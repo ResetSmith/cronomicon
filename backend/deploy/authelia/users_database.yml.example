@@ -1,0 +1,20 @@
+# Authelia file-backend users — EXAMPLE ONLY (for the standalone/file backend in
+# configuration.yml). In production you'll use your LDAP/AD backend instead and
+# this file is unused.
+#
+# Copy to users_database.yml and generate a real password hash:
+#   docker run --rm authelia/authelia:4.38 authelia crypto hash generate argon2 --password 'your-password'
+#
+# The `groups` here become Authelia groups → Remote-Groups → Cronomicon roles.
+# Put your first operator in the group named by AMADEUS_BOOTSTRAP_ADMIN_GROUP on
+# first deploy so they can sign in and seed the real ad_group_mappings.
+
+users:
+  admin:
+    displayname: "Cronomicon Admin"
+    # Replace with a real hash from the command above.
+    password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_ME"
+    email: admin@example.com
+    groups:
+      - amadeus-users
+      - amadeus-admins

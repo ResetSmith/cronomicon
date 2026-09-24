@@ -1,0 +1,11 @@
+-- 280 Script tags (scripts-tags.md). User-authored, SQLite-only tags on a script.
+--
+-- Unlike scripts.warnings (210) / scripts.variables (230) — which are RECOMPUTED
+-- from the Git body on every sync — tags are authored by operators via
+-- PUT /api/v1/script-tags/{name} and stored ONLY here. They are NOT parsed from
+-- Git and must SURVIVE syncs: the scripts upsert (gitlab.upsertScripts) leaves
+-- this column out of its ON CONFLICT DO UPDATE SET, and the DEFAULT '[]' covers a
+-- newly-synced row. (Removing a script from Git still deletes the row, and its
+-- tags with it — scripts remain a Git-sourced read model; surviving Git removal
+-- would need dual-source scripts, out of scope per scripts-tags.md D2.)
+ALTER TABLE scripts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';

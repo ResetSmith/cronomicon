@@ -1,0 +1,36 @@
+{
+  "name": "amadeus-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Cronomicon operator UI — React + TypeScript + Vite (T2). Builds into backend/web/dist, embedded and served by the Go binary (T3).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "gen": "openapi-typescript ../backend/openapi.yaml -o src/api/schema.d.ts"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
+    "@xyflow/react": "^12.11.1",
+    "openapi-fetch": "^0.13.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.27.0"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.1.1",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "jsdom": "^29.1.1",
+    "openapi-typescript": "^7.4.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^4.1.9"
+  }
+}

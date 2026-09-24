@@ -1,0 +1,44 @@
+-- 970 — runs.scheduled_for: the instant a SCHEDULE expected this run.
+--
+-- FX-B1. The Queue concurrency policy parks a scheduled fire in pending_runs
+-- with no runs row, and promotion later deletes the pending row and stamps the
+-- new run's created_at at PROMOTION time. So a fire expected at 02:00 that
+-- promotes at 02:06 is invisible to both of the missed-run detector's checks at
+-- the 02:07 scan — the pending row is gone, and the run row's created_at sits
+-- outside the [t-1m, t+5m] window. The detector pages for a run that in fact
+-- executed, and writes a fabricated 'skipped' row that then explains every
+-- later fire that day. v0.57.32 (v1.0.0) fixed the still-parked half of this;
+-- this is the promoted half, and nothing bridged the delete between them.
+--
+-- The fix is to carry the original fire instant across promotion. This column
+-- is that instant, copied from the pending row, so the detector can recognise
+-- a late-promoted run as the fire it was.
+--
+-- Deliberately a NEW COLUMN rather than a new pending_runs.status ('promoted'):
+-- pending_runs.status carries CHECK (status IN ('pending','missed')) from
+-- migration 790, and SQLite cannot alter a CHECK — widening it means a full
+-- 12-step table rebuild, which would drop and have to faithfully restore the
+-- delete-cascade triggers 790 installs. An additive ALTER on runs costs none of
+-- that and leaves the same evidence.
+--
+-- NULL for every run that did not originate as a parked scheduled fire, which
+-- is almost all of them: a manual click, a reaction, a file arrival and an
+-- ad-hoc deferral have no schedule expectation to record. Backfill is neither
+-- possible nor wanted — the instants it would describe are already past, and
+-- the detector's 24h catch-up bound means it will never look at them.
+ALTER TABLE runs ADD COLUMN scheduled_for TEXT;
+
+-- No index on scheduled_for. It was measured: the detector reads it inside an OR
+-- alongside created_at, and SQLite will not drive index selection from one arm
+-- of an OR unless BOTH arms are indexable — EXPLAIN QUERY PLAN is byte-identical
+-- with and without it, so it would be write cost on every runs INSERT buying
+-- nothing. The existing idx_runs_job_created already narrows the scan to one
+-- job's rows, which is the work that matters.
+
+-- FX-B3 — the missed-run detector now watches WORKFLOW schedules too, and its
+-- two lookups filter workflow_name with a COALESCE'd source. The existing
+-- idx_workflow_runs_source_name is (workflow_source, workflow_name), whose
+-- leading column that predicate cannot use, so both queries were full scans of
+-- workflow_runs — once per enumerated fire, per entry, every five minutes, and a
+-- catch-up scan enumerates hundreds. This is the index they can actually use.
+CREATE INDEX idx_workflow_runs_name_created ON workflow_runs(workflow_name, created_at);

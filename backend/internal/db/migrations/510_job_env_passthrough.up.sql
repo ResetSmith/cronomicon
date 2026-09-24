@@ -1,0 +1,15 @@
+-- 510 Job env passthrough (ansible-update.md RX.9, Phase 1 — universal
+-- runner hardening).
+--
+-- A job may declare env-var NAMES its local-toolchain run (ansible/terraform
+-- on a runner) needs forwarded from the runner's own environment. Under the
+-- scoped child env the agent no longer passes its full environment to the
+-- toolchain process; the manifest ships an allowlist of NAMES computed from
+-- inventory {{ lookup('env', NAME) }} references, target authKeyEnvVars, and
+-- this per-job list. Names only, never values (D1) — the agent resolves them
+-- against its own env (secrets.env).
+--
+-- Follows the prompts_json precedent (migration 330): a JSON-array TEXT column
+-- populated at git sync from the job spec's `env_passthrough` list. DEFAULT
+-- '[]' backfills existing rows (read as "no extra names").
+ALTER TABLE jobs ADD COLUMN env_passthrough TEXT NOT NULL DEFAULT '[]';

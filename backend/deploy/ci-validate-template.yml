@@ -1,0 +1,64 @@
+# Cronomicon — CI-time job-definition validation (V1.1-1, from T11).
+#
+# Drop this into the .gitlab-ci.yml of the repo that holds your Cronomicon job
+# definitions (jobs/*.yaml, workflows/*.yaml, inventory/*.ini). It runs
+# `amadeus validate` on every merge request so malformed definitions —
+# unknown apiVersion (T10), bad pragmas (S10) — are caught before they reach
+# Cronomicon, with line-numbered errors.
+#
+# The `amadeus` binary ships the same parser the runtime uses, so CI and runtime
+# never disagree. Pin AMADEUS_IMAGE to the version your Cronomicon deployment runs.
+
+variables:
+  AMADEUS_IMAGE: "registry.example.com/amadeus:latest"
+
+validate-job-definitions:
+  stage: test
+  image: "$AMADEUS_IMAGE"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    # Validate every definition file; fail fast with line-numbered errors.
+    - |
+      set -e
+      found=0
+      for f in $(find jobs workflows inventory -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.ini' \) 2>/dev/null); do
+        found=1
+        echo "validating $f"
+        amadeus validate "$f"
+      done
+      if [ "$found" = "0" ]; then echo "no definition files found"; fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPT-IN (V1.1-1 / Q1): also post the validation errors as a comment on the MR.
+#
+# The base job above already FAILS the pipeline — which blocks the merge and
+# shows the line-numbered errors in the job log — so this is a convenience, not
+# a second gate. It needs a token that can write MR notes: create a Project (or
+# Group) Access Token / PAT with the `api` scope and expose it as a *masked*
+# CI/CD variable named GITLAB_MR_TOKEN. (CI_JOB_TOKEN cannot post notes.)
+#
+# To enable, uncomment the job below. It also fails on validation errors, so you
+# can keep the base job or drop it — running both is redundant.
+#
+# validate-and-comment:
+#   stage: test
+#   image: "$AMADEUS_IMAGE"
+#   rules:
+#     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+#   script:
+#     - |
+#       set +e
+#       out="$(find jobs workflows inventory -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.ini' \) -print0 2>/dev/null \
+#               | xargs -0 -r -n1 amadeus validate 2>&1)"
+#       code=$?
+#       echo "$out"
+#       if [ "$code" -ne 0 ] && [ -n "$GITLAB_MR_TOKEN" ]; then
+#         note="### ❌ Cronomicon job-definition validation failed"$'\n\n''```'$'\n'"$out"$'\n''```'
+#         curl -sf --request POST \
+#           --header "PRIVATE-TOKEN: $GITLAB_MR_TOKEN" \
+#           --data-urlencode "body=$note" \
+#           "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes" >/dev/null || true
+#       fi
+#       exit $code

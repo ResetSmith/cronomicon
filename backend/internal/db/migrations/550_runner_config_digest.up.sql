@@ -1,0 +1,11 @@
+-- 550 Runner config digest (runner-install-update.md Phase 5 — automatic
+-- drift detection, D2 stage 2).
+--
+-- The canonical SHA-256 over the runner's DECLARED config set
+-- (runnerproto.ConfigDigest), computed and stored by register/redeclare from
+-- the same values the agent declared. A v4+ agent sends its current digest
+-- with every poll; a mismatch means declared config drifted (e.g. env edited
+-- + restarted, binary upgraded) and the server delivers the re-register op —
+-- no Resync click needed. NULL/'' = unknown (pre-550 row): treated as drift,
+-- so the first digest-bearing poll self-heals it via one redeclare.
+ALTER TABLE runners ADD COLUMN config_digest TEXT;

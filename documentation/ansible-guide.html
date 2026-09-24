@@ -1,0 +1,243 @@
+<h1>Ansible guide — running playbooks with Cronomicon (A1.0)</h1>
+
+<p>How to get the most out of <strong>Ansible</strong> inside Cronomicon: where playbooks run, the two ways to bring them in, how inventories become scopes, how SSH keys and become passwords resolve on a runner, how secrets reach a play safely, and the failure modes you will actually meet. It assumes you know Ansible itself; what it teaches is the <em>Cronomicon-specific</em> shape of an Ansible estate.</p>
+
+<p>Companion reading: the <a href="user-manual.html">User Manual</a> for the per-screen reference (Jobs §6, Scopes &amp; Env Vars §11), the <a href="administrator-manual.html">Administrator Manual</a> for GitOps and the runner fleet, the <a href="./bash-guide.html"><code>bash-guide.html</code></a> for shell scripts, and the <a href="./runner-install.html"><code>runner-install.html</code></a> / <a href="./runner-manage.html"><code>runner-manage.html</code></a> / <a href="./runner-security.html"><code>runner-security.html</code></a> guides for the agent itself.</p>
+
+<blockquote><p><strong>The one-sentence model.</strong> A playbook is a <strong>Script</strong> (run type <code>ansible</code>), a <strong>Scope</strong> carries the inventory it targets, a <strong>Job</strong> binds the two to schedules and env, and the run always executes on a <strong>runner</strong> that advertises the <code>ansible</code> capability — never inside the Cronomicon server, and never over the in-app SSH executor.</p></blockquote>
+
+<hr />
+
+<h2>1 · The execution model</h2>
+
+<p>Ansible (like Terraform) is a <strong>runner-only</strong> run type. The in-app SSH executor exists for shell-family scripts; for <code>ansible</code> the executor resolution always lands on <code>runner</code> — a global <code>ssh</code> default can never apply to it, and explicitly choosing SSH in the Run dialog is rejected with <code>422 invalid_executor</code> (the dialog flips you back to Runner). See <a href="administrator-manual.html#execution">Administrator Manual §4.1</a>.</p>
+
+<p>That means you need at least one runner whose host carries the Ansible toolchain:</p>
+
+<ul>
+<li><strong>Capabilities auto-detect.</strong> An agent probes for <code>ansible-playbook</code> at startup and claims the <code>ansible</code> run type if present — install Ansible later and a service restart propagates it via the config-drift resync. In containers, use the <strong>fat</strong> image (<code>Dockerfile.runner.fat</code>); the slim image has no Ansible to detect.</li>
+<li><strong>Capability routing is safe by default.</strong> A run for a type no online runner advertises stays <strong>queued</strong> (<em>“waiting for an ansible-capable runner”</em>) rather than failing. The same claim-gating covers <code>requires:</code> tokens (<code>checkout</code>, <code>vault</code>, <code>collection:&lt;fqcn&gt;</code>) and <a href="administrator-manual.html#runner-ops">agency isolation</a> — an unsatisfiable run waits and names what it is waiting for; it is never silently dropped.</li>
+<li><strong>What a runner advertises is visible.</strong> The Runners view shows each runner's capability chips — including its <code>ansible-core</code> version and detected collections — so “which runner will take this play” is a glance, not a guess.</li>
+</ul>
+
+<blockquote><p><strong>Sizing note.</strong> A runner claims up to <code>maxConcurrent</code> runs; each Ansible run is a full <code>ansible-playbook</code> process with its own forks. Tune fan-out with an <code>ANSIBLE_FORKS</code> variable on the scope (see §4) rather than raising <code>maxConcurrent</code> first — ten concurrent plays of 50 forks each is 500 SSH sessions from one host.</p></blockquote>
+
+<hr />
+
+<h2>2 · Two ways in: self-contained playbooks vs checkout projects</h2>
+
+<p>Cronomicon has two distinct paths for executing a playbook, and choosing the right one up front saves a migration later.</p>
+
+<div class="tbl"><table>
+<thead><tr><th></th><th>Path A — self-contained body</th><th>Path B — checkout project</th></tr></thead>
+<tbody>
+<tr><td><strong>What ships</strong></td><td>The playbook <em>text</em> only</td><td>The whole project tree at a <strong>server-pinned commit SHA</strong></td></tr>
+<tr><td><strong>Supports</strong></td><td>One YAML file; no <code>roles/</code>, <code>vars_files</code>, <code>include_*</code>, templates</td><td>Roles, <code>vars_files</code>, <code>include_vars</code>, <code>.j2</code> templates, <code>requirements.yml</code>, ansible-vault files</td></tr>
+<tr><td><strong>Authoring</strong></td><td>Drop a raw <code>.yml</code> under <code>scripts/</code> (auto-discovered), or a <code>kind: Script</code> with an inline body</td><td>A <code>kind: Script</code> wrapper declaring <code>project_root</code> + <code>entry</code></td></tr>
+<tr><td><strong>Runner setup</strong></td><td>None beyond the toolchain</td><td><strong>Opt-in per runner</strong>: <code>-allow-checkout</code>, a repo allowlist, a read-only deploy credential</td></tr>
+</tbody>
+</table></div>
+
+<h3>Path A — the default: keep playbooks self-contained</h3>
+
+<p>Any raw <code>*.yml</code> under <code>scripts/</code> in the definitions repo is auto-discovered on sync as a Script with run type <code>ansible</code> (a sub-folder like <code>scripts/ansible/patch.yml</code> just becomes part of the catalog's folder tree). A job references it by name:</p>
+
+<pre><code># jobs/patch-tuesday.yaml
+apiVersion: amadeus.io/v1
+kind: Job
+metadata:
+  name: patch-tuesday
+spec:
+  script_ref: patch.yml
+  scope: Production
+  scheduleRefs: [monthly-patch-window]
+  timeout_seconds: 3600</code></pre>
+
+<p>Self-contained plays run everywhere with zero runner configuration, and they are what the in-app <a href="user-manual.html#compose">Composer</a> and the Scripts catalog handle most naturally. Prefer this path until you genuinely need roles.</p>
+
+<h3>Path B — checkout projects for real role trees</h3>
+
+<p>A composite project — roles, group vars, templates, a vaulted secrets file — is declared as <em>one</em> Script whose members are not synthesized into standalone catalog entries:</p>
+
+<pre><code># scripts/deploy-app.yaml
+apiVersion: amadeus.io/v1
+kind: Script
+metadata:
+  name: deploy-app
+spec:
+  run_type: ansible
+  project_root: ansible/deploy-app     # repo-relative directory
+  entry: site.yml                      # playbook run from the materialized tree</code></pre>
+
+<p>At enqueue the server pins the exact commit SHA; the runner fetches the repo (allowlist-checked), verifies the SHA, materializes the tree, installs <code>requirements.yml</code> per run (already-present pinned collections are not re-downloaded), and runs the entry playbook from it. <code>amadeus validate</code> fails CI on an unpinned collection or a non-SHA git role, and a tree secret-scan catches inline plaintext secrets a <code>vars/*.yml</code> or template could smuggle past the inventory guard. Full operator detail: <a href="administrator-manual.html#runner-ops">Administrator Manual §7.8</a> and the <a href="./runner-install.html"><code>runner-install.html</code></a> guide.</p>
+
+<blockquote><p><strong>⚠ Submodules do not compose with Path B.</strong> The sync engine updates git submodules recursively, so a playbooks repo mounted as a submodule under <code>scripts/</code> <em>is</em> discovered — but only its <strong>self-contained</strong> playbooks work: checkout materialization uses <code>git archive</code>, which <strong>omits submodule content</strong>, and a checkout always targets the synced definitions repo. Any playbook that needs roles, includes or vault files must have its project files <strong>committed directly in the definitions repo</strong>. When migrating an existing Ansible repo, converge it into the definitions repo (or repoint the sync at it) rather than mounting it as a submodule.</p></blockquote>
+
+<hr />
+
+<h2>3 · Inventory: how scopes carry your hosts</h2>
+
+<p>An Ansible run must target a <strong>scope that declares the <code>ansible</code> run type and carries an inventory</strong> — the server refuses to build a runner manifest without one (<code>409 no_inventory</code>). Two ways to get there:</p>
+
+<ul>
+<li><strong>Git-synced</strong>: files in <code>inventory/*.ini</code> (read <strong>flat</strong>, not recursively — flatten and namespace nested department trees). A <code># amadeus:v1 types=bash,ansible</code> pragma at the top of the file (or a <code>.amadeus.yaml</code> sidecar) declares the scope's run types.</li>
+<li><strong>In-app</strong>: <strong>Scopes → + Add Scope</strong> and paste the full INI into the <em>Ansible INI Inventory</em> input — validated inline, projected atomically on save. See <a href="user-manual.html#scopes">User Manual §11.1</a>.</li>
+</ul>
+
+<p>A synced inventory does triple duty: the raw file ships <strong>byte-exact</strong> to the runner for <code>ansible-playbook -i</code>; it is parsed into an <em>advisory</em> group/host-vars projection you can read in the Scopes view (never authoritative for execution); and its hosts are imported into the SSH host registry so the rest of the app knows them. Group structure (<code>[group:children]</code>, <code>[group:vars]</code>) is preserved — and is what per-run <strong>group targeting</strong> works against (§4).</p>
+
+<blockquote><p><strong>Inline secret values are rejected at ingest — by design.</strong> An inventory carrying <code>ansible_ssh_pass</code>, any <code>*_become_pass</code>, or inline-vault markers is rejected fail-closed with a line-numbered <code>inventory_secret_rejected</code> before anything is persisted or shipped. The supported pattern is env-var-<strong>NAME</strong> indirection — <code>{{ lookup('env','NAME') }}</code> — resolved on the runner (§5–§6). A literal <code>AMADEUS_*=</code> assignment is likewise rejected: that namespace belongs to the injector; your content may <em>reference</em> those names, never define them.</p></blockquote>
+
+<p>For network-isolated segments, a runner can hold the inventory itself (<code>--inventory local</code> + <code>--local-inventory</code>): the manifest then carries only the scope <em>name</em> and the host list never touches the control plane. Pair with <strong>agencies</strong> to pin each scope's runs to the runners inside its segment (<a href="administrator-manual.html#runner-ops">§7.7</a>).</p>
+
+<hr />
+
+<h2>4 · Running plays: targeting, inputs and env</h2>
+
+<h3>Group targeting &amp; <code>--limit</code></h3>
+
+<p>When the effective scope has a parsed inventory, the Run dialog's <em>“Where it runs”</em> fold offers a <strong>Groups</strong> control — pick inventory groups and the runner receives them as <code>ansible --limit</code> (an SSH shell run over the same scope would expand them to member hosts; both hit the identical set). For selections the picker can't express, the <span class="adv">Advanced</span> <strong>Ansible --limit</strong> field takes a raw pattern like <code>webservers:&amp;staged:!quarantine</code> and overrides the group/host selection. An unknown group is rejected <code>422 group_membership</code>; the raw field is ansible/runner-only. Details: <a href="user-manual.html#jobs">User Manual §6.5</a>.</p>
+
+<p><strong>Prefer per-run targeting over inventory edits.</strong> A “run it just on the web tier this once” should be a Groups selection on the Run dialog, not a temporary inventory fork.</p>
+
+<h3>Run inputs replace <code>vars_prompt</code></h3>
+
+<p>Interactive prompts have no terminal to ask on — a play that uses <code>vars_prompt</code> will hang or take defaults. Declare the questions on the job (or seed them on the Script) as <strong>run inputs</strong> instead; the Run dialog asks the operator, and each answer arrives in the run's environment under its declared name:</p>
+
+<pre><code># on the Job (spec.prompts) — or on the Script, which seeds the Composer
+prompts:
+  - name: TARGET_RELEASE
+    label: "Release tag to deploy"
+    required: true
+  - name: DRAIN_FIRST
+    label: "Drain nodes first?"
+    default: "yes"
+    options: ["yes", "no"]</code></pre>
+
+<pre><code># in the playbook — read the answer from the env
+vars:
+  release: "{{ lookup('env','TARGET_RELEASE') }}"</code></pre>
+
+<p>By default an unfilled required input warns and records rather than blocking (<code>prompt_enforcement: warn</code>); set <code>prompt_enforcement: block</code> on jobs where running without the answer must be impossible. Note a job with required run inputs is effectively manual — a scheduled fire has nobody to ask.</p>
+
+<h3>Environment layering</h3>
+
+<p>Ansible reads its own configuration from the environment, which makes Cronomicon's env layering (job env ← schedule env ← per-run override, override wins per key) the natural tuning surface — <code>ANSIBLE_FORKS</code>, <code>ANSIBLE_TIMEOUT</code>, <code>ANSIBLE_STDOUT_CALLBACK</code> and friends all work as plain <a href="user-manual.html#envvars">Variables</a> or job env rows. Bound Variables arrive as <code>AMADEUS_VAR_&lt;key&gt;</code> (see §6); plain job/schedule/override env arrives under its own name. A job can also declare <code>env_passthrough:</code> — env-var <em>names</em> the runner forwards from its own local environment into the play (names only; the values live on the runner, e.g. in <code>secrets.env</code>).</p>
+
+<p>Give every play a realistic <code>timeout_seconds</code> (the whole run is killed and marked failed on overrun) and use <code>concurrency_policy: Forbid</code> on plays that must not overlap themselves — a slow patch window firing again on the next cron is the classic Ansible pile-up.</p>
+
+<hr />
+
+<h2>5 · SSH auth on the runner: names, not bytes</h2>
+
+<p>Cronomicon ships <strong>key names, never key material</strong>, to a runner by default. The agent resolves each name locally — against its key-map or key-dir (default <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code>) — so a compromised control plane never yields target keys, and a compromised runner exposes only its own segment. Provision keys at install time (<code>--generate-key &lt;NAME&gt;</code> mints one and prints the public half) or drop files into the key-dir later.</p>
+
+<p><strong>Where the name comes from</strong>, in precedence order on an Ansible run:</p>
+
+<ul>
+<li>An explicit <code>ansible_ssh_private_key_file</code> in the inventory always wins. The supported secret-free form is the lookup pattern:
+<pre><code>web-01 ansible_host=10.1.2.11 ansible_ssh_private_key_file="{{ lookup('env','prod_web_key') }}"</code></pre>
+The runner scans the inventory for <code>lookup('env',NAME)</code> names, and bridges each one to the matching key-dir file in the child environment. The name must be a <strong>bare literal</strong> — a nested template inside the lookup fails with <em>“env passthrough var(s) not set”</em>.</li>
+<li>Otherwise the <strong>auth bridge</strong>: when every target of the run resolves to exactly <strong>one</strong> distinct key name (per-host <code>amadeus_auth_key_env_var</code>, the scope sidecar's <code>authKeyEnvVar</code>, or the host record in <a href="user-manual.html#settings">Settings → SSH Targets</a>), the agent auto-appends <code>--private-key &lt;path&gt;</code> and verifies target host keys against the <em>same</em> <code>known_hosts</code> that <strong>Scan &amp; approve</strong> seeds. One provisioned key serves bash and ansible runs alike; no double provisioning.</li>
+</ul>
+
+<h3>Become passwords</h3>
+
+<p><strong>Passwordless sudo remains the preferred arrangement.</strong> A <code>NOPASSWD</code> rule scoped to what the play actually needs is auditable on the target and keeps the credential out of the run entirely. What follows is the exception path. And never rely on <code>-K</code>: there is no terminal to prompt on.</p>
+
+<p>There are two supported ways in, and they answer different questions.</p>
+
+<p><strong>1 · A job-level become password (preferred).</strong> The job names a Secrets row and Cronomicon does the rest:</p>
+
+<pre><code>spec:
+  become_password_secret: BECOME_PASSWORD   # a NAME, never a value</code></pre>
+
+<p>The field holds a <strong>bare key</strong>. The password stays in the Secrets catalogue with every control that implies — KEK or Vault at rest, department resolution, reveal auditing, log redaction — and is resolved at dispatch. The agent writes it to a <code>0600</code> file on tmpfs <em>off the run tree</em>, passes the path to <code>ansible-playbook --become-password-file</code>, and wipes it when the run ends. <strong>The value never enters the environment and never appears in a template.</strong> An environment variable is readable from <code>/proc</code> by anything that can see the process; a wiped file is a materially smaller window.</p>
+
+<p>Two consequences worth knowing. The flag is <strong>global to the run</strong>, so it cannot vary per host the way an inventory-authored <code>ansible_become_password</code> can — a fleet with heterogeneous become passwords wants pattern 2. And the job automatically requires the <code>become-file</code> capability, so its runs <strong>wait for a runner with ansible-core ≥ 2.12</strong> rather than being assigned to one that would silently ignore the flag.</p>
+
+<p><strong>2 · Inventory lookup (per-host variation).</strong> The older pattern, still correct when different hosts need different passwords: put <code>ansible_become_password="{{ lookup('env','PROD_BECOME_PASS') }}"</code> in the inventory (an inline value is rejected at ingest) and supply the value either as a <strong>reference binding</strong> — which is what lets one playbook serve several departments, see §6 — or runner-locally via <code>/etc/amadeus-runner/secrets.env</code> or the Vault Agent sidecar (§6).</p>
+
+<blockquote><p><strong>Setting a become password is a grant, and it is gated.</strong> Naming a Secret here has the runner write that value to a file, so the Composer requires <strong>Manage Env Vars</strong> <em>and</em> membership of the department that owns the row — you cannot bind another department's password. Git sync is deliberately advisory instead: a synced job naming a missing Secret produces a warning rather than failing the whole sync, and the run fails closed at dispatch.</p></blockquote>
+
+<blockquote><p><strong>⚠ Gotcha — Stored SSH-key credentials don't reach the runner path.</strong> A host whose key is attached as a first-class <em>Stored credential</em> (Env Vars → SSH Keys, picked by ID in SSH Targets) authenticates fine on the in-app SSH executor, but the runner manifest carries only the key <em>name</em> field — a credential-by-ID host presents <strong>no key name</strong> to a runner-executed Ansible run. For inventories that runners execute, reference keys <strong>by name</strong> (key-dir/key-map), or deliver the bound key via reference-binding injection on a flagged runner (§6).</p></blockquote>
+
+<p>A target the runner has never seen fails <em>soft</em> with <code>host_key_unverified</code>: run <strong>Scan keys</strong> from the Runners view, compare the fingerprint out-of-band, and <strong>Approve</strong> it into the runner's <code>known_hosts</code> — the flow is audited, strict thereafter. See <a href="./runner-security.html"><code>runner-security.html</code></a>.</p>
+
+<hr />
+
+<h2>6 · Secrets in plays: three doors, one rule</h2>
+
+<p>The rule: <strong>a secret value lives either on the runner, in Cronomicon's encrypted store / Vault, or in an ansible-vault file — never in the repo, the inventory, a schedule env, or a per-run override.</strong> The three doors:</p>
+
+<ul>
+<li><strong>Runner-local env (names-only).</strong> The play references <code>{{ lookup('env','NAME') }}</code>; the value sits in the runner's <code>secrets.env</code> — provisioned by you, or continuously rendered by the opt-in <strong>Vault Agent sidecar</strong> (the runner never holds a Vault token; the value never crosses the control-plane channel). Zero server involvement, works on any agent.</li>
+<li><strong>Reference bindings with per-runner injection.</strong> Declare the Secrets / Variables / SSH keys a job consumes as <a href="user-manual.html#refbindings">reference bindings (§11.6)</a>; they arrive as <code>AMADEUS_SECRET_&lt;name&gt;</code> / <code>AMADEUS_VAR_&lt;name&gt;</code> env vars, and a bound key's material as a private <code>/dev/shm</code> file, <em>only</em> on a runner an operator has flagged with the <strong>Secret injection</strong> toggle (protocol v6+). Everything is fail-closed — an unresolvable binding or an un-flagged runner leaves the run <strong>queued</strong>, never partially supplied — injected values join the run's redaction dictionary, and every dispatch writes a value-free audit row. This is the door that lets Vault-backed secrets reach a play with no runner-side file at all.</li>
+<li><strong>ansible-vault (checkout projects).</strong> The job declares <code>requires: [vault]</code>; a runner provisioned with <code>--vault-pass-file</code> supplies <code>--vault-password-file</code> itself (the password never travels, and the token claim-gates the run to vault-capable runners). Register that vault password as an Cronomicon stored secret too, so any accidental echo of it is masked.</li>
+</ul>
+
+<h3>One playbook, every department's credential</h3>
+
+<p>The common shape in a departmental estate is <em>one</em> shared playbook that each department runs with <em>its own</em> credential. Two mechanisms make that work without a naming convention in the play.</p>
+
+<p><strong>Per-department rows under one name.</strong> Two departments may each hold a Secret named <code>BECOME_PASSWORD</code> in the same scope. A run resolves <strong>its own department's row</strong> — the play just asks for the name it always asked for:</p>
+
+<pre><code>- hosts: all
+  become: true
+  vars:
+    ansible_become_password: "{{ lookup('env','AMADEUS_SECRET_BECOME_PASSWORD') }}"</code></pre>
+
+<p>This is legal despite the reserved namespace: the <code>AMADEUS_*=</code> guard matches an <strong>assignment</strong>, so <em>referencing</em> an injector-owned name inside a <code>lookup</code> is fine. Which row a run gets is decided by the run's <strong>scope</strong>, not by who triggered it — which is why a central operations team can run a department's job with that department's credential <em>without ever being able to see it</em>.</p>
+
+<p><strong>Aliasing, for rows that cannot share a name.</strong> When the catalogue already has <code>TEAMA_SUDO</code> and <code>TEAMB_SUDO</code> and renaming is not on the table, a binding can declare the name its value is injected <em>under</em>. Both alias to <code>BECOME_PASSWORD</code>, and the same one playbook works. The alias is a <strong>destination only</strong>: it never changes which row resolves, and an out-of-department row aliased to a friendly name is still refused.</p>
+
+<blockquote><p><strong>⚠ When two departments own the same name in one scope.</strong> If a run's scope belongs to <em>both</em> departments, the reference is <strong>ambiguous</strong> and the run is refused rather than being given somebody's credential at random — the audit trail would otherwise imply an intent that never existed. The refusal says <em>ambiguous</em>, not <em>missing</em>, so nobody goes hunting for a row that is there twice. Authoring surfaces name the owners; the run does not. If your scopes map one-to-one onto departments this can never fire.</p></blockquote>
+
+<blockquote><p><strong>Redaction has a deliberate gap you must close with <code>no_log</code>.</strong> Cronomicon masks stored-secret values and injected reference values in run logs — but a value a playbook <em>decrypts at run time</em> (ansible-vault) or fetches itself was never registered with the redactor. Put <code>no_log: true</code> on tasks that handle decrypted or fetched secrets, and keep <code>-vvv</code> debugging away from them.</p></blockquote>
+
+<hr />
+
+<h2>7 · Best-practice checklist</h2>
+
+<ul>
+<li><strong>Stay on Path A until roles force Path B.</strong> A self-contained play needs zero runner setup and composes best in-app.</li>
+<li><strong>Pin everything in Path B.</strong> Exact collection versions in <code>requirements.yml</code>, SHA-pinned git roles — the validators enforce it, CI (<code>amadeus validate .</code>) catches it at merge time.</li>
+<li><strong>Names, never values.</strong> <code>lookup('env','NAME')</code> for keys; <code>spec.become_password_secret</code> for a become password; reference bindings or the sidecar for delivery; nothing secret in inventory, vars files, schedule env, or run overrides.</li>
+<li><strong>Passwordless sudo first.</strong> A <code>NOPASSWD</code> rule scoped to what the play needs beats every password-delivery mechanism here. Use §5's become password when a target's policy forbids that — not as the default.</li>
+<li><strong>Let the scope pick the department's credential.</strong> One playbook asking for one name, with each department owning its own row, beats a naming convention per team (§6). Keep scopes mapped one-to-one onto departments and the ambiguity refusal can never fire.</li>
+<li><strong>Replace <code>vars_prompt</code> with run inputs</strong> (<code>spec.prompts</code>), and mark truly unskippable ones <code>prompt_enforcement: block</code>.</li>
+<li><strong>Target per run, don't fork inventories.</strong> Groups / <code>--limit</code> in the Run dialog; agencies for network segmentation; local-inventory runners for isolated segments.</li>
+<li><strong>Bound every play</strong>: <code>timeout_seconds</code> sized to reality, <code>concurrency_policy: Forbid</code> on non-reentrant plays, <code>ANSIBLE_FORKS</code> tuned at the scope.</li>
+<li><strong><code>no_log: true</code></strong> wherever a task handles a value the redactor has never seen.</li>
+<li><strong>Keep plays idempotent</strong> — Cronomicon retries (<code>retries:</code>) and schedules re-fire; a play that cannot safely run twice will eventually run twice.</li>
+</ul>
+
+<hr />
+
+<h2>8 · Troubleshooting</h2>
+
+<div class="tbl"><table>
+<thead><tr><th>Symptom</th><th>Likely cause → fix</th></tr></thead>
+<tbody>
+<tr><td>Run sits <strong>queued</strong>, “waiting for an ansible-capable runner”</td><td>No online runner advertises <code>ansible</code> — runner down, slim image, toolchain missing, or a <code>capabilityMask</code> narrowed it. Check the Runners view's capability chips; restart the agent after installing Ansible.</td></tr>
+<tr><td>Queued, “no online runner satisfies this run's requirements”</td><td>A <code>requires:</code> token (<code>vault</code>, <code>checkout</code>, <code>collection:…</code>) or an <strong>agency</strong> has no covering online runner. The reason names the missing piece.</td></tr>
+<tr><td>Queued, “no eligible runner advertises <code>become-file</code>”</td><td>The job names a <code>become_password_secret</code>, which requires <strong>ansible-core ≥ 2.12</strong> on the claiming runner. The run waits rather than being assigned to a runner that would ignore the flag. Upgrade the department's runner, or drop to the inventory-lookup pattern (§5).</td></tr>
+<tr><td>Queued, “no eligible runner is flagged for secret injection”</td><td>The job declares reference bindings (or a become password) and no runner in its department has the per-runner <strong>Secret injection</strong> toggle on. Enrolling a new runner in its agency is the obvious step; ticking this flag is the one people forget.</td></tr>
+<tr><td>Queued: “only a runner with no agencies can claim it”</td><td>The run has <strong>no scope</strong>. An untagged run is claimable only by an untagged runner — the general pool is <em>disjoint</em>, not a fallback — so a fully departmentalised fleet cannot take it at all. Bind a scope.</td></tr>
+<tr><td><code>422</code> “this job consumes department-owned credentials”</td><td>An <strong>unbound</strong> run declaring a binding to a department-<em>owned</em> row. An unbound run carries an empty department set, so the row resolves for nobody, and no departmental runner could claim it either. Supply a scope. Bindings to <em>global</em> rows are unaffected.</td></tr>
+<tr><td><code>409</code> reference is <strong>ambiguous</strong></td><td>Two departments own a row under this name and the run's scope belongs to both, so there is no defensible pick (§6). The run is refused rather than escalating with somebody's credential. Check <strong>Env Vars</strong> for the same-key rows and their owner chips, or run under a scope belonging to one department. Note this says <em>ambiguous</em>, not <em>unavailable</em> — the row is there twice, not missing.</td></tr>
+<tr><td><code>403</code> binding a become password</td><td>Setting <code>become_password_secret</code> in the Composer needs <strong>Manage Env Vars</strong> on the department that owns the row. You cannot bind another department's password.</td></tr>
+<tr><td><code>422 invalid_executor</code></td><td>SSH executor chosen for an ansible run, or a raw <code>--limit</code> supplied on an SSH run. Use Runner.</td></tr>
+<tr><td><code>409 no_inventory</code></td><td>The effective scope declares no inventory (or the run is unscoped). Bind an inventory-backed scope, or check the scope's run-type pragma.</td></tr>
+<tr><td><code>422 group_membership</code></td><td>A targeted group isn't in the effective scope's parsed inventory — check the scope's advisory projection for the real group names.</td></tr>
+<tr><td><code>inventory_secret_rejected</code> on sync / save</td><td>An inline secret value (or a literal <code>AMADEUS_*=</code> assignment) in the inventory. Switch to <code>{{ lookup('env','NAME') }}</code>.</td></tr>
+<tr><td><code>host_key_unverified</code> per-host failure</td><td>First contact with that target. <strong>Scan keys → Approve</strong> on the runner, then re-run.</td></tr>
+<tr><td>“env passthrough var(s) not set”</td><td>A <code>lookup('env',NAME)</code> name isn't provisioned in the runner's environment — or the name is a nested template rather than a bare literal. Add it to <code>secrets.env</code> (or the sidecar template) and restart the agent.</td></tr>
+<tr><td>Ansible authenticates with the wrong / no key</td><td>Targets resolve to multiple distinct key names (the auto <code>--private-key</code> bridge only engages on exactly one), or the host references a Stored credential by ID (§5). Set an explicit <code>ansible_ssh_private_key_file</code> lookup, or unify the key name.</td></tr>
+<tr><td>Play hangs, then times out</td><td>Usually an interactive prompt — <code>vars_prompt</code>, <code>-K</code>, or an unapproved sudo password. Replace with run inputs and env lookups (§4–§5).</td></tr>
+<tr><td>Run failed with reason <code>runner_lost</code> (amber <strong>Lost</strong> badge)</td><td>The runner stopped heartbeating mid-run — a runner problem, not a play error. See <a href="./runner-manage.html"><code>runner-manage.html</code></a>.</td></tr>
+<tr><td>A vault-decrypted value appeared in a log</td><td>Run-time-decrypted values bypass redaction. Add <code>no_log: true</code> to the task; rotate the exposed value.</td></tr>
+</tbody>
+</table></div>
+
+<p>For anything runner-side — sandbox posture, checkout flags, key provisioning, upgrades — continue in the <a href="./runner-install.html"><code>runner-install.html</code></a> and <a href="./runner-manage.html"><code>runner-manage.html</code></a> guides.</p>

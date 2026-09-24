@@ -1,0 +1,316 @@
+<h1>Runner management guide (R7.2)</h1>
+
+<p>Day-2 operations for an Cronomicon <strong>runner</strong> that is already installed and registered. For the initial install + configure walk-through, see <a href="./runner-install.html"><code>runner-install.html</code></a>; for the credential-model posture and blast-radius record, see <code>runner-security.html</code>.</p>
+
+<p>This guide covers, in order: <strong>checking status &amp; health</strong>, <strong>managing</strong> a runner day-to-day (drain / kill / token hygiene), <strong>updating</strong> the agent binary, <strong>re-syncing</strong> a runner's config and identity with the server, and <strong>removing / retiring</strong> a runner.</p>
+
+<blockquote><p><strong>One concept to hold first — declared vs local config.</strong> A runner declares <code>name</code>, <code>os</code>, <code>capabilities</code>, <code>maxConcurrent</code>, <code>inventory</code>, <code>version</code>, and its <code>protocolVersion</code> to the server <strong>only at registration</strong> (<code>POST /api/v1/runners/register</code>). The poll loop sends <strong>nothing but the bearer token</strong> — it is a heartbeat and a kill/drain channel, not a config update. So the server's view of a runner is frozen at its <strong>last registration</strong>. Anything that changes those declared fields — including upgrading the binary (which changes <code>version</code>/<code>protocolVersion</code>) — only reaches the server when the runner <strong>re-declares</strong>. On a protocol <strong>v4+</strong> agent (0.47.5+) this is <strong>automatic</strong>: the agent sends a digest of its declared config with every poll, so a change <strong>propagates on the next poll after a restart</strong> — the server spots the drift and requests the re-declare itself. The <strong>Runners → Resync</strong> button remains as a force-lever (see "Resync"). Local fields (keys, <code>known_hosts</code>, CA, poll cadence, fan-out, local inventory) need only a restart, or take effect on the next run.</p></blockquote>
+
+<hr />
+
+<h2>1 · Check status &amp; health</h2>
+
+<p><strong>On the host (systemd):</strong></p>
+
+<pre><code>systemctl status amadeus-runner          # running / failed, recent log lines
+systemctl is-active amadeus-runner        # active | inactive | failed
+journalctl -u amadeus-runner -f           # tail the agent log
+journalctl -u amadeus-runner --since '1 hour ago'
+/usr/local/bin/amadeus-runner version     # build version + commit</code></pre>
+
+<p><strong>On the host (container):</strong></p>
+
+<pre><code>docker ps --filter name=amadeus-runner    # Up / Exited
+docker logs -f amadeus-runner-01
+docker exec amadeus-runner-01 amadeus-runner version</code></pre>
+
+<p>Healthy logs show <code>registered with server</code> (first start) or <code>resumed runner identity</code> (restart), then steady <code>poll</code> activity on the cadence. A target dial that fails host-key verification surfaces per-host; a server reap shows <code>server returned 404 on poll — re-registering</code>.</p>
+
+<p><strong>On the server (the Runners view):</strong> each runner shows a <strong>status</strong>, its <strong>load</strong> (active runs / <code>maxConcurrent</code>), declared <strong>capabilities</strong>, version, last-seen time, and an <strong>inventory</strong> chip. Status meanings:</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><strong>online</strong></td><td>Polled within the offline threshold; claiming work.</td></tr>
+<tr><td><strong>degraded</strong></td><td>Still <code>online</code>, but its last heartbeat is more than <strong>2 minutes</strong> old — two missed polls — or it registered and has never polled. <strong>Derived when the row is read, never stored</strong>, so it is a freshness reading laid over the lifecycle status rather than a state the runner enters. It names the window in which a runner that had already died still read <em>online</em>: <code>offline</code> is only declared at the 5-minute threshold below. Dispatch and claiming are unaffected; the UI treats a degraded runner as <strong>reachable</strong> and keeps its recovery actions offered.</td></tr>
+<tr><td><strong>draining</strong></td><td>Asked to drain — finishing active runs, claiming nothing new.</td></tr>
+<tr><td><strong>offline</strong></td><td>No heartbeat for <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> (server default <strong>5m</strong>, ≈5 missed 60s polls). The reaper reconciles its in-flight runs to a terminal <code>failure</code> with <code>runner_lost</code> (History shows a <strong>Lost</strong> badge).</td></tr>
+</tbody>
+</table></div>
+
+<p>A runner that stays <strong>offline</strong> for <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code> (server default <strong>14d</strong>) is deleted by a secondary sweep. An offline runner that comes back <strong>resumes its ID</strong> (D4) and flips to online on its next successful poll.</p>
+
+<p><strong>Click any runner row to expand its detail panel.</strong> The compact row carries only <strong>Test</strong> and <strong>Deregister</strong>; the remaining per-runner actions — <strong>⚙ Settings</strong>, <strong>Resync</strong>, <strong>Scan keys</strong>, <strong>Drain</strong> and <strong>Copy upgrade command</strong> — live in the expanded detail. The gating there follows one rule: <strong>Resync, Scan keys and Drain are offered while the runner is <em>reachable</em></strong> — <code>online</code> <em>or</em> <code>degraded</code>, because a degraded runner still heartbeats and still holds work, and that is the state where you most need them. <code>offline</code> still hides them: there is nobody there to ask. There is no longer any <strong>protocol-version</strong> gate on these buttons: The server's protocol floor tracks the current wire protocol, so every agent that can talk to this server speaks it: one below the floor is refused at registration, at redeclare and on every poll with <code>426 protocol_too_old</code>, never silently degraded. (Before v1.5.40 each button carried its own minimum, and Scan keys could vanish silently below protocol v5 while Resync, on the same bar, explained itself.) <strong>Copy upgrade command</strong> is always offered whatever the version badge says — it is also the reinstall command, and “up to date” compares version <em>strings</em>, so a locally-built agent can read current while speaking an older protocol. The detail panel also surfaces health-at-a-glance (status, live heartbeat age, load, sandbox posture), the <strong>full capability list</strong>, <strong>registration provenance</strong> (with a link to the token that created the runner), a read-only <strong>managed-settings</strong> summary, an <strong>agent-version</strong> upgrade hint, the runner's <strong>currently-running</strong> jobs, and its <strong>recent job history</strong>.</p>
+
+<p>The panel is laid out for readability. It reads top-down as <em>what this runner <strong>is</strong>, then what you can <strong>change</strong></em>: <strong>Registration</strong> and <strong>Managed settings</strong> — the two read-only blocks — sit above the four editable controls, so the <strong>⚙ Settings</strong> entry point (which lives on the <em>Managed settings</em> header, beside the pending-change dot) is near the top instead of below the fold. Registration facts are also stated <strong>once</strong>: <em>Protocol</em> and <em>Registered</em> used to render twice under different labels, in the field grid and again under Registration, reading as two separate pairs of facts. Fields the runner has no value for are collected into a single muted <em>“Not recorded:”</em> line rather than each rendering a labelled <code>—</code>, and background explanation sits behind an <strong>ⓘ</strong> disclosure on the section it belongs to.</p>
+
+<blockquote><p><strong>A second, independent reaper acts on workflow-launched runs.</strong> The workflow engine's orphan reaper (a startup sweep plus a 10-minute periodic pass) fails the queued/running <strong>child runs</strong> of an orphaned or 24h-stale workflow with reason <code>orchestrator_lost</code> — including runs assigned to a perfectly healthy runner. Unlike <code>runner_lost</code>, this shows a plain Failed badge (no amber <strong>Lost</strong> badge): it means the <em>orchestrator</em> lost track of the workflow (e.g. a server restart mid-workflow), not that the runner vanished.</p></blockquote>
+
+<hr />
+
+<h2>2 · Manage day-to-day</h2>
+
+<h3>Drain (graceful — do this before maintenance)</h3>
+
+<p>Draining lets active runs finish while the runner stops claiming new work — the safe way to take a runner out of rotation.</p>
+
+<ul><li><strong>From the UI:</strong> <strong>Runners → Drain</strong> (the button shows while the runner is <strong>reachable</strong> — <code>online</code> or <code>degraded</code>). On its next poll the agent stops claiming, lets active runs finish, and <strong>exits once idle</strong>. Because the generated unit is <code>Restart=on-failure</code>, a clean drain-exit (code 0) leaves the service stopped — bring it back later with <code>systemctl start amadeus-runner</code>. Starting it back up <strong>is</strong> the come-back signal: the restarted agent's first poll re-admits it — same id, same key, online and claiming work in one round-trip. There is no separate "activate" step; if you want a runner to <em>stay</em> out of rotation, leave the service stopped (or <strong>Deregister</strong> to revoke its key entirely).</li><li><strong>From the host:</strong> <code>systemctl stop amadeus-runner</code> sends <code>SIGTERM</code>, which triggers the <strong>same</strong> graceful drain. <code>TimeoutStopSec=300</code> in the unit gives long ansible/terraform plays up to 5 minutes to wind down before a hard kill.</li></ul>
+
+<p><strong>Always drain before maintenance</strong> so you don't kill mid-flight runs.</p>
+
+<h3>Kill a single run</h3>
+
+<p>To stop one run without touching the rest, kill it from the server: the next poll delivers a <code>kill</code> for that specific <code>traceId</code> and the agent cancels just that run's execution/session. Because kill and drain arrive <strong>only on a poll</strong>, the agent keeps polling while executing — a busy runner is still controllable.</p>
+
+<h3>Registration-token hygiene is <strong>not</strong> a kill-switch</h3>
+
+<p>Registration tokens are <strong>single-use per install</strong> (minted from the Runners view; each dies on its first successful registration and records which runner consumed it). <strong>Revoking an unused token</strong> only stops the install that would have used it. Runners that already registered keep their long-lived <code>amt_run_*</code> key and keep working until you <strong>deregister</strong> them (see "Remove"). To revoke a specific runner, use its <strong>Deregister</strong> button — token hygiene never touches registered runners.</p>
+
+<h3>No hot reload</h3>
+
+<p>The agent has <strong>no SIGHUP/config-reload path</strong> — only <code>SIGINT</code>/<code>SIGTERM</code> (drain). Every config change needs a restart (<code>systemctl restart amadeus-runner</code>); the restart is also all a declared-config change needs — drift detection re-declares it on the next poll (see "Resync").</p>
+
+<hr />
+
+<h2>3 · Update (upgrade the agent)</h2>
+
+<p>Keep agents and the server in <strong>lock-step</strong> across upgrades. The wire protocol is versioned with a server-enforced minimum (<code>runner-security.html</code> §4); a drift becomes a loud, diagnosable failure rather than silent mis-driving.</p>
+
+<p><strong>systemd host:</strong></p>
+
+<pre><code># 1. Drain first so no run is interrupted.
+#    (UI → Drain, or `systemctl stop` which drains on SIGTERM.)
+sudo systemctl stop amadeus-runner
+
+# 2. Build/copy the new binary and install it over the old one.
+cd backend &amp;&amp; CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner
+sudo install -m 0755 amadeus-runner /usr/local/bin/amadeus-runner
+
+# 3. Start again — it resumes its identity from the identity file.
+sudo systemctl start amadeus-runner
+amadeus-runner version    # confirm the new build</code></pre>
+
+<p><strong>Container:</strong> pull/rebuild the new image, then recreate the container against the <strong>same named volume</strong> so identity persists:</p>
+
+<pre><code>docker pull amadeus-runner:slim       # or rebuild the image
+docker stop amadeus-runner-01 &amp;&amp; docker rm amadeus-runner-01
+docker run -d --name amadeus-runner-01 --restart unless-stopped \
+  -v amadeus-runner-data:/var/lib/amadeus-runner \
+  ...same -e flags as install... \
+  amadeus-runner:slim</code></pre>
+
+<blockquote><p><strong>The server keeps showing the OLD version/protocol until you re-register.</strong> A restart <strong>resumes the stored identity</strong> and never re-declares — so after an upgrade the <code>runners</code> row still reflects the version, capabilities, and <code>protocolVersion</code> from the <strong>last registration</strong>. This matters after an upgrade that changes the protocol version. The server's protocol floor tracks the current wire protocol, so every agent that can talk to this server speaks it: one below the floor is refused at registration, at redeclare and on every poll with <code>426 protocol_too_old</code>, never silently degraded. So an agent whose binary you upgraded across a protocol bump keeps working, while one you did <em>not</em> upgrade stops receiving work at its next poll and says so in its own log — rather than running on with fields it silently drops. The server picks up a new build <strong>automatically on the first poll after the restart</strong> (drift detection); the <strong>Resync</strong> button forces it. (Before v1.5.40 the floor sat at v1 and each capability carried its own minimum, hard-failing individual runs — managed inventory below v2, checkout below v3, injected secrets below v6. One loud refusal replaced all of them.)</p></blockquote>
+
+<hr />
+
+<h2>4 · Resync (reconcile a runner with the server)</h2>
+
+<p><strong>Resync = re-aligning the server's view of a runner with the runner's actual identity and config.</strong> It's needed because declared config crosses the wire only at (re-)registration (see the note at the top). Since protocol <strong>v4</strong> the agent can re-declare its current local config <strong>in place</strong> — same id, same API key, same agency membership, no deregistration, active runs unaffected — and since <strong>0.47.5</strong> the server asks for that <strong>automatically</strong>: the agent sends a config digest with every poll, and a mismatch with the stored declared set triggers the <code>re-register</code> op on that same poll (flap-guarded to at most one op per 5 minutes per runner). <strong>Runners → Resync</strong> forces the same op on demand. The button authenticates nothing new: the agent re-reads its <em>own</em> config, so a resync can never change what a runner is from the server side. Pick the case that matches:</p>
+
+<h3>Case A — the server reaped/deregistered the runner (automatic)</h3>
+
+<p>If the server has deleted the runner (manual deregister, or 14-day offline sweep), the agent's next poll returns <strong>404</strong>; it logs <code>server returned 404 on poll — re-registering</code>, discards the stale identity, and <strong>re-registers automatically</strong> with its current config. <strong>Nothing to do</strong> — <em>provided the registration token in its env is still valid</em>. Its install token is long dead (single-use, consumed at first registration) — <strong>mint a fresh <code>amt_reg_*</code></strong> (Runners → Register New Runner), put it in the runner's env, and restart so the re-register can succeed. This is the one flow that still needs a registration token: the reaped row's <code>amt_run_*</code> key was revoked with it. (The <strong>Resync</strong> button can't help here — the row is gone and the runner's key revoked; this path always needs a registration token.)</p>
+
+<h3>Case B — you changed declared config (capabilities / name / os / maxConcurrent / inventory / toolchains)</h3>
+
+<blockquote><p><strong>Checkout-mode capabilities are declared too.</strong> The tokens a runner advertises — <code>ansible</code>, <code>checkout</code> (from <code>-allow-checkout</code>), <code>collection:&lt;fqcn&gt;</code> (installed collections), <code>vault</code> (from <code>-vault-password-file</code>), <code>sandboxed</code> (systemd-run available) — plus the detected toolchain versions on the Runners page are all captured <strong>at registration</strong>. So enabling checkout, provisioning a new collection, adding the vault file, or gaining a systemd sandbox does <strong>not</strong> reach the server on a plain restart: it needs a <strong>resync</strong> (or re-registration), same as any declared change below.</p></blockquote>
+
+<p>A plain restart will <strong>not</strong> propagate these — the agent resumes its identity and skips registration. To propagate:</p>
+
+<ul><li><strong>Just restart (preferred):</strong> restart the service so the agent is reading the new values (<code>systemctl restart amadeus-runner</code>). At startup it recomputes its config digest (re-probing toolchains, collections, and the sandbox), the first poll carries it, and the server requests the re-declare automatically — <strong>no click needed</strong>. The <strong>Resync</strong> button forces the same thing without waiting a poll (and a newly installed collection is re-detected at re-declare time even without a restart; flag-derived tokens like <code>checkout</code>/<code>vault</code> and the startup <code>sandboxed</code> probe still need the restart first). One caveat: the startup probe is what gets declared — if the agent starts before its toolchain is ready (e.g. ansible on a slow-booting venv), the reduced token set propagates; restart or Resync once the toolchain is healthy (the agent logs the detected set at startup). No registration token involved — the agent authenticates with its existing <code>amt_run_*</code> key.</li><li><strong>Alternative — deregister, let it re-register:</strong> edit the config (e.g. <code>/etc/amadeus-runner/runner.env</code>), then <strong>Runners → Deregister</strong> the runner. On its next poll the agent 404s and re-registers with the new config. The old row is gone; the runner keeps the <strong>same name</strong> but gets a new id. (Restart the service after editing config so it's reading the new values when it re-registers.)</li><li><strong>Last resort — delete the identity file:</strong> drain, stop the service, delete the identity file (e.g. <code>/var/lib/amadeus-runner/identity.json</code>), then start. The agent registers <strong>fresh</strong> with the new config. Note this mints a <strong>new id</strong>; the old <code>runners</code> row lingers as <strong>offline</strong> until the reaper deregisters it (5m → 14d). Prefer the deregister path so there's no orphan row.</li></ul>
+
+<p>The deregister and identity-file paths need a valid registration token at re-register time; the Resync button does not.</p>
+
+<h3>Case C — you changed keys, known_hosts, or local inventory</h3>
+
+<p>These are <strong>runner-local</strong> and <strong>not declared to the server</strong>, so no re-registration is involved:</p>
+
+<ul><li><strong>Key files and <code>known_hosts</code></strong> are read <strong>at dial time</strong> — editing their <em>contents</em> in place takes effect on the <strong>next run</strong>, no restart needed. Only changing their <em>paths</em> (the <code>-key-dir</code> / <code>-key-map</code> / <code>-known-hosts</code> config) needs a restart.</li><li><strong>One key file now serves bash AND ansible.</strong> A key in <code>-key-dir</code>/<code>-key-map</code> named after the host's <code>authKeyEnvVar</code> is bridged to ansible automatically — you no longer provision the same name a second time as an env var. Each run's log shows what it used: <code>amadeus: auth: key "NAME" → &lt;path&gt;</code>, <code>amadeus: auth: --private-key NAME → &lt;path&gt;</code>, and <code>amadeus: trust: known_hosts → &lt;path&gt;</code>. Prove a name resolves with <code>amadeus-runner doctor --auth NAME [user@host]</code> before a run; the expanded Runner detail also lists a runner's resolvable key names as chips. (Opt out with <code>-no-auth-bridge</code>.) See <a href="./runner-security.html">runner-security.html</a> §2, "How a runner authenticates."</li><li><strong>Local inventory</strong> (<code>-local-inventory</code>, <code>local</code> mode) is loaded at agent <strong>start</strong> — edit it, then <code>systemctl restart amadeus-runner</code>.</li></ul>
+
+<h3>Case D — protocol/version drift after an upgrade</h3>
+
+<p>This is the "make the server see the new build" follow-up to an Update (§3): the post-upgrade restart is enough — the new binary's first poll carries a changed digest (its <code>version</code> differs) and the server records the new <code>version</code> and <code>protocolVersion</code> automatically; <strong>Resync</strong> forces it without waiting a poll. <strong>One boundary case:</strong> the upgrade that first crosses into v4 (e.g. v3 → v4) can't use the button — the server still records the <em>old</em> protocol from the last registration, so Resync is disabled. Cross that boundary once with Case B's deregister path; every later upgrade is one click. Confirm on the Runners view that the version (shown under the runner's name) updated and any protocol-gated runs now route.</p>
+
+<hr />
+
+<h2>4.5 · Managed settings (tune a live runner from its row)</h2>
+
+<p><strong>Managed settings are the exception to "declared config crosses the wire only at registration."</strong> A third category joins <em>declared</em> and <em>local</em> (added in protocol v4): a small set of <strong>server-managed operational overrides</strong> the operator edits on the runner's row — the <strong>⚙ Settings</strong> button opens a drawer — that ride to the agent <strong>over the poll channel</strong> and apply <strong>in-memory on the next poll</strong>. No SSH, no restart, no env edit.</p>
+
+<p>The managed set is: <strong>max jobs</strong> (<code>maxConcurrent</code>), the three <strong>sandbox caps</strong> (<code>MemoryMax</code>/<code>CPUQuota</code>/<code>TasksMax</code>), the <strong>checkout policy</strong> (<code>allowCheckout</code> + the repo <code>checkoutRepos</code> allowlist), and a subtract-only <strong>capability mask</strong> (remove run-types from what the runner will claim). Each field is tri-state: set it to override the runner's local value, or leave it blank/<em>inherit</em> to keep the local value. The secrets these depend on — the checkout deploy token and the vault password — are <strong>never</strong> managed here; they stay in runner-local custody (installed at §3 / <code>runner-install.html</code>), so the server never holds secret bytes.</p>
+
+<p>Each write <strong>bumps a version</strong>; the agent echoes the version it has <strong>applied</strong> as its poll ack, so the row shows a <strong>pending dot</strong> (● on the Settings button) until the change round-trips — typically one poll cycle. The <strong>capability mask is enforced server-side at claim</strong> (a masked run-type is simply never assigned to the runner) and honored agent-side too. Managed overrides do <strong>not</strong> touch the config digest, so changing one never triggers a drift re-registration (§4).</p>
+
+<p><strong>One row-level flag is deliberately not part of the managed set: <em>Secret injection</em></strong>. It is a per-runner <strong>trust</strong> decision, not an operational tune, and it lives in its own control on the runner's detail panel behind <code>configureApp</code>. When it is on, this runner may claim runs whose job or script declares <a href="runner-security.html">reference bindings</a>, and it receives the <strong>resolved secret values</strong> in its dispatch manifest; when it is off, such a run is <strong>never dispatched to it at all</strong>. Grant it only to runners you trust with the secrets in the scopes they serve. A secret-bearing run also needs the agent to speak protocol <strong>v6</strong> or later — an older agent would ignore the manifest block and run without the secrets, so the server hard-fails that pairing rather than letting it happen quietly (§4, and <code>runner-security.html</code> §4).</p>
+
+<blockquote><p><strong>Every registered agent receives managed settings.</strong> Delivery is keyed on the <code>settingsVersion</code> param the agent's poll carries, and since the protocol floor tracks the current version there is no agent old enough to be missing it. (Through v1.5.39 the floor sat at v1, so a pre-Phase-4 agent silently never received settings; such an agent now cannot register at all.)</p></blockquote>
+
+<hr />
+
+<h2>4.6 · Trust a target's host key (scan &amp; approve)</h2>
+
+<p>You no longer need to hand-assemble a <code>known_hosts</code> before a runner's first SSH run. Host-key verification is still strict — an unknown or changed target key is refused — but you can trust a key at the moment it's actually known, with an audit trail. <strong>This also covers ansible runs</strong>: local-toolchain runs verify against the same <code>known_hosts</code> the agent seeds here, so an approved key serves both Go-SSH and ansible (no more separate <code>~/.ssh/known_hosts</code> for ansible).</p>
+
+<ol>
+<li>A runner's SSH run to an unverified host fails with a <code>host_key_unverified</code> reason naming the host (the run's status reason). The run is a soft failure — nothing was executed on an unverified host.</li>
+<li>On the <strong>Runners</strong> view, press <strong>Scan keys</strong> on that runner's row and enter the target(s). The next poll delivers a <code>keyscan</code> op; the agent captures each host's presented key <em>from its own vantage</em> and uploads it.</li>
+<li>The key appears under <strong>Pending host-key approvals</strong> with its full <strong>SHA256 fingerprint</strong>. <strong>Compare it out-of-band</strong> against the host itself (<code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> on the host, or the fingerprint its admin publishes), then <strong>Approve</strong>.</li>
+<li>The next poll delivers a <code>trust-hosts</code> op; the agent appends the exact line to its <code>known_hosts</code> (idempotently — a re-delivery never duplicates). <strong>Retry the run</strong>; it now verifies.</li>
+</ol>
+
+<p><strong>Reject</strong> a key you can't verify — it is never trusted. Approving without the out-of-band comparison is still trust-on-first-use (the scan only shows what the host presented, not that it wasn't already compromised) — see <a href="./runner-security.html">runner-security.html</a> §8. A pre-seeded <code>known_hosts</code> (<code>--known-hosts</code> at install) still works and skips the scan for hosts you already trust.</p>
+
+<hr />
+
+<h2>4.7 · Tags — label a runner, then send work to it</h2>
+
+<p>A runner's <strong>tags</strong> are free-text labels you set on its row (expand the runner, edit the tag chips). They began as a way to <em>find</em> runners in a long list. They now also decide <strong>where work runs</strong>: a job &mdash; or a single ad-hoc run &mdash; can be <strong>pinned</strong> to a tag, and only runners carrying that tag may claim it.</p>
+
+<p>This is the answer to a question agencies could not express. An agency says <em>which department</em> a runner belongs to; every runner inside it is interchangeable. A tag says <em>where the runner sits</em> &mdash; which network segment it can reach, which datacentre it lives in, which VLAN its route table knows about. When a job must reach hosts only some of your runners can see, tag those runners and pin the job.</p>
+
+<p><strong>Tag the property, not the machine.</strong> Pins name a tag, never a specific runner, and that is deliberate: a runner's identity is minted at <em>registration</em>, so re-enrolling a host gives it a new one and any pin naming the old identity would quietly stop matching. A tag survives re-enrollment, and tagging three runners <code>vlan-dmz</code> gives the pin three ways to succeed instead of one. Name tags after the capability or location an operator would ask for &mdash; <code>vlan-dmz</code>, <code>dc-east</code>, <code>pci-zone</code> &mdash; not after the host.</p>
+
+<p><strong>Case does not matter.</strong> <code>vlan-dmz</code>, <code>VLAN-DMZ</code> and <code>Vlan-Dmz</code> are the same tag when a pin is matched, and a single runner cannot carry two spellings of one tag. Tags still display exactly as you typed them.</p>
+
+<p><strong>Editing tags takes effect on the next poll.</strong> Adding a tag lets that runner start claiming pinned work immediately; removing one stops it. Runs already in flight are unaffected &mdash; a claim is a decision made once, not re-checked mid-run. Deregistering a runner takes its tags with it.</p>
+
+<blockquote><p><strong>Tags are not capabilities, and neither replaces the other.</strong> A <em>capability</em> (<code>vault</code>, <code>checkout</code>, a run-type) describes what a runner can <strong>do</strong>, is declared by the agent itself from its own environment, and is matched by a job's <code>requires</code>. A <em>tag</em> describes where a runner <strong>is</strong>, is set by an operator in Cronomicon, and is matched by a pin. A run must satisfy both, plus its agency. If you find yourself wanting to grant a &ldquo;capability&rdquo; from the UI, you want a tag.</p></blockquote>
+
+<p><strong>Pinning never widens reach.</strong> A pin can only narrow which runners may claim a run; it is applied on top of department isolation, never instead of it. Pinning a run to a tag that only another department's runner carries does not send it there &mdash; the run waits, and says so (§5.5). There is no combination of pin and tag that reaches a runner the department rules would deny.</p>
+
+<p>Who sets the pin, and where, is covered in the manuals: the per-run and per-job controls in the <strong>User Manual</strong>, and the Git-declared form in the <strong>Administrator Manual</strong>.</p>
+
+<hr />
+
+<h2>5 · Remove / retire a runner</h2>
+
+<h3>Retire one runner (keep the host)</h3>
+
+<pre><code># 1. Drain (UI → Drain, or stop, which drains on SIGTERM).
+sudo systemctl stop amadeus-runner
+# 2. Deregister on the server: Runners → Deregister.
+# 3. Delete the identity so a stray restart can't resume the (now-gone) row.
+sudo rm -f /var/lib/amadeus-runner/identity.json
+# 4. (optional) keep it from coming back on boot:
+sudo systemctl disable amadeus-runner</code></pre>
+
+<p>Order matters: <strong>drain → deregister → delete identity</strong>. Deleting the identity without deregistering leaves an offline row to be reaped; deregistering without deleting the identity lets a restart re-register the runner right back.</p>
+
+<h3>Fully uninstall from the host (reverse of <code>runner-install.sh</code>)</h3>
+
+<pre><code>sudo systemctl disable --now amadeus-runner
+sudo rm -f /etc/systemd/system/amadeus-runner.service
+sudo systemctl daemon-reload
+sudo rm -f /usr/local/bin/amadeus-runner
+sudo rm -rf /etc/amadeus-runner          # config (runner.env)
+sudo rm -rf /var/lib/amadeus-runner      # state: identity + keys + known_hosts
+sudo userdel amadeus-runner              # remove the service account
+sudo groupdel amadeus-runner             # if it has no other members</code></pre>
+
+<p>Then <strong>Deregister</strong> the runner on the Runners view if you haven't already.</p>
+
+<h3>Container</h3>
+
+<pre><code># Drain first (UI → Drain), then:
+docker stop amadeus-runner-01            # SIGTERM → graceful drain (up to the stop timeout)
+docker rm amadeus-runner-01
+docker volume rm amadeus-runner-data     # destroys identity + keys — only when fully retiring</code></pre>
+
+<h3>Retire a <strong>compromised</strong> runner (segment-local rotation)</h3>
+
+<p>Because custody is <strong>distributed</strong> (model b), retiring a compromised runner is a segment-local rotation, not an estate-wide one (<code>runner-security.html</code> §7):</p>
+
+<ol><li><strong>Deregister</strong> it on the Runners view (revokes its server access).</li><li><strong>Delete its identity file</strong> (the <code>amt_run_*</code> bearer) so the host can no longer act as that runner.</li><li><strong>Rotate the SSH keys it held</strong> — only the keys for <em>that runner's segment</em> are exposed; other runners' keys and the control plane's secrets are not.</li></ol>
+
+<hr />
+
+<h2>5.5 · Online, but nothing runs on it</h2>
+
+<p>Registration and <em>eligibility</em> are separate things. A runner can be online, healthy and idle while a department's runs queue beside it — because Cronomicon ships <strong>names, not values</strong>, and claiming is gated on properties an operator has to set. Treat an <strong>agency as a provisioning domain</strong>: a department's runners carry that department's key-dir, secrets and sidecar templates, and claim-gating guarantees a run only lands where its names resolve.</p>
+
+<p>You do not have to guess which gate. A run that no online runner can claim <strong>records the reason</strong>, computed when it is enqueued and stored on the run, so it still answers the question days later — &ldquo;why didn't it run last night?&rdquo; cannot be settled by inspecting today's fleet, because the runner that was missing may be online now.</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Reason on the queued run</th><th>What to set on the runner</th></tr></thead>
+<tbody>
+<tr><td><em>no online runner belongs to &lt;agency&gt;</em></td><td>Enroll it in that agency &mdash; its row in Runners, or Scopes &rarr; Agencies &rarr; expand the agency. An untagged runner serves only the general pool.</td></tr>
+<tr><td><em>no eligible runner is flagged for secret injection</em></td><td>Turn on the per-runner <strong>Secret injection</strong> toggle. The run carries reference bindings or a become password, and such runs are invisible to un-flagged runners. Most-forgotten step on a new runner.</td></tr>
+<tr><td><em>no eligible runner advertises <code>become-file</code></em></td><td>Upgrade the agent's <strong>ansible-core to ≥ 2.12</strong> (where <code>--become-password-file</code> landed). The run waits rather than being handed to a runner that would ignore the flag.</td></tr>
+<tr><td><em>no eligible runner advertises <code>vault</code> / <code>checkout</code> / <code>collection:…</code></em></td><td>Provision the matching capability — <code>--vault-pass-file</code>, <code>-allow-checkout</code>, or the collection — then restart so it re-declares.</td></tr>
+<tr><td><em>no online runner can run &lt;type&gt; jobs</em></td><td>The toolchain is missing (slim image) or a <code>capabilityMask</code> narrowed it. Install and restart; check the capability chips.</td></tr>
+<tr><td><em>pinned to runners tagged &lt;tag&gt;, and no runner in the fleet carries that tag</em></td><td>Nothing carries the tag &mdash; a typo in the pin, or a runner nobody has tagged yet. Add the tag to the runners that belong on that segment (&sect;4.7), or correct the pin.</td></tr>
+<tr><td><em>pinned to runners tagged &lt;tag&gt;, and none of them is online and otherwise eligible</em></td><td>The tag exists, so this is about those particular runners: offline, draining, in another department, or missing the run-type. Check them first &mdash; the fix is on the tagged runners, not on the tag.</td></tr>
+<tr><td><em>only a runner with no agencies can claim it</em></td><td>Nothing — this one is about the <strong>run</strong>, not the runner. It has no scope, and an untagged run reaches only untagged runners (the general pool is <em>disjoint</em>, not a fallback). Bind a scope to the run.</td></tr>
+</tbody>
+</table></div>
+
+<p>After changing a runner's capabilities or provisioning, <strong>Resync</strong> (§4) or restart the agent so it re-declares; queued runs are re-evaluated on the next claim sweep and need no re-trigger.</p>
+
+<hr />
+
+<h2>6 · Troubleshooting — installed &amp; running, but not in the UI</h2>
+
+<p>A runner appears in the Runners view the instant <code>POST /api/v1/runners/register</code> succeeds — there is <strong>no approval gate</strong>. So a service that is "active (running)" but never shows up means <strong>registration never completed</strong>. The agent logs every startup phase <em>before</em> it runs it, so the <strong>last line</strong> in the journal names exactly where it stopped:</p>
+
+<pre><code>journalctl -u amadeus-runner -n 40 --no-pager</code></pre>
+
+<p>The healthy startup sequence is:</p>
+
+<pre><code>runner agent starting
+probing tier-2 sandbox availability (systemd-run)     # or: sandbox probe skipped (NoSandbox set)
+detecting host capabilities (toolchain probes)
+registering with server
+registered with server id=…
+runner agent online</code></pre>
+
+<p>Whichever <code>…</code> line is <strong>last with nothing after it</strong> is the phase that stalled or failed. Match it:</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Last line / error in the journal</th><th>Cause</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td><code>register request: Post "host/…": unsupported protocol scheme ""</code></td><td><code>AMADEUS_RUNNER_SERVER</code> has no <code>https://</code> scheme</td><td>Add the scheme in <code>runner.env</code> (recent agents auto-normalize a bare host).</td></tr>
+<tr><td><code>register: server returned 302</code>, or an HTML <code>&lt;!doctype html&gt;</code> snippet</td><td>The SSO / forward-auth proxy is intercepting runner endpoints and returning its login page</td><td>Add the runner paths to the proxy auth-bypass (Authelia <code>access_control</code>); see <code>deployment-guide.md</code>.</td></tr>
+<tr><td><code>register: server returned 401 … registration token invalid or expired</code></td><td>Registration token already used (single-use) or &gt;24h old</td><td>Mint a fresh token (<strong>Add Runner</strong>), update <code>AMADEUS_RUNNER_REGISTRATION_TOKEN</code>, restart.</td></tr>
+<tr><td><code>poll failed … 401 … invalid or expired runner token</code></td><td>The runner was deleted, or the server's token store was reset/rebuilt</td><td>Recent agents re-register automatically on a 401; otherwise <code>rm</code> the identity file + supply a fresh registration token.</td></tr>
+<tr><td><code>register request: … x509: certificate signed by unknown authority</code></td><td>Server TLS uses an internal CA the runner doesn't trust</td><td>Set <code>AMADEUS_RUNNER_CA_CERT=/path/to/ca.pem</code> in <code>runner.env</code>, restart.</td></tr>
+<tr><td>Last line is <code>registering with server</code> (hangs, no error)</td><td>Server unreachable, TLS stall, or a proxy black-holing the register POST</td><td>Run the reachability check below.</td></tr>
+<tr><td>Last line is <code>probing tier-2 sandbox…</code> or <code>detecting host capabilities…</code></td><td>A startup probe is wedged — almost always <code>exec.LookPath</code> stat-ing a <code>$PATH</code> dir on a hung mount</td><td>See <strong>Silent startup hang</strong> below.</td></tr>
+</tbody>
+</table></div>
+
+<h3>Reachability check from the host</h3>
+
+<pre><code>curl -sS -o /dev/null -w 'healthz %{http_code} %{time_total}s\n' https://SERVER/healthz
+curl -sS -m 20 -X POST https://SERVER/api/v1/runners/register \
+  -H 'Authorization: Bearer amt_reg_dummy' -H 'Content-Type: application/json' -d '{}' -i | head
+# Expect a FAST JSON 401 (unauthorized). An HTML/login page ⇒ SSO proxy intercept;
+# a hang/timeout ⇒ the network or proxy is black-holing the register endpoint.</code></pre>
+
+<h3>Silent startup hang (no logs after <code>starting</code>, SIGKILL after the stop timeout)</h3>
+
+<p>If the agent logs the <code>runner agent starting</code> banner (and maybe a <code>probing…</code>/<code>detecting…</code> line) and then <strong>nothing</strong>, and systemd eventually reports <code>stop-sigterm timed out … Killing</code> with <code>status=9/KILL</code>, it is blocked inside a startup probe. The overwhelming cause is <code>exec.LookPath</code> — which stats every <code>$PATH</code> directory — hitting a directory on a <strong>hung mount</strong> (stale NFS / autofs to an unreachable server), where the <code>stat()</code> blocks uninterruptibly. Confirm the exact frame (Go dumps every goroutine's stack on SIGQUIT):</p>
+
+<pre><code>systemctl kill --kill-who=main --signal=SIGQUIT amadeus-runner
+journalctl -u amadeus-runner --no-pager | grep -A20 'goroutine 1 \['
+# A frame in probeSandbox / detectRunTypes / exec.LookPath confirms it.</code></pre>
+
+<p>Find the stuck directory:</p>
+
+<pre><code>PID=$(systemctl show -p MainPID --value amadeus-runner)
+tr '\0' '\n' &lt; /proc/$PID/environ | grep '^PATH=' | cut -d= -f2 | tr ':' '\n' \
+  | while read d; do printf '%-24s ' "$d"; timeout 3 stat "$d/." &gt;/dev/null 2&gt;&amp;1; echo "rc=$? (124=HUNG)"; done
+timeout 5 df -h    # if df itself hangs, a stale network mount is the culprit</code></pre>
+
+<p>Mitigations, in order:</p>
+
+<ol>
+<li><strong>Repair or unmount the stale mount — this is the real fix.</strong> Playbook runs resolve their toolchains through the same <code>PATH</code>, so a hung directory breaks <em>runs</em> too, not just registration. A runner on such a host can register but cannot reliably execute.</li>
+<li><strong>Pin a clean <code>PATH</code></strong> in <code>runner.env</code> that omits the hung directory (keep wherever <code>which ansible systemd-run</code> actually resolve), then restart. <code>runner-install.sh</code> (recent releases) does this automatically at install time and prints which directories it excluded.</li>
+<li><strong><code>AMADEUS_RUNNER_NO_SANDBOX=true</code></strong> skips the <code>systemd-run</code> probe specifically — useful when <code>systemd-run</code> itself stalls (e.g. a non-login system user with no reachable manager) rather than a broad <code>PATH</code> problem.</li>
+</ol>
+
+<blockquote><p>Recent agents bound every startup probe with a deadline, so a hung mount now <strong>degrades</strong> a probe (logged: <code>PATH lookup timed out — treating tool as absent</code>) instead of wedging startup — the runner registers and runs unsandboxed. The stale mount still needs repair for playbook runs to resolve their tools.</p></blockquote>
+
+<hr />
+
+<p>See also: <a href="./runner-install.html"><code>runner-install.html</code></a> (install + configure), <code>runner-security.html</code> (credential-model posture &amp; blast radius), <code>env-matrix.md</code> (server-side vars such as <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> / <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code>), <code>amadeus-runner.service</code> (the hardened unit).</p>

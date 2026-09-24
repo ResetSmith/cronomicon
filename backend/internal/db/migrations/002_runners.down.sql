@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS runner_tokens;
+DROP TABLE IF EXISTS runners;

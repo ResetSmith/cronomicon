@@ -1,0 +1,23 @@
+-- Phase 2 (the schedule-update plan §4) — anchored interval schedules.
+--
+-- Cron is calendar-positional: it expresses "every Wednesday at 17:00" but not
+-- "every 10 days", because a repeating interval needs a phase anchor and cron
+-- has none. Migration 770's start_at IS that anchor, so an interval schedule
+-- becomes expressible by pairing the two.
+--
+-- `interval` holds a duration ("36h", "90m") or a day shorthand ("7d") and is
+-- MUTUALLY EXCLUSIVE with cron. Because cron is NOT NULL on both tables (and
+-- relaxing it would force a full table rebuild on each), an interval-driven
+-- entry stores cron = '' — which is already this system's "no cron" convention
+-- ('Manual'/empty has always meant unscheduled). Every read path resolves the
+-- mode through cronutil.ParseSpec rather than reading either column alone.
+--
+-- Three modes are now possible per entry, validated at every authoring boundary:
+--   cron     — a cron expression (optionally window-bounded)
+--   interval — fire every N from start_at (start_at required as the anchor)
+--   once     — start_at with neither cron nor interval: fire exactly once
+--
+-- NULL/empty on every existing row keeps them in cron mode, so this is a no-op
+-- on upgrade.
+ALTER TABLE schedules ADD COLUMN interval TEXT;
+ALTER TABLE definition_schedules ADD COLUMN interval TEXT;

@@ -1,0 +1,29 @@
+-- 660 Per-job run-input enforcement (20260724-job-run-update.md, Phase 3 / JR-Q5).
+--
+-- Opt-in hard enforcement for declared REQUIRED run inputs:
+--
+--   'warn'  (DEFAULT) — the v0.38.0 UDV4 behavior, unchanged. An unfilled required
+--                       input never blocks the run; it is recorded under
+--                       promptWarnings on the run's override envelope.
+--   'block'           — POST /jobs/{jobId}/run is rejected 422 (prompt_required)
+--                       while a declared required input has no value in the run's
+--                       effective env.
+--
+-- The DEFAULT is what makes this safe to deploy: every existing job — git-synced or
+-- composed — keeps warn-only semantics, so no existing automation changes behavior.
+-- An admin opts a specific job in. This matters because 'block' reaches paths no UI
+-- gate can: the API, schedules, and workflow steps all bypass the Run dialog.
+--
+-- JR-Q10 — 'block' is NOT escapable by a client-supplied promptAcknowledged. An
+-- escapable block is just 'warn' with extra steps; the entire point of opting in is
+-- to make the run impossible without a correct value.
+--
+-- Storage (JR-Q9): a scalar column rather than a key inside prompts_json. It keeps the
+-- per-prompt and per-job concerns separate and stays queryable — "which jobs can hard
+-- fail?" is a WHERE clause, not a JSON scan of every row.
+--
+-- The CHECK constraint pins the two legal values. NOTE (run-type-addition-checklist):
+-- SQLite cannot alter a CHECK in place, so widening this to a third mode later needs a
+-- full table rebuild — the same trap the jobs.run_type CHECK carries.
+ALTER TABLE jobs ADD COLUMN prompt_enforcement TEXT NOT NULL DEFAULT 'warn'
+    CHECK (prompt_enforcement IN ('warn', 'block'));

@@ -1,0 +1,13 @@
+-- Reverse 1150 — a deliberate NO-OP.
+--
+-- The object form this migration produces is readable by every build that ever
+-- read this column: the pre-v1.5.41 readers accepted both shapes, and the
+-- v1.5.41+ readers accept only the object form. Converting back to bare strings
+-- would therefore break the CURRENT readers to satisfy none, and it would
+-- destroy the label/service/enabled fields of targets that were authored in the
+-- object form to begin with (this migration cannot tell them apart from the
+-- ones it converted).
+--
+-- Down migrations exist so a rolled-back BINARY finds a schema it understands.
+-- Every binary understands this one.
+SELECT 1;

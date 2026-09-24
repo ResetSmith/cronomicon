@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS schedule_pushes;
+DROP TABLE IF EXISTS change_log;
+DROP TABLE IF EXISTS activity;
+DROP TABLE IF EXISTS runs;
+DROP TABLE IF EXISTS workflow_runs;

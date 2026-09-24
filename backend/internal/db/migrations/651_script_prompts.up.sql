@@ -1,0 +1,27 @@
+-- 651 Script-declared run inputs (20260724-job-run-update.md, Phase 2 / JR-Q6).
+--
+-- A Script may now declare the run inputs it consumes (`spec.prompts` in
+-- scripts/*.yaml), reusing the exact PromptSpec shape a Job already declares in
+-- jobs.prompts_json (migration 330). The Job Composer seeds a new job's Run inputs
+-- from the referenced script, so the required set is correct by default instead of
+-- depending on an admin remembering the "Import detected variables" button — this is
+-- the root-cause fix for run inputs going undeclared (gap G2).
+--
+-- Distinct from scripts.variables (migration 230): `variables` is HEURISTIC, extracted
+-- from the body by ExtractScriptVariables and used only as an authoring aid (UDV5).
+-- `prompts_json` is DECLARED by the script author and carries the label/required/
+-- default/options an operator actually sees. Declared beats inferred (UDV1).
+--
+-- Advisory metadata: a malformed or empty list NEVER blocks a sync, never drops a
+-- script from the resolved map, and never enters content_hash (Decision 8 identity is
+-- stable across scripts/jobs/runs). Mirrors the warnings (210) / variables (230)
+-- precedent: a JSON-array TEXT column defaulting to '[]'. The DEFAULT keeps
+-- pre-migration rows valid (read as "declares nothing") until the first sync after
+-- deploy recomputes every row.
+--
+-- Numbering: 650 is deliberately SKIPPED. The reverted PK-1 work (commit 2203fbd,
+-- reverted in 4c6a3f7) shipped a migration 650 and stamped real databases with that
+-- version. Reusing 650 would make migrate treat this column as already applied on
+-- those databases and silently skip it, leaving scripts.prompts_json missing at
+-- runtime. A version gap is harmless to golang-migrate; a silent skip is not.
+ALTER TABLE scripts ADD COLUMN prompts_json TEXT NOT NULL DEFAULT '[]';

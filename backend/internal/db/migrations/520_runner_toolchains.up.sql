@@ -1,0 +1,14 @@
+-- 520 Runner toolchains detail (ansible-update.md Phase 4 — capability
+-- advertisement, RX.7).
+--
+-- Runners advertise flat capability TOKENS in the existing runners.capabilities
+-- array (widened in Phase 4 from run-type names to also include `checkout`,
+-- `collection:<fqcn>`, `vault`) — that array is what claimRun gates against.
+-- This column holds the DETECTED VERSIONS as a JSON object for the Runners page
+-- (display only): { ansibleCore, collections:{fqcn:version}, checkout, vault }.
+-- Nullable; a pre-Phase-4 agent registers without it.
+--
+-- The requires_json columns Phase 4's claim-gating matches against
+-- (jobs.requires_json, runs.requires_json) already shipped in migration 512
+-- (Phase 3 pulled them forward for vault opt-in).
+ALTER TABLE runners ADD COLUMN toolchains TEXT;

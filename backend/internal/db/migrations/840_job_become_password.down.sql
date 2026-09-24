@@ -1,0 +1,11 @@
+-- 840 down — drop the become-password secret reference.
+--
+-- Lossless in the sense that matters: the column holds a NAME, so nothing secret is
+-- destroyed and the Secrets row it pointed at is untouched. What is lost is the
+-- association — a job that escalated with a password stops being told which secret
+-- supplied it, and (with `become: true` still set) will hang on a sudo prompt or
+-- fall through to whatever passwordless rule exists on the target.
+--
+-- SQLite 3.35+ supports DROP COLUMN directly; jobs carries no index or trigger on
+-- this column, so no rebuild is needed.
+ALTER TABLE jobs DROP COLUMN become_password_secret;

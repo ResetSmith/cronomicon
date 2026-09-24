@@ -1,0 +1,11 @@
+-- 620 Dispatch-time "this run injected a secret VALUE" flag (M5,
+-- the vault-integration-followup plan). Set at manifest dispatch when a
+-- run receives at least one sensitive injected value (secret/vault/key material —
+-- resolved.Redact non-empty). The runner log-ingest fail-closed decision reads
+-- THIS flag rather than re-enumerating live bindings each chunk: a binding deleted
+-- (or a job pruned) mid-run yields a clean-empty enumeration, which previously
+-- flipped the run to the lenient path and let an already-injected value persist
+-- un-redacted in remaining chunks. Making the decision authoritative to dispatch
+-- keeps a secret-bearing run fail-closed for its entire life, regardless of live
+-- binding state or the kill-switch. Defaults 0; only ever set to 1, never cleared.
+ALTER TABLE runs ADD COLUMN injects_secret BOOLEAN NOT NULL DEFAULT 0;

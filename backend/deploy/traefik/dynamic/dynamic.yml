@@ -1,0 +1,27 @@
+# Traefik dynamic configuration (file provider). Loaded from
+# /etc/traefik/dynamic and hot-reloaded on change.
+
+tls:
+  # Mounted certificate (./traefik/certs). For automated certs instead, enable a
+  # certificatesResolver (ACME) in the traefik command and drop this block.
+  certificates:
+    - certFile: /etc/traefik/certs/amadeus.crt
+      keyFile: /etc/traefik/certs/amadeus.key
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: true
+
+http:
+  middlewares:
+    # Defense in depth (B.3): clear any client-supplied Remote-* identity headers
+    # at the edge before forward-auth, so they can NEVER reach amadeus from an
+    # external caller. Authelia's forward-auth then injects the authenticated
+    # values. Setting a customRequestHeader to "" removes it.
+    strip-remote-headers:
+      headers:
+        customRequestHeaders:
+          Remote-User: ""
+          Remote-Groups: ""
+          Remote-Email: ""
+          Remote-Name: ""

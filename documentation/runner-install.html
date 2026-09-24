@@ -1,0 +1,376 @@
+<h1>Runner install &amp; configure guide (R7.2)</h1>
+
+<p>A step-by-step walk-through of <strong>installing and configuring</strong> an Cronomicon <strong>runner</strong>. A runner is an out-of-process worker that registers with the server, long-polls for runs the server assigned to it (<code>executor='runner'</code>), executes them, and streams logs back. It is the second execution method alongside the in-app SSH executor — it exists to run <strong>ansible/terraform</strong> (which need a local toolchain the app's distroless image lacks) and to reach <strong>network-isolated targets</strong> the server can't.</p>
+
+<blockquote><p><strong>Scope.</strong> This guide ends once the runner is registered and online. For day-2 operations — health checks, draining, <strong>updating</strong> the agent, <strong>re-syncing</strong> config to the server, and <strong>removing</strong> a runner — see <a href="./runner-manage.html"><code>runner-manage.html</code></a>.</p></blockquote>
+
+<blockquote><p><strong>Credential model (b), locked (<code>runners-update.md</code> D1).</strong> Cronomicon <strong>never</strong> decrypts or transmits private-key bytes. The runner holds its <strong>own</strong> keys; the server only ships host <em>references</em>. See <code>runner-security.html</code> for the full posture and blast-radius record.</p></blockquote>
+
+<p>The agent binary is <code>amadeus-runner</code> (built from <code>backend/cmd/amadeus-runner</code>). Its complete config surface lives in <code>internal/agent/config.go</code>; the var names in this guide are the real ones.</p>
+
+<hr />
+
+<h2>0 · Before you begin</h2>
+
+<p>Have these ready before you start:</p>
+
+<ul><li><strong>Server URL</strong> — the reachable base URL of the Cronomicon server (<code>https://amadeus.example.com</code>). If it presents a <strong>private/internal CA</strong> certificate, also have that CA bundle (PEM) on hand (§5).</li><li><strong>A registration token</strong> — single-use, one per install (§1).</li><li><strong>A capability decision — usually none</strong>: by default the agent auto-detects the host's toolchains at startup and claims the matching run-types; you only pass <code>-c</code> to narrow the set. For a <em>container</em> deployment you still pick slim vs fat, since the image decides which toolchains exist to detect (§2).</li><li><strong>For a systemd install:</strong> <code>root</code> on a Linux host (Debian/Ubuntu or RHEL-family) and an <code>amadeus-runner</code> binary — either pre-built (§2) or fetched from the server itself with the installer's <code>--download</code> flag (§2/§3; container-deployed servers bundle the binaries).</li><li><strong><code>known_hosts</code> for the targets — optional pre-seeding now</strong>. Host-key verification is strict (the agent refuses an unknown/changed key), but <code>--known-hosts</code> is no longer required up front: you can <strong>scan &amp; approve</strong> a target's key from the Runners view when the first run fails verification (human-approved TOFU — see the Security Guide §8 and <a href="./runner-manage.html">runner-manage.html</a>). Pre-seed a curated <code>known_hosts</code> with <code>--known-hosts</code> if you'd rather trust hosts ahead of time; either way, the runner's own keys still go in via <code>--key-dir</code> / <code>--key-map</code>.</li></ul>
+
+<p>The fastest route on a Linux VM is the <strong><code>runner-install.sh</code></strong> script (§3), which does §2/§4/§9 in one shot. Read §1 first to get a token, then jump to §3.</p>
+
+<hr />
+
+<h2>1 · Add a runner (one click) — or mint a token by hand</h2>
+
+<blockquote><p><strong>Fast path — the <code>+ Add Runner</code> button.</strong> On the <strong>Runners</strong> view, click <strong>+ Add Runner</strong>, optionally label it, and press <strong>Mint &amp; build command</strong>. You get a single <strong>flagless</strong> one-liner:</p>
+<pre><code>curl -fsSL https://amadeus.example.com/install/amt_reg_… | sudo bash</code></pre>
+<p>Paste it on the host as root — done. The server URL, the token, and the agent-binary download are <strong>baked into the script</strong> by the <code>/install/&lt;token&gt;</code> endpoint, so nothing rides the command line; capabilities auto-detect on the host (§8). A <em>download-inspect-run</em> variant is offered for shops that don't pipe curl into sudo (the saved file is already personalized, so it too runs with no arguments). This is the recommended path; the manual token/flag flow below still exists for pre-authored installs and config management.</p>
+<p><strong>Behind an SSO / forward-auth proxy?</strong> If <code>curl …/install/&lt;token&gt;</code> fails with <code>bash: syntax error near unexpected token `&lt;'</code> / <code>`&lt;!doctype html&gt;'</code>, the reverse proxy redirected the request to its login page and returned HTML instead of the script. The runner endpoints are unauthenticated by design (the token IS the credential; the runner authenticates the server with its own bearer) and <strong>must be bypassed at the proxy</strong> — the same bypass the runner's <code>poll</code>/<code>register</code> calls need. Add <code>/install/*</code> (and <code>/agents/*</code>, <code>/runner-install.sh</code>) to the proxy's auth-bypass allowlist; see <code>deploy/deployment-guide.md</code> for the exact Authelia rule.</p></blockquote>
+
+<p>In the UI, open the <strong>Runners</strong> view (top-level nav) and find the <strong>Register New Runner</strong> card: click <strong>Mint token</strong> (optionally giving it a <strong>label</strong>, e.g. the intended runner name) to get a fresh <code>amt_reg_*</code> bearer (24h expiry). Tokens are <strong>single-use</strong>: each one registers exactly <strong>one</strong> runner and dies on that first successful registration — the card's token list shows which runner consumed which token. The plaintext is shown <strong>only once at mint</strong> — <strong>Reveal</strong>/<strong>Copy</strong> it immediately; it is stored only as a hash and can never be re-revealed. Installing several runners? Mint one token per host — minting does <strong>not</strong> invalidate other tokens. Registration mints a long-lived per-runner key (<code>amt_run_*</code>, 365d), persisted to the runner's identity file; the registration token is dead from then on and is never needed again (config changes propagate via <strong>Resync</strong>, which uses the runner's own key). An unused token can be revoked from the list at any time.</p>
+
+<p>The card's <strong>Install Command</strong> is a real, copy-pasteable §3 invocation: it <code>curl</code>s <code>/runner-install.sh</code> <strong>from the Cronomicon server itself</strong> and pipes it into <code>sudo bash</code> with this server's URL and the token filled in (the freshly minted token is substituted while its plaintext is revealed — otherwise a <code>&lt;TOKEN&gt;</code> placeholder). A <em>download-inspect-run</em> variant is available under the command for orgs that don't pipe curl into sudo. Run it on the target host next to a pre-built <code>amadeus-runner</code> binary (§2); capabilities are auto-detected from the host's toolchains at startup — add <code>-c</code> only to narrow them.</p>
+
+<p>(A registration credential can also be seeded out-of-band via <code>AMADEUS_RUNNER_BOOTSTRAP_TOKEN</code> on the <strong>server</strong> — unlike minted tokens it is multi-use; see <code>env-matrix.md</code>.)</p>
+
+<hr />
+
+<h2>2 · Choose slim vs fat (capability-driven)</h2>
+
+<p>The image you deploy is dictated by the <strong>capabilities</strong> the runner will declare:</p>
+
+<div class="tbl"><table>
+<thead><tr><th>You need…</th><th>Capabilities</th><th>Image</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Run shells over SSH (incl. bastion/ProxyJump), or reach a <strong>network-isolated</strong> segment (T-b)</td><td><code>bash,perl,powershell,python</code></td><td><strong>slim</strong> (<code>Dockerfile.runner</code>)</td><td>The agent only needs an SSH client; it's a tiny static/distroless image.</td></tr>
+<tr><td>Run <strong>ansible / terraform</strong> locally (T-a)</td><td><code>ansible,terraform</code></td><td><strong>fat</strong> (<code>Dockerfile.runner.fat</code>)</td><td>These toolchains run <em>on the executor</em>; the fat image carries ansible+Python and terraform.</td></tr>
+<tr><td>Run full ansible <strong>project checkouts</strong> (roles, <code>vars_files</code>, <code>.j2</code> templates) — <strong>opt-in</strong></td><td><code>ansible</code> + <code>-allow-checkout</code></td><td><strong>fat</strong> + provisioning</td><td>The runner fetches the playbooks repo at a server-pinned commit and runs it from a tree; needs a deploy credential + provisioned collections. See <strong>§12</strong>.</td></tr>
+</tbody>
+</table></div>
+
+<p>The toolchains are <strong>only</strong> in the fat image — deliberately. The app's own image is distroless and ships no ansible/terraform (a conscious minimal-control-plane posture), and the slim runner stays slim for the SSH-onward case. Capability routing makes this safe: the server's claim filter (<code>run_type IN caps</code>) guarantees only an ansible-capable runner ever claims an ansible run, so you can run a fleet of slim shell runners and a few fat ansible/terraform runners side by side.</p>
+
+<p>Build either image from <code>backend/</code> (the Go module root is the build context):</p>
+
+<pre><code>cd backend
+docker build -f deploy/Dockerfile.runner     -t amadeus-runner:slim .
+docker build -f deploy/Dockerfile.runner.fat -t amadeus-runner:fat  .</code></pre>
+
+<p>Or get just the binary for a systemd install — <strong>download it from the server, or build it</strong>:</p>
+
+<ul><li><strong>Download (container-deployed server):</strong> the server image bundles cross-compiled agent binaries (linux amd64/arm64) plus a <code>SHA256SUMS</code> file, served unauthenticated at <code>/agents/amadeus-runner-linux-{amd64,arm64}</code>. The §3 installer's <code>--download</code> flag detects the host architecture, fetches the binary, and <strong>verifies its checksum</strong> before installing — so a host needs nothing but <code>curl</code> and reachability to the Cronomicon server. (A source-built/bare-metal server returns a clean 404 here — build instead, or point <code>AMADEUS_AGENT_DIR</code> at a directory holding the files.)</li><li><strong>Build:</strong></li></ul>
+
+<pre><code>cd backend
+CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
+
+<hr />
+
+<h2>3 · Fast path — <code>runner-install.sh</code> (systemd, Linux VM)</h2>
+
+<p>For a single-host systemd install, <code>deploy/runner-install.sh</code> — served by the app at <code>/runner-install.sh</code>, which is where the Runners view's <strong>Download</strong> button and the panel's install command fetch it, so the target host never needs to reach anything but the Cronomicon server — automates §2's binary placement, the service account and directories, the env file, and the hardened unit — everything in §9 — in one root-run command, and can also install the runner's <code>known_hosts</code>, key custody, CA trust, and local inventory (§5/§7/§8) so an SSH-capable runner is usable the moment the script exits. It detects Debian/Ubuntu vs RHEL-family from <code>/etc/os-release</code>.</p>
+
+<pre><code>sudo ./runner-install.sh \
+  --server   https://amadeus.example.com \
+  --token    amt_reg_xxxxxxxxxxxx \
+  --name     runner-dc1-01 \
+  --download \
+  --known-hosts ./known_hosts \
+  --key-dir  ./keys \
+  --ca-cert  ./internal-ca.pem   # only for a private/internal CA (§5)</code></pre>
+
+<p><strong>Capabilities are auto-detected.</strong> With no <code>-c</code>, the installer writes no <code>AMADEUS_RUNNER_CAPABILITIES</code> line at all and the agent probes the host's toolchains at startup (<code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>/<code>python</code>, <code>ansible-playbook</code>, <code>terraform</code>) to claim the matching run-types — install a toolchain later and a service restart propagates the new capability to the registry automatically (the config-drift resync). Pass <code>-c</code> only to <em>narrow</em> what the runner claims (e.g. the host has python but must not run python jobs).</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Flag</th><th>Required</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>-s, --server</code></td><td><strong>yes</strong></td><td>—</td><td>Cronomicon server URL (prepends <code>https://</code> if no scheme).</td></tr>
+<tr><td><code>-t, --token</code></td><td><strong>yes</strong></td><td>—</td><td>Registration token (<code>amt_reg_*</code>).</td></tr>
+<tr><td><code>-n, --name</code></td><td>no</td><td><code>$(hostname)</code></td><td>Runner display name (keep it <strong>stable</strong>).</td></tr>
+<tr><td><code>-c, --capabilities</code></td><td>no</td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Omit ⇒ the agent auto-detects the host's toolchains at startup; set only to narrow.</td></tr>
+<tr><td><code>-b, --binary</code></td><td>no</td><td><code>./amadeus-runner</code>, <code>./bin/…</code>, <code>backend/bin/…</code></td><td>Path to the pre-built binary.</td></tr>
+<tr><td><code>--download</code></td><td>no</td><td>off</td><td>Fetch the agent binary from the server's <code>/agents/</code> endpoint (arch auto-detected, <strong>SHA-256 verified</strong> — a checksum mismatch aborts, never falls back). Falls back to <code>-b</code>/auto-search when the deployment doesn't bundle binaries (§2). Uses <code>--ca-cert</code> for the fetch when given.</td></tr>
+<tr><td><code>--known-hosts</code></td><td>no</td><td>—</td><td>OpenSSH <code>known_hosts</code> file — installed to <code>/var/lib/amadeus-runner/known_hosts</code> (<code>0640</code>, owner <code>amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_KNOWN_HOSTS</code> (§8).</td></tr>
+<tr><td><code>--key-dir</code></td><td>no</td><td>—</td><td>Directory of private keys — copied into <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code> dir, <code>0600</code> files, owner <code>amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_KEY_DIR</code> (§8). Mutually exclusive with <code>--key-map</code>.</td></tr>
+<tr><td><code>--key-map</code></td><td>no</td><td>—</td><td><code>NAME=path,NAME2=path2</code> — each key is copied to <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> and the rewritten map wired via <code>AMADEUS_RUNNER_KEY_MAP</code> (§8). Mutually exclusive with <code>--key-dir</code>.</td></tr>
+<tr><td><code>--generate-key</code></td><td>no</td><td>—</td><td><code>&lt;NAME&gt;</code> — mint a fresh passphrase-less <code>ed25519</code> key at <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> (owned by <code>amadeus-runner</code>) and print its <strong>public</strong> key to add to each target's <code>authorized_keys</code>. The private key never leaves the host. Refuses to overwrite an existing key. Reference it in Cronomicon host config by <code>&lt;NAME&gt;</code> (the <code>authKeyEnvVar</code>).</td></tr>
+<tr><td><code>--ca-cert</code></td><td>no</td><td>—</td><td>Private CA bundle (PEM) — installed to <code>/etc/amadeus-runner/ca.pem</code> and wired via <code>AMADEUS_RUNNER_CA_CERT</code> (§5).</td></tr>
+<tr><td><code>--inventory</code></td><td>no</td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (§7); <code>local</code> requires <code>--local-inventory</code>.</td></tr>
+<tr><td><code>--local-inventory</code></td><td>no</td><td>—</td><td>Local inventory JSON (with <code>--inventory local</code>) — installed to <code>/etc/amadeus-runner/inventory.json</code> and wired via <code>AMADEUS_RUNNER_LOCAL_INVENTORY</code> (§7).</td></tr>
+<tr><td><code>--allow-checkout</code></td><td>no</td><td>off</td><td>Opt into runner-side pinned playbook checkout — writes <code>AMADEUS_RUNNER_ALLOW_CHECKOUT=true</code> (§12).</td></tr>
+<tr><td><code>--checkout-repos</code></td><td>no</td><td>—</td><td>Comma-separated allowlist of repo clone URLs the runner may check out — writes <code>AMADEUS_RUNNER_CHECKOUT_REPOS</code> (§12).</td></tr>
+<tr><td><code>--checkout-token-file</code></td><td>no</td><td>—</td><td>Path to a read-only deploy-token file — installed to <code>/etc/amadeus-runner/checkout-token</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE</code> (§12).</td></tr>
+<tr><td><code>--checkout-token -</code></td><td>no</td><td>—</td><td>Prompt for the deploy token on stdin (input hidden) and write it to the same path. <strong>Never pass the token as a flag value</strong> — it would leak via <code>ps</code>/shell history; the installer refuses.</td></tr>
+<tr><td><code>--vault-pass-file</code></td><td>no</td><td>—</td><td>Path to an Ansible Vault password file — installed to <code>/etc/amadeus-runner/vault-pass</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_VAULT_PASSWORD_FILE</code> (§8/§12).</td></tr>
+<tr><td><code>--vault-pass -</code></td><td>no</td><td>—</td><td>Prompt for the vault password on stdin (input hidden) and write it to the same path (same no-secret-as-value rule).</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>Secrets are never a flag value.</strong> The checkout deploy token and vault password are placed <em>either</em> from a file you staged (<code>--checkout-token-file</code> / <code>--vault-pass-file</code>) <em>or</em> typed at a hidden prompt (<code>--checkout-token -</code> / <code>--vault-pass -</code>) — the installer refuses a secret passed as a flag value, since it would be visible in <code>ps</code> and shell history. A hidden prompt needs a real terminal, so a piped <code>curl … | sudo bash</code> install must use the file form (the script's own stdin is the piped source). This makes a checkout+vault Ansible runner install in one invocation — no post-install file placement, no env merge.</p></blockquote>
+
+<p>What it does: creates the <code>amadeus-runner</code> system user/group, <code>0750</code> <code>/var/lib/amadeus-runner</code> (state) and <code>/etc/amadeus-runner</code> (config), installs the binary to <code>/usr/local/bin/amadeus-runner</code> (with <code>--download</code>, fetching and checksum-verifying it from the server first), installs whatever the optional flags supplied (<code>known_hosts</code>, keys, CA bundle, local inventory — with the ownership/modes in the table above), writes <code>runner.env</code> (mode <code>0640</code>) wiring it all up, writes the hardened <code>amadeus-runner.service</code>, then <code>daemon-reload</code> + <code>enable</code> + <code>restart</code>. It prints the runner name, capabilities, inventory mode, installed paths, and <code>systemctl is-active</code> when done.</p>
+
+<blockquote><p><strong>SSH-capable runner? Pass the custody flags.</strong> With <code>--known-hosts</code> and <code>--key-dir</code>/<code>--key-map</code>/<code>--generate-key</code>, the runner is ready for its first SSH run when the script exits — nothing to hand-edit. The installer <strong>always</strong> creates <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code>) and wires <code>AMADEUS_RUNNER_KEY_DIR</code> to it, so if you omit the key flags you need only <em>drop a key file into that directory</em> (named after its <code>authKeyEnvVar</code>) or re-run with <code>--generate-key NAME</code> — no <code>runner.env</code> edit for the key path. The agent still refuses SSH without <code>known_hosts</code> (§8), so the script prints a loud <em>"before the first SSH run"</em> block when <code>--known-hosts</code> was omitted, and <code>known_hosts</code> can be seeded then via <strong>scan &amp; approve</strong>. See §4 for the full surface and §11 to verify.</p></blockquote>
+
+<p>If you'd rather wire systemd up by hand (or need a non-default layout), skip the script and follow §9 instead.</p>
+
+<hr />
+
+<h2>4 · Configure (the full surface)</h2>
+
+<blockquote><p><strong>Most installs use <code>+ Add Runner</code> (§1); this table is for pre-authoring.</strong> For a fully-specified install — config management, containers, or a locked-down one-liner — the Runners view's <strong>Advanced: pre-authored install</strong> helper (demoted from the headline) authors the artifacts for you: pick a <strong>profile</strong> (<em>SSH task runner</em> surfaces key/known_hosts custody; <em>Ansible control node</em> surfaces the checkout/vault secret-file inputs; <em>Custom</em> shows everything), then copy a complete annotated <code>runner.env</code>, the matching §3 one-liner, or the §10 <code>docker run</code> variant. Max jobs, sandbox caps, and checkout policy are no longer helper inputs — they're tuned on the runner's row after it registers (<code>runner-manage.html</code> §4.5). The table below remains the reference for hand-authoring and for the knobs the helper doesn't surface (poll cadence, tuning, scoped child env).</p></blockquote>
+
+<p>Config is resolved from three layers, <strong>low → high precedence</strong>: an optional JSON config file &lt; <code>AMADEUS_RUNNER_*</code> env vars &lt; command-line flags. Pick whichever fits your deployment (env file for systemd/containers; flags for ad-hoc).</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Flag</th><th>Env</th><th>Config-file key</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>-server</code></td><td><code>AMADEUS_RUNNER_SERVER</code></td><td><code>serverUrl</code></td><td>— (required)</td><td>Cronomicon server base URL.</td></tr>
+<tr><td><code>-ca-cert</code></td><td><code>AMADEUS_RUNNER_CA_CERT</code></td><td><code>caCertPath</code></td><td>system store</td><td>PEM CA bundle to trust for TLS.</td></tr>
+<tr><td><code>-registration-token</code></td><td><code>AMADEUS_RUNNER_REGISTRATION_TOKEN</code></td><td><code>registrationToken</code></td><td>—</td><td>Shared <code>amt_reg_*</code> token (first run only).</td></tr>
+<tr><td><code>-name</code></td><td><code>AMADEUS_RUNNER_NAME</code></td><td><code>name</code></td><td>— (required)</td><td>Display name; <strong>stable across restarts</strong>.</td></tr>
+<tr><td><code>-os</code></td><td><code>AMADEUS_RUNNER_OS</code></td><td><code>os</code></td><td><code>Linux</code></td><td><code>Linux</code> or <code>Windows</code>.</td></tr>
+<tr><td><code>-capabilities</code></td><td><code>AMADEUS_RUNNER_CAPABILITIES</code></td><td><code>capabilities</code></td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Unset ⇒ probed from the host's toolchains at startup; set to narrow.</td></tr>
+<tr><td><code>-max-concurrent</code></td><td><code>AMADEUS_RUNNER_MAX_CONCURRENT</code></td><td><code>maxConcurrent</code></td><td><code>5</code></td><td>Max simultaneous runs.</td></tr>
+<tr><td><code>-inventory</code></td><td><code>AMADEUS_RUNNER_INVENTORY</code></td><td><code>inventory</code></td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (D8 — see §7).</td></tr>
+<tr><td><code>-identity-file</code></td><td><code>AMADEUS_RUNNER_IDENTITY_FILE</code></td><td><code>identityFile</code></td><td><code>amadeus-runner-identity.json</code></td><td>Where <code>{id, apiKey}</code> persists (§6).</td></tr>
+<tr><td><code>-poll-interval</code></td><td><code>AMADEUS_RUNNER_POLL_INTERVAL</code></td><td><code>pollInterval</code></td><td><code>60s</code></td><td>Heartbeat/poll cadence (D7).</td></tr>
+<tr><td><code>-key-dir</code></td><td><code>AMADEUS_RUNNER_KEY_DIR</code></td><td><code>keyDir</code></td><td>—</td><td>Dir searched for keys by name (§8).</td></tr>
+<tr><td><code>-key-map</code></td><td><code>AMADEUS_RUNNER_KEY_MAP</code></td><td><code>keyMap</code></td><td>—</td><td><code>NAME=path,NAME2=path2</code> key map (§8).</td></tr>
+<tr><td><code>-known-hosts</code></td><td><code>AMADEUS_RUNNER_KNOWN_HOSTS</code></td><td><code>knownHostsFile</code></td><td>—</td><td>OpenSSH known_hosts for target host-key verification (§8).</td></tr>
+<tr><td><code>-local-inventory</code></td><td><code>AMADEUS_RUNNER_LOCAL_INVENTORY</code></td><td><code>localInventoryFile</code></td><td>—</td><td>Local inventory file for <code>local</code> mode (§7).</td></tr>
+<tr><td><code>-state-dir</code></td><td><code>AMADEUS_RUNNER_STATE_DIR</code></td><td><code>stateDir</code></td><td>OS temp dir</td><td>Writable dir for transient run artifacts (falls back to systemd's <code>STATE_DIRECTORY</code>, then the OS temp dir).</td></tr>
+<tr><td><code>-log-retry-budget</code></td><td><code>AMADEUS_RUNNER_LOG_RETRY_BUDGET</code></td><td><code>logRetryBudget</code></td><td><code>5</code></td><td>Log-resume attempts before <code>log_stream_lost</code>.</td></tr>
+<tr><td><code>-fan-out</code></td><td><code>AMADEUS_RUNNER_FAN_OUT</code></td><td><code>fanOut</code></td><td><code>4</code></td><td>Max parallel SSH targets per run.</td></tr>
+<tr><td><code>-config</code></td><td><code>AMADEUS_RUNNER_CONFIG</code></td><td>—</td><td>—</td><td>Path to a JSON config file (the lowest layer).</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>Declared vs local config.</strong> <code>name</code>, <code>os</code>, <code>capabilities</code>, <code>maxConcurrent</code>, and <code>inventory</code> are <strong>declared to the server at registration</strong> — changing them later does <strong>not</strong> propagate on a plain restart (the agent resumes its stored identity without re-registering). To push a change you must resync — one click (<strong>Runners → Resync</strong>). The rest (keys, known_hosts, CA, poll cadence, fan-out, local inventory) are runner-local and take effect on the next run or restart. See <a href="./runner-manage.html"><code>runner-manage.html</code></a> "Resync" for the full rules.</p></blockquote>
+
+<p>A config file uses camelCase keys (unknown keys are a loud error):</p>
+
+<pre><code>{
+  "serverUrl": "https://amadeus.example.com",
+  "name": "runner-dc1-01",
+  "capabilities": ["bash", "perl", "powershell", "python"],
+  "inventory": "amadeus",
+  "knownHostsFile": "/var/lib/amadeus-runner/known_hosts",
+  "identityFile": "/var/lib/amadeus-runner/identity.json"
+}</code></pre>
+
+<p>Run <code>amadeus-runner version</code> to print the build version/commit.</p>
+
+<h3>Worked example A — SSH-onward bash/perl/powershell/python runner, <code>inventory=amadeus</code></h3>
+
+<p>A reachable-segment runner that executes bash/perl/powershell/python over SSH; the <strong>server</strong> resolves the targets and ships fully-resolved host references.</p>
+
+<pre><code>amadeus-runner \
+  -server https://amadeus.example.com \
+  -registration-token amt_reg_xxxxxxxxxxxx \
+  -name runner-dc1-01 \
+  -capabilities bash,perl,powershell,python \
+  -inventory amadeus \
+  -key-dir /var/lib/amadeus-runner/keys \
+  -known-hosts /var/lib/amadeus-runner/known_hosts \
+  -identity-file /var/lib/amadeus-runner/identity.json</code></pre>
+
+<p>The manifest carries each target's <code>address/port/user/via</code> plus an <code>authKeyEnvVar</code> <strong>name</strong>; the agent resolves that name to a local key in <code>-key-dir</code> (or <code>-key-map</code>/env) and dials — directly or through the <code>via</code> bastion.</p>
+
+<h3>Worked example B — network-isolated runner, <code>inventory=local</code></h3>
+
+<p>A runner living inside a segment Cronomicon can't see (T-b). The manifest carries only the <strong>scope name</strong>; the agent expands it against its <strong>own</strong> inventory and uses its <strong>own</strong> keys.</p>
+
+<pre><code>amadeus-runner \
+  -server https://amadeus.example.com \
+  -registration-token amt_reg_xxxxxxxxxxxx \
+  -name runner-isolated-seg-a \
+  -capabilities bash,ansible \
+  -inventory local \
+  -local-inventory /etc/amadeus-runner/inventory.json \
+  -key-map PROD_KEY=/var/lib/amadeus-runner/keys/prod.pem \
+  -known-hosts /var/lib/amadeus-runner/known_hosts \
+  -identity-file /var/lib/amadeus-runner/identity.json</code></pre>
+
+<p><code>inventory.json</code> maps a scope name → host targets (host references only — the agent supplies the key by <code>authKeyEnvVar</code> name, never the bytes):</p>
+
+<pre><code>{
+  "prod": [
+    {
+      "name": "app-1",
+      "address": "10.20.0.11",
+      "port": 22,
+      "user": "deploy",
+      "authKeyEnvVar": "PROD_KEY",
+      "via": "bastion.seg-a.local:22"
+    }
+  ]
+}</code></pre>
+
+<p>An unknown scope is an error (not a silent empty), mirroring the server's "unmatched host is a failure, not a skip" rule.</p>
+
+<hr />
+
+<h2>5 · TLS / CA trust</h2>
+
+<p>The agent connects to the server over HTTPS. If the server presents a certificate signed by a private/internal CA, point the agent at the CA bundle with <code>-ca-cert</code> / <code>AMADEUS_RUNNER_CA_CERT</code> (a PEM file). With a publicly-trusted cert, leave it unset to use the system trust store. (In containers, the slim/fat images ship <code>ca-certificates</code> for the public case.)</p>
+
+<hr />
+
+<h2>6 · Identity-file persistence (so restarts resume identity)</h2>
+
+<p>On first start the agent registers and writes <code>{id, apiKey}</code> to the identity file (<code>0600</code>, atomic write). <strong>On every subsequent start it resumes that identity</strong> instead of registering again — without this, each restart would mint a fresh runner row and orphan the old one.</p>
+
+<p>Set this up correctly at install time:</p>
+
+<ul><li>Put the identity file on <strong>durable</strong> storage: a named volume in containers (<code>/var/lib/amadeus-runner</code>), a real path under systemd <code>StateDirectory</code>.</li><li>Keep <code>-name</code> <strong>stable</strong> across restarts.</li><li>A present-but-corrupt identity file is a <strong>hard error</strong> (the agent will not silently re-register and orphan the existing row) — restore or delete it deliberately.</li></ul>
+
+<p>(The day-2 side of this — re-registration after a server reap, and forcing a re-register to push config — lives in <a href="./runner-manage.html"><code>runner-manage.html</code></a>.)</p>
+
+<hr />
+
+<h2>7 · The two inventory modes (D8) — when to use each</h2>
+
+<p>Selected <strong>per-runner at registration</strong> via <code>-inventory</code>:</p>
+
+<ul><li><strong><code>amadeus</code></strong> (default; suits <strong>T-a</strong> and reachable/semi-reachable targets): the server resolves the scope (<code>scope_hosts → ssh_hosts</code>) and the manifest carries <strong>fully-resolved</strong> target references. Use this when Cronomicon's inventory is the source of truth and the runner is just an execution location closer to the targets (or one carrying the ansible/terraform toolchain).</li><li><strong><code>local</code></strong> (suits <strong>T-b</strong> network-isolated segments): the manifest carries only the <strong>scope name</strong>; the agent resolves it against its own <code>-local-inventory</code>. Use this when the targets live where Cronomicon can't see them, so it shouldn't (and can't) hold their topology. Keeps the isolated segment's host list out of the control plane entirely.</li></ul>
+
+<p>A <code>local</code>-mode runner <strong>requires</strong> <code>-local-inventory</code>; resolving a scope that isn't in the file is an error.</p>
+
+<p>Because <code>inventory</code> is a <strong>declared</strong> field (set at registration), switching a runner between <code>amadeus</code> and <code>local</code> requires a resync (one click) — see <a href="./runner-manage.html"><code>runner-manage.html</code></a> "Resync".</p>
+
+<hr />
+
+<h2>8 · Declaring capabilities, keys &amp; host-key verification</h2>
+
+<ul><li><strong>Capabilities</strong> (<code>-capabilities</code>) are the run-types this runner will claim. <strong>Unset by default ⇒ auto-detected</strong>: the agent probes the host for <code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>/<code>python</code>, <code>ansible-playbook</code>, and <code>terraform</code> at startup and claims what it finds (zero findings is a startup error). Set the flag/env explicitly only to <em>narrow</em> the claim set. A run for a type no online runner declares stays queued — <em>waiting for a {type}-capable runner</em> — rather than failing.</li><li><strong>Keys (model b).</strong> The agent resolves a target's <code>authKeyEnvVar</code> <strong>name</strong> to a local private key, in order: (1) <code>-key-map</code> entry <code>NAME=path</code>; (2) an env var of that NAME holding a PEM; (3) a file <code>&lt;NAME&gt;</code>, <code>&lt;NAME&gt;.pem</code>, or <code>&lt;NAME&gt;.key</code> in <code>-key-dir</code>. The server never sends key bytes. Key files are read <strong>at dial time</strong>, so rotating the file contents in place takes effect on the next run.</li><li><strong>Host-key verification.</strong> Point <code>-known-hosts</code> at an OpenSSH <code>known_hosts</code> file. The agent verifies the <strong>target</strong> host key against it and <strong>refuses to connect</strong> when no known_hosts is configured — there is no trust-on-first-use fall-open on the target hop. Populate known_hosts before first run (<code>ssh-keyscan</code> the targets, or copy from a trusted source). The same applies to bastions reached via <code>via</code>. The file is read <strong>at dial time</strong>, so adding a host to it does not need a restart.</li></ul>
+
+<hr />
+
+<h2>9 · Manual systemd install</h2>
+
+<p>This is the long-form of what §3's <code>runner-install.sh</code> automates — use it when you need a custom layout or want to see each step.</p>
+
+<pre><code># Build/copy the binary.
+cd backend &amp;&amp; CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner
+sudo install -m 0755 amadeus-runner /usr/local/bin/
+
+# Service account + dirs.
+sudo useradd --system --home-dir /var/lib/amadeus-runner \
+             --shell /usr/sbin/nologin amadeus-runner
+sudo install -d -o amadeus-runner -g amadeus-runner -m 0750 /var/lib/amadeus-runner
+sudo install -d -m 0750 /etc/amadeus-runner
+
+# Config + unit (edit runner.env first — see amadeus-runner.env.example).
+sudo install -m 0640 deploy/amadeus-runner.env.example /etc/amadeus-runner/runner.env
+sudo install -m 0644 deploy/amadeus-runner.service /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now amadeus-runner
+sudo systemctl status amadeus-runner
+journalctl -u amadeus-runner -f</code></pre>
+
+<p>The unit runs the agent as a non-root, sandboxed service (<code>NoNewPrivileges</code>, <code>ProtectSystem=strict</code>, a single writable <code>StateDirectory</code>, a restricted syscall set). See <code>amadeus-runner.service</code> for the full hardening set.</p>
+
+<hr />
+
+<h2>10 · Container install</h2>
+
+<pre><code># Persist identity + keys across restarts on a named volume.
+docker volume create amadeus-runner-data
+
+docker run -d --name amadeus-runner-01 --restart unless-stopped \
+  -e AMADEUS_RUNNER_SERVER=https://amadeus.example.com \
+  -e AMADEUS_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxxxxxxxxxx \
+  -e AMADEUS_RUNNER_NAME=runner-dc1-01 \
+  -e AMADEUS_RUNNER_CAPABILITIES=bash,perl,powershell,python \
+  -e AMADEUS_RUNNER_INVENTORY=amadeus \
+  -e AMADEUS_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
+  -e AMADEUS_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
+  -v amadeus-runner-data:/var/lib/amadeus-runner \
+  amadeus-runner:slim</code></pre>
+
+<p>The explicit <code>AMADEUS_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). For an ansible/terraform runner, swap <code>amadeus-runner:fat</code> and either omit the var (detect) or set <code>AMADEUS_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
+
+<hr />
+
+<h2>11 · Verify the install</h2>
+
+<p>Confirm the runner came up and registered:</p>
+
+<ol><li><strong>Logs</strong> — <code>journalctl -u amadeus-runner -f</code> (systemd) or <code>docker logs -f amadeus-runner-01</code> (container) should show <code>registered with server</code> on the first start (or <code>resumed runner identity</code> on a restart), then quiet <code>poll</code> activity on the cadence. No <code>register: server returned …</code> errors.</li><li><strong>Runners view</strong> — the runner appears <strong>online</strong>, showing its capabilities, load, version, and an inventory chip (<code>amadeus</code> / <code>local</code>).</li><li><strong>Version</strong> — <code>amadeus-runner version</code> prints the build (a plain local <code>go build</code> reports <code>dev</code>; release images stamp the real version/commit).</li><li><em>(optional)</em> Trigger a small <code>bash</code> run scoped to a host this runner serves and watch the log stream back, to confirm key custody + <code>known_hosts</code> are wired correctly.</li></ol>
+
+<p>If the runner doesn't appear, or shows offline, see <a href="./runner-manage.html"><code>runner-manage.html</code></a> "Check status &amp; health".</p>
+
+<h3>The new-runner checklist — an agency is a <em>provisioning domain</em></h3>
+
+<p>A registered, online runner is not yet a <em>useful</em> one. Cronomicon ships <strong>names, not values</strong> — key names, become-password names, <code>lookup('env',…)</code> names — so every name a run may reference must resolve <strong>on every runner that can claim that run</strong>. With a fleet of one that is trivially true. With five it drifts, and each gate that saves correctness presents as the same symptom: the run sits <strong>queued</strong>.</p>
+
+<p>The supported answer is to treat an <strong>agency as a provisioning domain</strong>: a department's runners carry that department's key-dir, secrets and sidecar templates, and agency claim-gating guarantees a run only lands where its names resolve. The alternative — syncing every secret to every runner — reintroduces exactly the blast radius the names-only design exists to avoid.</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Step</th><th>Skip it and…</th></tr></thead>
+<tbody>
+<tr><td><strong>Enroll it in its agencies</strong> (Runners → the runner's row, or Scopes → Agencies → expand the agency)</td><td>An <em>untagged</em> runner serves only the general pool. It cannot claim any departmental run, and the department's runs wait for a runner that never comes.</td></tr>
+<tr><td><strong>Flag it for Secret injection</strong> if its runs carry reference bindings or a become password</td><td>Binding-bearing runs are <em>invisible</em> to an un-flagged runner. This is the step most often forgotten, because enrolling in the agency feels like the whole job.</td></tr>
+<tr><td><strong>Provision its department's key-dir / <code>secrets.env</code></strong> (or the Vault Agent sidecar)</td><td>The run claims, then fails on an unresolvable name — <em>“env passthrough var(s) not set”</em> or a key-resolution error.</td></tr>
+<tr><td><strong>Check its ansible-core version</strong> if the department uses job-level become passwords</td><td><code>--become-password-file</code> landed in <strong>2.12</strong>. A runner below that does not advertise <code>become-file</code>, and those runs correctly wait rather than being handed to a runner that would ignore the flag.</td></tr>
+<tr><td><strong>Scan &amp; approve</strong> the targets it will reach</td><td>First contact fails soft with <code>host_key_unverified</code> per host.</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>The version pin is a routing fact, not a fleet ceiling.</strong> A runner held at ansible-core 2.16 to serve RHEL 8 targets (platform python 3.6; core 2.17 dropped 3.6 <em>target</em> support) does not cap the rest of the fleet. Keep scopes with RHEL 8 targets claimable by a 2.16-line runner and let newer runners serve newer targets — but note such a runner is below no threshold that matters here: 2.16 is comfortably past <code>become-file</code>'s 2.12.</p></blockquote>
+
+<p>A run that no online runner can claim records <em>why</em>, so a mis-provisioned new runner shows up as a named reason on the waiting run rather than as an unexplained queue — see <a href="administrator-manual.html#troubleshooting">Administrator Manual §11</a>.</p>
+
+<hr />
+
+<h2>12 · Ansible checkout projects &amp; the Tier 2 sandbox (opt-in)</h2>
+
+<p>By default an ansible runner receives one <strong>self-contained playbook body</strong> per run. <strong>Checkout mode</strong> lets a runner execute a full playbook <strong>project</strong> — roles, <code>vars_files</code>, <code>include_vars</code>, <code>.j2</code> templates — by fetching the playbooks repo at a <strong>server-pinned commit SHA</strong> and running the entry playbook from a materialized tree. It is opt-in per job (a <code>kind: Script</code> wrapper with <code>project_root</code>/<code>entry</code>) <strong>and</strong> per runner (the flags below). Body-only runs are unchanged; a runner without <code>-allow-checkout</code> refuses any checkout run.</p>
+
+<h3>Enable checkout + the deploy credential</h3>
+
+<ul><li><strong><code>-allow-checkout</code></strong> opts the runner in. Without it, a checkout manifest is refused loudly.</li><li><strong><code>-checkout-repos</code></strong> is the allowlist of repo clone URLs this runner may check out. A checkout manifest whose repo is not in the list is refused — a compromised server cannot point the runner at an arbitrary repo. Empty ⇒ no repo allowed.</li><li><strong><code>-checkout-token-file</code></strong> (preferred) / <code>-checkout-token</code> holds a <strong>read-only</strong> GitLab deploy token (<code>read_repository</code> only), provisioned like <code>secrets.env</code> and <strong>never</strong> shipped by the server. A bare token uses the <code>oauth2:&lt;token&gt;</code> form; a <code>user:token</code> value is used verbatim (deploy-token form). Worst-case leak is read access to one repo from one runner — revoke it per-runner.</li><li><strong><code>-mirror-dir</code></strong> is where persistent bare git mirrors live (default <code>&lt;state-dir&gt;/mirrors</code>). Mirrors are fetch-updated; each run gets a fresh <code>git archive</code> tree (no <code>.git</code>) torn down on exit.</li></ul>
+
+<h3>Provision the toolchain (fat image)</h3>
+
+<p>Install <strong>ansible-core</strong> and your organization-standard <strong>collections</strong> on the runner host (the fat image carries ansible+Python; add collections in your image build or a provisioning step). The agent <strong>detects and advertises</strong> what's installed as capability tokens (<code>ansible</code>, <code>collection:&lt;fqcn&gt;</code>) so the server only lands a run on a runner that has its toolchain. A project's <code>requirements.yml</code> is installed <strong>per run</strong> into the ephemeral workdir; a collection already present at the <strong>exact pinned version</strong> is not re-downloaded (so a pre-provisioned runner runs offline). Point <strong><code>-galaxy-server</code></strong> at a private mirror/hub to keep installs off the public <code>galaxy.ansible.com</code> (the default).</p>
+
+<h3>Vault (opt-in)</h3>
+
+<p>A job that declares <code>requires: [vault]</code> needs <strong><code>-vault-password-file</code></strong> configured — a runner-local file the agent passes as <code>--vault-password-file</code>. The password <strong>never</strong> travels; a vault run reaching a runner without the file is refused loudly. Also register that password as an Cronomicon <strong>stored secret</strong> so the log redactor masks it — and note that values your playbook <em>decrypts from vault at run time</em> bypass redaction, so gate them with <code>no_log: true</code> (see <code>runner-security.html</code> §8).</p>
+
+<h3>Env scoping</h3>
+
+<p>A local-toolchain child no longer inherits the runner's full environment — it sees an explicit base safe-list + the run's env + an allowlist of NAMES (from inventory <code>lookup('env',…)</code>, target auth-key vars, and the job's <code>env_passthrough</code>). Add operator-needed names with <strong><code>-env-base-extra</code></strong>; drop <code>SSH_AUTH_SOCK</code> from the base with <strong><code>-exclude-ssh-auth-sock</code></strong> for runners that use per-host key files.</p>
+
+<h3>Tier 2 sandbox</h3>
+
+<p>Each local-toolchain run is wrapped in a per-run <code>systemd-run --scope</code> cgroup for resource caps — <strong><code>-sandbox-memory-max</code></strong> (e.g. <code>2G</code>), <strong><code>-sandbox-cpu-quota</code></strong> (e.g. <code>150%</code>), <strong><code>-sandbox-tasks-max</code></strong> (e.g. <code>512</code>) — while the filesystem/syscall hardening is inherited from the runner's own systemd unit. <strong><code>-no-sandbox</code></strong> opts out. Availability is <strong>probed at startup</strong>: where no usable systemd manager exists, runs execute <strong>unsandboxed</strong> and are reported as such (a loud startup warning + a per-run provenance line when <code>-allow-checkout</code> is set). A sandbox-capable runner advertises the <code>sandboxed</code> token, so a job may <code>requires: [sandboxed]</code> to avoid unsandboxed hosts.</p>
+
+<h3>Checkout config surface</h3>
+
+<div class="tbl"><table>
+<thead><tr><th>Flag</th><th>Env</th><th>Config-file key</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>-allow-checkout</code></td><td><code>AMADEUS_RUNNER_ALLOW_CHECKOUT</code></td><td><code>allowCheckout</code></td><td><code>false</code></td><td>Opt into runner-side project checkout.</td></tr>
+<tr><td><code>-checkout-repos</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_REPOS</code></td><td><code>checkoutRepos</code></td><td>—</td><td>Comma-separated allowlist of repo clone URLs.</td></tr>
+<tr><td><code>-checkout-token-file</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE</code></td><td><code>checkoutTokenFile</code></td><td>—</td><td>File holding the read-only deploy token (preferred).</td></tr>
+<tr><td><code>-checkout-token</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_TOKEN</code></td><td><code>checkoutToken</code></td><td>—</td><td>Deploy token literal (prefer the file form).</td></tr>
+<tr><td><code>-mirror-dir</code></td><td><code>AMADEUS_RUNNER_MIRROR_DIR</code></td><td><code>mirrorDir</code></td><td><code>&lt;state-dir&gt;/mirrors</code></td><td>Persistent bare-mirror directory.</td></tr>
+<tr><td><code>-galaxy-server</code></td><td><code>AMADEUS_RUNNER_GALAXY_SERVER</code></td><td><code>galaxyServer</code></td><td>public galaxy</td><td>ansible-galaxy source URL for per-run installs.</td></tr>
+<tr><td><code>-vault-password-file</code></td><td><code>AMADEUS_RUNNER_VAULT_PASSWORD_FILE</code></td><td><code>vaultPasswordFile</code></td><td>—</td><td>Ansible Vault password file (advertises <code>vault</code>).</td></tr>
+<tr><td><code>-env-base-extra</code></td><td><code>AMADEUS_RUNNER_ENV_BASE_EXTRA</code></td><td><code>envBaseExtra</code></td><td>—</td><td>Extra env-var NAMES forwarded to the scoped child env.</td></tr>
+<tr><td><code>-exclude-ssh-auth-sock</code></td><td><code>AMADEUS_RUNNER_EXCLUDE_SSH_AUTH_SOCK</code></td><td><code>excludeSshAuthSock</code></td><td><code>false</code></td><td>Drop <code>SSH_AUTH_SOCK</code> from the base safe-list.</td></tr>
+<tr><td><code>-no-sandbox</code></td><td><code>AMADEUS_RUNNER_NO_SANDBOX</code></td><td><code>noSandbox</code></td><td><code>false</code></td><td>Disable the per-run systemd-run scope wrapper.</td></tr>
+<tr><td><code>-sandbox-memory-max</code></td><td><code>AMADEUS_RUNNER_SANDBOX_MEMORY_MAX</code></td><td><code>sandboxMemoryMax</code></td><td>—</td><td>Per-run cgroup MemoryMax (e.g. <code>2G</code>).</td></tr>
+<tr><td><code>-sandbox-cpu-quota</code></td><td><code>AMADEUS_RUNNER_SANDBOX_CPU_QUOTA</code></td><td><code>sandboxCpuQuota</code></td><td>—</td><td>Per-run cgroup CPUQuota (e.g. <code>150%</code>).</td></tr>
+<tr><td><code>-sandbox-tasks-max</code></td><td><code>AMADEUS_RUNNER_SANDBOX_TASKS_MAX</code></td><td><code>sandboxTasksMax</code></td><td>—</td><td>Per-run cgroup TasksMax (e.g. <code>512</code>).</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>These capabilities are advertised at registration.</strong> <code>-allow-checkout</code>, the installed collections, <code>-vault-password-file</code>, and sandbox availability all become capability <strong>tokens</strong> the server claim-gates against. Changing them (or provisioning a new collection) only reaches the server on a <strong>resync</strong> (one click; installed collections are re-detected at resync time, while flag/probe-derived tokens need a restart first) — see <a href="./runner-manage.html"><code>runner-manage.html</code></a> "Resync". The Runners page shows each runner's detected toolchains (ansible-core version, collections, checkout/vault/sandbox).</p></blockquote>
+
+<hr />
+
+<p>See also: <a href="./runner-manage.html"><code>runner-manage.html</code></a> (day-2: manage, update, resync, remove), <code>runner-security.html</code> (credential-model posture &amp; blast radius, checkout security model), <code>amadeus-runner.env.example</code> (annotated env template), <code>env-matrix.md</code> (server-side vars).</p>

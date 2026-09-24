@@ -1,0 +1,23 @@
+-- 700_drop_legacy_agency_columns — retire the 1:1 agency model
+-- (the agencies plan T3.9). Numbered 700 because 690 is the claim-query
+-- index that had to land first (T3.3's fallback); AG-Q9's tens convention holds.
+--
+-- Both columns were DUAL-WRITTEN through v0.52.2 so a server rolled back to Phase 2
+-- read a correct scalar. Phase 3 converted every reader:
+--
+--   runs.agency        → runs.agencies_json (mig. 680) + run_agencies (mig. 690).
+--                        Readers: claimRun, execspec.EligibleOnlineRunnerForRun,
+--                        the run-detail projection and its stuck-run reason.
+--   scopes.agency_id   → scope_agencies (mig. 670).
+--                        Readers: execspec.ScopeAgencies, settings.GetScope's
+--                        agency ref, the git-sync preservation guard.
+--
+-- Dropping them is what makes the N:M model the ONLY model. Leaving them would
+-- leave a second, quietly-diverging answer to "which agency is this?" — which is
+-- the exact class of confusion this plan exists to remove.
+--
+-- Not reversible in the strict sense: the .down.sql restores the COLUMNS and
+-- re-derives their values from the join tables, but a scope belonging to more than
+-- one agency cannot round-trip through a scalar. That is stated plainly there.
+ALTER TABLE runs   DROP COLUMN agency;
+ALTER TABLE scopes DROP COLUMN agency_id;

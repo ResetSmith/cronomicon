@@ -1,0 +1,2091 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cronomicon — Ansible guide — running playbooks with Cronomicon</title>
+<style>
+        /* Fonts are SELF-HOSTED (VU-1), and they are declared HERE rather than via a
+ <link> in this <head> for a second reason: vite-manuals-plugin.js injects this
+ <style> verbatim into the wrapped runner guides, whose generated <head> has no
+ room for link elements. Everything the guides need must live in this block.
+
+ Why self-hosted: these documents are served by the Cronomicon binary to operators
+ on networks that may have no egress to fonts.googleapis.com, and a blocked
+ stylesheet silently drops the whole manual to system-ui with no error — the
+ same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ index.html unchanged (Google's own latin / latin-ext subsets); only the origin
+ differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
+ a wrapped guide at /runner-install.html alike: Vite copies public/ into
+ backend/web/dist and spa.go serves any real file under it.
+
+ Families track theme.ts so the manuals and the product read as one thing: IBM
+ Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
+ Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ hero and headings only — the manuals are a brand surface; do not spread it.
+
+ Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
+ and Mono are static per weight. An unreferenced face is never fetched. */
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        /* ============================================================
+ Cronomicon Manual — palette ported 1:1 from the product
+ (frontend/src/theme.ts). Dark is the product default.
+
+ VU-18: these are hand-copied hex literals, so they silently rot
+ the next time theme.ts moves. frontend/src/documentation-palette.test.ts
+ now fails if any hex in this file (or the wrapped runner-guide
+ fragments, which reuse this <style> verbatim) is absent from
+ theme.ts. When the product palette changes, re-map by ROLE — a
+ doc's page background takes the new `bg`, its cards `panel`, its
+ links `primary`, its warning callouts `warning` — never by
+ eyeballing which new hex looks closest to the old one.
+
+ Two role moves landed in Phase C and are easy to get backwards:
+ `warning` is now a distinct ORANGE (it used to be the same gold as
+ `accent`, which made a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is now the BRAND — the hero
+ spine, the h2 rule, the active TOC item.
+ ============================================================ */
+        :root {
+            /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono` / `display`) so a
+ fallback here matches a fallback there. --sansCond is the uppercase
+ structural face — eyebrows, nav group labels, code-block captions. */
+            --sans: 'IBM Plex Sans', system-ui, sans-serif;
+            --sansCond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+            --mono: 'IBM Plex Mono', ui-monospace, monospace;
+            --display: 'Fraunces', Georgia, serif;
+            --maxw: 880px;
+            --nav-w: 300px;
+            --gold-rule: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
+        }
+
+        html[data-theme="dark"] {
+            --bg: #0a1119;
+            --panel: #101a26;
+            --panel2: #182534;
+            --panelHover: #182534;
+            --panelInput: #0d1621;
+            --border: #22344a;
+            --borderLight: #1a2838;
+            --borderStrong: #566c86;
+            --text: #e8eff7;
+            --textSec: #9db2c8;
+            --textMuted: #78909f;
+            --onSolid: #0a1119;
+            --primary: #4da3d9;
+            --primaryHover: #6fb8e5;
+            --primaryBg: rgba(77, 163, 217, .15);
+            --accent: #c9a227;
+            --accentBg: rgba(201, 162, 39, .14);
+            --success: #45b26b;
+            --successBg: rgba(69, 178, 107, .14);
+            --danger: #e05a5a;
+            --dangerBg: rgba(224, 90, 90, .14);
+            --warning: #d98a2b;
+            --warningBg: rgba(217, 138, 43, .14);
+            --info: #4da3d9;
+            --infoBg: rgba(77, 163, 217, .14);
+            --sidebar: #0c1420;
+            --sidebarHover: #16222f;
+            --sidebarText: #93a9bf;
+            --sidebarTextActive: #f0e2b8;
+            --sidebarActive: rgba(201, 162, 39, .16);
+            --shadow: 0 2px 12px rgba(0, 0, 0, .45);
+            --shadowSm: 0 1px 4px rgba(0, 0, 0, .3);
+            --code: #0d1621;
+            --hero: linear-gradient(135deg, #101a26 0%, #0a1119 60%);
+        }
+
+        html[data-theme="light"] {
+            --bg: #f4f6fa;
+            --panel: #ffffff;
+            --panel2: #eef2f7;
+            --panelHover: #eef2f7;
+            --panelInput: #ffffff;
+            --border: #d5dde8;
+            --borderLight: #e6ebf2;
+            --borderStrong: #828fa0;
+            --text: #131e2b;
+            --textSec: #46596e;
+            --textMuted: #596c80;
+            --onSolid: #ffffff;
+            --primary: #15709f;
+            --primaryHover: #0f5c85;
+            --primaryBg: rgba(21, 112, 159, .10);
+            --accent: #7c6311;
+            --accentBg: rgba(124, 99, 17, .12);
+            --success: #1e7f45;
+            --successBg: rgba(30, 127, 69, .10);
+            --danger: #c0342f;
+            --dangerBg: rgba(192, 52, 47, .10);
+            --warning: #9c5f11;
+            --warningBg: rgba(156, 95, 17, .12);
+            --info: #15709f;
+            --infoBg: rgba(21, 112, 159, .10);
+            --sidebar: #ffffff;
+            --sidebarHover: #eef2f7;
+            --sidebarText: #46596e;
+            --sidebarTextActive: #131e2b;
+            --sidebarActive: rgba(124, 99, 17, .13);
+            --shadow: 0 2px 12px rgba(15, 30, 50, .08);
+            --shadowSm: 0 1px 4px rgba(15, 30, 50, .05);
+            --code: #eef2f7;
+            --hero: linear-gradient(135deg, #ffffff 0%, #eef2f7 100%);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html {
+            scroll-behavior: smooth
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 16px;
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        a {
+            color: var(--primary);
+            text-decoration: none
+        }
+
+        a:hover {
+            color: var(--primaryHover);
+            text-decoration: underline
+        }
+
+        code,
+        kbd,
+        pre {
+            font-family: var(--mono)
+        }
+
+        /* ---------- Sidebar ----------
+ Every colour in this block reads a token. It used to be hardcoded dark
+ literals, which was survivable only because the rail was dark in BOTH
+ themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
+ pale-slate link would now be near-invisible on white. Tokens also keep the
+ VU-18 drift guard honest — nothing here to re-map by hand next time. */
+        #sidebar {
+            width: var(--nav-w);
+            flex: 0 0 var(--nav-w);
+            background: var(--sidebar);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+        }
+
+        #sidebar::-webkit-scrollbar {
+            width: 8px
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 8px
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 20px 20px 14px
+        }
+
+        .brand .logo {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border-radius: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadowSm)
+        }
+
+        .brand .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block
+        }
+
+        .brand .bt {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.15
+        }
+
+        .brand .bt b {
+            color: var(--sidebarTextActive);
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: .2px
+        }
+
+        .brand .bt span {
+            color: var(--sidebarText);
+            font-size: 11.5px;
+            font-weight: 500
+        }
+
+        .navsearch {
+            padding: 0 16px 12px
+        }
+
+        .navsearch input {
+            width: 100%;
+            padding: 8px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--borderStrong);
+            background: var(--panelInput);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            outline: none
+        }
+
+        .navsearch input::placeholder {
+            color: var(--textMuted)
+        }
+
+        .navsearch input:focus {
+            border-color: var(--primary)
+        }
+
+        nav.toc {
+            padding: 0 10px 30px;
+            flex: 1
+        }
+
+        /* Condensed 600: the uppercase structural face (theme.ts `sansCond`). 600, not
+ 700 — the self-hosted Condensed subsets are 500 and 600, and 700 would be
+ synthesised. */
+        nav.toc .grp {
+            margin: 14px 6px 4px;
+            padding: 0 8px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--textMuted)
+        }
+
+        /* ---- collapsible part sections ---- */
+        nav.toc details.grp-sec {
+            margin: 0
+        }
+
+        nav.toc summary.grp {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            user-select: none;
+            transition: color .15s
+        }
+
+        nav.toc summary.grp::-webkit-details-marker {
+            display: none
+        }
+
+        nav.toc summary.grp:hover {
+            color: var(--sidebarText)
+        }
+
+        nav.toc summary.grp:before {
+            content: "";
+            flex: 0 0 6px;
+            width: 6px;
+            height: 6px;
+            border-right: 1.6px solid currentColor;
+            border-bottom: 1.6px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform .15s;
+            opacity: .85
+        }
+
+        nav.toc details.grp-sec[open]>summary.grp:before {
+            transform: rotate(45deg)
+        }
+
+        nav.toc summary.grp:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+            border-radius: 5px
+        }
+
+        nav.toc.filtering summary.grp {
+            display: none
+        }
+
+        nav.toc a {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 6px 12px;
+            margin: 1px 0;
+            border-radius: 7px;
+            color: var(--sidebarText);
+            font-size: 13.5px;
+            font-weight: 500;
+            text-decoration: none;
+            line-height: 1.3;
+            border-left: 2px solid transparent
+        }
+
+        nav.toc a .ic {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 15px;
+            opacity: .7
+        }
+
+        nav.toc a:hover {
+            background: var(--sidebarHover);
+            color: var(--sidebarTextActive);
+            text-decoration: none
+        }
+
+        nav.toc a.active {
+            background: var(--sidebarActive);
+            color: var(--sidebarTextActive);
+            border-left-color: var(--accent)
+        }
+
+        nav.toc a.active .ic {
+            opacity: 1
+        }
+
+        nav.toc a.hidden {
+            display: none
+        }
+
+        nav.toc .grp .grp-adv {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 6px;
+            border-radius: 20px;
+            background: var(--accentBg);
+            color: var(--accent);
+            font-size: 8.5px;
+            letter-spacing: .06em;
+            border: 1px solid var(--accent)
+        }
+
+        .sb-foot {
+            padding: 14px 20px;
+            border-top: 1px solid var(--borderLight);
+            color: var(--textMuted);
+            font-size: 11px
+        }
+
+        /* ---------- Topbar ---------- */
+        #topbar {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 26px;
+            background: color-mix(in srgb, var(--bg) 86%, transparent);
+            backdrop-filter: blur(9px);
+            border-bottom: 1px solid var(--border)
+        }
+
+        #topbar .crumbs {
+            flex: 1;
+            color: var(--textMuted);
+            font-size: 13px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        #topbar .crumbs b {
+            color: var(--textSec);
+            font-weight: 600
+        }
+
+        .tbtn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--textSec);
+            font-family: var(--sans);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: .15s
+        }
+
+        .tbtn:hover {
+            background: var(--panelHover);
+            color: var(--text);
+            border-color: var(--primary)
+        }
+
+        .tbtn svg {
+            width: 15px;
+            height: 15px
+        }
+
+        #menuToggle {
+            display: none
+        }
+
+        /* ---------- Main ---------- */
+        #wrap {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column
+        }
+
+        main {
+            width: 100%;
+            max-width: var(--maxw);
+            margin: 0 auto;
+            padding: 8px 30px 120px
+        }
+
+        section {
+            padding-top: 30px;
+            margin-top: 18px;
+            scroll-margin-top: 70px
+        }
+
+        section.part-lead {
+            border-top: 1px dashed var(--border);
+            margin-top: 46px
+        }
+
+        /* ---------- Hero ---------- */
+        .hero {
+            background: var(--hero);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 44px 44px 38px;
+            margin: 26px 0 8px;
+            box-shadow: var(--shadow);
+            position: relative;
+            overflow: hidden
+        }
+
+        /* warm gold spine down the left edge — the signature warmth accent */
+        .hero {
+            border-left: 3px solid var(--accent)
+        }
+
+        .hero:before {
+            content: "";
+            position: absolute;
+            right: -70px;
+            top: -70px;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--primaryBg), transparent 70%)
+        }
+
+        .hero:after {
+            content: "";
+            position: absolute;
+            left: -40px;
+            bottom: -80px;
+            width: 230px;
+            height: 230px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--accentBg), transparent 72%)
+        }
+
+        .hero>* {
+            position: relative
+        }
+
+        .hero .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--accent);
+            background: var(--accentBg);
+            padding: 5px 13px;
+            border-radius: 30px;
+            margin-bottom: 18px;
+            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent)
+        }
+
+        .hero h1 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 46px;
+            line-height: 1.04;
+            margin: .08em 0 .28em;
+            font-weight: 600;
+            letter-spacing: -.005em
+        }
+
+        .hero p.lead {
+            font-size: 18.5px;
+            line-height: 1.55;
+            color: var(--textSec);
+            max-width: 62ch;
+            margin: 0
+        }
+
+        .hero .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 24px
+        }
+
+        .hero .meta .chip {
+            font-size: 12.5px;
+            color: var(--textSec);
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 13px;
+            font-weight: 500;
+            box-shadow: var(--shadowSm)
+        }
+
+        .hero .meta .chip b {
+            color: var(--text)
+        }
+
+        /* ---------- Typography ---------- */
+        h2 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+            margin: .3em 0 .55em;
+            padding-bottom: .34em;
+            border-bottom: 2px solid transparent;
+            border-image: var(--gold-rule) 1;
+            display: flex;
+            align-items: center;
+            gap: 13px
+        }
+
+        h2 .secnum {
+            font-family: var(--sans);
+            font-size: 14px;
+            color: var(--onSolid);
+            background: var(--primary);
+            min-width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            display: inline-grid;
+            place-items: center;
+            font-weight: 700;
+            flex: 0 0 auto;
+            box-shadow: var(--shadowSm)
+        }
+
+        h3 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 21.5px;
+            font-weight: 600;
+            letter-spacing: -.005em;
+            margin: 1.8em 0 .5em;
+            color: var(--text)
+        }
+
+        h4 {
+            font-size: 16px;
+            font-weight: 650;
+            margin: 1.5em 0 .4em;
+            color: var(--text);
+            letter-spacing: .005em
+        }
+
+        p {
+            margin: .7em 0
+        }
+
+        ul,
+        ol {
+            margin: .6em 0;
+            padding-left: 1.4em
+        }
+
+        li {
+            margin: .32em 0
+        }
+
+        .lead-p {
+            font-size: 17.5px;
+            color: var(--textSec);
+            margin: .2em 0 1.1em
+        }
+
+        strong {
+            font-weight: 650;
+            color: var(--text)
+        }
+
+        em {
+            color: var(--textSec)
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 2em 0
+        }
+
+        .muted {
+            color: var(--textMuted)
+        }
+
+        /* ---------- Code ---------- */
+        code:not(pre code) {
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            padding: .08em .42em;
+            border-radius: 5px;
+            font-size: .86em;
+            color: var(--text);
+            white-space: nowrap
+        }
+
+        .codeblock {
+            position: relative;
+            margin: 1em 0
+        }
+
+        .codeblock pre {
+            background: var(--code);
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 16px 18px;
+            overflow-x: auto;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+            margin: 0
+        }
+
+        .codeblock .cap {
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--textMuted);
+            padding: 0 2px 6px
+        }
+
+        .copybtn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--textSec);
+            border-radius: 7px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-family: var(--sans);
+            font-weight: 600;
+            cursor: pointer;
+            opacity: 0;
+            transition: .15s
+        }
+
+        .codeblock:hover .copybtn {
+            opacity: 1
+        }
+
+        .copybtn:hover {
+            background: var(--primary);
+            color: var(--onSolid);
+            border-color: var(--primary)
+        }
+
+        .copybtn.ok {
+            background: var(--success);
+            color: var(--onSolid);
+            border-color: var(--success)
+        }
+
+        /* ---------- Tables ---------- */
+        .tbl-wrap {
+            overflow-x: auto;
+            margin: 1.1em 0;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: var(--shadowSm)
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 14px
+        }
+
+        table.matrix {
+            min-width: 640px
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--borderLight);
+            vertical-align: top
+        }
+
+        thead th {
+            background: var(--panel2);
+            color: var(--textSec);
+            font-weight: 650;
+            font-size: 12.5px;
+            letter-spacing: .02em;
+            position: sticky;
+            top: 0
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none
+        }
+
+        tbody tr:hover {
+            background: var(--panelHover)
+        }
+
+        td code {
+            white-space: normal
+        }
+
+        .tick {
+            color: var(--success);
+            font-weight: 800
+        }
+
+        .cross {
+            color: var(--textMuted)
+        }
+
+        .enf {
+            background: var(--successBg)
+        }
+
+        /* ---------- Callouts ---------- */
+        .callout {
+            border-radius: 11px;
+            padding: 14px 17px 14px 16px;
+            margin: 1.2em 0;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            border-left-width: 4px;
+            position: relative;
+            font-size: 14.5px
+        }
+
+        .callout .ct {
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+            font-size: 14px
+        }
+
+        .callout p:first-of-type {
+            margin-top: .2em
+        }
+
+        .callout p:last-child {
+            margin-bottom: 0
+        }
+
+        .callout.note {
+            border-left-color: var(--info);
+            background: var(--infoBg)
+        }
+
+        .callout.tip {
+            border-left-color: var(--success);
+            background: var(--successBg)
+        }
+
+        .callout.warn {
+            border-left-color: var(--warning);
+            background: var(--warningBg)
+        }
+
+        .callout.danger {
+            border-left-color: var(--danger);
+            background: var(--dangerBg)
+        }
+
+        .callout.gotcha {
+            border-left-color: var(--accent);
+            background: var(--accentBg)
+        }
+
+        .callout.plain {
+            border-left-color: var(--primary);
+            background: var(--primaryBg)
+        }
+
+        .callout.plain .ct {
+            color: var(--primary)
+        }
+
+        .callout .ct .em {
+            font-size: 16px
+        }
+
+        /* ---------- "Advanced" heading badge ---------- */
+        .adv {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 30px;
+            background: var(--accentBg);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            vertical-align: middle;
+            margin-left: 9px;
+            line-height: 1.4
+        }
+
+        .adv:before {
+            content: "▸";
+            font-size: 10px
+        }
+
+        /* ---------- Start-here persona cards ---------- */
+        .starthere {
+            background: linear-gradient(135deg, var(--primaryBg), transparent 70%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px 24px 20px;
+            margin: 1.6em 0;
+            box-shadow: var(--shadowSm)
+        }
+
+        .starthere>.sh-hd {
+            font-weight: 700;
+            font-size: 17px;
+            margin: 0 0 4px;
+            display: flex;
+            align-items: center;
+            gap: 9px
+        }
+
+        .starthere>.sh-sub {
+            color: var(--textSec);
+            font-size: 14px;
+            margin: 0 0 16px
+        }
+
+        .persona-grid {
+            display: grid;
+            gap: 13px;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))
+        }
+
+        .persona {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 18px 15px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .persona:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border))
+        }
+
+        .persona .ph {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            font-weight: 700;
+            font-size: 15px;
+            margin-bottom: 5px
+        }
+
+        .persona .ph .em {
+            font-size: 19px
+        }
+
+        .persona .pdesc {
+            color: var(--textSec);
+            font-size: 13.5px;
+            line-height: 1.5;
+            flex: 1;
+            margin: 0 0 11px
+        }
+
+        .persona .ppath {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding-top: 9px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .persona .ppath:hover {
+            color: var(--primaryHover);
+            text-decoration: none
+        }
+
+        /* ---------- Jargon buster ---------- */
+        .jargon {
+            margin: 1.3em 0;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            overflow: hidden
+        }
+
+        .jargon table {
+            margin: 0;
+            border: none
+        }
+
+        .jargon td {
+            vertical-align: top;
+            padding: 11px 16px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .jargon tr:first-child td {
+            border-top: none
+        }
+
+        .jargon td:first-child {
+            font-weight: 650;
+            color: var(--text);
+            white-space: nowrap;
+            width: 1%
+        }
+
+        .jargon td:last-child {
+            color: var(--textSec);
+            font-size: 14px
+        }
+
+        /* ---------- Cards / grids ---------- */
+        .grid {
+            display: grid;
+            gap: 14px;
+            margin: 1.2em 0
+        }
+
+        .grid.c2 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))
+        }
+
+        .grid.c3 {
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr))
+        }
+
+        .grid.c4 {
+            grid-template-columns: repeat(auto-fit, minmax(175px, 1fr))
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border))
+        }
+
+        .card h4 {
+            margin-top: 0
+        }
+
+        .card .ic-lg {
+            width: 30px;
+            height: 30px;
+            color: var(--primary);
+            margin-bottom: 6px
+        }
+
+        /* ---------- Steps ---------- */
+        ol.steps {
+            counter-reset: st;
+            list-style: none;
+            padding-left: 0;
+            margin: 1em 0
+        }
+
+        ol.steps>li {
+            counter-increment: st;
+            position: relative;
+            padding: 4px 0 14px 44px;
+            margin: 0
+        }
+
+        ol.steps>li:before {
+            content: counter(st);
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 28px;
+            height: 28px;
+            background: var(--primaryBg);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            font-size: 13px;
+            font-family: var(--mono)
+        }
+
+        ol.steps>li:not(:last-child):after {
+            content: "";
+            position: absolute;
+            left: 14px;
+            top: 32px;
+            bottom: 2px;
+            width: 1px;
+            background: var(--border)
+        }
+
+        /* ---------- Pills / badges ---------- */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 9px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sans);
+            white-space: nowrap;
+            line-height: 1.5
+        }
+
+        .pill .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block
+        }
+
+        .pill.ok {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        .pill.ok .dot {
+            background: var(--success)
+        }
+
+        .pill.fail {
+            background: var(--dangerBg);
+            color: var(--danger)
+        }
+
+        .pill.fail .dot {
+            background: var(--danger)
+        }
+
+        .pill.warn {
+            background: var(--warningBg);
+            color: var(--warning)
+        }
+
+        .pill.warn .dot {
+            background: var(--warning)
+        }
+
+        .pill.run {
+            background: var(--infoBg);
+            color: var(--info)
+        }
+
+        .pill.run .dot {
+            background: var(--info)
+        }
+
+        .pill.mut {
+            background: var(--panel2);
+            color: var(--textMuted)
+        }
+
+        .pill.mut .dot {
+            background: var(--textMuted)
+        }
+
+        .pill.amad {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .pill.git {
+            background: var(--panel2);
+            color: var(--textSec)
+        }
+
+        .tag {
+            display: inline-block;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            border-radius: 5px;
+            padding: 1px 7px;
+            color: var(--textSec);
+            font-weight: 500
+        }
+
+        /* ---------- Figures / SVG ---------- */
+        figure {
+            margin: 1.4em 0;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            overflow: hidden
+        }
+
+        figure svg {
+            display: block;
+            width: 100%;
+            height: auto
+        }
+
+        figcaption {
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--textMuted);
+            text-align: center;
+            font-style: italic
+        }
+
+        /* Screenshots — each figure.shot carries a dark AND a light capture of the real
+ app (frontend/public/manual/<view>-<theme>.png, served at /manual/*); the pair
+ swaps with the manual's own theme toggle so the pictured UI always matches the
+ reader's chosen theme. Captures are 1600×900 with seeded demo data; the
+ width/height attributes prevent layout shift under loading="lazy". */
+        figure.shot {
+            padding: 10px
+        }
+
+        figure.shot img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--borderLight);
+            border-radius: 9px
+        }
+
+        figure.shot figcaption {
+            margin-top: 10px
+        }
+
+        html[data-theme="dark"] figure.shot img.light {
+            display: none
+        }
+
+        html[data-theme="light"] figure.shot img.dark {
+            display: none
+        }
+
+        .svg-box {
+            fill: var(--panel2);
+            stroke: var(--border)
+        }
+
+        .svg-box-p {
+            fill: var(--primaryBg);
+            stroke: var(--primary)
+        }
+
+        .svg-box-a {
+            fill: var(--accentBg);
+            stroke: var(--accent)
+        }
+
+        .svg-box-s {
+            fill: var(--successBg);
+            stroke: var(--success)
+        }
+
+        .svg-box-d {
+            fill: var(--dangerBg);
+            stroke: var(--danger)
+        }
+
+        .svg-lbl {
+            fill: var(--text);
+            font-family: var(--sans);
+            font-weight: 600
+        }
+
+        .svg-sub {
+            fill: var(--textMuted);
+            font-family: var(--sans)
+        }
+
+        .svg-line {
+            stroke: var(--textMuted);
+            stroke-width: 1.6;
+            fill: none
+        }
+
+        .svg-line-p {
+            stroke: var(--primary);
+            stroke-width: 1.8;
+            fill: none
+        }
+
+        .svg-mono {
+            fill: var(--textSec);
+            font-family: var(--mono)
+        }
+
+        /* ---------- Definition list (glossary) ---------- */
+        dl.gloss dt {
+            font-weight: 650;
+            color: var(--text);
+            margin-top: 1.1em;
+            font-size: 15px;
+            scroll-margin-top: 70px
+        }
+
+        dl.gloss dt .tag {
+            margin-left: 8px
+        }
+
+        dl.gloss dd {
+            margin: .25em 0 0;
+            color: var(--textSec);
+            font-size: 14.5px
+        }
+
+        .gloss-letter {
+            font-family: var(--mono);
+            color: var(--primary);
+            font-weight: 700
+        }
+
+        /* ---------- FAQ accordion ---------- */
+        details.faq {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.faq summary {
+            cursor: pointer;
+            padding: 13px 16px;
+            font-weight: 600;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px
+        }
+
+        details.faq summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.faq summary:before {
+            content: "+";
+            color: var(--primary);
+            font-weight: 800;
+            font-size: 18px;
+            width: 14px
+        }
+
+        details.faq[open] summary:before {
+            content: "–"
+        }
+
+        details.faq[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.faq .body {
+            padding: 13px 16px 15px 40px
+        }
+
+        details.faq .body p {
+            margin: .4em 0
+        }
+
+        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+ bar whose right edge is the collapsed one-line summary (RU redesign) */
+        details.dlgbar {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.dlgbar summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 12px 16px
+        }
+
+        details.dlgbar summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.dlgbar summary:before {
+            content: "▸";
+            color: var(--primary);
+            font-size: 12px;
+            flex: 0 0 12px
+        }
+
+        details.dlgbar[open] summary:before {
+            content: "▾"
+        }
+
+        details.dlgbar summary .t {
+            font-weight: 700
+        }
+
+        details.dlgbar summary .pill {
+            flex: 0 0 auto
+        }
+
+        details.dlgbar summary .sum {
+            margin-left: auto;
+            color: var(--textMuted);
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 52%
+        }
+
+        details.dlgbar[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.dlgbar .body {
+            padding: 13px 18px 15px 38px;
+            max-width: 76ch
+        }
+
+        details.dlgbar .body p {
+            margin: .55em 0
+        }
+
+        details.dlgbar summary:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px
+        }
+
+        @media(max-width:640px) {
+            details.dlgbar summary .sum {
+                display: none
+            }
+        }
+
+        .faq-cause {
+            color: var(--textMuted);
+            font-size: 13.5px
+        }
+
+        /* ---------- Section intro / view header ---------- */
+        .view-hd {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: .2em 0 .6em
+        }
+
+        .route {
+            font-family: var(--mono);
+            font-size: 12.5px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 3px 9px;
+            color: var(--primary);
+            font-weight: 500
+        }
+
+        .gate {
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 7px
+        }
+
+        .gate.admin {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .gate.any {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        /* ---------- Back to top ---------- */
+        #totop {
+            position: fixed;
+            right: 22px;
+            bottom: 22px;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: var(--onSolid);
+            border: none;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            display: grid;
+            place-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: .25s;
+            z-index: 50
+        }
+
+        #totop.show {
+            opacity: 1;
+            pointer-events: auto
+        }
+
+        #totop:hover {
+            background: var(--primaryHover)
+        }
+
+        /* keyboard hint */
+        .kbd {
+            font-family: var(--mono);
+            font-size: 11px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 5px;
+            padding: 1px 6px;
+            color: var(--textSec)
+        }
+
+        /* ---------- Gentle motion (one calm entrance; disabled on request) ---------- */
+        @keyframes heroRise {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        .hero {
+            animation: heroRise .5s cubic-bezier(.22, .61, .36, 1) both
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+                scroll-behavior: auto !important
+            }
+
+            .card:hover,
+            .persona:hover {
+                transform: none
+            }
+        }
+
+        /* ---------- Responsive ---------- */
+        #scrim {
+            display: none
+        }
+
+        @media(max-width:1040px) {
+            #menuToggle {
+                display: inline-flex
+            }
+
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                transform: translateX(-102%);
+                transition: transform .25s;
+                box-shadow: var(--shadow)
+            }
+
+            body.nav-open #sidebar {
+                transform: translateX(0)
+            }
+
+            body.nav-open #scrim {
+                display: block;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, .5);
+                z-index: 35
+            }
+
+            main {
+                padding: 8px 18px 120px
+            }
+
+            .hero {
+                padding: 30px 24px
+            }
+
+            .hero h1 {
+                font-size: 33px
+            }
+        }
+
+        @media print {
+
+            #sidebar,
+            #topbar,
+            #totop,
+            .copybtn {
+                display: none !important
+            }
+
+            body {
+                display: block;
+                font-size: 11pt
+            }
+
+            main {
+                max-width: none
+            }
+
+            .callout,
+            .card,
+            figure,
+            .codeblock pre,
+            .tbl-wrap {
+                break-inside: avoid
+            }
+
+            section {
+                padding-top: 10px
+            }
+
+            a {
+                color: inherit;
+                text-decoration: none
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+<aside id="sidebar">
+  <div class="brand">
+    
+    <div class="bt"><b>Cronomicon</b><span>Ansible Guide · A1.0</span></div>
+  </div>
+  <nav class="toc" id="toc">
+    <div class="grp">On this page</div>
+      <a href="#1-the-execution-model"><span class="ic">&#9656;</span> 1 · The execution model</a>
+      <a href="#2-two-ways-in-self-contained-playbooks-vs-checkout-projects"><span class="ic">&#9656;</span> 2 · Two ways in: self-contained playbooks vs checkout projects</a>
+      <a href="#3-inventory-how-scopes-carry-your-hosts"><span class="ic">&#9656;</span> 3 · Inventory: how scopes carry your hosts</a>
+      <a href="#4-running-plays-targeting-inputs-and-env"><span class="ic">&#9656;</span> 4 · Running plays: targeting, inputs and env</a>
+      <a href="#5-ssh-auth-on-the-runner-names-not-bytes"><span class="ic">&#9656;</span> 5 · SSH auth on the runner: names, not bytes</a>
+      <a href="#6-secrets-in-plays-three-doors-one-rule"><span class="ic">&#9656;</span> 6 · Secrets in plays: three doors, one rule</a>
+      <a href="#7-best-practice-checklist"><span class="ic">&#9656;</span> 7 · Best-practice checklist</a>
+      <a href="#8-troubleshooting"><span class="ic">&#9656;</span> 8 · Troubleshooting</a>
+    <details class="grp-sec" open><summary class="grp">Guides</summary>
+      <a href="runner-install.html"><span class="ic">&#9656;</span> Runner Install Guide</a>
+      <a href="runner-manage.html"><span class="ic">&#9656;</span> Runner Config Guide</a>
+      <a href="runner-security.html"><span class="ic">&#9656;</span> Runner Security Guide</a>
+      <a class="active"><span class="ic">&#9656;</span> Ansible Guide</a>
+      <a href="bash-guide.html"><span class="ic">&#9656;</span> Bash Guide</a>
+      <a href="powershell-guide.html"><span class="ic">&#9656;</span> PowerShell Guide</a>
+      <a href="python-guide.html"><span class="ic">&#9656;</span> Python Guide</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Manuals</summary>
+      <a href="user-manual.html">&#128213; User Manual &rarr;</a>
+      <a href="administrator-manual.html">&#9881;&#65039; Administrator Manual &rarr;</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Courses</summary>
+      <a href="training-operator.html"><span class="ic">&#9656;</span> Operator Course</a>
+      <a href="training-admin.html"><span class="ic">&#9656;</span> Administrator Course</a>
+    </details>
+  </nav>
+  <div class="sb-foot">Script Orchestrator · single Go binary + SQLite · self-hosted</div>
+</aside>
+<div id="wrap">
+<header id="topbar">
+  <button class="tbtn" id="menuToggle" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="crumbs" id="crumbs"><b>Cronomicon</b> · Ansible Guide</div>
+  <button class="tbtn" onclick="window.print()" title="Print or save as PDF">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>
+    Print
+  </button>
+  <button class="tbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">
+    <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="themeLabel">Light</span>
+  </button>
+</header>
+<main>
+  <div class="hero">
+    <div class="eyebrow">&#128215; Usage Guide</div>
+    <h1>Cronomicon</h1>
+    <p class="lead">The self-hosted <strong>Script Orchestrator</strong> — schedule and run Bash, Ansible,
+                    Terraform, PowerShell, Perl and Python jobs across your fleet from one auditable web console.</p>
+    <div class="meta">
+      <span class="chip">Guide <b>Ansible guide — running playbooks with Cronomicon</b></span>
+      <span class="chip">Version <b>A1.0</b></span>
+    </div>
+  </div>
+  <p>How to get the most out of <strong>Ansible</strong> inside Cronomicon: where playbooks run, the two ways to bring them in, how inventories become scopes, how SSH keys and become passwords resolve on a runner, how secrets reach a play safely, and the failure modes you will actually meet. It assumes you know Ansible itself; what it teaches is the <em>Cronomicon-specific</em> shape of an Ansible estate.</p>
+
+<p>Companion reading: the <a href="user-manual.html">User Manual</a> for the per-screen reference (Jobs §6, Scopes &amp; Env Vars §11), the <a href="administrator-manual.html">Administrator Manual</a> for GitOps and the runner fleet, the <a href="./bash-guide.html">Bash Guide</a> for shell scripts, and the <a href="./runner-install.html">Runner Install Guide</a> / <a href="./runner-manage.html">Runner Config Guide</a> / <a href="./runner-security.html">Runner Security Guide</a> guides for the agent itself.</p>
+
+<blockquote><p><strong>The one-sentence model.</strong> A playbook is a <strong>Script</strong> (run type <code>ansible</code>), a <strong>Scope</strong> carries the inventory it targets, a <strong>Job</strong> binds the two to schedules and env, and the run always executes on a <strong>runner</strong> that advertises the <code>ansible</code> capability — never inside the Cronomicon server, and never over the in-app SSH executor.</p></blockquote>
+
+<hr />
+
+<h2 id="1-the-execution-model">1 · The execution model</h2>
+
+<p>Ansible (like Terraform) is a <strong>runner-only</strong> run type. The in-app SSH executor exists for shell-family scripts; for <code>ansible</code> the executor resolution always lands on <code>runner</code> — a global <code>ssh</code> default can never apply to it, and explicitly choosing SSH in the Run dialog is rejected with <code>422 invalid_executor</code> (the dialog flips you back to Runner). See <a href="administrator-manual.html#execution">Administrator Manual §4.1</a>.</p>
+
+<p>That means you need at least one runner whose host carries the Ansible toolchain:</p>
+
+<ul>
+<li><strong>Capabilities auto-detect.</strong> An agent probes for <code>ansible-playbook</code> at startup and claims the <code>ansible</code> run type if present — install Ansible later and a service restart propagates it via the config-drift resync. In containers, use the <strong>fat</strong> image (<code>Dockerfile.runner.fat</code>); the slim image has no Ansible to detect.</li>
+<li><strong>Capability routing is safe by default.</strong> A run for a type no online runner advertises stays <strong>queued</strong> (<em>“waiting for an ansible-capable runner”</em>) rather than failing. The same claim-gating covers <code>requires:</code> tokens (<code>checkout</code>, <code>vault</code>, <code>collection:&lt;fqcn&gt;</code>) and <a href="administrator-manual.html#runner-ops">agency isolation</a> — an unsatisfiable run waits and names what it is waiting for; it is never silently dropped.</li>
+<li><strong>What a runner advertises is visible.</strong> The Runners view shows each runner's capability chips — including its <code>ansible-core</code> version and detected collections — so “which runner will take this play” is a glance, not a guess.</li>
+</ul>
+
+<blockquote><p><strong>Sizing note.</strong> A runner claims up to <code>maxConcurrent</code> runs; each Ansible run is a full <code>ansible-playbook</code> process with its own forks. Tune fan-out with an <code>ANSIBLE_FORKS</code> variable on the scope (see §4) rather than raising <code>maxConcurrent</code> first — ten concurrent plays of 50 forks each is 500 SSH sessions from one host.</p></blockquote>
+
+<hr />
+
+<h2 id="2-two-ways-in-self-contained-playbooks-vs-checkout-projects">2 · Two ways in: self-contained playbooks vs checkout projects</h2>
+
+<p>Cronomicon has two distinct paths for executing a playbook, and choosing the right one up front saves a migration later.</p>
+
+<div class="tbl"><table>
+<thead><tr><th></th><th>Path A — self-contained body</th><th>Path B — checkout project</th></tr></thead>
+<tbody>
+<tr><td><strong>What ships</strong></td><td>The playbook <em>text</em> only</td><td>The whole project tree at a <strong>server-pinned commit SHA</strong></td></tr>
+<tr><td><strong>Supports</strong></td><td>One YAML file; no <code>roles/</code>, <code>vars_files</code>, <code>include_*</code>, templates</td><td>Roles, <code>vars_files</code>, <code>include_vars</code>, <code>.j2</code> templates, <code>requirements.yml</code>, ansible-vault files</td></tr>
+<tr><td><strong>Authoring</strong></td><td>Drop a raw <code>.yml</code> under <code>scripts/</code> (auto-discovered), or a <code>kind: Script</code> with an inline body</td><td>A <code>kind: Script</code> wrapper declaring <code>project_root</code> + <code>entry</code></td></tr>
+<tr><td><strong>Runner setup</strong></td><td>None beyond the toolchain</td><td><strong>Opt-in per runner</strong>: <code>-allow-checkout</code>, a repo allowlist, a read-only deploy credential</td></tr>
+</tbody>
+</table></div>
+
+<h3>Path A — the default: keep playbooks self-contained</h3>
+
+<p>Any raw <code>*.yml</code> under <code>scripts/</code> in the definitions repo is auto-discovered on sync as a Script with run type <code>ansible</code> (a sub-folder like <code>scripts/ansible/patch.yml</code> just becomes part of the catalog's folder tree). A job references it by name:</p>
+
+<div class="codeblock"><pre><code># jobs/patch-tuesday.yaml
+apiVersion: amadeus.io/v1
+kind: Job
+metadata:
+  name: patch-tuesday
+spec:
+  script_ref: patch.yml
+  scope: Production
+  scheduleRefs: [monthly-patch-window]
+  timeout_seconds: 3600</code></pre></div>
+
+<p>Self-contained plays run everywhere with zero runner configuration, and they are what the in-app <a href="user-manual.html#compose">Composer</a> and the Scripts catalog handle most naturally. Prefer this path until you genuinely need roles.</p>
+
+<h3>Path B — checkout projects for real role trees</h3>
+
+<p>A composite project — roles, group vars, templates, a vaulted secrets file — is declared as <em>one</em> Script whose members are not synthesized into standalone catalog entries:</p>
+
+<div class="codeblock"><pre><code># scripts/deploy-app.yaml
+apiVersion: amadeus.io/v1
+kind: Script
+metadata:
+  name: deploy-app
+spec:
+  run_type: ansible
+  project_root: ansible/deploy-app     # repo-relative directory
+  entry: site.yml                      # playbook run from the materialized tree</code></pre></div>
+
+<p>At enqueue the server pins the exact commit SHA; the runner fetches the repo (allowlist-checked), verifies the SHA, materializes the tree, installs <code>requirements.yml</code> per run (already-present pinned collections are not re-downloaded), and runs the entry playbook from it. <code>amadeus validate</code> fails CI on an unpinned collection or a non-SHA git role, and a tree secret-scan catches inline plaintext secrets a <code>vars/*.yml</code> or template could smuggle past the inventory guard. Full operator detail: <a href="administrator-manual.html#runner-ops">Administrator Manual §7.8</a> and the <a href="./runner-install.html">Runner Install Guide</a> guide.</p>
+
+<blockquote><p><strong>⚠ Submodules do not compose with Path B.</strong> The sync engine updates git submodules recursively, so a playbooks repo mounted as a submodule under <code>scripts/</code> <em>is</em> discovered — but only its <strong>self-contained</strong> playbooks work: checkout materialization uses <code>git archive</code>, which <strong>omits submodule content</strong>, and a checkout always targets the synced definitions repo. Any playbook that needs roles, includes or vault files must have its project files <strong>committed directly in the definitions repo</strong>. When migrating an existing Ansible repo, converge it into the definitions repo (or repoint the sync at it) rather than mounting it as a submodule.</p></blockquote>
+
+<hr />
+
+<h2 id="3-inventory-how-scopes-carry-your-hosts">3 · Inventory: how scopes carry your hosts</h2>
+
+<p>An Ansible run must target a <strong>scope that declares the <code>ansible</code> run type and carries an inventory</strong> — the server refuses to build a runner manifest without one (<code>409 no_inventory</code>). Two ways to get there:</p>
+
+<ul>
+<li><strong>Git-synced</strong>: files in <code>inventory/*.ini</code> (read <strong>flat</strong>, not recursively — flatten and namespace nested department trees). A <code># amadeus:v1 types=bash,ansible</code> pragma at the top of the file (or a <code>.amadeus.yaml</code> sidecar) declares the scope's run types.</li>
+<li><strong>In-app</strong>: <strong>Scopes → + Add Scope</strong> and paste the full INI into the <em>Ansible INI Inventory</em> input — validated inline, projected atomically on save. See <a href="user-manual.html#scopes">User Manual §11.1</a>.</li>
+</ul>
+
+<p>A synced inventory does triple duty: the raw file ships <strong>byte-exact</strong> to the runner for <code>ansible-playbook -i</code>; it is parsed into an <em>advisory</em> group/host-vars projection you can read in the Scopes view (never authoritative for execution); and its hosts are imported into the SSH host registry so the rest of the app knows them. Group structure (<code>[group:children]</code>, <code>[group:vars]</code>) is preserved — and is what per-run <strong>group targeting</strong> works against (§4).</p>
+
+<blockquote><p><strong>Inline secret values are rejected at ingest — by design.</strong> An inventory carrying <code>ansible_ssh_pass</code>, any <code>*_become_pass</code>, or inline-vault markers is rejected fail-closed with a line-numbered <code>inventory_secret_rejected</code> before anything is persisted or shipped. The supported pattern is env-var-<strong>NAME</strong> indirection — <code>{{ lookup('env','NAME') }}</code> — resolved on the runner (§5–§6). A literal <code>AMADEUS_*=</code> assignment is likewise rejected: that namespace belongs to the injector; your content may <em>reference</em> those names, never define them.</p></blockquote>
+
+<p>For network-isolated segments, a runner can hold the inventory itself (<code>--inventory local</code> + <code>--local-inventory</code>): the manifest then carries only the scope <em>name</em> and the host list never touches the control plane. Pair with <strong>agencies</strong> to pin each scope's runs to the runners inside its segment (<a href="administrator-manual.html#runner-ops">§7.7</a>).</p>
+
+<hr />
+
+<h2 id="4-running-plays-targeting-inputs-and-env">4 · Running plays: targeting, inputs and env</h2>
+
+<h3>Group targeting &amp; <code>--limit</code></h3>
+
+<p>When the effective scope has a parsed inventory, the Run dialog's <em>“Where it runs”</em> fold offers a <strong>Groups</strong> control — pick inventory groups and the runner receives them as <code>ansible --limit</code> (an SSH shell run over the same scope would expand them to member hosts; both hit the identical set). For selections the picker can't express, the <span class="adv">Advanced</span> <strong>Ansible --limit</strong> field takes a raw pattern like <code>webservers:&amp;staged:!quarantine</code> and overrides the group/host selection. An unknown group is rejected <code>422 group_membership</code>; the raw field is ansible/runner-only. Details: <a href="user-manual.html#jobs">User Manual §6.5</a>.</p>
+
+<p><strong>Prefer per-run targeting over inventory edits.</strong> A “run it just on the web tier this once” should be a Groups selection on the Run dialog, not a temporary inventory fork.</p>
+
+<h3>Run inputs replace <code>vars_prompt</code></h3>
+
+<p>Interactive prompts have no terminal to ask on — a play that uses <code>vars_prompt</code> will hang or take defaults. Declare the questions on the job (or seed them on the Script) as <strong>run inputs</strong> instead; the Run dialog asks the operator, and each answer arrives in the run's environment under its declared name:</p>
+
+<div class="codeblock"><pre><code># on the Job (spec.prompts) — or on the Script, which seeds the Composer
+prompts:
+  - name: TARGET_RELEASE
+    label: "Release tag to deploy"
+    required: true
+  - name: DRAIN_FIRST
+    label: "Drain nodes first?"
+    default: "yes"
+    options: ["yes", "no"]</code></pre></div>
+
+<div class="codeblock"><pre><code># in the playbook — read the answer from the env
+vars:
+  release: "{{ lookup('env','TARGET_RELEASE') }}"</code></pre></div>
+
+<p>By default an unfilled required input warns and records rather than blocking (<code>prompt_enforcement: warn</code>); set <code>prompt_enforcement: block</code> on jobs where running without the answer must be impossible. Note a job with required run inputs is effectively manual — a scheduled fire has nobody to ask.</p>
+
+<h3>Environment layering</h3>
+
+<p>Ansible reads its own configuration from the environment, which makes Cronomicon's env layering (job env ← schedule env ← per-run override, override wins per key) the natural tuning surface — <code>ANSIBLE_FORKS</code>, <code>ANSIBLE_TIMEOUT</code>, <code>ANSIBLE_STDOUT_CALLBACK</code> and friends all work as plain <a href="user-manual.html#envvars">Variables</a> or job env rows. Bound Variables arrive as <code>AMADEUS_VAR_&lt;key&gt;</code> (see §6); plain job/schedule/override env arrives under its own name. A job can also declare <code>env_passthrough:</code> — env-var <em>names</em> the runner forwards from its own local environment into the play (names only; the values live on the runner, e.g. in <code>secrets.env</code>).</p>
+
+<p>Give every play a realistic <code>timeout_seconds</code> (the whole run is killed and marked failed on overrun) and use <code>concurrency_policy: Forbid</code> on plays that must not overlap themselves — a slow patch window firing again on the next cron is the classic Ansible pile-up.</p>
+
+<hr />
+
+<h2 id="5-ssh-auth-on-the-runner-names-not-bytes">5 · SSH auth on the runner: names, not bytes</h2>
+
+<p>Cronomicon ships <strong>key names, never key material</strong>, to a runner by default. The agent resolves each name locally — against its key-map or key-dir (default <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code>) — so a compromised control plane never yields target keys, and a compromised runner exposes only its own segment. Provision keys at install time (<code>--generate-key &lt;NAME&gt;</code> mints one and prints the public half) or drop files into the key-dir later.</p>
+
+<p><strong>Where the name comes from</strong>, in precedence order on an Ansible run:</p>
+
+<ul>
+<li>An explicit <code>ansible_ssh_private_key_file</code> in the inventory always wins. The supported secret-free form is the lookup pattern:
+<div class="codeblock"><pre><code>web-01 ansible_host=10.1.2.11 ansible_ssh_private_key_file="{{ lookup('env','prod_web_key') }}"</code></pre></div>
+The runner scans the inventory for <code>lookup('env',NAME)</code> names, and bridges each one to the matching key-dir file in the child environment. The name must be a <strong>bare literal</strong> — a nested template inside the lookup fails with <em>“env passthrough var(s) not set”</em>.</li>
+<li>Otherwise the <strong>auth bridge</strong>: when every target of the run resolves to exactly <strong>one</strong> distinct key name (per-host <code>amadeus_auth_key_env_var</code>, the scope sidecar's <code>authKeyEnvVar</code>, or the host record in <a href="user-manual.html#settings">Settings → SSH Targets</a>), the agent auto-appends <code>--private-key &lt;path&gt;</code> and verifies target host keys against the <em>same</em> <code>known_hosts</code> that <strong>Scan &amp; approve</strong> seeds. One provisioned key serves bash and ansible runs alike; no double provisioning.</li>
+</ul>
+
+<h3>Become passwords</h3>
+
+<p><strong>Passwordless sudo remains the preferred arrangement.</strong> A <code>NOPASSWD</code> rule scoped to what the play actually needs is auditable on the target and keeps the credential out of the run entirely. What follows is the exception path. And never rely on <code>-K</code>: there is no terminal to prompt on.</p>
+
+<p>There are two supported ways in, and they answer different questions.</p>
+
+<p><strong>1 · A job-level become password (preferred).</strong> The job names a Secrets row and Cronomicon does the rest:</p>
+
+<div class="codeblock"><pre><code>spec:
+  become_password_secret: BECOME_PASSWORD   # a NAME, never a value</code></pre></div>
+
+<p>The field holds a <strong>bare key</strong>. The password stays in the Secrets catalogue with every control that implies — KEK or Vault at rest, department resolution, reveal auditing, log redaction — and is resolved at dispatch. The agent writes it to a <code>0600</code> file on tmpfs <em>off the run tree</em>, passes the path to <code>ansible-playbook --become-password-file</code>, and wipes it when the run ends. <strong>The value never enters the environment and never appears in a template.</strong> An environment variable is readable from <code>/proc</code> by anything that can see the process; a wiped file is a materially smaller window.</p>
+
+<p>Two consequences worth knowing. The flag is <strong>global to the run</strong>, so it cannot vary per host the way an inventory-authored <code>ansible_become_password</code> can — a fleet with heterogeneous become passwords wants pattern 2. And the job automatically requires the <code>become-file</code> capability, so its runs <strong>wait for a runner with ansible-core ≥ 2.12</strong> rather than being assigned to one that would silently ignore the flag.</p>
+
+<p><strong>2 · Inventory lookup (per-host variation).</strong> The older pattern, still correct when different hosts need different passwords: put <code>ansible_become_password="{{ lookup('env','PROD_BECOME_PASS') }}"</code> in the inventory (an inline value is rejected at ingest) and supply the value either as a <strong>reference binding</strong> — which is what lets one playbook serve several departments, see §6 — or runner-locally via <code>/etc/amadeus-runner/secrets.env</code> or the Vault Agent sidecar (§6).</p>
+
+<blockquote><p><strong>Setting a become password is a grant, and it is gated.</strong> Naming a Secret here has the runner write that value to a file, so the Composer requires <strong>Manage Env Vars</strong> <em>and</em> membership of the department that owns the row — you cannot bind another department's password. Git sync is deliberately advisory instead: a synced job naming a missing Secret produces a warning rather than failing the whole sync, and the run fails closed at dispatch.</p></blockquote>
+
+<blockquote><p><strong>⚠ Gotcha — Stored SSH-key credentials don't reach the runner path.</strong> A host whose key is attached as a first-class <em>Stored credential</em> (Env Vars → SSH Keys, picked by ID in SSH Targets) authenticates fine on the in-app SSH executor, but the runner manifest carries only the key <em>name</em> field — a credential-by-ID host presents <strong>no key name</strong> to a runner-executed Ansible run. For inventories that runners execute, reference keys <strong>by name</strong> (key-dir/key-map), or deliver the bound key via reference-binding injection on a flagged runner (§6).</p></blockquote>
+
+<p>A target the runner has never seen fails <em>soft</em> with <code>host_key_unverified</code>: run <strong>Scan keys</strong> from the Runners view, compare the fingerprint out-of-band, and <strong>Approve</strong> it into the runner's <code>known_hosts</code> — the flow is audited, strict thereafter. See <a href="./runner-security.html">Runner Security Guide</a>.</p>
+
+<hr />
+
+<h2 id="6-secrets-in-plays-three-doors-one-rule">6 · Secrets in plays: three doors, one rule</h2>
+
+<p>The rule: <strong>a secret value lives either on the runner, in Cronomicon's encrypted store / Vault, or in an ansible-vault file — never in the repo, the inventory, a schedule env, or a per-run override.</strong> The three doors:</p>
+
+<ul>
+<li><strong>Runner-local env (names-only).</strong> The play references <code>{{ lookup('env','NAME') }}</code>; the value sits in the runner's <code>secrets.env</code> — provisioned by you, or continuously rendered by the opt-in <strong>Vault Agent sidecar</strong> (the runner never holds a Vault token; the value never crosses the control-plane channel). Zero server involvement, works on any agent.</li>
+<li><strong>Reference bindings with per-runner injection.</strong> Declare the Secrets / Variables / SSH keys a job consumes as <a href="user-manual.html#refbindings">reference bindings (§11.6)</a>; they arrive as <code>AMADEUS_SECRET_&lt;name&gt;</code> / <code>AMADEUS_VAR_&lt;name&gt;</code> env vars, and a bound key's material as a private <code>/dev/shm</code> file, <em>only</em> on a runner an operator has flagged with the <strong>Secret injection</strong> toggle (protocol v6+). Everything is fail-closed — an unresolvable binding or an un-flagged runner leaves the run <strong>queued</strong>, never partially supplied — injected values join the run's redaction dictionary, and every dispatch writes a value-free audit row. This is the door that lets Vault-backed secrets reach a play with no runner-side file at all.</li>
+<li><strong>ansible-vault (checkout projects).</strong> The job declares <code>requires: [vault]</code>; a runner provisioned with <code>--vault-pass-file</code> supplies <code>--vault-password-file</code> itself (the password never travels, and the token claim-gates the run to vault-capable runners). Register that vault password as an Cronomicon stored secret too, so any accidental echo of it is masked.</li>
+</ul>
+
+<h3>One playbook, every department's credential</h3>
+
+<p>The common shape in a departmental estate is <em>one</em> shared playbook that each department runs with <em>its own</em> credential. Two mechanisms make that work without a naming convention in the play.</p>
+
+<p><strong>Per-department rows under one name.</strong> Two departments may each hold a Secret named <code>BECOME_PASSWORD</code> in the same scope. A run resolves <strong>its own department's row</strong> — the play just asks for the name it always asked for:</p>
+
+<div class="codeblock"><pre><code>- hosts: all
+  become: true
+  vars:
+    ansible_become_password: "{{ lookup('env','AMADEUS_SECRET_BECOME_PASSWORD') }}"</code></pre></div>
+
+<p>This is legal despite the reserved namespace: the <code>AMADEUS_*=</code> guard matches an <strong>assignment</strong>, so <em>referencing</em> an injector-owned name inside a <code>lookup</code> is fine. Which row a run gets is decided by the run's <strong>scope</strong>, not by who triggered it — which is why a central operations team can run a department's job with that department's credential <em>without ever being able to see it</em>.</p>
+
+<p><strong>Aliasing, for rows that cannot share a name.</strong> When the catalogue already has <code>TEAMA_SUDO</code> and <code>TEAMB_SUDO</code> and renaming is not on the table, a binding can declare the name its value is injected <em>under</em>. Both alias to <code>BECOME_PASSWORD</code>, and the same one playbook works. The alias is a <strong>destination only</strong>: it never changes which row resolves, and an out-of-department row aliased to a friendly name is still refused.</p>
+
+<blockquote><p><strong>⚠ When two departments own the same name in one scope.</strong> If a run's scope belongs to <em>both</em> departments, the reference is <strong>ambiguous</strong> and the run is refused rather than being given somebody's credential at random — the audit trail would otherwise imply an intent that never existed. The refusal says <em>ambiguous</em>, not <em>missing</em>, so nobody goes hunting for a row that is there twice. Authoring surfaces name the owners; the run does not. If your scopes map one-to-one onto departments this can never fire.</p></blockquote>
+
+<blockquote><p><strong>Redaction has a deliberate gap you must close with <code>no_log</code>.</strong> Cronomicon masks stored-secret values and injected reference values in run logs — but a value a playbook <em>decrypts at run time</em> (ansible-vault) or fetches itself was never registered with the redactor. Put <code>no_log: true</code> on tasks that handle decrypted or fetched secrets, and keep <code>-vvv</code> debugging away from them.</p></blockquote>
+
+<hr />
+
+<h2 id="7-best-practice-checklist">7 · Best-practice checklist</h2>
+
+<ul>
+<li><strong>Stay on Path A until roles force Path B.</strong> A self-contained play needs zero runner setup and composes best in-app.</li>
+<li><strong>Pin everything in Path B.</strong> Exact collection versions in <code>requirements.yml</code>, SHA-pinned git roles — the validators enforce it, CI (<code>amadeus validate .</code>) catches it at merge time.</li>
+<li><strong>Names, never values.</strong> <code>lookup('env','NAME')</code> for keys; <code>spec.become_password_secret</code> for a become password; reference bindings or the sidecar for delivery; nothing secret in inventory, vars files, schedule env, or run overrides.</li>
+<li><strong>Passwordless sudo first.</strong> A <code>NOPASSWD</code> rule scoped to what the play needs beats every password-delivery mechanism here. Use §5's become password when a target's policy forbids that — not as the default.</li>
+<li><strong>Let the scope pick the department's credential.</strong> One playbook asking for one name, with each department owning its own row, beats a naming convention per team (§6). Keep scopes mapped one-to-one onto departments and the ambiguity refusal can never fire.</li>
+<li><strong>Replace <code>vars_prompt</code> with run inputs</strong> (<code>spec.prompts</code>), and mark truly unskippable ones <code>prompt_enforcement: block</code>.</li>
+<li><strong>Target per run, don't fork inventories.</strong> Groups / <code>--limit</code> in the Run dialog; agencies for network segmentation; local-inventory runners for isolated segments.</li>
+<li><strong>Bound every play</strong>: <code>timeout_seconds</code> sized to reality, <code>concurrency_policy: Forbid</code> on non-reentrant plays, <code>ANSIBLE_FORKS</code> tuned at the scope.</li>
+<li><strong><code>no_log: true</code></strong> wherever a task handles a value the redactor has never seen.</li>
+<li><strong>Keep plays idempotent</strong> — Cronomicon retries (<code>retries:</code>) and schedules re-fire; a play that cannot safely run twice will eventually run twice.</li>
+</ul>
+
+<hr />
+
+<h2 id="8-troubleshooting">8 · Troubleshooting</h2>
+
+<div class="tbl"><table>
+<thead><tr><th>Symptom</th><th>Likely cause → fix</th></tr></thead>
+<tbody>
+<tr><td>Run sits <strong>queued</strong>, “waiting for an ansible-capable runner”</td><td>No online runner advertises <code>ansible</code> — runner down, slim image, toolchain missing, or a <code>capabilityMask</code> narrowed it. Check the Runners view's capability chips; restart the agent after installing Ansible.</td></tr>
+<tr><td>Queued, “no online runner satisfies this run's requirements”</td><td>A <code>requires:</code> token (<code>vault</code>, <code>checkout</code>, <code>collection:…</code>) or an <strong>agency</strong> has no covering online runner. The reason names the missing piece.</td></tr>
+<tr><td>Queued, “no eligible runner advertises <code>become-file</code>”</td><td>The job names a <code>become_password_secret</code>, which requires <strong>ansible-core ≥ 2.12</strong> on the claiming runner. The run waits rather than being assigned to a runner that would ignore the flag. Upgrade the department's runner, or drop to the inventory-lookup pattern (§5).</td></tr>
+<tr><td>Queued, “no eligible runner is flagged for secret injection”</td><td>The job declares reference bindings (or a become password) and no runner in its department has the per-runner <strong>Secret injection</strong> toggle on. Enrolling a new runner in its agency is the obvious step; ticking this flag is the one people forget.</td></tr>
+<tr><td>Queued: “only a runner with no agencies can claim it”</td><td>The run has <strong>no scope</strong>. An untagged run is claimable only by an untagged runner — the general pool is <em>disjoint</em>, not a fallback — so a fully departmentalised fleet cannot take it at all. Bind a scope.</td></tr>
+<tr><td><code>422</code> “this job consumes department-owned credentials”</td><td>An <strong>unbound</strong> run declaring a binding to a department-<em>owned</em> row. An unbound run carries an empty department set, so the row resolves for nobody, and no departmental runner could claim it either. Supply a scope. Bindings to <em>global</em> rows are unaffected.</td></tr>
+<tr><td><code>409</code> reference is <strong>ambiguous</strong></td><td>Two departments own a row under this name and the run's scope belongs to both, so there is no defensible pick (§6). The run is refused rather than escalating with somebody's credential. Check <strong>Env Vars</strong> for the same-key rows and their owner chips, or run under a scope belonging to one department. Note this says <em>ambiguous</em>, not <em>unavailable</em> — the row is there twice, not missing.</td></tr>
+<tr><td><code>403</code> binding a become password</td><td>Setting <code>become_password_secret</code> in the Composer needs <strong>Manage Env Vars</strong> on the department that owns the row. You cannot bind another department's password.</td></tr>
+<tr><td><code>422 invalid_executor</code></td><td>SSH executor chosen for an ansible run, or a raw <code>--limit</code> supplied on an SSH run. Use Runner.</td></tr>
+<tr><td><code>409 no_inventory</code></td><td>The effective scope declares no inventory (or the run is unscoped). Bind an inventory-backed scope, or check the scope's run-type pragma.</td></tr>
+<tr><td><code>422 group_membership</code></td><td>A targeted group isn't in the effective scope's parsed inventory — check the scope's advisory projection for the real group names.</td></tr>
+<tr><td><code>inventory_secret_rejected</code> on sync / save</td><td>An inline secret value (or a literal <code>AMADEUS_*=</code> assignment) in the inventory. Switch to <code>{{ lookup('env','NAME') }}</code>.</td></tr>
+<tr><td><code>host_key_unverified</code> per-host failure</td><td>First contact with that target. <strong>Scan keys → Approve</strong> on the runner, then re-run.</td></tr>
+<tr><td>“env passthrough var(s) not set”</td><td>A <code>lookup('env',NAME)</code> name isn't provisioned in the runner's environment — or the name is a nested template rather than a bare literal. Add it to <code>secrets.env</code> (or the sidecar template) and restart the agent.</td></tr>
+<tr><td>Ansible authenticates with the wrong / no key</td><td>Targets resolve to multiple distinct key names (the auto <code>--private-key</code> bridge only engages on exactly one), or the host references a Stored credential by ID (§5). Set an explicit <code>ansible_ssh_private_key_file</code> lookup, or unify the key name.</td></tr>
+<tr><td>Play hangs, then times out</td><td>Usually an interactive prompt — <code>vars_prompt</code>, <code>-K</code>, or an unapproved sudo password. Replace with run inputs and env lookups (§4–§5).</td></tr>
+<tr><td>Run failed with reason <code>runner_lost</code> (amber <strong>Lost</strong> badge)</td><td>The runner stopped heartbeating mid-run — a runner problem, not a play error. See <a href="./runner-manage.html">Runner Config Guide</a>.</td></tr>
+<tr><td>A vault-decrypted value appeared in a log</td><td>Run-time-decrypted values bypass redaction. Add <code>no_log: true</code> to the task; rotate the exposed value.</td></tr>
+</tbody>
+</table></div>
+
+<p>For anything runner-side — sandbox posture, checkout flags, key provisioning, upgrades — continue in the <a href="./runner-install.html">Runner Install Guide</a> and <a href="./runner-manage.html">Runner Config Guide</a> guides.</p>
+
+</main>
+</div>
+<button id="totop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+</button>
+<script>
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  document.getElementById('themeLabel').textContent=t==='dark'?'Light':'Dark';
+  var ic=document.getElementById('themeIcon');
+  ic.innerHTML=t==='dark'
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    : '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>';
+  try{localStorage.setItem('am_manual_theme',t)}catch(e){}
+}
+function toggleTheme(){applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark')}
+(function(){var s;try{s=localStorage.getItem('am_manual_theme')}catch(e){}applyTheme(s==='light'?'light':'dark')})();
+document.querySelectorAll('.codeblock').forEach(function(cb){
+  var pre=cb.querySelector('pre'); if(!pre||cb.querySelector('.copybtn'))return;
+  var b=document.createElement('button'); b.className='copybtn'; b.textContent='Copy';
+  b.onclick=function(){navigator.clipboard.writeText(pre.innerText).then(function(){b.textContent='Copied';b.classList.add('ok');setTimeout(function(){b.textContent='Copy';b.classList.remove('ok')},1400)})};
+  cb.appendChild(b);
+});
+(function(){
+  var links=[].slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a});
+  if(!links.length)return;
+  var obs=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var a=map[e.target.id];if(!a)return;links.forEach(function(l){l.classList.remove('active')});a.classList.add('active')}})},{rootMargin:'-64px 0px -72% 0px',threshold:0});
+  document.querySelectorAll('main h2[id]').forEach(function(h){obs.observe(h)});
+})();
+window.addEventListener('scroll',function(){document.getElementById('totop').classList.toggle('show',window.scrollY>500)});
+document.querySelectorAll('nav.toc a').forEach(function(a){a.addEventListener('click',function(){document.body.classList.remove('nav-open')})});
+</script>
+</body>
+</html>

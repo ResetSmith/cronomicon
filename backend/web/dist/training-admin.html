@@ -1,0 +1,3374 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cronomicon — Administrator course</title>
+<style>
+        /* Fonts are SELF-HOSTED (VU-1), and they are declared HERE rather than via a
+ <link> in this <head> for a second reason: vite-manuals-plugin.js injects this
+ <style> verbatim into the wrapped runner guides, whose generated <head> has no
+ room for link elements. Everything the guides need must live in this block.
+
+ Why self-hosted: these documents are served by the Cronomicon binary to operators
+ on networks that may have no egress to fonts.googleapis.com, and a blocked
+ stylesheet silently drops the whole manual to system-ui with no error — the
+ same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ index.html unchanged (Google's own latin / latin-ext subsets); only the origin
+ differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
+ a wrapped guide at /runner-install.html alike: Vite copies public/ into
+ backend/web/dist and spa.go serves any real file under it.
+
+ Families track theme.ts so the manuals and the product read as one thing: IBM
+ Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
+ Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ hero and headings only — the manuals are a brand surface; do not spread it.
+
+ Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
+ and Mono are static per weight. An unreferenced face is never fetched. */
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        /* ============================================================
+ Cronomicon Manual — palette ported 1:1 from the product
+ (frontend/src/theme.ts). Dark is the product default.
+
+ VU-18: these are hand-copied hex literals, so they silently rot
+ the next time theme.ts moves. frontend/src/documentation-palette.test.ts
+ now fails if any hex in this file (or the wrapped runner-guide
+ fragments, which reuse this <style> verbatim) is absent from
+ theme.ts. When the product palette changes, re-map by ROLE — a
+ doc's page background takes the new `bg`, its cards `panel`, its
+ links `primary`, its warning callouts `warning` — never by
+ eyeballing which new hex looks closest to the old one.
+
+ Two role moves landed in Phase C and are easy to get backwards:
+ `warning` is now a distinct ORANGE (it used to be the same gold as
+ `accent`, which made a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is now the BRAND — the hero
+ spine, the h2 rule, the active TOC item.
+ ============================================================ */
+        :root {
+            /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono` / `display`) so a
+ fallback here matches a fallback there. --sansCond is the uppercase
+ structural face — eyebrows, nav group labels, code-block captions. */
+            --sans: 'IBM Plex Sans', system-ui, sans-serif;
+            --sansCond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+            --mono: 'IBM Plex Mono', ui-monospace, monospace;
+            --display: 'Fraunces', Georgia, serif;
+            --maxw: 880px;
+            --nav-w: 300px;
+            --gold-rule: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
+        }
+
+        html[data-theme="dark"] {
+            --bg: #0a1119;
+            --panel: #101a26;
+            --panel2: #182534;
+            --panelHover: #182534;
+            --panelInput: #0d1621;
+            --border: #22344a;
+            --borderLight: #1a2838;
+            --borderStrong: #566c86;
+            --text: #e8eff7;
+            --textSec: #9db2c8;
+            --textMuted: #78909f;
+            --onSolid: #0a1119;
+            --primary: #4da3d9;
+            --primaryHover: #6fb8e5;
+            --primaryBg: rgba(77, 163, 217, .15);
+            --accent: #c9a227;
+            --accentBg: rgba(201, 162, 39, .14);
+            --success: #45b26b;
+            --successBg: rgba(69, 178, 107, .14);
+            --danger: #e05a5a;
+            --dangerBg: rgba(224, 90, 90, .14);
+            --warning: #d98a2b;
+            --warningBg: rgba(217, 138, 43, .14);
+            --info: #4da3d9;
+            --infoBg: rgba(77, 163, 217, .14);
+            --sidebar: #0c1420;
+            --sidebarHover: #16222f;
+            --sidebarText: #93a9bf;
+            --sidebarTextActive: #f0e2b8;
+            --sidebarActive: rgba(201, 162, 39, .16);
+            --shadow: 0 2px 12px rgba(0, 0, 0, .45);
+            --shadowSm: 0 1px 4px rgba(0, 0, 0, .3);
+            --code: #0d1621;
+            --hero: linear-gradient(135deg, #101a26 0%, #0a1119 60%);
+        }
+
+        html[data-theme="light"] {
+            --bg: #f4f6fa;
+            --panel: #ffffff;
+            --panel2: #eef2f7;
+            --panelHover: #eef2f7;
+            --panelInput: #ffffff;
+            --border: #d5dde8;
+            --borderLight: #e6ebf2;
+            --borderStrong: #828fa0;
+            --text: #131e2b;
+            --textSec: #46596e;
+            --textMuted: #596c80;
+            --onSolid: #ffffff;
+            --primary: #15709f;
+            --primaryHover: #0f5c85;
+            --primaryBg: rgba(21, 112, 159, .10);
+            --accent: #7c6311;
+            --accentBg: rgba(124, 99, 17, .12);
+            --success: #1e7f45;
+            --successBg: rgba(30, 127, 69, .10);
+            --danger: #c0342f;
+            --dangerBg: rgba(192, 52, 47, .10);
+            --warning: #9c5f11;
+            --warningBg: rgba(156, 95, 17, .12);
+            --info: #15709f;
+            --infoBg: rgba(21, 112, 159, .10);
+            --sidebar: #ffffff;
+            --sidebarHover: #eef2f7;
+            --sidebarText: #46596e;
+            --sidebarTextActive: #131e2b;
+            --sidebarActive: rgba(124, 99, 17, .13);
+            --shadow: 0 2px 12px rgba(15, 30, 50, .08);
+            --shadowSm: 0 1px 4px rgba(15, 30, 50, .05);
+            --code: #eef2f7;
+            --hero: linear-gradient(135deg, #ffffff 0%, #eef2f7 100%);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html {
+            scroll-behavior: smooth
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 16px;
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        a {
+            color: var(--primary);
+            text-decoration: none
+        }
+
+        a:hover {
+            color: var(--primaryHover);
+            text-decoration: underline
+        }
+
+        code,
+        kbd,
+        pre {
+            font-family: var(--mono)
+        }
+
+        /* ---------- Sidebar ----------
+ Every colour in this block reads a token. It used to be hardcoded dark
+ literals, which was survivable only because the rail was dark in BOTH
+ themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
+ pale-slate link would now be near-invisible on white. Tokens also keep the
+ VU-18 drift guard honest — nothing here to re-map by hand next time. */
+        #sidebar {
+            width: var(--nav-w);
+            flex: 0 0 var(--nav-w);
+            background: var(--sidebar);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+        }
+
+        #sidebar::-webkit-scrollbar {
+            width: 8px
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 8px
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 20px 20px 14px
+        }
+
+        .brand .logo {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border-radius: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadowSm)
+        }
+
+        .brand .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block
+        }
+
+        .brand .bt {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.15
+        }
+
+        .brand .bt b {
+            color: var(--sidebarTextActive);
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: .2px
+        }
+
+        .brand .bt span {
+            color: var(--sidebarText);
+            font-size: 11.5px;
+            font-weight: 500
+        }
+
+        .navsearch {
+            padding: 0 16px 12px
+        }
+
+        .navsearch input {
+            width: 100%;
+            padding: 8px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--borderStrong);
+            background: var(--panelInput);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            outline: none
+        }
+
+        .navsearch input::placeholder {
+            color: var(--textMuted)
+        }
+
+        .navsearch input:focus {
+            border-color: var(--primary)
+        }
+
+        nav.toc {
+            padding: 0 10px 30px;
+            flex: 1
+        }
+
+        /* Condensed 600: the uppercase structural face (theme.ts `sansCond`). 600, not
+ 700 — the self-hosted Condensed subsets are 500 and 600, and 700 would be
+ synthesised. */
+        nav.toc .grp {
+            margin: 14px 6px 4px;
+            padding: 0 8px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--textMuted)
+        }
+
+        /* ---- collapsible part sections ---- */
+        nav.toc details.grp-sec {
+            margin: 0
+        }
+
+        nav.toc summary.grp {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            user-select: none;
+            transition: color .15s
+        }
+
+        nav.toc summary.grp::-webkit-details-marker {
+            display: none
+        }
+
+        nav.toc summary.grp:hover {
+            color: var(--sidebarText)
+        }
+
+        nav.toc summary.grp:before {
+            content: "";
+            flex: 0 0 6px;
+            width: 6px;
+            height: 6px;
+            border-right: 1.6px solid currentColor;
+            border-bottom: 1.6px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform .15s;
+            opacity: .85
+        }
+
+        nav.toc details.grp-sec[open]>summary.grp:before {
+            transform: rotate(45deg)
+        }
+
+        nav.toc summary.grp:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+            border-radius: 5px
+        }
+
+        nav.toc.filtering summary.grp {
+            display: none
+        }
+
+        nav.toc a {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 6px 12px;
+            margin: 1px 0;
+            border-radius: 7px;
+            color: var(--sidebarText);
+            font-size: 13.5px;
+            font-weight: 500;
+            text-decoration: none;
+            line-height: 1.3;
+            border-left: 2px solid transparent
+        }
+
+        nav.toc a .ic {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 15px;
+            opacity: .7
+        }
+
+        nav.toc a:hover {
+            background: var(--sidebarHover);
+            color: var(--sidebarTextActive);
+            text-decoration: none
+        }
+
+        nav.toc a.active {
+            background: var(--sidebarActive);
+            color: var(--sidebarTextActive);
+            border-left-color: var(--accent)
+        }
+
+        nav.toc a.active .ic {
+            opacity: 1
+        }
+
+        nav.toc a.hidden {
+            display: none
+        }
+
+        nav.toc .grp .grp-adv {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 6px;
+            border-radius: 20px;
+            background: var(--accentBg);
+            color: var(--accent);
+            font-size: 8.5px;
+            letter-spacing: .06em;
+            border: 1px solid var(--accent)
+        }
+
+        .sb-foot {
+            padding: 14px 20px;
+            border-top: 1px solid var(--borderLight);
+            color: var(--textMuted);
+            font-size: 11px
+        }
+
+        /* ---------- Topbar ---------- */
+        #topbar {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 26px;
+            background: color-mix(in srgb, var(--bg) 86%, transparent);
+            backdrop-filter: blur(9px);
+            border-bottom: 1px solid var(--border)
+        }
+
+        #topbar .crumbs {
+            flex: 1;
+            color: var(--textMuted);
+            font-size: 13px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        #topbar .crumbs b {
+            color: var(--textSec);
+            font-weight: 600
+        }
+
+        .tbtn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--textSec);
+            font-family: var(--sans);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: .15s
+        }
+
+        .tbtn:hover {
+            background: var(--panelHover);
+            color: var(--text);
+            border-color: var(--primary)
+        }
+
+        .tbtn svg {
+            width: 15px;
+            height: 15px
+        }
+
+        #menuToggle {
+            display: none
+        }
+
+        /* ---------- Main ---------- */
+        #wrap {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column
+        }
+
+        main {
+            width: 100%;
+            max-width: var(--maxw);
+            margin: 0 auto;
+            padding: 8px 30px 120px
+        }
+
+        section {
+            padding-top: 30px;
+            margin-top: 18px;
+            scroll-margin-top: 70px
+        }
+
+        section.part-lead {
+            border-top: 1px dashed var(--border);
+            margin-top: 46px
+        }
+
+        /* ---------- Hero ---------- */
+        .hero {
+            background: var(--hero);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 44px 44px 38px;
+            margin: 26px 0 8px;
+            box-shadow: var(--shadow);
+            position: relative;
+            overflow: hidden
+        }
+
+        /* warm gold spine down the left edge — the signature warmth accent */
+        .hero {
+            border-left: 3px solid var(--accent)
+        }
+
+        .hero:before {
+            content: "";
+            position: absolute;
+            right: -70px;
+            top: -70px;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--primaryBg), transparent 70%)
+        }
+
+        .hero:after {
+            content: "";
+            position: absolute;
+            left: -40px;
+            bottom: -80px;
+            width: 230px;
+            height: 230px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--accentBg), transparent 72%)
+        }
+
+        .hero>* {
+            position: relative
+        }
+
+        .hero .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--accent);
+            background: var(--accentBg);
+            padding: 5px 13px;
+            border-radius: 30px;
+            margin-bottom: 18px;
+            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent)
+        }
+
+        .hero h1 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 46px;
+            line-height: 1.04;
+            margin: .08em 0 .28em;
+            font-weight: 600;
+            letter-spacing: -.005em
+        }
+
+        .hero p.lead {
+            font-size: 18.5px;
+            line-height: 1.55;
+            color: var(--textSec);
+            max-width: 62ch;
+            margin: 0
+        }
+
+        .hero .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 24px
+        }
+
+        .hero .meta .chip {
+            font-size: 12.5px;
+            color: var(--textSec);
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 13px;
+            font-weight: 500;
+            box-shadow: var(--shadowSm)
+        }
+
+        .hero .meta .chip b {
+            color: var(--text)
+        }
+
+        /* ---------- Typography ---------- */
+        h2 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+            margin: .3em 0 .55em;
+            padding-bottom: .34em;
+            border-bottom: 2px solid transparent;
+            border-image: var(--gold-rule) 1;
+            display: flex;
+            align-items: center;
+            gap: 13px
+        }
+
+        h2 .secnum {
+            font-family: var(--sans);
+            font-size: 14px;
+            color: var(--onSolid);
+            background: var(--primary);
+            min-width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            display: inline-grid;
+            place-items: center;
+            font-weight: 700;
+            flex: 0 0 auto;
+            box-shadow: var(--shadowSm)
+        }
+
+        h3 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 21.5px;
+            font-weight: 600;
+            letter-spacing: -.005em;
+            margin: 1.8em 0 .5em;
+            color: var(--text)
+        }
+
+        h4 {
+            font-size: 16px;
+            font-weight: 650;
+            margin: 1.5em 0 .4em;
+            color: var(--text);
+            letter-spacing: .005em
+        }
+
+        p {
+            margin: .7em 0
+        }
+
+        ul,
+        ol {
+            margin: .6em 0;
+            padding-left: 1.4em
+        }
+
+        li {
+            margin: .32em 0
+        }
+
+        .lead-p {
+            font-size: 17.5px;
+            color: var(--textSec);
+            margin: .2em 0 1.1em
+        }
+
+        strong {
+            font-weight: 650;
+            color: var(--text)
+        }
+
+        em {
+            color: var(--textSec)
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 2em 0
+        }
+
+        .muted {
+            color: var(--textMuted)
+        }
+
+        /* ---------- Code ---------- */
+        code:not(pre code) {
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            padding: .08em .42em;
+            border-radius: 5px;
+            font-size: .86em;
+            color: var(--text);
+            white-space: nowrap
+        }
+
+        .codeblock {
+            position: relative;
+            margin: 1em 0
+        }
+
+        .codeblock pre {
+            background: var(--code);
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 16px 18px;
+            overflow-x: auto;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+            margin: 0
+        }
+
+        .codeblock .cap {
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--textMuted);
+            padding: 0 2px 6px
+        }
+
+        .copybtn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--textSec);
+            border-radius: 7px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-family: var(--sans);
+            font-weight: 600;
+            cursor: pointer;
+            opacity: 0;
+            transition: .15s
+        }
+
+        .codeblock:hover .copybtn {
+            opacity: 1
+        }
+
+        .copybtn:hover {
+            background: var(--primary);
+            color: var(--onSolid);
+            border-color: var(--primary)
+        }
+
+        .copybtn.ok {
+            background: var(--success);
+            color: var(--onSolid);
+            border-color: var(--success)
+        }
+
+        /* ---------- Tables ---------- */
+        .tbl-wrap {
+            overflow-x: auto;
+            margin: 1.1em 0;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: var(--shadowSm)
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 14px
+        }
+
+        table.matrix {
+            min-width: 640px
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--borderLight);
+            vertical-align: top
+        }
+
+        thead th {
+            background: var(--panel2);
+            color: var(--textSec);
+            font-weight: 650;
+            font-size: 12.5px;
+            letter-spacing: .02em;
+            position: sticky;
+            top: 0
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none
+        }
+
+        tbody tr:hover {
+            background: var(--panelHover)
+        }
+
+        td code {
+            white-space: normal
+        }
+
+        .tick {
+            color: var(--success);
+            font-weight: 800
+        }
+
+        .cross {
+            color: var(--textMuted)
+        }
+
+        .enf {
+            background: var(--successBg)
+        }
+
+        /* ---------- Callouts ---------- */
+        .callout {
+            border-radius: 11px;
+            padding: 14px 17px 14px 16px;
+            margin: 1.2em 0;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            border-left-width: 4px;
+            position: relative;
+            font-size: 14.5px
+        }
+
+        .callout .ct {
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+            font-size: 14px
+        }
+
+        .callout p:first-of-type {
+            margin-top: .2em
+        }
+
+        .callout p:last-child {
+            margin-bottom: 0
+        }
+
+        .callout.note {
+            border-left-color: var(--info);
+            background: var(--infoBg)
+        }
+
+        .callout.tip {
+            border-left-color: var(--success);
+            background: var(--successBg)
+        }
+
+        .callout.warn {
+            border-left-color: var(--warning);
+            background: var(--warningBg)
+        }
+
+        .callout.danger {
+            border-left-color: var(--danger);
+            background: var(--dangerBg)
+        }
+
+        .callout.gotcha {
+            border-left-color: var(--accent);
+            background: var(--accentBg)
+        }
+
+        .callout.plain {
+            border-left-color: var(--primary);
+            background: var(--primaryBg)
+        }
+
+        .callout.plain .ct {
+            color: var(--primary)
+        }
+
+        .callout .ct .em {
+            font-size: 16px
+        }
+
+        /* ---------- "Advanced" heading badge ---------- */
+        .adv {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 30px;
+            background: var(--accentBg);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            vertical-align: middle;
+            margin-left: 9px;
+            line-height: 1.4
+        }
+
+        .adv:before {
+            content: "▸";
+            font-size: 10px
+        }
+
+        /* ---------- Start-here persona cards ---------- */
+        .starthere {
+            background: linear-gradient(135deg, var(--primaryBg), transparent 70%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px 24px 20px;
+            margin: 1.6em 0;
+            box-shadow: var(--shadowSm)
+        }
+
+        .starthere>.sh-hd {
+            font-weight: 700;
+            font-size: 17px;
+            margin: 0 0 4px;
+            display: flex;
+            align-items: center;
+            gap: 9px
+        }
+
+        .starthere>.sh-sub {
+            color: var(--textSec);
+            font-size: 14px;
+            margin: 0 0 16px
+        }
+
+        .persona-grid {
+            display: grid;
+            gap: 13px;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))
+        }
+
+        .persona {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 18px 15px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .persona:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border))
+        }
+
+        .persona .ph {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            font-weight: 700;
+            font-size: 15px;
+            margin-bottom: 5px
+        }
+
+        .persona .ph .em {
+            font-size: 19px
+        }
+
+        .persona .pdesc {
+            color: var(--textSec);
+            font-size: 13.5px;
+            line-height: 1.5;
+            flex: 1;
+            margin: 0 0 11px
+        }
+
+        .persona .ppath {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding-top: 9px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .persona .ppath:hover {
+            color: var(--primaryHover);
+            text-decoration: none
+        }
+
+        /* ---------- Jargon buster ---------- */
+        .jargon {
+            margin: 1.3em 0;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            overflow: hidden
+        }
+
+        .jargon table {
+            margin: 0;
+            border: none
+        }
+
+        .jargon td {
+            vertical-align: top;
+            padding: 11px 16px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .jargon tr:first-child td {
+            border-top: none
+        }
+
+        .jargon td:first-child {
+            font-weight: 650;
+            color: var(--text);
+            white-space: nowrap;
+            width: 1%
+        }
+
+        .jargon td:last-child {
+            color: var(--textSec);
+            font-size: 14px
+        }
+
+        /* ---------- Cards / grids ---------- */
+        .grid {
+            display: grid;
+            gap: 14px;
+            margin: 1.2em 0
+        }
+
+        .grid.c2 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))
+        }
+
+        .grid.c3 {
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr))
+        }
+
+        .grid.c4 {
+            grid-template-columns: repeat(auto-fit, minmax(175px, 1fr))
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border))
+        }
+
+        .card h4 {
+            margin-top: 0
+        }
+
+        .card .ic-lg {
+            width: 30px;
+            height: 30px;
+            color: var(--primary);
+            margin-bottom: 6px
+        }
+
+        /* ---------- Steps ---------- */
+        ol.steps {
+            counter-reset: st;
+            list-style: none;
+            padding-left: 0;
+            margin: 1em 0
+        }
+
+        ol.steps>li {
+            counter-increment: st;
+            position: relative;
+            padding: 4px 0 14px 44px;
+            margin: 0
+        }
+
+        ol.steps>li:before {
+            content: counter(st);
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 28px;
+            height: 28px;
+            background: var(--primaryBg);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            font-size: 13px;
+            font-family: var(--mono)
+        }
+
+        ol.steps>li:not(:last-child):after {
+            content: "";
+            position: absolute;
+            left: 14px;
+            top: 32px;
+            bottom: 2px;
+            width: 1px;
+            background: var(--border)
+        }
+
+        /* ---------- Pills / badges ---------- */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 9px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sans);
+            white-space: nowrap;
+            line-height: 1.5
+        }
+
+        .pill .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block
+        }
+
+        .pill.ok {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        .pill.ok .dot {
+            background: var(--success)
+        }
+
+        .pill.fail {
+            background: var(--dangerBg);
+            color: var(--danger)
+        }
+
+        .pill.fail .dot {
+            background: var(--danger)
+        }
+
+        .pill.warn {
+            background: var(--warningBg);
+            color: var(--warning)
+        }
+
+        .pill.warn .dot {
+            background: var(--warning)
+        }
+
+        .pill.run {
+            background: var(--infoBg);
+            color: var(--info)
+        }
+
+        .pill.run .dot {
+            background: var(--info)
+        }
+
+        .pill.mut {
+            background: var(--panel2);
+            color: var(--textMuted)
+        }
+
+        .pill.mut .dot {
+            background: var(--textMuted)
+        }
+
+        .pill.amad {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .pill.git {
+            background: var(--panel2);
+            color: var(--textSec)
+        }
+
+        .tag {
+            display: inline-block;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            border-radius: 5px;
+            padding: 1px 7px;
+            color: var(--textSec);
+            font-weight: 500
+        }
+
+        /* ---------- Figures / SVG ---------- */
+        figure {
+            margin: 1.4em 0;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            overflow: hidden
+        }
+
+        figure svg {
+            display: block;
+            width: 100%;
+            height: auto
+        }
+
+        figcaption {
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--textMuted);
+            text-align: center;
+            font-style: italic
+        }
+
+        /* Screenshots — each figure.shot carries a dark AND a light capture of the real
+ app (frontend/public/manual/<view>-<theme>.png, served at /manual/*); the pair
+ swaps with the manual's own theme toggle so the pictured UI always matches the
+ reader's chosen theme. Captures are 1600×900 with seeded demo data; the
+ width/height attributes prevent layout shift under loading="lazy". */
+        figure.shot {
+            padding: 10px
+        }
+
+        figure.shot img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--borderLight);
+            border-radius: 9px
+        }
+
+        figure.shot figcaption {
+            margin-top: 10px
+        }
+
+        html[data-theme="dark"] figure.shot img.light {
+            display: none
+        }
+
+        html[data-theme="light"] figure.shot img.dark {
+            display: none
+        }
+
+        .svg-box {
+            fill: var(--panel2);
+            stroke: var(--border)
+        }
+
+        .svg-box-p {
+            fill: var(--primaryBg);
+            stroke: var(--primary)
+        }
+
+        .svg-box-a {
+            fill: var(--accentBg);
+            stroke: var(--accent)
+        }
+
+        .svg-box-s {
+            fill: var(--successBg);
+            stroke: var(--success)
+        }
+
+        .svg-box-d {
+            fill: var(--dangerBg);
+            stroke: var(--danger)
+        }
+
+        .svg-lbl {
+            fill: var(--text);
+            font-family: var(--sans);
+            font-weight: 600
+        }
+
+        .svg-sub {
+            fill: var(--textMuted);
+            font-family: var(--sans)
+        }
+
+        .svg-line {
+            stroke: var(--textMuted);
+            stroke-width: 1.6;
+            fill: none
+        }
+
+        .svg-line-p {
+            stroke: var(--primary);
+            stroke-width: 1.8;
+            fill: none
+        }
+
+        .svg-mono {
+            fill: var(--textSec);
+            font-family: var(--mono)
+        }
+
+        /* ---------- Definition list (glossary) ---------- */
+        dl.gloss dt {
+            font-weight: 650;
+            color: var(--text);
+            margin-top: 1.1em;
+            font-size: 15px;
+            scroll-margin-top: 70px
+        }
+
+        dl.gloss dt .tag {
+            margin-left: 8px
+        }
+
+        dl.gloss dd {
+            margin: .25em 0 0;
+            color: var(--textSec);
+            font-size: 14.5px
+        }
+
+        .gloss-letter {
+            font-family: var(--mono);
+            color: var(--primary);
+            font-weight: 700
+        }
+
+        /* ---------- FAQ accordion ---------- */
+        details.faq {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.faq summary {
+            cursor: pointer;
+            padding: 13px 16px;
+            font-weight: 600;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px
+        }
+
+        details.faq summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.faq summary:before {
+            content: "+";
+            color: var(--primary);
+            font-weight: 800;
+            font-size: 18px;
+            width: 14px
+        }
+
+        details.faq[open] summary:before {
+            content: "–"
+        }
+
+        details.faq[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.faq .body {
+            padding: 13px 16px 15px 40px
+        }
+
+        details.faq .body p {
+            margin: .4em 0
+        }
+
+        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+ bar whose right edge is the collapsed one-line summary (RU redesign) */
+        details.dlgbar {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.dlgbar summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 12px 16px
+        }
+
+        details.dlgbar summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.dlgbar summary:before {
+            content: "▸";
+            color: var(--primary);
+            font-size: 12px;
+            flex: 0 0 12px
+        }
+
+        details.dlgbar[open] summary:before {
+            content: "▾"
+        }
+
+        details.dlgbar summary .t {
+            font-weight: 700
+        }
+
+        details.dlgbar summary .pill {
+            flex: 0 0 auto
+        }
+
+        details.dlgbar summary .sum {
+            margin-left: auto;
+            color: var(--textMuted);
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 52%
+        }
+
+        details.dlgbar[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.dlgbar .body {
+            padding: 13px 18px 15px 38px;
+            max-width: 76ch
+        }
+
+        details.dlgbar .body p {
+            margin: .55em 0
+        }
+
+        details.dlgbar summary:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px
+        }
+
+        @media(max-width:640px) {
+            details.dlgbar summary .sum {
+                display: none
+            }
+        }
+
+        .faq-cause {
+            color: var(--textMuted);
+            font-size: 13.5px
+        }
+
+        /* ---------- Section intro / view header ---------- */
+        .view-hd {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: .2em 0 .6em
+        }
+
+        .route {
+            font-family: var(--mono);
+            font-size: 12.5px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 3px 9px;
+            color: var(--primary);
+            font-weight: 500
+        }
+
+        .gate {
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 7px
+        }
+
+        .gate.admin {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .gate.any {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        /* ---------- Back to top ---------- */
+        #totop {
+            position: fixed;
+            right: 22px;
+            bottom: 22px;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: var(--onSolid);
+            border: none;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            display: grid;
+            place-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: .25s;
+            z-index: 50
+        }
+
+        #totop.show {
+            opacity: 1;
+            pointer-events: auto
+        }
+
+        #totop:hover {
+            background: var(--primaryHover)
+        }
+
+        /* keyboard hint */
+        .kbd {
+            font-family: var(--mono);
+            font-size: 11px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 5px;
+            padding: 1px 6px;
+            color: var(--textSec)
+        }
+
+        /* ---------- Gentle motion (one calm entrance; disabled on request) ---------- */
+        @keyframes heroRise {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        .hero {
+            animation: heroRise .5s cubic-bezier(.22, .61, .36, 1) both
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+                scroll-behavior: auto !important
+            }
+
+            .card:hover,
+            .persona:hover {
+                transform: none
+            }
+        }
+
+        /* ---------- Responsive ---------- */
+        #scrim {
+            display: none
+        }
+
+        @media(max-width:1040px) {
+            #menuToggle {
+                display: inline-flex
+            }
+
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                transform: translateX(-102%);
+                transition: transform .25s;
+                box-shadow: var(--shadow)
+            }
+
+            body.nav-open #sidebar {
+                transform: translateX(0)
+            }
+
+            body.nav-open #scrim {
+                display: block;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, .5);
+                z-index: 35
+            }
+
+            main {
+                padding: 8px 18px 120px
+            }
+
+            .hero {
+                padding: 30px 24px
+            }
+
+            .hero h1 {
+                font-size: 33px
+            }
+        }
+
+        @media print {
+
+            #sidebar,
+            #topbar,
+            #totop,
+            .copybtn {
+                display: none !important
+            }
+
+            body {
+                display: block;
+                font-size: 11pt
+            }
+
+            main {
+                max-width: none
+            }
+
+            .callout,
+            .card,
+            figure,
+            .codeblock pre,
+            .tbl-wrap {
+                break-inside: avoid
+            }
+
+            section {
+                padding-top: 10px
+            }
+
+            a {
+                color: inherit;
+                text-decoration: none
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+<aside id="sidebar">
+  <div class="brand">
+    
+    <div class="bt"><b>Cronomicon</b><span>Administrator Course · v1.5.6</span></div>
+  </div>
+  <nav class="toc" id="toc">
+    <div class="grp">On this page</div>
+      <a href="#a1-scopes-inventory-and-hosts"><span class="ic">&#9656;</span> A1 · Scopes, inventory and hosts</a>
+      <a href="#a2-agencies-and-network-isolation"><span class="ic">&#9656;</span> A2 · Agencies and network isolation</a>
+      <a href="#a3-runners"><span class="ic">&#9656;</span> A3 · Runners</a>
+      <a href="#a4-who-can-do-what"><span class="ic">&#9656;</span> A4 · Who can do what</a>
+      <a href="#a5-secrets-variables-and-credentials"><span class="ic">&#9656;</span> A5 · Secrets, variables and credentials</a>
+      <a href="#a6-authoring-in-the-app"><span class="ic">&#9656;</span> A6 · Authoring in the app</a>
+      <a href="#a7-external-triggers-and-what-cronomicon-does-not-do-yet"><span class="ic">&#9656;</span> A7 · External triggers, and what Cronomicon does not do yet</a>
+    <details class="grp-sec"><summary class="grp">Guides</summary>
+      <a href="runner-install.html"><span class="ic">&#9656;</span> Runner Install Guide</a>
+      <a href="runner-manage.html"><span class="ic">&#9656;</span> Runner Config Guide</a>
+      <a href="runner-security.html"><span class="ic">&#9656;</span> Runner Security Guide</a>
+      <a href="ansible-guide.html"><span class="ic">&#9656;</span> Ansible Guide</a>
+      <a href="bash-guide.html"><span class="ic">&#9656;</span> Bash Guide</a>
+      <a href="powershell-guide.html"><span class="ic">&#9656;</span> PowerShell Guide</a>
+      <a href="python-guide.html"><span class="ic">&#9656;</span> Python Guide</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Manuals</summary>
+      <a href="user-manual.html">&#128213; User Manual &rarr;</a>
+      <a href="administrator-manual.html">&#9881;&#65039; Administrator Manual &rarr;</a>
+    </details>
+    <details class="grp-sec" open><summary class="grp">Courses</summary>
+      <a href="training-operator.html"><span class="ic">&#9656;</span> Operator Course</a>
+      <a class="active"><span class="ic">&#9656;</span> Administrator Course</a>
+    </details>
+  </nav>
+  <div class="sb-foot">Script Orchestrator · single Go binary + SQLite · self-hosted</div>
+</aside>
+<div id="wrap">
+<header id="topbar">
+  <button class="tbtn" id="menuToggle" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="crumbs" id="crumbs"><b>Cronomicon</b> · Administrator Course</div>
+  <button class="tbtn" onclick="window.print()" title="Print or save as PDF">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>
+    Print
+  </button>
+  <button class="tbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">
+    <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="themeLabel">Light</span>
+  </button>
+</header>
+<main>
+  <div class="hero">
+    <div class="eyebrow">&#127891; Training</div>
+    <h1>Cronomicon</h1>
+    <p class="lead">The self-hosted <strong>Script Orchestrator</strong> — schedule and run Bash, Ansible,
+                    Terraform, PowerShell, Perl and Python jobs across your fleet from one auditable web console.</p>
+    <div class="meta">
+      <span class="chip">Guide <b>Administrator course</b></span>
+      <span class="chip">Version <b>v1.5.6</b></span>
+    </div>
+  </div>
+  <!--
+  Administrator training course — body-only fragment (TR-4,
+  the training-course plan). Published by
+  frontend/vite-manuals-plugin.js as a GUIDES entry.
+
+  THE WIDGET STYLE AND SCRIPT BLOCKS BELOW ARE COPIED VERBATIM FROM
+  training-operator.html, apart from the localStorage key. That duplication is
+  deliberate (TR-D3): these are hand-authored standalone documents with no build
+  step of their own, and inventing a partial-include mechanism in the publish
+  plugin to save one copy of ~150 lines would be more machinery than the thing it
+  saves. If the harness grows past ~300 lines, revisit.
+
+  Same six authoring rules as the operator course — read that file's header. The
+  two that bite hardest, because they fail silently:
+
+    · The h1 MUST be the first thing in the file, ahead of this comment, or the
+      wrapper does not lift it into the hero and you get a duplicate title with
+      no version chip.
+    · NEVER write a tag in angle brackets inside this comment. The heading and
+      code-block rewrites run over comments too, and an unclosed heading tag here
+      swallows content up to the first real closing tag.
+-->
+<style>
+    /* ── Training widgets (tr-) ────────────────────────────────────────────
+       Namespaced so nothing collides with the manuals' own classes or the
+       wrapper's appended script. Colours are var(--*) only — see rule 1. */
+
+    .tr-intro {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 18px 20px;
+        margin: 22px 0 28px;
+    }
+
+    .tr-intro p:last-child { margin-bottom: 0; }
+
+    .tr-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+    }
+
+    .tr-meta span {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--textSec);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 3px 8px;
+    }
+
+    /* ── Progress strip ─────────────────────────────────────────────────── */
+
+    .tr-progress {
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin: 24px 0;
+    }
+
+    .tr-progress h3 {
+        margin: 0 0 4px;
+        font-size: 13px;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--textSec);
+    }
+
+    .tr-progress-note {
+        font-size: 13px;
+        color: var(--textMuted);
+        margin: 0 0 12px;
+    }
+
+    .tr-progress ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+    }
+
+    .tr-progress li { margin: 0; }
+
+    .tr-progress label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        cursor: pointer;
+        color: var(--text);
+    }
+
+    .tr-progress input { accent-color: var(--primary); width: 15px; height: 15px; }
+
+    .tr-reset {
+        margin-top: 12px;
+        font: inherit;
+        font-size: 13px;
+        background: transparent;
+        color: var(--primary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 4px 10px;
+        cursor: pointer;
+    }
+
+    .tr-reset:hover { border-color: var(--borderStrong); }
+
+    /* ── Shared disclosure look ─────────────────────────────────────────── */
+
+    .tr-map, .tr-opt, .tr-reveal {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--panel);
+        margin-bottom: 8px;
+    }
+
+    .tr-map > summary,
+    .tr-opt > summary,
+    .tr-reveal > summary {
+        cursor: pointer;
+        padding: 10px 14px;
+        list-style: none;
+        font-size: 14px;
+    }
+
+    .tr-map > summary::-webkit-details-marker,
+    .tr-opt > summary::-webkit-details-marker,
+    .tr-reveal > summary::-webkit-details-marker { display: none; }
+
+    .tr-map > summary:hover,
+    .tr-opt > summary:hover,
+    .tr-reveal > summary:hover { background: var(--panelHover); }
+
+    /* Disclosure affordance. Nothing marked these rows as expandable — the
+       native marker is suppressed above. \25B6/\25BC is the app's one
+       disclosure pair (ExpandChevron); tr-opt keeps ::after for its verdict
+       pill, and tr-map's chevron rides the summary grid's last slot. */
+    .tr-reveal > summary::before,
+    .tr-opt > summary::before {
+        content: "\25B6";
+        display: inline-block;
+        font-size: 9px;
+        color: var(--textMuted);
+        margin-right: 9px;
+        vertical-align: 1px;
+    }
+
+    .tr-reveal[open] > summary::before,
+    .tr-opt[open] > summary::before { content: "\25BC"; color: var(--textSec); }
+
+    .tr-map > summary::after {
+        content: "\25B6";
+        font-size: 9px;
+        color: var(--textMuted);
+        justify-self: end;
+    }
+
+    .tr-map[open] > summary::after { content: "\25BC"; color: var(--textSec); }
+
+    .tr-map[open] > summary,
+    .tr-opt[open] > summary,
+    .tr-reveal[open] > summary { border-bottom: 1px solid var(--border); }
+
+    .tr-body { padding: 12px 14px; font-size: 14px; }
+    .tr-body p:last-child, .tr-body ul:last-child { margin-bottom: 0; }
+
+    /* ── Rosetta rows ───────────────────────────────────────────────────── */
+
+    .tr-rosetta { margin: 18px 0 24px; }
+
+    .tr-map > summary {
+        display: grid;
+        grid-template-columns: 1fr 22px 1fr auto 12px; /* 5th col: the ::after chevron */
+        align-items: center;
+        gap: 10px;
+    }
+
+    .tr-from { color: var(--textSec); }
+    .tr-to { color: var(--text); font-weight: 600; }
+    .tr-arrow { color: var(--textMuted); text-align: center; }
+
+    .tr-flag {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 9px;
+        white-space: nowrap;
+    }
+
+    .tr-flag-new { background: var(--primaryBg); color: var(--primary); }
+    .tr-flag-warn { background: var(--warningBg); color: var(--warning); }
+    .tr-flag-gap { background: var(--dangerBg); color: var(--danger); }
+    .tr-flag-win { background: var(--successBg); color: var(--success); }
+
+    /* ── Scenarios ──────────────────────────────────────────────────────── */
+
+    .tr-scenario {
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--primary);
+        border-radius: 8px;
+        background: var(--panel2);
+        padding: 16px 18px;
+        margin: 20px 0 26px;
+    }
+
+    .tr-scenario > h4 {
+        margin: 0 0 4px;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--primary);
+    }
+
+    .tr-setup { font-size: 14px; margin: 0 0 14px; }
+
+    .tr-ask {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 12px;
+        color: var(--text);
+    }
+
+    .tr-opt { background: var(--panel); }
+
+    .tr-opt[open] > summary::after {
+        float: right;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 9px;
+        margin-left: 12px;
+    }
+
+    .tr-opt[data-verdict="right"][open] > summary::after {
+        content: "\2713 Correct";
+        background: var(--successBg);
+        color: var(--success);
+    }
+
+    .tr-opt[data-verdict="wrong"][open] > summary::after {
+        content: "\2717 Not this one";
+        background: var(--dangerBg);
+        color: var(--danger);
+    }
+
+    .tr-opt[data-verdict="right"][open] { border-color: var(--success); }
+    .tr-opt[data-verdict="wrong"][open] { border-color: var(--danger); }
+
+    .tr-takeaway {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+        font-size: 14px;
+    }
+
+    .tr-takeaway strong { color: var(--accent); }
+
+
+    /* ── Match lists (tr-sort) ──────────────────────────────────────────────
+       A "commit mentally, then reveal" matcher rather than a drag-and-drop
+       sorter. Same teaching value — you have to decide before you look — with
+       no JavaScript, no drag affordance to fail on touch, and no keyboard trap.
+       The buckets are shown first so the choice is a real one. */
+
+    .tr-buckets {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+        margin: 16px 0;
+    }
+
+    .tr-bucket {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel2);
+        padding: 12px 14px;
+    }
+
+    .tr-bucket h4 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        color: var(--primary);
+    }
+
+    .tr-bucket p { margin: 0; font-size: 13px; color: var(--textSec); }
+
+    .tr-answer {
+        display: inline-block;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 4px;
+        padding: 2px 8px;
+        margin-bottom: 8px;
+        background: var(--primaryBg);
+        color: var(--primary);
+    }
+
+    /* ── Hotspots ───────────────────────────────────────────────────────────
+       Numbered pins positioned in PERCENTAGES over a figure.shot pair, so one
+       set of coordinates serves both themes and every viewport width. Each pin
+       is an anchor into the numbered list below it, which is also what the
+       whole widget degrades to in print and with images off. */
+
+    .tr-hotspot { margin: 20px 0 8px; }
+
+    /* The pins' coordinate space is THIS box, which wraps the images alone. It
+       must not include the figcaption: percentages measured against a taller
+       box put every pin high by the caption's height, which is how the first
+       draft of this widget landed pin 2 on the Score header. */
+    .tr-shotbox { position: relative; display: block; }
+    .tr-shotbox img { display: block; width: 100%; height: auto; }
+
+    .tr-pin {
+        position: absolute;
+        width: 26px;
+        height: 26px;
+        margin: -13px 0 0 -13px;
+        border-radius: 999px;
+        background: var(--primary);
+        color: var(--onSolid);
+        font-family: var(--sansCond);
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 26px;
+        text-align: center;
+        text-decoration: none;
+        box-shadow: var(--shadow);
+        border: 2px solid var(--panel);
+    }
+
+    .tr-pin:hover, .tr-pin:focus { background: var(--accent); }
+
+    .tr-legend { counter-reset: none; margin: 0 0 24px; padding-left: 22px; }
+    .tr-legend li { margin-bottom: 8px; font-size: 14px; }
+    .tr-legend li strong { color: var(--text); }
+
+    /* ── Walkthrough (CSS-only stepper) ─────────────────────────────────────
+       Radio inputs drive which step shows via :checked ~ sibling selectors, so
+       the stepper works with JavaScript disabled. The inputs are visually
+       hidden but focusable, and each label is their control — so arrow keys
+       move through the steps the way a radio group should. */
+
+    .tr-walk {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 14px 16px;
+        margin: 20px 0 26px;
+    }
+
+    .tr-walk > input[type="radio"] {
+        position: absolute;
+        opacity: 0;
+        width: 1px;
+        height: 1px;
+        pointer-events: none;
+    }
+
+    .tr-walk-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .tr-walk-nav label {
+        cursor: pointer;
+        font-size: 13px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 5px 11px;
+        color: var(--textSec);
+        background: var(--panel2);
+    }
+
+    .tr-walk-nav label:hover { border-color: var(--borderStrong); color: var(--text); }
+
+    .tr-walk-step { display: none; }
+    .tr-walk-step figure.shot { margin: 0 0 12px; }
+    .tr-walk-step h4 { margin: 0 0 6px; font-size: 15px; }
+    .tr-walk-step p { font-size: 14px; }
+    .tr-walk-step p:last-child { margin-bottom: 0; }
+
+    /* Step N checked → highlight tab N, show panel N. Four steps. */
+    .tr-w1:checked ~ .tr-walk-nav label[for$="s1"],
+    .tr-w2:checked ~ .tr-walk-nav label[for$="s2"],
+    .tr-w3:checked ~ .tr-walk-nav label[for$="s3"],
+    .tr-w4:checked ~ .tr-walk-nav label[for$="s4"] {
+        background: var(--primary);
+        color: var(--onSolid);
+        border-color: var(--primary);
+    }
+
+    .tr-w1:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(1),
+    .tr-w2:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(2),
+    .tr-w3:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(3),
+    .tr-w4:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(4) { display: block; }
+
+    /* Keyboard focus has to be visible even though the input itself is hidden. */
+    .tr-w1:focus-visible ~ .tr-walk-nav label[for$="s1"],
+    .tr-w2:focus-visible ~ .tr-walk-nav label[for$="s2"],
+    .tr-w3:focus-visible ~ .tr-walk-nav label[for$="s3"],
+    .tr-w4:focus-visible ~ .tr-walk-nav label[for$="s4"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    @media print {
+        .tr-walk-step { display: block !important; break-inside: avoid; }
+        .tr-walk-nav { display: none; }
+        .tr-pin { display: none; }
+    }
+
+    /* Print: open every disclosure so a PDF carries the whole course. */
+    @media print {
+        .tr-map, .tr-opt, .tr-reveal { break-inside: avoid; }
+        .tr-map > .tr-body, .tr-opt > .tr-body, .tr-reveal > .tr-body { display: block !important; }
+        .tr-progress, .tr-reset { display: none; }
+    }
+
+    /* ── Deck mode (TR-6) ───────────────────────────────────────────────────
+       One slide at a time, the SCORM-ish presentation the courses default to.
+
+       The whole feature is an ENHANCEMENT layered on the scrolling page: the
+       markup below is built at runtime by the deck script, so with JavaScript
+       disabled none of these rules ever match and the document is exactly the
+       long page it was before TR-6 — which is what keeps the print path, the
+       Moodle File-resource download and the no-JS guarantee intact without a
+       second code path to maintain. `@media print` force-restores page mode for
+       the same reason. */
+
+    .tr-deck .tr-slide { display: none; }
+    /* The current slide is a flex column centered in its min-height, so a
+       short slide sits composed in the frame instead of stranded at the top.
+       A tall slide outgrows the min-height and scrolls from the top as before. */
+    .tr-deck .tr-slide.tr-current {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        animation: none;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .tr-deck .tr-slide.tr-current { animation: tr-enter .22s ease; }
+
+        @keyframes tr-enter {
+            from { opacity: 0; transform: translateY(8px); }
+        }
+    }
+    .tr-deck .tr-slide.tr-current > :first-child { margin-top: 0; }
+
+    /* The manuals give every `section` top padding and margin for the scrolling
+       read. A slide is the top of the screen, so it takes neither. */
+    .tr-deck .tr-slide { padding-top: 0; margin-top: 0; }
+
+    /* Each slide is focused on navigation so screen readers land on the new
+       content. That is a programmatic focus on a container, not a control, so
+       it must not draw a focus ring — an outline around the whole slide reads
+       as a card border and makes a short slide look like an empty box. The
+       real focus ring on real controls is untouched. */
+    .tr-deck .tr-slide:focus { outline: none; }
+
+    /* Room for the fixed bar, and enough height that a short slide still reads
+       as a slide rather than as a stranded paragraph. */
+    .tr-deck main { padding-bottom: 96px; }
+    .tr-deck .tr-slide.tr-current { min-height: 58vh; }
+
+    .tr-deckbar {
+        position: fixed;
+        bottom: 0;
+        left: var(--nav-w);
+        right: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 22px;
+        background: var(--panel);
+        border-top: 1px solid var(--border);
+        box-shadow: var(--shadow);
+    }
+
+    /* Matches the manuals' own sidebar-collapse breakpoint, so the bar and the
+       sidebar can never disagree about who owns the left edge. */
+    @media (max-width: 1040px) {
+        .tr-deckbar { left: 0; }
+    }
+
+    .tr-deckbar button {
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 4px;
+        padding: 7px 14px;
+        border: 1px solid var(--borderStrong);
+        background: var(--panel2);
+        color: var(--text);
+    }
+
+    .tr-deckbar button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+    .tr-deckbar button:disabled { opacity: .4; cursor: default; }
+
+    .tr-deck-next { background: var(--primary) !important; color: var(--onSolid) !important; border-color: var(--primary) !important; }
+    .tr-deck-next:hover:not(:disabled) { background: var(--primaryHover) !important; color: var(--onSolid) !important; }
+
+    .tr-deck-where {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .tr-deck-label {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--textSec);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .tr-deck-rail { height: 4px; border-radius: 999px; background: var(--panel2); overflow: hidden; }
+    .tr-deck-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+    .tr-deck-mode {
+        border: 1px solid var(--border) !important;
+        background: transparent !important;
+        color: var(--primary) !important;
+        white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+        .tr-deck-mode { display: none; }
+        .tr-deckbar { gap: 10px; padding: 9px 14px; }
+    }
+
+    /* The control that brings the deck back while reading as one page. It rides
+       in the flow at the top of the content rather than in the fixed bar, which
+       does not exist in page mode. */
+    .tr-page-resume { margin: 0 0 18px; }
+
+    @media print {
+        .tr-deckbar, .tr-page-resume { display: none !important; }
+        .tr-deck .tr-slide { display: block !important; }
+        .tr-deck main { padding-bottom: 0; }
+    }
+
+</style>
+<p class="lead-p">This course is for people who <strong>administer</strong> Cronomicon, not just operate it:
+    you set up scopes, decide who can do what, enrol runners, and hold the secrets. It assumes the
+    operator course.</p>
+
+<div class="tr-intro">
+    <div class="tr-meta">
+        <span>Audience: administrators</span>
+        <span>About 45 minutes</span>
+        <span>Operator course first</span>
+    </div>
+    <p><strong>Take the operator course before this one.</strong> It covers the composable model, where
+        definitions live, the Run dialog, blast radius, how runs start, and reading results. Everything
+        below assumes all of it, and none of it is repeated here.</p>
+    <p>Two modules carry more weight than the rest. <strong>A2</strong> and <strong>A4</strong> are where an
+        administrator's mistakes are expensive — one strands work where nothing can run it, the other
+        locks people out or hands them everything. Slow down on both.</p>
+</div>
+
+<div class="tr-progress" id="tr-progress" hidden>
+    <h3>Your progress</h3>
+    <p class="tr-progress-note">Saved in this browser only. Not sent anywhere, not visible to anyone else.</p>
+    <ul>
+        <li><label><input type="checkbox" data-mod="a1"> A1 · Scopes and hosts</label></li>
+        <li><label><input type="checkbox" data-mod="a2"> A2 · Agencies</label></li>
+        <li><label><input type="checkbox" data-mod="a3"> A3 · Runners</label></li>
+        <li><label><input type="checkbox" data-mod="a4"> A4 · Access</label></li>
+        <li><label><input type="checkbox" data-mod="a5"> A5 · Secrets</label></li>
+        <li><label><input type="checkbox" data-mod="a6"> A6 · Authoring</label></li>
+        <li><label><input type="checkbox" data-mod="a7"> A7 · Triggers and not-yets</label></li>
+    </ul>
+    <button type="button" class="tr-reset" id="tr-reset">Clear progress</button>
+</div>
+
+<h2 id="a1-scopes-inventory-and-hosts">A1 · Scopes, inventory and hosts</h2>
+
+<p>A <strong>scope</strong> is a named set of hosts plus the run types they support. It is the closest
+    thing to an Automate Schedule agent environment, and it does more than group machines: it is the
+    boundary a run cannot cross. Getting scopes right is most of getting targeting right.</p>
+
+<h3>Scopes have a source too</h3>
+
+<p>Like jobs and schedules, a scope is either <code>git</code> or <code>amadeus</code>. A git scope is
+    defined in a repository and synced in; an Cronomicon scope is authored in the app. The same rule follows:
+    if it came from Git, change it in Git.</p>
+
+<p>Hosts work the same way, and this is where it gets interesting — <strong>a single scope can contain
+        hosts from both sources at once</strong>. Hosts imported from a Git inventory carry a read-only
+    badge; hosts you add in the app are yours to edit. When a name exists in both, <strong>the Cronomicon
+        entry wins</strong>.</p>
+
+<details class="tr-reveal">
+    <summary>Why the Cronomicon entry wins, and how to use that</summary>
+    <div class="tr-body">
+        <p>Because it is the overlay. The repository describes the fleet as the team that owns the
+            repository understands it; your overlay describes what is true for <em>this</em> Cronomicon
+            installation — a different address, a bastion, a specific credential.</p>
+        <p>The practical use: you do not have to get a pull request merged to fix one host's connection
+            details. Add the overlay, move on, and let the repository catch up. The practical risk: an
+            overlay you forget about will keep winning long after the repository was fixed. Overlays are
+            worth reviewing occasionally.</p>
+    </div>
+</details>
+
+<h3>Ansible inventory</h3>
+
+<p>A scope can carry a full Ansible inventory in INI form. Cronomicon parses it into an <strong>advisory
+        projection</strong> — groups, hosts, group variables — which is what the app shows you and what
+    group targeting resolves against.</p>
+
+<details class="tr-reveal">
+    <summary>"Advisory" is doing real work in that sentence</summary>
+    <div class="tr-body">
+        <p>Cronomicon parses a deliberately limited subset of inventory syntax. Anything it cannot parse it
+            <strong>degrades loudly</strong> — it tells you, rather than quietly showing you an inventory
+            that is missing half its groups.</p>
+        <p>The projection is for display and for resolving group targeting. The inventory that Ansible
+            actually runs against is the one in the repository. When they disagree, the repository is
+            right, and the projection warning is your signal that they do.</p>
+        <p>One hard rule: <strong>an inventory containing secrets is rejected outright.</strong> Not warned
+            about — rejected. Inventories are read by more people than you think.</p>
+    </div>
+</details>
+
+<h3>Which is it?</h3>
+
+<details class="tr-reveal">
+    <summary>A host's SSH port is wrong for this installation only</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">An Cronomicon overlay host</span></p>
+        <p>Exactly what the overlay is for. Add the host in the app with the right port; it wins over the
+            git-imported entry of the same name.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>A new server everyone's automation needs to know about</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Git</span></p>
+        <p>If it belongs to the fleet as everyone understands it, it belongs in the repository. An overlay
+            here means the next person to read the inventory gets the wrong picture.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>This scope's hosts sit behind a firewall the server cannot cross</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">An agency, plus a runner — not a scope change</span></p>
+        <p>Reachability is not a property of the host list. That is A2, and it is the next module.</p>
+    </div>
+</details>
+
+<h2 id="a2-agencies-and-network-isolation">A2 · Agencies and network isolation</h2>
+
+<p>An <strong>agency</strong> is a network-isolation zone. It answers one question: <em>which runners are
+        allowed to execute this work?</em> And the answer is enforced as a hard boundary, not a
+    preference.</p>
+
+<p>Two facts do most of the work:</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>A run carries agencies</h4>
+        <p>Snapshotted when the run is enqueued, from the scope it is bound to. Changing the scope's
+            agencies later does not retroactively move runs already queued.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>A runner belongs to agencies</h4>
+        <p>Set by you, in the app. <strong>Never self-declared by the agent</strong> — a runner cannot
+            talk its way into an agency by claiming membership.</p>
+    </div>
+</div>
+
+<h3>The dispatch rule, exactly</h3>
+
+<p>It is disjoint in <em>both</em> directions, and the second half is the one people miss:</p>
+
+<ol class="tr-legend">
+    <li><strong>A run that carries agencies</strong> can only be claimed by a runner that belongs to at
+        least one of them.</li>
+    <li><strong>A run that carries no agencies</strong> can only be claimed by a runner that belongs to
+        <strong>no agencies at all</strong> — the general pool.</li>
+</ol>
+
+<p>So putting a runner into an agency does not add capability to it. It <em>removes</em> that runner from
+    the general pool. This is deliberate: an isolation boundary that leaks in one direction is not an
+    isolation boundary.</p>
+
+<h3>Check yourself</h3>
+
+<div class="tr-scenario">
+    <h4>Scenario A1</h4>
+    <p class="tr-setup">You have one runner, doing general work happily. A new isolated network needs
+        automation, so you create the agency <strong>dmz</strong> and add your existing runner to it,
+        expecting it to handle both.</p>
+    <p class="tr-ask">What happens to the general work it was doing?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Nothing — it now does general work and dmz work</summary>
+        <div class="tr-body">
+            <p>No, and this is the assumption that causes the outage. Agency membership is not additive
+                capability.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>It stops. Untagged runs can only go to a runner with no agencies at all.</summary>
+        <div class="tr-body">
+            <p>Correct. The moment that runner joined an agency it left the general pool, and every
+                untagged run now has nowhere to go — they queue rather than fail, which is why this can go
+                unnoticed for a while.</p>
+            <p>The fix is a second runner. A runner is a small binary; needing two is the intended shape,
+                not a limitation.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>General runs fail immediately with "no runner available"</summary>
+        <div class="tr-body">
+            <p>No — they <strong>queue</strong>, which is worse for your Tuesday because nothing alerts as
+                loudly as a failure would. The signal is a stuck-run indicator and a growing queue, not a
+                red row.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> joining an agency removes a runner from the general
+        pool. Plan runner coverage per agency, and keep at least one runner in the general pool if
+        anything still needs it.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario A2</h4>
+    <p class="tr-setup">A job bound to a <strong>dmz</strong> scope has been queued for twenty minutes. The
+        dmz runner shows as <strong>offline</strong>.</p>
+    <p class="tr-ask">Can you get the run moving by pointing the job at a scope with no agency?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Yes — re-binding the job releases the queued run to the general pool</summary>
+        <div class="tr-body">
+            <p>No. The run snapshotted its agencies when it was enqueued, so the run that is already
+                waiting keeps waiting. Editing the definition changes what happens <em>next time</em>.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>No — and you should not want to. Fix the runner.</summary>
+        <div class="tr-body">
+            <p>Correct on both counts. The queued run keeps the agencies it was enqueued with, and the
+                boundary exists because those hosts are isolated for a reason. Routing round it is
+                precisely the thing agencies prevent.</p>
+            <p>The right move is to bring the runner back. Offline runners re-admit themselves
+                automatically on their next successful poll, so often the answer is fixing the network or
+                the service on that host and waiting.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Yes, after cancelling and re-triggering the run</summary>
+        <div class="tr-body">
+            <p>Mechanically this would enqueue a fresh run with the new binding — but it would run
+                department-isolated work outside its isolation zone. If you find yourself here, the
+                question to escalate is whether the scope's agency is right, not how to bypass it.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> a run's agencies are fixed at enqueue. Agencies are an
+        isolation guarantee — when one blocks you, that is the feature.</p>
+</div>
+
+<h2 id="a3-runners">A3 · Runners</h2>
+
+<p>A runner is a small external binary that polls Cronomicon for work. You need one when the server cannot
+    reach the targets directly, when the work must execute inside an isolated network, or when a job
+    watches for arriving files.</p>
+
+<figure class="shot">
+    <img class="dark" src="/manual/runners-dark.png" loading="lazy" width="1600" height="900"
+        alt="The Runners view: registered runners with their status, capability chips, agency membership and last heartbeat">
+    <img class="light" src="/manual/runners-light.png" loading="lazy" width="1600" height="900"
+        alt="The Runners view: registered runners with their status, capability chips, agency membership and last heartbeat">
+    <figcaption>The Runners view — status, capabilities, agencies.</figcaption>
+</figure>
+
+<h3>Three states, and one of them is not stored</h3>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>Online</h4>
+        <p>Heartbeating normally. Claiming work.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Degraded</h4>
+        <p>Has not heartbeated for more than two minutes. Still counts as reachable.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Offline</h4>
+        <p>Gone long enough to be treated as absent. Re-admits itself on its next successful poll.</p>
+    </div>
+</div>
+
+<details class="tr-reveal">
+    <summary>Degraded is computed when you look, never written down</summary>
+    <div class="tr-body">
+        <p>It is derived from the last heartbeat at read time. There is no background job flipping runners
+            to degraded and no stored value to go stale — which means the state you see is always current,
+            and a runner that recovers stops being degraded the instant it heartbeats.</p>
+        <p>Recovery actions are available on degraded runners, not just online ones. A runner that has gone
+            quiet is exactly the one you want to be able to act on.</p>
+    </div>
+</details>
+
+<h3>Capabilities are flags you set, not claims the agent makes</h3>
+
+<p>A runner does only what it was started and configured to do. Two capabilities matter most, and both are
+    opt-in:</p>
+
+<details class="tr-reveal">
+    <summary><strong>Checkout</strong> — running full Ansible playbook projects</summary>
+    <div class="tr-body">
+        <p>Off unless the agent was started to allow it, and then bounded: a repository allowlist, a
+            server-pinned commit, a read-only deploy credential, and a secret scan of the tree before it
+            runs. Body-only runs need none of this.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>File watching</strong> — the other reason to deploy a runner</summary>
+    <div class="tr-body">
+        <p>Also opt-in, with an allowlist of paths it may watch. The agent reports what it observed; the
+            server decides whether that means a run. The agent never triggers anything itself.</p>
+        <p>It polls rather than using filesystem notifications — deliberately. The stability check ("size
+            unchanged for N seconds") needs polling anyway, and filesystem notifications do not fire for
+            writes made by <em>another host</em> over NFS or SMB, which is exactly where drop directories
+            live. A watcher that silently never fires there would be worse than a slower one that always
+            works.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Secret injection</strong> — a flag with teeth</summary>
+    <div class="tr-body">
+        <p>A job that binds secret references may only be claimed by a runner you have flagged for secret
+            injection, and which speaks a recent enough protocol. An unflagged runner leaves such a run
+            queued for an eligible one rather than claiming it and failing.</p>
+        <p>Same shape as agency isolation: eligibility filters dispatch, so the wrong runner never sees the
+            work.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Protocol version, and why an old runner disables buttons rather than hiding them</summary>
+    <div class="tr-body">
+        <p>Agent and server negotiate a wire protocol version. Newer features need newer agents, so a
+            runner that is behind simply cannot do some things.</p>
+        <p>When that happens the control is <strong>disabled with a tooltip naming the fix</strong>, not
+            hidden. A missing button is a mystery; a disabled one that says "needs agent v10 or later" is
+            an instruction. That is a house rule across the whole app.</p>
+    </div>
+</details>
+
+<h2 id="a4-who-can-do-what">A4 · Who can do what</h2>
+
+<p>This is the module to read twice. Access mistakes are quiet: nobody reports being able to do something
+    they should not.</p>
+
+<h3>Two halves, and they must come from the same grant</h3>
+
+<p>Access is not "a role" plus "some scopes" held separately. It is a <strong>grant</strong>: an AD group,
+    a role, and where that role applies — one row, one package.</p>
+
+<p>The rule that follows is the single most important thing here: <strong>a permission and a scope must
+        come from the same grant.</strong> Cronomicon never combines the verb from one grant with the
+    territory of another.</p>
+
+<h3>The six permissions</h3>
+
+<ol class="tr-legend">
+    <li><strong>Trigger jobs</strong> — start a run.</li>
+    <li><strong>Kill jobs</strong> — stop one that is going.</li>
+    <li><strong>Manage env vars</strong> — env vars and secrets.</li>
+    <li><strong>Publish schedule</strong> — push definitions to GitLab.</li>
+    <li><strong>Configure app</strong> — settings, scopes, agencies, runners.</li>
+    <li><strong>Manage roles</strong> — roles and grants. The one that can grant itself away.</li>
+</ol>
+
+<p>Four roles come built in — <strong>admin</strong> (all six), <strong>approver</strong> (trigger, kill,
+    publish), <strong>operator</strong> (trigger, kill) and <strong>viewer</strong> (none, read-only) — and
+    you can define your own from the same six.</p>
+
+<h3>Where a grant applies</h3>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>All scopes</h4>
+        <p>Unrestricted. The role's permissions apply everywhere, including to anything created
+            tomorrow.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>One agency</h4>
+        <p>The role applies to that agency's scopes, and follows as the agency's membership changes.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>No grant</h4>
+        <p><strong>Zero access.</strong> Not "everything" — nothing.</p>
+    </div>
+</div>
+
+<p>That third one used to be the other way round in much older versions, and it was a trap: an empty scope
+    list meant unrestricted. It now fails closed. If you read old notes suggesting otherwise, they are
+    describing behaviour that no longer exists.</p>
+
+<p>One more thing that catches people: <strong>AD group names are case-sensitive.</strong>
+    <code>Finance-Ops</code> and <code>finance-ops</code> are different groups, and a grant against the
+    wrong case simply never matches — silently, because there is nothing to report.</p>
+
+<h3>Check yourself</h3>
+
+<div class="tr-scenario">
+    <h4>Scenario A3</h4>
+    <p class="tr-setup">Dana is in two AD groups. One grants <strong>viewer</strong> across
+        <strong>all scopes</strong>. The other grants <strong>operator</strong> on the
+        <strong>Finance</strong> agency.</p>
+    <p class="tr-ask">Can Dana run a job in the Tax agency?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Yes — she has operator somewhere, and viewer everywhere</summary>
+        <div class="tr-body">
+            <p>No, and this is exactly the mistake the same-grant rule exists to prevent. It takes the verb
+                from the second grant and the territory from the first. Cronomicon never does that.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>No. She can see Tax jobs, and run nothing there.</summary>
+        <div class="tr-body">
+            <p>Correct. Each grant is evaluated whole. The viewer grant reaches Tax but carries no verbs;
+                the operator grant carries the verb but does not reach Tax. Neither grant answers yes on
+                its own, so the answer is no.</p>
+            <p>She can run jobs in Finance, and read everywhere.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>No, and she cannot see Tax jobs either</summary>
+        <div class="tr-body">
+            <p>Half right. The viewer grant does reach all scopes, so she can see Tax jobs — she just holds
+                no verbs to use on them. Visibility and capability are separate questions, answered by
+                different grants.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> evaluate one grant at a time, whole. "Can do this
+        somewhere" is never "can do it here".</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario A4</h4>
+    <p class="tr-setup">A contractor needs to run one specific job in Finance and nothing else. You are
+        looking for a per-job permission and cannot find one.</p>
+    <p class="tr-ask">What is the right shape?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Grant operator on all scopes and rely on them only touching that job</summary>
+        <div class="tr-body">
+            <p>No. That is not access control, it is a request. It also fails the question anyone will ask
+                afterwards: what could this account have done?</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>A scope containing only what that job targets, an agency for it, and a grant against that</summary>
+        <div class="tr-body">
+            <p>Correct. There is deliberately no per-job permission — the unit of access is the scope,
+                reached through an agency. Narrowing access means narrowing the territory, which also
+                narrows the blast radius of anything that goes wrong.</p>
+            <p>If that feels like a lot of structure for one contractor, that is the system telling you
+                something true: one job's worth of access is unusual, and it is worth being deliberate
+                about.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Make a custom role holding only "trigger jobs" and grant it everywhere</summary>
+        <div class="tr-body">
+            <p>Better than the first option, and still wrong on the territory: "everywhere" means every
+                scope including ones that do not exist yet. The custom role is a good instinct — pair it
+                with a narrow agency rather than all scopes.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> the unit of access is the scope. Narrow the territory,
+        not the job list.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario A5</h4>
+    <p class="tr-setup">Tidying up, you remove the last grant that gives anyone <strong>manage
+            roles</strong> across all scopes.</p>
+    <p class="tr-ask">What happens?</p>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>Cronomicon refuses — it will not let you remove the last unrestricted administrator</summary>
+        <div class="tr-body">
+            <p>Correct. There is a guard for exactly this, because the failure is unrecoverable from inside
+                the app: nobody left could grant the permission back.</p>
+            <p>It is the one place where the system overrules an administrator, and it earns it.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It succeeds, and you fix it by editing the database</summary>
+        <div class="tr-body">
+            <p>It does not succeed. And "fix it in the database" is a bad plan you should not need — which
+                is why the guard exists.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It succeeds, and everyone is silently promoted to admin</summary>
+        <div class="tr-body">
+            <p>No. Cronomicon fails closed everywhere — the failure mode of losing access control is that
+                nobody can do anything, never that everybody can.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> the system fails closed, and guards the one door that
+        cannot be reopened from inside.</p>
+</div>
+
+<h3>One operational note</h3>
+
+<p>Changing roles or grants <strong>revokes existing sessions</strong>. People will be asked to sign in
+    again, and their new access takes effect immediately rather than whenever their session happened to
+    expire. Worth saying out loud before you make a change during business hours.</p>
+
+<h2 id="a5-secrets-variables-and-credentials">A5 · Secrets, variables and credentials</h2>
+
+<p>Four different things live near each other. Choosing the wrong one is how values end up in logs.</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>Env var</h4>
+        <p>An ordinary value. <strong>Visible in logs.</strong> For configuration, not credentials.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Secret</h4>
+        <p>Encrypted at rest, injected only into runs that declare it, masked in logs as it is written.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Vault reference</h4>
+        <p>Same, but the value lives in Vault and is fetched at dispatch. Cronomicon stores the name.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>SSH credential</h4>
+        <p>A first-class key for connecting to hosts, with its own rotation and usage tracking.</p>
+    </div>
+</div>
+
+<details class="tr-reveal">
+    <summary>Jobs bind names, never values</summary>
+    <div class="tr-body">
+        <p>A job declares which secrets it needs by <strong>reference</strong>. Nothing sensitive is stored
+            in the job definition, which is what makes it safe for that definition to live in Git and be
+            read by anyone with repository access.</p>
+        <p>At dispatch, only the declared references are resolved, injected into that one run, recorded in
+            an audit row, and fed to the log redactor. A run that does not declare a secret cannot see
+            it.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Redaction happens on the way in, not on the way out</summary>
+    <div class="tr-body">
+        <p>Values are masked as the log is written, so there is no unredacted copy on disk to leak later.</p>
+        <p>The corollary matters for your operators: ordinary variables and run inputs are <em>not</em>
+            masked, deliberately, because they are usually what someone needs to see when diagnosing. So
+            the rule to teach is simple — <strong>if a value must never appear in a log, it must be a
+                secret, not a variable.</strong></p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Run-as credentials belong to the agency, not the job</summary>
+    <div class="tr-body">
+        <p>One job body can run under each department's own credential: the credential is resolved per run
+            from the run's agency, rather than baked into the job. That is what lets a single job
+            definition serve several departments without any of them holding another's credential.</p>
+        <p>A become password is <strong>never an environment variable</strong>. It has its own path
+            precisely so it cannot land in an env dump.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>The one that will catch you in a fresh install</summary>
+    <div class="tr-body">
+        <p>The secret store needs its encryption key configured. Without it, creating a secret fails — and
+            the failure is at save time, not at startup, so a server that looks healthy can be unable to
+            store a secret.</p>
+        <p>Check it as part of standing an environment up, not when somebody first tries to add a
+            password.</p>
+    </div>
+</details>
+
+<h2 id="a6-authoring-in-the-app">A6 · Authoring in the app</h2>
+
+<p>Most definitions come from Git. Cronomicon can also author its own, and knowing which surfaces do that —
+    and which deliberately do not — saves a lot of hunting.</p>
+
+<details class="tr-reveal">
+    <summary>What you can author in the app</summary>
+    <div class="tr-body">
+        <ul>
+            <li><strong>Compose</strong> — build a job by binding a script to a scope, schedules, variables
+                and declared run inputs.</li>
+            <li><strong>Workflow Editor</strong> — compose a workflow from job steps, with a visual
+                canvas.</li>
+            <li><strong>Schedule Builder</strong> — author schedules, with a cron helper.</li>
+            <li><strong>Calendars</strong> and <strong>Reactions</strong> — both authored in the app.</li>
+            <li><strong>Scopes, agencies, runners, secrets, grants</strong> — all app-owned.</li>
+        </ul>
+        <p>All of the authoring surfaces are permission-gated. Tags and notes are the deliberate exception:
+            any signed-in user can add those to anything.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>What you cannot author in the app, and why</summary>
+    <div class="tr-body">
+        <p><strong>Scripts.</strong> There is no in-app script editor and there will not be one. Automation
+            content belongs in version control, where it can be reviewed, diffed, blamed and rolled
+            back.</p>
+        <p>Every question of the form "why can I not edit this here?" traces back to that decision or to
+            the source of the definition in front of you.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Git sync, and what it will not touch</summary>
+    <div class="tr-body">
+        <p>Sync brings definitions in from the repository. It deliberately leaves the app-owned sidecars
+            alone: <strong>tags, notes, a scope's agency binding and a workflow's canvas layout survive
+                every sync</strong>, because they are yours rather than the repository's.</p>
+        <p>The Git Sync and Schedule Pushes tabs in History are where you look when a definition is not
+            what you expected — before assuming the app is wrong.</p>
+    </div>
+</details>
+
+<h2 id="a7-external-triggers-and-what-cronomicon-does-not-do-yet">A7 · External triggers, and what Cronomicon does not do yet</h2>
+
+<p>Two things administrators get asked about, in one module: letting other systems start jobs, and the
+    honest list of gaps.</p>
+
+<h3>Service accounts</h3>
+
+<details class="tr-reveal">
+    <summary>A token is a principal, not a bypass</summary>
+    <div class="tr-body">
+        <p>A service account carries a role and a territory exactly like a person does, and its actions are
+            audited under its own name. There is no second, weaker authorization vocabulary for machines —
+            which means everything you know from A4 applies unchanged.</p>
+        <p>The token is shown once, at creation. Treat that moment accordingly.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>A job must opt in to being triggered externally</summary>
+    <div class="tr-body">
+        <p>Holding a valid token is not enough: the job itself must be marked as externally triggerable.
+            Being reachable from outside is a decision the job's author makes, not a default that a token
+            can override.</p>
+        <p>So an over-broad token still cannot start a job nobody meant to expose.</p>
+    </div>
+</details>
+
+<h3>The four not-yets</h3>
+
+<p>Say these out loud to your operators before they find them. Each has an interim answer, and all four are
+    on the roadmap.</p>
+
+<details class="tr-reveal">
+    <summary><strong>Email triggers</strong> — no native support</summary>
+    <div class="tr-body">
+        <p>Automate Schedule conditions that watched a mailbox have no direct equivalent. The interim
+            answer is a small bridge that turns an inbound message into an API trigger call — which works
+            today, using the service accounts above.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>High availability</strong> — no standby server</summary>
+    <div class="tr-body">
+        <p>The largest architectural difference from Automate Schedule. Cronomicon runs as a single process,
+            so the answer today is <strong>recovery, not failover</strong>: backups, snapshots, and a
+            documented restore.</p>
+        <p>The thing to actually do about it: rehearse the restore. An untested backup is a belief, not a
+            recovery plan, and this is the gap where that distinction costs the most.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Reports</strong> — no report builder</summary>
+    <div class="tr-body">
+        <p>You have the Dashboard's Score, filterable History, run analytics, and a CSV export. One
+            caveat worth knowing before you promise anything: <strong>the export covers audit records, not
+                run history.</strong></p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>SNMP monitoring</strong> — a different shape</summary>
+    <div class="tr-body">
+        <p>Cronomicon exposes Prometheus metrics rather than SNMP. If your monitoring is SNMP-based you need a
+            bridge; the metrics themselves are there.</p>
+    </div>
+</details>
+
+<div class="tr-intro">
+    <p><strong>That is the administrator course.</strong> Scopes and the host overlay, agencies as a hard
+        boundary, runners and their opt-in capabilities, grants and the same-grant rule, the four kinds of
+        secret, what the app will and will not author, and the current gaps.</p>
+    <p><strong>Next:</strong> the administrator manual documents every setting in detail, and the runner
+        guides cover installation, configuration and hardening.</p>
+</div>
+<script>
+    /* Progress strip — the only JavaScript on this page. Everything else is
+       <details>, so the course works fully with scripting disabled, in print,
+       and as a downloaded file. Revealed only if we can actually persist,
+       so we never show a control that silently forgets. */
+    (function () {
+        var KEY = "am_training_admin";
+        var box = document.getElementById("tr-progress");
+        if (!box) { return; }
+
+        var store;
+        try {
+            store = window.localStorage;
+            store.setItem(KEY + ":probe", "1");
+            store.removeItem(KEY + ":probe");
+        } catch (e) {
+            return; // private mode or storage disabled — leave the strip hidden
+        }
+
+        var boxes = box.querySelectorAll("input[data-mod]");
+        var state = {};
+        try {
+            state = JSON.parse(store.getItem(KEY) || "{}") || {};
+        } catch (e) {
+            state = {};
+        }
+
+        function save() {
+            try {
+                store.setItem(KEY, JSON.stringify(state));
+            } catch (e) { /* quota or disabled mid-session — progress is not worth an error */ }
+        }
+
+        Array.prototype.forEach.call(boxes, function (cb) {
+            cb.checked = state[cb.getAttribute("data-mod")] === true;
+            cb.addEventListener("change", function () {
+                state[cb.getAttribute("data-mod")] = cb.checked;
+                save();
+            });
+        });
+
+        var reset = document.getElementById("tr-reset");
+        if (reset) {
+            reset.addEventListener("click", function () {
+                state = {};
+                save();
+                Array.prototype.forEach.call(boxes, function (cb) { cb.checked = false; });
+            });
+        }
+
+        box.hidden = false;
+    })();
+</script>
+<script>
+    /* Deck mode (TR-6) — the courses present as slides by default.
+     *
+     * Everything here is an ENHANCEMENT. The slides are built from the existing
+     * document at runtime, so nothing in the authored markup changed and the
+     * no-JavaScript rendering is still the plain scrolling page it always was.
+     * That is deliberate and load-bearing: print, the Moodle File-resource
+     * download and the accessibility fallback all ride on the page view, and a
+     * second authored code path would drift from the first.
+     *
+     * Slide boundaries are DERIVED, not authored: a new slide starts at every
+     * h2 (module), every h3 (subsection), and every scenario or walkthrough
+     * block, because those are already the content's own seams. Anything else
+     * rides along with the heading above it — which is what keeps a hotspot
+     * figure and its numbered legend on one slide, where they are useless
+     * apart.
+     */
+    (function () {
+        var MODE_KEY = "am_training_mode"; /* "deck" | "page" */
+        var main = document.querySelector("main");
+        if (!main) { return; }
+
+        var store = null;
+        try {
+            window.localStorage.setItem(MODE_KEY + ":probe", "1");
+            window.localStorage.removeItem(MODE_KEY + ":probe");
+            store = window.localStorage;
+        } catch (e) { /* private mode — deck still works, it just will not remember */ }
+
+        var POS_KEY = MODE_KEY + ":" + location.pathname.replace(/[^a-z0-9]+/gi, "-") + ":at";
+
+        /* ── Build the slides ─────────────────────────────────────────────── */
+
+        var hero = main.querySelector(".hero");
+        var nodes = [];
+        var n = hero ? hero.nextElementSibling : main.firstElementChild;
+        while (n) { nodes.push(n); n = n.nextElementSibling; }
+        if (!nodes.length) { return; }
+
+        function isBreak(el) {
+            return el.tagName === "H2" || el.tagName === "H3" ||
+                el.classList.contains("tr-scenario") || el.classList.contains("tr-walk");
+        }
+
+        var groups = [];
+        var cur = null;
+        var mod = null;
+        if (hero) { groups.push({ els: [hero], mod: null, cover: true }); }
+        nodes.forEach(function (el) {
+            /* An h3 ("Check yourself") alone or with a single lead-in
+             * paragraph, directly followed by a scenario or walkthrough block,
+             * would otherwise strand as a near-empty title slide — let it ride
+             * into the slide it introduces instead. */
+            var absorb = isBreak(el) && el.tagName !== "H2" && el.tagName !== "H3" &&
+                cur !== null && cur.els.length <= 2 && cur.els[0].tagName === "H3";
+            if (cur === null || (isBreak(el) && !absorb)) {
+                cur = { els: [], mod: mod };
+                groups.push(cur);
+            }
+            if (el.tagName === "H2") {
+                /* "M5 · Targeting and blast radius" → id m5, for the progress tick. */
+                var key = (el.textContent.trim().match(/^([ma]\s*\d+)/i) || [])[1];
+                mod = { label: el.textContent.trim(), key: key ? key.replace(/\s+/g, "").toLowerCase() : null };
+                cur.mod = mod;
+            }
+            cur.els.push(el);
+        });
+
+        groups.forEach(function (g) {
+            var sec = document.createElement("section");
+            sec.className = "tr-slide";
+            sec.setAttribute("tabindex", "-1");
+            g.els[0].parentNode.insertBefore(sec, g.els[0]);
+            g.els.forEach(function (e) { sec.appendChild(e); });
+            g.el = sec;
+        });
+
+        /* Per-module position, so the counter reads "3 of 6" inside a module
+         * rather than "27 of 41" across the whole course. */
+        var counts = {};
+        groups.forEach(function (g) {
+            var k = g.mod ? g.mod.label : "";
+            counts[k] = (counts[k] || 0) + 1;
+            g.nth = counts[k];
+        });
+        groups.forEach(function (g) { g.of = counts[g.mod ? g.mod.label : ""]; });
+
+        /* ── Chrome ───────────────────────────────────────────────────────── */
+
+        var bar = document.createElement("div");
+        bar.className = "tr-deckbar";
+        bar.innerHTML =
+            '<button type="button" class="tr-deck-prev">&larr; Back</button>' +
+            '<div class="tr-deck-where">' +
+            '<div class="tr-deck-label"></div>' +
+            '<div class="tr-deck-rail"><div class="tr-deck-fill"></div></div>' +
+            '</div>' +
+            '<button type="button" class="tr-deck-mode">Read as one page</button>' +
+            '<button type="button" class="tr-deck-next">Next &rarr;</button>';
+        document.body.appendChild(bar);
+
+        var live = document.createElement("div");
+        live.setAttribute("aria-live", "polite");
+        live.className = "tr-deck-live";
+        live.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
+        document.body.appendChild(live);
+
+        var resume = document.createElement("p");
+        resume.className = "tr-page-resume";
+        resume.innerHTML = '<button type="button" class="tr-reset tr-deck-back">&#9654; Back to slides</button>';
+        resume.style.display = "none";
+        main.insertBefore(resume, main.firstChild);
+
+        var elPrev = bar.querySelector(".tr-deck-prev");
+        var elNext = bar.querySelector(".tr-deck-next");
+        var elLabel = bar.querySelector(".tr-deck-label");
+        var elFill = bar.querySelector(".tr-deck-fill");
+        var elMode = bar.querySelector(".tr-deck-mode");
+
+        var at = 0;
+
+        function tickProgress(g) {
+            /* Reaching a module's last slide ticks its box in the progress strip,
+             * so the two ways of tracking where you are cannot disagree. */
+            if (!g.mod || !g.mod.key || g.nth !== g.of) { return; }
+            var box = document.querySelector('#tr-progress input[data-mod="' + g.mod.key + '"]');
+            if (box && !box.checked) {
+                box.checked = true;
+                box.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+        }
+
+        function show(i, focus) {
+            at = Math.max(0, Math.min(groups.length - 1, i));
+            groups.forEach(function (g, k) {
+                var on = k === at;
+                g.el.classList.toggle("tr-current", on);
+                g.el.setAttribute("aria-hidden", on ? "false" : "true");
+            });
+            var g = groups[at];
+            /* A slide made of collapsed disclosures is a blank screen until
+             * clicked. Content reveals open themselves the first time their
+             * slide shows; quiz rows stay closed — anything hiding a
+             * .tr-answer, and every .tr-opt, teaches BY being closed. */
+            if (!g.revealed) {
+                g.revealed = true;
+                var ds = g.el.querySelectorAll("details.tr-reveal");
+                for (var di = 0; di < ds.length; di++) {
+                    if (!ds[di].querySelector(".tr-answer")) { ds[di].open = true; }
+                }
+            }
+            elLabel.textContent = g.cover ? "Course overview"
+                : (g.mod ? g.mod.label + "  ·  " + g.nth + " of " + g.of : "Introduction");
+            elFill.style.width = Math.round(((at + 1) / groups.length) * 100) + "%";
+            elPrev.disabled = at === 0;
+            elNext.disabled = at === groups.length - 1;
+            live.textContent = elLabel.textContent + ", slide " + (at + 1) + " of " + groups.length;
+            tickProgress(g);
+            if (store) { try { store.setItem(POS_KEY, String(at)); } catch (e) {} }
+            window.scrollTo({ top: 0, behavior: "auto" });
+            if (focus) { g.el.focus({ preventScroll: true }); }
+        }
+
+        function setMode(mode) {
+            var deck = mode !== "page";
+            document.body.classList.toggle("tr-deck", deck);
+            bar.style.display = deck ? "" : "none";
+            resume.style.display = deck ? "none" : "";
+            if (store) { try { store.setItem(MODE_KEY, deck ? "deck" : "page"); } catch (e) {} }
+            if (deck) { show(at, false); }
+        }
+
+        elPrev.addEventListener("click", function () { show(at - 1, true); });
+        elNext.addEventListener("click", function () { show(at + 1, true); });
+        elMode.addEventListener("click", function () { setMode("page"); });
+        resume.querySelector(".tr-deck-back").addEventListener("click", function () { setMode("deck"); });
+
+        document.addEventListener("keydown", function (e) {
+            if (!document.body.classList.contains("tr-deck")) { return; }
+            if (e.metaKey || e.ctrlKey || e.altKey) { return; }
+            var t = e.target;
+            if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) { return; }
+            if (e.key === "ArrowRight" || e.key === "PageDown") { show(at + 1, true); e.preventDefault(); }
+            else if (e.key === "ArrowLeft" || e.key === "PageUp") { show(at - 1, true); e.preventDefault(); }
+            else if (e.key === "Home") { show(0, true); e.preventDefault(); }
+            else if (e.key === "End") { show(groups.length - 1, true); e.preventDefault(); }
+        });
+
+        /* The sidebar TOC keeps working: a module anchor selects that module's
+         * first slide instead of scrolling to a heading that is not displayed. */
+        var idIndex = {};
+        groups.forEach(function (g, i) {
+            g.els.forEach(function (e) {
+                if (e.id) { idIndex[e.id] = i; }
+                var kids = e.querySelectorAll ? e.querySelectorAll("[id]") : [];
+                for (var k = 0; k < kids.length; k++) { idIndex[kids[k].id] = i; }
+            });
+        });
+
+        function fromHash() {
+            var id = (location.hash || "").replace(/^#/, "");
+            return (id && idIndex[id] !== undefined) ? idIndex[id] : -1;
+        }
+        window.addEventListener("hashchange", function () {
+            var i = fromHash();
+            if (i >= 0) {
+                if (!document.body.classList.contains("tr-deck")) { return; }
+                show(i, true);
+            }
+        });
+
+        /* ── Start ────────────────────────────────────────────────────────── */
+
+        var start = fromHash();
+        if (start < 0 && store) {
+            var saved = parseInt(store.getItem(POS_KEY) || "", 10);
+            if (!isNaN(saved)) { start = saved; }
+        }
+        at = start >= 0 ? start : 0;
+
+        var mode = store ? store.getItem(MODE_KEY) : null;
+        setMode(mode === "page" ? "page" : "deck");
+    })();
+</script>
+
+</main>
+</div>
+<button id="totop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+</button>
+<script>
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  document.getElementById('themeLabel').textContent=t==='dark'?'Light':'Dark';
+  var ic=document.getElementById('themeIcon');
+  ic.innerHTML=t==='dark'
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    : '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>';
+  try{localStorage.setItem('am_manual_theme',t)}catch(e){}
+}
+function toggleTheme(){applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark')}
+(function(){var s;try{s=localStorage.getItem('am_manual_theme')}catch(e){}applyTheme(s==='light'?'light':'dark')})();
+document.querySelectorAll('.codeblock').forEach(function(cb){
+  var pre=cb.querySelector('pre'); if(!pre||cb.querySelector('.copybtn'))return;
+  var b=document.createElement('button'); b.className='copybtn'; b.textContent='Copy';
+  b.onclick=function(){navigator.clipboard.writeText(pre.innerText).then(function(){b.textContent='Copied';b.classList.add('ok');setTimeout(function(){b.textContent='Copy';b.classList.remove('ok')},1400)})};
+  cb.appendChild(b);
+});
+(function(){
+  var links=[].slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a});
+  if(!links.length)return;
+  var obs=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var a=map[e.target.id];if(!a)return;links.forEach(function(l){l.classList.remove('active')});a.classList.add('active')}})},{rootMargin:'-64px 0px -72% 0px',threshold:0});
+  document.querySelectorAll('main h2[id]').forEach(function(h){obs.observe(h)});
+})();
+window.addEventListener('scroll',function(){document.getElementById('totop').classList.toggle('show',window.scrollY>500)});
+document.querySelectorAll('nav.toc a').forEach(function(a){a.addEventListener('click',function(){document.body.classList.remove('nav-open')})});
+</script>
+</body>
+</html>

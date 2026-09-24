@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS bastions;
+DROP TABLE IF EXISTS ssh_hosts;
+DROP TABLE IF EXISTS alert_config;
+DROP TABLE IF EXISTS alert_destinations;
+DROP TABLE IF EXISTS notification_config;
+DROP TABLE IF EXISTS gitlab_config;
+DROP TABLE IF EXISTS secrets;
+DROP TABLE IF EXISTS env_vars;

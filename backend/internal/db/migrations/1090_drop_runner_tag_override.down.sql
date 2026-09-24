@@ -1,0 +1,13 @@
+-- Reverse 1090 — re-add the column 1080 created, empty.
+--
+-- The schema comes back; the DATA does not. Every override that existed when
+-- 1090 ran was dropped with the column, and NULL for every row means "no
+-- override anywhere", which is exactly what 1080 meant on the day it shipped.
+-- A rollback therefore restores the rung in the precedence chain, not anyone's
+-- decisions.
+--
+-- Note that the application no longer writes or reads this column as of v1.3.5
+-- — rolling the schema back does not bring the endpoint, the handler or the
+-- detail-panel editor back with it. See 1080's header for the tri-state
+-- semantics if that code is ever restored.
+ALTER TABLE jobs ADD COLUMN runner_tag_override TEXT;

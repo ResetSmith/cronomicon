@@ -1,0 +1,16 @@
+-- 230 Script referenced-variable extraction (script-upgrade.md, Workstream B).
+--
+-- The sync engine reads every script body once to compute content_hash and run
+-- the body-lint scan (migration 210); this column lets it ALSO persist the env
+-- variables the body references (extracted by gitlab.ExtractScriptVariables) so
+-- the Scripts catalog, the Run dialog, and the Job Composer can tell an operator
+-- which variables a script consumes — what they need to define — without
+-- re-reading the file on every list or re-implementing the parser client-side.
+--
+-- Advisory metadata only: extracted variables NEVER block a sync, never drop a
+-- script from the resolved map, and never enter content_hash (Decision 8 identity
+-- is stable across scripts/jobs/runs). Mirrors the scripts.warnings precedent: a
+-- JSON-array TEXT column defaulting to '[]', decoded by a parseWarnings-style
+-- helper into a non-nil empty slice. The DEFAULT keeps pre-migration rows valid
+-- (read as "no variables") until the first sync after deploy recomputes every row.
+ALTER TABLE scripts ADD COLUMN variables TEXT NOT NULL DEFAULT '[]';

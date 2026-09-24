@@ -1,0 +1,12 @@
+-- 600 Per-runner secret-injection trust flag (the vault-integration plan,
+-- P1.4 / D1 = 1C). A run whose job/script declares reference bindings (migration
+-- 590) must only be claimed by a runner the OPERATOR has flagged to receive
+-- injected secret material — the runner path relaxes the "never ship secret bytes
+-- to runners" invariant, so it is gated explicitly.
+--
+-- This is an operator trust flag (like agency membership / tags), NOT an
+-- agent-self-declared capability: it defaults OFF on registration and survives
+-- redeclare, and is set only via the operator settings API. The claim gate
+-- (internal/runner/poll.go) reads it and lets such a runner claim binding-bearing
+-- runs; a non-injection runner leaves them queued for an eligible runner.
+ALTER TABLE runners ADD COLUMN allow_secret_injection BOOLEAN NOT NULL DEFAULT 0;

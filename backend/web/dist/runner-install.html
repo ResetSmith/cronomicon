@@ -1,0 +1,2229 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cronomicon — Runner install &amp; configure guide</title>
+<style>
+        /* Fonts are SELF-HOSTED (VU-1), and they are declared HERE rather than via a
+ <link> in this <head> for a second reason: vite-manuals-plugin.js injects this
+ <style> verbatim into the wrapped runner guides, whose generated <head> has no
+ room for link elements. Everything the guides need must live in this block.
+
+ Why self-hosted: these documents are served by the Cronomicon binary to operators
+ on networks that may have no egress to fonts.googleapis.com, and a blocked
+ stylesheet silently drops the whole manual to system-ui with no error — the
+ same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ index.html unchanged (Google's own latin / latin-ext subsets); only the origin
+ differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
+ a wrapped guide at /runner-install.html alike: Vite copies public/ into
+ backend/web/dist and spa.go serves any real file under it.
+
+ Families track theme.ts so the manuals and the product read as one thing: IBM
+ Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
+ Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ hero and headings only — the manuals are a brand surface; do not spread it.
+
+ Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
+ and Mono are static per weight. An unreferenced face is never fetched. */
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        /* ============================================================
+ Cronomicon Manual — palette ported 1:1 from the product
+ (frontend/src/theme.ts). Dark is the product default.
+
+ VU-18: these are hand-copied hex literals, so they silently rot
+ the next time theme.ts moves. frontend/src/documentation-palette.test.ts
+ now fails if any hex in this file (or the wrapped runner-guide
+ fragments, which reuse this <style> verbatim) is absent from
+ theme.ts. When the product palette changes, re-map by ROLE — a
+ doc's page background takes the new `bg`, its cards `panel`, its
+ links `primary`, its warning callouts `warning` — never by
+ eyeballing which new hex looks closest to the old one.
+
+ Two role moves landed in Phase C and are easy to get backwards:
+ `warning` is now a distinct ORANGE (it used to be the same gold as
+ `accent`, which made a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is now the BRAND — the hero
+ spine, the h2 rule, the active TOC item.
+ ============================================================ */
+        :root {
+            /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono` / `display`) so a
+ fallback here matches a fallback there. --sansCond is the uppercase
+ structural face — eyebrows, nav group labels, code-block captions. */
+            --sans: 'IBM Plex Sans', system-ui, sans-serif;
+            --sansCond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+            --mono: 'IBM Plex Mono', ui-monospace, monospace;
+            --display: 'Fraunces', Georgia, serif;
+            --maxw: 880px;
+            --nav-w: 300px;
+            --gold-rule: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
+        }
+
+        html[data-theme="dark"] {
+            --bg: #0a1119;
+            --panel: #101a26;
+            --panel2: #182534;
+            --panelHover: #182534;
+            --panelInput: #0d1621;
+            --border: #22344a;
+            --borderLight: #1a2838;
+            --borderStrong: #566c86;
+            --text: #e8eff7;
+            --textSec: #9db2c8;
+            --textMuted: #78909f;
+            --onSolid: #0a1119;
+            --primary: #4da3d9;
+            --primaryHover: #6fb8e5;
+            --primaryBg: rgba(77, 163, 217, .15);
+            --accent: #c9a227;
+            --accentBg: rgba(201, 162, 39, .14);
+            --success: #45b26b;
+            --successBg: rgba(69, 178, 107, .14);
+            --danger: #e05a5a;
+            --dangerBg: rgba(224, 90, 90, .14);
+            --warning: #d98a2b;
+            --warningBg: rgba(217, 138, 43, .14);
+            --info: #4da3d9;
+            --infoBg: rgba(77, 163, 217, .14);
+            --sidebar: #0c1420;
+            --sidebarHover: #16222f;
+            --sidebarText: #93a9bf;
+            --sidebarTextActive: #f0e2b8;
+            --sidebarActive: rgba(201, 162, 39, .16);
+            --shadow: 0 2px 12px rgba(0, 0, 0, .45);
+            --shadowSm: 0 1px 4px rgba(0, 0, 0, .3);
+            --code: #0d1621;
+            --hero: linear-gradient(135deg, #101a26 0%, #0a1119 60%);
+        }
+
+        html[data-theme="light"] {
+            --bg: #f4f6fa;
+            --panel: #ffffff;
+            --panel2: #eef2f7;
+            --panelHover: #eef2f7;
+            --panelInput: #ffffff;
+            --border: #d5dde8;
+            --borderLight: #e6ebf2;
+            --borderStrong: #828fa0;
+            --text: #131e2b;
+            --textSec: #46596e;
+            --textMuted: #596c80;
+            --onSolid: #ffffff;
+            --primary: #15709f;
+            --primaryHover: #0f5c85;
+            --primaryBg: rgba(21, 112, 159, .10);
+            --accent: #7c6311;
+            --accentBg: rgba(124, 99, 17, .12);
+            --success: #1e7f45;
+            --successBg: rgba(30, 127, 69, .10);
+            --danger: #c0342f;
+            --dangerBg: rgba(192, 52, 47, .10);
+            --warning: #9c5f11;
+            --warningBg: rgba(156, 95, 17, .12);
+            --info: #15709f;
+            --infoBg: rgba(21, 112, 159, .10);
+            --sidebar: #ffffff;
+            --sidebarHover: #eef2f7;
+            --sidebarText: #46596e;
+            --sidebarTextActive: #131e2b;
+            --sidebarActive: rgba(124, 99, 17, .13);
+            --shadow: 0 2px 12px rgba(15, 30, 50, .08);
+            --shadowSm: 0 1px 4px rgba(15, 30, 50, .05);
+            --code: #eef2f7;
+            --hero: linear-gradient(135deg, #ffffff 0%, #eef2f7 100%);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html {
+            scroll-behavior: smooth
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 16px;
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        a {
+            color: var(--primary);
+            text-decoration: none
+        }
+
+        a:hover {
+            color: var(--primaryHover);
+            text-decoration: underline
+        }
+
+        code,
+        kbd,
+        pre {
+            font-family: var(--mono)
+        }
+
+        /* ---------- Sidebar ----------
+ Every colour in this block reads a token. It used to be hardcoded dark
+ literals, which was survivable only because the rail was dark in BOTH
+ themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
+ pale-slate link would now be near-invisible on white. Tokens also keep the
+ VU-18 drift guard honest — nothing here to re-map by hand next time. */
+        #sidebar {
+            width: var(--nav-w);
+            flex: 0 0 var(--nav-w);
+            background: var(--sidebar);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+        }
+
+        #sidebar::-webkit-scrollbar {
+            width: 8px
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 8px
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 20px 20px 14px
+        }
+
+        .brand .logo {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border-radius: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadowSm)
+        }
+
+        .brand .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block
+        }
+
+        .brand .bt {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.15
+        }
+
+        .brand .bt b {
+            color: var(--sidebarTextActive);
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: .2px
+        }
+
+        .brand .bt span {
+            color: var(--sidebarText);
+            font-size: 11.5px;
+            font-weight: 500
+        }
+
+        .navsearch {
+            padding: 0 16px 12px
+        }
+
+        .navsearch input {
+            width: 100%;
+            padding: 8px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--borderStrong);
+            background: var(--panelInput);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            outline: none
+        }
+
+        .navsearch input::placeholder {
+            color: var(--textMuted)
+        }
+
+        .navsearch input:focus {
+            border-color: var(--primary)
+        }
+
+        nav.toc {
+            padding: 0 10px 30px;
+            flex: 1
+        }
+
+        /* Condensed 600: the uppercase structural face (theme.ts `sansCond`). 600, not
+ 700 — the self-hosted Condensed subsets are 500 and 600, and 700 would be
+ synthesised. */
+        nav.toc .grp {
+            margin: 14px 6px 4px;
+            padding: 0 8px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--textMuted)
+        }
+
+        /* ---- collapsible part sections ---- */
+        nav.toc details.grp-sec {
+            margin: 0
+        }
+
+        nav.toc summary.grp {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            user-select: none;
+            transition: color .15s
+        }
+
+        nav.toc summary.grp::-webkit-details-marker {
+            display: none
+        }
+
+        nav.toc summary.grp:hover {
+            color: var(--sidebarText)
+        }
+
+        nav.toc summary.grp:before {
+            content: "";
+            flex: 0 0 6px;
+            width: 6px;
+            height: 6px;
+            border-right: 1.6px solid currentColor;
+            border-bottom: 1.6px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform .15s;
+            opacity: .85
+        }
+
+        nav.toc details.grp-sec[open]>summary.grp:before {
+            transform: rotate(45deg)
+        }
+
+        nav.toc summary.grp:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+            border-radius: 5px
+        }
+
+        nav.toc.filtering summary.grp {
+            display: none
+        }
+
+        nav.toc a {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 6px 12px;
+            margin: 1px 0;
+            border-radius: 7px;
+            color: var(--sidebarText);
+            font-size: 13.5px;
+            font-weight: 500;
+            text-decoration: none;
+            line-height: 1.3;
+            border-left: 2px solid transparent
+        }
+
+        nav.toc a .ic {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 15px;
+            opacity: .7
+        }
+
+        nav.toc a:hover {
+            background: var(--sidebarHover);
+            color: var(--sidebarTextActive);
+            text-decoration: none
+        }
+
+        nav.toc a.active {
+            background: var(--sidebarActive);
+            color: var(--sidebarTextActive);
+            border-left-color: var(--accent)
+        }
+
+        nav.toc a.active .ic {
+            opacity: 1
+        }
+
+        nav.toc a.hidden {
+            display: none
+        }
+
+        nav.toc .grp .grp-adv {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 6px;
+            border-radius: 20px;
+            background: var(--accentBg);
+            color: var(--accent);
+            font-size: 8.5px;
+            letter-spacing: .06em;
+            border: 1px solid var(--accent)
+        }
+
+        .sb-foot {
+            padding: 14px 20px;
+            border-top: 1px solid var(--borderLight);
+            color: var(--textMuted);
+            font-size: 11px
+        }
+
+        /* ---------- Topbar ---------- */
+        #topbar {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 26px;
+            background: color-mix(in srgb, var(--bg) 86%, transparent);
+            backdrop-filter: blur(9px);
+            border-bottom: 1px solid var(--border)
+        }
+
+        #topbar .crumbs {
+            flex: 1;
+            color: var(--textMuted);
+            font-size: 13px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        #topbar .crumbs b {
+            color: var(--textSec);
+            font-weight: 600
+        }
+
+        .tbtn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--textSec);
+            font-family: var(--sans);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: .15s
+        }
+
+        .tbtn:hover {
+            background: var(--panelHover);
+            color: var(--text);
+            border-color: var(--primary)
+        }
+
+        .tbtn svg {
+            width: 15px;
+            height: 15px
+        }
+
+        #menuToggle {
+            display: none
+        }
+
+        /* ---------- Main ---------- */
+        #wrap {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column
+        }
+
+        main {
+            width: 100%;
+            max-width: var(--maxw);
+            margin: 0 auto;
+            padding: 8px 30px 120px
+        }
+
+        section {
+            padding-top: 30px;
+            margin-top: 18px;
+            scroll-margin-top: 70px
+        }
+
+        section.part-lead {
+            border-top: 1px dashed var(--border);
+            margin-top: 46px
+        }
+
+        /* ---------- Hero ---------- */
+        .hero {
+            background: var(--hero);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 44px 44px 38px;
+            margin: 26px 0 8px;
+            box-shadow: var(--shadow);
+            position: relative;
+            overflow: hidden
+        }
+
+        /* warm gold spine down the left edge — the signature warmth accent */
+        .hero {
+            border-left: 3px solid var(--accent)
+        }
+
+        .hero:before {
+            content: "";
+            position: absolute;
+            right: -70px;
+            top: -70px;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--primaryBg), transparent 70%)
+        }
+
+        .hero:after {
+            content: "";
+            position: absolute;
+            left: -40px;
+            bottom: -80px;
+            width: 230px;
+            height: 230px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--accentBg), transparent 72%)
+        }
+
+        .hero>* {
+            position: relative
+        }
+
+        .hero .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--accent);
+            background: var(--accentBg);
+            padding: 5px 13px;
+            border-radius: 30px;
+            margin-bottom: 18px;
+            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent)
+        }
+
+        .hero h1 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 46px;
+            line-height: 1.04;
+            margin: .08em 0 .28em;
+            font-weight: 600;
+            letter-spacing: -.005em
+        }
+
+        .hero p.lead {
+            font-size: 18.5px;
+            line-height: 1.55;
+            color: var(--textSec);
+            max-width: 62ch;
+            margin: 0
+        }
+
+        .hero .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 24px
+        }
+
+        .hero .meta .chip {
+            font-size: 12.5px;
+            color: var(--textSec);
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 13px;
+            font-weight: 500;
+            box-shadow: var(--shadowSm)
+        }
+
+        .hero .meta .chip b {
+            color: var(--text)
+        }
+
+        /* ---------- Typography ---------- */
+        h2 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+            margin: .3em 0 .55em;
+            padding-bottom: .34em;
+            border-bottom: 2px solid transparent;
+            border-image: var(--gold-rule) 1;
+            display: flex;
+            align-items: center;
+            gap: 13px
+        }
+
+        h2 .secnum {
+            font-family: var(--sans);
+            font-size: 14px;
+            color: var(--onSolid);
+            background: var(--primary);
+            min-width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            display: inline-grid;
+            place-items: center;
+            font-weight: 700;
+            flex: 0 0 auto;
+            box-shadow: var(--shadowSm)
+        }
+
+        h3 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 21.5px;
+            font-weight: 600;
+            letter-spacing: -.005em;
+            margin: 1.8em 0 .5em;
+            color: var(--text)
+        }
+
+        h4 {
+            font-size: 16px;
+            font-weight: 650;
+            margin: 1.5em 0 .4em;
+            color: var(--text);
+            letter-spacing: .005em
+        }
+
+        p {
+            margin: .7em 0
+        }
+
+        ul,
+        ol {
+            margin: .6em 0;
+            padding-left: 1.4em
+        }
+
+        li {
+            margin: .32em 0
+        }
+
+        .lead-p {
+            font-size: 17.5px;
+            color: var(--textSec);
+            margin: .2em 0 1.1em
+        }
+
+        strong {
+            font-weight: 650;
+            color: var(--text)
+        }
+
+        em {
+            color: var(--textSec)
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 2em 0
+        }
+
+        .muted {
+            color: var(--textMuted)
+        }
+
+        /* ---------- Code ---------- */
+        code:not(pre code) {
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            padding: .08em .42em;
+            border-radius: 5px;
+            font-size: .86em;
+            color: var(--text);
+            white-space: nowrap
+        }
+
+        .codeblock {
+            position: relative;
+            margin: 1em 0
+        }
+
+        .codeblock pre {
+            background: var(--code);
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 16px 18px;
+            overflow-x: auto;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+            margin: 0
+        }
+
+        .codeblock .cap {
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--textMuted);
+            padding: 0 2px 6px
+        }
+
+        .copybtn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--textSec);
+            border-radius: 7px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-family: var(--sans);
+            font-weight: 600;
+            cursor: pointer;
+            opacity: 0;
+            transition: .15s
+        }
+
+        .codeblock:hover .copybtn {
+            opacity: 1
+        }
+
+        .copybtn:hover {
+            background: var(--primary);
+            color: var(--onSolid);
+            border-color: var(--primary)
+        }
+
+        .copybtn.ok {
+            background: var(--success);
+            color: var(--onSolid);
+            border-color: var(--success)
+        }
+
+        /* ---------- Tables ---------- */
+        .tbl-wrap {
+            overflow-x: auto;
+            margin: 1.1em 0;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: var(--shadowSm)
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 14px
+        }
+
+        table.matrix {
+            min-width: 640px
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--borderLight);
+            vertical-align: top
+        }
+
+        thead th {
+            background: var(--panel2);
+            color: var(--textSec);
+            font-weight: 650;
+            font-size: 12.5px;
+            letter-spacing: .02em;
+            position: sticky;
+            top: 0
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none
+        }
+
+        tbody tr:hover {
+            background: var(--panelHover)
+        }
+
+        td code {
+            white-space: normal
+        }
+
+        .tick {
+            color: var(--success);
+            font-weight: 800
+        }
+
+        .cross {
+            color: var(--textMuted)
+        }
+
+        .enf {
+            background: var(--successBg)
+        }
+
+        /* ---------- Callouts ---------- */
+        .callout {
+            border-radius: 11px;
+            padding: 14px 17px 14px 16px;
+            margin: 1.2em 0;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            border-left-width: 4px;
+            position: relative;
+            font-size: 14.5px
+        }
+
+        .callout .ct {
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+            font-size: 14px
+        }
+
+        .callout p:first-of-type {
+            margin-top: .2em
+        }
+
+        .callout p:last-child {
+            margin-bottom: 0
+        }
+
+        .callout.note {
+            border-left-color: var(--info);
+            background: var(--infoBg)
+        }
+
+        .callout.tip {
+            border-left-color: var(--success);
+            background: var(--successBg)
+        }
+
+        .callout.warn {
+            border-left-color: var(--warning);
+            background: var(--warningBg)
+        }
+
+        .callout.danger {
+            border-left-color: var(--danger);
+            background: var(--dangerBg)
+        }
+
+        .callout.gotcha {
+            border-left-color: var(--accent);
+            background: var(--accentBg)
+        }
+
+        .callout.plain {
+            border-left-color: var(--primary);
+            background: var(--primaryBg)
+        }
+
+        .callout.plain .ct {
+            color: var(--primary)
+        }
+
+        .callout .ct .em {
+            font-size: 16px
+        }
+
+        /* ---------- "Advanced" heading badge ---------- */
+        .adv {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 30px;
+            background: var(--accentBg);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            vertical-align: middle;
+            margin-left: 9px;
+            line-height: 1.4
+        }
+
+        .adv:before {
+            content: "▸";
+            font-size: 10px
+        }
+
+        /* ---------- Start-here persona cards ---------- */
+        .starthere {
+            background: linear-gradient(135deg, var(--primaryBg), transparent 70%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px 24px 20px;
+            margin: 1.6em 0;
+            box-shadow: var(--shadowSm)
+        }
+
+        .starthere>.sh-hd {
+            font-weight: 700;
+            font-size: 17px;
+            margin: 0 0 4px;
+            display: flex;
+            align-items: center;
+            gap: 9px
+        }
+
+        .starthere>.sh-sub {
+            color: var(--textSec);
+            font-size: 14px;
+            margin: 0 0 16px
+        }
+
+        .persona-grid {
+            display: grid;
+            gap: 13px;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))
+        }
+
+        .persona {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 18px 15px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .persona:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border))
+        }
+
+        .persona .ph {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            font-weight: 700;
+            font-size: 15px;
+            margin-bottom: 5px
+        }
+
+        .persona .ph .em {
+            font-size: 19px
+        }
+
+        .persona .pdesc {
+            color: var(--textSec);
+            font-size: 13.5px;
+            line-height: 1.5;
+            flex: 1;
+            margin: 0 0 11px
+        }
+
+        .persona .ppath {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding-top: 9px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .persona .ppath:hover {
+            color: var(--primaryHover);
+            text-decoration: none
+        }
+
+        /* ---------- Jargon buster ---------- */
+        .jargon {
+            margin: 1.3em 0;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            overflow: hidden
+        }
+
+        .jargon table {
+            margin: 0;
+            border: none
+        }
+
+        .jargon td {
+            vertical-align: top;
+            padding: 11px 16px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .jargon tr:first-child td {
+            border-top: none
+        }
+
+        .jargon td:first-child {
+            font-weight: 650;
+            color: var(--text);
+            white-space: nowrap;
+            width: 1%
+        }
+
+        .jargon td:last-child {
+            color: var(--textSec);
+            font-size: 14px
+        }
+
+        /* ---------- Cards / grids ---------- */
+        .grid {
+            display: grid;
+            gap: 14px;
+            margin: 1.2em 0
+        }
+
+        .grid.c2 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))
+        }
+
+        .grid.c3 {
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr))
+        }
+
+        .grid.c4 {
+            grid-template-columns: repeat(auto-fit, minmax(175px, 1fr))
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border))
+        }
+
+        .card h4 {
+            margin-top: 0
+        }
+
+        .card .ic-lg {
+            width: 30px;
+            height: 30px;
+            color: var(--primary);
+            margin-bottom: 6px
+        }
+
+        /* ---------- Steps ---------- */
+        ol.steps {
+            counter-reset: st;
+            list-style: none;
+            padding-left: 0;
+            margin: 1em 0
+        }
+
+        ol.steps>li {
+            counter-increment: st;
+            position: relative;
+            padding: 4px 0 14px 44px;
+            margin: 0
+        }
+
+        ol.steps>li:before {
+            content: counter(st);
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 28px;
+            height: 28px;
+            background: var(--primaryBg);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            font-size: 13px;
+            font-family: var(--mono)
+        }
+
+        ol.steps>li:not(:last-child):after {
+            content: "";
+            position: absolute;
+            left: 14px;
+            top: 32px;
+            bottom: 2px;
+            width: 1px;
+            background: var(--border)
+        }
+
+        /* ---------- Pills / badges ---------- */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 9px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sans);
+            white-space: nowrap;
+            line-height: 1.5
+        }
+
+        .pill .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block
+        }
+
+        .pill.ok {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        .pill.ok .dot {
+            background: var(--success)
+        }
+
+        .pill.fail {
+            background: var(--dangerBg);
+            color: var(--danger)
+        }
+
+        .pill.fail .dot {
+            background: var(--danger)
+        }
+
+        .pill.warn {
+            background: var(--warningBg);
+            color: var(--warning)
+        }
+
+        .pill.warn .dot {
+            background: var(--warning)
+        }
+
+        .pill.run {
+            background: var(--infoBg);
+            color: var(--info)
+        }
+
+        .pill.run .dot {
+            background: var(--info)
+        }
+
+        .pill.mut {
+            background: var(--panel2);
+            color: var(--textMuted)
+        }
+
+        .pill.mut .dot {
+            background: var(--textMuted)
+        }
+
+        .pill.amad {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .pill.git {
+            background: var(--panel2);
+            color: var(--textSec)
+        }
+
+        .tag {
+            display: inline-block;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            border-radius: 5px;
+            padding: 1px 7px;
+            color: var(--textSec);
+            font-weight: 500
+        }
+
+        /* ---------- Figures / SVG ---------- */
+        figure {
+            margin: 1.4em 0;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            overflow: hidden
+        }
+
+        figure svg {
+            display: block;
+            width: 100%;
+            height: auto
+        }
+
+        figcaption {
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--textMuted);
+            text-align: center;
+            font-style: italic
+        }
+
+        /* Screenshots — each figure.shot carries a dark AND a light capture of the real
+ app (frontend/public/manual/<view>-<theme>.png, served at /manual/*); the pair
+ swaps with the manual's own theme toggle so the pictured UI always matches the
+ reader's chosen theme. Captures are 1600×900 with seeded demo data; the
+ width/height attributes prevent layout shift under loading="lazy". */
+        figure.shot {
+            padding: 10px
+        }
+
+        figure.shot img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--borderLight);
+            border-radius: 9px
+        }
+
+        figure.shot figcaption {
+            margin-top: 10px
+        }
+
+        html[data-theme="dark"] figure.shot img.light {
+            display: none
+        }
+
+        html[data-theme="light"] figure.shot img.dark {
+            display: none
+        }
+
+        .svg-box {
+            fill: var(--panel2);
+            stroke: var(--border)
+        }
+
+        .svg-box-p {
+            fill: var(--primaryBg);
+            stroke: var(--primary)
+        }
+
+        .svg-box-a {
+            fill: var(--accentBg);
+            stroke: var(--accent)
+        }
+
+        .svg-box-s {
+            fill: var(--successBg);
+            stroke: var(--success)
+        }
+
+        .svg-box-d {
+            fill: var(--dangerBg);
+            stroke: var(--danger)
+        }
+
+        .svg-lbl {
+            fill: var(--text);
+            font-family: var(--sans);
+            font-weight: 600
+        }
+
+        .svg-sub {
+            fill: var(--textMuted);
+            font-family: var(--sans)
+        }
+
+        .svg-line {
+            stroke: var(--textMuted);
+            stroke-width: 1.6;
+            fill: none
+        }
+
+        .svg-line-p {
+            stroke: var(--primary);
+            stroke-width: 1.8;
+            fill: none
+        }
+
+        .svg-mono {
+            fill: var(--textSec);
+            font-family: var(--mono)
+        }
+
+        /* ---------- Definition list (glossary) ---------- */
+        dl.gloss dt {
+            font-weight: 650;
+            color: var(--text);
+            margin-top: 1.1em;
+            font-size: 15px;
+            scroll-margin-top: 70px
+        }
+
+        dl.gloss dt .tag {
+            margin-left: 8px
+        }
+
+        dl.gloss dd {
+            margin: .25em 0 0;
+            color: var(--textSec);
+            font-size: 14.5px
+        }
+
+        .gloss-letter {
+            font-family: var(--mono);
+            color: var(--primary);
+            font-weight: 700
+        }
+
+        /* ---------- FAQ accordion ---------- */
+        details.faq {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.faq summary {
+            cursor: pointer;
+            padding: 13px 16px;
+            font-weight: 600;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px
+        }
+
+        details.faq summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.faq summary:before {
+            content: "+";
+            color: var(--primary);
+            font-weight: 800;
+            font-size: 18px;
+            width: 14px
+        }
+
+        details.faq[open] summary:before {
+            content: "–"
+        }
+
+        details.faq[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.faq .body {
+            padding: 13px 16px 15px 40px
+        }
+
+        details.faq .body p {
+            margin: .4em 0
+        }
+
+        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+ bar whose right edge is the collapsed one-line summary (RU redesign) */
+        details.dlgbar {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.dlgbar summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 12px 16px
+        }
+
+        details.dlgbar summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.dlgbar summary:before {
+            content: "▸";
+            color: var(--primary);
+            font-size: 12px;
+            flex: 0 0 12px
+        }
+
+        details.dlgbar[open] summary:before {
+            content: "▾"
+        }
+
+        details.dlgbar summary .t {
+            font-weight: 700
+        }
+
+        details.dlgbar summary .pill {
+            flex: 0 0 auto
+        }
+
+        details.dlgbar summary .sum {
+            margin-left: auto;
+            color: var(--textMuted);
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 52%
+        }
+
+        details.dlgbar[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.dlgbar .body {
+            padding: 13px 18px 15px 38px;
+            max-width: 76ch
+        }
+
+        details.dlgbar .body p {
+            margin: .55em 0
+        }
+
+        details.dlgbar summary:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px
+        }
+
+        @media(max-width:640px) {
+            details.dlgbar summary .sum {
+                display: none
+            }
+        }
+
+        .faq-cause {
+            color: var(--textMuted);
+            font-size: 13.5px
+        }
+
+        /* ---------- Section intro / view header ---------- */
+        .view-hd {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: .2em 0 .6em
+        }
+
+        .route {
+            font-family: var(--mono);
+            font-size: 12.5px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 3px 9px;
+            color: var(--primary);
+            font-weight: 500
+        }
+
+        .gate {
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 7px
+        }
+
+        .gate.admin {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .gate.any {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        /* ---------- Back to top ---------- */
+        #totop {
+            position: fixed;
+            right: 22px;
+            bottom: 22px;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: var(--onSolid);
+            border: none;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            display: grid;
+            place-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: .25s;
+            z-index: 50
+        }
+
+        #totop.show {
+            opacity: 1;
+            pointer-events: auto
+        }
+
+        #totop:hover {
+            background: var(--primaryHover)
+        }
+
+        /* keyboard hint */
+        .kbd {
+            font-family: var(--mono);
+            font-size: 11px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 5px;
+            padding: 1px 6px;
+            color: var(--textSec)
+        }
+
+        /* ---------- Gentle motion (one calm entrance; disabled on request) ---------- */
+        @keyframes heroRise {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        .hero {
+            animation: heroRise .5s cubic-bezier(.22, .61, .36, 1) both
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+                scroll-behavior: auto !important
+            }
+
+            .card:hover,
+            .persona:hover {
+                transform: none
+            }
+        }
+
+        /* ---------- Responsive ---------- */
+        #scrim {
+            display: none
+        }
+
+        @media(max-width:1040px) {
+            #menuToggle {
+                display: inline-flex
+            }
+
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                transform: translateX(-102%);
+                transition: transform .25s;
+                box-shadow: var(--shadow)
+            }
+
+            body.nav-open #sidebar {
+                transform: translateX(0)
+            }
+
+            body.nav-open #scrim {
+                display: block;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, .5);
+                z-index: 35
+            }
+
+            main {
+                padding: 8px 18px 120px
+            }
+
+            .hero {
+                padding: 30px 24px
+            }
+
+            .hero h1 {
+                font-size: 33px
+            }
+        }
+
+        @media print {
+
+            #sidebar,
+            #topbar,
+            #totop,
+            .copybtn {
+                display: none !important
+            }
+
+            body {
+                display: block;
+                font-size: 11pt
+            }
+
+            main {
+                max-width: none
+            }
+
+            .callout,
+            .card,
+            figure,
+            .codeblock pre,
+            .tbl-wrap {
+                break-inside: avoid
+            }
+
+            section {
+                padding-top: 10px
+            }
+
+            a {
+                color: inherit;
+                text-decoration: none
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+<aside id="sidebar">
+  <div class="brand">
+    
+    <div class="bt"><b>Cronomicon</b><span>Runner Install Guide · R7.2</span></div>
+  </div>
+  <nav class="toc" id="toc">
+    <div class="grp">On this page</div>
+      <a href="#0-before-you-begin"><span class="ic">&#9656;</span> 0 · Before you begin</a>
+      <a href="#1-add-a-runner-one-click-or-mint-a-token-by-hand"><span class="ic">&#9656;</span> 1 · Add a runner (one click) — or mint a token by hand</a>
+      <a href="#2-choose-slim-vs-fat-capability-driven"><span class="ic">&#9656;</span> 2 · Choose slim vs fat (capability-driven)</a>
+      <a href="#3-fast-path-runner-install-sh-systemd-linux-vm"><span class="ic">&#9656;</span> 3 · Fast path — runner-install.sh (systemd, Linux VM)</a>
+      <a href="#4-configure-the-full-surface"><span class="ic">&#9656;</span> 4 · Configure (the full surface)</a>
+      <a href="#5-tls-ca-trust"><span class="ic">&#9656;</span> 5 · TLS / CA trust</a>
+      <a href="#6-identity-file-persistence-so-restarts-resume-identity"><span class="ic">&#9656;</span> 6 · Identity-file persistence (so restarts resume identity)</a>
+      <a href="#7-the-two-inventory-modes-d8-when-to-use-each"><span class="ic">&#9656;</span> 7 · The two inventory modes (D8) — when to use each</a>
+      <a href="#8-declaring-capabilities-keys-host-key-verification"><span class="ic">&#9656;</span> 8 · Declaring capabilities, keys &amp; host-key verification</a>
+      <a href="#9-manual-systemd-install"><span class="ic">&#9656;</span> 9 · Manual systemd install</a>
+      <a href="#10-container-install"><span class="ic">&#9656;</span> 10 · Container install</a>
+      <a href="#11-verify-the-install"><span class="ic">&#9656;</span> 11 · Verify the install</a>
+      <a href="#12-ansible-checkout-projects-the-tier-2-sandbox-opt-in"><span class="ic">&#9656;</span> 12 · Ansible checkout projects &amp; the Tier 2 sandbox (opt-in)</a>
+    <details class="grp-sec" open><summary class="grp">Guides</summary>
+      <a class="active"><span class="ic">&#9656;</span> Runner Install Guide</a>
+      <a href="runner-manage.html"><span class="ic">&#9656;</span> Runner Config Guide</a>
+      <a href="runner-security.html"><span class="ic">&#9656;</span> Runner Security Guide</a>
+      <a href="ansible-guide.html"><span class="ic">&#9656;</span> Ansible Guide</a>
+      <a href="bash-guide.html"><span class="ic">&#9656;</span> Bash Guide</a>
+      <a href="powershell-guide.html"><span class="ic">&#9656;</span> PowerShell Guide</a>
+      <a href="python-guide.html"><span class="ic">&#9656;</span> Python Guide</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Manuals</summary>
+      <a href="user-manual.html">&#128213; User Manual &rarr;</a>
+      <a href="administrator-manual.html">&#9881;&#65039; Administrator Manual &rarr;</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Courses</summary>
+      <a href="training-operator.html"><span class="ic">&#9656;</span> Operator Course</a>
+      <a href="training-admin.html"><span class="ic">&#9656;</span> Administrator Course</a>
+    </details>
+  </nav>
+  <div class="sb-foot">Script Orchestrator · single Go binary + SQLite · self-hosted</div>
+</aside>
+<div id="wrap">
+<header id="topbar">
+  <button class="tbtn" id="menuToggle" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="crumbs" id="crumbs"><b>Cronomicon</b> · Runner Install Guide</div>
+  <button class="tbtn" onclick="window.print()" title="Print or save as PDF">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>
+    Print
+  </button>
+  <button class="tbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">
+    <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="themeLabel">Light</span>
+  </button>
+</header>
+<main>
+  <div class="hero">
+    <div class="eyebrow">&#128295; Runner Guide</div>
+    <h1>Cronomicon</h1>
+    <p class="lead">The self-hosted <strong>Script Orchestrator</strong> — schedule and run Bash, Ansible,
+                    Terraform, PowerShell, Perl and Python jobs across your fleet from one auditable web console.</p>
+    <div class="meta">
+      <span class="chip">Guide <b>Runner install &amp; configure guide</b></span>
+      <span class="chip">Version <b>R7.2</b></span>
+    </div>
+  </div>
+  <p>A step-by-step walk-through of <strong>installing and configuring</strong> an Cronomicon <strong>runner</strong>. A runner is an out-of-process worker that registers with the server, long-polls for runs the server assigned to it (<code>executor='runner'</code>), executes them, and streams logs back. It is the second execution method alongside the in-app SSH executor — it exists to run <strong>ansible/terraform</strong> (which need a local toolchain the app's distroless image lacks) and to reach <strong>network-isolated targets</strong> the server can't.</p>
+
+<blockquote><p><strong>Scope.</strong> This guide ends once the runner is registered and online. For day-2 operations — health checks, draining, <strong>updating</strong> the agent, <strong>re-syncing</strong> config to the server, and <strong>removing</strong> a runner — see <a href="./runner-manage.html">Runner Config Guide</a>.</p></blockquote>
+
+<blockquote><p><strong>Credential model (b), locked (<code>runners-update.md</code> D1).</strong> Cronomicon <strong>never</strong> decrypts or transmits private-key bytes. The runner holds its <strong>own</strong> keys; the server only ships host <em>references</em>. See <code>runner-security.html</code> for the full posture and blast-radius record.</p></blockquote>
+
+<p>The agent binary is <code>amadeus-runner</code> (built from <code>backend/cmd/amadeus-runner</code>). Its complete config surface lives in <code>internal/agent/config.go</code>; the var names in this guide are the real ones.</p>
+
+<hr />
+
+<h2 id="0-before-you-begin">0 · Before you begin</h2>
+
+<p>Have these ready before you start:</p>
+
+<ul><li><strong>Server URL</strong> — the reachable base URL of the Cronomicon server (<code>https://amadeus.example.com</code>). If it presents a <strong>private/internal CA</strong> certificate, also have that CA bundle (PEM) on hand (§5).</li><li><strong>A registration token</strong> — single-use, one per install (§1).</li><li><strong>A capability decision — usually none</strong>: by default the agent auto-detects the host's toolchains at startup and claims the matching run-types; you only pass <code>-c</code> to narrow the set. For a <em>container</em> deployment you still pick slim vs fat, since the image decides which toolchains exist to detect (§2).</li><li><strong>For a systemd install:</strong> <code>root</code> on a Linux host (Debian/Ubuntu or RHEL-family) and an <code>amadeus-runner</code> binary — either pre-built (§2) or fetched from the server itself with the installer's <code>--download</code> flag (§2/§3; container-deployed servers bundle the binaries).</li><li><strong><code>known_hosts</code> for the targets — optional pre-seeding now</strong>. Host-key verification is strict (the agent refuses an unknown/changed key), but <code>--known-hosts</code> is no longer required up front: you can <strong>scan &amp; approve</strong> a target's key from the Runners view when the first run fails verification (human-approved TOFU — see the Security Guide §8 and <a href="./runner-manage.html">Runner Config Guide</a>). Pre-seed a curated <code>known_hosts</code> with <code>--known-hosts</code> if you'd rather trust hosts ahead of time; either way, the runner's own keys still go in via <code>--key-dir</code> / <code>--key-map</code>.</li></ul>
+
+<p>The fastest route on a Linux VM is the <strong><code>runner-install.sh</code></strong> script (§3), which does §2/§4/§9 in one shot. Read §1 first to get a token, then jump to §3.</p>
+
+<hr />
+
+<h2 id="1-add-a-runner-one-click-or-mint-a-token-by-hand">1 · Add a runner (one click) — or mint a token by hand</h2>
+
+<blockquote><p><strong>Fast path — the <code>+ Add Runner</code> button.</strong> On the <strong>Runners</strong> view, click <strong>+ Add Runner</strong>, optionally label it, and press <strong>Mint &amp; build command</strong>. You get a single <strong>flagless</strong> one-liner:</p>
+<div class="codeblock"><pre><code>curl -fsSL https://amadeus.example.com/install/amt_reg_… | sudo bash</code></pre></div>
+<p>Paste it on the host as root — done. The server URL, the token, and the agent-binary download are <strong>baked into the script</strong> by the <code>/install/&lt;token&gt;</code> endpoint, so nothing rides the command line; capabilities auto-detect on the host (§8). A <em>download-inspect-run</em> variant is offered for shops that don't pipe curl into sudo (the saved file is already personalized, so it too runs with no arguments). This is the recommended path; the manual token/flag flow below still exists for pre-authored installs and config management.</p>
+<p><strong>Behind an SSO / forward-auth proxy?</strong> If <code>curl …/install/&lt;token&gt;</code> fails with <code>bash: syntax error near unexpected token `&lt;'</code> / <code>`&lt;!doctype html&gt;'</code>, the reverse proxy redirected the request to its login page and returned HTML instead of the script. The runner endpoints are unauthenticated by design (the token IS the credential; the runner authenticates the server with its own bearer) and <strong>must be bypassed at the proxy</strong> — the same bypass the runner's <code>poll</code>/<code>register</code> calls need. Add <code>/install/*</code> (and <code>/agents/*</code>, <code>/runner-install.sh</code>) to the proxy's auth-bypass allowlist; see <code>deploy/deployment-guide.md</code> for the exact Authelia rule.</p></blockquote>
+
+<p>In the UI, open the <strong>Runners</strong> view (top-level nav) and find the <strong>Register New Runner</strong> card: click <strong>Mint token</strong> (optionally giving it a <strong>label</strong>, e.g. the intended runner name) to get a fresh <code>amt_reg_*</code> bearer (24h expiry). Tokens are <strong>single-use</strong>: each one registers exactly <strong>one</strong> runner and dies on that first successful registration — the card's token list shows which runner consumed which token. The plaintext is shown <strong>only once at mint</strong> — <strong>Reveal</strong>/<strong>Copy</strong> it immediately; it is stored only as a hash and can never be re-revealed. Installing several runners? Mint one token per host — minting does <strong>not</strong> invalidate other tokens. Registration mints a long-lived per-runner key (<code>amt_run_*</code>, 365d), persisted to the runner's identity file; the registration token is dead from then on and is never needed again (config changes propagate via <strong>Resync</strong>, which uses the runner's own key). An unused token can be revoked from the list at any time.</p>
+
+<p>The card's <strong>Install Command</strong> is a real, copy-pasteable §3 invocation: it <code>curl</code>s <code>/runner-install.sh</code> <strong>from the Cronomicon server itself</strong> and pipes it into <code>sudo bash</code> with this server's URL and the token filled in (the freshly minted token is substituted while its plaintext is revealed — otherwise a <code>&lt;TOKEN&gt;</code> placeholder). A <em>download-inspect-run</em> variant is available under the command for orgs that don't pipe curl into sudo. Run it on the target host next to a pre-built <code>amadeus-runner</code> binary (§2); capabilities are auto-detected from the host's toolchains at startup — add <code>-c</code> only to narrow them.</p>
+
+<p>(A registration credential can also be seeded out-of-band via <code>AMADEUS_RUNNER_BOOTSTRAP_TOKEN</code> on the <strong>server</strong> — unlike minted tokens it is multi-use; see <code>env-matrix.md</code>.)</p>
+
+<hr />
+
+<h2 id="2-choose-slim-vs-fat-capability-driven">2 · Choose slim vs fat (capability-driven)</h2>
+
+<p>The image you deploy is dictated by the <strong>capabilities</strong> the runner will declare:</p>
+
+<div class="tbl"><table>
+<thead><tr><th>You need…</th><th>Capabilities</th><th>Image</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Run shells over SSH (incl. bastion/ProxyJump), or reach a <strong>network-isolated</strong> segment (T-b)</td><td><code>bash,perl,powershell,python</code></td><td><strong>slim</strong> (<code>Dockerfile.runner</code>)</td><td>The agent only needs an SSH client; it's a tiny static/distroless image.</td></tr>
+<tr><td>Run <strong>ansible / terraform</strong> locally (T-a)</td><td><code>ansible,terraform</code></td><td><strong>fat</strong> (<code>Dockerfile.runner.fat</code>)</td><td>These toolchains run <em>on the executor</em>; the fat image carries ansible+Python and terraform.</td></tr>
+<tr><td>Run full ansible <strong>project checkouts</strong> (roles, <code>vars_files</code>, <code>.j2</code> templates) — <strong>opt-in</strong></td><td><code>ansible</code> + <code>-allow-checkout</code></td><td><strong>fat</strong> + provisioning</td><td>The runner fetches the playbooks repo at a server-pinned commit and runs it from a tree; needs a deploy credential + provisioned collections. See <strong>§12</strong>.</td></tr>
+</tbody>
+</table></div>
+
+<p>The toolchains are <strong>only</strong> in the fat image — deliberately. The app's own image is distroless and ships no ansible/terraform (a conscious minimal-control-plane posture), and the slim runner stays slim for the SSH-onward case. Capability routing makes this safe: the server's claim filter (<code>run_type IN caps</code>) guarantees only an ansible-capable runner ever claims an ansible run, so you can run a fleet of slim shell runners and a few fat ansible/terraform runners side by side.</p>
+
+<p>Build either image from <code>backend/</code> (the Go module root is the build context):</p>
+
+<div class="codeblock"><pre><code>cd backend
+docker build -f deploy/Dockerfile.runner     -t amadeus-runner:slim .
+docker build -f deploy/Dockerfile.runner.fat -t amadeus-runner:fat  .</code></pre></div>
+
+<p>Or get just the binary for a systemd install — <strong>download it from the server, or build it</strong>:</p>
+
+<ul><li><strong>Download (container-deployed server):</strong> the server image bundles cross-compiled agent binaries (linux amd64/arm64) plus a <code>SHA256SUMS</code> file, served unauthenticated at <code>/agents/amadeus-runner-linux-{amd64,arm64}</code>. The §3 installer's <code>--download</code> flag detects the host architecture, fetches the binary, and <strong>verifies its checksum</strong> before installing — so a host needs nothing but <code>curl</code> and reachability to the Cronomicon server. (A source-built/bare-metal server returns a clean 404 here — build instead, or point <code>AMADEUS_AGENT_DIR</code> at a directory holding the files.)</li><li><strong>Build:</strong></li></ul>
+
+<div class="codeblock"><pre><code>cd backend
+CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
+
+<hr />
+
+<h2 id="3-fast-path-runner-install-sh-systemd-linux-vm">3 · Fast path — <code>runner-install.sh</code> (systemd, Linux VM)</h2>
+
+<p>For a single-host systemd install, <code>deploy/runner-install.sh</code> — served by the app at <code>/runner-install.sh</code>, which is where the Runners view's <strong>Download</strong> button and the panel's install command fetch it, so the target host never needs to reach anything but the Cronomicon server — automates §2's binary placement, the service account and directories, the env file, and the hardened unit — everything in §9 — in one root-run command, and can also install the runner's <code>known_hosts</code>, key custody, CA trust, and local inventory (§5/§7/§8) so an SSH-capable runner is usable the moment the script exits. It detects Debian/Ubuntu vs RHEL-family from <code>/etc/os-release</code>.</p>
+
+<div class="codeblock"><pre><code>sudo ./runner-install.sh \
+  --server   https://amadeus.example.com \
+  --token    amt_reg_xxxxxxxxxxxx \
+  --name     runner-dc1-01 \
+  --download \
+  --known-hosts ./known_hosts \
+  --key-dir  ./keys \
+  --ca-cert  ./internal-ca.pem   # only for a private/internal CA (§5)</code></pre></div>
+
+<p><strong>Capabilities are auto-detected.</strong> With no <code>-c</code>, the installer writes no <code>AMADEUS_RUNNER_CAPABILITIES</code> line at all and the agent probes the host's toolchains at startup (<code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>/<code>python</code>, <code>ansible-playbook</code>, <code>terraform</code>) to claim the matching run-types — install a toolchain later and a service restart propagates the new capability to the registry automatically (the config-drift resync). Pass <code>-c</code> only to <em>narrow</em> what the runner claims (e.g. the host has python but must not run python jobs).</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Flag</th><th>Required</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>-s, --server</code></td><td><strong>yes</strong></td><td>—</td><td>Cronomicon server URL (prepends <code>https://</code> if no scheme).</td></tr>
+<tr><td><code>-t, --token</code></td><td><strong>yes</strong></td><td>—</td><td>Registration token (<code>amt_reg_*</code>).</td></tr>
+<tr><td><code>-n, --name</code></td><td>no</td><td><code>$(hostname)</code></td><td>Runner display name (keep it <strong>stable</strong>).</td></tr>
+<tr><td><code>-c, --capabilities</code></td><td>no</td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Omit ⇒ the agent auto-detects the host's toolchains at startup; set only to narrow.</td></tr>
+<tr><td><code>-b, --binary</code></td><td>no</td><td><code>./amadeus-runner</code>, <code>./bin/…</code>, <code>backend/bin/…</code></td><td>Path to the pre-built binary.</td></tr>
+<tr><td><code>--download</code></td><td>no</td><td>off</td><td>Fetch the agent binary from the server's <code>/agents/</code> endpoint (arch auto-detected, <strong>SHA-256 verified</strong> — a checksum mismatch aborts, never falls back). Falls back to <code>-b</code>/auto-search when the deployment doesn't bundle binaries (§2). Uses <code>--ca-cert</code> for the fetch when given.</td></tr>
+<tr><td><code>--known-hosts</code></td><td>no</td><td>—</td><td>OpenSSH <code>known_hosts</code> file — installed to <code>/var/lib/amadeus-runner/known_hosts</code> (<code>0640</code>, owner <code>amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_KNOWN_HOSTS</code> (§8).</td></tr>
+<tr><td><code>--key-dir</code></td><td>no</td><td>—</td><td>Directory of private keys — copied into <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code> dir, <code>0600</code> files, owner <code>amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_KEY_DIR</code> (§8). Mutually exclusive with <code>--key-map</code>.</td></tr>
+<tr><td><code>--key-map</code></td><td>no</td><td>—</td><td><code>NAME=path,NAME2=path2</code> — each key is copied to <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> and the rewritten map wired via <code>AMADEUS_RUNNER_KEY_MAP</code> (§8). Mutually exclusive with <code>--key-dir</code>.</td></tr>
+<tr><td><code>--generate-key</code></td><td>no</td><td>—</td><td><code>&lt;NAME&gt;</code> — mint a fresh passphrase-less <code>ed25519</code> key at <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> (owned by <code>amadeus-runner</code>) and print its <strong>public</strong> key to add to each target's <code>authorized_keys</code>. The private key never leaves the host. Refuses to overwrite an existing key. Reference it in Cronomicon host config by <code>&lt;NAME&gt;</code> (the <code>authKeyEnvVar</code>).</td></tr>
+<tr><td><code>--ca-cert</code></td><td>no</td><td>—</td><td>Private CA bundle (PEM) — installed to <code>/etc/amadeus-runner/ca.pem</code> and wired via <code>AMADEUS_RUNNER_CA_CERT</code> (§5).</td></tr>
+<tr><td><code>--inventory</code></td><td>no</td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (§7); <code>local</code> requires <code>--local-inventory</code>.</td></tr>
+<tr><td><code>--local-inventory</code></td><td>no</td><td>—</td><td>Local inventory JSON (with <code>--inventory local</code>) — installed to <code>/etc/amadeus-runner/inventory.json</code> and wired via <code>AMADEUS_RUNNER_LOCAL_INVENTORY</code> (§7).</td></tr>
+<tr><td><code>--allow-checkout</code></td><td>no</td><td>off</td><td>Opt into runner-side pinned playbook checkout — writes <code>AMADEUS_RUNNER_ALLOW_CHECKOUT=true</code> (§12).</td></tr>
+<tr><td><code>--checkout-repos</code></td><td>no</td><td>—</td><td>Comma-separated allowlist of repo clone URLs the runner may check out — writes <code>AMADEUS_RUNNER_CHECKOUT_REPOS</code> (§12).</td></tr>
+<tr><td><code>--checkout-token-file</code></td><td>no</td><td>—</td><td>Path to a read-only deploy-token file — installed to <code>/etc/amadeus-runner/checkout-token</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE</code> (§12).</td></tr>
+<tr><td><code>--checkout-token -</code></td><td>no</td><td>—</td><td>Prompt for the deploy token on stdin (input hidden) and write it to the same path. <strong>Never pass the token as a flag value</strong> — it would leak via <code>ps</code>/shell history; the installer refuses.</td></tr>
+<tr><td><code>--vault-pass-file</code></td><td>no</td><td>—</td><td>Path to an Ansible Vault password file — installed to <code>/etc/amadeus-runner/vault-pass</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_VAULT_PASSWORD_FILE</code> (§8/§12).</td></tr>
+<tr><td><code>--vault-pass -</code></td><td>no</td><td>—</td><td>Prompt for the vault password on stdin (input hidden) and write it to the same path (same no-secret-as-value rule).</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>Secrets are never a flag value.</strong> The checkout deploy token and vault password are placed <em>either</em> from a file you staged (<code>--checkout-token-file</code> / <code>--vault-pass-file</code>) <em>or</em> typed at a hidden prompt (<code>--checkout-token -</code> / <code>--vault-pass -</code>) — the installer refuses a secret passed as a flag value, since it would be visible in <code>ps</code> and shell history. A hidden prompt needs a real terminal, so a piped <code>curl … | sudo bash</code> install must use the file form (the script's own stdin is the piped source). This makes a checkout+vault Ansible runner install in one invocation — no post-install file placement, no env merge.</p></blockquote>
+
+<p>What it does: creates the <code>amadeus-runner</code> system user/group, <code>0750</code> <code>/var/lib/amadeus-runner</code> (state) and <code>/etc/amadeus-runner</code> (config), installs the binary to <code>/usr/local/bin/amadeus-runner</code> (with <code>--download</code>, fetching and checksum-verifying it from the server first), installs whatever the optional flags supplied (<code>known_hosts</code>, keys, CA bundle, local inventory — with the ownership/modes in the table above), writes <code>runner.env</code> (mode <code>0640</code>) wiring it all up, writes the hardened <code>amadeus-runner.service</code>, then <code>daemon-reload</code> + <code>enable</code> + <code>restart</code>. It prints the runner name, capabilities, inventory mode, installed paths, and <code>systemctl is-active</code> when done.</p>
+
+<blockquote><p><strong>SSH-capable runner? Pass the custody flags.</strong> With <code>--known-hosts</code> and <code>--key-dir</code>/<code>--key-map</code>/<code>--generate-key</code>, the runner is ready for its first SSH run when the script exits — nothing to hand-edit. The installer <strong>always</strong> creates <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code>) and wires <code>AMADEUS_RUNNER_KEY_DIR</code> to it, so if you omit the key flags you need only <em>drop a key file into that directory</em> (named after its <code>authKeyEnvVar</code>) or re-run with <code>--generate-key NAME</code> — no <code>runner.env</code> edit for the key path. The agent still refuses SSH without <code>known_hosts</code> (§8), so the script prints a loud <em>"before the first SSH run"</em> block when <code>--known-hosts</code> was omitted, and <code>known_hosts</code> can be seeded then via <strong>scan &amp; approve</strong>. See §4 for the full surface and §11 to verify.</p></blockquote>
+
+<p>If you'd rather wire systemd up by hand (or need a non-default layout), skip the script and follow §9 instead.</p>
+
+<hr />
+
+<h2 id="4-configure-the-full-surface">4 · Configure (the full surface)</h2>
+
+<blockquote><p><strong>Most installs use <code>+ Add Runner</code> (§1); this table is for pre-authoring.</strong> For a fully-specified install — config management, containers, or a locked-down one-liner — the Runners view's <strong>Advanced: pre-authored install</strong> helper (demoted from the headline) authors the artifacts for you: pick a <strong>profile</strong> (<em>SSH task runner</em> surfaces key/known_hosts custody; <em>Ansible control node</em> surfaces the checkout/vault secret-file inputs; <em>Custom</em> shows everything), then copy a complete annotated <code>runner.env</code>, the matching §3 one-liner, or the §10 <code>docker run</code> variant. Max jobs, sandbox caps, and checkout policy are no longer helper inputs — they're tuned on the runner's row after it registers (<code>runner-manage.html</code> §4.5). The table below remains the reference for hand-authoring and for the knobs the helper doesn't surface (poll cadence, tuning, scoped child env).</p></blockquote>
+
+<p>Config is resolved from three layers, <strong>low → high precedence</strong>: an optional JSON config file &lt; <code>AMADEUS_RUNNER_*</code> env vars &lt; command-line flags. Pick whichever fits your deployment (env file for systemd/containers; flags for ad-hoc).</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Flag</th><th>Env</th><th>Config-file key</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>-server</code></td><td><code>AMADEUS_RUNNER_SERVER</code></td><td><code>serverUrl</code></td><td>— (required)</td><td>Cronomicon server base URL.</td></tr>
+<tr><td><code>-ca-cert</code></td><td><code>AMADEUS_RUNNER_CA_CERT</code></td><td><code>caCertPath</code></td><td>system store</td><td>PEM CA bundle to trust for TLS.</td></tr>
+<tr><td><code>-registration-token</code></td><td><code>AMADEUS_RUNNER_REGISTRATION_TOKEN</code></td><td><code>registrationToken</code></td><td>—</td><td>Shared <code>amt_reg_*</code> token (first run only).</td></tr>
+<tr><td><code>-name</code></td><td><code>AMADEUS_RUNNER_NAME</code></td><td><code>name</code></td><td>— (required)</td><td>Display name; <strong>stable across restarts</strong>.</td></tr>
+<tr><td><code>-os</code></td><td><code>AMADEUS_RUNNER_OS</code></td><td><code>os</code></td><td><code>Linux</code></td><td><code>Linux</code> or <code>Windows</code>.</td></tr>
+<tr><td><code>-capabilities</code></td><td><code>AMADEUS_RUNNER_CAPABILITIES</code></td><td><code>capabilities</code></td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Unset ⇒ probed from the host's toolchains at startup; set to narrow.</td></tr>
+<tr><td><code>-max-concurrent</code></td><td><code>AMADEUS_RUNNER_MAX_CONCURRENT</code></td><td><code>maxConcurrent</code></td><td><code>5</code></td><td>Max simultaneous runs.</td></tr>
+<tr><td><code>-inventory</code></td><td><code>AMADEUS_RUNNER_INVENTORY</code></td><td><code>inventory</code></td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (D8 — see §7).</td></tr>
+<tr><td><code>-identity-file</code></td><td><code>AMADEUS_RUNNER_IDENTITY_FILE</code></td><td><code>identityFile</code></td><td><code>amadeus-runner-identity.json</code></td><td>Where <code>{id, apiKey}</code> persists (§6).</td></tr>
+<tr><td><code>-poll-interval</code></td><td><code>AMADEUS_RUNNER_POLL_INTERVAL</code></td><td><code>pollInterval</code></td><td><code>60s</code></td><td>Heartbeat/poll cadence (D7).</td></tr>
+<tr><td><code>-key-dir</code></td><td><code>AMADEUS_RUNNER_KEY_DIR</code></td><td><code>keyDir</code></td><td>—</td><td>Dir searched for keys by name (§8).</td></tr>
+<tr><td><code>-key-map</code></td><td><code>AMADEUS_RUNNER_KEY_MAP</code></td><td><code>keyMap</code></td><td>—</td><td><code>NAME=path,NAME2=path2</code> key map (§8).</td></tr>
+<tr><td><code>-known-hosts</code></td><td><code>AMADEUS_RUNNER_KNOWN_HOSTS</code></td><td><code>knownHostsFile</code></td><td>—</td><td>OpenSSH known_hosts for target host-key verification (§8).</td></tr>
+<tr><td><code>-local-inventory</code></td><td><code>AMADEUS_RUNNER_LOCAL_INVENTORY</code></td><td><code>localInventoryFile</code></td><td>—</td><td>Local inventory file for <code>local</code> mode (§7).</td></tr>
+<tr><td><code>-state-dir</code></td><td><code>AMADEUS_RUNNER_STATE_DIR</code></td><td><code>stateDir</code></td><td>OS temp dir</td><td>Writable dir for transient run artifacts (falls back to systemd's <code>STATE_DIRECTORY</code>, then the OS temp dir).</td></tr>
+<tr><td><code>-log-retry-budget</code></td><td><code>AMADEUS_RUNNER_LOG_RETRY_BUDGET</code></td><td><code>logRetryBudget</code></td><td><code>5</code></td><td>Log-resume attempts before <code>log_stream_lost</code>.</td></tr>
+<tr><td><code>-fan-out</code></td><td><code>AMADEUS_RUNNER_FAN_OUT</code></td><td><code>fanOut</code></td><td><code>4</code></td><td>Max parallel SSH targets per run.</td></tr>
+<tr><td><code>-config</code></td><td><code>AMADEUS_RUNNER_CONFIG</code></td><td>—</td><td>—</td><td>Path to a JSON config file (the lowest layer).</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>Declared vs local config.</strong> <code>name</code>, <code>os</code>, <code>capabilities</code>, <code>maxConcurrent</code>, and <code>inventory</code> are <strong>declared to the server at registration</strong> — changing them later does <strong>not</strong> propagate on a plain restart (the agent resumes its stored identity without re-registering). To push a change you must resync — one click (<strong>Runners → Resync</strong>). The rest (keys, known_hosts, CA, poll cadence, fan-out, local inventory) are runner-local and take effect on the next run or restart. See <a href="./runner-manage.html">Runner Config Guide</a> "Resync" for the full rules.</p></blockquote>
+
+<p>A config file uses camelCase keys (unknown keys are a loud error):</p>
+
+<div class="codeblock"><pre><code>{
+  "serverUrl": "https://amadeus.example.com",
+  "name": "runner-dc1-01",
+  "capabilities": ["bash", "perl", "powershell", "python"],
+  "inventory": "amadeus",
+  "knownHostsFile": "/var/lib/amadeus-runner/known_hosts",
+  "identityFile": "/var/lib/amadeus-runner/identity.json"
+}</code></pre></div>
+
+<p>Run <code>amadeus-runner version</code> to print the build version/commit.</p>
+
+<h3>Worked example A — SSH-onward bash/perl/powershell/python runner, <code>inventory=amadeus</code></h3>
+
+<p>A reachable-segment runner that executes bash/perl/powershell/python over SSH; the <strong>server</strong> resolves the targets and ships fully-resolved host references.</p>
+
+<div class="codeblock"><pre><code>amadeus-runner \
+  -server https://amadeus.example.com \
+  -registration-token amt_reg_xxxxxxxxxxxx \
+  -name runner-dc1-01 \
+  -capabilities bash,perl,powershell,python \
+  -inventory amadeus \
+  -key-dir /var/lib/amadeus-runner/keys \
+  -known-hosts /var/lib/amadeus-runner/known_hosts \
+  -identity-file /var/lib/amadeus-runner/identity.json</code></pre></div>
+
+<p>The manifest carries each target's <code>address/port/user/via</code> plus an <code>authKeyEnvVar</code> <strong>name</strong>; the agent resolves that name to a local key in <code>-key-dir</code> (or <code>-key-map</code>/env) and dials — directly or through the <code>via</code> bastion.</p>
+
+<h3>Worked example B — network-isolated runner, <code>inventory=local</code></h3>
+
+<p>A runner living inside a segment Cronomicon can't see (T-b). The manifest carries only the <strong>scope name</strong>; the agent expands it against its <strong>own</strong> inventory and uses its <strong>own</strong> keys.</p>
+
+<div class="codeblock"><pre><code>amadeus-runner \
+  -server https://amadeus.example.com \
+  -registration-token amt_reg_xxxxxxxxxxxx \
+  -name runner-isolated-seg-a \
+  -capabilities bash,ansible \
+  -inventory local \
+  -local-inventory /etc/amadeus-runner/inventory.json \
+  -key-map PROD_KEY=/var/lib/amadeus-runner/keys/prod.pem \
+  -known-hosts /var/lib/amadeus-runner/known_hosts \
+  -identity-file /var/lib/amadeus-runner/identity.json</code></pre></div>
+
+<p><code>inventory.json</code> maps a scope name → host targets (host references only — the agent supplies the key by <code>authKeyEnvVar</code> name, never the bytes):</p>
+
+<div class="codeblock"><pre><code>{
+  "prod": [
+    {
+      "name": "app-1",
+      "address": "10.20.0.11",
+      "port": 22,
+      "user": "deploy",
+      "authKeyEnvVar": "PROD_KEY",
+      "via": "bastion.seg-a.local:22"
+    }
+  ]
+}</code></pre></div>
+
+<p>An unknown scope is an error (not a silent empty), mirroring the server's "unmatched host is a failure, not a skip" rule.</p>
+
+<hr />
+
+<h2 id="5-tls-ca-trust">5 · TLS / CA trust</h2>
+
+<p>The agent connects to the server over HTTPS. If the server presents a certificate signed by a private/internal CA, point the agent at the CA bundle with <code>-ca-cert</code> / <code>AMADEUS_RUNNER_CA_CERT</code> (a PEM file). With a publicly-trusted cert, leave it unset to use the system trust store. (In containers, the slim/fat images ship <code>ca-certificates</code> for the public case.)</p>
+
+<hr />
+
+<h2 id="6-identity-file-persistence-so-restarts-resume-identity">6 · Identity-file persistence (so restarts resume identity)</h2>
+
+<p>On first start the agent registers and writes <code>{id, apiKey}</code> to the identity file (<code>0600</code>, atomic write). <strong>On every subsequent start it resumes that identity</strong> instead of registering again — without this, each restart would mint a fresh runner row and orphan the old one.</p>
+
+<p>Set this up correctly at install time:</p>
+
+<ul><li>Put the identity file on <strong>durable</strong> storage: a named volume in containers (<code>/var/lib/amadeus-runner</code>), a real path under systemd <code>StateDirectory</code>.</li><li>Keep <code>-name</code> <strong>stable</strong> across restarts.</li><li>A present-but-corrupt identity file is a <strong>hard error</strong> (the agent will not silently re-register and orphan the existing row) — restore or delete it deliberately.</li></ul>
+
+<p>(The day-2 side of this — re-registration after a server reap, and forcing a re-register to push config — lives in <a href="./runner-manage.html">Runner Config Guide</a>.)</p>
+
+<hr />
+
+<h2 id="7-the-two-inventory-modes-d8-when-to-use-each">7 · The two inventory modes (D8) — when to use each</h2>
+
+<p>Selected <strong>per-runner at registration</strong> via <code>-inventory</code>:</p>
+
+<ul><li><strong><code>amadeus</code></strong> (default; suits <strong>T-a</strong> and reachable/semi-reachable targets): the server resolves the scope (<code>scope_hosts → ssh_hosts</code>) and the manifest carries <strong>fully-resolved</strong> target references. Use this when Cronomicon's inventory is the source of truth and the runner is just an execution location closer to the targets (or one carrying the ansible/terraform toolchain).</li><li><strong><code>local</code></strong> (suits <strong>T-b</strong> network-isolated segments): the manifest carries only the <strong>scope name</strong>; the agent resolves it against its own <code>-local-inventory</code>. Use this when the targets live where Cronomicon can't see them, so it shouldn't (and can't) hold their topology. Keeps the isolated segment's host list out of the control plane entirely.</li></ul>
+
+<p>A <code>local</code>-mode runner <strong>requires</strong> <code>-local-inventory</code>; resolving a scope that isn't in the file is an error.</p>
+
+<p>Because <code>inventory</code> is a <strong>declared</strong> field (set at registration), switching a runner between <code>amadeus</code> and <code>local</code> requires a resync (one click) — see <a href="./runner-manage.html">Runner Config Guide</a> "Resync".</p>
+
+<hr />
+
+<h2 id="8-declaring-capabilities-keys-host-key-verification">8 · Declaring capabilities, keys &amp; host-key verification</h2>
+
+<ul><li><strong>Capabilities</strong> (<code>-capabilities</code>) are the run-types this runner will claim. <strong>Unset by default ⇒ auto-detected</strong>: the agent probes the host for <code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>/<code>python</code>, <code>ansible-playbook</code>, and <code>terraform</code> at startup and claims what it finds (zero findings is a startup error). Set the flag/env explicitly only to <em>narrow</em> the claim set. A run for a type no online runner declares stays queued — <em>waiting for a {type}-capable runner</em> — rather than failing.</li><li><strong>Keys (model b).</strong> The agent resolves a target's <code>authKeyEnvVar</code> <strong>name</strong> to a local private key, in order: (1) <code>-key-map</code> entry <code>NAME=path</code>; (2) an env var of that NAME holding a PEM; (3) a file <code>&lt;NAME&gt;</code>, <code>&lt;NAME&gt;.pem</code>, or <code>&lt;NAME&gt;.key</code> in <code>-key-dir</code>. The server never sends key bytes. Key files are read <strong>at dial time</strong>, so rotating the file contents in place takes effect on the next run.</li><li><strong>Host-key verification.</strong> Point <code>-known-hosts</code> at an OpenSSH <code>known_hosts</code> file. The agent verifies the <strong>target</strong> host key against it and <strong>refuses to connect</strong> when no known_hosts is configured — there is no trust-on-first-use fall-open on the target hop. Populate known_hosts before first run (<code>ssh-keyscan</code> the targets, or copy from a trusted source). The same applies to bastions reached via <code>via</code>. The file is read <strong>at dial time</strong>, so adding a host to it does not need a restart.</li></ul>
+
+<hr />
+
+<h2 id="9-manual-systemd-install">9 · Manual systemd install</h2>
+
+<p>This is the long-form of what §3's <code>runner-install.sh</code> automates — use it when you need a custom layout or want to see each step.</p>
+
+<div class="codeblock"><pre><code># Build/copy the binary.
+cd backend &amp;&amp; CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner
+sudo install -m 0755 amadeus-runner /usr/local/bin/
+
+# Service account + dirs.
+sudo useradd --system --home-dir /var/lib/amadeus-runner \
+             --shell /usr/sbin/nologin amadeus-runner
+sudo install -d -o amadeus-runner -g amadeus-runner -m 0750 /var/lib/amadeus-runner
+sudo install -d -m 0750 /etc/amadeus-runner
+
+# Config + unit (edit runner.env first — see amadeus-runner.env.example).
+sudo install -m 0640 deploy/amadeus-runner.env.example /etc/amadeus-runner/runner.env
+sudo install -m 0644 deploy/amadeus-runner.service /etc/systemd/system/
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now amadeus-runner
+sudo systemctl status amadeus-runner
+journalctl -u amadeus-runner -f</code></pre></div>
+
+<p>The unit runs the agent as a non-root, sandboxed service (<code>NoNewPrivileges</code>, <code>ProtectSystem=strict</code>, a single writable <code>StateDirectory</code>, a restricted syscall set). See <code>amadeus-runner.service</code> for the full hardening set.</p>
+
+<hr />
+
+<h2 id="10-container-install">10 · Container install</h2>
+
+<div class="codeblock"><pre><code># Persist identity + keys across restarts on a named volume.
+docker volume create amadeus-runner-data
+
+docker run -d --name amadeus-runner-01 --restart unless-stopped \
+  -e AMADEUS_RUNNER_SERVER=https://amadeus.example.com \
+  -e AMADEUS_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxxxxxxxxxx \
+  -e AMADEUS_RUNNER_NAME=runner-dc1-01 \
+  -e AMADEUS_RUNNER_CAPABILITIES=bash,perl,powershell,python \
+  -e AMADEUS_RUNNER_INVENTORY=amadeus \
+  -e AMADEUS_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
+  -e AMADEUS_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
+  -v amadeus-runner-data:/var/lib/amadeus-runner \
+  amadeus-runner:slim</code></pre></div>
+
+<p>The explicit <code>AMADEUS_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). For an ansible/terraform runner, swap <code>amadeus-runner:fat</code> and either omit the var (detect) or set <code>AMADEUS_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
+
+<hr />
+
+<h2 id="11-verify-the-install">11 · Verify the install</h2>
+
+<p>Confirm the runner came up and registered:</p>
+
+<ol><li><strong>Logs</strong> — <code>journalctl -u amadeus-runner -f</code> (systemd) or <code>docker logs -f amadeus-runner-01</code> (container) should show <code>registered with server</code> on the first start (or <code>resumed runner identity</code> on a restart), then quiet <code>poll</code> activity on the cadence. No <code>register: server returned …</code> errors.</li><li><strong>Runners view</strong> — the runner appears <strong>online</strong>, showing its capabilities, load, version, and an inventory chip (<code>amadeus</code> / <code>local</code>).</li><li><strong>Version</strong> — <code>amadeus-runner version</code> prints the build (a plain local <code>go build</code> reports <code>dev</code>; release images stamp the real version/commit).</li><li><em>(optional)</em> Trigger a small <code>bash</code> run scoped to a host this runner serves and watch the log stream back, to confirm key custody + <code>known_hosts</code> are wired correctly.</li></ol>
+
+<p>If the runner doesn't appear, or shows offline, see <a href="./runner-manage.html">Runner Config Guide</a> "Check status &amp; health".</p>
+
+<h3>The new-runner checklist — an agency is a <em>provisioning domain</em></h3>
+
+<p>A registered, online runner is not yet a <em>useful</em> one. Cronomicon ships <strong>names, not values</strong> — key names, become-password names, <code>lookup('env',…)</code> names — so every name a run may reference must resolve <strong>on every runner that can claim that run</strong>. With a fleet of one that is trivially true. With five it drifts, and each gate that saves correctness presents as the same symptom: the run sits <strong>queued</strong>.</p>
+
+<p>The supported answer is to treat an <strong>agency as a provisioning domain</strong>: a department's runners carry that department's key-dir, secrets and sidecar templates, and agency claim-gating guarantees a run only lands where its names resolve. The alternative — syncing every secret to every runner — reintroduces exactly the blast radius the names-only design exists to avoid.</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Step</th><th>Skip it and…</th></tr></thead>
+<tbody>
+<tr><td><strong>Enroll it in its agencies</strong> (Runners → the runner's row, or Scopes → Agencies → expand the agency)</td><td>An <em>untagged</em> runner serves only the general pool. It cannot claim any departmental run, and the department's runs wait for a runner that never comes.</td></tr>
+<tr><td><strong>Flag it for Secret injection</strong> if its runs carry reference bindings or a become password</td><td>Binding-bearing runs are <em>invisible</em> to an un-flagged runner. This is the step most often forgotten, because enrolling in the agency feels like the whole job.</td></tr>
+<tr><td><strong>Provision its department's key-dir / <code>secrets.env</code></strong> (or the Vault Agent sidecar)</td><td>The run claims, then fails on an unresolvable name — <em>“env passthrough var(s) not set”</em> or a key-resolution error.</td></tr>
+<tr><td><strong>Check its ansible-core version</strong> if the department uses job-level become passwords</td><td><code>--become-password-file</code> landed in <strong>2.12</strong>. A runner below that does not advertise <code>become-file</code>, and those runs correctly wait rather than being handed to a runner that would ignore the flag.</td></tr>
+<tr><td><strong>Scan &amp; approve</strong> the targets it will reach</td><td>First contact fails soft with <code>host_key_unverified</code> per host.</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>The version pin is a routing fact, not a fleet ceiling.</strong> A runner held at ansible-core 2.16 to serve RHEL 8 targets (platform python 3.6; core 2.17 dropped 3.6 <em>target</em> support) does not cap the rest of the fleet. Keep scopes with RHEL 8 targets claimable by a 2.16-line runner and let newer runners serve newer targets — but note such a runner is below no threshold that matters here: 2.16 is comfortably past <code>become-file</code>'s 2.12.</p></blockquote>
+
+<p>A run that no online runner can claim records <em>why</em>, so a mis-provisioned new runner shows up as a named reason on the waiting run rather than as an unexplained queue — see <a href="administrator-manual.html#troubleshooting">Administrator Manual §11</a>.</p>
+
+<hr />
+
+<h2 id="12-ansible-checkout-projects-the-tier-2-sandbox-opt-in">12 · Ansible checkout projects &amp; the Tier 2 sandbox (opt-in)</h2>
+
+<p>By default an ansible runner receives one <strong>self-contained playbook body</strong> per run. <strong>Checkout mode</strong> lets a runner execute a full playbook <strong>project</strong> — roles, <code>vars_files</code>, <code>include_vars</code>, <code>.j2</code> templates — by fetching the playbooks repo at a <strong>server-pinned commit SHA</strong> and running the entry playbook from a materialized tree. It is opt-in per job (a <code>kind: Script</code> wrapper with <code>project_root</code>/<code>entry</code>) <strong>and</strong> per runner (the flags below). Body-only runs are unchanged; a runner without <code>-allow-checkout</code> refuses any checkout run.</p>
+
+<h3>Enable checkout + the deploy credential</h3>
+
+<ul><li><strong><code>-allow-checkout</code></strong> opts the runner in. Without it, a checkout manifest is refused loudly.</li><li><strong><code>-checkout-repos</code></strong> is the allowlist of repo clone URLs this runner may check out. A checkout manifest whose repo is not in the list is refused — a compromised server cannot point the runner at an arbitrary repo. Empty ⇒ no repo allowed.</li><li><strong><code>-checkout-token-file</code></strong> (preferred) / <code>-checkout-token</code> holds a <strong>read-only</strong> GitLab deploy token (<code>read_repository</code> only), provisioned like <code>secrets.env</code> and <strong>never</strong> shipped by the server. A bare token uses the <code>oauth2:&lt;token&gt;</code> form; a <code>user:token</code> value is used verbatim (deploy-token form). Worst-case leak is read access to one repo from one runner — revoke it per-runner.</li><li><strong><code>-mirror-dir</code></strong> is where persistent bare git mirrors live (default <code>&lt;state-dir&gt;/mirrors</code>). Mirrors are fetch-updated; each run gets a fresh <code>git archive</code> tree (no <code>.git</code>) torn down on exit.</li></ul>
+
+<h3>Provision the toolchain (fat image)</h3>
+
+<p>Install <strong>ansible-core</strong> and your organization-standard <strong>collections</strong> on the runner host (the fat image carries ansible+Python; add collections in your image build or a provisioning step). The agent <strong>detects and advertises</strong> what's installed as capability tokens (<code>ansible</code>, <code>collection:&lt;fqcn&gt;</code>) so the server only lands a run on a runner that has its toolchain. A project's <code>requirements.yml</code> is installed <strong>per run</strong> into the ephemeral workdir; a collection already present at the <strong>exact pinned version</strong> is not re-downloaded (so a pre-provisioned runner runs offline). Point <strong><code>-galaxy-server</code></strong> at a private mirror/hub to keep installs off the public <code>galaxy.ansible.com</code> (the default).</p>
+
+<h3>Vault (opt-in)</h3>
+
+<p>A job that declares <code>requires: [vault]</code> needs <strong><code>-vault-password-file</code></strong> configured — a runner-local file the agent passes as <code>--vault-password-file</code>. The password <strong>never</strong> travels; a vault run reaching a runner without the file is refused loudly. Also register that password as an Cronomicon <strong>stored secret</strong> so the log redactor masks it — and note that values your playbook <em>decrypts from vault at run time</em> bypass redaction, so gate them with <code>no_log: true</code> (see <code>runner-security.html</code> §8).</p>
+
+<h3>Env scoping</h3>
+
+<p>A local-toolchain child no longer inherits the runner's full environment — it sees an explicit base safe-list + the run's env + an allowlist of NAMES (from inventory <code>lookup('env',…)</code>, target auth-key vars, and the job's <code>env_passthrough</code>). Add operator-needed names with <strong><code>-env-base-extra</code></strong>; drop <code>SSH_AUTH_SOCK</code> from the base with <strong><code>-exclude-ssh-auth-sock</code></strong> for runners that use per-host key files.</p>
+
+<h3>Tier 2 sandbox</h3>
+
+<p>Each local-toolchain run is wrapped in a per-run <code>systemd-run --scope</code> cgroup for resource caps — <strong><code>-sandbox-memory-max</code></strong> (e.g. <code>2G</code>), <strong><code>-sandbox-cpu-quota</code></strong> (e.g. <code>150%</code>), <strong><code>-sandbox-tasks-max</code></strong> (e.g. <code>512</code>) — while the filesystem/syscall hardening is inherited from the runner's own systemd unit. <strong><code>-no-sandbox</code></strong> opts out. Availability is <strong>probed at startup</strong>: where no usable systemd manager exists, runs execute <strong>unsandboxed</strong> and are reported as such (a loud startup warning + a per-run provenance line when <code>-allow-checkout</code> is set). A sandbox-capable runner advertises the <code>sandboxed</code> token, so a job may <code>requires: [sandboxed]</code> to avoid unsandboxed hosts.</p>
+
+<h3>Checkout config surface</h3>
+
+<div class="tbl"><table>
+<thead><tr><th>Flag</th><th>Env</th><th>Config-file key</th><th>Default</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>-allow-checkout</code></td><td><code>AMADEUS_RUNNER_ALLOW_CHECKOUT</code></td><td><code>allowCheckout</code></td><td><code>false</code></td><td>Opt into runner-side project checkout.</td></tr>
+<tr><td><code>-checkout-repos</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_REPOS</code></td><td><code>checkoutRepos</code></td><td>—</td><td>Comma-separated allowlist of repo clone URLs.</td></tr>
+<tr><td><code>-checkout-token-file</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE</code></td><td><code>checkoutTokenFile</code></td><td>—</td><td>File holding the read-only deploy token (preferred).</td></tr>
+<tr><td><code>-checkout-token</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_TOKEN</code></td><td><code>checkoutToken</code></td><td>—</td><td>Deploy token literal (prefer the file form).</td></tr>
+<tr><td><code>-mirror-dir</code></td><td><code>AMADEUS_RUNNER_MIRROR_DIR</code></td><td><code>mirrorDir</code></td><td><code>&lt;state-dir&gt;/mirrors</code></td><td>Persistent bare-mirror directory.</td></tr>
+<tr><td><code>-galaxy-server</code></td><td><code>AMADEUS_RUNNER_GALAXY_SERVER</code></td><td><code>galaxyServer</code></td><td>public galaxy</td><td>ansible-galaxy source URL for per-run installs.</td></tr>
+<tr><td><code>-vault-password-file</code></td><td><code>AMADEUS_RUNNER_VAULT_PASSWORD_FILE</code></td><td><code>vaultPasswordFile</code></td><td>—</td><td>Ansible Vault password file (advertises <code>vault</code>).</td></tr>
+<tr><td><code>-env-base-extra</code></td><td><code>AMADEUS_RUNNER_ENV_BASE_EXTRA</code></td><td><code>envBaseExtra</code></td><td>—</td><td>Extra env-var NAMES forwarded to the scoped child env.</td></tr>
+<tr><td><code>-exclude-ssh-auth-sock</code></td><td><code>AMADEUS_RUNNER_EXCLUDE_SSH_AUTH_SOCK</code></td><td><code>excludeSshAuthSock</code></td><td><code>false</code></td><td>Drop <code>SSH_AUTH_SOCK</code> from the base safe-list.</td></tr>
+<tr><td><code>-no-sandbox</code></td><td><code>AMADEUS_RUNNER_NO_SANDBOX</code></td><td><code>noSandbox</code></td><td><code>false</code></td><td>Disable the per-run systemd-run scope wrapper.</td></tr>
+<tr><td><code>-sandbox-memory-max</code></td><td><code>AMADEUS_RUNNER_SANDBOX_MEMORY_MAX</code></td><td><code>sandboxMemoryMax</code></td><td>—</td><td>Per-run cgroup MemoryMax (e.g. <code>2G</code>).</td></tr>
+<tr><td><code>-sandbox-cpu-quota</code></td><td><code>AMADEUS_RUNNER_SANDBOX_CPU_QUOTA</code></td><td><code>sandboxCpuQuota</code></td><td>—</td><td>Per-run cgroup CPUQuota (e.g. <code>150%</code>).</td></tr>
+<tr><td><code>-sandbox-tasks-max</code></td><td><code>AMADEUS_RUNNER_SANDBOX_TASKS_MAX</code></td><td><code>sandboxTasksMax</code></td><td>—</td><td>Per-run cgroup TasksMax (e.g. <code>512</code>).</td></tr>
+</tbody>
+</table></div>
+
+<blockquote><p><strong>These capabilities are advertised at registration.</strong> <code>-allow-checkout</code>, the installed collections, <code>-vault-password-file</code>, and sandbox availability all become capability <strong>tokens</strong> the server claim-gates against. Changing them (or provisioning a new collection) only reaches the server on a <strong>resync</strong> (one click; installed collections are re-detected at resync time, while flag/probe-derived tokens need a restart first) — see <a href="./runner-manage.html">Runner Config Guide</a> "Resync". The Runners page shows each runner's detected toolchains (ansible-core version, collections, checkout/vault/sandbox).</p></blockquote>
+
+<hr />
+
+<p>See also: <a href="./runner-manage.html">Runner Config Guide</a> (day-2: manage, update, resync, remove), <code>runner-security.html</code> (credential-model posture &amp; blast radius, checkout security model), <code>amadeus-runner.env.example</code> (annotated env template), <code>env-matrix.md</code> (server-side vars).</p>
+
+</main>
+</div>
+<button id="totop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+</button>
+<script>
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  document.getElementById('themeLabel').textContent=t==='dark'?'Light':'Dark';
+  var ic=document.getElementById('themeIcon');
+  ic.innerHTML=t==='dark'
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    : '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>';
+  try{localStorage.setItem('am_manual_theme',t)}catch(e){}
+}
+function toggleTheme(){applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark')}
+(function(){var s;try{s=localStorage.getItem('am_manual_theme')}catch(e){}applyTheme(s==='light'?'light':'dark')})();
+document.querySelectorAll('.codeblock').forEach(function(cb){
+  var pre=cb.querySelector('pre'); if(!pre||cb.querySelector('.copybtn'))return;
+  var b=document.createElement('button'); b.className='copybtn'; b.textContent='Copy';
+  b.onclick=function(){navigator.clipboard.writeText(pre.innerText).then(function(){b.textContent='Copied';b.classList.add('ok');setTimeout(function(){b.textContent='Copy';b.classList.remove('ok')},1400)})};
+  cb.appendChild(b);
+});
+(function(){
+  var links=[].slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a});
+  if(!links.length)return;
+  var obs=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var a=map[e.target.id];if(!a)return;links.forEach(function(l){l.classList.remove('active')});a.classList.add('active')}})},{rootMargin:'-64px 0px -72% 0px',threshold:0});
+  document.querySelectorAll('main h2[id]').forEach(function(h){obs.observe(h)});
+})();
+window.addEventListener('scroll',function(){document.getElementById('totop').classList.toggle('show',window.scrollY>500)});
+document.querySelectorAll('nav.toc a').forEach(function(a){a.addEventListener('click',function(){document.body.classList.remove('nav-open')})});
+</script>
+</body>
+</html>

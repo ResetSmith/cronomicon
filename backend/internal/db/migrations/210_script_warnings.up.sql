@@ -1,0 +1,14 @@
+-- 210 Script body-lint warnings (script-upgrade.md, Workstream B).
+--
+-- The sync engine reads every script body once to compute content_hash; this
+-- column lets it also persist the findings of a body-lint scan (CRLF line
+-- endings, non-UTF8/NUL, missing/mismatched shebang, oversized) so the Scripts
+-- catalog can surface a warning chip without re-reading the file on every list.
+--
+-- Advisory metadata only: warnings NEVER block a sync, never drop a script from
+-- the resolved map, and never enter content_hash (Decision 8 identity is stable
+-- across scripts/jobs/runs). Mirrors the jobs.tags precedent: a JSON-array TEXT
+-- column defaulting to '[]', decoded by a parseTags-style helper into a non-nil
+-- empty slice. The DEFAULT keeps pre-migration rows valid (read as "no warnings")
+-- until the first sync after deploy recomputes + overwrites every row.
+ALTER TABLE scripts ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]';

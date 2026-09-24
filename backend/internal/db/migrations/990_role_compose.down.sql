@@ -1,0 +1,13 @@
+-- Reverse 990.
+--
+-- LOSSY in the direction that matters: any role granted `compose` loses it, and
+-- the code this rolls back to gates authoring on RequireRole("admin") again — so
+-- a non-admin composer created under AF-2 becomes unable to author. That is
+-- fail-CLOSED, which is the right way to lose. No job or workflow is touched;
+-- only who may write one.
+--
+-- A real DROP COLUMN (not a zeroing UPDATE) so a re-up's ADD COLUMN does not hit
+-- "duplicate column name". SQLite permits dropping a column that carries its own
+-- CHECK, and `roles` is not rebuilt — which matters, because rebuilding it would
+-- destroy the custom roles migration 800 exists to make possible.
+ALTER TABLE roles DROP COLUMN compose;

@@ -1,0 +1,1973 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cronomicon — PowerShell guide — running PowerShell scripts with Cronomicon</title>
+<style>
+        /* Fonts are SELF-HOSTED (VU-1), and they are declared HERE rather than via a
+ <link> in this <head> for a second reason: vite-manuals-plugin.js injects this
+ <style> verbatim into the wrapped runner guides, whose generated <head> has no
+ room for link elements. Everything the guides need must live in this block.
+
+ Why self-hosted: these documents are served by the Cronomicon binary to operators
+ on networks that may have no egress to fonts.googleapis.com, and a blocked
+ stylesheet silently drops the whole manual to system-ui with no error — the
+ same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ index.html unchanged (Google's own latin / latin-ext subsets); only the origin
+ differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
+ a wrapped guide at /runner-install.html alike: Vite copies public/ into
+ backend/web/dist and spa.go serves any real file under it.
+
+ Families track theme.ts so the manuals and the product read as one thing: IBM
+ Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
+ Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ hero and headings only — the manuals are a brand surface; do not spread it.
+
+ Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
+ and Mono are static per weight. An unreferenced face is never fetched. */
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        /* ============================================================
+ Cronomicon Manual — palette ported 1:1 from the product
+ (frontend/src/theme.ts). Dark is the product default.
+
+ VU-18: these are hand-copied hex literals, so they silently rot
+ the next time theme.ts moves. frontend/src/documentation-palette.test.ts
+ now fails if any hex in this file (or the wrapped runner-guide
+ fragments, which reuse this <style> verbatim) is absent from
+ theme.ts. When the product palette changes, re-map by ROLE — a
+ doc's page background takes the new `bg`, its cards `panel`, its
+ links `primary`, its warning callouts `warning` — never by
+ eyeballing which new hex looks closest to the old one.
+
+ Two role moves landed in Phase C and are easy to get backwards:
+ `warning` is now a distinct ORANGE (it used to be the same gold as
+ `accent`, which made a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is now the BRAND — the hero
+ spine, the h2 rule, the active TOC item.
+ ============================================================ */
+        :root {
+            /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono` / `display`) so a
+ fallback here matches a fallback there. --sansCond is the uppercase
+ structural face — eyebrows, nav group labels, code-block captions. */
+            --sans: 'IBM Plex Sans', system-ui, sans-serif;
+            --sansCond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+            --mono: 'IBM Plex Mono', ui-monospace, monospace;
+            --display: 'Fraunces', Georgia, serif;
+            --maxw: 880px;
+            --nav-w: 300px;
+            --gold-rule: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
+        }
+
+        html[data-theme="dark"] {
+            --bg: #0a1119;
+            --panel: #101a26;
+            --panel2: #182534;
+            --panelHover: #182534;
+            --panelInput: #0d1621;
+            --border: #22344a;
+            --borderLight: #1a2838;
+            --borderStrong: #566c86;
+            --text: #e8eff7;
+            --textSec: #9db2c8;
+            --textMuted: #78909f;
+            --onSolid: #0a1119;
+            --primary: #4da3d9;
+            --primaryHover: #6fb8e5;
+            --primaryBg: rgba(77, 163, 217, .15);
+            --accent: #c9a227;
+            --accentBg: rgba(201, 162, 39, .14);
+            --success: #45b26b;
+            --successBg: rgba(69, 178, 107, .14);
+            --danger: #e05a5a;
+            --dangerBg: rgba(224, 90, 90, .14);
+            --warning: #d98a2b;
+            --warningBg: rgba(217, 138, 43, .14);
+            --info: #4da3d9;
+            --infoBg: rgba(77, 163, 217, .14);
+            --sidebar: #0c1420;
+            --sidebarHover: #16222f;
+            --sidebarText: #93a9bf;
+            --sidebarTextActive: #f0e2b8;
+            --sidebarActive: rgba(201, 162, 39, .16);
+            --shadow: 0 2px 12px rgba(0, 0, 0, .45);
+            --shadowSm: 0 1px 4px rgba(0, 0, 0, .3);
+            --code: #0d1621;
+            --hero: linear-gradient(135deg, #101a26 0%, #0a1119 60%);
+        }
+
+        html[data-theme="light"] {
+            --bg: #f4f6fa;
+            --panel: #ffffff;
+            --panel2: #eef2f7;
+            --panelHover: #eef2f7;
+            --panelInput: #ffffff;
+            --border: #d5dde8;
+            --borderLight: #e6ebf2;
+            --borderStrong: #828fa0;
+            --text: #131e2b;
+            --textSec: #46596e;
+            --textMuted: #596c80;
+            --onSolid: #ffffff;
+            --primary: #15709f;
+            --primaryHover: #0f5c85;
+            --primaryBg: rgba(21, 112, 159, .10);
+            --accent: #7c6311;
+            --accentBg: rgba(124, 99, 17, .12);
+            --success: #1e7f45;
+            --successBg: rgba(30, 127, 69, .10);
+            --danger: #c0342f;
+            --dangerBg: rgba(192, 52, 47, .10);
+            --warning: #9c5f11;
+            --warningBg: rgba(156, 95, 17, .12);
+            --info: #15709f;
+            --infoBg: rgba(21, 112, 159, .10);
+            --sidebar: #ffffff;
+            --sidebarHover: #eef2f7;
+            --sidebarText: #46596e;
+            --sidebarTextActive: #131e2b;
+            --sidebarActive: rgba(124, 99, 17, .13);
+            --shadow: 0 2px 12px rgba(15, 30, 50, .08);
+            --shadowSm: 0 1px 4px rgba(15, 30, 50, .05);
+            --code: #eef2f7;
+            --hero: linear-gradient(135deg, #ffffff 0%, #eef2f7 100%);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html {
+            scroll-behavior: smooth
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 16px;
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        a {
+            color: var(--primary);
+            text-decoration: none
+        }
+
+        a:hover {
+            color: var(--primaryHover);
+            text-decoration: underline
+        }
+
+        code,
+        kbd,
+        pre {
+            font-family: var(--mono)
+        }
+
+        /* ---------- Sidebar ----------
+ Every colour in this block reads a token. It used to be hardcoded dark
+ literals, which was survivable only because the rail was dark in BOTH
+ themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
+ pale-slate link would now be near-invisible on white. Tokens also keep the
+ VU-18 drift guard honest — nothing here to re-map by hand next time. */
+        #sidebar {
+            width: var(--nav-w);
+            flex: 0 0 var(--nav-w);
+            background: var(--sidebar);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+        }
+
+        #sidebar::-webkit-scrollbar {
+            width: 8px
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 8px
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 20px 20px 14px
+        }
+
+        .brand .logo {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border-radius: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadowSm)
+        }
+
+        .brand .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block
+        }
+
+        .brand .bt {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.15
+        }
+
+        .brand .bt b {
+            color: var(--sidebarTextActive);
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: .2px
+        }
+
+        .brand .bt span {
+            color: var(--sidebarText);
+            font-size: 11.5px;
+            font-weight: 500
+        }
+
+        .navsearch {
+            padding: 0 16px 12px
+        }
+
+        .navsearch input {
+            width: 100%;
+            padding: 8px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--borderStrong);
+            background: var(--panelInput);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            outline: none
+        }
+
+        .navsearch input::placeholder {
+            color: var(--textMuted)
+        }
+
+        .navsearch input:focus {
+            border-color: var(--primary)
+        }
+
+        nav.toc {
+            padding: 0 10px 30px;
+            flex: 1
+        }
+
+        /* Condensed 600: the uppercase structural face (theme.ts `sansCond`). 600, not
+ 700 — the self-hosted Condensed subsets are 500 and 600, and 700 would be
+ synthesised. */
+        nav.toc .grp {
+            margin: 14px 6px 4px;
+            padding: 0 8px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--textMuted)
+        }
+
+        /* ---- collapsible part sections ---- */
+        nav.toc details.grp-sec {
+            margin: 0
+        }
+
+        nav.toc summary.grp {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            user-select: none;
+            transition: color .15s
+        }
+
+        nav.toc summary.grp::-webkit-details-marker {
+            display: none
+        }
+
+        nav.toc summary.grp:hover {
+            color: var(--sidebarText)
+        }
+
+        nav.toc summary.grp:before {
+            content: "";
+            flex: 0 0 6px;
+            width: 6px;
+            height: 6px;
+            border-right: 1.6px solid currentColor;
+            border-bottom: 1.6px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform .15s;
+            opacity: .85
+        }
+
+        nav.toc details.grp-sec[open]>summary.grp:before {
+            transform: rotate(45deg)
+        }
+
+        nav.toc summary.grp:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+            border-radius: 5px
+        }
+
+        nav.toc.filtering summary.grp {
+            display: none
+        }
+
+        nav.toc a {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 6px 12px;
+            margin: 1px 0;
+            border-radius: 7px;
+            color: var(--sidebarText);
+            font-size: 13.5px;
+            font-weight: 500;
+            text-decoration: none;
+            line-height: 1.3;
+            border-left: 2px solid transparent
+        }
+
+        nav.toc a .ic {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 15px;
+            opacity: .7
+        }
+
+        nav.toc a:hover {
+            background: var(--sidebarHover);
+            color: var(--sidebarTextActive);
+            text-decoration: none
+        }
+
+        nav.toc a.active {
+            background: var(--sidebarActive);
+            color: var(--sidebarTextActive);
+            border-left-color: var(--accent)
+        }
+
+        nav.toc a.active .ic {
+            opacity: 1
+        }
+
+        nav.toc a.hidden {
+            display: none
+        }
+
+        nav.toc .grp .grp-adv {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 6px;
+            border-radius: 20px;
+            background: var(--accentBg);
+            color: var(--accent);
+            font-size: 8.5px;
+            letter-spacing: .06em;
+            border: 1px solid var(--accent)
+        }
+
+        .sb-foot {
+            padding: 14px 20px;
+            border-top: 1px solid var(--borderLight);
+            color: var(--textMuted);
+            font-size: 11px
+        }
+
+        /* ---------- Topbar ---------- */
+        #topbar {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 26px;
+            background: color-mix(in srgb, var(--bg) 86%, transparent);
+            backdrop-filter: blur(9px);
+            border-bottom: 1px solid var(--border)
+        }
+
+        #topbar .crumbs {
+            flex: 1;
+            color: var(--textMuted);
+            font-size: 13px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        #topbar .crumbs b {
+            color: var(--textSec);
+            font-weight: 600
+        }
+
+        .tbtn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--textSec);
+            font-family: var(--sans);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: .15s
+        }
+
+        .tbtn:hover {
+            background: var(--panelHover);
+            color: var(--text);
+            border-color: var(--primary)
+        }
+
+        .tbtn svg {
+            width: 15px;
+            height: 15px
+        }
+
+        #menuToggle {
+            display: none
+        }
+
+        /* ---------- Main ---------- */
+        #wrap {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column
+        }
+
+        main {
+            width: 100%;
+            max-width: var(--maxw);
+            margin: 0 auto;
+            padding: 8px 30px 120px
+        }
+
+        section {
+            padding-top: 30px;
+            margin-top: 18px;
+            scroll-margin-top: 70px
+        }
+
+        section.part-lead {
+            border-top: 1px dashed var(--border);
+            margin-top: 46px
+        }
+
+        /* ---------- Hero ---------- */
+        .hero {
+            background: var(--hero);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 44px 44px 38px;
+            margin: 26px 0 8px;
+            box-shadow: var(--shadow);
+            position: relative;
+            overflow: hidden
+        }
+
+        /* warm gold spine down the left edge — the signature warmth accent */
+        .hero {
+            border-left: 3px solid var(--accent)
+        }
+
+        .hero:before {
+            content: "";
+            position: absolute;
+            right: -70px;
+            top: -70px;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--primaryBg), transparent 70%)
+        }
+
+        .hero:after {
+            content: "";
+            position: absolute;
+            left: -40px;
+            bottom: -80px;
+            width: 230px;
+            height: 230px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--accentBg), transparent 72%)
+        }
+
+        .hero>* {
+            position: relative
+        }
+
+        .hero .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--accent);
+            background: var(--accentBg);
+            padding: 5px 13px;
+            border-radius: 30px;
+            margin-bottom: 18px;
+            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent)
+        }
+
+        .hero h1 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 46px;
+            line-height: 1.04;
+            margin: .08em 0 .28em;
+            font-weight: 600;
+            letter-spacing: -.005em
+        }
+
+        .hero p.lead {
+            font-size: 18.5px;
+            line-height: 1.55;
+            color: var(--textSec);
+            max-width: 62ch;
+            margin: 0
+        }
+
+        .hero .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 24px
+        }
+
+        .hero .meta .chip {
+            font-size: 12.5px;
+            color: var(--textSec);
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 13px;
+            font-weight: 500;
+            box-shadow: var(--shadowSm)
+        }
+
+        .hero .meta .chip b {
+            color: var(--text)
+        }
+
+        /* ---------- Typography ---------- */
+        h2 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+            margin: .3em 0 .55em;
+            padding-bottom: .34em;
+            border-bottom: 2px solid transparent;
+            border-image: var(--gold-rule) 1;
+            display: flex;
+            align-items: center;
+            gap: 13px
+        }
+
+        h2 .secnum {
+            font-family: var(--sans);
+            font-size: 14px;
+            color: var(--onSolid);
+            background: var(--primary);
+            min-width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            display: inline-grid;
+            place-items: center;
+            font-weight: 700;
+            flex: 0 0 auto;
+            box-shadow: var(--shadowSm)
+        }
+
+        h3 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 21.5px;
+            font-weight: 600;
+            letter-spacing: -.005em;
+            margin: 1.8em 0 .5em;
+            color: var(--text)
+        }
+
+        h4 {
+            font-size: 16px;
+            font-weight: 650;
+            margin: 1.5em 0 .4em;
+            color: var(--text);
+            letter-spacing: .005em
+        }
+
+        p {
+            margin: .7em 0
+        }
+
+        ul,
+        ol {
+            margin: .6em 0;
+            padding-left: 1.4em
+        }
+
+        li {
+            margin: .32em 0
+        }
+
+        .lead-p {
+            font-size: 17.5px;
+            color: var(--textSec);
+            margin: .2em 0 1.1em
+        }
+
+        strong {
+            font-weight: 650;
+            color: var(--text)
+        }
+
+        em {
+            color: var(--textSec)
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 2em 0
+        }
+
+        .muted {
+            color: var(--textMuted)
+        }
+
+        /* ---------- Code ---------- */
+        code:not(pre code) {
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            padding: .08em .42em;
+            border-radius: 5px;
+            font-size: .86em;
+            color: var(--text);
+            white-space: nowrap
+        }
+
+        .codeblock {
+            position: relative;
+            margin: 1em 0
+        }
+
+        .codeblock pre {
+            background: var(--code);
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 16px 18px;
+            overflow-x: auto;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+            margin: 0
+        }
+
+        .codeblock .cap {
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--textMuted);
+            padding: 0 2px 6px
+        }
+
+        .copybtn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--textSec);
+            border-radius: 7px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-family: var(--sans);
+            font-weight: 600;
+            cursor: pointer;
+            opacity: 0;
+            transition: .15s
+        }
+
+        .codeblock:hover .copybtn {
+            opacity: 1
+        }
+
+        .copybtn:hover {
+            background: var(--primary);
+            color: var(--onSolid);
+            border-color: var(--primary)
+        }
+
+        .copybtn.ok {
+            background: var(--success);
+            color: var(--onSolid);
+            border-color: var(--success)
+        }
+
+        /* ---------- Tables ---------- */
+        .tbl-wrap {
+            overflow-x: auto;
+            margin: 1.1em 0;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: var(--shadowSm)
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 14px
+        }
+
+        table.matrix {
+            min-width: 640px
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--borderLight);
+            vertical-align: top
+        }
+
+        thead th {
+            background: var(--panel2);
+            color: var(--textSec);
+            font-weight: 650;
+            font-size: 12.5px;
+            letter-spacing: .02em;
+            position: sticky;
+            top: 0
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none
+        }
+
+        tbody tr:hover {
+            background: var(--panelHover)
+        }
+
+        td code {
+            white-space: normal
+        }
+
+        .tick {
+            color: var(--success);
+            font-weight: 800
+        }
+
+        .cross {
+            color: var(--textMuted)
+        }
+
+        .enf {
+            background: var(--successBg)
+        }
+
+        /* ---------- Callouts ---------- */
+        .callout {
+            border-radius: 11px;
+            padding: 14px 17px 14px 16px;
+            margin: 1.2em 0;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            border-left-width: 4px;
+            position: relative;
+            font-size: 14.5px
+        }
+
+        .callout .ct {
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+            font-size: 14px
+        }
+
+        .callout p:first-of-type {
+            margin-top: .2em
+        }
+
+        .callout p:last-child {
+            margin-bottom: 0
+        }
+
+        .callout.note {
+            border-left-color: var(--info);
+            background: var(--infoBg)
+        }
+
+        .callout.tip {
+            border-left-color: var(--success);
+            background: var(--successBg)
+        }
+
+        .callout.warn {
+            border-left-color: var(--warning);
+            background: var(--warningBg)
+        }
+
+        .callout.danger {
+            border-left-color: var(--danger);
+            background: var(--dangerBg)
+        }
+
+        .callout.gotcha {
+            border-left-color: var(--accent);
+            background: var(--accentBg)
+        }
+
+        .callout.plain {
+            border-left-color: var(--primary);
+            background: var(--primaryBg)
+        }
+
+        .callout.plain .ct {
+            color: var(--primary)
+        }
+
+        .callout .ct .em {
+            font-size: 16px
+        }
+
+        /* ---------- "Advanced" heading badge ---------- */
+        .adv {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 30px;
+            background: var(--accentBg);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            vertical-align: middle;
+            margin-left: 9px;
+            line-height: 1.4
+        }
+
+        .adv:before {
+            content: "▸";
+            font-size: 10px
+        }
+
+        /* ---------- Start-here persona cards ---------- */
+        .starthere {
+            background: linear-gradient(135deg, var(--primaryBg), transparent 70%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px 24px 20px;
+            margin: 1.6em 0;
+            box-shadow: var(--shadowSm)
+        }
+
+        .starthere>.sh-hd {
+            font-weight: 700;
+            font-size: 17px;
+            margin: 0 0 4px;
+            display: flex;
+            align-items: center;
+            gap: 9px
+        }
+
+        .starthere>.sh-sub {
+            color: var(--textSec);
+            font-size: 14px;
+            margin: 0 0 16px
+        }
+
+        .persona-grid {
+            display: grid;
+            gap: 13px;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))
+        }
+
+        .persona {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 18px 15px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .persona:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border))
+        }
+
+        .persona .ph {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            font-weight: 700;
+            font-size: 15px;
+            margin-bottom: 5px
+        }
+
+        .persona .ph .em {
+            font-size: 19px
+        }
+
+        .persona .pdesc {
+            color: var(--textSec);
+            font-size: 13.5px;
+            line-height: 1.5;
+            flex: 1;
+            margin: 0 0 11px
+        }
+
+        .persona .ppath {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding-top: 9px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .persona .ppath:hover {
+            color: var(--primaryHover);
+            text-decoration: none
+        }
+
+        /* ---------- Jargon buster ---------- */
+        .jargon {
+            margin: 1.3em 0;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            overflow: hidden
+        }
+
+        .jargon table {
+            margin: 0;
+            border: none
+        }
+
+        .jargon td {
+            vertical-align: top;
+            padding: 11px 16px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .jargon tr:first-child td {
+            border-top: none
+        }
+
+        .jargon td:first-child {
+            font-weight: 650;
+            color: var(--text);
+            white-space: nowrap;
+            width: 1%
+        }
+
+        .jargon td:last-child {
+            color: var(--textSec);
+            font-size: 14px
+        }
+
+        /* ---------- Cards / grids ---------- */
+        .grid {
+            display: grid;
+            gap: 14px;
+            margin: 1.2em 0
+        }
+
+        .grid.c2 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))
+        }
+
+        .grid.c3 {
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr))
+        }
+
+        .grid.c4 {
+            grid-template-columns: repeat(auto-fit, minmax(175px, 1fr))
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border))
+        }
+
+        .card h4 {
+            margin-top: 0
+        }
+
+        .card .ic-lg {
+            width: 30px;
+            height: 30px;
+            color: var(--primary);
+            margin-bottom: 6px
+        }
+
+        /* ---------- Steps ---------- */
+        ol.steps {
+            counter-reset: st;
+            list-style: none;
+            padding-left: 0;
+            margin: 1em 0
+        }
+
+        ol.steps>li {
+            counter-increment: st;
+            position: relative;
+            padding: 4px 0 14px 44px;
+            margin: 0
+        }
+
+        ol.steps>li:before {
+            content: counter(st);
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 28px;
+            height: 28px;
+            background: var(--primaryBg);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            font-size: 13px;
+            font-family: var(--mono)
+        }
+
+        ol.steps>li:not(:last-child):after {
+            content: "";
+            position: absolute;
+            left: 14px;
+            top: 32px;
+            bottom: 2px;
+            width: 1px;
+            background: var(--border)
+        }
+
+        /* ---------- Pills / badges ---------- */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 9px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sans);
+            white-space: nowrap;
+            line-height: 1.5
+        }
+
+        .pill .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block
+        }
+
+        .pill.ok {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        .pill.ok .dot {
+            background: var(--success)
+        }
+
+        .pill.fail {
+            background: var(--dangerBg);
+            color: var(--danger)
+        }
+
+        .pill.fail .dot {
+            background: var(--danger)
+        }
+
+        .pill.warn {
+            background: var(--warningBg);
+            color: var(--warning)
+        }
+
+        .pill.warn .dot {
+            background: var(--warning)
+        }
+
+        .pill.run {
+            background: var(--infoBg);
+            color: var(--info)
+        }
+
+        .pill.run .dot {
+            background: var(--info)
+        }
+
+        .pill.mut {
+            background: var(--panel2);
+            color: var(--textMuted)
+        }
+
+        .pill.mut .dot {
+            background: var(--textMuted)
+        }
+
+        .pill.amad {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .pill.git {
+            background: var(--panel2);
+            color: var(--textSec)
+        }
+
+        .tag {
+            display: inline-block;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            border-radius: 5px;
+            padding: 1px 7px;
+            color: var(--textSec);
+            font-weight: 500
+        }
+
+        /* ---------- Figures / SVG ---------- */
+        figure {
+            margin: 1.4em 0;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            overflow: hidden
+        }
+
+        figure svg {
+            display: block;
+            width: 100%;
+            height: auto
+        }
+
+        figcaption {
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--textMuted);
+            text-align: center;
+            font-style: italic
+        }
+
+        /* Screenshots — each figure.shot carries a dark AND a light capture of the real
+ app (frontend/public/manual/<view>-<theme>.png, served at /manual/*); the pair
+ swaps with the manual's own theme toggle so the pictured UI always matches the
+ reader's chosen theme. Captures are 1600×900 with seeded demo data; the
+ width/height attributes prevent layout shift under loading="lazy". */
+        figure.shot {
+            padding: 10px
+        }
+
+        figure.shot img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--borderLight);
+            border-radius: 9px
+        }
+
+        figure.shot figcaption {
+            margin-top: 10px
+        }
+
+        html[data-theme="dark"] figure.shot img.light {
+            display: none
+        }
+
+        html[data-theme="light"] figure.shot img.dark {
+            display: none
+        }
+
+        .svg-box {
+            fill: var(--panel2);
+            stroke: var(--border)
+        }
+
+        .svg-box-p {
+            fill: var(--primaryBg);
+            stroke: var(--primary)
+        }
+
+        .svg-box-a {
+            fill: var(--accentBg);
+            stroke: var(--accent)
+        }
+
+        .svg-box-s {
+            fill: var(--successBg);
+            stroke: var(--success)
+        }
+
+        .svg-box-d {
+            fill: var(--dangerBg);
+            stroke: var(--danger)
+        }
+
+        .svg-lbl {
+            fill: var(--text);
+            font-family: var(--sans);
+            font-weight: 600
+        }
+
+        .svg-sub {
+            fill: var(--textMuted);
+            font-family: var(--sans)
+        }
+
+        .svg-line {
+            stroke: var(--textMuted);
+            stroke-width: 1.6;
+            fill: none
+        }
+
+        .svg-line-p {
+            stroke: var(--primary);
+            stroke-width: 1.8;
+            fill: none
+        }
+
+        .svg-mono {
+            fill: var(--textSec);
+            font-family: var(--mono)
+        }
+
+        /* ---------- Definition list (glossary) ---------- */
+        dl.gloss dt {
+            font-weight: 650;
+            color: var(--text);
+            margin-top: 1.1em;
+            font-size: 15px;
+            scroll-margin-top: 70px
+        }
+
+        dl.gloss dt .tag {
+            margin-left: 8px
+        }
+
+        dl.gloss dd {
+            margin: .25em 0 0;
+            color: var(--textSec);
+            font-size: 14.5px
+        }
+
+        .gloss-letter {
+            font-family: var(--mono);
+            color: var(--primary);
+            font-weight: 700
+        }
+
+        /* ---------- FAQ accordion ---------- */
+        details.faq {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.faq summary {
+            cursor: pointer;
+            padding: 13px 16px;
+            font-weight: 600;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px
+        }
+
+        details.faq summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.faq summary:before {
+            content: "+";
+            color: var(--primary);
+            font-weight: 800;
+            font-size: 18px;
+            width: 14px
+        }
+
+        details.faq[open] summary:before {
+            content: "–"
+        }
+
+        details.faq[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.faq .body {
+            padding: 13px 16px 15px 40px
+        }
+
+        details.faq .body p {
+            margin: .4em 0
+        }
+
+        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+ bar whose right edge is the collapsed one-line summary (RU redesign) */
+        details.dlgbar {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.dlgbar summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 12px 16px
+        }
+
+        details.dlgbar summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.dlgbar summary:before {
+            content: "▸";
+            color: var(--primary);
+            font-size: 12px;
+            flex: 0 0 12px
+        }
+
+        details.dlgbar[open] summary:before {
+            content: "▾"
+        }
+
+        details.dlgbar summary .t {
+            font-weight: 700
+        }
+
+        details.dlgbar summary .pill {
+            flex: 0 0 auto
+        }
+
+        details.dlgbar summary .sum {
+            margin-left: auto;
+            color: var(--textMuted);
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 52%
+        }
+
+        details.dlgbar[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.dlgbar .body {
+            padding: 13px 18px 15px 38px;
+            max-width: 76ch
+        }
+
+        details.dlgbar .body p {
+            margin: .55em 0
+        }
+
+        details.dlgbar summary:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px
+        }
+
+        @media(max-width:640px) {
+            details.dlgbar summary .sum {
+                display: none
+            }
+        }
+
+        .faq-cause {
+            color: var(--textMuted);
+            font-size: 13.5px
+        }
+
+        /* ---------- Section intro / view header ---------- */
+        .view-hd {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: .2em 0 .6em
+        }
+
+        .route {
+            font-family: var(--mono);
+            font-size: 12.5px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 3px 9px;
+            color: var(--primary);
+            font-weight: 500
+        }
+
+        .gate {
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 7px
+        }
+
+        .gate.admin {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .gate.any {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        /* ---------- Back to top ---------- */
+        #totop {
+            position: fixed;
+            right: 22px;
+            bottom: 22px;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: var(--onSolid);
+            border: none;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            display: grid;
+            place-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: .25s;
+            z-index: 50
+        }
+
+        #totop.show {
+            opacity: 1;
+            pointer-events: auto
+        }
+
+        #totop:hover {
+            background: var(--primaryHover)
+        }
+
+        /* keyboard hint */
+        .kbd {
+            font-family: var(--mono);
+            font-size: 11px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 5px;
+            padding: 1px 6px;
+            color: var(--textSec)
+        }
+
+        /* ---------- Gentle motion (one calm entrance; disabled on request) ---------- */
+        @keyframes heroRise {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        .hero {
+            animation: heroRise .5s cubic-bezier(.22, .61, .36, 1) both
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+                scroll-behavior: auto !important
+            }
+
+            .card:hover,
+            .persona:hover {
+                transform: none
+            }
+        }
+
+        /* ---------- Responsive ---------- */
+        #scrim {
+            display: none
+        }
+
+        @media(max-width:1040px) {
+            #menuToggle {
+                display: inline-flex
+            }
+
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                transform: translateX(-102%);
+                transition: transform .25s;
+                box-shadow: var(--shadow)
+            }
+
+            body.nav-open #sidebar {
+                transform: translateX(0)
+            }
+
+            body.nav-open #scrim {
+                display: block;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, .5);
+                z-index: 35
+            }
+
+            main {
+                padding: 8px 18px 120px
+            }
+
+            .hero {
+                padding: 30px 24px
+            }
+
+            .hero h1 {
+                font-size: 33px
+            }
+        }
+
+        @media print {
+
+            #sidebar,
+            #topbar,
+            #totop,
+            .copybtn {
+                display: none !important
+            }
+
+            body {
+                display: block;
+                font-size: 11pt
+            }
+
+            main {
+                max-width: none
+            }
+
+            .callout,
+            .card,
+            figure,
+            .codeblock pre,
+            .tbl-wrap {
+                break-inside: avoid
+            }
+
+            section {
+                padding-top: 10px
+            }
+
+            a {
+                color: inherit;
+                text-decoration: none
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+<aside id="sidebar">
+  <div class="brand">
+    
+    <div class="bt"><b>Cronomicon</b><span>PowerShell Guide · P1.0</span></div>
+  </div>
+  <nav class="toc" id="toc">
+    <div class="grp">On this page</div>
+      <a href="#1-how-a-powershell-run-reaches-its-target"><span class="ic">&#9656;</span> 1 · How a PowerShell run reaches its target</a>
+      <a href="#2-getting-scripts-in"><span class="ic">&#9656;</span> 2 · Getting scripts in</a>
+      <a href="#3-windows-fleets-scopes-host-records-auth"><span class="ic">&#9656;</span> 3 · Windows fleets: scopes, host records &amp; auth</a>
+      <a href="#4-env-inputs-outputs-and-exit-codes-that-tell-the-truth"><span class="ic">&#9656;</span> 4 · Env, inputs, outputs — and exit codes that tell the truth</a>
+      <a href="#5-secrets-from-powershell"><span class="ic">&#9656;</span> 5 · Secrets from PowerShell</a>
+      <a href="#6-best-practice-checklist"><span class="ic">&#9656;</span> 6 · Best-practice checklist</a>
+      <a href="#7-troubleshooting"><span class="ic">&#9656;</span> 7 · Troubleshooting</a>
+    <details class="grp-sec" open><summary class="grp">Guides</summary>
+      <a href="runner-install.html"><span class="ic">&#9656;</span> Runner Install Guide</a>
+      <a href="runner-manage.html"><span class="ic">&#9656;</span> Runner Config Guide</a>
+      <a href="runner-security.html"><span class="ic">&#9656;</span> Runner Security Guide</a>
+      <a href="ansible-guide.html"><span class="ic">&#9656;</span> Ansible Guide</a>
+      <a href="bash-guide.html"><span class="ic">&#9656;</span> Bash Guide</a>
+      <a class="active"><span class="ic">&#9656;</span> PowerShell Guide</a>
+      <a href="python-guide.html"><span class="ic">&#9656;</span> Python Guide</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Manuals</summary>
+      <a href="user-manual.html">&#128213; User Manual &rarr;</a>
+      <a href="administrator-manual.html">&#9881;&#65039; Administrator Manual &rarr;</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Courses</summary>
+      <a href="training-operator.html"><span class="ic">&#9656;</span> Operator Course</a>
+      <a href="training-admin.html"><span class="ic">&#9656;</span> Administrator Course</a>
+    </details>
+  </nav>
+  <div class="sb-foot">Script Orchestrator · single Go binary + SQLite · self-hosted</div>
+</aside>
+<div id="wrap">
+<header id="topbar">
+  <button class="tbtn" id="menuToggle" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="crumbs" id="crumbs"><b>Cronomicon</b> · PowerShell Guide</div>
+  <button class="tbtn" onclick="window.print()" title="Print or save as PDF">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>
+    Print
+  </button>
+  <button class="tbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">
+    <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="themeLabel">Light</span>
+  </button>
+</header>
+<main>
+  <div class="hero">
+    <div class="eyebrow">&#128215; Usage Guide</div>
+    <h1>Cronomicon</h1>
+    <p class="lead">The self-hosted <strong>Script Orchestrator</strong> — schedule and run Bash, Ansible,
+                    Terraform, PowerShell, Perl and Python jobs across your fleet from one auditable web console.</p>
+    <div class="meta">
+      <span class="chip">Guide <b>PowerShell guide — running PowerShell scripts with Cronomicon</b></span>
+      <span class="chip">Version <b>P1.0</b></span>
+    </div>
+  </div>
+  <p>How to run <strong>PowerShell</strong> well inside Cronomicon — chiefly against Windows fleets over OpenSSH: how a <code>powershell</code> run actually reaches its target, what that means for Windows hosts (and the one thing to know for Linux targets), how env, run inputs and outputs look from inside a PowerShell script, the exit-code semantics that decide whether your run reads Success or Failed, and how to use Cronomicon's features — scopes, run inputs, reference bindings, workflow outputs — idiomatically from PowerShell.</p>
+
+<p>PowerShell is a <strong>shell-family</strong> run type, so most of the machinery is shared with Bash: read the <a href="./bash-guide.html">Bash Guide</a> for the two-executor model, targeting, bastions and secrets in full depth — this guide states the shared rules briefly and goes deep only where PowerShell differs. Companions: the <a href="user-manual.html">User Manual</a>, the <a href="administrator-manual.html">Administrator Manual</a> (§4, SSH executor), and the <a href="./runner-install.html">Runner Install Guide</a> / <a href="./runner-manage.html">Runner Config Guide</a> / <a href="./runner-security.html">Runner Security Guide</a> guides.</p>
+
+<blockquote><p><strong>The one-sentence model.</strong> A PowerShell script is a <strong>Script</strong> (run type <code>powershell</code>), a <strong>Scope</strong> names the hosts it may touch, a <strong>Job</strong> binds the two to schedules and env — and the run executes <em>over SSH</em>: the dialing side (the Cronomicon server or a runner) connects to each target and invokes <code>powershell -NonInteractive -Command</code> there.</p></blockquote>
+
+<hr />
+
+<h2 id="1-how-a-powershell-run-reaches-its-target">1 · How a PowerShell run reaches its target</h2>
+
+<p>Like Bash, a <code>powershell</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (default via the resolution chain; <strong>the pool is off until an operator sets <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the actual mechanics are identical: the dialing side opens an SSH connection to each target and runs</p>
+
+<div class="codeblock"><pre><code>powershell -NonInteractive -Command &lt;your script&gt;</code></pre></div>
+
+<p>on the <em>target</em> (when the run injects environment, the invocation becomes <code>powershell -NonInteractive -Command -</code> and the program — an <code>$env:</code> prelude plus your body — arrives on <strong>stdin</strong>, so no value ever touches argv; see §4). Two consequences worth internalizing:</p>
+
+<ul>
+<li><strong>Windows targets are the primary case.</strong> The target needs an <strong>OpenSSH server</strong> (a built-in optional feature since Windows Server 2019 / Windows 10) and <code>powershell</code> resolvable in the SSH session's PATH — true by default, since Windows PowerShell 5.1 ships with the OS. The default SSH shell (cmd or powershell) doesn't matter: Cronomicon invokes <code>powershell</code> explicitly.</li>
+<li><strong>Linux/macOS targets need one symlink.</strong> PowerShell 7 installs itself as <code>pwsh</code>, and the remote invocation calls <code>powershell</code> — so on a non-Windows target, provide the name (e.g. <code>ln -s /usr/bin/pwsh /usr/local/bin/powershell</code>) or the run fails per-host with <em>command not found</em>.</li>
+</ul>
+
+<blockquote><p><strong>Runner capability nuance.</strong> A runner claims the <code>powershell</code> run type when <code>pwsh</code> is on <em>its own</em> PATH (the auto-detect probe) — even though execution happens on the targets over SSH. For a Linux runner that serves a Windows fleet but has no local pwsh, declare the capability explicitly (<code>-capabilities bash,powershell</code> / <code>AMADEUS_RUNNER_CAPABILITIES</code>); otherwise the run queues <em>“waiting for a powershell-capable runner.”</em> A runner's <code>-os</code> flag records the runner host's own OS — it does not restrict what OS its targets run.</p></blockquote>
+
+<hr />
+
+<h2 id="2-getting-scripts-in">2 · Getting scripts in</h2>
+
+<p>Identical to the rest of the catalog (<a href="./bash-guide.html">Bash Guide</a> §2 in depth): any raw <code>*.ps1</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>powershell</code>; or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>amadeus validate .</code> into CI — and <code>Invoke-ScriptAnalyzer</code> (PSScriptAnalyzer) sits beside it as naturally as shellcheck does for bash.</p>
+
+<hr />
+
+<h2 id="3-windows-fleets-scopes-host-records-auth">3 · Windows fleets: scopes, host records &amp; auth</h2>
+
+<p>Targeting follows the shared shell-family rules — a scope fans out to its member hosts, a pinned <code>target_host</code> wins outright on every run path, a per-run host subset is SSH-executor-only (<code>422 scope_membership</code> otherwise) — with these Windows-fleet specifics:</p>
+
+<ul>
+<li><strong>Declare <code>powershell</code> on the scope.</strong> Supported run types are chips on the scope (the “bash floor” means <code>bash</code> is always present; add <code>powershell</code> for your Windows scopes — e.g. a <code>Windows-Fleet</code> scope declaring <span class="tag">powershell</span> <span class="tag">ansible</span>). A pragma does the same for a Git-synced inventory: <code># amadeus:v1 types=bash,powershell</code>.</li>
+<li><strong>Host records are OS-agnostic.</strong> Address, port (22 for Windows OpenSSH too), user, optional bastion <code>via</code>, and the auth key. The <strong>OS</strong> field on a host record is descriptive; execution behavior comes from the run type.</li>
+<li><strong>Key-based auth on Windows OpenSSH</strong> works like anywhere else, with one server-side gotcha worth knowing when <em>Test connection</em> says <span class="pill fail"><span class="dot"></span>cred_error</span> but the key is right: for members of the Administrators group, Windows OpenSSH reads authorized keys from <code>C:\ProgramData\ssh\administrators_authorized_keys</code> (with restrictive ACLs), not the user profile's <code>authorized_keys</code>.</li>
+<li><strong>Host keys fail closed</strong> on both executors — stored-key strict match or loud TOFU on the in-app executor; the runner's <code>known_hosts</code> + <strong>Scan &amp; approve</strong> on the agent path. Bastion hops are pinned too. Same rules, same fixes as <a href="./bash-guide.html">Bash Guide</a> §3.</li>
+</ul>
+
+<hr />
+
+<h2 id="4-env-inputs-outputs-and-exit-codes-that-tell-the-truth">4 · Env, inputs, outputs — and exit codes that tell the truth</h2>
+
+<h3>Reading the environment</h3>
+
+<p>Injected environment (job env ← schedule env ← per-run overrides, plus bound references and the dispatcher's <code>AMADEUS_RUN_*</code> context set) arrives as an <code>$env:</code> prelude ahead of your body, delivered on stdin — never argv, never <code>/proc</code>-visible. Read it the normal way:</p>
+
+<div class="codeblock"><pre><code>$release = $env:TARGET_RELEASE          # a run-input answer (§ below)
+$apiKey  = $env:AMADEUS_SECRET_API_KEY  # a bound secret reference
+Write-Output "run $($env:AMADEUS_RUN_ID) on scope $($env:AMADEUS_RUN_SCOPE)"</code></pre></div>
+
+<h3>Run inputs, not <code>Read-Host</code></h3>
+
+<p>The invocation is <code>-NonInteractive</code>: <code>Read-Host</code>, credential prompts and <code>-Confirm</code> dialogs don't hang — they <strong>throw</strong> (<em>“Read and Prompt functionality is not available”</em>). Declare operator questions as <a href="user-manual.html#jobs">run inputs</a> (<code>spec.prompts</code>) and read the answers from <code>$env:</code>; add <code>-Confirm:$false</code> / <code>-Force</code> to cmdlets that would otherwise prompt.</p>
+
+<h3>Exit codes: make failure loud</h3>
+
+<p>Cronomicon judges each host by the process exit code — and PowerShell's defaults are looser than Bash's. <code>powershell -Command</code> exits <code>1</code> on a <em>terminating</em> error, but non-terminating errors (most cmdlet failures) and failed native commands do <strong>not</strong> fail the run by themselves. Open every script with:</p>
+
+<div class="codeblock"><pre><code>$ErrorActionPreference = 'Stop'     # non-terminating errors become terminating
+Set-StrictMode -Version Latest
+
+# after any native command you care about:
+some.exe --do-thing
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }</code></pre></div>
+
+<p>That is PowerShell's <code>set -euo pipefail</code>. Per-host results aggregate exactly as for bash: all ok → <span class="pill ok"><span class="dot"></span>success</span>, all failed → failure, mixed → <strong>warning (partial)</strong>, with each host's output prefixed <code>[hostname]</code>.</p>
+
+<h3>Workflow outputs (A12)</h3>
+
+<p>Hand values to downstream workflow steps with the standard marker on stdout:</p>
+
+<div class="codeblock"><pre><code>Write-Output "::amadeus-output name=HOTFIX_KB::KB5031364"</code></pre></div>
+
+<p>A downstream step binds an input to it and receives it as env. The <code>output_secret_leak</code> fail-close applies here too — never emit a bound secret as an output. See <a href="user-manual.html#workflows">User Manual §7.5</a>.</p>
+
+<hr />
+
+<h2 id="5-secrets-from-powershell">5 · Secrets from PowerShell</h2>
+
+<p>The delivery model is the shared one (<a href="./bash-guide.html">Bash Guide</a> §5): declare <a href="user-manual.html#refbindings">reference bindings</a> on the job, receive <code>$env:AMADEUS_SECRET_&lt;name&gt;</code> / <code>$env:AMADEUS_VAR_&lt;name&gt;</code>; the in-app executor resolves and injects fail-closed with STDIN delivery, the runner path needs the per-runner <strong>Secret injection</strong> flag, and <code>AMADEUS_KEY_*</code> material is runner-only. PowerShell-specific habits:</p>
+
+<ul>
+<li><strong>Bridge to credential-taking cmdlets without echoing:</strong>
+<div class="codeblock"><pre><code>$sec  = ConvertTo-SecureString $env:AMADEUS_SECRET_SVC_PASS -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec)</code></pre></div></li>
+<li><strong>Don't re-broadcast.</strong> Redaction masks known injected values in stored logs, but a value your script fetches or decrypts itself was never registered — keep it out of <code>Write-Host</code>/<code>Write-Output</code>, out of other processes' argv, and away from <code>-Verbose</code> streams.</li>
+<li><strong>Nothing secret in the repo, schedule env or run overrides</strong> — plaintext by design; secrets belong in the encrypted store / Vault behind a binding.</li>
+</ul>
+
+<hr />
+
+<h2 id="6-best-practice-checklist">6 · Best-practice checklist</h2>
+
+<ul>
+<li><strong>Open with <code>$ErrorActionPreference = 'Stop'</code> + <code>Set-StrictMode</code></strong>, and propagate <code>$LASTEXITCODE</code> after native commands — exit codes are the contract Cronomicon reads.</li>
+<li><strong>Write for Windows PowerShell 5.1 compatibility</strong> when targeting stock Windows hosts (the invocation is <code>powershell</code>, not <code>pwsh</code>) — or standardize your fleet on PowerShell 7 <em>and</em> alias <code>powershell</code> to it deliberately.</li>
+<li><strong>No prompts, ever:</strong> run inputs instead of <code>Read-Host</code>; <code>-Confirm:$false</code>/<code>-Force</code> on cmdlets that ask; <code>-NonInteractive</code> turns forgotten prompts into immediate errors, which is the good outcome.</li>
+<li><strong>Be idempotent</strong> — retries, schedule re-fires and re-runs all mean “again”; test with <code>-WhatIf</code> during authoring, then remove it.</li>
+<li><strong>Pin single-host jobs with <code>target_host</code></strong>; size <code>timeout_seconds</code> to reality (a hung Windows Update call is the classic overrun); <code>concurrency_policy: Forbid</code> for non-reentrant maintenance.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>, lint with PSScriptAnalyzer + <code>amadeus validate</code> in CI, and use <code>::amadeus-output</code> markers — not temp files — to pass data between workflow steps.</li>
+</ul>
+
+<hr />
+
+<h2 id="7-troubleshooting">7 · Troubleshooting</h2>
+
+<div class="tbl"><table>
+<thead><tr><th>Symptom</th><th>Likely cause → fix</th></tr></thead>
+<tbody>
+<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code>, or route to a runner.</td></tr>
+<tr><td>Queued, “waiting for a powershell-capable runner”</td><td>No online runner claims <code>powershell</code> — the probe needs local <code>pwsh</code>; declare <code>-capabilities</code> explicitly for a runner that only <em>dials</em> PowerShell targets (§1).</td></tr>
+<tr><td>Per-host failure: <code>powershell: command not found</code></td><td>A non-Windows target with only <code>pwsh</code> — add the <code>powershell</code> symlink/alias (§1). On Windows: the OpenSSH session's PATH is broken.</td></tr>
+<tr><td>Error “Read and Prompt functionality is not available”</td><td>Something asked a question under <code>-NonInteractive</code> — <code>Read-Host</code>, a confirm, a credential dialog. Replace with run inputs / <code>-Confirm:$false</code> (§4).</td></tr>
+<tr><td>Run reads <strong>Success</strong> but the work failed</td><td>A non-terminating error or a failed native command didn't move the exit code. Add the §4 preamble and the <code>$LASTEXITCODE</code> check.</td></tr>
+<tr><td><span class="pill fail"><span class="dot"></span>cred_error</span> on a Windows host despite a correct key</td><td>The account is an Administrator and the key isn't in <code>administrators_authorized_keys</code> (§3).</td></tr>
+<tr><td>Host-key mismatch / <code>conn_error</code> / <code>unpinned_bastion_target</code> / <code>executor_lost</code> / <code>amadeus: job timed out</code></td><td>Shared shell-family causes — see the <a href="./bash-guide.html">Bash Guide</a> §7 table; the rules are identical for PowerShell.</td></tr>
+</tbody>
+</table></div>
+
+<p>For the SSH executor's internals see <a href="administrator-manual.html#execution">Administrator Manual §4</a>; for agent-side key custody and host-key approval, <a href="./runner-security.html">Runner Security Guide</a>.</p>
+
+</main>
+</div>
+<button id="totop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+</button>
+<script>
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  document.getElementById('themeLabel').textContent=t==='dark'?'Light':'Dark';
+  var ic=document.getElementById('themeIcon');
+  ic.innerHTML=t==='dark'
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    : '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>';
+  try{localStorage.setItem('am_manual_theme',t)}catch(e){}
+}
+function toggleTheme(){applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark')}
+(function(){var s;try{s=localStorage.getItem('am_manual_theme')}catch(e){}applyTheme(s==='light'?'light':'dark')})();
+document.querySelectorAll('.codeblock').forEach(function(cb){
+  var pre=cb.querySelector('pre'); if(!pre||cb.querySelector('.copybtn'))return;
+  var b=document.createElement('button'); b.className='copybtn'; b.textContent='Copy';
+  b.onclick=function(){navigator.clipboard.writeText(pre.innerText).then(function(){b.textContent='Copied';b.classList.add('ok');setTimeout(function(){b.textContent='Copy';b.classList.remove('ok')},1400)})};
+  cb.appendChild(b);
+});
+(function(){
+  var links=[].slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a});
+  if(!links.length)return;
+  var obs=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var a=map[e.target.id];if(!a)return;links.forEach(function(l){l.classList.remove('active')});a.classList.add('active')}})},{rootMargin:'-64px 0px -72% 0px',threshold:0});
+  document.querySelectorAll('main h2[id]').forEach(function(h){obs.observe(h)});
+})();
+window.addEventListener('scroll',function(){document.getElementById('totop').classList.toggle('show',window.scrollY>500)});
+document.querySelectorAll('nav.toc a').forEach(function(a){a.addEventListener('click',function(){document.body.classList.remove('nav-open')})});
+</script>
+</body>
+</html>

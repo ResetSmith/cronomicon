@@ -1,0 +1,27 @@
+-- 840 Job become-password secret (the runas-update plan, RA-12 — Phase B).
+--
+-- The bare name of a Secrets row supplying the run's Ansible become password. NULL
+-- (every existing job) means no become password, which is the pre-Phase-B behaviour
+-- exactly: `--become` still works for passwordless-sudo targets, and nothing else
+-- changes.
+--
+-- WHY A JOB FIELD AND NOT A PROMPT OR A PLAIN ENV VAR. Cronomicon has deliberately had
+-- no become-password field since v0.55.3 — the admin manual states outright that
+-- "a become password is deliberately not a field, being secret material". That
+-- position is preserved, not reversed: this column holds a NAME, never a value. The
+-- value lives in the Secrets catalogue with every control that implies (KEK or
+-- Vault at rest, agency + scope resolution, reveal auditing, log redaction), and is
+-- resolved at dispatch through the same runref path as any other reference.
+--
+-- Run inputs remain the wrong channel and this does not open one: prompt answers
+-- land in runs.env_json in PLAINTEXT and are log-visible by design (v0.55.12), so
+-- "just prompt for the password" would put it exactly where a secret must never be.
+--
+-- ⚠️ THE PERMISSION STORY CHANGES WITH THIS COLUMN. The manual's rationale for
+-- `--become` carrying no extra gate was that "a playbook can already declare
+-- `become` itself, so the toggle grants nothing the caller could not already run".
+-- That stops being true once a run can carry a password the caller supplied: the
+-- gate becomes secret-read entitlement (the row must resolve for the run's scope and
+-- department) plus an injection-flagged, capable runner. The administrator manual is
+-- rewritten accordingly in this release.
+ALTER TABLE jobs ADD COLUMN become_password_secret TEXT;

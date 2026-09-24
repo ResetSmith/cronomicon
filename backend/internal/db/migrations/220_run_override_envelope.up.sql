@@ -1,0 +1,15 @@
+-- 220 Per-run override envelope (architecture-update.md — F3).
+--
+-- A manual/ad-hoc run may override what the job would otherwise run with: env-var
+-- overrides (F1), a host subset within the bound scope (F2), and the existing
+-- scope/executor overrides. The EFFECTIVE values still land in their own columns
+-- (env_json, scope, target_host, executor) for the executor to consume unchanged;
+-- this column is the AUDIT/reproducibility record of *what the operator overrode*
+-- at trigger time, captured at the single enqueue write path.
+--
+-- A JSON object, decoded with the same map ergonomics as env_json. Stores only the
+-- fields actually overridden, e.g. {"env":{KEY:VAL},"hosts":[h1,h2],"scope":"…",
+-- "executor":"ssh"}. Additive (ALTER ADD COLUMN) — no rebuild. NULL ⇒ no ad-hoc
+-- overrides (a plain scheduled/default/workflow run), making "was this ad-hoc?" a
+-- simple NULL test.
+ALTER TABLE runs ADD COLUMN override_json TEXT;

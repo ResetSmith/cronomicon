@@ -1,0 +1,2331 @@
+<h1>Operator course (v1.5.6)</h1>
+
+<!--
+  Operator training course — body-only fragment (TR-1, the training-course plan).
+
+  Published by frontend/vite-manuals-plugin.js as a GUIDES entry: wrapped at
+  build time in the manuals' shell, so this file carries CONTENT ONLY — no
+  document scaffolding, no sidebar, no theme toggle. The wrapper supplies all of
+  that, plus the on-this-page TOC built from the h2 headings below.
+
+  Six rules this file lives under. The last two were learned by building it —
+  the wrapper's rewrites are blind regexes with no idea what a comment is.
+
+    1. NO HEX LITERALS. Every colour is a var(--*) published by the manuals'
+       stylesheet for both themes. frontend/src/documentation-palette.test.ts
+       fails on any hex that is not a theme.ts value, and using the vars means
+       there is nothing for it to catch AND the widgets follow the light/dark
+       toggle for free.
+    2. h2 IS STRUCTURAL — each one becomes a sidebar TOC entry. Module headings
+       only; everything inside a module is h3 or lower.
+    3. NO pre BLOCKS. The wrapper boxes every one of them in .codeblock by
+       global regex, including inside a widget. Use inline code instead.
+    4. NO custom link text on runner-* or usage-guide anchors — the wrapper
+       rewrites the visible label to the guide's registered name. Manual links
+       are safe.
+    5. THE h1 MUST BE THE FIRST THING IN THIS FILE, ahead of this comment. The
+       wrapper lifts it into the hero (and splits a trailing parenthetical into
+       a version chip) with a pattern anchored to the very start of the body, so
+       anything before it — including a comment — silently defeats the lift and
+       leaves a duplicate title in the page.
+    6. NEVER WRITE A TAG IN ANGLE BRACKETS IN THIS COMMENT. The heading and
+       code-block rewrites run over the whole body, comments included. An
+       unclosed h2 written here swallowed everything up to the first real
+       closing h2 tag and ate module M0 out of the sidebar TOC.
+
+  The widgets are deliberately CSS-only except the progress strip. Reveals,
+  the Rosetta rows and the scenarios are all disclosure elements, so they work
+  with JavaScript disabled, in print, and in a Moodle File-resource download.
+  The only script on the page tracks per-module progress in localStorage.
+-->
+
+<style>
+    /* ── Training widgets (tr-) ────────────────────────────────────────────
+       Namespaced so nothing collides with the manuals' own classes or the
+       wrapper's appended script. Colours are var(--*) only — see rule 1. */
+
+    .tr-intro {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 18px 20px;
+        margin: 22px 0 28px;
+    }
+
+    .tr-intro p:last-child { margin-bottom: 0; }
+
+    .tr-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+    }
+
+    .tr-meta span {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--textSec);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 3px 8px;
+    }
+
+    /* ── Progress strip ─────────────────────────────────────────────────── */
+
+    .tr-progress {
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin: 24px 0;
+    }
+
+    .tr-progress h3 {
+        margin: 0 0 4px;
+        font-size: 13px;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--textSec);
+    }
+
+    .tr-progress-note {
+        font-size: 13px;
+        color: var(--textMuted);
+        margin: 0 0 12px;
+    }
+
+    .tr-progress ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+    }
+
+    .tr-progress li { margin: 0; }
+
+    .tr-progress label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        cursor: pointer;
+        color: var(--text);
+    }
+
+    .tr-progress input { accent-color: var(--primary); width: 15px; height: 15px; }
+
+    .tr-reset {
+        margin-top: 12px;
+        font: inherit;
+        font-size: 13px;
+        background: transparent;
+        color: var(--primary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 4px 10px;
+        cursor: pointer;
+    }
+
+    .tr-reset:hover { border-color: var(--borderStrong); }
+
+    /* ── Shared disclosure look ─────────────────────────────────────────── */
+
+    .tr-map, .tr-opt, .tr-reveal {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--panel);
+        margin-bottom: 8px;
+    }
+
+    .tr-map > summary,
+    .tr-opt > summary,
+    .tr-reveal > summary {
+        cursor: pointer;
+        padding: 10px 14px;
+        list-style: none;
+        font-size: 14px;
+    }
+
+    .tr-map > summary::-webkit-details-marker,
+    .tr-opt > summary::-webkit-details-marker,
+    .tr-reveal > summary::-webkit-details-marker { display: none; }
+
+    .tr-map > summary:hover,
+    .tr-opt > summary:hover,
+    .tr-reveal > summary:hover { background: var(--panelHover); }
+
+    /* Disclosure affordance. Nothing marked these rows as expandable — the
+       native marker is suppressed above. \25B6/\25BC is the app's one
+       disclosure pair (ExpandChevron); tr-opt keeps ::after for its verdict
+       pill, and tr-map's chevron rides the summary grid's last slot. */
+    .tr-reveal > summary::before,
+    .tr-opt > summary::before {
+        content: "\25B6";
+        display: inline-block;
+        font-size: 9px;
+        color: var(--textMuted);
+        margin-right: 9px;
+        vertical-align: 1px;
+    }
+
+    .tr-reveal[open] > summary::before,
+    .tr-opt[open] > summary::before { content: "\25BC"; color: var(--textSec); }
+
+    .tr-map > summary::after {
+        content: "\25B6";
+        font-size: 9px;
+        color: var(--textMuted);
+        justify-self: end;
+    }
+
+    .tr-map[open] > summary::after { content: "\25BC"; color: var(--textSec); }
+
+    .tr-map[open] > summary,
+    .tr-opt[open] > summary,
+    .tr-reveal[open] > summary { border-bottom: 1px solid var(--border); }
+
+    .tr-body { padding: 12px 14px; font-size: 14px; }
+    .tr-body p:last-child, .tr-body ul:last-child { margin-bottom: 0; }
+
+    /* ── Rosetta rows ───────────────────────────────────────────────────── */
+
+    .tr-rosetta { margin: 18px 0 24px; }
+
+    .tr-map > summary {
+        display: grid;
+        grid-template-columns: 1fr 22px 1fr auto 12px; /* 5th col: the ::after chevron */
+        align-items: center;
+        gap: 10px;
+    }
+
+    .tr-from { color: var(--textSec); }
+    .tr-to { color: var(--text); font-weight: 600; }
+    .tr-arrow { color: var(--textMuted); text-align: center; }
+
+    .tr-flag {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 9px;
+        white-space: nowrap;
+    }
+
+    .tr-flag-new { background: var(--primaryBg); color: var(--primary); }
+    .tr-flag-warn { background: var(--warningBg); color: var(--warning); }
+    .tr-flag-gap { background: var(--dangerBg); color: var(--danger); }
+    .tr-flag-win { background: var(--successBg); color: var(--success); }
+
+    /* ── Scenarios ──────────────────────────────────────────────────────── */
+
+    .tr-scenario {
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--primary);
+        border-radius: 8px;
+        background: var(--panel2);
+        padding: 16px 18px;
+        margin: 20px 0 26px;
+    }
+
+    .tr-scenario > h4 {
+        margin: 0 0 4px;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--primary);
+    }
+
+    .tr-setup { font-size: 14px; margin: 0 0 14px; }
+
+    .tr-ask {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 12px;
+        color: var(--text);
+    }
+
+    .tr-opt { background: var(--panel); }
+
+    .tr-opt[open] > summary::after {
+        float: right;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 9px;
+        margin-left: 12px;
+    }
+
+    .tr-opt[data-verdict="right"][open] > summary::after {
+        content: "\2713 Correct";
+        background: var(--successBg);
+        color: var(--success);
+    }
+
+    .tr-opt[data-verdict="wrong"][open] > summary::after {
+        content: "\2717 Not this one";
+        background: var(--dangerBg);
+        color: var(--danger);
+    }
+
+    .tr-opt[data-verdict="right"][open] { border-color: var(--success); }
+    .tr-opt[data-verdict="wrong"][open] { border-color: var(--danger); }
+
+    .tr-takeaway {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+        font-size: 14px;
+    }
+
+    .tr-takeaway strong { color: var(--accent); }
+
+
+    /* ── Match lists (tr-sort) ──────────────────────────────────────────────
+       A "commit mentally, then reveal" matcher rather than a drag-and-drop
+       sorter. Same teaching value — you have to decide before you look — with
+       no JavaScript, no drag affordance to fail on touch, and no keyboard trap.
+       The buckets are shown first so the choice is a real one. */
+
+    .tr-buckets {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+        margin: 16px 0;
+    }
+
+    .tr-bucket {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel2);
+        padding: 12px 14px;
+    }
+
+    .tr-bucket h4 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        color: var(--primary);
+    }
+
+    .tr-bucket p { margin: 0; font-size: 13px; color: var(--textSec); }
+
+    .tr-answer {
+        display: inline-block;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 4px;
+        padding: 2px 8px;
+        margin-bottom: 8px;
+        background: var(--primaryBg);
+        color: var(--primary);
+    }
+
+    /* ── Hotspots ───────────────────────────────────────────────────────────
+       Numbered pins positioned in PERCENTAGES over a figure.shot pair, so one
+       set of coordinates serves both themes and every viewport width. Each pin
+       is an anchor into the numbered list below it, which is also what the
+       whole widget degrades to in print and with images off. */
+
+    .tr-hotspot { margin: 20px 0 8px; }
+
+    /* The pins' coordinate space is THIS box, which wraps the images alone. It
+       must not include the figcaption: percentages measured against a taller
+       box put every pin high by the caption's height, which is how the first
+       draft of this widget landed pin 2 on the Score header. */
+    .tr-shotbox { position: relative; display: block; }
+    .tr-shotbox img { display: block; width: 100%; height: auto; }
+
+    .tr-pin {
+        position: absolute;
+        width: 26px;
+        height: 26px;
+        margin: -13px 0 0 -13px;
+        border-radius: 999px;
+        background: var(--primary);
+        color: var(--onSolid);
+        font-family: var(--sansCond);
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 26px;
+        text-align: center;
+        text-decoration: none;
+        box-shadow: var(--shadow);
+        border: 2px solid var(--panel);
+    }
+
+    .tr-pin:hover, .tr-pin:focus { background: var(--accent); }
+
+    .tr-legend { counter-reset: none; margin: 0 0 24px; padding-left: 22px; }
+    .tr-legend li { margin-bottom: 8px; font-size: 14px; }
+    .tr-legend li strong { color: var(--text); }
+
+    /* ── Walkthrough (CSS-only stepper) ─────────────────────────────────────
+       Radio inputs drive which step shows via :checked ~ sibling selectors, so
+       the stepper works with JavaScript disabled. The inputs are visually
+       hidden but focusable, and each label is their control — so arrow keys
+       move through the steps the way a radio group should. */
+
+    .tr-walk {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 14px 16px;
+        margin: 20px 0 26px;
+    }
+
+    .tr-walk > input[type="radio"] {
+        position: absolute;
+        opacity: 0;
+        width: 1px;
+        height: 1px;
+        pointer-events: none;
+    }
+
+    .tr-walk-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .tr-walk-nav label {
+        cursor: pointer;
+        font-size: 13px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 5px 11px;
+        color: var(--textSec);
+        background: var(--panel2);
+    }
+
+    .tr-walk-nav label:hover { border-color: var(--borderStrong); color: var(--text); }
+
+    .tr-walk-step { display: none; }
+    .tr-walk-step figure.shot { margin: 0 0 12px; }
+    .tr-walk-step h4 { margin: 0 0 6px; font-size: 15px; }
+    .tr-walk-step p { font-size: 14px; }
+    .tr-walk-step p:last-child { margin-bottom: 0; }
+
+    /* Step N checked → highlight tab N, show panel N. Four steps. */
+    .tr-w1:checked ~ .tr-walk-nav label[for$="s1"],
+    .tr-w2:checked ~ .tr-walk-nav label[for$="s2"],
+    .tr-w3:checked ~ .tr-walk-nav label[for$="s3"],
+    .tr-w4:checked ~ .tr-walk-nav label[for$="s4"] {
+        background: var(--primary);
+        color: var(--onSolid);
+        border-color: var(--primary);
+    }
+
+    .tr-w1:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(1),
+    .tr-w2:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(2),
+    .tr-w3:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(3),
+    .tr-w4:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(4) { display: block; }
+
+    /* Keyboard focus has to be visible even though the input itself is hidden. */
+    .tr-w1:focus-visible ~ .tr-walk-nav label[for$="s1"],
+    .tr-w2:focus-visible ~ .tr-walk-nav label[for$="s2"],
+    .tr-w3:focus-visible ~ .tr-walk-nav label[for$="s3"],
+    .tr-w4:focus-visible ~ .tr-walk-nav label[for$="s4"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    @media print {
+        .tr-walk-step { display: block !important; break-inside: avoid; }
+        .tr-walk-nav { display: none; }
+        .tr-pin { display: none; }
+    }
+
+    /* Print: open every disclosure so a PDF carries the whole course. */
+    @media print {
+        .tr-map, .tr-opt, .tr-reveal { break-inside: avoid; }
+        .tr-map > .tr-body, .tr-opt > .tr-body, .tr-reveal > .tr-body { display: block !important; }
+        .tr-progress, .tr-reset { display: none; }
+    }
+
+    /* ── Deck mode (TR-6) ───────────────────────────────────────────────────
+       One slide at a time, the SCORM-ish presentation the courses default to.
+
+       The whole feature is an ENHANCEMENT layered on the scrolling page: the
+       markup below is built at runtime by the deck script, so with JavaScript
+       disabled none of these rules ever match and the document is exactly the
+       long page it was before TR-6 — which is what keeps the print path, the
+       Moodle File-resource download and the no-JS guarantee intact without a
+       second code path to maintain. `@media print` force-restores page mode for
+       the same reason. */
+
+    .tr-deck .tr-slide { display: none; }
+    /* The current slide is a flex column centered in its min-height, so a
+       short slide sits composed in the frame instead of stranded at the top.
+       A tall slide outgrows the min-height and scrolls from the top as before. */
+    .tr-deck .tr-slide.tr-current {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        animation: none;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .tr-deck .tr-slide.tr-current { animation: tr-enter .22s ease; }
+
+        @keyframes tr-enter {
+            from { opacity: 0; transform: translateY(8px); }
+        }
+    }
+    .tr-deck .tr-slide.tr-current > :first-child { margin-top: 0; }
+
+    /* The manuals give every `section` top padding and margin for the scrolling
+       read. A slide is the top of the screen, so it takes neither. */
+    .tr-deck .tr-slide { padding-top: 0; margin-top: 0; }
+
+    /* Each slide is focused on navigation so screen readers land on the new
+       content. That is a programmatic focus on a container, not a control, so
+       it must not draw a focus ring — an outline around the whole slide reads
+       as a card border and makes a short slide look like an empty box. The
+       real focus ring on real controls is untouched. */
+    .tr-deck .tr-slide:focus { outline: none; }
+
+    /* Room for the fixed bar, and enough height that a short slide still reads
+       as a slide rather than as a stranded paragraph. */
+    .tr-deck main { padding-bottom: 96px; }
+    .tr-deck .tr-slide.tr-current { min-height: 58vh; }
+
+    .tr-deckbar {
+        position: fixed;
+        bottom: 0;
+        left: var(--nav-w);
+        right: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 22px;
+        background: var(--panel);
+        border-top: 1px solid var(--border);
+        box-shadow: var(--shadow);
+    }
+
+    /* Matches the manuals' own sidebar-collapse breakpoint, so the bar and the
+       sidebar can never disagree about who owns the left edge. */
+    @media (max-width: 1040px) {
+        .tr-deckbar { left: 0; }
+    }
+
+    .tr-deckbar button {
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 4px;
+        padding: 7px 14px;
+        border: 1px solid var(--borderStrong);
+        background: var(--panel2);
+        color: var(--text);
+    }
+
+    .tr-deckbar button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+    .tr-deckbar button:disabled { opacity: .4; cursor: default; }
+
+    .tr-deck-next { background: var(--primary) !important; color: var(--onSolid) !important; border-color: var(--primary) !important; }
+    .tr-deck-next:hover:not(:disabled) { background: var(--primaryHover) !important; color: var(--onSolid) !important; }
+
+    .tr-deck-where {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .tr-deck-label {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--textSec);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .tr-deck-rail { height: 4px; border-radius: 999px; background: var(--panel2); overflow: hidden; }
+    .tr-deck-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+    .tr-deck-mode {
+        border: 1px solid var(--border) !important;
+        background: transparent !important;
+        color: var(--primary) !important;
+        white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+        .tr-deck-mode { display: none; }
+        .tr-deckbar { gap: 10px; padding: 9px 14px; }
+    }
+
+    /* The control that brings the deck back while reading as one page. It rides
+       in the flow at the top of the content rather than in the fixed bar, which
+       does not exist in page mode. */
+    .tr-page-resume { margin: 0 0 18px; }
+
+    @media print {
+        .tr-deckbar, .tr-page-resume { display: none !important; }
+        .tr-deck .tr-slide { display: block !important; }
+        .tr-deck main { padding-bottom: 0; }
+    }
+
+</style>
+
+<p class="lead-p">This course is for operators moving from <strong>Fortra Automate Schedule</strong> to
+    Cronomicon. It teaches the model — the handful of ideas that are genuinely different — rather than
+    touring every screen. The manuals already document every field; this gets you to the point where
+    those manuals make sense.</p>
+
+<div class="tr-intro">
+    <div class="tr-meta">
+        <span>Audience: operators</span>
+        <span>About 45–60 minutes</span>
+        <span>No sign-off, no score</span>
+    </div>
+    <p>Work through it in order — later modules assume earlier ones. Nothing here is timed or graded, and
+        nothing is recorded anywhere but your own browser. The tick boxes below are for your benefit only.</p>
+    <p><strong>Administrators:</strong> finish this course first, then take the administrator course. It
+        covers scopes, agencies, runners, access grants and secrets, and it assumes everything below.</p>
+</div>
+
+<div class="tr-progress" id="tr-progress" hidden>
+    <h3>Your progress</h3>
+    <p class="tr-progress-note">Saved in this browser only. Not sent anywhere, not visible to anyone else.</p>
+    <ul>
+        <li><label><input type="checkbox" data-mod="m0"> M0 · What changed</label></li>
+        <li><label><input type="checkbox" data-mod="m1"> M1 · The four objects</label></li>
+        <li><label><input type="checkbox" data-mod="m2"> M2 · Git or Cronomicon</label></li>
+        <li><label><input type="checkbox" data-mod="m3"> M3 · Finding your way</label></li>
+        <li><label><input type="checkbox" data-mod="m4"> M4 · Running a job</label></li>
+        <li><label><input type="checkbox" data-mod="m5"> M5 · Blast radius</label></li>
+        <li><label><input type="checkbox" data-mod="m6"> M6 · How runs start</label></li>
+        <li><label><input type="checkbox" data-mod="m7"> M7 · Reading results</label></li>
+        <li><label><input type="checkbox" data-mod="m8"> M8 · When it goes wrong</label></li>
+        <li><label><input type="checkbox" data-mod="m9"> M9 · Bringing jobs across</label></li>
+    </ul>
+    <button type="button" class="tr-reset" id="tr-reset">Clear progress</button>
+</div>
+
+<h2>M0 · What changed — Automate Schedule to Cronomicon</h2>
+
+<p>The good news first: <strong>you already know most of this</strong>. Automate Schedule and Cronomicon do
+    the same job — run scripts on servers, on a schedule, in order, and tell you what happened. A job is
+    still a job. Your scripts are still your scripts. Most of what you know transfers directly.</p>
+
+<p>Six things are genuinely different. Everything else in this course is detail hanging off them.</p>
+
+<h3>The six differences</h3>
+
+<details class="tr-reveal">
+    <summary><strong>1.</strong> Job definitions live in Git, not in the scheduler</summary>
+    <div class="tr-body">
+        <p>In Automate Schedule you edit a job on the server and the change is live. In Cronomicon, most job
+            definitions live in a Git repository — version-controlled, reviewed, and synced into Cronomicon.</p>
+        <p>This is the single biggest change, and it explains most of the times you will find a field you
+            cannot edit. A job that came from Git is <em>read-only in the app</em>, on purpose: the
+            repository is the source of truth, and letting the app overwrite it would mean two answers to
+            "what does this job do".</p>
+        <p>Cronomicon can also hold jobs of its own, authored in the app. The two kinds live in separate
+            namespaces and never collide — that is the "source" column you will see everywhere, reading
+            either <code>git</code> or <code>amadeus</code>.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>2.</strong> One job becomes four reusable pieces</summary>
+    <div class="tr-body">
+        <p>An Automate Schedule job carries everything on one record: the command, the agent, the schedule,
+            the parameters. Cronomicon splits those into four objects that snap together:</p>
+        <ul>
+            <li><strong>Script</strong> — what runs (Bash, PowerShell, Python, Perl, Ansible, Terraform)</li>
+            <li><strong>Scope</strong> — where it is allowed to run</li>
+            <li><strong>Schedule</strong> — when it runs</li>
+            <li><strong>Env Vars</strong> — what it needs to know</li>
+        </ul>
+        <p>A <strong>Job</strong> is those four bound together. The payoff is reuse: one "nightly at 02:00"
+            schedule serves forty jobs, and fixing it once fixes all forty. The cost is that creating a job
+            feels like assembly rather than filling in a form.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>3.</strong> There is no agent on most machines</summary>
+    <div class="tr-body">
+        <p>Cronomicon connects over SSH from the server. No agent to install on each target, no per-machine
+            licence, and no "Unlicensed Agents" count to watch.</p>
+        <p>Runner agents do exist, but for different reasons than you are used to: reaching networks the
+            server cannot reach, and watching directories for files. If your work does not involve either,
+            you may never see one.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>4.</strong> Calendars can only <em>block</em> a run — never cause one</summary>
+    <div class="tr-body">
+        <p>Read this one twice. It is the same word doing a narrower job, which makes it the easiest thing
+            on this page to get wrong.</p>
+        <p>An Automate Schedule calendar can define when a job runs. An Cronomicon <strong>working
+                calendar</strong> can only <em>suppress</em> a run that a schedule was already going to
+            make. It is a veto, applied just before a scheduled fire. It can never trigger anything.</p>
+        <p>So when you bring a job across: the days it runs on move into the <strong>schedule</strong>. The
+            days it must <em>not</em> run on — holidays, freeze windows, month-end — move into the
+            calendar.</p>
+        <p>One consequence in your favour: an Cronomicon calendar cannot quietly expire and leave a job
+            never running.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>5.</strong> How wide a run reaches is something you can see — and set</summary>
+    <div class="tr-body">
+        <p>In Automate Schedule, where a job runs is settled by its agent or agent environment. In Cronomicon
+            a run's reach is decided by three things together, and the Run dialog shows you all of them
+            before you commit.</p>
+        <p>This is module M5, and it is the one worth slowing down for. It is where a new operator can do
+            real damage.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>6.</strong> Every run is reproducible, by trace ID</summary>
+    <div class="tr-body">
+        <p>Cronomicon snapshots what actually ran: a hash of the script's content at execution time, the
+            effective environment, the scope, the target hosts, and which executor carried it out. Each run
+            carries a <strong>trace ID</strong> that ties the log, the audit record and the activity entry
+            together.</p>
+        <p>Practically: when someone asks "what did this job do on the 3rd", there is an exact answer, and
+            "the script changed since then" is visible rather than guessed at.</p>
+    </div>
+</details>
+
+<h3>Your vocabulary, translated</h3>
+
+<p>Expand any row for what actually changes for you. Rows marked <span class="tr-flag tr-flag-new">new</span>
+    have no Automate Schedule equivalent — those are the ones to read properly. <span
+        class="tr-flag tr-flag-warn">careful</span> marks a false friend: same word, different behaviour.
+    <span class="tr-flag tr-flag-gap">not yet</span> is something Cronomicon does not do today.</p>
+
+<div class="tr-rosetta">
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Job</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Job</span><span></span></summary>
+        <div class="tr-body">
+            <p>Same idea, same name. The difference is where the definition lives — usually Git — and that
+                the schedule, scope and variables it uses are separate reusable objects rather than fields
+                on the job itself.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">The job's command or script</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Script</span><span></span></summary>
+        <div class="tr-body">
+            <p>Now a version-controlled file rather than a field you type into. Cronomicon reads your scripts
+                from Git, detects which variables they reference, and lints them. You will find your
+                scripts under the Scripts catalog, read-only — they are changed by committing, not by
+                editing in the app.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Agent</span><span class="tr-arrow">&rarr;</span><span class="tr-to">SSH executor, or a Runner</span><span class="tr-flag tr-flag-win">simpler</span></summary>
+        <div class="tr-body">
+            <p>By default there is no agent: Cronomicon connects over SSH. Runner agents exist for networks
+                the server cannot reach directly, and for watching directories for arriving files.</p>
+            <p>No licensing, so no unlicensed-agent count and no licence expiry to track.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Agent Environment</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Scope</span><span></span></summary>
+        <div class="tr-body">
+            <p>A named set of hosts a job is allowed to run on. Closest thing to an agent environment, and
+                it does more: a scope also declares which run types it supports and can carry an Ansible
+                inventory.</p>
+            <p>Crucially it is a <em>boundary</em>, not just a grouping — a run cannot reach a host that is
+                not in its scope. M5 covers this.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">&mdash;</span><span class="tr-arrow"></span><span class="tr-to">Agency</span><span class="tr-flag tr-flag-new">new</span></summary>
+        <div class="tr-body">
+            <p>A network-isolation zone. Jobs in one agency only ever dispatch to runners in that same
+                agency — the separation is hard, not a preference.</p>
+            <p>Mostly an administrator's concern. As an operator you will see agency names on jobs and
+                runners and can otherwise ignore them.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Job Suite</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Workflow</span><span></span></summary>
+        <div class="tr-body">
+            <p>Ordered jobs run as a unit, with branching, parallel arms, and the ability to pass values
+                from one step to the next. A workflow can also contain another workflow as a step.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Job dependency / prerequisite</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Reaction</span><span></span></summary>
+        <div class="tr-body">
+            <p>"When job A finishes, run job B." Reactions carry the finishing job's <em>disposition</em>,
+                so you can react differently to a success, a failure, or a run someone killed.</p>
+            <p>They are depth-limited on purpose: a chain of reactions cannot run away, and every decision
+                to fire — including "wanted to fire, could not" — is recorded.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">File dependency</span><span class="tr-arrow">&rarr;</span><span class="tr-to">File-arrival trigger</span><span></span></summary>
+        <div class="tr-body">
+            <p>A runner watches a path and the server decides what an arrival means. A file must be
+                <em>stable</em> — unchanged in size for a set period — before it counts, so a job cannot
+                start on a half-copied file.</p>
+            <p>Every arrival leaves a row in the job's File Arrivals panel, including arrivals that did
+                <em>not</em> start a run and why. That panel is the answer to "the file landed, so why did
+                nothing happen?"</p>
+            <p>This is one of the two features that needs a runner — specifically, one where the files
+                land.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Job Queue</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Concurrency policy</span><span></span></summary>
+        <div class="tr-body">
+            <p>Set per job, with three answers. <strong>Allow</strong> lets runs overlap.
+                <strong>Forbid</strong> drops the new run and records it as skipped.
+                <strong>Queue</strong> parks it and runs it when the previous one clears.</p>
+            <p>A queued run does not wait forever — if the way stays blocked for 24 hours it is recorded as
+                missed rather than firing at a time that no longer makes sense.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Calendar</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Working calendar</span><span class="tr-flag tr-flag-warn">careful</span></summary>
+        <div class="tr-body">
+            <p><strong>Veto only.</strong> An Cronomicon calendar suppresses runs; it cannot schedule them.
+                See difference 4 above — this is the most common thing to get wrong when moving a job
+                across.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Job Monitor (runs too long)</span><span class="tr-arrow">&rarr;</span><span class="tr-to">SLA deadline</span><span class="tr-flag tr-flag-warn">careful</span></summary>
+        <div class="tr-body">
+            <p>Two separate settings that are easy to confuse, and they do opposite things:</p>
+            <ul>
+                <li><strong>Overdue</strong> tells a person. The run keeps going.</li>
+                <li><strong>Timeout</strong> kills the run.</li>
+            </ul>
+            <p>A backup still running at 6am may be perfectly healthy and merely slow. The right response
+                to that is usually a human looking at it, not a kill — so reach for overdue first.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Missed Jobs</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Missed-run detection</span><span></span></summary>
+        <div class="tr-body">
+            <p>Cronomicon watches for a schedule that should have fired and did not, and raises it rather than
+                leaving it to be noticed. Note that a run suppressed by a working calendar is
+                <em>skipped</em>, not missed — that one was deliberate.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Today's Failed / Skipped Jobs</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Dashboard verdict strip</span><span></span></summary>
+        <div class="tr-body">
+            <p>The first thing on the Dashboard is a one-line answer: everything is fine, or these jobs
+                need you. It links straight to the failures.</p>
+            <p>You can dismiss it — and dismissing is tied to <em>what you saw</em>. If a new failure
+                appears, the strip comes back. It cannot swallow something you have not looked at.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">History / History Purge</span><span class="tr-arrow">&rarr;</span><span class="tr-to">History + log retention</span><span></span></summary>
+        <div class="tr-body">
+            <p>Every run, filterable, with the full log attached. Logs stream live while a run is going, so
+                you can watch a long job rather than waiting for it to finish. Retention reaps old log
+                files on a schedule an administrator sets.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Notification lists</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Notifications</span><span></span></summary>
+        <div class="tr-body">
+            <p>Email as before, plus Slack and PagerDuty. Configured by an administrator; you will see the
+                results rather than the wiring.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Users / Admin</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Roles and access grants</span><span></span></summary>
+        <div class="tr-body">
+            <p>Access is granted as a package: a group of people, a role, and the scopes that role applies
+                to — together, in one grant. Being allowed to run jobs <em>somewhere</em> is not the same
+                as being allowed to run them <em>here</em>, and Cronomicon keeps those apart deliberately.</p>
+            <p>If a button is greyed out or a job is not in your list, this is usually why. The
+                administrator course covers it properly.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Standby Server</span><span class="tr-arrow">&rarr;</span><span class="tr-to">&mdash;</span><span class="tr-flag tr-flag-gap">not yet</span></summary>
+        <div class="tr-body">
+            <p>No standby server today. Recovery is by restore from backup rather than failover to a
+                standby. Not an operator concern day to day, but worth knowing it works differently — it
+                is on the roadmap.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Reports / Analysis Tools</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Dashboard, History, run analytics</span><span class="tr-flag tr-flag-gap">partial</span></summary>
+        <div class="tr-body">
+            <p>You get the Dashboard's Score timeline, filterable History, and run analytics. There is no
+                report builder, and the CSV export covers audit records rather than run history. Also on
+                the roadmap.</p>
+        </div>
+    </details>
+
+    <details class="tr-map">
+        <summary><span class="tr-from">Enter License / Unlicensed Agents</span><span class="tr-arrow">&rarr;</span><span class="tr-to">&mdash;</span><span class="tr-flag tr-flag-win">gone</span></summary>
+        <div class="tr-body">
+            <p>There is no licensing model. Nothing to enter, nothing to expire, no cap on how many
+                machines you reach.</p>
+        </div>
+    </details>
+
+</div>
+
+<h2>M1 · One job becomes four objects</h2>
+
+<p>In Automate Schedule, a job record holds everything: the command, the agent, the schedule, the
+    parameters. Cronomicon takes those apart into four objects that you combine.</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>Script</h4>
+        <p><strong>What</strong> runs. A file in Git — Bash, PowerShell, Python, Perl, Ansible, Terraform.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Scope</h4>
+        <p><strong>Where</strong> it may run. A named set of hosts, and the outer limit of any run.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Schedule</h4>
+        <p><strong>When</strong> it runs. A reusable cron definition, shared across jobs.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Env Vars</h4>
+        <p><strong>What it needs to know.</strong> Values, and references to secrets it must not carry
+            itself.</p>
+    </div>
+</div>
+
+<p>A <strong>Job</strong> binds those four together. Ordered jobs make a <strong>Workflow</strong>, and a
+    workflow can contain another workflow as a step.</p>
+
+<p>The reason for the split is reuse. One "weeknights at 02:00" schedule can serve forty jobs — change it
+    once and all forty move. One scope named <code>Production</code> is maintained in one place rather than
+    re-typed onto every job that targets it. The cost is that building a job feels like assembly, and that
+    you have to know which object owns which fact.</p>
+
+<h3>Which object owns it?</h3>
+
+<p>Decide before you open each one.</p>
+
+<details class="tr-reveal">
+    <summary>The command line that actually executes</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Script</span></p>
+        <p>The script is the executable content, held in Git. Cronomicon reads it, hashes it at run time so
+            the run is reproducible, and detects which variables it references.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>The list of servers this job is allowed to touch</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Scope</span></p>
+        <p>And "allowed" is exact — the scope is a ceiling, not a default. M5 covers what that means when
+            you press Run.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>02:00 every weeknight</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Schedule</span></p>
+        <p>Reusable and shared. Schedules also carry activation windows — a start and end date outside
+            which the schedule simply does not fire — and can run at an interval or exactly once.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>The database password the script needs</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Env Vars — as a secret reference, not a value</span></p>
+        <p>This one has a sharp edge. A job binds the <em>name</em> of a secret, never the secret itself.
+            The value is fetched at dispatch, injected into that run only, and fed to the log redactor so
+            it cannot appear in output.</p>
+        <p>The practical rule: if you ever find yourself typing a password into a job definition, stop —
+            there is a reference for it.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>The order in which three jobs must run</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Workflow</span></p>
+        <p>Not a property of any one job. A workflow holds the order, the branching, and the values passed
+            from one step to the next — the equivalent of an Automate Schedule job suite.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Whether this job may run while a previous run is still going</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">The job — its concurrency policy</span></p>
+        <p>Allow, Forbid or Queue, set on the job itself rather than on any of the four pieces. It is the
+            equivalent of an Automate Schedule job queue. M6 covers what each answer does.</p>
+    </div>
+</details>
+
+<h2>M2 · Where definitions live — Git or Cronomicon</h2>
+
+<p>Every definition in Cronomicon — job, workflow, script, schedule — carries a <strong>source</strong>, and
+    it is one of two values.</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>git</h4>
+        <p>Defined in a Git repository and synced in. The repository is the truth; Cronomicon holds a copy it
+            keeps up to date.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>amadeus</h4>
+        <p>Authored in the app, stored in Cronomicon's own database. No repository involved.</p>
+    </div>
+</div>
+
+<p>The two are separate namespaces. A git job called <code>nightly-backup</code> and an Cronomicon job called
+    <code>nightly-backup</code> are different jobs and never collide. You will see the source on every row,
+    and it is the answer to most "why can't I edit this?" moments.</p>
+
+<p>Scripts are a special case worth knowing up front: <strong>scripts are Git-only</strong>. There is no
+    in-app script editor at all, by design. Automation content belongs in version control where it can be
+    reviewed, diffed and rolled back.</p>
+
+<h3>Can you change it in the app?</h3>
+
+<p>Assume the job in question came from Git. For each one, decide before revealing.</p>
+
+<details class="tr-reveal">
+    <summary>Add a tag to the job</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Yes — any signed-in user</span></p>
+        <p>Tags are yours, not Git's. They live only in Cronomicon, survive every sync, and need no special
+            permission. The same is true of tags on scripts, schedules and workflows.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Change what the script does</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">No — commit to Git</span></p>
+        <p>The script is the definition. Change it in the repository and let it sync. If the app let you
+            overwrite it, there would be two answers to "what does this job do", and the repository's would
+            be wrong.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Add a note, a contact, or mark the job critical</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Yes — any signed-in user</span></p>
+        <p>Annotations are a sidecar, like tags: Cronomicon-only, sync-preserved. This is the right place for
+            "ring the DBA before re-running this" — knowledge that belongs to your team's operation of the
+            job rather than to its definition.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Pause the job so it stops firing</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Yes — that is state, not definition</span></p>
+        <p>Pausing does not change what the job <em>is</em>, so Git has no opinion about it. Same for
+            resuming, and for stopping a run that is currently going.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Point the job at a different scope</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">No — commit to Git</span></p>
+        <p>The scope binding is part of the definition. Changing where a job may run is exactly the kind of
+            change that should be reviewed and recorded, not typed into a form at 2am.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Override an environment variable for one run only</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Yes — and it changes nothing permanently</span></p>
+        <p>A per-run override applies to that run and no other. It is recorded against the run so anyone
+            reading the history later can see it was not a normal execution. The definition is untouched.</p>
+        <p>This is the release valve for "just this once", and it is the right tool for that job.</p>
+    </div>
+</details>
+
+<h2>M3 · Finding your way around</h2>
+
+<p>The Dashboard answers one question before you have to ask it: <strong>does anything need me right
+        now?</strong> Everything else on the page is evidence for that answer.</p>
+
+<figure class="shot tr-hotspot">
+    <span class="tr-shotbox">
+        <img class="dark" src="/manual/dashboard-dark.png" loading="lazy" width="1600" height="900"
+            alt="The Cronomicon Dashboard with the verdict strip in its attention state — 3 jobs need attention — above the four stat tiles, the Score timeline with its playhead, and Current status listing the next fires and the recent errors">
+        <img class="light" src="/manual/dashboard-light.png" loading="lazy" width="1600" height="900"
+            alt="The Cronomicon Dashboard with the verdict strip in its attention state — 3 jobs need attention — above the four stat tiles, the Score timeline with its playhead, and Current status listing the next fires and the recent errors">
+        <a class="tr-pin" href="#dash-1" style="left: 44%; top: 15.5%;" aria-label="Point 1: the verdict strip">1</a>
+        <a class="tr-pin" href="#dash-2" style="left: 16%; top: 23.5%;" aria-label="Point 2: stat tiles">2</a>
+        <a class="tr-pin" href="#dash-3" style="left: 55%; top: 45%;" aria-label="Point 3: the Score timeline">3</a>
+        <a class="tr-pin" href="#dash-4" style="left: 20%; top: 75%;" aria-label="Point 4: Up next">4</a>
+    </span>
+    <figcaption>The Dashboard, on a good day. The numbers match the list below.</figcaption>
+</figure>
+
+<ol class="tr-legend">
+    <li id="dash-1"><strong>The verdict strip.</strong> The first thing on the page and usually the only
+        thing you need. Either everything is fine — as here — or it names how many jobs need you and links
+        straight to them. You can dismiss it, and the dismissal is tied to what you actually saw, so a new
+        failure brings it back. Closest thing to your Action Required list, minus the twenty-one messages
+        nobody cleared.</li>
+    <li id="dash-2"><strong>Stat tiles.</strong> Failed in the last 24 hours, running now, active schedules,
+        total jobs. All four are links: Running now opens History filtered to in-flight runs, Total jobs
+        opens the catalog.</li>
+    <li id="dash-3"><strong>The Score.</strong> A timeline running 24 hours back and 12 hours forward, one
+        row per job, with a playhead at "now" — the vertical line. Past runs sit to its left carrying their
+        outcome colour, future scheduled fires to its right. Runs at nearly the same moment draw as a single
+        chord rather than piling up. Hover any mark, or tab into the timeline and use the arrow keys, to
+        read it.</li>
+    <li id="dash-4"><strong>Current status.</strong> <em>Up next</em> names the next three scheduled fires,
+        soonest first — and it accounts for working calendars, so a fire that will be vetoed is not listed
+        as though it were going to happen.</li>
+    <li id="dash-5"><strong>Recent errors — not visible above, and that is the point.</strong> It appears
+        beneath Up next only when something has actually failed, listing each failure with a link into
+        History filtered to that job. This Dashboard has nothing to report, so the section is absent rather
+        than sitting there empty. That is the pattern across the app: a section with nothing to say gets
+        out of the way.</li>
+</ol>
+
+<h3>The rest of the app</h3>
+
+<p>The sidebar is the catalog list: <strong>Jobs</strong>, <strong>Workflows</strong>,
+    <strong>Scripts</strong>, <strong>Schedules</strong>, <strong>Scopes</strong>, <strong>Env
+        Vars</strong>, <strong>Runners</strong>, <strong>History</strong>, <strong>Activity</strong>,
+    <strong>Settings</strong>. Three habits will save you time in all of them:</p>
+
+<details class="tr-reveal">
+    <summary>Click a row to expand it, rather than navigating away</summary>
+    <div class="tr-body">
+        <p>Catalog rows expand in place into a detail panel — runs, bindings, notes, actions — so you keep
+            your filters and your place in the list. Each panel has its own <strong>Refresh</strong>, which
+            reloads that panel alone.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Use the status tabs and the Tag filter before you use search</summary>
+    <div class="tr-body">
+        <p>Every catalog has tabs across the top — All, Running, Success, Failed, Paused — with counts. A
+            tab showing zero is dimmed but still clickable. Tags are yours to apply and filter by, and are
+            usually a faster route to "my team's jobs" than typing.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Make the table show what you care about, once</summary>
+    <div class="tr-body">
+        <p>The <strong>Columns</strong> menu lets you choose which columns appear and in what order, per
+            table, and it remembers. If you never look at a column, remove it — a narrower table is a
+            faster read, and the setting follows you back.</p>
+    </div>
+</details>
+
+<h2>M4 · Running a job</h2>
+
+<p>The Run dialog is where an intention becomes a run, so it is built to be read rather than clicked
+    through. It opens with everything collapsed and a plain-language summary on each section — you only
+    open what you intend to change.</p>
+
+<p>Step through it below. The panel on the right of the dialog is the important part.</p>
+
+<div class="tr-walk">
+    <input class="tr-w1" type="radio" name="tr-walk-run" id="tr-run-s1" checked>
+    <input class="tr-w2" type="radio" name="tr-walk-run" id="tr-run-s2">
+    <input class="tr-w3" type="radio" name="tr-walk-run" id="tr-run-s3">
+    <input class="tr-w4" type="radio" name="tr-walk-run" id="tr-run-s4">
+
+    <div class="tr-walk-nav">
+        <label for="tr-run-s1">1 · It opens</label>
+        <label for="tr-run-s2">2 · Where it runs</label>
+        <label for="tr-run-s3">3 · When to run</label>
+        <label for="tr-run-s4">4 · Advanced</label>
+    </div>
+
+    <div class="tr-walk-panels">
+        <div class="tr-walk-step">
+            <figure class="shot">
+                <img class="dark" src="/manual/training-run-collapsed-dark.png" loading="lazy" width="972" height="449"
+                    alt="The Run dialog as it opens: four collapsed sections — Run inputs, Where it runs, When to run, Advanced options — each with a summary, and a This run panel on the right">
+                <img class="light" src="/manual/training-run-collapsed-light.png" loading="lazy" width="972" height="449"
+                    alt="The Run dialog as it opens: four collapsed sections — Run inputs, Where it runs, When to run, Advanced options — each with a summary, and a This run panel on the right">
+            </figure>
+            <h4>Everything is answered before you touch anything</h4>
+            <p>Four sections, all closed, each stating its own answer on the right: <em>none declared</em>,
+                <em>Production · Auto &rarr; SSH · all 5 hosts</em>, <em>now</em>, <em>defaults</em>. You can
+                read the entire run without opening a single one.</p>
+            <p>The <strong>This run</strong> panel repeats it as a sentence and then in full. It lists
+                <em>every</em> setting the run will use — not only the ones you changed — because the
+                question it answers is "what is about to happen", and a list of your edits does not answer
+                that.</p>
+        </div>
+
+        <div class="tr-walk-step">
+            <figure class="shot">
+                <img class="dark" src="/manual/training-run-where-dark.png" loading="lazy" width="972" height="762"
+                    alt="The Where it runs section expanded, showing target scope, references, host and group limiting, executor choice between SSH and Runner, and connect-as identity">
+                <img class="light" src="/manual/training-run-where-light.png" loading="lazy" width="972" height="762"
+                    alt="The Where it runs section expanded, showing target scope, references, host and group limiting, executor choice between SSH and Runner, and connect-as identity">
+            </figure>
+            <h4>Targeting and connection, in one place</h4>
+            <p>The scope, then two ways to narrow within it — specific hosts, or inventory groups — then how
+                Cronomicon connects: which executor, and which identity to connect as.</p>
+            <p>Both narrowing controls name the scope and count what is available (<em>5 available</em>), so
+                you are choosing from a known set rather than typing hostnames and hoping. Leave them alone
+                and the run uses the whole scope, which is M5's first lesson.</p>
+        </div>
+
+        <div class="tr-walk-step">
+            <figure class="shot">
+                <img class="dark" src="/manual/training-run-when-dark.png" loading="lazy" width="972" height="808"
+                    alt="The When to run section expanded, offering Now — enqueue immediately — or At a specific time">
+                <img class="light" src="/manual/training-run-when-light.png" loading="lazy" width="972" height="808"
+                    alt="The When to run section expanded, offering Now — enqueue immediately — or At a specific time">
+            </figure>
+            <h4>Now, or later</h4>
+            <p>An ad-hoc run does not have to be immediate. <strong>At a specific time</strong> parks the
+                run and releases it when the time arrives.</p>
+            <p>Worth knowing: a deferred run is not a schedule. It is one run, waiting. If the conditions
+                for releasing it have not cleared within about a day it is recorded as missed rather than
+                firing at a time that no longer makes sense.</p>
+        </div>
+
+        <div class="tr-walk-step">
+            <figure class="shot">
+                <img class="dark" src="/manual/training-run-advanced-dark.png" loading="lazy" width="972" height="846"
+                    alt="The Advanced options section expanded on a bash job, explaining that the options are Ansible-specific and that per-run environment overrides live under Run inputs">
+                <img class="light" src="/manual/training-run-advanced-light.png" loading="lazy" width="972" height="846"
+                    alt="The Advanced options section expanded on a bash job, explaining that the options are Ansible-specific and that per-run environment overrides live under Run inputs">
+            </figure>
+            <h4>Advanced options tell you when they do not apply</h4>
+            <p>For an Ansible run this is where check mode, diff, verbosity, tags and become live. For this
+                bash job it says so plainly — <em>nothing to set for a bash run</em> — and points at where
+                the thing you were probably looking for actually is.</p>
+            <p>A section that explains its own emptiness is worth more than one that hides.</p>
+        </div>
+    </div>
+</div>
+
+<h3>Two things to carry away</h3>
+
+<details class="tr-reveal">
+    <summary>Anything you change shows up as a deviation</summary>
+    <div class="tr-body">
+        <p>Change a setting and the This run panel calls it out as a deviation from the job's normal
+            behaviour. Before the run starts, a confirmation lists those deviations back to you — only the
+            deviations, because that is the part worth a second look.</p>
+        <p>The deviation list is also recorded against the run. Someone reading History next month can see
+            this run was not a normal one, and how.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Some jobs ask you questions, and some insist</summary>
+    <div class="tr-body">
+        <p>A job can declare <strong>run inputs</strong> — questions answered at run time, inherited from
+            the script that declares them. This one declares none, so the section reads
+            <em>none declared</em>.</p>
+        <p>When a job does declare them, it can be set to warn about missing required answers or to block
+            the run outright. If a run refuses to start over a missing input, that is the job's author
+            telling you the answer genuinely matters.</p>
+    </div>
+</details>
+
+<h2>M5 · Targeting and blast radius</h2>
+
+<p>This module is about one question: <strong>when I press Run, how many machines does this touch?</strong>
+    Get it wrong in the cautious direction and a job does not do its work. Get it wrong the other way and
+    you have run something on two hundred servers that you meant to run on one.</p>
+
+<p>Three things decide it, and they combine.</p>
+
+<h3>The three controls</h3>
+
+<details class="tr-reveal">
+    <summary><strong>The scope</strong> — the outer boundary, and it is a hard one</summary>
+    <div class="tr-body">
+        <p>Every job is bound to a scope, and the scope's host list is the <em>maximum</em> reach of any run
+            of that job. Not a default — a ceiling.</p>
+        <p>You cannot target a host outside the bound scope. Try it and the run is refused before anything
+            executes, naming the host that is not a member. There is no override for this in the Run
+            dialog; widening reach means changing the scope, which is an administrator's job and leaves an
+            audit trail.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>The pinned target host</strong> — set on the job, applies to every way it runs</summary>
+    <div class="tr-body">
+        <p>A job can pin a single host. When it does, every run of that job goes to that host only —
+            whether you started it, a schedule fired it, a workflow stepped into it, or a reaction
+            triggered it.</p>
+        <p>That "every way" matters. It is the whole point of the pin: a job that is safe only on one host
+            must not become unsafe because something other than a person started it.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Per-run selection</strong> — hosts or groups you choose in the Run dialog</summary>
+    <div class="tr-body">
+        <p>For a single run you can narrow to specific hosts, or to inventory groups. This narrows only —
+            it can never reach past the scope.</p>
+        <p>For Ansible jobs this becomes the <code>--limit</code> the playbook runs under, computed the
+            same way for both executors so an Ansible run and an SSH run of the same selection reach the
+            same machines.</p>
+        <p>One deliberate behaviour worth knowing: if your selection resolves to <em>nothing</em>, the run
+            targets nothing. It does not fall back to the whole scope. A selection that matched nothing is
+            far more likely to be a mistake than an instruction to run everywhere.</p>
+    </div>
+</details>
+
+<p>Before you commit, the Run dialog's <strong>This run</strong> panel states exactly what will happen —
+    every answer and setting the run will use, not just the ones you changed. Read it. It is the last
+    thing standing between an intention and two hundred servers.</p>
+
+<h3>Check yourself</h3>
+
+<p>Three situations. Commit to an answer before you open it — the wrong ones are explained too, and that is
+    where most of the teaching is.</p>
+
+<div class="tr-scenario">
+    <h4>Scenario 1</h4>
+    <p class="tr-setup">A job named <code>disk-report</code> is bound to the scope <strong>Production</strong>,
+        which contains 12 hosts. The job has no pinned target host. You open the Run dialog, change nothing,
+        and run it.</p>
+    <p class="tr-ask">How many hosts does it run on?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>One — the first host in the scope</summary>
+        <div class="tr-body">
+            <p>No. Cronomicon never silently picks one host for you. If it did, a job's reach would depend on
+                inventory ordering, which nobody can see and anybody can change.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>All 12</summary>
+        <div class="tr-body">
+            <p>Correct. With no pin and no per-run selection, the scope <em>is</em> the target set. The
+                scope is a ceiling, and with nothing narrowing it, you are running at the ceiling.</p>
+            <p>This is the default that surprises people most, which is why it is scenario 1.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>None — you have to select hosts before it will run</summary>
+        <div class="tr-body">
+            <p>No. Selecting hosts is optional; an unnarrowed run is a legitimate and common thing to want.
+                Empty targets happen when a selection <em>matches</em> nothing, which is different from
+                making no selection.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> no selection means the whole scope. If you want one
+        host, say so — every run, every time.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario 2</h4>
+    <p class="tr-setup">A job named <code>db-reindex</code> is bound to a scope of 8 hosts and has
+        <strong>target host pinned to <code>db-01</code></strong>. Nobody is at a keyboard: its schedule
+        fires it at 02:00.</p>
+    <p class="tr-ask">Where does the scheduled run execute?</p>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>Only <code>db-01</code></summary>
+        <div class="tr-body">
+            <p>Correct. The pin applies to every path a run can start from — scheduled fires, workflow
+                steps, retries, reactions, and Ansible runs alike.</p>
+            <p>This is worth trusting, because the alternative is a job that is safe when you run it and
+                dangerous at 02:00.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>All 8 — a pin only applies when a person runs the job</summary>
+        <div class="tr-body">
+            <p>No — and this is the single most valuable wrong answer on the page, because it is exactly
+                the behaviour of an older Cronomicon version. A pin used to be honoured for manual runs and
+                dropped by scheduled fires and workflow steps, which meant a job pinned to one database
+                server fanned out across all eight overnight.</p>
+            <p>That was fixed deliberately: the pin now rides every path. If you read older notes or
+                remember the old behaviour, this is the correction.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Nowhere — a pinned job cannot be scheduled</summary>
+        <div class="tr-body">
+            <p>No. Pinning and scheduling are independent. Pinning answers "where", the schedule answers
+                "when", and a job routinely needs both.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> a pin is a property of the <em>job</em>, not of the
+        way you happened to start it.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario 3</h4>
+    <p class="tr-setup">A job is bound to the scope <strong>Staging</strong>. In the Run dialog you type
+        the host <code>prod-web-04</code>, which exists in Cronomicon but belongs to the
+        <strong>Production</strong> scope.</p>
+    <p class="tr-ask">What happens?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It runs — the host exists, so Cronomicon connects to it</summary>
+        <div class="tr-body">
+            <p>No, and if this were true the scope would be decoration. A boundary that yields whenever
+                you name something outside it is not a boundary.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It runs on Staging's hosts instead, ignoring what you typed</summary>
+        <div class="tr-body">
+            <p>No — and silently substituting a different target set would be the worst option available.
+                You asked for one machine and would have got several, with nothing on screen to say so.
+                Cronomicon refuses rather than reinterprets.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>The run is refused, naming the host that is not a member</summary>
+        <div class="tr-body">
+            <p>Correct. Membership is checked before anything executes, and the refusal names the specific
+                host so you can see whether you mistyped or genuinely need a different job.</p>
+            <p>The fix is never to force it through. Either run the job whose scope contains that host, or
+                ask an administrator to change the scope — which is a deliberate, audited act.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> the scope is a wall, not a suggestion. When Cronomicon
+        refuses, it is doing its job.</p>
+</div>
+
+<h3>Three habits worth keeping</h3>
+
+<ol>
+    <li><strong>Read the "This run" panel before committing.</strong> It states the full picture, not just
+        what you changed.</li>
+    <li><strong>Say the reach out loud.</strong> "This runs on all twelve Production hosts." If that
+        sentence is uncomfortable, narrow it.</li>
+    <li><strong>Treat a refusal as information.</strong> Cronomicon refused because something did not add up.
+        Find out what before you route around it.</li>
+</ol>
+
+<h2>M6 · How runs start</h2>
+
+<p>In Automate Schedule almost everything starts on a schedule or a dependency. Cronomicon has six ways a run
+    can begin. Knowing which one started a given run is usually the first step in understanding it — and
+    History records it on every row.</p>
+
+<details class="tr-reveal">
+    <summary><strong>1. The clock</strong> — a schedule fires</summary>
+    <div class="tr-body">
+        <p>The common case. Schedules are reusable, support activation windows (a start and end date
+            outside which nothing fires), and can run on an interval or exactly once instead of on a cron
+            expression.</p>
+        <p>This is the only path a working calendar can veto.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>2. A person</strong> — someone presses Run</summary>
+    <div class="tr-body">
+        <p>What M4 walked through. Can be immediate or deferred to a specific time. Calendars do
+            <em>not</em> veto this — if you have decided to run something on a holiday, Cronomicon assumes you
+            meant it.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>3. Another job finishing</strong> — a reaction</summary>
+    <div class="tr-body">
+        <p>Your job dependencies. A reaction can distinguish how the first run ended — succeeded, failed, or
+            was killed by someone — and act differently.</p>
+        <p>Reaction chains are depth-limited so they cannot run away, and every decision to fire is logged,
+            including the ones that decided to fire but could not. If a reaction did not happen, there is a
+            record saying why.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>4. Being a step in a workflow</strong></summary>
+    <div class="tr-body">
+        <p>The job runs because the workflow reached it. Its run is linked to the workflow run, so you can
+            read the whole sequence rather than five unrelated rows.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>5. An external system</strong> — an API trigger</summary>
+    <div class="tr-body">
+        <p>Another system can start a job by calling Cronomicon with a service-account token. A job must
+            explicitly opt in to being triggered this way — being reachable by the API is a decision its
+            author makes, not a default.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>6. A file arriving</strong></summary>
+    <div class="tr-body">
+        <p>Your file dependencies. A runner watches a path; the file must be <em>stable</em> — unchanged in
+            size for a set period — before it counts, so nothing starts on a half-copied file.</p>
+        <p>Every arrival is recorded in the job's <strong>File Arrivals</strong> panel, including arrivals
+            that did not start a run and the reason. When someone says "the file landed and nothing
+            happened", that panel is the answer rather than the beginning of an investigation.</p>
+        <p>This is one of the two things that needs a runner — specifically one on the machine where the
+            files land.</p>
+    </div>
+</details>
+
+<h3>What a calendar does, one more time</h3>
+
+<p>A working calendar is a <strong>veto applied just before a scheduled fire</strong>. It can stop a run.
+    It can never cause one, and it only ever sees path 1 above.</p>
+
+<p>When you move a job across from Automate Schedule, its calendar splits in two: the days it
+    <em>should</em> run go into the schedule's cron expression, and the days it must <em>not</em> run go
+    into a working calendar.</p>
+
+<h3>Check yourself</h3>
+
+<div class="tr-scenario">
+    <h4>Scenario 4</h4>
+    <p class="tr-setup">A job runs at 02:00 every day. A working calendar attached to it marks 25 December
+        as a non-working day. It is now 03:00 on 25 December.</p>
+    <p class="tr-ask">What do you see in History for 02:00 today?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Nothing at all — no fire, so no record</summary>
+        <div class="tr-body">
+            <p>No. A silent non-event is indistinguishable from a broken scheduler, and you would have no
+                way to tell "the calendar worked" from "the calendar is misconfigured".</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>A run with the result <strong>Skipped</strong>, whose reason names the calendar</summary>
+        <div class="tr-body">
+            <p>Correct. Suppression is a decision the system made on your behalf, so it is written down
+                like any other decision — and the reason names the calendar that made it.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>A run with the result <strong>Missed</strong></summary>
+        <div class="tr-body">
+            <p>Close, and worth being precise about: there is no Missed <em>result</em>. A fire that a
+                schedule expected and never got is also recorded as <strong>Skipped</strong> — with the
+                reason "Missed: the schedule expected a fire and no run appeared".</p>
+            <p>So both land in the same place, and <strong>the reason line is what tells them apart</strong>:
+                a named calendar means the system did what you asked, while a missed reason means something
+                is wrong. This is the habit worth forming — on a skipped run, read the reason, never just
+                the result.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Nothing today, but it will run twice tomorrow to catch up</summary>
+        <div class="tr-body">
+            <p>No. A vetoed fire is not deferred, it is cancelled. Catch-up behaviour would be
+                actively dangerous here — the whole point of the calendar was that today was the wrong day
+                to run.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> Skipped covers everything that was going to run and
+        did not. The reason says whether that was deliberate or a problem — which is the difference between
+        an alert worth answering and noise, and it is one line further down the panel.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario 5</h4>
+    <p class="tr-setup">A job is set to <strong>Queue</strong>. It fires hourly. The 02:00 run is slow and
+        is still going when 03:00 arrives.</p>
+    <p class="tr-ask">What happens to the 03:00 fire?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It starts anyway, alongside the 02:00 run</summary>
+        <div class="tr-body">
+            <p>No — that is <strong>Allow</strong>. It is the right answer for jobs that are safe to
+                overlap, and the wrong one for anything that writes to a shared resource.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It is dropped and recorded as skipped</summary>
+        <div class="tr-body">
+            <p>No — that is <strong>Forbid</strong>. Honest, and it is what people usually reach for first,
+                but it is rarely what they actually wanted: the work still needed doing.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>It is parked, and runs as soon as the 02:00 run finishes</summary>
+        <div class="tr-body">
+            <p>Correct. That is the point of Queue: neither overlapping nor losing the fire.</p>
+            <p>With one bound worth knowing — a run that stays blocked for about a day is recorded as
+                missed rather than firing eventually. A backup queued behind a wedged job should not start
+                twenty hours late; by then, not running is the safer outcome and someone should be told.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> Allow overlaps, Forbid drops, Queue waits. Most jobs
+        that used a job queue in Automate Schedule want <strong>Queue</strong>.</p>
+</div>
+
+<h2>M7 · Reading results</h2>
+
+<p><strong>History</strong> is the record of every run Cronomicon has ever made — what ran, when, where, who
+    or what started it, how it ended, and the log it produced. It is where you spend most of your time
+    once something has gone wrong, so it is worth learning properly rather than by hunting.</p>
+
+<figure class="shot tr-hotspot">
+    <span class="tr-shotbox">
+        <img class="dark" src="/manual/training-history-dark.png" loading="lazy" width="1390" height="250"
+            alt="The History page: six tabs across the top, a search box, filters for type, result, trigger and stopped, a Columns button, and the executions table with job name, trace ID, type, executor, schedule, timings, user, duration and result">
+        <img class="light" src="/manual/training-history-light.png" loading="lazy" width="1390" height="250"
+            alt="The History page: six tabs across the top, a search box, filters for type, result, trigger and stopped, a Columns button, and the executions table with job name, trace ID, type, executor, schedule, timings, user, duration and result">
+        <a class="tr-pin" href="#hist-1" style="left: 8%; top: 12%;" aria-label="Point 1: the tabs">1</a>
+        <a class="tr-pin" href="#hist-2" style="left: 22%; top: 31%;" aria-label="Point 2: search">2</a>
+        <a class="tr-pin" href="#hist-3" style="left: 69%; top: 31%;" aria-label="Point 3: filters">3</a>
+        <a class="tr-pin" href="#hist-4" style="left: 32%; top: 52%;" aria-label="Point 4: the trace ID column">4</a>
+    </span>
+    <figcaption>History, filtered to successful runs.</figcaption>
+</figure>
+
+<ol class="tr-legend">
+    <li id="hist-1"><strong>Six tabs, not one page.</strong> <em>Executions</em> is individual job runs and
+        is where you will live. <em>Workflow Runs</em> is the same for workflows, so a five-step workflow
+        reads as one row rather than five unrelated ones. <em>Analytics</em> is run statistics over time.
+        <em>Change Log</em> is who changed what — a different question from what ran, and worth knowing
+        exists before you need it. <em>Schedule Pushes</em> and <em>Git Sync</em> cover definitions arriving
+        from Git.</li>
+    <li id="hist-2"><strong>Search takes a job name or a trace ID.</strong> If someone hands you a trace ID
+        from an alert or a ticket, paste it here and you are looking at exactly that run.</li>
+    <li id="hist-3"><strong>Four filters.</strong> Type (bash, ansible, python…), Result, <em>Trigger</em> —
+        which of M6's six ways started the run — and <em>Stopped</em>, for runs someone intervened in.
+        Filtering by Trigger is the fastest way to answer "did a person do this, or did the schedule?"</li>
+    <li id="hist-4"><strong>Every run has a trace ID</strong>, shown truncated with a copy button. It is the
+        one identifier that ties the run's row, its log, its audit records and its activity entry together.
+        When you escalate, send the trace ID — it saves the next person every question they were about to
+        ask.</li>
+</ol>
+
+<h3>The drill-in</h3>
+
+<p>Click any row and it expands in place into the full record.</p>
+
+<figure class="shot">
+    <img class="dark" src="/manual/training-run-detail-dark.png" loading="lazy" width="1385" height="178"
+        alt="A run's expanded detail: trace ID, result, set-off links, executor, exit code, duration, queued, started and completed times, triggered by, schedule and scope">
+    <img class="light" src="/manual/training-run-detail-light.png" loading="lazy" width="1385" height="178"
+        alt="A run's expanded detail: trace ID, result, set-off links, executor, exit code, duration, queued, started and completed times, triggered by, schedule and scope">
+    <figcaption>One run, in full. The log follows beneath these fields.</figcaption>
+</figure>
+
+<p>Most of it is self-explanatory. Four fields repay a closer look:</p>
+
+<details class="tr-reveal">
+    <summary><strong>Triggered by</strong> — who or what caused this</summary>
+    <div class="tr-body">
+        <p>Reads as an actor and a mechanism: <em>Cronomicon (scheduled)</em>, or a person's address for a
+            manual run, or a service account for an API trigger. This is the first thing to check when a
+            run happened that you did not expect.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Set off</strong> — what this run will trigger in turn</summary>
+    <div class="tr-body">
+        <p>The reactions watching this run. If a failure here is going to cascade into three more jobs, this
+            is where you find that out — ideally before you go and re-run something.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Queued at</strong> versus <strong>Started at</strong></summary>
+    <div class="tr-body">
+        <p>Two different times, and a gap between them is information. A run that queued at 02:00 and started
+            at 02:47 was waiting — for a concurrency gate, for a runner, for the queue ahead of it. If a job
+            "runs late", this pair tells you whether it started late or simply took a long time.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Exit code</strong> — and why the result may not match your instinct</summary>
+    <div class="tr-body">
+        <p>The script's own exit code. Worth pairing with the result: a job can end as <em>Warn</em> and
+            still be considered complete, and — this is the one people do not guess — <strong>a warning
+                counts as a success for anything reacting to this run.</strong></p>
+        <p>If a job habitually exits with warnings and something downstream fires "at random", that is why.</p>
+    </div>
+</details>
+
+<h3>Watching a run that is still going</h3>
+
+<details class="tr-reveal">
+    <summary>The log tails live, and follows unless you scroll away</summary>
+    <div class="tr-body">
+        <p>Open a run that is still going and the log updates itself every couple of seconds. You do not have
+            to wait for the job to finish to see what it is doing — which for a long Ansible play is the
+            difference between watching and guessing.</p>
+        <p>It sticks to the bottom while you are parked there, and stops following the moment you scroll up
+            to read something, then resumes when you scroll back down. When the run reaches its end, tailing
+            switches off by itself.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Logs are redacted, and what that does and does not cover</summary>
+    <div class="tr-body">
+        <p><strong>Secrets are masked</strong> — anything injected from the secret store or Vault, and
+            multi-line values such as SSH keys. That masking happens as the log is written, not when you
+            read it, so there is no unredacted copy sitting on disk.</p>
+        <p>Ordinary environment variables and run inputs are <em>not</em> masked; they are visible, on
+            purpose, because they are usually what you need to see when diagnosing. The rule to carry: if a
+            value should never appear in a log, it belongs in the secret store, not in a variable.</p>
+        <p>There is a copy button on every log view.</p>
+    </div>
+</details>
+
+<h2>M8 · When something goes wrong</h2>
+
+<p>A job failed. Before touching anything, four questions in order — each one is cheap, and answering them
+    out of order is how people re-run a job that was never the problem.</p>
+
+<ol class="tr-legend">
+    <li><strong>What actually failed?</strong> The Dashboard's verdict strip names it and links straight
+        there. If several things failed at once, that is itself a clue — one job failing is a job problem,
+        six failing together is usually a host, a credential, or a network.</li>
+    <li><strong>When did it start failing?</strong> The job's Score row shows the last 24 hours at a glance.
+        A job that failed once at 02:00 and succeeded at 03:00 is a different problem from one that has
+        failed every run since Tuesday.</li>
+    <li><strong>What does the log say?</strong> Open the run, read the log, note the exit code. Most
+        failures answer themselves here.</li>
+    <li><strong>Is it the job, or where it ran?</strong> Check <em>Where it runs</em> on the run record. A
+        job that fails on one host and succeeds on eleven is not a broken job.</li>
+</ol>
+
+<h3>What you can do about it</h3>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>Stop a run</h4>
+        <p>For something in flight that must not continue. You choose how it is recorded — see below,
+            because that choice matters more than it looks.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Pause the job</h4>
+        <p>Stops future fires without changing the definition. The right move when a job is failing
+            repeatedly and you need it to stop while someone investigates.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Run it again</h4>
+        <p>Once you know why it failed. The Run dialog lets you narrow to the one host that failed rather
+            than repeating the whole fan-out.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Leave a note</h4>
+        <p>Add an annotation to the job — what happened, what you did, who to ring. It survives every sync
+            and is there for whoever hits this at 3am next time.</p>
+    </div>
+</div>
+
+<h3>Stopping a run: the disposition</h3>
+
+<p>When you stop a run, Cronomicon asks how it should be recorded. That is not bookkeeping — <strong>the
+        answer decides what happens next</strong>, because reactions read it.</p>
+
+<p>A reaction can watch for a run that <em>succeeded</em>, <em>failed</em>, was <em>stopped</em>, or
+    <em>any</em> of those. When you record a stop as a success, downstream work continues as though the run
+    had worked. Record it as a failure and failure-handling fires. Leave it unclassified and it reads as
+    stopped — which reactions watching for success or failure will ignore entirely.</p>
+
+<p>So before stopping a run, glance at <strong>Set off</strong> on its record. If nothing is watching, pick
+    whatever is honest. If something is, pick deliberately.</p>
+
+<h3>Check yourself</h3>
+
+<div class="tr-scenario">
+    <h4>Scenario 6</h4>
+    <p class="tr-setup">A long data load is stuck and you need to stop it. A cleanup job reacts to this one
+        <strong>failing</strong>, and a reporting job reacts to it <strong>succeeding</strong>. You stop the
+        run and record the disposition as <strong>success</strong>.</p>
+    <p class="tr-ask">What happens next?</p>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>The reporting job runs. The cleanup job does not.</summary>
+        <div class="tr-body">
+            <p>Correct, and it is very probably not what you wanted. Recording a stop as a success makes it
+                a success as far as everything downstream is concerned — so reporting runs on data that
+                never finished loading, and the cleanup that would have tidied up never fires.</p>
+            <p>The disposition is a statement about what happened, and other jobs act on it.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Neither runs — you stopped it, so it did not really succeed</summary>
+        <div class="tr-body">
+            <p>No. There is no hidden "but it was really stopped" qualifier. Your chosen disposition is
+                written as the run's outcome, and that is the only thing downstream jobs can see.</p>
+            <p>If you want neither to fire, leave the stop unclassified — that records it as
+                <em>stopped</em>, which neither a success nor a failure reaction matches.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Both run, because stopping a run counts as ending it either way</summary>
+        <div class="tr-body">
+            <p>No. Reactions match one outcome (or explicitly any), so a single run cannot satisfy both a
+                success and a failure watcher.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> check <em>Set off</em> before you stop a run. The
+        disposition you choose is an instruction to every job watching.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario 7</h4>
+    <p class="tr-setup">A job scheduled for 02:00 shows no run at all this morning — not a failure, not a
+        success, nothing. Its Score row is empty where 02:00 should be.</p>
+    <p class="tr-ask">Where do you look first?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>The log — every run has one</summary>
+        <div class="tr-body">
+            <p>No, because there may be no run to have a log. Reaching for the log first assumes the job
+                ran and failed, which is the thing you have not established yet.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>History, filtered to <strong>Skipped</strong> — and then read the reason</summary>
+        <div class="tr-body">
+            <p>Correct. A fire that did not become a run still leaves a record, and it lands under Skipped.
+                The reason then tells you which of several quite different things happened: a working
+                calendar suppressed it, the job is paused, a concurrency gate held it, or the schedule
+                expected a fire that never appeared.</p>
+            <p>Those need completely different responses, and they are one line apart.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Nowhere — if nothing ran, there is nothing recorded</summary>
+        <div class="tr-body">
+            <p>No, and this is the assumption worth unlearning. Cronomicon records the decision not to run, for
+                exactly this moment. A silent non-event would be indistinguishable from a broken
+                scheduler.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> "nothing ran" is a result, and it is written down.
+        Filter to Skipped and read the reason.</p>
+</div>
+
+<h3>When to escalate, and what to send</h3>
+
+<p>Escalate when the log points outside your reach — a credential, a firewall, a host that is down — or
+    when a job is marked <strong>critical</strong> and you cannot fix it quickly. A critical job carries
+    that flag on its row, and usually a contact in its notes; that contact is there because someone
+    expected this moment.</p>
+
+<p>Send three things: <strong>the trace ID</strong>, what you already checked, and whether you paused
+    anything. The trace ID alone saves the next person ten minutes of hunting, and telling them what you
+    have already ruled out saves them repeating it.</p>
+
+<h2>M9 · Bringing your own jobs across</h2>
+
+<p class="lead-p">This module is for people converting their own Automate Schedule jobs. If someone else is
+    doing the migration for you, you can skip it — nothing later depends on it.</p>
+
+<p>An Automate Schedule job record holds everything in one place. Converting it means asking eight
+    questions and putting each answer where Cronomicon keeps it. Work in this order: each answer narrows the
+    next.</p>
+
+<div class="tr-intro">
+    <p><strong>Before you start:</strong> find out whether the job's script is already in Git. If it is,
+        most of this is binding things together. If it is not, getting it into the repository is step zero
+        and everything else waits on it.</p>
+</div>
+
+<details class="tr-reveal">
+    <summary><strong>1. What does it run?</strong> &rarr; a Script</summary>
+    <div class="tr-body">
+        <p>The command or script becomes a file in Git. Decide which repository and path, and which run type
+            it is — bash, PowerShell, Python, Perl, Ansible, Terraform.</p>
+        <p>If the Automate Schedule job ran several commands in sequence, you have a choice: one script that
+            does all of it, or several jobs composed into a workflow. Prefer the workflow when the steps can
+            fail independently and you would want to see which one broke.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>2. Where does it run?</strong> &rarr; a Scope</summary>
+    <div class="tr-body">
+        <p>The agent or agent environment becomes a scope. Check whether a suitable scope already exists
+            before making another — scopes are shared, and a proliferation of near-identical ones is how
+            targeting mistakes start.</p>
+        <p>Two follow-ups: does it need an <strong>agency</strong>, because the hosts sit in an isolated
+            network? And does it need a <strong>runner</strong> — which is true if the job watches for files,
+            or if the server cannot reach those hosts directly?</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>3. When does it run?</strong> &rarr; a Schedule, and maybe a Calendar</summary>
+    <div class="tr-body">
+        <p>Look for an existing schedule that already says what you need before authoring a new one.</p>
+        <p><strong>This is the step that goes wrong.</strong> If the Automate Schedule job had a calendar,
+            split it in two: the days it <em>should</em> run become part of the cron expression, and only the
+            days it must <em>not</em> run become a working calendar. An Cronomicon calendar cannot schedule
+            anything — if you move the whole calendar across expecting it to drive the job, the job will
+            never run.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>4. What does it need to know?</strong> &rarr; Env Vars, Secrets, Run inputs</summary>
+    <div class="tr-body">
+        <p>Three destinations, and picking the wrong one has consequences:</p>
+        <ul>
+            <li>Ordinary values &rarr; <strong>env vars</strong>. Visible in logs.</li>
+            <li>Passwords, keys, tokens &rarr; <strong>secrets</strong>, bound by reference. Masked in logs,
+                resolved only at dispatch.</li>
+            <li>Anything a person supplies at run time &rarr; a declared <strong>run input</strong>.</li>
+        </ul>
+        <p>If a value is currently sitting in the job's parameters and would embarrass you in a log, it is a
+            secret, not a variable.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>5. What starts it, if not the clock?</strong> &rarr; a Reaction, a file trigger, or an API trigger</summary>
+    <div class="tr-body">
+        <p>Job prerequisites become <strong>reactions</strong>. Note which outcome each one should watch for
+            — success, failure, stopped, or any — because Automate Schedule dependencies and Cronomicon
+            reactions do not always express this the same way.</p>
+        <p>File dependencies become <strong>file-arrival triggers</strong>, and need a runner where the files
+            land. Anything triggered by an outside system becomes an API trigger, which means a service
+            account and setting the job to allow external triggering.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>6. What must it not run alongside?</strong> &rarr; a concurrency policy</summary>
+    <div class="tr-body">
+        <p>A job queue becomes Allow, Forbid or Queue on the job. If it was in a queue to stop it overlapping
+            itself, you almost certainly want <strong>Queue</strong> — Forbid is the closest literal
+            translation but it drops the work, which is rarely what the queue was for.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>7. Who needs to know, and by when?</strong> &rarr; Notifications and an SLA deadline</summary>
+    <div class="tr-body">
+        <p>Notification lists become notification routing. If the job had a monitor for running too long or
+            not starting on time, that becomes an <strong>overdue deadline</strong> — which alerts a person
+            without killing the run. Only set a timeout if you genuinely want the run killed.</p>
+        <p>While you are here, put the on-call contact in the job's notes. It costs nothing and it is the
+            first thing someone looks for at 3am.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>8. Who may run it?</strong> &rarr; an access grant</summary>
+    <div class="tr-body">
+        <p>Usually an administrator's job, but you are the one who knows which team owns this. Access is
+            granted as a package — a group, a role, and the scopes it applies to — so "who may run this" and
+            "where they may run it" are answered together.</p>
+    </div>
+</details>
+
+<h3>A worked example</h3>
+
+<p>Illustrative rather than one of yours — a shape you will recognise. <em>Ask your migration lead for the
+        converted versions of jobs you actually own; working through one of those beats any example
+        here.</em></p>
+
+<div class="tr-scenario">
+    <h4>The original</h4>
+    <p class="tr-setup"><strong>Automate Schedule job <code>FIN_NIGHTLY_EXTRACT</code>.</strong> Runs a shell
+        script on the agent <code>fin-batch-01</code>. Scheduled 23:30 on working days per the
+        <code>Fiscal</code> calendar. Waits for <code>/in/ledger/*.csv</code> to arrive. Parameters include a
+        database password. In a job queue so two never overlap. Emails the finance-ops list on failure. A
+        second job, <code>FIN_NIGHTLY_REPORT</code>, runs after it completes successfully.</p>
+
+    <details class="tr-reveal">
+        <summary><strong>What it becomes in Cronomicon</strong></summary>
+        <div class="tr-body">
+            <ul>
+                <li><strong>Script</strong> — the shell script, committed to the finance repository, run
+                    type bash.</li>
+                <li><strong>Scope</strong> — one containing <code>fin-batch-01</code>. Because it watches for
+                    files, it needs a <strong>runner</strong> on that host.</li>
+                <li><strong>Schedule</strong> — <code>30 23 * * 1-5</code>. The weekday part came out of the
+                    Fiscal calendar and into the cron expression.</li>
+                <li><strong>Working calendar</strong> — the fiscal <em>holidays</em> only, as a skip
+                    calendar. This is the split from question 3.</li>
+                <li><strong>Secret</strong> — the database password, bound by reference. Never a
+                    parameter.</li>
+                <li><strong>File-arrival trigger</strong> — <code>/in/ledger/*.csv</code>, with a stability
+                    window so a half-copied file cannot start it.</li>
+                <li><strong>Concurrency policy</strong> — Queue.</li>
+                <li><strong>Notification</strong> — finance-ops on failure, plus an overdue deadline so
+                    somebody hears about it running long, rather than only about it breaking.</li>
+                <li><strong>Reaction</strong> — <code>FIN_NIGHTLY_REPORT</code> reacting to this job's
+                    <strong>success</strong>.</li>
+            </ul>
+            <p><strong>The one that catches people:</strong> this job now has two independent ways to start —
+                the schedule and the file trigger. In Automate Schedule the file dependency gated the
+                scheduled fire; here they are separate paths. If the intent was "at 23:30, but only once the
+                file has landed", that is the schedule plus a job that checks for the file, not a file
+                trigger. Decide which you meant before you build it.</p>
+        </div>
+    </details>
+</div>
+
+<h3>A short checklist for each converted job</h3>
+
+<ol class="tr-legend">
+    <li>Run it once by hand, narrowed to a single host, and read the log.</li>
+    <li>Check the Score row the next morning: did it fire when you expected?</li>
+    <li>If it did not, filter History to Skipped and read the reason before changing anything.</li>
+    <li>Confirm anything downstream of it fired — or correctly did not.</li>
+    <li>Put the on-call contact in the notes while the job is still fresh in your mind.</li>
+</ol>
+
+<div class="tr-intro">
+    <p><strong>That is the operator course.</strong> You know the model, where definitions live, how to
+        find your way around, how to run a job and read what it will do before you commit, how wide a run
+        reaches, the six ways a run can start, how to read a result, and what to do when one goes wrong.</p>
+    <p><strong>Next:</strong> the user manual documents every screen and field in detail — it will make
+        much more sense now than it would have an hour ago. If you administer Cronomicon as well as operate
+        it, the administrator course covers scopes, agencies, runners, access grants and secrets.</p>
+</div>
+
+<script>
+    /* Progress strip — the only JavaScript on this page. Everything else is
+       <details>, so the course works fully with scripting disabled, in print,
+       and as a downloaded file. Revealed only if we can actually persist,
+       so we never show a control that silently forgets. */
+    (function () {
+        var KEY = "am_training_operator";
+        var box = document.getElementById("tr-progress");
+        if (!box) { return; }
+
+        var store;
+        try {
+            store = window.localStorage;
+            store.setItem(KEY + ":probe", "1");
+            store.removeItem(KEY + ":probe");
+        } catch (e) {
+            return; // private mode or storage disabled — leave the strip hidden
+        }
+
+        var boxes = box.querySelectorAll("input[data-mod]");
+        var state = {};
+        try {
+            state = JSON.parse(store.getItem(KEY) || "{}") || {};
+        } catch (e) {
+            state = {};
+        }
+
+        function save() {
+            try {
+                store.setItem(KEY, JSON.stringify(state));
+            } catch (e) { /* quota or disabled mid-session — progress is not worth an error */ }
+        }
+
+        Array.prototype.forEach.call(boxes, function (cb) {
+            cb.checked = state[cb.getAttribute("data-mod")] === true;
+            cb.addEventListener("change", function () {
+                state[cb.getAttribute("data-mod")] = cb.checked;
+                save();
+            });
+        });
+
+        var reset = document.getElementById("tr-reset");
+        if (reset) {
+            reset.addEventListener("click", function () {
+                state = {};
+                save();
+                Array.prototype.forEach.call(boxes, function (cb) { cb.checked = false; });
+            });
+        }
+
+        box.hidden = false;
+    })();
+</script>
+<script>
+    /* Deck mode (TR-6) — the courses present as slides by default.
+     *
+     * Everything here is an ENHANCEMENT. The slides are built from the existing
+     * document at runtime, so nothing in the authored markup changed and the
+     * no-JavaScript rendering is still the plain scrolling page it always was.
+     * That is deliberate and load-bearing: print, the Moodle File-resource
+     * download and the accessibility fallback all ride on the page view, and a
+     * second authored code path would drift from the first.
+     *
+     * Slide boundaries are DERIVED, not authored: a new slide starts at every
+     * h2 (module), every h3 (subsection), and every scenario or walkthrough
+     * block, because those are already the content's own seams. Anything else
+     * rides along with the heading above it — which is what keeps a hotspot
+     * figure and its numbered legend on one slide, where they are useless
+     * apart.
+     */
+    (function () {
+        var MODE_KEY = "am_training_mode"; /* "deck" | "page" */
+        var main = document.querySelector("main");
+        if (!main) { return; }
+
+        var store = null;
+        try {
+            window.localStorage.setItem(MODE_KEY + ":probe", "1");
+            window.localStorage.removeItem(MODE_KEY + ":probe");
+            store = window.localStorage;
+        } catch (e) { /* private mode — deck still works, it just will not remember */ }
+
+        var POS_KEY = MODE_KEY + ":" + location.pathname.replace(/[^a-z0-9]+/gi, "-") + ":at";
+
+        /* ── Build the slides ─────────────────────────────────────────────── */
+
+        var hero = main.querySelector(".hero");
+        var nodes = [];
+        var n = hero ? hero.nextElementSibling : main.firstElementChild;
+        while (n) { nodes.push(n); n = n.nextElementSibling; }
+        if (!nodes.length) { return; }
+
+        function isBreak(el) {
+            return el.tagName === "H2" || el.tagName === "H3" ||
+                el.classList.contains("tr-scenario") || el.classList.contains("tr-walk");
+        }
+
+        var groups = [];
+        var cur = null;
+        var mod = null;
+        if (hero) { groups.push({ els: [hero], mod: null, cover: true }); }
+        nodes.forEach(function (el) {
+            /* An h3 ("Check yourself") alone or with a single lead-in
+             * paragraph, directly followed by a scenario or walkthrough block,
+             * would otherwise strand as a near-empty title slide — let it ride
+             * into the slide it introduces instead. */
+            var absorb = isBreak(el) && el.tagName !== "H2" && el.tagName !== "H3" &&
+                cur !== null && cur.els.length <= 2 && cur.els[0].tagName === "H3";
+            if (cur === null || (isBreak(el) && !absorb)) {
+                cur = { els: [], mod: mod };
+                groups.push(cur);
+            }
+            if (el.tagName === "H2") {
+                /* "M5 · Targeting and blast radius" → id m5, for the progress tick. */
+                var key = (el.textContent.trim().match(/^([ma]\s*\d+)/i) || [])[1];
+                mod = { label: el.textContent.trim(), key: key ? key.replace(/\s+/g, "").toLowerCase() : null };
+                cur.mod = mod;
+            }
+            cur.els.push(el);
+        });
+
+        groups.forEach(function (g) {
+            var sec = document.createElement("section");
+            sec.className = "tr-slide";
+            sec.setAttribute("tabindex", "-1");
+            g.els[0].parentNode.insertBefore(sec, g.els[0]);
+            g.els.forEach(function (e) { sec.appendChild(e); });
+            g.el = sec;
+        });
+
+        /* Per-module position, so the counter reads "3 of 6" inside a module
+         * rather than "27 of 41" across the whole course. */
+        var counts = {};
+        groups.forEach(function (g) {
+            var k = g.mod ? g.mod.label : "";
+            counts[k] = (counts[k] || 0) + 1;
+            g.nth = counts[k];
+        });
+        groups.forEach(function (g) { g.of = counts[g.mod ? g.mod.label : ""]; });
+
+        /* ── Chrome ───────────────────────────────────────────────────────── */
+
+        var bar = document.createElement("div");
+        bar.className = "tr-deckbar";
+        bar.innerHTML =
+            '<button type="button" class="tr-deck-prev">&larr; Back</button>' +
+            '<div class="tr-deck-where">' +
+            '<div class="tr-deck-label"></div>' +
+            '<div class="tr-deck-rail"><div class="tr-deck-fill"></div></div>' +
+            '</div>' +
+            '<button type="button" class="tr-deck-mode">Read as one page</button>' +
+            '<button type="button" class="tr-deck-next">Next &rarr;</button>';
+        document.body.appendChild(bar);
+
+        var live = document.createElement("div");
+        live.setAttribute("aria-live", "polite");
+        live.className = "tr-deck-live";
+        live.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
+        document.body.appendChild(live);
+
+        var resume = document.createElement("p");
+        resume.className = "tr-page-resume";
+        resume.innerHTML = '<button type="button" class="tr-reset tr-deck-back">&#9654; Back to slides</button>';
+        resume.style.display = "none";
+        main.insertBefore(resume, main.firstChild);
+
+        var elPrev = bar.querySelector(".tr-deck-prev");
+        var elNext = bar.querySelector(".tr-deck-next");
+        var elLabel = bar.querySelector(".tr-deck-label");
+        var elFill = bar.querySelector(".tr-deck-fill");
+        var elMode = bar.querySelector(".tr-deck-mode");
+
+        var at = 0;
+
+        function tickProgress(g) {
+            /* Reaching a module's last slide ticks its box in the progress strip,
+             * so the two ways of tracking where you are cannot disagree. */
+            if (!g.mod || !g.mod.key || g.nth !== g.of) { return; }
+            var box = document.querySelector('#tr-progress input[data-mod="' + g.mod.key + '"]');
+            if (box && !box.checked) {
+                box.checked = true;
+                box.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+        }
+
+        function show(i, focus) {
+            at = Math.max(0, Math.min(groups.length - 1, i));
+            groups.forEach(function (g, k) {
+                var on = k === at;
+                g.el.classList.toggle("tr-current", on);
+                g.el.setAttribute("aria-hidden", on ? "false" : "true");
+            });
+            var g = groups[at];
+            /* A slide made of collapsed disclosures is a blank screen until
+             * clicked. Content reveals open themselves the first time their
+             * slide shows; quiz rows stay closed — anything hiding a
+             * .tr-answer, and every .tr-opt, teaches BY being closed. */
+            if (!g.revealed) {
+                g.revealed = true;
+                var ds = g.el.querySelectorAll("details.tr-reveal");
+                for (var di = 0; di < ds.length; di++) {
+                    if (!ds[di].querySelector(".tr-answer")) { ds[di].open = true; }
+                }
+            }
+            elLabel.textContent = g.cover ? "Course overview"
+                : (g.mod ? g.mod.label + "  ·  " + g.nth + " of " + g.of : "Introduction");
+            elFill.style.width = Math.round(((at + 1) / groups.length) * 100) + "%";
+            elPrev.disabled = at === 0;
+            elNext.disabled = at === groups.length - 1;
+            live.textContent = elLabel.textContent + ", slide " + (at + 1) + " of " + groups.length;
+            tickProgress(g);
+            if (store) { try { store.setItem(POS_KEY, String(at)); } catch (e) {} }
+            window.scrollTo({ top: 0, behavior: "auto" });
+            if (focus) { g.el.focus({ preventScroll: true }); }
+        }
+
+        function setMode(mode) {
+            var deck = mode !== "page";
+            document.body.classList.toggle("tr-deck", deck);
+            bar.style.display = deck ? "" : "none";
+            resume.style.display = deck ? "none" : "";
+            if (store) { try { store.setItem(MODE_KEY, deck ? "deck" : "page"); } catch (e) {} }
+            if (deck) { show(at, false); }
+        }
+
+        elPrev.addEventListener("click", function () { show(at - 1, true); });
+        elNext.addEventListener("click", function () { show(at + 1, true); });
+        elMode.addEventListener("click", function () { setMode("page"); });
+        resume.querySelector(".tr-deck-back").addEventListener("click", function () { setMode("deck"); });
+
+        document.addEventListener("keydown", function (e) {
+            if (!document.body.classList.contains("tr-deck")) { return; }
+            if (e.metaKey || e.ctrlKey || e.altKey) { return; }
+            var t = e.target;
+            if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) { return; }
+            if (e.key === "ArrowRight" || e.key === "PageDown") { show(at + 1, true); e.preventDefault(); }
+            else if (e.key === "ArrowLeft" || e.key === "PageUp") { show(at - 1, true); e.preventDefault(); }
+            else if (e.key === "Home") { show(0, true); e.preventDefault(); }
+            else if (e.key === "End") { show(groups.length - 1, true); e.preventDefault(); }
+        });
+
+        /* The sidebar TOC keeps working: a module anchor selects that module's
+         * first slide instead of scrolling to a heading that is not displayed. */
+        var idIndex = {};
+        groups.forEach(function (g, i) {
+            g.els.forEach(function (e) {
+                if (e.id) { idIndex[e.id] = i; }
+                var kids = e.querySelectorAll ? e.querySelectorAll("[id]") : [];
+                for (var k = 0; k < kids.length; k++) { idIndex[kids[k].id] = i; }
+            });
+        });
+
+        function fromHash() {
+            var id = (location.hash || "").replace(/^#/, "");
+            return (id && idIndex[id] !== undefined) ? idIndex[id] : -1;
+        }
+        window.addEventListener("hashchange", function () {
+            var i = fromHash();
+            if (i >= 0) {
+                if (!document.body.classList.contains("tr-deck")) { return; }
+                show(i, true);
+            }
+        });
+
+        /* ── Start ────────────────────────────────────────────────────────── */
+
+        var start = fromHash();
+        if (start < 0 && store) {
+            var saved = parseInt(store.getItem(POS_KEY) || "", 10);
+            if (!isNaN(saved)) { start = saved; }
+        }
+        at = start >= 0 ? start : 0;
+
+        var mode = store ? store.getItem(MODE_KEY) : null;
+        setMode(mode === "page" ? "page" : "deck");
+    })();
+</script>

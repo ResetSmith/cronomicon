@@ -1,0 +1,36 @@
+-- 1090_drop_runner_tag_override — retire the OPERATOR layer of the runner pin
+-- (the runner-targeting plan, RT-3 REVERSED on 2026-08-14).
+--
+-- 1080 added `jobs.runner_tag_override` so an operator could repoint a job
+-- without editing its repository. Two days later the decision was reversed:
+-- placement is authored in exactly two places — the definition (the Composer's
+-- "Run on" field, or a git job's YAML `spec.runner_tag`) and the Run dialog,
+-- per run. The detail-panel editor that was this column's only writer is gone
+-- (v1.3.5), and a column with no writer is worse than no column: it keeps a
+-- rung in the pin precedence chain that nothing can set, inspect or clear, and
+-- the next reader of `resolveJobRunnerTag` has to work out why one of its two
+-- arms is dead.
+--
+-- WHAT THIS COSTS, stated plainly: a git-source job's pin is now editable only
+-- in its repository. That was the argument FOR the operator layer (RT-Q7) and
+-- it has not become wrong — it lost to the argument that one idea should have
+-- one home. The escape hatch for "the pinned runners are gone and this has to
+-- run" is the Run dialog's per-run pin, which can send a single run anywhere
+-- (including explicitly unpinned) without touching the definition. That path
+-- is unchanged and is now the only one.
+--
+-- SAFE TO DROP ON A LIVE FLEET only because of when this lands: 1080 shipped in
+-- v1.3.1 and its writer shipped in v1.3.2, both on 2026-08-14, and this drops
+-- on the same day. Any row that IS set here is losing a mask, so the job
+-- reverts to its declared pin — for a force-unpinned ('') row that means a job
+-- someone deliberately freed goes back to being pinned. Check before applying
+-- to anything long-lived:
+--
+--   SELECT source, name, runner_tag, runner_tag_override
+--     FROM jobs WHERE runner_tag_override IS NOT NULL;
+--
+-- The `runner_tags` NOCASE recollation that 1080 also carried (RT-G9) is
+-- deliberately NOT reverted here — it is a correctness fix for the DECLARED
+-- pin, which survives, and reverting it would break case-insensitive matching
+-- for the layer we are keeping.
+ALTER TABLE jobs DROP COLUMN runner_tag_override;

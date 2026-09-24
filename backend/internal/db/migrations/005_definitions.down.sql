@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS git_sync_state;
+DROP TABLE IF EXISTS workflows;
+DROP TABLE IF EXISTS jobs;

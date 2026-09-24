@@ -1,0 +1,10 @@
+# Never commit live deployment secrets, certs, or environment.
+amadeus.env
+authelia/users_database.yml
+authelia/secrets/
+secrets/
+traefik/certs/
+authelia/configuration-local.yml
+
+# Keep the *.example templates tracked.
+!*.example

@@ -1,0 +1,34 @@
+# Build context is the repository root (see backend/Dockerfile). Keep the
+# context small and deterministic: only frontend/ + backend/ source is needed.
+
+# Dependencies — reinstalled in-image (npm ci) / fetched (go mod download).
+**/node_modules
+
+# VCS + local tooling state.
+.git
+.gitignore
+.crush
+.claude
+skill-observations
+
+# Committed frontend build output — rebuilt fresh in the image so the embed
+# always matches source HEAD (B.1). Never ship a stale dist.
+#
+# Briefly un-excluded in v0.52.26 so stage 1 could fall back to it and report a
+# build failure the deploy tool would not show. Re-excluded in v0.52.28 once that
+# investigation closed; a8c594e has the fallback if it is ever wanted again.
+backend/web/dist
+
+# Build artifacts + local databases.
+backend/bin
+**/*.db
+**/*.db-shm
+**/*.db-wal
+frontend/tsconfig.tsbuildinfo
+
+# Planning docs + design scratch not needed to build the binary. (The root
+# Babel-in-browser prototype that used to be excluded here was removed in the
+# DD band, v1.5.38.)
+assets
+screenshots
+skill-updates

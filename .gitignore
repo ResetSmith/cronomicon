@@ -1,0 +1,31 @@
+# Live runtime environment — contains real credentials (PAT, tokens). The
+# tracked template lives at backend/deploy/amadeus.env.example.
+backend/amadeus.env
+amadeus.env
+backend/deploy/secrets
+
+# Compiled binaries — built locally by backend/Makefile (`-o backend/amadeus`
+# and the runner); the Docker image builds its own inside the container. Local
+# builds keep working; these outputs are just no longer tracked.
+backend/amadeus
+backend/amadeus-runner
+backend/bin
+frontend/tsconfig.tsbuildinfo
+
+# OS / editor cruft and stray logs.
+.DS_Store
+*.log
+
+.claude/
+.crush/
+.scratch/
+.aidata/
+skill-observations/
+skill-updates/
+node_modules/
+documentation/user-manual.pdf
+CLAUDE.md
+AGENTS.md
+
+# Local copy of the GitOps sync token — never commit.
+_gitops_sync_token

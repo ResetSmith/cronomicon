@@ -1,0 +1,2166 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cronomicon — Runner management guide</title>
+<style>
+        /* Fonts are SELF-HOSTED (VU-1), and they are declared HERE rather than via a
+ <link> in this <head> for a second reason: vite-manuals-plugin.js injects this
+ <style> verbatim into the wrapped runner guides, whose generated <head> has no
+ room for link elements. Everything the guides need must live in this block.
+
+ Why self-hosted: these documents are served by the Cronomicon binary to operators
+ on networks that may have no egress to fonts.googleapis.com, and a blocked
+ stylesheet silently drops the whole manual to system-ui with no error — the
+ same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ index.html unchanged (Google's own latin / latin-ext subsets); only the origin
+ differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
+ a wrapped guide at /runner-install.html alike: Vite copies public/ into
+ backend/web/dist and spa.go serves any real file under it.
+
+ Families track theme.ts so the manuals and the product read as one thing: IBM
+ Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
+ Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ hero and headings only — the manuals are a brand surface; do not spread it.
+
+ Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
+ and Mono are static per weight. An unreferenced face is never fetched. */
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/plex-sans-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Sans Condensed';
+            font-style: normal;
+            font-weight: 600;
+            font-display: swap;
+            src: url('/fonts/plex-sans-condensed-600-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url('/fonts/plex-mono-400-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'IBM Plex Mono';
+            font-style: normal;
+            font-weight: 500;
+            font-display: swap;
+            src: url('/fonts/plex-mono-500-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('/fonts/fraunces-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
+        /* ============================================================
+ Cronomicon Manual — palette ported 1:1 from the product
+ (frontend/src/theme.ts). Dark is the product default.
+
+ VU-18: these are hand-copied hex literals, so they silently rot
+ the next time theme.ts moves. frontend/src/documentation-palette.test.ts
+ now fails if any hex in this file (or the wrapped runner-guide
+ fragments, which reuse this <style> verbatim) is absent from
+ theme.ts. When the product palette changes, re-map by ROLE — a
+ doc's page background takes the new `bg`, its cards `panel`, its
+ links `primary`, its warning callouts `warning` — never by
+ eyeballing which new hex looks closest to the old one.
+
+ Two role moves landed in Phase C and are easy to get backwards:
+ `warning` is now a distinct ORANGE (it used to be the same gold as
+ `accent`, which made a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is now the BRAND — the hero
+ spine, the h2 rule, the active TOC item.
+ ============================================================ */
+        :root {
+            /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono` / `display`) so a
+ fallback here matches a fallback there. --sansCond is the uppercase
+ structural face — eyebrows, nav group labels, code-block captions. */
+            --sans: 'IBM Plex Sans', system-ui, sans-serif;
+            --sansCond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+            --mono: 'IBM Plex Mono', ui-monospace, monospace;
+            --display: 'Fraunces', Georgia, serif;
+            --maxw: 880px;
+            --nav-w: 300px;
+            --gold-rule: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
+        }
+
+        html[data-theme="dark"] {
+            --bg: #0a1119;
+            --panel: #101a26;
+            --panel2: #182534;
+            --panelHover: #182534;
+            --panelInput: #0d1621;
+            --border: #22344a;
+            --borderLight: #1a2838;
+            --borderStrong: #566c86;
+            --text: #e8eff7;
+            --textSec: #9db2c8;
+            --textMuted: #78909f;
+            --onSolid: #0a1119;
+            --primary: #4da3d9;
+            --primaryHover: #6fb8e5;
+            --primaryBg: rgba(77, 163, 217, .15);
+            --accent: #c9a227;
+            --accentBg: rgba(201, 162, 39, .14);
+            --success: #45b26b;
+            --successBg: rgba(69, 178, 107, .14);
+            --danger: #e05a5a;
+            --dangerBg: rgba(224, 90, 90, .14);
+            --warning: #d98a2b;
+            --warningBg: rgba(217, 138, 43, .14);
+            --info: #4da3d9;
+            --infoBg: rgba(77, 163, 217, .14);
+            --sidebar: #0c1420;
+            --sidebarHover: #16222f;
+            --sidebarText: #93a9bf;
+            --sidebarTextActive: #f0e2b8;
+            --sidebarActive: rgba(201, 162, 39, .16);
+            --shadow: 0 2px 12px rgba(0, 0, 0, .45);
+            --shadowSm: 0 1px 4px rgba(0, 0, 0, .3);
+            --code: #0d1621;
+            --hero: linear-gradient(135deg, #101a26 0%, #0a1119 60%);
+        }
+
+        html[data-theme="light"] {
+            --bg: #f4f6fa;
+            --panel: #ffffff;
+            --panel2: #eef2f7;
+            --panelHover: #eef2f7;
+            --panelInput: #ffffff;
+            --border: #d5dde8;
+            --borderLight: #e6ebf2;
+            --borderStrong: #828fa0;
+            --text: #131e2b;
+            --textSec: #46596e;
+            --textMuted: #596c80;
+            --onSolid: #ffffff;
+            --primary: #15709f;
+            --primaryHover: #0f5c85;
+            --primaryBg: rgba(21, 112, 159, .10);
+            --accent: #7c6311;
+            --accentBg: rgba(124, 99, 17, .12);
+            --success: #1e7f45;
+            --successBg: rgba(30, 127, 69, .10);
+            --danger: #c0342f;
+            --dangerBg: rgba(192, 52, 47, .10);
+            --warning: #9c5f11;
+            --warningBg: rgba(156, 95, 17, .12);
+            --info: #15709f;
+            --infoBg: rgba(21, 112, 159, .10);
+            --sidebar: #ffffff;
+            --sidebarHover: #eef2f7;
+            --sidebarText: #46596e;
+            --sidebarTextActive: #131e2b;
+            --sidebarActive: rgba(124, 99, 17, .13);
+            --shadow: 0 2px 12px rgba(15, 30, 50, .08);
+            --shadowSm: 0 1px 4px rgba(15, 30, 50, .05);
+            --code: #eef2f7;
+            --hero: linear-gradient(135deg, #ffffff 0%, #eef2f7 100%);
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        html {
+            scroll-behavior: smooth
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 16px;
+            line-height: 1.65;
+            -webkit-font-smoothing: antialiased;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        a {
+            color: var(--primary);
+            text-decoration: none
+        }
+
+        a:hover {
+            color: var(--primaryHover);
+            text-decoration: underline
+        }
+
+        code,
+        kbd,
+        pre {
+            font-family: var(--mono)
+        }
+
+        /* ---------- Sidebar ----------
+ Every colour in this block reads a token. It used to be hardcoded dark
+ literals, which was survivable only because the rail was dark in BOTH
+ themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
+ pale-slate link would now be near-invisible on white. Tokens also keep the
+ VU-18 drift guard honest — nothing here to re-map by hand next time. */
+        #sidebar {
+            width: var(--nav-w);
+            flex: 0 0 var(--nav-w);
+            background: var(--sidebar);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            z-index: 40;
+        }
+
+        #sidebar::-webkit-scrollbar {
+            width: 8px
+        }
+
+        #sidebar::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 8px
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 20px 20px 14px
+        }
+
+        .brand .logo {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border-radius: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadowSm)
+        }
+
+        .brand .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block
+        }
+
+        .brand .bt {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.15
+        }
+
+        .brand .bt b {
+            color: var(--sidebarTextActive);
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: .2px
+        }
+
+        .brand .bt span {
+            color: var(--sidebarText);
+            font-size: 11.5px;
+            font-weight: 500
+        }
+
+        .navsearch {
+            padding: 0 16px 12px
+        }
+
+        .navsearch input {
+            width: 100%;
+            padding: 8px 11px;
+            border-radius: 8px;
+            border: 1px solid var(--borderStrong);
+            background: var(--panelInput);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            outline: none
+        }
+
+        .navsearch input::placeholder {
+            color: var(--textMuted)
+        }
+
+        .navsearch input:focus {
+            border-color: var(--primary)
+        }
+
+        nav.toc {
+            padding: 0 10px 30px;
+            flex: 1
+        }
+
+        /* Condensed 600: the uppercase structural face (theme.ts `sansCond`). 600, not
+ 700 — the self-hosted Condensed subsets are 500 and 600, and 700 would be
+ synthesised. */
+        nav.toc .grp {
+            margin: 14px 6px 4px;
+            padding: 0 8px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--textMuted)
+        }
+
+        /* ---- collapsible part sections ---- */
+        nav.toc details.grp-sec {
+            margin: 0
+        }
+
+        nav.toc summary.grp {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            user-select: none;
+            transition: color .15s
+        }
+
+        nav.toc summary.grp::-webkit-details-marker {
+            display: none
+        }
+
+        nav.toc summary.grp:hover {
+            color: var(--sidebarText)
+        }
+
+        nav.toc summary.grp:before {
+            content: "";
+            flex: 0 0 6px;
+            width: 6px;
+            height: 6px;
+            border-right: 1.6px solid currentColor;
+            border-bottom: 1.6px solid currentColor;
+            transform: rotate(-45deg);
+            transition: transform .15s;
+            opacity: .85
+        }
+
+        nav.toc details.grp-sec[open]>summary.grp:before {
+            transform: rotate(45deg)
+        }
+
+        nav.toc summary.grp:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+            border-radius: 5px
+        }
+
+        nav.toc.filtering summary.grp {
+            display: none
+        }
+
+        nav.toc a {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 6px 12px;
+            margin: 1px 0;
+            border-radius: 7px;
+            color: var(--sidebarText);
+            font-size: 13.5px;
+            font-weight: 500;
+            text-decoration: none;
+            line-height: 1.3;
+            border-left: 2px solid transparent
+        }
+
+        nav.toc a .ic {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 15px;
+            opacity: .7
+        }
+
+        nav.toc a:hover {
+            background: var(--sidebarHover);
+            color: var(--sidebarTextActive);
+            text-decoration: none
+        }
+
+        nav.toc a.active {
+            background: var(--sidebarActive);
+            color: var(--sidebarTextActive);
+            border-left-color: var(--accent)
+        }
+
+        nav.toc a.active .ic {
+            opacity: 1
+        }
+
+        nav.toc a.hidden {
+            display: none
+        }
+
+        nav.toc .grp .grp-adv {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 6px;
+            border-radius: 20px;
+            background: var(--accentBg);
+            color: var(--accent);
+            font-size: 8.5px;
+            letter-spacing: .06em;
+            border: 1px solid var(--accent)
+        }
+
+        .sb-foot {
+            padding: 14px 20px;
+            border-top: 1px solid var(--borderLight);
+            color: var(--textMuted);
+            font-size: 11px
+        }
+
+        /* ---------- Topbar ---------- */
+        #topbar {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 26px;
+            background: color-mix(in srgb, var(--bg) 86%, transparent);
+            backdrop-filter: blur(9px);
+            border-bottom: 1px solid var(--border)
+        }
+
+        #topbar .crumbs {
+            flex: 1;
+            color: var(--textMuted);
+            font-size: 13px;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap
+        }
+
+        #topbar .crumbs b {
+            color: var(--textSec);
+            font-weight: 600
+        }
+
+        .tbtn {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--textSec);
+            font-family: var(--sans);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: .15s
+        }
+
+        .tbtn:hover {
+            background: var(--panelHover);
+            color: var(--text);
+            border-color: var(--primary)
+        }
+
+        .tbtn svg {
+            width: 15px;
+            height: 15px
+        }
+
+        #menuToggle {
+            display: none
+        }
+
+        /* ---------- Main ---------- */
+        #wrap {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column
+        }
+
+        main {
+            width: 100%;
+            max-width: var(--maxw);
+            margin: 0 auto;
+            padding: 8px 30px 120px
+        }
+
+        section {
+            padding-top: 30px;
+            margin-top: 18px;
+            scroll-margin-top: 70px
+        }
+
+        section.part-lead {
+            border-top: 1px dashed var(--border);
+            margin-top: 46px
+        }
+
+        /* ---------- Hero ---------- */
+        .hero {
+            background: var(--hero);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 44px 44px 38px;
+            margin: 26px 0 8px;
+            box-shadow: var(--shadow);
+            position: relative;
+            overflow: hidden
+        }
+
+        /* warm gold spine down the left edge — the signature warmth accent */
+        .hero {
+            border-left: 3px solid var(--accent)
+        }
+
+        .hero:before {
+            content: "";
+            position: absolute;
+            right: -70px;
+            top: -70px;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--primaryBg), transparent 70%)
+        }
+
+        .hero:after {
+            content: "";
+            position: absolute;
+            left: -40px;
+            bottom: -80px;
+            width: 230px;
+            height: 230px;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--accentBg), transparent 72%)
+        }
+
+        .hero>* {
+            position: relative
+        }
+
+        .hero .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: var(--accent);
+            background: var(--accentBg);
+            padding: 5px 13px;
+            border-radius: 30px;
+            margin-bottom: 18px;
+            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent)
+        }
+
+        .hero h1 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 46px;
+            line-height: 1.04;
+            margin: .08em 0 .28em;
+            font-weight: 600;
+            letter-spacing: -.005em
+        }
+
+        .hero p.lead {
+            font-size: 18.5px;
+            line-height: 1.55;
+            color: var(--textSec);
+            max-width: 62ch;
+            margin: 0
+        }
+
+        .hero .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 24px
+        }
+
+        .hero .meta .chip {
+            font-size: 12.5px;
+            color: var(--textSec);
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 5px 13px;
+            font-weight: 500;
+            box-shadow: var(--shadowSm)
+        }
+
+        .hero .meta .chip b {
+            color: var(--text)
+        }
+
+        /* ---------- Typography ---------- */
+        h2 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+            margin: .3em 0 .55em;
+            padding-bottom: .34em;
+            border-bottom: 2px solid transparent;
+            border-image: var(--gold-rule) 1;
+            display: flex;
+            align-items: center;
+            gap: 13px
+        }
+
+        h2 .secnum {
+            font-family: var(--sans);
+            font-size: 14px;
+            color: var(--onSolid);
+            background: var(--primary);
+            min-width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            display: inline-grid;
+            place-items: center;
+            font-weight: 700;
+            flex: 0 0 auto;
+            box-shadow: var(--shadowSm)
+        }
+
+        h3 {
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 21.5px;
+            font-weight: 600;
+            letter-spacing: -.005em;
+            margin: 1.8em 0 .5em;
+            color: var(--text)
+        }
+
+        h4 {
+            font-size: 16px;
+            font-weight: 650;
+            margin: 1.5em 0 .4em;
+            color: var(--text);
+            letter-spacing: .005em
+        }
+
+        p {
+            margin: .7em 0
+        }
+
+        ul,
+        ol {
+            margin: .6em 0;
+            padding-left: 1.4em
+        }
+
+        li {
+            margin: .32em 0
+        }
+
+        .lead-p {
+            font-size: 17.5px;
+            color: var(--textSec);
+            margin: .2em 0 1.1em
+        }
+
+        strong {
+            font-weight: 650;
+            color: var(--text)
+        }
+
+        em {
+            color: var(--textSec)
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 2em 0
+        }
+
+        .muted {
+            color: var(--textMuted)
+        }
+
+        /* ---------- Code ---------- */
+        code:not(pre code) {
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            padding: .08em .42em;
+            border-radius: 5px;
+            font-size: .86em;
+            color: var(--text);
+            white-space: nowrap
+        }
+
+        .codeblock {
+            position: relative;
+            margin: 1em 0
+        }
+
+        .codeblock pre {
+            background: var(--code);
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            padding: 16px 18px;
+            overflow-x: auto;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+            margin: 0
+        }
+
+        .codeblock .cap {
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--textMuted);
+            padding: 0 2px 6px
+        }
+
+        .copybtn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            color: var(--textSec);
+            border-radius: 7px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-family: var(--sans);
+            font-weight: 600;
+            cursor: pointer;
+            opacity: 0;
+            transition: .15s
+        }
+
+        .codeblock:hover .copybtn {
+            opacity: 1
+        }
+
+        .copybtn:hover {
+            background: var(--primary);
+            color: var(--onSolid);
+            border-color: var(--primary)
+        }
+
+        .copybtn.ok {
+            background: var(--success);
+            color: var(--onSolid);
+            border-color: var(--success)
+        }
+
+        /* ---------- Tables ---------- */
+        .tbl-wrap {
+            overflow-x: auto;
+            margin: 1.1em 0;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: var(--shadowSm)
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 14px
+        }
+
+        table.matrix {
+            min-width: 640px
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--borderLight);
+            vertical-align: top
+        }
+
+        thead th {
+            background: var(--panel2);
+            color: var(--textSec);
+            font-weight: 650;
+            font-size: 12.5px;
+            letter-spacing: .02em;
+            position: sticky;
+            top: 0
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none
+        }
+
+        tbody tr:hover {
+            background: var(--panelHover)
+        }
+
+        td code {
+            white-space: normal
+        }
+
+        .tick {
+            color: var(--success);
+            font-weight: 800
+        }
+
+        .cross {
+            color: var(--textMuted)
+        }
+
+        .enf {
+            background: var(--successBg)
+        }
+
+        /* ---------- Callouts ---------- */
+        .callout {
+            border-radius: 11px;
+            padding: 14px 17px 14px 16px;
+            margin: 1.2em 0;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            border-left-width: 4px;
+            position: relative;
+            font-size: 14.5px
+        }
+
+        .callout .ct {
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 3px;
+            font-size: 14px
+        }
+
+        .callout p:first-of-type {
+            margin-top: .2em
+        }
+
+        .callout p:last-child {
+            margin-bottom: 0
+        }
+
+        .callout.note {
+            border-left-color: var(--info);
+            background: var(--infoBg)
+        }
+
+        .callout.tip {
+            border-left-color: var(--success);
+            background: var(--successBg)
+        }
+
+        .callout.warn {
+            border-left-color: var(--warning);
+            background: var(--warningBg)
+        }
+
+        .callout.danger {
+            border-left-color: var(--danger);
+            background: var(--dangerBg)
+        }
+
+        .callout.gotcha {
+            border-left-color: var(--accent);
+            background: var(--accentBg)
+        }
+
+        .callout.plain {
+            border-left-color: var(--primary);
+            background: var(--primaryBg)
+        }
+
+        .callout.plain .ct {
+            color: var(--primary)
+        }
+
+        .callout .ct .em {
+            font-size: 16px
+        }
+
+        /* ---------- "Advanced" heading badge ---------- */
+        .adv {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10.5px;
+            font-weight: 600;
+            font-family: var(--sansCond);
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 30px;
+            background: var(--accentBg);
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            vertical-align: middle;
+            margin-left: 9px;
+            line-height: 1.4
+        }
+
+        .adv:before {
+            content: "▸";
+            font-size: 10px
+        }
+
+        /* ---------- Start-here persona cards ---------- */
+        .starthere {
+            background: linear-gradient(135deg, var(--primaryBg), transparent 70%);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px 24px 20px;
+            margin: 1.6em 0;
+            box-shadow: var(--shadowSm)
+        }
+
+        .starthere>.sh-hd {
+            font-weight: 700;
+            font-size: 17px;
+            margin: 0 0 4px;
+            display: flex;
+            align-items: center;
+            gap: 9px
+        }
+
+        .starthere>.sh-sub {
+            color: var(--textSec);
+            font-size: 14px;
+            margin: 0 0 16px
+        }
+
+        .persona-grid {
+            display: grid;
+            gap: 13px;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))
+        }
+
+        .persona {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 18px 15px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .persona:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border))
+        }
+
+        .persona .ph {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            font-weight: 700;
+            font-size: 15px;
+            margin-bottom: 5px
+        }
+
+        .persona .ph .em {
+            font-size: 19px
+        }
+
+        .persona .pdesc {
+            color: var(--textSec);
+            font-size: 13.5px;
+            line-height: 1.5;
+            flex: 1;
+            margin: 0 0 11px
+        }
+
+        .persona .ppath {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding-top: 9px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .persona .ppath:hover {
+            color: var(--primaryHover);
+            text-decoration: none
+        }
+
+        /* ---------- Jargon buster ---------- */
+        .jargon {
+            margin: 1.3em 0;
+            border: 1px solid var(--border);
+            border-radius: 13px;
+            overflow: hidden
+        }
+
+        .jargon table {
+            margin: 0;
+            border: none
+        }
+
+        .jargon td {
+            vertical-align: top;
+            padding: 11px 16px;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .jargon tr:first-child td {
+            border-top: none
+        }
+
+        .jargon td:first-child {
+            font-weight: 650;
+            color: var(--text);
+            white-space: nowrap;
+            width: 1%
+        }
+
+        .jargon td:last-child {
+            color: var(--textSec);
+            font-size: 14px
+        }
+
+        /* ---------- Cards / grids ---------- */
+        .grid {
+            display: grid;
+            gap: 14px;
+            margin: 1.2em 0
+        }
+
+        .grid.c2 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr))
+        }
+
+        .grid.c3 {
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr))
+        }
+
+        .grid.c4 {
+            grid-template-columns: repeat(auto-fit, minmax(175px, 1fr))
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border))
+        }
+
+        .card h4 {
+            margin-top: 0
+        }
+
+        .card .ic-lg {
+            width: 30px;
+            height: 30px;
+            color: var(--primary);
+            margin-bottom: 6px
+        }
+
+        /* ---------- Steps ---------- */
+        ol.steps {
+            counter-reset: st;
+            list-style: none;
+            padding-left: 0;
+            margin: 1em 0
+        }
+
+        ol.steps>li {
+            counter-increment: st;
+            position: relative;
+            padding: 4px 0 14px 44px;
+            margin: 0
+        }
+
+        ol.steps>li:before {
+            content: counter(st);
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 28px;
+            height: 28px;
+            background: var(--primaryBg);
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            font-size: 13px;
+            font-family: var(--mono)
+        }
+
+        ol.steps>li:not(:last-child):after {
+            content: "";
+            position: absolute;
+            left: 14px;
+            top: 32px;
+            bottom: 2px;
+            width: 1px;
+            background: var(--border)
+        }
+
+        /* ---------- Pills / badges ---------- */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 9px;
+            border-radius: 30px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: var(--sans);
+            white-space: nowrap;
+            line-height: 1.5
+        }
+
+        .pill .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block
+        }
+
+        .pill.ok {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        .pill.ok .dot {
+            background: var(--success)
+        }
+
+        .pill.fail {
+            background: var(--dangerBg);
+            color: var(--danger)
+        }
+
+        .pill.fail .dot {
+            background: var(--danger)
+        }
+
+        .pill.warn {
+            background: var(--warningBg);
+            color: var(--warning)
+        }
+
+        .pill.warn .dot {
+            background: var(--warning)
+        }
+
+        .pill.run {
+            background: var(--infoBg);
+            color: var(--info)
+        }
+
+        .pill.run .dot {
+            background: var(--info)
+        }
+
+        .pill.mut {
+            background: var(--panel2);
+            color: var(--textMuted)
+        }
+
+        .pill.mut .dot {
+            background: var(--textMuted)
+        }
+
+        .pill.amad {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .pill.git {
+            background: var(--panel2);
+            color: var(--textSec)
+        }
+
+        .tag {
+            display: inline-block;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            background: var(--panel2);
+            border: 1px solid var(--borderLight);
+            border-radius: 5px;
+            padding: 1px 7px;
+            color: var(--textSec);
+            font-weight: 500
+        }
+
+        /* ---------- Figures / SVG ---------- */
+        figure {
+            margin: 1.4em 0;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            overflow: hidden
+        }
+
+        figure svg {
+            display: block;
+            width: 100%;
+            height: auto
+        }
+
+        figcaption {
+            margin-top: 12px;
+            font-size: 13px;
+            color: var(--textMuted);
+            text-align: center;
+            font-style: italic
+        }
+
+        /* Screenshots — each figure.shot carries a dark AND a light capture of the real
+ app (frontend/public/manual/<view>-<theme>.png, served at /manual/*); the pair
+ swaps with the manual's own theme toggle so the pictured UI always matches the
+ reader's chosen theme. Captures are 1600×900 with seeded demo data; the
+ width/height attributes prevent layout shift under loading="lazy". */
+        figure.shot {
+            padding: 10px
+        }
+
+        figure.shot img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--borderLight);
+            border-radius: 9px
+        }
+
+        figure.shot figcaption {
+            margin-top: 10px
+        }
+
+        html[data-theme="dark"] figure.shot img.light {
+            display: none
+        }
+
+        html[data-theme="light"] figure.shot img.dark {
+            display: none
+        }
+
+        .svg-box {
+            fill: var(--panel2);
+            stroke: var(--border)
+        }
+
+        .svg-box-p {
+            fill: var(--primaryBg);
+            stroke: var(--primary)
+        }
+
+        .svg-box-a {
+            fill: var(--accentBg);
+            stroke: var(--accent)
+        }
+
+        .svg-box-s {
+            fill: var(--successBg);
+            stroke: var(--success)
+        }
+
+        .svg-box-d {
+            fill: var(--dangerBg);
+            stroke: var(--danger)
+        }
+
+        .svg-lbl {
+            fill: var(--text);
+            font-family: var(--sans);
+            font-weight: 600
+        }
+
+        .svg-sub {
+            fill: var(--textMuted);
+            font-family: var(--sans)
+        }
+
+        .svg-line {
+            stroke: var(--textMuted);
+            stroke-width: 1.6;
+            fill: none
+        }
+
+        .svg-line-p {
+            stroke: var(--primary);
+            stroke-width: 1.8;
+            fill: none
+        }
+
+        .svg-mono {
+            fill: var(--textSec);
+            font-family: var(--mono)
+        }
+
+        /* ---------- Definition list (glossary) ---------- */
+        dl.gloss dt {
+            font-weight: 650;
+            color: var(--text);
+            margin-top: 1.1em;
+            font-size: 15px;
+            scroll-margin-top: 70px
+        }
+
+        dl.gloss dt .tag {
+            margin-left: 8px
+        }
+
+        dl.gloss dd {
+            margin: .25em 0 0;
+            color: var(--textSec);
+            font-size: 14.5px
+        }
+
+        .gloss-letter {
+            font-family: var(--mono);
+            color: var(--primary);
+            font-weight: 700
+        }
+
+        /* ---------- FAQ accordion ---------- */
+        details.faq {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.faq summary {
+            cursor: pointer;
+            padding: 13px 16px;
+            font-weight: 600;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 15px
+        }
+
+        details.faq summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.faq summary:before {
+            content: "+";
+            color: var(--primary);
+            font-weight: 800;
+            font-size: 18px;
+            width: 14px
+        }
+
+        details.faq[open] summary:before {
+            content: "–"
+        }
+
+        details.faq[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.faq .body {
+            padding: 13px 16px 15px 40px
+        }
+
+        details.faq .body p {
+            margin: .4em 0
+        }
+
+        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+ bar whose right edge is the collapsed one-line summary (RU redesign) */
+        details.dlgbar {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.dlgbar summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 12px 16px
+        }
+
+        details.dlgbar summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.dlgbar summary:before {
+            content: "▸";
+            color: var(--primary);
+            font-size: 12px;
+            flex: 0 0 12px
+        }
+
+        details.dlgbar[open] summary:before {
+            content: "▾"
+        }
+
+        details.dlgbar summary .t {
+            font-weight: 700
+        }
+
+        details.dlgbar summary .pill {
+            flex: 0 0 auto
+        }
+
+        details.dlgbar summary .sum {
+            margin-left: auto;
+            color: var(--textMuted);
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 52%
+        }
+
+        details.dlgbar[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.dlgbar .body {
+            padding: 13px 18px 15px 38px;
+            max-width: 76ch
+        }
+
+        details.dlgbar .body p {
+            margin: .55em 0
+        }
+
+        details.dlgbar summary:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px
+        }
+
+        @media(max-width:640px) {
+            details.dlgbar summary .sum {
+                display: none
+            }
+        }
+
+        .faq-cause {
+            color: var(--textMuted);
+            font-size: 13.5px
+        }
+
+        /* ---------- Section intro / view header ---------- */
+        .view-hd {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: .2em 0 .6em
+        }
+
+        .route {
+            font-family: var(--mono);
+            font-size: 12.5px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 3px 9px;
+            color: var(--primary);
+            font-weight: 500
+        }
+
+        .gate {
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 7px
+        }
+
+        .gate.admin {
+            background: var(--accentBg);
+            color: var(--accent)
+        }
+
+        .gate.any {
+            background: var(--successBg);
+            color: var(--success)
+        }
+
+        /* ---------- Back to top ---------- */
+        #totop {
+            position: fixed;
+            right: 22px;
+            bottom: 22px;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: var(--onSolid);
+            border: none;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            display: grid;
+            place-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: .25s;
+            z-index: 50
+        }
+
+        #totop.show {
+            opacity: 1;
+            pointer-events: auto
+        }
+
+        #totop:hover {
+            background: var(--primaryHover)
+        }
+
+        /* keyboard hint */
+        .kbd {
+            font-family: var(--mono);
+            font-size: 11px;
+            background: var(--panel2);
+            border: 1px solid var(--border);
+            border-bottom-width: 2px;
+            border-radius: 5px;
+            padding: 1px 6px;
+            color: var(--textSec)
+        }
+
+        /* ---------- Gentle motion (one calm entrance; disabled on request) ---------- */
+        @keyframes heroRise {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        .hero {
+            animation: heroRise .5s cubic-bezier(.22, .61, .36, 1) both
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+                scroll-behavior: auto !important
+            }
+
+            .card:hover,
+            .persona:hover {
+                transform: none
+            }
+        }
+
+        /* ---------- Responsive ---------- */
+        #scrim {
+            display: none
+        }
+
+        @media(max-width:1040px) {
+            #menuToggle {
+                display: inline-flex
+            }
+
+            #sidebar {
+                position: fixed;
+                left: 0;
+                top: 0;
+                transform: translateX(-102%);
+                transition: transform .25s;
+                box-shadow: var(--shadow)
+            }
+
+            body.nav-open #sidebar {
+                transform: translateX(0)
+            }
+
+            body.nav-open #scrim {
+                display: block;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, .5);
+                z-index: 35
+            }
+
+            main {
+                padding: 8px 18px 120px
+            }
+
+            .hero {
+                padding: 30px 24px
+            }
+
+            .hero h1 {
+                font-size: 33px
+            }
+        }
+
+        @media print {
+
+            #sidebar,
+            #topbar,
+            #totop,
+            .copybtn {
+                display: none !important
+            }
+
+            body {
+                display: block;
+                font-size: 11pt
+            }
+
+            main {
+                max-width: none
+            }
+
+            .callout,
+            .card,
+            figure,
+            .codeblock pre,
+            .tbl-wrap {
+                break-inside: avoid
+            }
+
+            section {
+                padding-top: 10px
+            }
+
+            a {
+                color: inherit;
+                text-decoration: none
+            }
+        }
+    </style>
+</head>
+<body>
+<div id="scrim" onclick="document.body.classList.remove('nav-open')"></div>
+<aside id="sidebar">
+  <div class="brand">
+    
+    <div class="bt"><b>Cronomicon</b><span>Runner Config Guide · R7.2</span></div>
+  </div>
+  <nav class="toc" id="toc">
+    <div class="grp">On this page</div>
+      <a href="#1-check-status-health"><span class="ic">&#9656;</span> 1 · Check status &amp; health</a>
+      <a href="#2-manage-day-to-day"><span class="ic">&#9656;</span> 2 · Manage day-to-day</a>
+      <a href="#3-update-upgrade-the-agent"><span class="ic">&#9656;</span> 3 · Update (upgrade the agent)</a>
+      <a href="#4-resync-reconcile-a-runner-with-the-server"><span class="ic">&#9656;</span> 4 · Resync (reconcile a runner with the server)</a>
+      <a href="#4-5-managed-settings-tune-a-live-runner-from-its-row"><span class="ic">&#9656;</span> 4.5 · Managed settings (tune a live runner from its row)</a>
+      <a href="#4-6-trust-a-target-s-host-key-scan-approve"><span class="ic">&#9656;</span> 4.6 · Trust a target's host key (scan &amp; approve)</a>
+      <a href="#4-7-tags-label-a-runner-then-send-work-to-it"><span class="ic">&#9656;</span> 4.7 · Tags — label a runner, then send work to it</a>
+      <a href="#5-remove-retire-a-runner"><span class="ic">&#9656;</span> 5 · Remove / retire a runner</a>
+      <a href="#5-5-online-but-nothing-runs-on-it"><span class="ic">&#9656;</span> 5.5 · Online, but nothing runs on it</a>
+      <a href="#6-troubleshooting-installed-running-but-not-in-the-ui"><span class="ic">&#9656;</span> 6 · Troubleshooting — installed &amp; running, but not in the UI</a>
+    <details class="grp-sec" open><summary class="grp">Guides</summary>
+      <a href="runner-install.html"><span class="ic">&#9656;</span> Runner Install Guide</a>
+      <a class="active"><span class="ic">&#9656;</span> Runner Config Guide</a>
+      <a href="runner-security.html"><span class="ic">&#9656;</span> Runner Security Guide</a>
+      <a href="ansible-guide.html"><span class="ic">&#9656;</span> Ansible Guide</a>
+      <a href="bash-guide.html"><span class="ic">&#9656;</span> Bash Guide</a>
+      <a href="powershell-guide.html"><span class="ic">&#9656;</span> PowerShell Guide</a>
+      <a href="python-guide.html"><span class="ic">&#9656;</span> Python Guide</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Manuals</summary>
+      <a href="user-manual.html">&#128213; User Manual &rarr;</a>
+      <a href="administrator-manual.html">&#9881;&#65039; Administrator Manual &rarr;</a>
+    </details>
+    <details class="grp-sec"><summary class="grp">Courses</summary>
+      <a href="training-operator.html"><span class="ic">&#9656;</span> Operator Course</a>
+      <a href="training-admin.html"><span class="ic">&#9656;</span> Administrator Course</a>
+    </details>
+  </nav>
+  <div class="sb-foot">Script Orchestrator · single Go binary + SQLite · self-hosted</div>
+</aside>
+<div id="wrap">
+<header id="topbar">
+  <button class="tbtn" id="menuToggle" aria-label="Toggle navigation" onclick="document.body.classList.toggle('nav-open')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <div class="crumbs" id="crumbs"><b>Cronomicon</b> · Runner Config Guide</div>
+  <button class="tbtn" onclick="window.print()" title="Print or save as PDF">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>
+    Print
+  </button>
+  <button class="tbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">
+    <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <span id="themeLabel">Light</span>
+  </button>
+</header>
+<main>
+  <div class="hero">
+    <div class="eyebrow">&#128295; Runner Guide</div>
+    <h1>Cronomicon</h1>
+    <p class="lead">The self-hosted <strong>Script Orchestrator</strong> — schedule and run Bash, Ansible,
+                    Terraform, PowerShell, Perl and Python jobs across your fleet from one auditable web console.</p>
+    <div class="meta">
+      <span class="chip">Guide <b>Runner management guide</b></span>
+      <span class="chip">Version <b>R7.2</b></span>
+    </div>
+  </div>
+  <p>Day-2 operations for an Cronomicon <strong>runner</strong> that is already installed and registered. For the initial install + configure walk-through, see <a href="./runner-install.html">Runner Install Guide</a>; for the credential-model posture and blast-radius record, see <code>runner-security.html</code>.</p>
+
+<p>This guide covers, in order: <strong>checking status &amp; health</strong>, <strong>managing</strong> a runner day-to-day (drain / kill / token hygiene), <strong>updating</strong> the agent binary, <strong>re-syncing</strong> a runner's config and identity with the server, and <strong>removing / retiring</strong> a runner.</p>
+
+<blockquote><p><strong>One concept to hold first — declared vs local config.</strong> A runner declares <code>name</code>, <code>os</code>, <code>capabilities</code>, <code>maxConcurrent</code>, <code>inventory</code>, <code>version</code>, and its <code>protocolVersion</code> to the server <strong>only at registration</strong> (<code>POST /api/v1/runners/register</code>). The poll loop sends <strong>nothing but the bearer token</strong> — it is a heartbeat and a kill/drain channel, not a config update. So the server's view of a runner is frozen at its <strong>last registration</strong>. Anything that changes those declared fields — including upgrading the binary (which changes <code>version</code>/<code>protocolVersion</code>) — only reaches the server when the runner <strong>re-declares</strong>. On a protocol <strong>v4+</strong> agent (0.47.5+) this is <strong>automatic</strong>: the agent sends a digest of its declared config with every poll, so a change <strong>propagates on the next poll after a restart</strong> — the server spots the drift and requests the re-declare itself. The <strong>Runners → Resync</strong> button remains as a force-lever (see "Resync"). Local fields (keys, <code>known_hosts</code>, CA, poll cadence, fan-out, local inventory) need only a restart, or take effect on the next run.</p></blockquote>
+
+<hr />
+
+<h2 id="1-check-status-health">1 · Check status &amp; health</h2>
+
+<p><strong>On the host (systemd):</strong></p>
+
+<div class="codeblock"><pre><code>systemctl status amadeus-runner          # running / failed, recent log lines
+systemctl is-active amadeus-runner        # active | inactive | failed
+journalctl -u amadeus-runner -f           # tail the agent log
+journalctl -u amadeus-runner --since '1 hour ago'
+/usr/local/bin/amadeus-runner version     # build version + commit</code></pre></div>
+
+<p><strong>On the host (container):</strong></p>
+
+<div class="codeblock"><pre><code>docker ps --filter name=amadeus-runner    # Up / Exited
+docker logs -f amadeus-runner-01
+docker exec amadeus-runner-01 amadeus-runner version</code></pre></div>
+
+<p>Healthy logs show <code>registered with server</code> (first start) or <code>resumed runner identity</code> (restart), then steady <code>poll</code> activity on the cadence. A target dial that fails host-key verification surfaces per-host; a server reap shows <code>server returned 404 on poll — re-registering</code>.</p>
+
+<p><strong>On the server (the Runners view):</strong> each runner shows a <strong>status</strong>, its <strong>load</strong> (active runs / <code>maxConcurrent</code>), declared <strong>capabilities</strong>, version, last-seen time, and an <strong>inventory</strong> chip. Status meanings:</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><strong>online</strong></td><td>Polled within the offline threshold; claiming work.</td></tr>
+<tr><td><strong>degraded</strong></td><td>Still <code>online</code>, but its last heartbeat is more than <strong>2 minutes</strong> old — two missed polls — or it registered and has never polled. <strong>Derived when the row is read, never stored</strong>, so it is a freshness reading laid over the lifecycle status rather than a state the runner enters. It names the window in which a runner that had already died still read <em>online</em>: <code>offline</code> is only declared at the 5-minute threshold below. Dispatch and claiming are unaffected; the UI treats a degraded runner as <strong>reachable</strong> and keeps its recovery actions offered.</td></tr>
+<tr><td><strong>draining</strong></td><td>Asked to drain — finishing active runs, claiming nothing new.</td></tr>
+<tr><td><strong>offline</strong></td><td>No heartbeat for <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> (server default <strong>5m</strong>, ≈5 missed 60s polls). The reaper reconciles its in-flight runs to a terminal <code>failure</code> with <code>runner_lost</code> (History shows a <strong>Lost</strong> badge).</td></tr>
+</tbody>
+</table></div>
+
+<p>A runner that stays <strong>offline</strong> for <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code> (server default <strong>14d</strong>) is deleted by a secondary sweep. An offline runner that comes back <strong>resumes its ID</strong> (D4) and flips to online on its next successful poll.</p>
+
+<p><strong>Click any runner row to expand its detail panel.</strong> The compact row carries only <strong>Test</strong> and <strong>Deregister</strong>; the remaining per-runner actions — <strong>⚙ Settings</strong>, <strong>Resync</strong>, <strong>Scan keys</strong>, <strong>Drain</strong> and <strong>Copy upgrade command</strong> — live in the expanded detail. The gating there follows one rule: <strong>Resync, Scan keys and Drain are offered while the runner is <em>reachable</em></strong> — <code>online</code> <em>or</em> <code>degraded</code>, because a degraded runner still heartbeats and still holds work, and that is the state where you most need them. <code>offline</code> still hides them: there is nobody there to ask. There is no longer any <strong>protocol-version</strong> gate on these buttons: The server's protocol floor tracks the current wire protocol, so every agent that can talk to this server speaks it: one below the floor is refused at registration, at redeclare and on every poll with <code>426 protocol_too_old</code>, never silently degraded. (Before v1.5.40 each button carried its own minimum, and Scan keys could vanish silently below protocol v5 while Resync, on the same bar, explained itself.) <strong>Copy upgrade command</strong> is always offered whatever the version badge says — it is also the reinstall command, and “up to date” compares version <em>strings</em>, so a locally-built agent can read current while speaking an older protocol. The detail panel also surfaces health-at-a-glance (status, live heartbeat age, load, sandbox posture), the <strong>full capability list</strong>, <strong>registration provenance</strong> (with a link to the token that created the runner), a read-only <strong>managed-settings</strong> summary, an <strong>agent-version</strong> upgrade hint, the runner's <strong>currently-running</strong> jobs, and its <strong>recent job history</strong>.</p>
+
+<p>The panel is laid out for readability. It reads top-down as <em>what this runner <strong>is</strong>, then what you can <strong>change</strong></em>: <strong>Registration</strong> and <strong>Managed settings</strong> — the two read-only blocks — sit above the four editable controls, so the <strong>⚙ Settings</strong> entry point (which lives on the <em>Managed settings</em> header, beside the pending-change dot) is near the top instead of below the fold. Registration facts are also stated <strong>once</strong>: <em>Protocol</em> and <em>Registered</em> used to render twice under different labels, in the field grid and again under Registration, reading as two separate pairs of facts. Fields the runner has no value for are collected into a single muted <em>“Not recorded:”</em> line rather than each rendering a labelled <code>—</code>, and background explanation sits behind an <strong>ⓘ</strong> disclosure on the section it belongs to.</p>
+
+<blockquote><p><strong>A second, independent reaper acts on workflow-launched runs.</strong> The workflow engine's orphan reaper (a startup sweep plus a 10-minute periodic pass) fails the queued/running <strong>child runs</strong> of an orphaned or 24h-stale workflow with reason <code>orchestrator_lost</code> — including runs assigned to a perfectly healthy runner. Unlike <code>runner_lost</code>, this shows a plain Failed badge (no amber <strong>Lost</strong> badge): it means the <em>orchestrator</em> lost track of the workflow (e.g. a server restart mid-workflow), not that the runner vanished.</p></blockquote>
+
+<hr />
+
+<h2 id="2-manage-day-to-day">2 · Manage day-to-day</h2>
+
+<h3>Drain (graceful — do this before maintenance)</h3>
+
+<p>Draining lets active runs finish while the runner stops claiming new work — the safe way to take a runner out of rotation.</p>
+
+<ul><li><strong>From the UI:</strong> <strong>Runners → Drain</strong> (the button shows while the runner is <strong>reachable</strong> — <code>online</code> or <code>degraded</code>). On its next poll the agent stops claiming, lets active runs finish, and <strong>exits once idle</strong>. Because the generated unit is <code>Restart=on-failure</code>, a clean drain-exit (code 0) leaves the service stopped — bring it back later with <code>systemctl start amadeus-runner</code>. Starting it back up <strong>is</strong> the come-back signal: the restarted agent's first poll re-admits it — same id, same key, online and claiming work in one round-trip. There is no separate "activate" step; if you want a runner to <em>stay</em> out of rotation, leave the service stopped (or <strong>Deregister</strong> to revoke its key entirely).</li><li><strong>From the host:</strong> <code>systemctl stop amadeus-runner</code> sends <code>SIGTERM</code>, which triggers the <strong>same</strong> graceful drain. <code>TimeoutStopSec=300</code> in the unit gives long ansible/terraform plays up to 5 minutes to wind down before a hard kill.</li></ul>
+
+<p><strong>Always drain before maintenance</strong> so you don't kill mid-flight runs.</p>
+
+<h3>Kill a single run</h3>
+
+<p>To stop one run without touching the rest, kill it from the server: the next poll delivers a <code>kill</code> for that specific <code>traceId</code> and the agent cancels just that run's execution/session. Because kill and drain arrive <strong>only on a poll</strong>, the agent keeps polling while executing — a busy runner is still controllable.</p>
+
+<h3>Registration-token hygiene is <strong>not</strong> a kill-switch</h3>
+
+<p>Registration tokens are <strong>single-use per install</strong> (minted from the Runners view; each dies on its first successful registration and records which runner consumed it). <strong>Revoking an unused token</strong> only stops the install that would have used it. Runners that already registered keep their long-lived <code>amt_run_*</code> key and keep working until you <strong>deregister</strong> them (see "Remove"). To revoke a specific runner, use its <strong>Deregister</strong> button — token hygiene never touches registered runners.</p>
+
+<h3>No hot reload</h3>
+
+<p>The agent has <strong>no SIGHUP/config-reload path</strong> — only <code>SIGINT</code>/<code>SIGTERM</code> (drain). Every config change needs a restart (<code>systemctl restart amadeus-runner</code>); the restart is also all a declared-config change needs — drift detection re-declares it on the next poll (see "Resync").</p>
+
+<hr />
+
+<h2 id="3-update-upgrade-the-agent">3 · Update (upgrade the agent)</h2>
+
+<p>Keep agents and the server in <strong>lock-step</strong> across upgrades. The wire protocol is versioned with a server-enforced minimum (<code>runner-security.html</code> §4); a drift becomes a loud, diagnosable failure rather than silent mis-driving.</p>
+
+<p><strong>systemd host:</strong></p>
+
+<div class="codeblock"><pre><code># 1. Drain first so no run is interrupted.
+#    (UI → Drain, or `systemctl stop` which drains on SIGTERM.)
+sudo systemctl stop amadeus-runner
+
+# 2. Build/copy the new binary and install it over the old one.
+cd backend &amp;&amp; CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner
+sudo install -m 0755 amadeus-runner /usr/local/bin/amadeus-runner
+
+# 3. Start again — it resumes its identity from the identity file.
+sudo systemctl start amadeus-runner
+amadeus-runner version    # confirm the new build</code></pre></div>
+
+<p><strong>Container:</strong> pull/rebuild the new image, then recreate the container against the <strong>same named volume</strong> so identity persists:</p>
+
+<div class="codeblock"><pre><code>docker pull amadeus-runner:slim       # or rebuild the image
+docker stop amadeus-runner-01 &amp;&amp; docker rm amadeus-runner-01
+docker run -d --name amadeus-runner-01 --restart unless-stopped \
+  -v amadeus-runner-data:/var/lib/amadeus-runner \
+  ...same -e flags as install... \
+  amadeus-runner:slim</code></pre></div>
+
+<blockquote><p><strong>The server keeps showing the OLD version/protocol until you re-register.</strong> A restart <strong>resumes the stored identity</strong> and never re-declares — so after an upgrade the <code>runners</code> row still reflects the version, capabilities, and <code>protocolVersion</code> from the <strong>last registration</strong>. This matters after an upgrade that changes the protocol version. The server's protocol floor tracks the current wire protocol, so every agent that can talk to this server speaks it: one below the floor is refused at registration, at redeclare and on every poll with <code>426 protocol_too_old</code>, never silently degraded. So an agent whose binary you upgraded across a protocol bump keeps working, while one you did <em>not</em> upgrade stops receiving work at its next poll and says so in its own log — rather than running on with fields it silently drops. The server picks up a new build <strong>automatically on the first poll after the restart</strong> (drift detection); the <strong>Resync</strong> button forces it. (Before v1.5.40 the floor sat at v1 and each capability carried its own minimum, hard-failing individual runs — managed inventory below v2, checkout below v3, injected secrets below v6. One loud refusal replaced all of them.)</p></blockquote>
+
+<hr />
+
+<h2 id="4-resync-reconcile-a-runner-with-the-server">4 · Resync (reconcile a runner with the server)</h2>
+
+<p><strong>Resync = re-aligning the server's view of a runner with the runner's actual identity and config.</strong> It's needed because declared config crosses the wire only at (re-)registration (see the note at the top). Since protocol <strong>v4</strong> the agent can re-declare its current local config <strong>in place</strong> — same id, same API key, same agency membership, no deregistration, active runs unaffected — and since <strong>0.47.5</strong> the server asks for that <strong>automatically</strong>: the agent sends a config digest with every poll, and a mismatch with the stored declared set triggers the <code>re-register</code> op on that same poll (flap-guarded to at most one op per 5 minutes per runner). <strong>Runners → Resync</strong> forces the same op on demand. The button authenticates nothing new: the agent re-reads its <em>own</em> config, so a resync can never change what a runner is from the server side. Pick the case that matches:</p>
+
+<h3>Case A — the server reaped/deregistered the runner (automatic)</h3>
+
+<p>If the server has deleted the runner (manual deregister, or 14-day offline sweep), the agent's next poll returns <strong>404</strong>; it logs <code>server returned 404 on poll — re-registering</code>, discards the stale identity, and <strong>re-registers automatically</strong> with its current config. <strong>Nothing to do</strong> — <em>provided the registration token in its env is still valid</em>. Its install token is long dead (single-use, consumed at first registration) — <strong>mint a fresh <code>amt_reg_*</code></strong> (Runners → Register New Runner), put it in the runner's env, and restart so the re-register can succeed. This is the one flow that still needs a registration token: the reaped row's <code>amt_run_*</code> key was revoked with it. (The <strong>Resync</strong> button can't help here — the row is gone and the runner's key revoked; this path always needs a registration token.)</p>
+
+<h3>Case B — you changed declared config (capabilities / name / os / maxConcurrent / inventory / toolchains)</h3>
+
+<blockquote><p><strong>Checkout-mode capabilities are declared too.</strong> The tokens a runner advertises — <code>ansible</code>, <code>checkout</code> (from <code>-allow-checkout</code>), <code>collection:&lt;fqcn&gt;</code> (installed collections), <code>vault</code> (from <code>-vault-password-file</code>), <code>sandboxed</code> (systemd-run available) — plus the detected toolchain versions on the Runners page are all captured <strong>at registration</strong>. So enabling checkout, provisioning a new collection, adding the vault file, or gaining a systemd sandbox does <strong>not</strong> reach the server on a plain restart: it needs a <strong>resync</strong> (or re-registration), same as any declared change below.</p></blockquote>
+
+<p>A plain restart will <strong>not</strong> propagate these — the agent resumes its identity and skips registration. To propagate:</p>
+
+<ul><li><strong>Just restart (preferred):</strong> restart the service so the agent is reading the new values (<code>systemctl restart amadeus-runner</code>). At startup it recomputes its config digest (re-probing toolchains, collections, and the sandbox), the first poll carries it, and the server requests the re-declare automatically — <strong>no click needed</strong>. The <strong>Resync</strong> button forces the same thing without waiting a poll (and a newly installed collection is re-detected at re-declare time even without a restart; flag-derived tokens like <code>checkout</code>/<code>vault</code> and the startup <code>sandboxed</code> probe still need the restart first). One caveat: the startup probe is what gets declared — if the agent starts before its toolchain is ready (e.g. ansible on a slow-booting venv), the reduced token set propagates; restart or Resync once the toolchain is healthy (the agent logs the detected set at startup). No registration token involved — the agent authenticates with its existing <code>amt_run_*</code> key.</li><li><strong>Alternative — deregister, let it re-register:</strong> edit the config (e.g. <code>/etc/amadeus-runner/runner.env</code>), then <strong>Runners → Deregister</strong> the runner. On its next poll the agent 404s and re-registers with the new config. The old row is gone; the runner keeps the <strong>same name</strong> but gets a new id. (Restart the service after editing config so it's reading the new values when it re-registers.)</li><li><strong>Last resort — delete the identity file:</strong> drain, stop the service, delete the identity file (e.g. <code>/var/lib/amadeus-runner/identity.json</code>), then start. The agent registers <strong>fresh</strong> with the new config. Note this mints a <strong>new id</strong>; the old <code>runners</code> row lingers as <strong>offline</strong> until the reaper deregisters it (5m → 14d). Prefer the deregister path so there's no orphan row.</li></ul>
+
+<p>The deregister and identity-file paths need a valid registration token at re-register time; the Resync button does not.</p>
+
+<h3>Case C — you changed keys, known_hosts, or local inventory</h3>
+
+<p>These are <strong>runner-local</strong> and <strong>not declared to the server</strong>, so no re-registration is involved:</p>
+
+<ul><li><strong>Key files and <code>known_hosts</code></strong> are read <strong>at dial time</strong> — editing their <em>contents</em> in place takes effect on the <strong>next run</strong>, no restart needed. Only changing their <em>paths</em> (the <code>-key-dir</code> / <code>-key-map</code> / <code>-known-hosts</code> config) needs a restart.</li><li><strong>One key file now serves bash AND ansible.</strong> A key in <code>-key-dir</code>/<code>-key-map</code> named after the host's <code>authKeyEnvVar</code> is bridged to ansible automatically — you no longer provision the same name a second time as an env var. Each run's log shows what it used: <code>amadeus: auth: key "NAME" → &lt;path&gt;</code>, <code>amadeus: auth: --private-key NAME → &lt;path&gt;</code>, and <code>amadeus: trust: known_hosts → &lt;path&gt;</code>. Prove a name resolves with <code>amadeus-runner doctor --auth NAME [user@host]</code> before a run; the expanded Runner detail also lists a runner's resolvable key names as chips. (Opt out with <code>-no-auth-bridge</code>.) See <a href="./runner-security.html">Runner Security Guide</a> §2, "How a runner authenticates."</li><li><strong>Local inventory</strong> (<code>-local-inventory</code>, <code>local</code> mode) is loaded at agent <strong>start</strong> — edit it, then <code>systemctl restart amadeus-runner</code>.</li></ul>
+
+<h3>Case D — protocol/version drift after an upgrade</h3>
+
+<p>This is the "make the server see the new build" follow-up to an Update (§3): the post-upgrade restart is enough — the new binary's first poll carries a changed digest (its <code>version</code> differs) and the server records the new <code>version</code> and <code>protocolVersion</code> automatically; <strong>Resync</strong> forces it without waiting a poll. <strong>One boundary case:</strong> the upgrade that first crosses into v4 (e.g. v3 → v4) can't use the button — the server still records the <em>old</em> protocol from the last registration, so Resync is disabled. Cross that boundary once with Case B's deregister path; every later upgrade is one click. Confirm on the Runners view that the version (shown under the runner's name) updated and any protocol-gated runs now route.</p>
+
+<hr />
+
+<h2 id="4-5-managed-settings-tune-a-live-runner-from-its-row">4.5 · Managed settings (tune a live runner from its row)</h2>
+
+<p><strong>Managed settings are the exception to "declared config crosses the wire only at registration."</strong> A third category joins <em>declared</em> and <em>local</em> (added in protocol v4): a small set of <strong>server-managed operational overrides</strong> the operator edits on the runner's row — the <strong>⚙ Settings</strong> button opens a drawer — that ride to the agent <strong>over the poll channel</strong> and apply <strong>in-memory on the next poll</strong>. No SSH, no restart, no env edit.</p>
+
+<p>The managed set is: <strong>max jobs</strong> (<code>maxConcurrent</code>), the three <strong>sandbox caps</strong> (<code>MemoryMax</code>/<code>CPUQuota</code>/<code>TasksMax</code>), the <strong>checkout policy</strong> (<code>allowCheckout</code> + the repo <code>checkoutRepos</code> allowlist), and a subtract-only <strong>capability mask</strong> (remove run-types from what the runner will claim). Each field is tri-state: set it to override the runner's local value, or leave it blank/<em>inherit</em> to keep the local value. The secrets these depend on — the checkout deploy token and the vault password — are <strong>never</strong> managed here; they stay in runner-local custody (installed at §3 / <code>runner-install.html</code>), so the server never holds secret bytes.</p>
+
+<p>Each write <strong>bumps a version</strong>; the agent echoes the version it has <strong>applied</strong> as its poll ack, so the row shows a <strong>pending dot</strong> (● on the Settings button) until the change round-trips — typically one poll cycle. The <strong>capability mask is enforced server-side at claim</strong> (a masked run-type is simply never assigned to the runner) and honored agent-side too. Managed overrides do <strong>not</strong> touch the config digest, so changing one never triggers a drift re-registration (§4).</p>
+
+<p><strong>One row-level flag is deliberately not part of the managed set: <em>Secret injection</em></strong>. It is a per-runner <strong>trust</strong> decision, not an operational tune, and it lives in its own control on the runner's detail panel behind <code>configureApp</code>. When it is on, this runner may claim runs whose job or script declares <a href="runner-security.html">Runner Security Guide</a>, and it receives the <strong>resolved secret values</strong> in its dispatch manifest; when it is off, such a run is <strong>never dispatched to it at all</strong>. Grant it only to runners you trust with the secrets in the scopes they serve. A secret-bearing run also needs the agent to speak protocol <strong>v6</strong> or later — an older agent would ignore the manifest block and run without the secrets, so the server hard-fails that pairing rather than letting it happen quietly (§4, and <code>runner-security.html</code> §4).</p>
+
+<blockquote><p><strong>Every registered agent receives managed settings.</strong> Delivery is keyed on the <code>settingsVersion</code> param the agent's poll carries, and since the protocol floor tracks the current version there is no agent old enough to be missing it. (Through v1.5.39 the floor sat at v1, so a pre-Phase-4 agent silently never received settings; such an agent now cannot register at all.)</p></blockquote>
+
+<hr />
+
+<h2 id="4-6-trust-a-target-s-host-key-scan-approve">4.6 · Trust a target's host key (scan &amp; approve)</h2>
+
+<p>You no longer need to hand-assemble a <code>known_hosts</code> before a runner's first SSH run. Host-key verification is still strict — an unknown or changed target key is refused — but you can trust a key at the moment it's actually known, with an audit trail. <strong>This also covers ansible runs</strong>: local-toolchain runs verify against the same <code>known_hosts</code> the agent seeds here, so an approved key serves both Go-SSH and ansible (no more separate <code>~/.ssh/known_hosts</code> for ansible).</p>
+
+<ol>
+<li>A runner's SSH run to an unverified host fails with a <code>host_key_unverified</code> reason naming the host (the run's status reason). The run is a soft failure — nothing was executed on an unverified host.</li>
+<li>On the <strong>Runners</strong> view, press <strong>Scan keys</strong> on that runner's row and enter the target(s). The next poll delivers a <code>keyscan</code> op; the agent captures each host's presented key <em>from its own vantage</em> and uploads it.</li>
+<li>The key appears under <strong>Pending host-key approvals</strong> with its full <strong>SHA256 fingerprint</strong>. <strong>Compare it out-of-band</strong> against the host itself (<code>ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</code> on the host, or the fingerprint its admin publishes), then <strong>Approve</strong>.</li>
+<li>The next poll delivers a <code>trust-hosts</code> op; the agent appends the exact line to its <code>known_hosts</code> (idempotently — a re-delivery never duplicates). <strong>Retry the run</strong>; it now verifies.</li>
+</ol>
+
+<p><strong>Reject</strong> a key you can't verify — it is never trusted. Approving without the out-of-band comparison is still trust-on-first-use (the scan only shows what the host presented, not that it wasn't already compromised) — see <a href="./runner-security.html">Runner Security Guide</a> §8. A pre-seeded <code>known_hosts</code> (<code>--known-hosts</code> at install) still works and skips the scan for hosts you already trust.</p>
+
+<hr />
+
+<h2 id="4-7-tags-label-a-runner-then-send-work-to-it">4.7 · Tags — label a runner, then send work to it</h2>
+
+<p>A runner's <strong>tags</strong> are free-text labels you set on its row (expand the runner, edit the tag chips). They began as a way to <em>find</em> runners in a long list. They now also decide <strong>where work runs</strong>: a job &mdash; or a single ad-hoc run &mdash; can be <strong>pinned</strong> to a tag, and only runners carrying that tag may claim it.</p>
+
+<p>This is the answer to a question agencies could not express. An agency says <em>which department</em> a runner belongs to; every runner inside it is interchangeable. A tag says <em>where the runner sits</em> &mdash; which network segment it can reach, which datacentre it lives in, which VLAN its route table knows about. When a job must reach hosts only some of your runners can see, tag those runners and pin the job.</p>
+
+<p><strong>Tag the property, not the machine.</strong> Pins name a tag, never a specific runner, and that is deliberate: a runner's identity is minted at <em>registration</em>, so re-enrolling a host gives it a new one and any pin naming the old identity would quietly stop matching. A tag survives re-enrollment, and tagging three runners <code>vlan-dmz</code> gives the pin three ways to succeed instead of one. Name tags after the capability or location an operator would ask for &mdash; <code>vlan-dmz</code>, <code>dc-east</code>, <code>pci-zone</code> &mdash; not after the host.</p>
+
+<p><strong>Case does not matter.</strong> <code>vlan-dmz</code>, <code>VLAN-DMZ</code> and <code>Vlan-Dmz</code> are the same tag when a pin is matched, and a single runner cannot carry two spellings of one tag. Tags still display exactly as you typed them.</p>
+
+<p><strong>Editing tags takes effect on the next poll.</strong> Adding a tag lets that runner start claiming pinned work immediately; removing one stops it. Runs already in flight are unaffected &mdash; a claim is a decision made once, not re-checked mid-run. Deregistering a runner takes its tags with it.</p>
+
+<blockquote><p><strong>Tags are not capabilities, and neither replaces the other.</strong> A <em>capability</em> (<code>vault</code>, <code>checkout</code>, a run-type) describes what a runner can <strong>do</strong>, is declared by the agent itself from its own environment, and is matched by a job's <code>requires</code>. A <em>tag</em> describes where a runner <strong>is</strong>, is set by an operator in Cronomicon, and is matched by a pin. A run must satisfy both, plus its agency. If you find yourself wanting to grant a &ldquo;capability&rdquo; from the UI, you want a tag.</p></blockquote>
+
+<p><strong>Pinning never widens reach.</strong> A pin can only narrow which runners may claim a run; it is applied on top of department isolation, never instead of it. Pinning a run to a tag that only another department's runner carries does not send it there &mdash; the run waits, and says so (§5.5). There is no combination of pin and tag that reaches a runner the department rules would deny.</p>
+
+<p>Who sets the pin, and where, is covered in the manuals: the per-run and per-job controls in the <strong>User Manual</strong>, and the Git-declared form in the <strong>Administrator Manual</strong>.</p>
+
+<hr />
+
+<h2 id="5-remove-retire-a-runner">5 · Remove / retire a runner</h2>
+
+<h3>Retire one runner (keep the host)</h3>
+
+<div class="codeblock"><pre><code># 1. Drain (UI → Drain, or stop, which drains on SIGTERM).
+sudo systemctl stop amadeus-runner
+# 2. Deregister on the server: Runners → Deregister.
+# 3. Delete the identity so a stray restart can't resume the (now-gone) row.
+sudo rm -f /var/lib/amadeus-runner/identity.json
+# 4. (optional) keep it from coming back on boot:
+sudo systemctl disable amadeus-runner</code></pre></div>
+
+<p>Order matters: <strong>drain → deregister → delete identity</strong>. Deleting the identity without deregistering leaves an offline row to be reaped; deregistering without deleting the identity lets a restart re-register the runner right back.</p>
+
+<h3>Fully uninstall from the host (reverse of <code>runner-install.sh</code>)</h3>
+
+<div class="codeblock"><pre><code>sudo systemctl disable --now amadeus-runner
+sudo rm -f /etc/systemd/system/amadeus-runner.service
+sudo systemctl daemon-reload
+sudo rm -f /usr/local/bin/amadeus-runner
+sudo rm -rf /etc/amadeus-runner          # config (runner.env)
+sudo rm -rf /var/lib/amadeus-runner      # state: identity + keys + known_hosts
+sudo userdel amadeus-runner              # remove the service account
+sudo groupdel amadeus-runner             # if it has no other members</code></pre></div>
+
+<p>Then <strong>Deregister</strong> the runner on the Runners view if you haven't already.</p>
+
+<h3>Container</h3>
+
+<div class="codeblock"><pre><code># Drain first (UI → Drain), then:
+docker stop amadeus-runner-01            # SIGTERM → graceful drain (up to the stop timeout)
+docker rm amadeus-runner-01
+docker volume rm amadeus-runner-data     # destroys identity + keys — only when fully retiring</code></pre></div>
+
+<h3>Retire a <strong>compromised</strong> runner (segment-local rotation)</h3>
+
+<p>Because custody is <strong>distributed</strong> (model b), retiring a compromised runner is a segment-local rotation, not an estate-wide one (<code>runner-security.html</code> §7):</p>
+
+<ol><li><strong>Deregister</strong> it on the Runners view (revokes its server access).</li><li><strong>Delete its identity file</strong> (the <code>amt_run_*</code> bearer) so the host can no longer act as that runner.</li><li><strong>Rotate the SSH keys it held</strong> — only the keys for <em>that runner's segment</em> are exposed; other runners' keys and the control plane's secrets are not.</li></ol>
+
+<hr />
+
+<h2 id="5-5-online-but-nothing-runs-on-it">5.5 · Online, but nothing runs on it</h2>
+
+<p>Registration and <em>eligibility</em> are separate things. A runner can be online, healthy and idle while a department's runs queue beside it — because Cronomicon ships <strong>names, not values</strong>, and claiming is gated on properties an operator has to set. Treat an <strong>agency as a provisioning domain</strong>: a department's runners carry that department's key-dir, secrets and sidecar templates, and claim-gating guarantees a run only lands where its names resolve.</p>
+
+<p>You do not have to guess which gate. A run that no online runner can claim <strong>records the reason</strong>, computed when it is enqueued and stored on the run, so it still answers the question days later — &ldquo;why didn't it run last night?&rdquo; cannot be settled by inspecting today's fleet, because the runner that was missing may be online now.</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Reason on the queued run</th><th>What to set on the runner</th></tr></thead>
+<tbody>
+<tr><td><em>no online runner belongs to &lt;agency&gt;</em></td><td>Enroll it in that agency &mdash; its row in Runners, or Scopes &rarr; Agencies &rarr; expand the agency. An untagged runner serves only the general pool.</td></tr>
+<tr><td><em>no eligible runner is flagged for secret injection</em></td><td>Turn on the per-runner <strong>Secret injection</strong> toggle. The run carries reference bindings or a become password, and such runs are invisible to un-flagged runners. Most-forgotten step on a new runner.</td></tr>
+<tr><td><em>no eligible runner advertises <code>become-file</code></em></td><td>Upgrade the agent's <strong>ansible-core to ≥ 2.12</strong> (where <code>--become-password-file</code> landed). The run waits rather than being handed to a runner that would ignore the flag.</td></tr>
+<tr><td><em>no eligible runner advertises <code>vault</code> / <code>checkout</code> / <code>collection:…</code></em></td><td>Provision the matching capability — <code>--vault-pass-file</code>, <code>-allow-checkout</code>, or the collection — then restart so it re-declares.</td></tr>
+<tr><td><em>no online runner can run &lt;type&gt; jobs</em></td><td>The toolchain is missing (slim image) or a <code>capabilityMask</code> narrowed it. Install and restart; check the capability chips.</td></tr>
+<tr><td><em>pinned to runners tagged &lt;tag&gt;, and no runner in the fleet carries that tag</em></td><td>Nothing carries the tag &mdash; a typo in the pin, or a runner nobody has tagged yet. Add the tag to the runners that belong on that segment (&sect;4.7), or correct the pin.</td></tr>
+<tr><td><em>pinned to runners tagged &lt;tag&gt;, and none of them is online and otherwise eligible</em></td><td>The tag exists, so this is about those particular runners: offline, draining, in another department, or missing the run-type. Check them first &mdash; the fix is on the tagged runners, not on the tag.</td></tr>
+<tr><td><em>only a runner with no agencies can claim it</em></td><td>Nothing — this one is about the <strong>run</strong>, not the runner. It has no scope, and an untagged run reaches only untagged runners (the general pool is <em>disjoint</em>, not a fallback). Bind a scope to the run.</td></tr>
+</tbody>
+</table></div>
+
+<p>After changing a runner's capabilities or provisioning, <strong>Resync</strong> (§4) or restart the agent so it re-declares; queued runs are re-evaluated on the next claim sweep and need no re-trigger.</p>
+
+<hr />
+
+<h2 id="6-troubleshooting-installed-running-but-not-in-the-ui">6 · Troubleshooting — installed &amp; running, but not in the UI</h2>
+
+<p>A runner appears in the Runners view the instant <code>POST /api/v1/runners/register</code> succeeds — there is <strong>no approval gate</strong>. So a service that is "active (running)" but never shows up means <strong>registration never completed</strong>. The agent logs every startup phase <em>before</em> it runs it, so the <strong>last line</strong> in the journal names exactly where it stopped:</p>
+
+<div class="codeblock"><pre><code>journalctl -u amadeus-runner -n 40 --no-pager</code></pre></div>
+
+<p>The healthy startup sequence is:</p>
+
+<div class="codeblock"><pre><code>runner agent starting
+probing tier-2 sandbox availability (systemd-run)     # or: sandbox probe skipped (NoSandbox set)
+detecting host capabilities (toolchain probes)
+registering with server
+registered with server id=…
+runner agent online</code></pre></div>
+
+<p>Whichever <code>…</code> line is <strong>last with nothing after it</strong> is the phase that stalled or failed. Match it:</p>
+
+<div class="tbl"><table>
+<thead><tr><th>Last line / error in the journal</th><th>Cause</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td><code>register request: Post "host/…": unsupported protocol scheme ""</code></td><td><code>AMADEUS_RUNNER_SERVER</code> has no <code>https://</code> scheme</td><td>Add the scheme in <code>runner.env</code> (recent agents auto-normalize a bare host).</td></tr>
+<tr><td><code>register: server returned 302</code>, or an HTML <code>&lt;!doctype html&gt;</code> snippet</td><td>The SSO / forward-auth proxy is intercepting runner endpoints and returning its login page</td><td>Add the runner paths to the proxy auth-bypass (Authelia <code>access_control</code>); see <code>deployment-guide.md</code>.</td></tr>
+<tr><td><code>register: server returned 401 … registration token invalid or expired</code></td><td>Registration token already used (single-use) or &gt;24h old</td><td>Mint a fresh token (<strong>Add Runner</strong>), update <code>AMADEUS_RUNNER_REGISTRATION_TOKEN</code>, restart.</td></tr>
+<tr><td><code>poll failed … 401 … invalid or expired runner token</code></td><td>The runner was deleted, or the server's token store was reset/rebuilt</td><td>Recent agents re-register automatically on a 401; otherwise <code>rm</code> the identity file + supply a fresh registration token.</td></tr>
+<tr><td><code>register request: … x509: certificate signed by unknown authority</code></td><td>Server TLS uses an internal CA the runner doesn't trust</td><td>Set <code>AMADEUS_RUNNER_CA_CERT=/path/to/ca.pem</code> in <code>runner.env</code>, restart.</td></tr>
+<tr><td>Last line is <code>registering with server</code> (hangs, no error)</td><td>Server unreachable, TLS stall, or a proxy black-holing the register POST</td><td>Run the reachability check below.</td></tr>
+<tr><td>Last line is <code>probing tier-2 sandbox…</code> or <code>detecting host capabilities…</code></td><td>A startup probe is wedged — almost always <code>exec.LookPath</code> stat-ing a <code>$PATH</code> dir on a hung mount</td><td>See <strong>Silent startup hang</strong> below.</td></tr>
+</tbody>
+</table></div>
+
+<h3>Reachability check from the host</h3>
+
+<div class="codeblock"><pre><code>curl -sS -o /dev/null -w 'healthz %{http_code} %{time_total}s\n' https://SERVER/healthz
+curl -sS -m 20 -X POST https://SERVER/api/v1/runners/register \
+  -H 'Authorization: Bearer amt_reg_dummy' -H 'Content-Type: application/json' -d '{}' -i | head
+# Expect a FAST JSON 401 (unauthorized). An HTML/login page ⇒ SSO proxy intercept;
+# a hang/timeout ⇒ the network or proxy is black-holing the register endpoint.</code></pre></div>
+
+<h3>Silent startup hang (no logs after <code>starting</code>, SIGKILL after the stop timeout)</h3>
+
+<p>If the agent logs the <code>runner agent starting</code> banner (and maybe a <code>probing…</code>/<code>detecting…</code> line) and then <strong>nothing</strong>, and systemd eventually reports <code>stop-sigterm timed out … Killing</code> with <code>status=9/KILL</code>, it is blocked inside a startup probe. The overwhelming cause is <code>exec.LookPath</code> — which stats every <code>$PATH</code> directory — hitting a directory on a <strong>hung mount</strong> (stale NFS / autofs to an unreachable server), where the <code>stat()</code> blocks uninterruptibly. Confirm the exact frame (Go dumps every goroutine's stack on SIGQUIT):</p>
+
+<div class="codeblock"><pre><code>systemctl kill --kill-who=main --signal=SIGQUIT amadeus-runner
+journalctl -u amadeus-runner --no-pager | grep -A20 'goroutine 1 \['
+# A frame in probeSandbox / detectRunTypes / exec.LookPath confirms it.</code></pre></div>
+
+<p>Find the stuck directory:</p>
+
+<div class="codeblock"><pre><code>PID=$(systemctl show -p MainPID --value amadeus-runner)
+tr '\0' '\n' &lt; /proc/$PID/environ | grep '^PATH=' | cut -d= -f2 | tr ':' '\n' \
+  | while read d; do printf '%-24s ' "$d"; timeout 3 stat "$d/." &gt;/dev/null 2&gt;&amp;1; echo "rc=$? (124=HUNG)"; done
+timeout 5 df -h    # if df itself hangs, a stale network mount is the culprit</code></pre></div>
+
+<p>Mitigations, in order:</p>
+
+<ol>
+<li><strong>Repair or unmount the stale mount — this is the real fix.</strong> Playbook runs resolve their toolchains through the same <code>PATH</code>, so a hung directory breaks <em>runs</em> too, not just registration. A runner on such a host can register but cannot reliably execute.</li>
+<li><strong>Pin a clean <code>PATH</code></strong> in <code>runner.env</code> that omits the hung directory (keep wherever <code>which ansible systemd-run</code> actually resolve), then restart. <code>runner-install.sh</code> (recent releases) does this automatically at install time and prints which directories it excluded.</li>
+<li><strong><code>AMADEUS_RUNNER_NO_SANDBOX=true</code></strong> skips the <code>systemd-run</code> probe specifically — useful when <code>systemd-run</code> itself stalls (e.g. a non-login system user with no reachable manager) rather than a broad <code>PATH</code> problem.</li>
+</ol>
+
+<blockquote><p>Recent agents bound every startup probe with a deadline, so a hung mount now <strong>degrades</strong> a probe (logged: <code>PATH lookup timed out — treating tool as absent</code>) instead of wedging startup — the runner registers and runs unsandboxed. The stale mount still needs repair for playbook runs to resolve their tools.</p></blockquote>
+
+<hr />
+
+<p>See also: <a href="./runner-install.html">Runner Install Guide</a> (install + configure), <code>runner-security.html</code> (credential-model posture &amp; blast radius), <code>env-matrix.md</code> (server-side vars such as <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> / <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code>), <code>amadeus-runner.service</code> (the hardened unit).</p>
+
+</main>
+</div>
+<button id="totop" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+</button>
+<script>
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  document.getElementById('themeLabel').textContent=t==='dark'?'Light':'Dark';
+  var ic=document.getElementById('themeIcon');
+  ic.innerHTML=t==='dark'
+    ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+    : '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>';
+  try{localStorage.setItem('am_manual_theme',t)}catch(e){}
+}
+function toggleTheme(){applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark')}
+(function(){var s;try{s=localStorage.getItem('am_manual_theme')}catch(e){}applyTheme(s==='light'?'light':'dark')})();
+document.querySelectorAll('.codeblock').forEach(function(cb){
+  var pre=cb.querySelector('pre'); if(!pre||cb.querySelector('.copybtn'))return;
+  var b=document.createElement('button'); b.className='copybtn'; b.textContent='Copy';
+  b.onclick=function(){navigator.clipboard.writeText(pre.innerText).then(function(){b.textContent='Copied';b.classList.add('ok');setTimeout(function(){b.textContent='Copy';b.classList.remove('ok')},1400)})};
+  cb.appendChild(b);
+});
+(function(){
+  var links=[].slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a});
+  if(!links.length)return;
+  var obs=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){var a=map[e.target.id];if(!a)return;links.forEach(function(l){l.classList.remove('active')});a.classList.add('active')}})},{rootMargin:'-64px 0px -72% 0px',threshold:0});
+  document.querySelectorAll('main h2[id]').forEach(function(h){obs.observe(h)});
+})();
+window.addEventListener('scroll',function(){document.getElementById('totop').classList.toggle('show',window.scrollY>500)});
+document.querySelectorAll('nav.toc a').forEach(function(a){a.addEventListener('click',function(){document.body.classList.remove('nav-open')})});
+</script>
+</body>
+</html>

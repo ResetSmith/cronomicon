@@ -1,0 +1,82 @@
+# golangci-lint v2 config (GM-4, 20260824-go-modernization.md).
+#
+# Posture: this gates NEW code, not history. CI runs
+#   golangci-lint run --new-from-rev=origin/main
+# so only findings on lines an MR touches fail the job. The pre-existing
+# backlog is visible via `make lint` and blocks nothing — a linter that fires
+# thousands of times on day one gets ignored on day two. Same posture the
+# frontend takes with tsc on dirty checkouts (v0.52.26): gate at the source,
+# don't relitigate history.
+#
+# The enabled set is deliberately small. Add a linter when it would have caught
+# a real bug in this repo, not because it exists.
+version: "2"
+
+run:
+  build-tags: []
+  # The race detector is the test gate's job (make verify); linting is static.
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - govet          # already in CI standalone; here too so one command covers it
+    - staticcheck    # SA* correctness + S* simplifications — the high-value one
+    - errcheck       # unchecked errors; see the read-side Close exclusions below
+    - ineffassign    # assignments never read
+    - unused         # dead identifiers
+    - gosec          # G-series; this process holds SSH keys and a secret KEK
+    - bodyclose      # leaked http.Response.Body — nine http.Client sites here
+    - contextcheck   # context.Background() where a ctx was in scope
+    - errorlint      # err == ErrX that silently stops matching once wrapped
+    - modernize      # keeps GM-3's Go 1.26 sweep from regressing
+
+  settings:
+    errcheck:
+      # GM-Q3 — read-side Close returns nothing actionable: the read already
+      # succeeded or already errored, and the deferred Close cannot change that.
+      # WRITE-side Close is deliberately NOT excluded: a short write surfaces at
+      # Close on an *os.File opened for writing, an *sql.Tx, or an *ssh.Session,
+      # and those are real findings.
+      exclude-functions:
+        - (*database/sql.Rows).Close
+        - (io.ReadCloser).Close
+        - (io.Closer).Close
+        - (*os.File).Close
+
+    gosec:
+      excludes:
+        # G104 duplicates errcheck, with none of its exclusions.
+        - G104
+        # G404: weak RNG. Trace/run IDs come from db.NewTraceID (UUIDv7) and
+        # secrets from crypto/rand; math/rand here is jitter and test fixtures.
+        - G404
+
+    staticcheck:
+      checks:
+        - all
+        # ST1000/ST1020/ST1021/ST1022: package- and exported-symbol comment
+        # style. This repo comments heavily and idiosyncratically (the SQL
+        # narrative comments are load-bearing); enforcing godoc phrasing would
+        # produce hundreds of findings that improve nothing.
+        - -ST1000
+        - -ST1020
+        - -ST1021
+        - -ST1022
+
+  exclusions:
+    generated: lax
+    rules:
+      # Migrations and seed data are fixtures, not production paths.
+      - path: internal/seed/
+        linters: [gosec, errcheck]
+      # Table-driven tests legitimately ignore errors in fixture setup, and
+      # gosec's file-permission and subprocess rules do not apply to them.
+      - path: _test\.go
+        linters: [gosec, bodyclose]
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax

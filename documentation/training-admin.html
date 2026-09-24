@@ -1,0 +1,1527 @@
+<h1>Administrator course (v1.5.6)</h1>
+
+<!--
+  Administrator training course — body-only fragment (TR-4,
+  the training-course plan). Published by
+  frontend/vite-manuals-plugin.js as a GUIDES entry.
+
+  THE WIDGET STYLE AND SCRIPT BLOCKS BELOW ARE COPIED VERBATIM FROM
+  training-operator.html, apart from the localStorage key. That duplication is
+  deliberate (TR-D3): these are hand-authored standalone documents with no build
+  step of their own, and inventing a partial-include mechanism in the publish
+  plugin to save one copy of ~150 lines would be more machinery than the thing it
+  saves. If the harness grows past ~300 lines, revisit.
+
+  Same six authoring rules as the operator course — read that file's header. The
+  two that bite hardest, because they fail silently:
+
+    · The h1 MUST be the first thing in the file, ahead of this comment, or the
+      wrapper does not lift it into the hero and you get a duplicate title with
+      no version chip.
+    · NEVER write a tag in angle brackets inside this comment. The heading and
+      code-block rewrites run over comments too, and an unclosed heading tag here
+      swallows content up to the first real closing tag.
+-->
+<style>
+    /* ── Training widgets (tr-) ────────────────────────────────────────────
+       Namespaced so nothing collides with the manuals' own classes or the
+       wrapper's appended script. Colours are var(--*) only — see rule 1. */
+
+    .tr-intro {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 18px 20px;
+        margin: 22px 0 28px;
+    }
+
+    .tr-intro p:last-child { margin-bottom: 0; }
+
+    .tr-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+    }
+
+    .tr-meta span {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--textSec);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 3px 8px;
+    }
+
+    /* ── Progress strip ─────────────────────────────────────────────────── */
+
+    .tr-progress {
+        background: var(--panel2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin: 24px 0;
+    }
+
+    .tr-progress h3 {
+        margin: 0 0 4px;
+        font-size: 13px;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--textSec);
+    }
+
+    .tr-progress-note {
+        font-size: 13px;
+        color: var(--textMuted);
+        margin: 0 0 12px;
+    }
+
+    .tr-progress ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+    }
+
+    .tr-progress li { margin: 0; }
+
+    .tr-progress label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        cursor: pointer;
+        color: var(--text);
+    }
+
+    .tr-progress input { accent-color: var(--primary); width: 15px; height: 15px; }
+
+    .tr-reset {
+        margin-top: 12px;
+        font: inherit;
+        font-size: 13px;
+        background: transparent;
+        color: var(--primary);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 4px 10px;
+        cursor: pointer;
+    }
+
+    .tr-reset:hover { border-color: var(--borderStrong); }
+
+    /* ── Shared disclosure look ─────────────────────────────────────────── */
+
+    .tr-map, .tr-opt, .tr-reveal {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--panel);
+        margin-bottom: 8px;
+    }
+
+    .tr-map > summary,
+    .tr-opt > summary,
+    .tr-reveal > summary {
+        cursor: pointer;
+        padding: 10px 14px;
+        list-style: none;
+        font-size: 14px;
+    }
+
+    .tr-map > summary::-webkit-details-marker,
+    .tr-opt > summary::-webkit-details-marker,
+    .tr-reveal > summary::-webkit-details-marker { display: none; }
+
+    .tr-map > summary:hover,
+    .tr-opt > summary:hover,
+    .tr-reveal > summary:hover { background: var(--panelHover); }
+
+    /* Disclosure affordance. Nothing marked these rows as expandable — the
+       native marker is suppressed above. \25B6/\25BC is the app's one
+       disclosure pair (ExpandChevron); tr-opt keeps ::after for its verdict
+       pill, and tr-map's chevron rides the summary grid's last slot. */
+    .tr-reveal > summary::before,
+    .tr-opt > summary::before {
+        content: "\25B6";
+        display: inline-block;
+        font-size: 9px;
+        color: var(--textMuted);
+        margin-right: 9px;
+        vertical-align: 1px;
+    }
+
+    .tr-reveal[open] > summary::before,
+    .tr-opt[open] > summary::before { content: "\25BC"; color: var(--textSec); }
+
+    .tr-map > summary::after {
+        content: "\25B6";
+        font-size: 9px;
+        color: var(--textMuted);
+        justify-self: end;
+    }
+
+    .tr-map[open] > summary::after { content: "\25BC"; color: var(--textSec); }
+
+    .tr-map[open] > summary,
+    .tr-opt[open] > summary,
+    .tr-reveal[open] > summary { border-bottom: 1px solid var(--border); }
+
+    .tr-body { padding: 12px 14px; font-size: 14px; }
+    .tr-body p:last-child, .tr-body ul:last-child { margin-bottom: 0; }
+
+    /* ── Rosetta rows ───────────────────────────────────────────────────── */
+
+    .tr-rosetta { margin: 18px 0 24px; }
+
+    .tr-map > summary {
+        display: grid;
+        grid-template-columns: 1fr 22px 1fr auto 12px; /* 5th col: the ::after chevron */
+        align-items: center;
+        gap: 10px;
+    }
+
+    .tr-from { color: var(--textSec); }
+    .tr-to { color: var(--text); font-weight: 600; }
+    .tr-arrow { color: var(--textMuted); text-align: center; }
+
+    .tr-flag {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 9px;
+        white-space: nowrap;
+    }
+
+    .tr-flag-new { background: var(--primaryBg); color: var(--primary); }
+    .tr-flag-warn { background: var(--warningBg); color: var(--warning); }
+    .tr-flag-gap { background: var(--dangerBg); color: var(--danger); }
+    .tr-flag-win { background: var(--successBg); color: var(--success); }
+
+    /* ── Scenarios ──────────────────────────────────────────────────────── */
+
+    .tr-scenario {
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--primary);
+        border-radius: 8px;
+        background: var(--panel2);
+        padding: 16px 18px;
+        margin: 20px 0 26px;
+    }
+
+    .tr-scenario > h4 {
+        margin: 0 0 4px;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--primary);
+    }
+
+    .tr-setup { font-size: 14px; margin: 0 0 14px; }
+
+    .tr-ask {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 12px;
+        color: var(--text);
+    }
+
+    .tr-opt { background: var(--panel); }
+
+    .tr-opt[open] > summary::after {
+        float: right;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 2px 9px;
+        margin-left: 12px;
+    }
+
+    .tr-opt[data-verdict="right"][open] > summary::after {
+        content: "\2713 Correct";
+        background: var(--successBg);
+        color: var(--success);
+    }
+
+    .tr-opt[data-verdict="wrong"][open] > summary::after {
+        content: "\2717 Not this one";
+        background: var(--dangerBg);
+        color: var(--danger);
+    }
+
+    .tr-opt[data-verdict="right"][open] { border-color: var(--success); }
+    .tr-opt[data-verdict="wrong"][open] { border-color: var(--danger); }
+
+    .tr-takeaway {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+        font-size: 14px;
+    }
+
+    .tr-takeaway strong { color: var(--accent); }
+
+
+    /* ── Match lists (tr-sort) ──────────────────────────────────────────────
+       A "commit mentally, then reveal" matcher rather than a drag-and-drop
+       sorter. Same teaching value — you have to decide before you look — with
+       no JavaScript, no drag affordance to fail on touch, and no keyboard trap.
+       The buckets are shown first so the choice is a real one. */
+
+    .tr-buckets {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+        margin: 16px 0;
+    }
+
+    .tr-bucket {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel2);
+        padding: 12px 14px;
+    }
+
+    .tr-bucket h4 {
+        margin: 0 0 4px;
+        font-size: 14px;
+        color: var(--primary);
+    }
+
+    .tr-bucket p { margin: 0; font-size: 13px; color: var(--textSec); }
+
+    .tr-answer {
+        display: inline-block;
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        font-size: 11px;
+        border-radius: 4px;
+        padding: 2px 8px;
+        margin-bottom: 8px;
+        background: var(--primaryBg);
+        color: var(--primary);
+    }
+
+    /* ── Hotspots ───────────────────────────────────────────────────────────
+       Numbered pins positioned in PERCENTAGES over a figure.shot pair, so one
+       set of coordinates serves both themes and every viewport width. Each pin
+       is an anchor into the numbered list below it, which is also what the
+       whole widget degrades to in print and with images off. */
+
+    .tr-hotspot { margin: 20px 0 8px; }
+
+    /* The pins' coordinate space is THIS box, which wraps the images alone. It
+       must not include the figcaption: percentages measured against a taller
+       box put every pin high by the caption's height, which is how the first
+       draft of this widget landed pin 2 on the Score header. */
+    .tr-shotbox { position: relative; display: block; }
+    .tr-shotbox img { display: block; width: 100%; height: auto; }
+
+    .tr-pin {
+        position: absolute;
+        width: 26px;
+        height: 26px;
+        margin: -13px 0 0 -13px;
+        border-radius: 999px;
+        background: var(--primary);
+        color: var(--onSolid);
+        font-family: var(--sansCond);
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 26px;
+        text-align: center;
+        text-decoration: none;
+        box-shadow: var(--shadow);
+        border: 2px solid var(--panel);
+    }
+
+    .tr-pin:hover, .tr-pin:focus { background: var(--accent); }
+
+    .tr-legend { counter-reset: none; margin: 0 0 24px; padding-left: 22px; }
+    .tr-legend li { margin-bottom: 8px; font-size: 14px; }
+    .tr-legend li strong { color: var(--text); }
+
+    /* ── Walkthrough (CSS-only stepper) ─────────────────────────────────────
+       Radio inputs drive which step shows via :checked ~ sibling selectors, so
+       the stepper works with JavaScript disabled. The inputs are visually
+       hidden but focusable, and each label is their control — so arrow keys
+       move through the steps the way a radio group should. */
+
+    .tr-walk {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 14px 16px;
+        margin: 20px 0 26px;
+    }
+
+    .tr-walk > input[type="radio"] {
+        position: absolute;
+        opacity: 0;
+        width: 1px;
+        height: 1px;
+        pointer-events: none;
+    }
+
+    .tr-walk-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 14px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .tr-walk-nav label {
+        cursor: pointer;
+        font-size: 13px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 5px 11px;
+        color: var(--textSec);
+        background: var(--panel2);
+    }
+
+    .tr-walk-nav label:hover { border-color: var(--borderStrong); color: var(--text); }
+
+    .tr-walk-step { display: none; }
+    .tr-walk-step figure.shot { margin: 0 0 12px; }
+    .tr-walk-step h4 { margin: 0 0 6px; font-size: 15px; }
+    .tr-walk-step p { font-size: 14px; }
+    .tr-walk-step p:last-child { margin-bottom: 0; }
+
+    /* Step N checked → highlight tab N, show panel N. Four steps. */
+    .tr-w1:checked ~ .tr-walk-nav label[for$="s1"],
+    .tr-w2:checked ~ .tr-walk-nav label[for$="s2"],
+    .tr-w3:checked ~ .tr-walk-nav label[for$="s3"],
+    .tr-w4:checked ~ .tr-walk-nav label[for$="s4"] {
+        background: var(--primary);
+        color: var(--onSolid);
+        border-color: var(--primary);
+    }
+
+    .tr-w1:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(1),
+    .tr-w2:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(2),
+    .tr-w3:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(3),
+    .tr-w4:checked ~ .tr-walk-panels > .tr-walk-step:nth-of-type(4) { display: block; }
+
+    /* Keyboard focus has to be visible even though the input itself is hidden. */
+    .tr-w1:focus-visible ~ .tr-walk-nav label[for$="s1"],
+    .tr-w2:focus-visible ~ .tr-walk-nav label[for$="s2"],
+    .tr-w3:focus-visible ~ .tr-walk-nav label[for$="s3"],
+    .tr-w4:focus-visible ~ .tr-walk-nav label[for$="s4"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    @media print {
+        .tr-walk-step { display: block !important; break-inside: avoid; }
+        .tr-walk-nav { display: none; }
+        .tr-pin { display: none; }
+    }
+
+    /* Print: open every disclosure so a PDF carries the whole course. */
+    @media print {
+        .tr-map, .tr-opt, .tr-reveal { break-inside: avoid; }
+        .tr-map > .tr-body, .tr-opt > .tr-body, .tr-reveal > .tr-body { display: block !important; }
+        .tr-progress, .tr-reset { display: none; }
+    }
+
+    /* ── Deck mode (TR-6) ───────────────────────────────────────────────────
+       One slide at a time, the SCORM-ish presentation the courses default to.
+
+       The whole feature is an ENHANCEMENT layered on the scrolling page: the
+       markup below is built at runtime by the deck script, so with JavaScript
+       disabled none of these rules ever match and the document is exactly the
+       long page it was before TR-6 — which is what keeps the print path, the
+       Moodle File-resource download and the no-JS guarantee intact without a
+       second code path to maintain. `@media print` force-restores page mode for
+       the same reason. */
+
+    .tr-deck .tr-slide { display: none; }
+    /* The current slide is a flex column centered in its min-height, so a
+       short slide sits composed in the frame instead of stranded at the top.
+       A tall slide outgrows the min-height and scrolls from the top as before. */
+    .tr-deck .tr-slide.tr-current {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        animation: none;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        .tr-deck .tr-slide.tr-current { animation: tr-enter .22s ease; }
+
+        @keyframes tr-enter {
+            from { opacity: 0; transform: translateY(8px); }
+        }
+    }
+    .tr-deck .tr-slide.tr-current > :first-child { margin-top: 0; }
+
+    /* The manuals give every `section` top padding and margin for the scrolling
+       read. A slide is the top of the screen, so it takes neither. */
+    .tr-deck .tr-slide { padding-top: 0; margin-top: 0; }
+
+    /* Each slide is focused on navigation so screen readers land on the new
+       content. That is a programmatic focus on a container, not a control, so
+       it must not draw a focus ring — an outline around the whole slide reads
+       as a card border and makes a short slide look like an empty box. The
+       real focus ring on real controls is untouched. */
+    .tr-deck .tr-slide:focus { outline: none; }
+
+    /* Room for the fixed bar, and enough height that a short slide still reads
+       as a slide rather than as a stranded paragraph. */
+    .tr-deck main { padding-bottom: 96px; }
+    .tr-deck .tr-slide.tr-current { min-height: 58vh; }
+
+    .tr-deckbar {
+        position: fixed;
+        bottom: 0;
+        left: var(--nav-w);
+        right: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 22px;
+        background: var(--panel);
+        border-top: 1px solid var(--border);
+        box-shadow: var(--shadow);
+    }
+
+    /* Matches the manuals' own sidebar-collapse breakpoint, so the bar and the
+       sidebar can never disagree about who owns the left edge. */
+    @media (max-width: 1040px) {
+        .tr-deckbar { left: 0; }
+    }
+
+    .tr-deckbar button {
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 4px;
+        padding: 7px 14px;
+        border: 1px solid var(--borderStrong);
+        background: var(--panel2);
+        color: var(--text);
+    }
+
+    .tr-deckbar button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+    .tr-deckbar button:disabled { opacity: .4; cursor: default; }
+
+    .tr-deck-next { background: var(--primary) !important; color: var(--onSolid) !important; border-color: var(--primary) !important; }
+    .tr-deck-next:hover:not(:disabled) { background: var(--primaryHover) !important; color: var(--onSolid) !important; }
+
+    .tr-deck-where {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .tr-deck-label {
+        font-family: var(--sansCond);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        font-size: 11px;
+        color: var(--textSec);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .tr-deck-rail { height: 4px; border-radius: 999px; background: var(--panel2); overflow: hidden; }
+    .tr-deck-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+    .tr-deck-mode {
+        border: 1px solid var(--border) !important;
+        background: transparent !important;
+        color: var(--primary) !important;
+        white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+        .tr-deck-mode { display: none; }
+        .tr-deckbar { gap: 10px; padding: 9px 14px; }
+    }
+
+    /* The control that brings the deck back while reading as one page. It rides
+       in the flow at the top of the content rather than in the fixed bar, which
+       does not exist in page mode. */
+    .tr-page-resume { margin: 0 0 18px; }
+
+    @media print {
+        .tr-deckbar, .tr-page-resume { display: none !important; }
+        .tr-deck .tr-slide { display: block !important; }
+        .tr-deck main { padding-bottom: 0; }
+    }
+
+</style>
+<p class="lead-p">This course is for people who <strong>administer</strong> Cronomicon, not just operate it:
+    you set up scopes, decide who can do what, enrol runners, and hold the secrets. It assumes the
+    operator course.</p>
+
+<div class="tr-intro">
+    <div class="tr-meta">
+        <span>Audience: administrators</span>
+        <span>About 45 minutes</span>
+        <span>Operator course first</span>
+    </div>
+    <p><strong>Take the operator course before this one.</strong> It covers the composable model, where
+        definitions live, the Run dialog, blast radius, how runs start, and reading results. Everything
+        below assumes all of it, and none of it is repeated here.</p>
+    <p>Two modules carry more weight than the rest. <strong>A2</strong> and <strong>A4</strong> are where an
+        administrator's mistakes are expensive — one strands work where nothing can run it, the other
+        locks people out or hands them everything. Slow down on both.</p>
+</div>
+
+<div class="tr-progress" id="tr-progress" hidden>
+    <h3>Your progress</h3>
+    <p class="tr-progress-note">Saved in this browser only. Not sent anywhere, not visible to anyone else.</p>
+    <ul>
+        <li><label><input type="checkbox" data-mod="a1"> A1 · Scopes and hosts</label></li>
+        <li><label><input type="checkbox" data-mod="a2"> A2 · Agencies</label></li>
+        <li><label><input type="checkbox" data-mod="a3"> A3 · Runners</label></li>
+        <li><label><input type="checkbox" data-mod="a4"> A4 · Access</label></li>
+        <li><label><input type="checkbox" data-mod="a5"> A5 · Secrets</label></li>
+        <li><label><input type="checkbox" data-mod="a6"> A6 · Authoring</label></li>
+        <li><label><input type="checkbox" data-mod="a7"> A7 · Triggers and not-yets</label></li>
+    </ul>
+    <button type="button" class="tr-reset" id="tr-reset">Clear progress</button>
+</div>
+
+<h2>A1 · Scopes, inventory and hosts</h2>
+
+<p>A <strong>scope</strong> is a named set of hosts plus the run types they support. It is the closest
+    thing to an Automate Schedule agent environment, and it does more than group machines: it is the
+    boundary a run cannot cross. Getting scopes right is most of getting targeting right.</p>
+
+<h3>Scopes have a source too</h3>
+
+<p>Like jobs and schedules, a scope is either <code>git</code> or <code>amadeus</code>. A git scope is
+    defined in a repository and synced in; an Cronomicon scope is authored in the app. The same rule follows:
+    if it came from Git, change it in Git.</p>
+
+<p>Hosts work the same way, and this is where it gets interesting — <strong>a single scope can contain
+        hosts from both sources at once</strong>. Hosts imported from a Git inventory carry a read-only
+    badge; hosts you add in the app are yours to edit. When a name exists in both, <strong>the Cronomicon
+        entry wins</strong>.</p>
+
+<details class="tr-reveal">
+    <summary>Why the Cronomicon entry wins, and how to use that</summary>
+    <div class="tr-body">
+        <p>Because it is the overlay. The repository describes the fleet as the team that owns the
+            repository understands it; your overlay describes what is true for <em>this</em> Cronomicon
+            installation — a different address, a bastion, a specific credential.</p>
+        <p>The practical use: you do not have to get a pull request merged to fix one host's connection
+            details. Add the overlay, move on, and let the repository catch up. The practical risk: an
+            overlay you forget about will keep winning long after the repository was fixed. Overlays are
+            worth reviewing occasionally.</p>
+    </div>
+</details>
+
+<h3>Ansible inventory</h3>
+
+<p>A scope can carry a full Ansible inventory in INI form. Cronomicon parses it into an <strong>advisory
+        projection</strong> — groups, hosts, group variables — which is what the app shows you and what
+    group targeting resolves against.</p>
+
+<details class="tr-reveal">
+    <summary>"Advisory" is doing real work in that sentence</summary>
+    <div class="tr-body">
+        <p>Cronomicon parses a deliberately limited subset of inventory syntax. Anything it cannot parse it
+            <strong>degrades loudly</strong> — it tells you, rather than quietly showing you an inventory
+            that is missing half its groups.</p>
+        <p>The projection is for display and for resolving group targeting. The inventory that Ansible
+            actually runs against is the one in the repository. When they disagree, the repository is
+            right, and the projection warning is your signal that they do.</p>
+        <p>One hard rule: <strong>an inventory containing secrets is rejected outright.</strong> Not warned
+            about — rejected. Inventories are read by more people than you think.</p>
+    </div>
+</details>
+
+<h3>Which is it?</h3>
+
+<details class="tr-reveal">
+    <summary>A host's SSH port is wrong for this installation only</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">An Cronomicon overlay host</span></p>
+        <p>Exactly what the overlay is for. Add the host in the app with the right port; it wins over the
+            git-imported entry of the same name.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>A new server everyone's automation needs to know about</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">Git</span></p>
+        <p>If it belongs to the fleet as everyone understands it, it belongs in the repository. An overlay
+            here means the next person to read the inventory gets the wrong picture.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>This scope's hosts sit behind a firewall the server cannot cross</summary>
+    <div class="tr-body">
+        <p><span class="tr-answer">An agency, plus a runner — not a scope change</span></p>
+        <p>Reachability is not a property of the host list. That is A2, and it is the next module.</p>
+    </div>
+</details>
+
+<h2>A2 · Agencies and network isolation</h2>
+
+<p>An <strong>agency</strong> is a network-isolation zone. It answers one question: <em>which runners are
+        allowed to execute this work?</em> And the answer is enforced as a hard boundary, not a
+    preference.</p>
+
+<p>Two facts do most of the work:</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>A run carries agencies</h4>
+        <p>Snapshotted when the run is enqueued, from the scope it is bound to. Changing the scope's
+            agencies later does not retroactively move runs already queued.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>A runner belongs to agencies</h4>
+        <p>Set by you, in the app. <strong>Never self-declared by the agent</strong> — a runner cannot
+            talk its way into an agency by claiming membership.</p>
+    </div>
+</div>
+
+<h3>The dispatch rule, exactly</h3>
+
+<p>It is disjoint in <em>both</em> directions, and the second half is the one people miss:</p>
+
+<ol class="tr-legend">
+    <li><strong>A run that carries agencies</strong> can only be claimed by a runner that belongs to at
+        least one of them.</li>
+    <li><strong>A run that carries no agencies</strong> can only be claimed by a runner that belongs to
+        <strong>no agencies at all</strong> — the general pool.</li>
+</ol>
+
+<p>So putting a runner into an agency does not add capability to it. It <em>removes</em> that runner from
+    the general pool. This is deliberate: an isolation boundary that leaks in one direction is not an
+    isolation boundary.</p>
+
+<h3>Check yourself</h3>
+
+<div class="tr-scenario">
+    <h4>Scenario A1</h4>
+    <p class="tr-setup">You have one runner, doing general work happily. A new isolated network needs
+        automation, so you create the agency <strong>dmz</strong> and add your existing runner to it,
+        expecting it to handle both.</p>
+    <p class="tr-ask">What happens to the general work it was doing?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Nothing — it now does general work and dmz work</summary>
+        <div class="tr-body">
+            <p>No, and this is the assumption that causes the outage. Agency membership is not additive
+                capability.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>It stops. Untagged runs can only go to a runner with no agencies at all.</summary>
+        <div class="tr-body">
+            <p>Correct. The moment that runner joined an agency it left the general pool, and every
+                untagged run now has nowhere to go — they queue rather than fail, which is why this can go
+                unnoticed for a while.</p>
+            <p>The fix is a second runner. A runner is a small binary; needing two is the intended shape,
+                not a limitation.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>General runs fail immediately with "no runner available"</summary>
+        <div class="tr-body">
+            <p>No — they <strong>queue</strong>, which is worse for your Tuesday because nothing alerts as
+                loudly as a failure would. The signal is a stuck-run indicator and a growing queue, not a
+                red row.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> joining an agency removes a runner from the general
+        pool. Plan runner coverage per agency, and keep at least one runner in the general pool if
+        anything still needs it.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario A2</h4>
+    <p class="tr-setup">A job bound to a <strong>dmz</strong> scope has been queued for twenty minutes. The
+        dmz runner shows as <strong>offline</strong>.</p>
+    <p class="tr-ask">Can you get the run moving by pointing the job at a scope with no agency?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Yes — re-binding the job releases the queued run to the general pool</summary>
+        <div class="tr-body">
+            <p>No. The run snapshotted its agencies when it was enqueued, so the run that is already
+                waiting keeps waiting. Editing the definition changes what happens <em>next time</em>.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>No — and you should not want to. Fix the runner.</summary>
+        <div class="tr-body">
+            <p>Correct on both counts. The queued run keeps the agencies it was enqueued with, and the
+                boundary exists because those hosts are isolated for a reason. Routing round it is
+                precisely the thing agencies prevent.</p>
+            <p>The right move is to bring the runner back. Offline runners re-admit themselves
+                automatically on their next successful poll, so often the answer is fixing the network or
+                the service on that host and waiting.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Yes, after cancelling and re-triggering the run</summary>
+        <div class="tr-body">
+            <p>Mechanically this would enqueue a fresh run with the new binding — but it would run
+                department-isolated work outside its isolation zone. If you find yourself here, the
+                question to escalate is whether the scope's agency is right, not how to bypass it.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> a run's agencies are fixed at enqueue. Agencies are an
+        isolation guarantee — when one blocks you, that is the feature.</p>
+</div>
+
+<h2>A3 · Runners</h2>
+
+<p>A runner is a small external binary that polls Cronomicon for work. You need one when the server cannot
+    reach the targets directly, when the work must execute inside an isolated network, or when a job
+    watches for arriving files.</p>
+
+<figure class="shot">
+    <img class="dark" src="/manual/runners-dark.png" loading="lazy" width="1600" height="900"
+        alt="The Runners view: registered runners with their status, capability chips, agency membership and last heartbeat">
+    <img class="light" src="/manual/runners-light.png" loading="lazy" width="1600" height="900"
+        alt="The Runners view: registered runners with their status, capability chips, agency membership and last heartbeat">
+    <figcaption>The Runners view — status, capabilities, agencies.</figcaption>
+</figure>
+
+<h3>Three states, and one of them is not stored</h3>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>Online</h4>
+        <p>Heartbeating normally. Claiming work.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Degraded</h4>
+        <p>Has not heartbeated for more than two minutes. Still counts as reachable.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Offline</h4>
+        <p>Gone long enough to be treated as absent. Re-admits itself on its next successful poll.</p>
+    </div>
+</div>
+
+<details class="tr-reveal">
+    <summary>Degraded is computed when you look, never written down</summary>
+    <div class="tr-body">
+        <p>It is derived from the last heartbeat at read time. There is no background job flipping runners
+            to degraded and no stored value to go stale — which means the state you see is always current,
+            and a runner that recovers stops being degraded the instant it heartbeats.</p>
+        <p>Recovery actions are available on degraded runners, not just online ones. A runner that has gone
+            quiet is exactly the one you want to be able to act on.</p>
+    </div>
+</details>
+
+<h3>Capabilities are flags you set, not claims the agent makes</h3>
+
+<p>A runner does only what it was started and configured to do. Two capabilities matter most, and both are
+    opt-in:</p>
+
+<details class="tr-reveal">
+    <summary><strong>Checkout</strong> — running full Ansible playbook projects</summary>
+    <div class="tr-body">
+        <p>Off unless the agent was started to allow it, and then bounded: a repository allowlist, a
+            server-pinned commit, a read-only deploy credential, and a secret scan of the tree before it
+            runs. Body-only runs need none of this.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>File watching</strong> — the other reason to deploy a runner</summary>
+    <div class="tr-body">
+        <p>Also opt-in, with an allowlist of paths it may watch. The agent reports what it observed; the
+            server decides whether that means a run. The agent never triggers anything itself.</p>
+        <p>It polls rather than using filesystem notifications — deliberately. The stability check ("size
+            unchanged for N seconds") needs polling anyway, and filesystem notifications do not fire for
+            writes made by <em>another host</em> over NFS or SMB, which is exactly where drop directories
+            live. A watcher that silently never fires there would be worse than a slower one that always
+            works.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Secret injection</strong> — a flag with teeth</summary>
+    <div class="tr-body">
+        <p>A job that binds secret references may only be claimed by a runner you have flagged for secret
+            injection, and which speaks a recent enough protocol. An unflagged runner leaves such a run
+            queued for an eligible one rather than claiming it and failing.</p>
+        <p>Same shape as agency isolation: eligibility filters dispatch, so the wrong runner never sees the
+            work.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Protocol version, and why an old runner disables buttons rather than hiding them</summary>
+    <div class="tr-body">
+        <p>Agent and server negotiate a wire protocol version. Newer features need newer agents, so a
+            runner that is behind simply cannot do some things.</p>
+        <p>When that happens the control is <strong>disabled with a tooltip naming the fix</strong>, not
+            hidden. A missing button is a mystery; a disabled one that says "needs agent v10 or later" is
+            an instruction. That is a house rule across the whole app.</p>
+    </div>
+</details>
+
+<h2>A4 · Who can do what</h2>
+
+<p>This is the module to read twice. Access mistakes are quiet: nobody reports being able to do something
+    they should not.</p>
+
+<h3>Two halves, and they must come from the same grant</h3>
+
+<p>Access is not "a role" plus "some scopes" held separately. It is a <strong>grant</strong>: an AD group,
+    a role, and where that role applies — one row, one package.</p>
+
+<p>The rule that follows is the single most important thing here: <strong>a permission and a scope must
+        come from the same grant.</strong> Cronomicon never combines the verb from one grant with the
+    territory of another.</p>
+
+<h3>The six permissions</h3>
+
+<ol class="tr-legend">
+    <li><strong>Trigger jobs</strong> — start a run.</li>
+    <li><strong>Kill jobs</strong> — stop one that is going.</li>
+    <li><strong>Manage env vars</strong> — env vars and secrets.</li>
+    <li><strong>Publish schedule</strong> — push definitions to GitLab.</li>
+    <li><strong>Configure app</strong> — settings, scopes, agencies, runners.</li>
+    <li><strong>Manage roles</strong> — roles and grants. The one that can grant itself away.</li>
+</ol>
+
+<p>Four roles come built in — <strong>admin</strong> (all six), <strong>approver</strong> (trigger, kill,
+    publish), <strong>operator</strong> (trigger, kill) and <strong>viewer</strong> (none, read-only) — and
+    you can define your own from the same six.</p>
+
+<h3>Where a grant applies</h3>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>All scopes</h4>
+        <p>Unrestricted. The role's permissions apply everywhere, including to anything created
+            tomorrow.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>One agency</h4>
+        <p>The role applies to that agency's scopes, and follows as the agency's membership changes.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>No grant</h4>
+        <p><strong>Zero access.</strong> Not "everything" — nothing.</p>
+    </div>
+</div>
+
+<p>That third one used to be the other way round in much older versions, and it was a trap: an empty scope
+    list meant unrestricted. It now fails closed. If you read old notes suggesting otherwise, they are
+    describing behaviour that no longer exists.</p>
+
+<p>One more thing that catches people: <strong>AD group names are case-sensitive.</strong>
+    <code>Finance-Ops</code> and <code>finance-ops</code> are different groups, and a grant against the
+    wrong case simply never matches — silently, because there is nothing to report.</p>
+
+<h3>Check yourself</h3>
+
+<div class="tr-scenario">
+    <h4>Scenario A3</h4>
+    <p class="tr-setup">Dana is in two AD groups. One grants <strong>viewer</strong> across
+        <strong>all scopes</strong>. The other grants <strong>operator</strong> on the
+        <strong>Finance</strong> agency.</p>
+    <p class="tr-ask">Can Dana run a job in the Tax agency?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Yes — she has operator somewhere, and viewer everywhere</summary>
+        <div class="tr-body">
+            <p>No, and this is exactly the mistake the same-grant rule exists to prevent. It takes the verb
+                from the second grant and the territory from the first. Cronomicon never does that.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>No. She can see Tax jobs, and run nothing there.</summary>
+        <div class="tr-body">
+            <p>Correct. Each grant is evaluated whole. The viewer grant reaches Tax but carries no verbs;
+                the operator grant carries the verb but does not reach Tax. Neither grant answers yes on
+                its own, so the answer is no.</p>
+            <p>She can run jobs in Finance, and read everywhere.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>No, and she cannot see Tax jobs either</summary>
+        <div class="tr-body">
+            <p>Half right. The viewer grant does reach all scopes, so she can see Tax jobs — she just holds
+                no verbs to use on them. Visibility and capability are separate questions, answered by
+                different grants.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> evaluate one grant at a time, whole. "Can do this
+        somewhere" is never "can do it here".</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario A4</h4>
+    <p class="tr-setup">A contractor needs to run one specific job in Finance and nothing else. You are
+        looking for a per-job permission and cannot find one.</p>
+    <p class="tr-ask">What is the right shape?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Grant operator on all scopes and rely on them only touching that job</summary>
+        <div class="tr-body">
+            <p>No. That is not access control, it is a request. It also fails the question anyone will ask
+                afterwards: what could this account have done?</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>A scope containing only what that job targets, an agency for it, and a grant against that</summary>
+        <div class="tr-body">
+            <p>Correct. There is deliberately no per-job permission — the unit of access is the scope,
+                reached through an agency. Narrowing access means narrowing the territory, which also
+                narrows the blast radius of anything that goes wrong.</p>
+            <p>If that feels like a lot of structure for one contractor, that is the system telling you
+                something true: one job's worth of access is unusual, and it is worth being deliberate
+                about.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Make a custom role holding only "trigger jobs" and grant it everywhere</summary>
+        <div class="tr-body">
+            <p>Better than the first option, and still wrong on the territory: "everywhere" means every
+                scope including ones that do not exist yet. The custom role is a good instinct — pair it
+                with a narrow agency rather than all scopes.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> the unit of access is the scope. Narrow the territory,
+        not the job list.</p>
+</div>
+
+<div class="tr-scenario">
+    <h4>Scenario A5</h4>
+    <p class="tr-setup">Tidying up, you remove the last grant that gives anyone <strong>manage
+            roles</strong> across all scopes.</p>
+    <p class="tr-ask">What happens?</p>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>Cronomicon refuses — it will not let you remove the last unrestricted administrator</summary>
+        <div class="tr-body">
+            <p>Correct. There is a guard for exactly this, because the failure is unrecoverable from inside
+                the app: nobody left could grant the permission back.</p>
+            <p>It is the one place where the system overrules an administrator, and it earns it.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It succeeds, and you fix it by editing the database</summary>
+        <div class="tr-body">
+            <p>It does not succeed. And "fix it in the database" is a bad plan you should not need — which
+                is why the guard exists.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>It succeeds, and everyone is silently promoted to admin</summary>
+        <div class="tr-body">
+            <p>No. Cronomicon fails closed everywhere — the failure mode of losing access control is that
+                nobody can do anything, never that everybody can.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> the system fails closed, and guards the one door that
+        cannot be reopened from inside.</p>
+</div>
+
+<h3>One operational note</h3>
+
+<p>Changing roles or grants <strong>revokes existing sessions</strong>. People will be asked to sign in
+    again, and their new access takes effect immediately rather than whenever their session happened to
+    expire. Worth saying out loud before you make a change during business hours.</p>
+
+<h2>A5 · Secrets, variables and credentials</h2>
+
+<p>Four different things live near each other. Choosing the wrong one is how values end up in logs.</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>Env var</h4>
+        <p>An ordinary value. <strong>Visible in logs.</strong> For configuration, not credentials.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Secret</h4>
+        <p>Encrypted at rest, injected only into runs that declare it, masked in logs as it is written.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>Vault reference</h4>
+        <p>Same, but the value lives in Vault and is fetched at dispatch. Cronomicon stores the name.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>SSH credential</h4>
+        <p>A first-class key for connecting to hosts, with its own rotation and usage tracking.</p>
+    </div>
+</div>
+
+<details class="tr-reveal">
+    <summary>Jobs bind names, never values</summary>
+    <div class="tr-body">
+        <p>A job declares which secrets it needs by <strong>reference</strong>. Nothing sensitive is stored
+            in the job definition, which is what makes it safe for that definition to live in Git and be
+            read by anyone with repository access.</p>
+        <p>At dispatch, only the declared references are resolved, injected into that one run, recorded in
+            an audit row, and fed to the log redactor. A run that does not declare a secret cannot see
+            it.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Redaction happens on the way in, not on the way out</summary>
+    <div class="tr-body">
+        <p>Values are masked as the log is written, so there is no unredacted copy on disk to leak later.</p>
+        <p>The corollary matters for your operators: ordinary variables and run inputs are <em>not</em>
+            masked, deliberately, because they are usually what someone needs to see when diagnosing. So
+            the rule to teach is simple — <strong>if a value must never appear in a log, it must be a
+                secret, not a variable.</strong></p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Run-as credentials belong to the agency, not the job</summary>
+    <div class="tr-body">
+        <p>One job body can run under each department's own credential: the credential is resolved per run
+            from the run's agency, rather than baked into the job. That is what lets a single job
+            definition serve several departments without any of them holding another's credential.</p>
+        <p>A become password is <strong>never an environment variable</strong>. It has its own path
+            precisely so it cannot land in an env dump.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>The one that will catch you in a fresh install</summary>
+    <div class="tr-body">
+        <p>The secret store needs its encryption key configured. Without it, creating a secret fails — and
+            the failure is at save time, not at startup, so a server that looks healthy can be unable to
+            store a secret.</p>
+        <p>Check it as part of standing an environment up, not when somebody first tries to add a
+            password.</p>
+    </div>
+</details>
+
+<h2>A6 · Authoring in the app</h2>
+
+<p>Most definitions come from Git. Cronomicon can also author its own, and knowing which surfaces do that —
+    and which deliberately do not — saves a lot of hunting.</p>
+
+<details class="tr-reveal">
+    <summary>What you can author in the app</summary>
+    <div class="tr-body">
+        <ul>
+            <li><strong>Compose</strong> — build a job by binding a script to a scope, schedules, variables
+                and declared run inputs.</li>
+            <li><strong>Workflow Editor</strong> — compose a workflow from job steps, with a visual
+                canvas.</li>
+            <li><strong>Schedule Builder</strong> — author schedules, with a cron helper.</li>
+            <li><strong>Calendars</strong> and <strong>Reactions</strong> — both authored in the app.</li>
+            <li><strong>Scopes, agencies, runners, secrets, grants</strong> — all app-owned.</li>
+        </ul>
+        <p>All of the authoring surfaces are permission-gated. Tags and notes are the deliberate exception:
+            any signed-in user can add those to anything.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>What you cannot author in the app, and why</summary>
+    <div class="tr-body">
+        <p><strong>Scripts.</strong> There is no in-app script editor and there will not be one. Automation
+            content belongs in version control, where it can be reviewed, diffed, blamed and rolled
+            back.</p>
+        <p>Every question of the form "why can I not edit this here?" traces back to that decision or to
+            the source of the definition in front of you.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Git sync, and what it will not touch</summary>
+    <div class="tr-body">
+        <p>Sync brings definitions in from the repository. It deliberately leaves the app-owned sidecars
+            alone: <strong>tags, notes, a scope's agency binding and a workflow's canvas layout survive
+                every sync</strong>, because they are yours rather than the repository's.</p>
+        <p>The Git Sync and Schedule Pushes tabs in History are where you look when a definition is not
+            what you expected — before assuming the app is wrong.</p>
+    </div>
+</details>
+
+<h2>A7 · External triggers, and what Cronomicon does not do yet</h2>
+
+<p>Two things administrators get asked about, in one module: letting other systems start jobs, and the
+    honest list of gaps.</p>
+
+<h3>Service accounts</h3>
+
+<details class="tr-reveal">
+    <summary>A token is a principal, not a bypass</summary>
+    <div class="tr-body">
+        <p>A service account carries a role and a territory exactly like a person does, and its actions are
+            audited under its own name. There is no second, weaker authorization vocabulary for machines —
+            which means everything you know from A4 applies unchanged.</p>
+        <p>The token is shown once, at creation. Treat that moment accordingly.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>A job must opt in to being triggered externally</summary>
+    <div class="tr-body">
+        <p>Holding a valid token is not enough: the job itself must be marked as externally triggerable.
+            Being reachable from outside is a decision the job's author makes, not a default that a token
+            can override.</p>
+        <p>So an over-broad token still cannot start a job nobody meant to expose.</p>
+    </div>
+</details>
+
+<h3>The four not-yets</h3>
+
+<p>Say these out loud to your operators before they find them. Each has an interim answer, and all four are
+    on the roadmap.</p>
+
+<details class="tr-reveal">
+    <summary><strong>Email triggers</strong> — no native support</summary>
+    <div class="tr-body">
+        <p>Automate Schedule conditions that watched a mailbox have no direct equivalent. The interim
+            answer is a small bridge that turns an inbound message into an API trigger call — which works
+            today, using the service accounts above.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>High availability</strong> — no standby server</summary>
+    <div class="tr-body">
+        <p>The largest architectural difference from Automate Schedule. Cronomicon runs as a single process,
+            so the answer today is <strong>recovery, not failover</strong>: backups, snapshots, and a
+            documented restore.</p>
+        <p>The thing to actually do about it: rehearse the restore. An untested backup is a belief, not a
+            recovery plan, and this is the gap where that distinction costs the most.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Reports</strong> — no report builder</summary>
+    <div class="tr-body">
+        <p>You have the Dashboard's Score, filterable History, run analytics, and a CSV export. One
+            caveat worth knowing before you promise anything: <strong>the export covers audit records, not
+                run history.</strong></p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>SNMP monitoring</strong> — a different shape</summary>
+    <div class="tr-body">
+        <p>Cronomicon exposes Prometheus metrics rather than SNMP. If your monitoring is SNMP-based you need a
+            bridge; the metrics themselves are there.</p>
+    </div>
+</details>
+
+<div class="tr-intro">
+    <p><strong>That is the administrator course.</strong> Scopes and the host overlay, agencies as a hard
+        boundary, runners and their opt-in capabilities, grants and the same-grant rule, the four kinds of
+        secret, what the app will and will not author, and the current gaps.</p>
+    <p><strong>Next:</strong> the administrator manual documents every setting in detail, and the runner
+        guides cover installation, configuration and hardening.</p>
+</div>
+<script>
+    /* Progress strip — the only JavaScript on this page. Everything else is
+       <details>, so the course works fully with scripting disabled, in print,
+       and as a downloaded file. Revealed only if we can actually persist,
+       so we never show a control that silently forgets. */
+    (function () {
+        var KEY = "am_training_admin";
+        var box = document.getElementById("tr-progress");
+        if (!box) { return; }
+
+        var store;
+        try {
+            store = window.localStorage;
+            store.setItem(KEY + ":probe", "1");
+            store.removeItem(KEY + ":probe");
+        } catch (e) {
+            return; // private mode or storage disabled — leave the strip hidden
+        }
+
+        var boxes = box.querySelectorAll("input[data-mod]");
+        var state = {};
+        try {
+            state = JSON.parse(store.getItem(KEY) || "{}") || {};
+        } catch (e) {
+            state = {};
+        }
+
+        function save() {
+            try {
+                store.setItem(KEY, JSON.stringify(state));
+            } catch (e) { /* quota or disabled mid-session — progress is not worth an error */ }
+        }
+
+        Array.prototype.forEach.call(boxes, function (cb) {
+            cb.checked = state[cb.getAttribute("data-mod")] === true;
+            cb.addEventListener("change", function () {
+                state[cb.getAttribute("data-mod")] = cb.checked;
+                save();
+            });
+        });
+
+        var reset = document.getElementById("tr-reset");
+        if (reset) {
+            reset.addEventListener("click", function () {
+                state = {};
+                save();
+                Array.prototype.forEach.call(boxes, function (cb) { cb.checked = false; });
+            });
+        }
+
+        box.hidden = false;
+    })();
+</script>
+<script>
+    /* Deck mode (TR-6) — the courses present as slides by default.
+     *
+     * Everything here is an ENHANCEMENT. The slides are built from the existing
+     * document at runtime, so nothing in the authored markup changed and the
+     * no-JavaScript rendering is still the plain scrolling page it always was.
+     * That is deliberate and load-bearing: print, the Moodle File-resource
+     * download and the accessibility fallback all ride on the page view, and a
+     * second authored code path would drift from the first.
+     *
+     * Slide boundaries are DERIVED, not authored: a new slide starts at every
+     * h2 (module), every h3 (subsection), and every scenario or walkthrough
+     * block, because those are already the content's own seams. Anything else
+     * rides along with the heading above it — which is what keeps a hotspot
+     * figure and its numbered legend on one slide, where they are useless
+     * apart.
+     */
+    (function () {
+        var MODE_KEY = "am_training_mode"; /* "deck" | "page" */
+        var main = document.querySelector("main");
+        if (!main) { return; }
+
+        var store = null;
+        try {
+            window.localStorage.setItem(MODE_KEY + ":probe", "1");
+            window.localStorage.removeItem(MODE_KEY + ":probe");
+            store = window.localStorage;
+        } catch (e) { /* private mode — deck still works, it just will not remember */ }
+
+        var POS_KEY = MODE_KEY + ":" + location.pathname.replace(/[^a-z0-9]+/gi, "-") + ":at";
+
+        /* ── Build the slides ─────────────────────────────────────────────── */
+
+        var hero = main.querySelector(".hero");
+        var nodes = [];
+        var n = hero ? hero.nextElementSibling : main.firstElementChild;
+        while (n) { nodes.push(n); n = n.nextElementSibling; }
+        if (!nodes.length) { return; }
+
+        function isBreak(el) {
+            return el.tagName === "H2" || el.tagName === "H3" ||
+                el.classList.contains("tr-scenario") || el.classList.contains("tr-walk");
+        }
+
+        var groups = [];
+        var cur = null;
+        var mod = null;
+        if (hero) { groups.push({ els: [hero], mod: null, cover: true }); }
+        nodes.forEach(function (el) {
+            /* An h3 ("Check yourself") alone or with a single lead-in
+             * paragraph, directly followed by a scenario or walkthrough block,
+             * would otherwise strand as a near-empty title slide — let it ride
+             * into the slide it introduces instead. */
+            var absorb = isBreak(el) && el.tagName !== "H2" && el.tagName !== "H3" &&
+                cur !== null && cur.els.length <= 2 && cur.els[0].tagName === "H3";
+            if (cur === null || (isBreak(el) && !absorb)) {
+                cur = { els: [], mod: mod };
+                groups.push(cur);
+            }
+            if (el.tagName === "H2") {
+                /* "M5 · Targeting and blast radius" → id m5, for the progress tick. */
+                var key = (el.textContent.trim().match(/^([ma]\s*\d+)/i) || [])[1];
+                mod = { label: el.textContent.trim(), key: key ? key.replace(/\s+/g, "").toLowerCase() : null };
+                cur.mod = mod;
+            }
+            cur.els.push(el);
+        });
+
+        groups.forEach(function (g) {
+            var sec = document.createElement("section");
+            sec.className = "tr-slide";
+            sec.setAttribute("tabindex", "-1");
+            g.els[0].parentNode.insertBefore(sec, g.els[0]);
+            g.els.forEach(function (e) { sec.appendChild(e); });
+            g.el = sec;
+        });
+
+        /* Per-module position, so the counter reads "3 of 6" inside a module
+         * rather than "27 of 41" across the whole course. */
+        var counts = {};
+        groups.forEach(function (g) {
+            var k = g.mod ? g.mod.label : "";
+            counts[k] = (counts[k] || 0) + 1;
+            g.nth = counts[k];
+        });
+        groups.forEach(function (g) { g.of = counts[g.mod ? g.mod.label : ""]; });
+
+        /* ── Chrome ───────────────────────────────────────────────────────── */
+
+        var bar = document.createElement("div");
+        bar.className = "tr-deckbar";
+        bar.innerHTML =
+            '<button type="button" class="tr-deck-prev">&larr; Back</button>' +
+            '<div class="tr-deck-where">' +
+            '<div class="tr-deck-label"></div>' +
+            '<div class="tr-deck-rail"><div class="tr-deck-fill"></div></div>' +
+            '</div>' +
+            '<button type="button" class="tr-deck-mode">Read as one page</button>' +
+            '<button type="button" class="tr-deck-next">Next &rarr;</button>';
+        document.body.appendChild(bar);
+
+        var live = document.createElement("div");
+        live.setAttribute("aria-live", "polite");
+        live.className = "tr-deck-live";
+        live.style.cssText = "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
+        document.body.appendChild(live);
+
+        var resume = document.createElement("p");
+        resume.className = "tr-page-resume";
+        resume.innerHTML = '<button type="button" class="tr-reset tr-deck-back">&#9654; Back to slides</button>';
+        resume.style.display = "none";
+        main.insertBefore(resume, main.firstChild);
+
+        var elPrev = bar.querySelector(".tr-deck-prev");
+        var elNext = bar.querySelector(".tr-deck-next");
+        var elLabel = bar.querySelector(".tr-deck-label");
+        var elFill = bar.querySelector(".tr-deck-fill");
+        var elMode = bar.querySelector(".tr-deck-mode");
+
+        var at = 0;
+
+        function tickProgress(g) {
+            /* Reaching a module's last slide ticks its box in the progress strip,
+             * so the two ways of tracking where you are cannot disagree. */
+            if (!g.mod || !g.mod.key || g.nth !== g.of) { return; }
+            var box = document.querySelector('#tr-progress input[data-mod="' + g.mod.key + '"]');
+            if (box && !box.checked) {
+                box.checked = true;
+                box.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+        }
+
+        function show(i, focus) {
+            at = Math.max(0, Math.min(groups.length - 1, i));
+            groups.forEach(function (g, k) {
+                var on = k === at;
+                g.el.classList.toggle("tr-current", on);
+                g.el.setAttribute("aria-hidden", on ? "false" : "true");
+            });
+            var g = groups[at];
+            /* A slide made of collapsed disclosures is a blank screen until
+             * clicked. Content reveals open themselves the first time their
+             * slide shows; quiz rows stay closed — anything hiding a
+             * .tr-answer, and every .tr-opt, teaches BY being closed. */
+            if (!g.revealed) {
+                g.revealed = true;
+                var ds = g.el.querySelectorAll("details.tr-reveal");
+                for (var di = 0; di < ds.length; di++) {
+                    if (!ds[di].querySelector(".tr-answer")) { ds[di].open = true; }
+                }
+            }
+            elLabel.textContent = g.cover ? "Course overview"
+                : (g.mod ? g.mod.label + "  ·  " + g.nth + " of " + g.of : "Introduction");
+            elFill.style.width = Math.round(((at + 1) / groups.length) * 100) + "%";
+            elPrev.disabled = at === 0;
+            elNext.disabled = at === groups.length - 1;
+            live.textContent = elLabel.textContent + ", slide " + (at + 1) + " of " + groups.length;
+            tickProgress(g);
+            if (store) { try { store.setItem(POS_KEY, String(at)); } catch (e) {} }
+            window.scrollTo({ top: 0, behavior: "auto" });
+            if (focus) { g.el.focus({ preventScroll: true }); }
+        }
+
+        function setMode(mode) {
+            var deck = mode !== "page";
+            document.body.classList.toggle("tr-deck", deck);
+            bar.style.display = deck ? "" : "none";
+            resume.style.display = deck ? "none" : "";
+            if (store) { try { store.setItem(MODE_KEY, deck ? "deck" : "page"); } catch (e) {} }
+            if (deck) { show(at, false); }
+        }
+
+        elPrev.addEventListener("click", function () { show(at - 1, true); });
+        elNext.addEventListener("click", function () { show(at + 1, true); });
+        elMode.addEventListener("click", function () { setMode("page"); });
+        resume.querySelector(".tr-deck-back").addEventListener("click", function () { setMode("deck"); });
+
+        document.addEventListener("keydown", function (e) {
+            if (!document.body.classList.contains("tr-deck")) { return; }
+            if (e.metaKey || e.ctrlKey || e.altKey) { return; }
+            var t = e.target;
+            if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) { return; }
+            if (e.key === "ArrowRight" || e.key === "PageDown") { show(at + 1, true); e.preventDefault(); }
+            else if (e.key === "ArrowLeft" || e.key === "PageUp") { show(at - 1, true); e.preventDefault(); }
+            else if (e.key === "Home") { show(0, true); e.preventDefault(); }
+            else if (e.key === "End") { show(groups.length - 1, true); e.preventDefault(); }
+        });
+
+        /* The sidebar TOC keeps working: a module anchor selects that module's
+         * first slide instead of scrolling to a heading that is not displayed. */
+        var idIndex = {};
+        groups.forEach(function (g, i) {
+            g.els.forEach(function (e) {
+                if (e.id) { idIndex[e.id] = i; }
+                var kids = e.querySelectorAll ? e.querySelectorAll("[id]") : [];
+                for (var k = 0; k < kids.length; k++) { idIndex[kids[k].id] = i; }
+            });
+        });
+
+        function fromHash() {
+            var id = (location.hash || "").replace(/^#/, "");
+            return (id && idIndex[id] !== undefined) ? idIndex[id] : -1;
+        }
+        window.addEventListener("hashchange", function () {
+            var i = fromHash();
+            if (i >= 0) {
+                if (!document.body.classList.contains("tr-deck")) { return; }
+                show(i, true);
+            }
+        });
+
+        /* ── Start ────────────────────────────────────────────────────────── */
+
+        var start = fromHash();
+        if (start < 0 && store) {
+            var saved = parseInt(store.getItem(POS_KEY) || "", 10);
+            if (!isNaN(saved)) { start = saved; }
+        }
+        at = start >= 0 ? start : 0;
+
+        var mode = store ? store.getItem(MODE_KEY) : null;
+        setMode(mode === "page" ? "page" : "deck");
+    })();
+</script>

@@ -1,0 +1,11 @@
+-- Reverse 1110.
+--
+-- Deliberately a NO-OP. This migration only ever WIDENED 1100's backfill, and
+-- the two are not separable after the fact: nothing distinguishes a row stamped
+-- by 1110 from one stamped by 1100 or by a live writer, so a down that tried to
+-- unstamp would have to clear rows 1100 owns and would corrupt the column.
+--
+-- Reverting the COLUMN is 1100's down migration, which drops it outright and
+-- takes 1110's work with it. Stepping 1110 down then up re-derives identically,
+-- because the up is idempotent (`runner_name IS NULL`).
+SELECT 1;

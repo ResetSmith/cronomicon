@@ -1,0 +1,13 @@
+-- 221 Job-level env (job-composer-update-2.md — JC10).
+--
+-- A job may declare environment variables that apply to EVERY run of the job,
+-- independent of which schedule (or manual/workflow trigger) fires it. Stored as a
+-- JSON object with the same map ergonomics as definition_schedules.env and
+-- runs.env_json, e.g. {"STAGE":"prod"}.
+--
+-- At run time this is the BASE layer of the effective env, merged beneath the
+-- firing schedule's env and any per-run override (JC11; later layers win on key
+-- collision). Plaintext literals only — NOT redacted (JC12), same rule as schedule
+-- env. Additive (ALTER ADD COLUMN) — no rebuild. NULL ⇒ no job-level env (the
+-- pre-221 behavior).
+ALTER TABLE jobs ADD COLUMN env_json TEXT;

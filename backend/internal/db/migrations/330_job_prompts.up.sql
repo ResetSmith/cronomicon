@@ -1,0 +1,20 @@
+-- 330 Job prompt variables (user-defined-vars.md — UDV1).
+--
+-- A job may DECLARE prompt variables: named inputs an operator is asked to fill
+-- in the ad-hoc Run dialog before a manual run. Stored as a JSON array of
+-- {name,label,required,default,options} objects, e.g.
+--   [{"name":"TARGET_ENV","label":"Deployment environment","required":true,
+--     "options":["dev","staging","prod"]}]
+--
+-- At run time the filled-in values flow through the EXISTING per-run env override
+-- path (UDV2): a prompt answer is submitted as env[name]=value and merged via
+-- internal/envmerge into runs.env_json. The declaration itself never changes the
+-- run lifecycle — it only drives the Run dialog UI and a warn-only check (UDV4).
+--
+-- Dual-source (A9): read-only for git jobs (populated by sync from spec.prompts),
+-- writable for amadeus jobs (populated by the composer) — exactly like env_json
+-- (migration 221). Advisory: a malformed/empty list never blocks a sync. Mirrors
+-- the scripts.variables precedent (migration 230): a JSON-array TEXT column
+-- defaulting to '[]', so pre-migration rows read as "no prompts". Additive
+-- (ALTER ADD COLUMN) — no rebuild.
+ALTER TABLE jobs ADD COLUMN prompts_json TEXT NOT NULL DEFAULT '[]';

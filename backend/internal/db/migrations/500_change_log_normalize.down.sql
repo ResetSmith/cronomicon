@@ -1,0 +1,2 @@
+-- Irreversible: which rows originally held NULL vs '' is not recoverable, and
+-- empty string is the canonical form going forward (CC-D2). No-op.
