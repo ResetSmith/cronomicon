@@ -9,15 +9,15 @@ func TestSplit(t *testing.T) {
 		bare    string
 		ok      bool
 	}{
-		{"AMADEUS_VAR_FOO", SectionVariable, "FOO", true},
-		{"AMADEUS_SECRET_NWD_BECOME_PASS", SectionSecret, "NWD_BECOME_PASS", true},
-		{"AMADEUS_KEY_ansible_rh8_key", SectionKey, "ansible_rh8_key", true},
-		{"AMADEUS_RUN_TRACE_ID", SectionRun, "TRACE_ID", true},
+		{"CRONOMICON_VAR_FOO", SectionVariable, "FOO", true},
+		{"CRONOMICON_SECRET_NWD_BECOME_PASS", SectionSecret, "NWD_BECOME_PASS", true},
+		{"CRONOMICON_KEY_ansible_rh8_key", SectionKey, "ansible_rh8_key", true},
+		{"CRONOMICON_RUN_TRACE_ID", SectionRun, "TRACE_ID", true},
 		// Exact-prefix: SECRETS_ (plural) is NOT a reference.
-		{"AMADEUS_SECRETS_INJECTION_ENABLED", SectionNone, "", false},
+		{"CRONOMICON_SECRETS_INJECTION_ENABLED", SectionNone, "", false},
 		// Config names are not references.
-		{"AMADEUS_KEK_FILE", SectionNone, "", false},
-		{"AMADEUS_VAULT_ADDR", SectionNone, "", false},
+		{"CRONOMICON_KEK_FILE", SectionNone, "", false},
+		{"CRONOMICON_VAULT_ADDR", SectionNone, "", false},
 		{"PLAIN", SectionNone, "", false},
 	}
 	for _, c := range cases {
@@ -29,8 +29,8 @@ func TestSplit(t *testing.T) {
 }
 
 func TestHasAmadeusPrefix(t *testing.T) {
-	if !HasAmadeusPrefix("AMADEUS_ANYTHING") {
-		t.Error("AMADEUS_ANYTHING should be in the namespace")
+	if !HasAmadeusPrefix("CRONOMICON_ANYTHING") {
+		t.Error("CRONOMICON_ANYTHING should be in the namespace")
 	}
 	if HasAmadeusPrefix("PATH") {
 		t.Error("PATH is not in the namespace")
@@ -38,19 +38,19 @@ func TestHasAmadeusPrefix(t *testing.T) {
 }
 
 func TestStripKeyAndValue(t *testing.T) {
-	if b, ok := StripKey("AMADEUS_KEY_x"); !ok || b != "x" {
+	if b, ok := StripKey("CRONOMICON_KEY_x"); !ok || b != "x" {
 		t.Errorf("StripKey = (%q,%v)", b, ok)
 	}
 	if b, ok := StripKey("x"); ok || b != "x" {
 		t.Errorf("StripKey passthrough = (%q,%v)", b, ok)
 	}
-	if b, ok := StripValueReference("AMADEUS_SECRET_x"); !ok || b != "x" {
+	if b, ok := StripValueReference("CRONOMICON_SECRET_x"); !ok || b != "x" {
 		t.Errorf("StripValueReference secret = (%q,%v)", b, ok)
 	}
-	if b, ok := StripValueReference("AMADEUS_VAR_x"); !ok || b != "x" {
+	if b, ok := StripValueReference("CRONOMICON_VAR_x"); !ok || b != "x" {
 		t.Errorf("StripValueReference var = (%q,%v)", b, ok)
 	}
-	if _, ok := StripValueReference("AMADEUS_KEY_x"); ok {
+	if _, ok := StripValueReference("CRONOMICON_KEY_x"); ok {
 		t.Error("StripValueReference must not strip a KEY reference (it is a path, not a value)")
 	}
 }
@@ -62,7 +62,7 @@ func TestValidateRowName(t *testing.T) {
 			t.Errorf("ValidateRowName(%q) unexpected error: %v", n, err)
 		}
 	}
-	bad := []string{"", "1abc", "has-dash", "has space", "AMADEUS_X", "AMADEUS_SECRET_X"}
+	bad := []string{"", "1abc", "has-dash", "has space", "CRONOMICON_X", "CRONOMICON_SECRET_X"}
 	for _, n := range bad {
 		if err := ValidateRowName(n); err == nil {
 			t.Errorf("ValidateRowName(%q) expected error", n)
@@ -91,7 +91,7 @@ func TestValidateOperatorEnv(t *testing.T) {
 	if err := ValidateOperatorEnv(nil); err != nil {
 		t.Errorf("nil env should pass: %v", err)
 	}
-	for _, k := range []string{"AMADEUS_SECRET_X", "AMADEUS_VAR_X", "AMADEUS_KEY_X", "AMADEUS_RUN_X", "AMADEUS_KEK", "AMADEUS_ANYTHING"} {
+	for _, k := range []string{"CRONOMICON_SECRET_X", "CRONOMICON_VAR_X", "CRONOMICON_KEY_X", "CRONOMICON_RUN_X", "CRONOMICON_KEK", "CRONOMICON_ANYTHING"} {
 		if err := ValidateOperatorEnv(map[string]string{k: "v"}); err == nil {
 			t.Errorf("ValidateOperatorEnv must reject %q", k)
 		}

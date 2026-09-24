@@ -222,4 +222,4 @@ CREATE INDEX idx_workflow_runs_reacted_to
 ALTER TABLE pending_runs ADD COLUMN origin_kind     TEXT;    -- 'reaction' when a reactor produced this row
 ALTER TABLE pending_runs ADD COLUMN origin_ref      TEXT;    -- the upstream run id
 ALTER TABLE pending_runs ADD COLUMN reaction_depth  INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE pending_runs ADD COLUMN origin_env_json TEXT;    -- the AMADEUS_REACTED_TO_* stamp
+ALTER TABLE pending_runs ADD COLUMN origin_env_json TEXT;    -- the CRONOMICON_REACTED_TO_* stamp

@@ -44,7 +44,7 @@ func nullIfEmpty(s string) any {
 
 // TestManifestPerRunCredential — the frozen credential is delivered as key
 // material through the D8 channel WITHOUT any declared binding, every target's
-// AuthKeyEnvVar becomes the derived AMADEUS_KEY_<label> reference (which the
+// AuthKeyEnvVar becomes the derived CRONOMICON_KEY_<label> reference (which the
 // agent resolves to the delivered file), the user override lands on the target,
 // and no target ever carries key bytes.
 func TestManifestPerRunCredential(t *testing.T) {
@@ -74,8 +74,8 @@ func TestManifestPerRunCredential(t *testing.T) {
 	if tg.User != "deploy" {
 		t.Errorf("target user = %q, want the per-run override 'deploy'", tg.User)
 	}
-	if tg.AuthKeyEnvVar != "AMADEUS_KEY_prod-key" {
-		t.Errorf("target AuthKeyEnvVar = %q, want the derived AMADEUS_KEY_prod-key reference", tg.AuthKeyEnvVar)
+	if tg.AuthKeyEnvVar != "CRONOMICON_KEY_prod-key" {
+		t.Errorf("target AuthKeyEnvVar = %q, want the derived CRONOMICON_KEY_prod-key reference", tg.AuthKeyEnvVar)
 	}
 	// D1 — targets are references only, never bytes.
 	for _, x := range m.Targets {
@@ -218,8 +218,8 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 	if m.SSHUser != "deploy" {
 		t.Errorf("manifest sshUser = %q, want deploy", m.SSHUser)
 	}
-	if m.SSHKeyRef != "AMADEUS_KEY_prod-key" {
-		t.Errorf("manifest sshKeyRef = %q, want the derived AMADEUS_KEY_prod-key reference", m.SSHKeyRef)
+	if m.SSHKeyRef != "CRONOMICON_KEY_prod-key" {
+		t.Errorf("manifest sshKeyRef = %q, want the derived CRONOMICON_KEY_prod-key reference", m.SSHKeyRef)
 	}
 	// Names only (D1) — the reference, never the bytes.
 	if m.SSHKeyRef == keyMaterial || m.SSHUser == keyMaterial {
@@ -233,7 +233,7 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 	// The targets keep their INVENTORY identity: the override is applied by
 	// ansible from the extra-vars, not by rewriting the host list.
 	for _, tg := range m.Targets {
-		if tg.AuthKeyEnvVar == "AMADEUS_KEY_prod-key" {
+		if tg.AuthKeyEnvVar == "CRONOMICON_KEY_prod-key" {
 			t.Errorf("ansible run overlaid the target key ref (%+v) — that would auto-wire --private-key, which the inventory outranks", tg)
 		}
 	}
@@ -278,7 +278,7 @@ func TestManifestSSHFamilyIdentityUnchanged(t *testing.T) {
 	if m.SSHUser != "" || m.SSHKeyRef != "" {
 		t.Errorf("ssh-family run set the ansible-only fields: (%q,%q)", m.SSHUser, m.SSHKeyRef)
 	}
-	if len(m.Targets) != 1 || m.Targets[0].User != "deploy" || m.Targets[0].AuthKeyEnvVar != "AMADEUS_KEY_prod-key" {
+	if len(m.Targets) != 1 || m.Targets[0].User != "deploy" || m.Targets[0].AuthKeyEnvVar != "CRONOMICON_KEY_prod-key" {
 		t.Errorf("ssh-family target overlay regressed: %+v", m.Targets)
 	}
 }

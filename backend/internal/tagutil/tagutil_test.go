@@ -7,12 +7,12 @@ import (
 
 func TestParse(t *testing.T) {
 	cases := map[string][]string{
-		``:              {},
-		`[]`:            {},
-		`not json`:      {},
-		`null`:          {},
-		`["a","b"]`:     {"a", "b"},
-		`["only"]`:      {"only"},
+		``:          {},
+		`[]`:        {},
+		`not json`:  {},
+		`null`:      {},
+		`["a","b"]`: {"a", "b"},
+		`["only"]`:  {"only"},
 	}
 	for raw, want := range cases {
 		got := Parse(raw)

@@ -128,7 +128,7 @@ type Target struct {
 // replaces every target's login; a credential replaces the target's key
 // selection outright — credentialID on the in-app SSH path (AuthKeyEnvVar
 // cleared so the legacy fallback can't race the override, SK.5), keyEnvVar
-// (the derived AMADEUS_KEY_<label> reference, CA-3b) on the runner path where
+// (the derived CRONOMICON_KEY_<label> reference, CA-3b) on the runner path where
 // the manifest carries names only (D1). Exactly one of credentialID/keyEnvVar
 // may be non-empty. Bastion hops are untouched (CA-Q4): the override changes
 // who logs in with which key, not how the connection is routed. Unresolved

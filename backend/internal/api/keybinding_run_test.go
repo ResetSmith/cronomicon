@@ -41,7 +41,7 @@ func TestRunOfKeyBoundJobOnSSHIsRefused(t *testing.T) {
 	if errBody.Code != runref.CodeKeyBindingOnSSH {
 		t.Errorf("code = %q, want %q", errBody.Code, runref.CodeKeyBindingOnSSH)
 	}
-	if !containsAll(errBody.Message, "AMADEUS_KEY_deploy_key", "runner", "Secret") {
+	if !containsAll(errBody.Message, "CRONOMICON_KEY_deploy_key", "runner", "Secret") {
 		t.Errorf("message %q must name the key and both ways out", errBody.Message)
 	}
 	var n int

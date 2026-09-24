@@ -1828,10 +1828,10 @@
             <section id="bootstrap" class="part-lead">
                 <h2><span class="secnum">2</span> First-run bootstrap</h2>
                 <p>Access grants give access, and only an admin can create the grants. Thus you seed the first admin
-                    with the <code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code> environment variable. This is the sequence (<a
+                    with the <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> environment variable. This is the sequence (<a
                         href="#deployment">&sect;8</a> gives the full procedure):</p>
                 <ol class="steps">
-                    <li>Deploy with <code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code> set to one of your AD groups.</li>
+                    <li>Deploy with <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> set to one of your AD groups.</li>
                     <li>Log in. The server gives you admin access. The grants table has no effect on this.</li>
                     <li>Go to <em>Settings &rarr; Users &amp; Access</em>. Create the real access grants (AD group
                         &rarr; role &rarr; agency, or <em>All scopes</em>).</li>
@@ -1841,7 +1841,7 @@
                 <div class="callout warn">
                     <div class="ct"><span class="em">🧯</span> The env var operates in trusted-header mode only. For
                         OIDC recovery, use <code>amadeus grant-admin</code></div>
-                    <p><code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code> has an effect on the <strong>trusted-header (proxy)
+                    <p><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> has an effect on the <strong>trusted-header (proxy)
                             login path only</strong>. The OIDC login path never reads it. On an OIDC deployment, the
                         variable does nothing and gives no message. Do not use it there for a first deploy or for a
                         lockout recovery. The approved recovery on <em>each type of</em> deployment is the offline
@@ -1858,7 +1858,7 @@
                 <div class="callout danger">
                     <div class="ct"><span class="em">🚫</span> Developer login is for the local preview only</div>
                     <p>A dashed <em>&ldquo;Developer login (bypass SSO)&rdquo;</em> button shows only when
-                        <code>AMADEUS_DEV_AUTH=true</code>. The button makes a synthetic local admin, so you can see the
+                        <code>CRONOMICON_DEV_AUTH=true</code>. The button makes a synthetic local admin, so you can see the
                         UI without a proxy. The route is <strong>never mounted in production</strong>, where it returns
                         404. Do not set this variable on a deployed server.</p>
                 </div>
@@ -2042,9 +2042,9 @@
                     <code>ssh</code> is rejected, because the in-app executor has no runner for a tag to select.</p>
                 <div class="callout danger">
                     <div class="ct"><span class="em">🔌</span> The SSH executor is OFF by default</div>
-                    <p>The executor runs only when an operator sets <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code>. The
+                    <p>The executor runs only when an operator sets <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code>. The
                         pool concurrency default is <strong>4</strong>, from
-                        <code>AMADEUS_SSH_EXECUTOR_CONCURRENCY</code>. When the executor is on, the server writes a
+                        <code>CRONOMICON_SSH_EXECUTOR_CONCURRENCY</code>. When the executor is on, the server writes a
                         clear warning to the log: the server now holds SSH private keys and has outbound SSH to the job
                         targets. <strong>If the executor is off, <code>ssh</code>-tagged runs stay in the queue
                             forever.</strong></p>
@@ -2082,7 +2082,7 @@
                         that hangs and sends no output. A timed-out run logs <code>amadeus: job timed out</code>. The
                         in-app executor is single-instance. Thus, at startup, the server finds each <code>ssh</code> run
                         that a crash or restart left <code>running</code>. An age reaper also finds them periodically,
-                        after <code>AMADEUS_SSH_EXECUTOR_STALE_AFTER</code> (default <strong>24h</strong>, set far above
+                        after <code>CRONOMICON_SSH_EXECUTOR_STALE_AFTER</code> (default <strong>24h</strong>, set far above
                         a real timeout). The server sets these runs to <span class="pill fail"><span
                                 class="dot"></span>failure</span> with reason <code>executor_lost</code>. This releases
                         the concurrency slot that they would block. <code>executor_lost</code> shows a plain Failed
@@ -2106,7 +2106,7 @@
 
                 <div class="callout note">
                     <div class="ct"><span class="em">💉</span> Reference injection into the run (v0.49.x; kill-switch
-                        <code>AMADEUS_SECRETS_INJECTION_ENABLED</code>, default on)</div>
+                        <code>CRONOMICON_SECRETS_INJECTION_ENABLED</code>, default on)</div>
                     <p>After the command resolution and before the fan-out, the executor resolves the <strong>reference
                             bindings</strong> that the job and its referenced script <em>declared</em>. It resolves only
                         those. Thus two jobs that share a scope do not both see the scope's secrets. The executor then
@@ -2118,12 +2118,12 @@
                         values go to the remote command on <strong>STDIN (standard input), never on the process
                             argv</strong>. Thus an injected secret never shows in <code>/proc/&lt;pid&gt;/cmdline</code>
                         or auditd. The values are <strong>never written back to <code>runs.env_json</code></strong>. On
-                        the SSH path, a declared <code>AMADEUS_KEY_*</code> reference causes a warning and is skipped,
+                        the SSH path, a declared <code>CRONOMICON_KEY_*</code> reference causes a warning and is skipped,
                         because remote key-file delivery is deferred.</p>
-                    <p>Each run also gets the fixed <code>AMADEUS_RUN_*</code> context set, which the dispatcher owns:
+                    <p>Each run also gets the fixed <code>CRONOMICON_RUN_*</code> context set, which the dispatcher owns:
                         <code>_ID</code>, <code>_JOB</code>, <code>_JOB_SOURCE</code>, <code>_SCOPE</code>,
                         <code>_TYPE</code>, <code>_TRIGGERED_BY</code>, <code>_EXECUTOR</code>. These are log-safe and
-                        not bindable. Operator-authored env can never define an <code>AMADEUS_*</code> key (422).</p>
+                        not bindable. Operator-authored env can never define an <code>CRONOMICON_*</code> key (422).</p>
                     <p><strong>Output fail-close:</strong> if a captured <code>::amadeus-output::</code> value contains
                         an injected secret, the executor drops <em>all</em> captured outputs and fails the run with
                         reason <code>output_secret_leak</code>. Thus the secret cannot go into
@@ -2524,8 +2524,8 @@
                     block beside its schedule (stored in <code>jobs.watch_json</code>, migration <strong>960</strong>):
                     a list of glob paths, each with an optional <code>stableSeconds</code>. When a matching file
                     appears &mdash; and holds still for the stability window (default 5&nbsp;seconds) &mdash; a run
-                    starts, carrying <code>AMADEUS_WATCH_PATH</code> (the full path),
-                    <code>AMADEUS_WATCH_FILE</code> (the basename) and <code>AMADEUS_WATCH_SIZE</code> (bytes) in its
+                    starts, carrying <code>CRONOMICON_WATCH_PATH</code> (the full path),
+                    <code>CRONOMICON_WATCH_FILE</code> (the basename) and <code>CRONOMICON_WATCH_SIZE</code> (bytes) in its
                     environment. The file is never copied anywhere: the job's script already runs where the file is.
                     Declaring a watch <em>is</em> the opt-in &mdash; it is deliberately not gated on
                     <code>requestable</code>, which belongs to a different door. The watching is done by <strong>runner
@@ -2832,12 +2832,12 @@
                         anything. Thus a secret value never lands in the DB and never crosses to a runner. The scope
                         stays unchanged. The one supported correction is env-var-<strong>NAME</strong> indirection (for
                         example, <code>{{ lookup('env','NAME') }}</code>), which the runner resolves locally.</p>
-                    <p>A related fail-closed guard also rejects a <strong>literal <code>AMADEUS_*=</code>
+                    <p>A related fail-closed guard also rejects a <strong>literal <code>CRONOMICON_*=</code>
                             assignment</strong> in all parts of the inventory. The injector owns the
-                        <code>AMADEUS_</code> namespace. Operator content can <em>point to</em> a runner env var by name
-                        (<code>lookup('env','AMADEUS_&hellip;')</code>), but it can never <em>define</em> one. The guard
+                        <code>CRONOMICON_</code> namespace. Operator content can <em>point to</em> a runner env var by name
+                        (<code>lookup('env','CRONOMICON_&hellip;')</code>), but it can never <em>define</em> one. The guard
                         matches only the key position (a name directly followed by <code>=</code>), so an
-                        <code>AMADEUS_</code> name inside a <code>lookup</code> value stays valid. This applies in the
+                        <code>CRONOMICON_</code> name inside a <code>lookup</code> value stays valid. This applies in the
                         same way to git-synced and in-app-authored inventories.</p>
                 </div>
 
@@ -3042,13 +3042,13 @@
                 <ul>
                     <li><strong>Stored secrets</strong> get AES-256-GCM <strong>envelope encryption</strong>: a random
                         per-secret DEK (data encryption key) encrypts the value, and the master <strong>KEK</strong>
-                        (32-byte base64, from <code>AMADEUS_KEK_FILE</code>) wraps the DEK. The variable moved out of
-                        the reserved <code>AMADEUS_SECRET_</code> prefix (the old
-                        <code>AMADEUS_SECRET_KEK_FILE</code> spelling stopped reading in v1.5.41). The DB never holds plaintext or a bare DEK. On return from each envelope encrypt or
+                        (32-byte base64, from <code>CRONOMICON_KEK_FILE</code>) wraps the DEK. The variable moved out of
+                        the reserved <code>CRONOMICON_SECRET_</code> prefix (the old
+                        <code>CRONOMICON_SECRET_KEK_FILE</code> spelling stopped reading in v1.5.41). The DB never holds plaintext or a bare DEK. On return from each envelope encrypt or
                         decrypt, the server zeroizes the unwrapped DEK and the loaded KEK, best-effort. This decreases
                         the time that key material stays recoverable in memory. It is best-effort only, because Go has
                         no guaranteed secure erase. Without a KEK, stored-secret operations fail with <em>&ldquo;set
-                            AMADEUS_KEK_FILE or AMADEUS_KEK.&rdquo;</em></li>
+                            CRONOMICON_KEK_FILE or CRONOMICON_KEK.&rdquo;</em></li>
                     <li><strong>Vault secrets</strong> store only a reference (<code>path#field</code>, in the Vault KV
                         v2 key-value secrets engine). The value stays in Vault, and the server gets it live with the
                         configured Vault auth method (AppRole or a token). You cannot reveal it through Cronomicon.</li>
@@ -3078,7 +3078,7 @@
                     format). The <em>key-by-name</em> path is permanent for runner-executed and inventory-imported
                     hosts. Those resolve keys by name locally and normally get no credential material; see <a
                         href="user-manual.html#settings">&sect;14</a>. The one exception: a job or script that
-                    <em>binds</em> an <code>AMADEUS_KEY_</code> reference sends resolved private-key material to a
+                    <em>binds</em> an <code>CRONOMICON_KEY_</code> reference sends resolved private-key material to a
                     flagged protocol-v6 runner (see <a href="#runner-ops">&sect;7</a>).</p>
                 <p><strong>Who can point a run at a stored key.</strong> Operators can now select a stored
                     credential as a run's <strong>connect-as identity</strong>: for each run in the Run dialog, or
@@ -3177,7 +3177,7 @@
                     never read a runner-local variable. The Composer now authors it (Advanced &rarr; <em>Runner
                         environment passthrough</em>) and writes the same serialization as the sync path. Validation
                     uses the same env namespace rules: the POSIX character set for environment-variable names;
-                    <code>AMADEUS_*</code> refused (those are injected references, not the runner's environment);
+                    <code>CRONOMICON_*</code> refused (those are injected references, not the runner's environment);
                     and local-toolchain run types only.</p>
 
                 <h3>6.1b Authoring-time reference validation &amp; the oracle rule</h3>
@@ -3514,7 +3514,7 @@
                     Runner ingest of a run that injects a secret is <strong>fail-closed</strong>
                     (<code>503 redactor_unavailable</code>; nothing persists, and the agent tries again when the fault
                     clears). The run's authoritative <code>injects_secret</code> flag (migration 620) drives this
-                    decision. Thus a deleted binding, or the <code>AMADEUS_SECRETS_INJECTION_ENABLED</code> kill-switch
+                    decision. Thus a deleted binding, or the <code>CRONOMICON_SECRETS_INJECTION_ENABLED</code> kill-switch
                     turned mid-run, no longer moves a secret-bearing run to the lenient path.</p>
                 <p>Separately, A12 captured inter-job <strong>outputs</strong> are stored raw, because the engine
                     injects them into later steps. The run-detail response masks them against the same dictionary
@@ -3539,7 +3539,7 @@
                         into a server log line (usually inside an error string) is written as-is. That was always
                         true of stdout, but the file is a <em>durable</em> artifact on the data volume. It is
                         <code>0640</code> in a <code>0750</code> directory, and size-bounded. Set
-                        <code>AMADEUS_LOG_FILE_ENABLED=false</code> to keep server logs on stdout only. See <a
+                        <code>CRONOMICON_LOG_FILE_ENABLED=false</code> to keep server logs on stdout only. See <a
                             href="#deployment">&sect;8.4</a> for its location on disk, and <a
                             href="#appendix">Appendix C</a> for its controls.</li>
                 </ul>
@@ -3566,7 +3566,7 @@
                         exactly</div>
                     <p><strong>If you lose the KEK, no stored secret can decrypt again, permanently.</strong> Keep its
                         backup <em>separate</em> from the database backup: a compromised bucket must not give both. And
-                        <code>AMADEUS_TRUSTED_PROXIES</code> is the full trusted-header security model. Set it to the
+                        <code>CRONOMICON_TRUSTED_PROXIES</code> is the full trusted-header security model. Set it to the
                         exact peer IP that Cronomicon sees. If it is too wide, a spoofed <code>Remote-Groups: admins</code>
                         could impersonate an admin. See <a href="#deployment">&sect;8</a>.</p>
                 </div>
@@ -3577,8 +3577,8 @@
                     S3/MinIO backup, OIDC, Apprise) now goes through a shared <strong>SSRF egress guard</strong>.
                     The guard blocks cloud-metadata (<code>169.254.169.254</code>, <code>fd00:ec2::254</code>),
                     loopback, and link-local targets, and it closes DNS-rebind: it dials the checked IP.
-                    <code>AMADEUS_OUTBOUND_ALLOW_PRIVATE</code> (default <code>true</code>) keeps an internal Vault
-                    or GitLab reachable. <code>AMADEUS_OUTBOUND_ALLOW_LOOPBACK</code> (default <code>false</code>)
+                    <code>CRONOMICON_OUTBOUND_ALLOW_PRIVATE</code> (default <code>true</code>) keeps an internal Vault
+                    or GitLab reachable. <code>CRONOMICON_OUTBOUND_ALLOW_LOOPBACK</code> (default <code>false</code>)
                     lets in a <code>127.0.0.1</code> Vault-agent sidecar. The credential provider for the EC2 and
                     ECS instance metadata service (IMDS) is exempt, so S3 IAM (identity and access management) roles
                     still operate.</p>
@@ -3641,7 +3641,7 @@
                     refused at construction. The alternative sends a single-use wrapping token as
                     <code>X-Vault-Token</code> and gets <code>403</code> on each read, with nothing to show why.</p>
                 <p class="muted">The environment path did not change and still wins over the
-                    stored config: <code>AMADEUS_VAULT_*</code> is <strong>always AppRole</strong>. Only the
+                    stored config: <code>CRONOMICON_VAULT_*</code> is <strong>always AppRole</strong>. Only the
                     UI/API-configured path can select token auth.</p>
 
                 <h3 id="service-accounts">6.5 Service accounts: something other than a person can start a run</h3>
@@ -3673,8 +3673,8 @@
                     whether a restore is a recovery or a second incident.</p>
 
                 <h4>The KEK belongs in a file, not the environment</h4>
-                <p>Cronomicon reads the key encryption key from <code>AMADEUS_KEK_FILE</code> first and
-                    <code>AMADEUS_KEK</code> only as a fallback; if both are set, <strong>the file wins</strong>. Prefer
+                <p>Cronomicon reads the key encryption key from <code>CRONOMICON_KEK_FILE</code> first and
+                    <code>CRONOMICON_KEK</code> only as a fallback; if both are set, <strong>the file wins</strong>. Prefer
                     the file and remove the environment variable rather than leaving both in place &mdash; an
                     environment variable is readable from <code>/proc/&lt;pid&gt;/environ</code>, from a container
                     inspect, and from anything that dumps process configuration, and a leftover copy buys nothing once
@@ -3684,7 +3684,7 @@
                     validates only that it decodes to 32 bytes &mdash; it does not check the mode or the owner, so a
                     world-readable KEK loads without a word of complaint. Mount it read-only, owned by the account the
                     server runs as, mode <code>0400</code>. If your deployment still uses the older
-                    <code>AMADEUS_SECRET_KEK*</code> names, rename them to the <code>AMADEUS_KEK*</code> forms before
+                    <code>CRONOMICON_SECRET_KEK*</code> names, rename them to the <code>CRONOMICON_KEK*</code> forms before
                     upgrading to v1.5.41 or later: the old names no longer read, and the first stored-secret
                     operation fails with "no KEK configured".</p>
 
@@ -3701,9 +3701,9 @@
                 <h4>Rotation works, but you have to finish it by hand</h4>
                 <p>KEK rotation is zero-downtime and needs no outage. Every encrypted row records the version it was
                     sealed under, and historical keys stay available, so old and new coexist:</p>
-                <pre><code>AMADEUS_KEK_VERSION=2
-AMADEUS_KEK_FILE=/run/secrets/kek-v2     # the new key
-AMADEUS_KEK_1_FILE=/run/secrets/kek-v1   # the old key, still able to decrypt</code></pre>
+                <pre><code>CRONOMICON_KEK_VERSION=2
+CRONOMICON_KEK_FILE=/run/secrets/kek-v2     # the new key
+CRONOMICON_KEK_1_FILE=/run/secrets/kek-v1   # the old key, still able to decrypt</code></pre>
                 <p><strong>Rotation is lazy: a row moves to the new version only when it is rewritten.</strong> There is
                     <code>amadeus rewrap-secrets</code> to finish it. Without that command an operator would have to
                     touch every encrypted item by hand &mdash; and there are three stores, not one, so missing any of
@@ -3745,11 +3745,11 @@ AMADEUS_KEK_1_FILE=/run/secrets/kek-v1   # the old key, still able to decrypt</c
                 <pre><code>docker exec &lt;amadeus&gt; amadeus rewrap-secrets --dry-run   # what is outstanding, per store
 docker exec &lt;amadeus&gt; amadeus rewrap-secrets             # move it all to the active version</code></pre>
                 <p><strong>Only once <code>--dry-run</code> reports rotation complete should you drop
-                        <code>AMADEUS_KEK_1</code>.</strong> That report is the whole point of the command: it counts
+                        <code>CRONOMICON_KEK_1</code>.</strong> That report is the whole point of the command: it counts
                     what is sealed under which version <em>without decrypting anything</em>, so it still answers the
                     question when a superseded key is no longer configured. If any item cannot be re-wrapped the command
                     says so and exits non-zero &mdash; almost always because the key that sealed it is missing from the
-                    environment. Supply it as <code>AMADEUS_KEK_&lt;N&gt;</code> and re-run; do not read a partial pass
+                    environment. Supply it as <code>CRONOMICON_KEK_&lt;N&gt;</code> and re-run; do not read a partial pass
                     as a finished one.</p>
 
                 <div class="callout warn">
@@ -3780,7 +3780,7 @@ docker exec &lt;amadeus&gt; amadeus rewrap-secrets             # move it all to 
                             <tr>
                                 <td>Source</td>
                                 <td>minted in <strong>Settings &rarr; Runners</strong>, one per install</td>
-                                <td><code>AMADEUS_RUNNER_BOOTSTRAP_TOKEN</code> in the server's environment</td>
+                                <td><code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code> in the server's environment</td>
                             </tr>
                             <tr>
                                 <td>Lifetime</td>
@@ -3819,7 +3819,7 @@ docker exec &lt;amadeus&gt; amadeus rewrap-secrets             # move it all to 
                         its environment</div>
                     <p>A job can declare <strong>environment passthrough</strong> by name, and a passthrough name is
                         resolved from the runner agent's own environment. The agent now <strong>refuses</strong> any
-                        passthrough under <code>AMADEUS_RUNNER_*</code> &mdash; its own configuration namespace &mdash;
+                        passthrough under <code>CRONOMICON_RUNNER_*</code> &mdash; its own configuration namespace &mdash;
                         and fails the run rather than resolving it, so a job cannot read the token this way. Keeping the
                         token out of the environment entirely is the belt to that braces: a value the process never
                         holds cannot be reached by any future lookup, and the refusal protects deployments that have not
@@ -3856,49 +3856,49 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code></td>
+                                <td><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></td>
                                 <td><strong>unset</strong></td>
                                 <td>Anyone in that group is admin regardless of access grants. It logs a loud warning
                                     the whole time it is set. First deploy only &mdash; see &sect;2.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_DEV_AUTH</code></td>
+                                <td><code>CRONOMICON_DEV_AUTH</code></td>
                                 <td><strong>unset</strong></td>
                                 <td>One-click synthetic-admin login with no identity provider, <em>and</em> it exempts the
                                     trusted-proxy boot check &mdash; two protections, one switch.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_DEV_SEED</code></td>
+                                <td><code>CRONOMICON_DEV_SEED</code></td>
                                 <td><strong>unset</strong></td>
                                 <td>Seeds demo data into an empty database.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_COOKIE_SECURE</code></td>
+                                <td><code>CRONOMICON_COOKIE_SECURE</code></td>
                                 <td><code>true</code></td>
                                 <td>Session cookie over HTTPS only.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_TRUSTED_PROXIES</code></td>
+                                <td><code>CRONOMICON_TRUSTED_PROXIES</code></td>
                                 <td>the exact proxy peer IP</td>
                                 <td>Fail-closed by design &mdash; empty refuses to boot. The exception is when
-                                    <code>AMADEUS_DEV_AUTH</code> is set, which is precisely the combination that
+                                    <code>CRONOMICON_DEV_AUTH</code> is set, which is precisely the combination that
                                     disables the check quietly. See &sect;6.3.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SESSION_HASH_KEY</code></td>
+                                <td><code>CRONOMICON_SESSION_HASH_KEY</code></td>
                                 <td>base64, at least 32 bytes</td>
                                 <td>A shorter key is replaced with a random ephemeral one (sessions do not survive a
                                     restart, with a warning); a non-base64 value is rejected outright in a production
                                     auth mode.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_RUNNER_CHECKOUT_TOKEN</code></td>
+                                <td><code>CRONOMICON_RUNNER_CHECKOUT_TOKEN</code></td>
                                 <td>prefer the <code>_FILE</code> form</td>
                                 <td>A GitLab deploy token in an environment variable is the same exposure class as any
                                     other token there.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BACKUP_S3_ACCESS_KEY</code> / <code>_SECRET_KEY</code></td>
+                                <td><code>CRONOMICON_BACKUP_S3_ACCESS_KEY</code> / <code>_SECRET_KEY</code></td>
                                 <td>omit both where you can</td>
                                 <td>Omitting them uses the ambient IAM credential chain. Grant
                                     <code>s3:PutObject</code> and <code>s3:GetObject</code> and <em>not</em>
@@ -3964,7 +3964,7 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                     runner whose capabilities include that run type. A run for a type that no online runner advertises
                     stays <em>queued</em> (&ldquo;waiting for a {type}-capable runner&rdquo;). It does not fail.</p>
                 <p><strong>Capabilities auto-detect by default</strong>. With no <code>-c</code> /
-                    <code>AMADEUS_RUNNER_CAPABILITIES</code>, the agent probes the host's toolchains at startup
+                    <code>CRONOMICON_RUNNER_CAPABILITIES</code>, the agent probes the host's toolchains at startup
                     (<code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>,
                     <code>ansible-playbook</code>, <code>terraform</code>) and claims the applicable run-types. If you
                     install a toolchain later, a service restart sends it through the config-drift resync. Set the flag
@@ -3990,7 +3990,7 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                 <p>The script creates the <code>amadeus-runner</code> user, installs the binary to
                     <code>/usr/local/bin</code>, writes <code>/etc/amadeus-runner/runner.env</code>, installs a hardened
                     systemd unit, and starts the service. The key directory (<code>/var/lib/amadeus-runner/keys</code>,
-                    <code>0700</code>) and <code>AMADEUS_RUNNER_KEY_DIR</code> are <strong>always</strong> provisioned.
+                    <code>0700</code>) and <code>CRONOMICON_RUNNER_KEY_DIR</code> are <strong>always</strong> provisioned.
                     Thus a key added later operates with no <code>runner.env</code> edit.
                     <code>--generate-key &lt;NAME&gt;</code> makes a passphrase-less ed25519 key that the runner owns,
                     and it prints the public half for the targets' <code>authorized_keys</code>.
@@ -4010,11 +4010,11 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                     <div class="cap">Container</div>
                     <pre>docker volume create amadeus-runner-data
 docker run -d --name amadeus-runner-01 --restart unless-stopped \
- -e AMADEUS_RUNNER_SERVER=https://amadeus.example.com \
- -e AMADEUS_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxx \
- -e AMADEUS_RUNNER_NAME=runner-dc1-01 \
- -e AMADEUS_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
- -e AMADEUS_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
+ -e CRONOMICON_RUNNER_SERVER=https://amadeus.example.com \
+ -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxx \
+ -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
+ -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
+ -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
  -v amadeus-runner-data:/var/lib/amadeus-runner \
  amadeus-runner:slim # use :fat for ansible/terraform</pre>
                 </div>
@@ -4070,7 +4070,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         <code>known_hosts</code>. After that, the compare is strict and never falls open. The scan, the
                         approval, and the rejection are all audited. If one runner is compromised, only its segment's
                         keys and targets are exposed. A per-run log-ingest byte cap
-                        (<code>AMADEUS_MAX_RUN_LOG_BYTES</code>, default 512&nbsp;MiB) limits a rogue runner that
+                        (<code>CRONOMICON_MAX_RUN_LOG_BYTES</code>, default 512&nbsp;MiB) limits a rogue runner that
                         streams logs past the ceiling (<code>413</code>; nothing more persists).</p>
                     <p><strong>The current wire protocol is v12, and the server's floor tracks it.</strong> It is
                         enforced in three places &mdash; registration, redeclare, and every poll &mdash; each answering
@@ -4100,8 +4100,8 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         self-declare it. Set it with the warning-toned <strong>Secret injection</strong> control &rarr;
                         <code>PUT /api/v1/runners/{id}/secret-injection</code> (ConfigureApp). Only when a runner has
                         the flag does a binding-bearing run send resolved
-                        <code>AMADEUS_SECRET_*</code> and <code>AMADEUS_VAR_*</code> <strong>values</strong> in a
-                        dedicated manifest Secrets block, and a bound <code>AMADEUS_KEY_&lt;name&gt;</code>'s
+                        <code>CRONOMICON_SECRET_*</code> and <code>CRONOMICON_VAR_*</code> <strong>values</strong> in a
+                        dedicated manifest Secrets block, and a bound <code>CRONOMICON_KEY_&lt;name&gt;</code>'s
                         private-key <strong>material</strong> in a Keys block. The agent writes each key to a
                         <code>/dev/shm</code> <code>0600</code> file, off the run tree, zeroed and removed at run end.
                         <strong>Fail-closed at each point:</strong> a binding that cannot resolve or an un-flagged
@@ -4132,10 +4132,10 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         force-lever.
                     </li>
                     <li><strong>Offline / reaping</strong>: a reaper (about every 60s) marks a runner offline after
-                        <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> (default <strong>5 min</strong>) and sets its
+                        <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> (default <strong>5 min</strong>) and sets its
                         in-flight runs to <span class="pill fail"><span class="dot"></span>failure</span> with reason
                         <code>runner_lost</code> (an amber <strong>Lost</strong> badge). A runner offline longer than
-                        <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code> (default <strong>14 days</strong>) is deregistered
+                        <code>CRONOMICON_RUNNER_DEREGISTER_AFTER</code> (default <strong>14 days</strong>) is deregistered
                         automatically. <strong>Offline is not permanent:</strong> an authenticated poll from an offline
                         runner re-admits it to <code>online</code> &mdash; see the callout below.</li>
                     <li><strong>Degraded</strong>: <strong>a freshness reading, derived at read time and never
@@ -4155,7 +4155,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                     <div class="ct"><span class="em">🟠</span> Why <code>degraded</code> exists, and why it is not a
                         stored status</div>
                     <p><strong>The gap that it names is real, and it was invisible.</strong> Each long-poll writes
-                        <code>last_seen_at</code>, but the reaper waits <code>AMADEUS_RUNNER_OFFLINE_AFTER</code>
+                        <code>last_seen_at</code>, but the reaper waits <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code>
                         (default 5 min) before it calls a runner offline. Thus, for a maximum of five minutes, a runner
                         that had already died read <span class="pill ok"><span class="dot"></span>Online</span>: in its
                         row, in the tile counts, and to each person who decides where to send work.
@@ -4309,7 +4309,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         keys against the <em>same</em> <code>known_hosts</code> that <strong>Scan &amp; approve</strong>
                         seeds. Thus there is no double-provisioning and no <code>~/.ssh/known_hosts</code> symlink. An
                         explicit env var, or an inventory <code>ansible_ssh_private_key_file</code>, still wins.
-                        <code>-no-auth-bridge</code> (<code>AMADEUS_RUNNER_NO_AUTH_BRIDGE</code>) opts an estate out,
+                        <code>-no-auth-bridge</code> (<code>CRONOMICON_RUNNER_NO_AUTH_BRIDGE</code>) opts an estate out,
                         and <code>-ansible-ssh-common-args</code> lets it own the full SSH arg string.</li>
                 </ul>
                 <div class="callout note">
@@ -4477,8 +4477,8 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                     arrived.</p>
                 <p><strong>The security posture is inverted, and that is the point: the server chooses the globs, the
                         agent enforces.</strong> A runner watches only what falls inside its local
-                    <code>-watch-paths</code> allowlist (env: <code>AMADEUS_RUNNER_WATCH_PATHS</code>), re-checked on
-                    every scan, behind the <code>-allow-watch</code> opt-in (<code>AMADEUS_RUNNER_ALLOW_WATCH</code>).
+                    <code>-watch-paths</code> allowlist (env: <code>CRONOMICON_RUNNER_WATCH_PATHS</code>), re-checked on
+                    every scan, behind the <code>-allow-watch</code> opt-in (<code>CRONOMICON_RUNNER_ALLOW_WATCH</code>).
                     An <strong>empty allowlist permits nothing</strong> &mdash; the same fail-closed rule as scope
                     grants &mdash; and <code>-allow-watch</code> with an empty list logs a loud warning rather than
                     watching silently. The reverse direction holds too: the server refuses a sighting for a path it
@@ -4569,56 +4569,56 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>AMADEUS_TRUSTED_PROXIES</code></td>
+                                <td><code>CRONOMICON_TRUSTED_PROXIES</code></td>
                                 <td><strong>The most important value to get right.</strong> The IP address, or the CIDR
                                     range (an address range in Classless Inter-Domain Routing notation), of the proxy
                                     peer that Cronomicon really sees. <strong>Fail-closed: if it is empty, the server
                                         refuses to boot.</strong> (&sect;8.5)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_KEK_FILE</code></td>
+                                <td><code>CRONOMICON_KEK_FILE</code></td>
                                 <td>The mounted base64 KEK for stored secrets. <strong>Back it up separately from the
-                                        DB.</strong> Renamed from <code>AMADEUS_SECRET_KEK_FILE</code> in v0.48.0; the old
+                                        DB.</strong> Renamed from <code>CRONOMICON_SECRET_KEK_FILE</code> in v0.48.0; the old
                                     name dual-read until v1.5.40 and no longer reads.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_AUTH_MODE</code></td>
+                                <td><code>CRONOMICON_AUTH_MODE</code></td>
                                 <td><code>trusted-header</code> (default) or <code>oidc</code>.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code></td>
+                                <td><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></td>
                                 <td>The first-deploy admin seed, for <strong>trusted-header mode only</strong> (the OIDC
                                     login path never applies it). Remove it after you seed the grants. For lockout
                                     recovery on all deployments, use <code>amadeus grant-admin</code> (&sect;8.7).</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SSH_EXECUTOR_ENABLED</code></td>
+                                <td><code>CRONOMICON_SSH_EXECUTOR_ENABLED</code></td>
                                 <td>Turns on the in-app SSH executor (off by default).</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_COOKIE_SECURE</code></td>
+                                <td><code>CRONOMICON_COOKIE_SECURE</code></td>
                                 <td>Must be <code>true</code> in production (HTTPS through the proxy).</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_GITLAB_*</code> / <code>AMADEUS_VAULT_*</code></td>
+                                <td><code>CRONOMICON_GITLAB_*</code> / <code>CRONOMICON_VAULT_*</code></td>
                                 <td>Optional integrations. Each is off when unset. An env value overrides the matching
                                     DB setting.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BACKUP_S3_*</code></td>
+                                <td><code>CRONOMICON_BACKUP_S3_*</code></td>
                                 <td>The nightly S3 backup upload; off when unset. Backups are configured
                                     <strong>only</strong> here. There is no DB-backed backup setting to override (the
                                     inert one was removed in FU-3). See &sect;8.6.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BACKUP_S3_CA_FILE</code></td>
+                                <td><code>CRONOMICON_BACKUP_S3_CA_FILE</code></td>
                                 <td>Optional PEM bundle for a backup bucket on a private S3 node signed by an internal
                                     CA. The log archive's equivalent is the <em>CA Bundle</em> field in Settings
                                     (&sect;8.6.1); both feed the same client.</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_OUTBOUND_ALLOW_PRIVATE</code> /
-                                    <code>AMADEUS_OUTBOUND_ALLOW_LOOPBACK</code></td>
+                                <td><code>CRONOMICON_OUTBOUND_ALLOW_PRIVATE</code> /
+                                    <code>CRONOMICON_OUTBOUND_ALLOW_LOOPBACK</code></td>
                                 <td>The SSRF egress-guard posture for each outbound call that the server starts: Vault,
                                     GitLab, go-git, S3, OIDC, Apprise. Private default <code>true</code>: an internal
                                     Vault or GitLab on a private address range (RFC-1918 or ULA) continues to operate.
@@ -4637,14 +4637,14 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         and in the identity-provider config (<code>deploy/authelia/</code> in the bundled stack).</li>
                     <li>Point your identity provider at your LDAP or Active Directory server. Make sure that group membership shows in
                         <code>Remote-Groups</code>.</li>
-                    <li><code>cp amadeus.env.example amadeus.env</code>. Set <code>AMADEUS_TRUSTED_PROXIES</code> to the
+                    <li><code>cp amadeus.env.example amadeus.env</code>. Set <code>CRONOMICON_TRUSTED_PROXIES</code> to the
                         proxy's static internal IP (<code>172.28.0.2/32</code> in the included stack).</li>
                     <li>Write the base64 KEK to <code>secrets/amadeus_kek</code>, and back it up separately.</li>
-                    <li>Set <code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code> for this first deploy. Then run
+                    <li>Set <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> for this first deploy. Then run
                         <code>docker compose up -d --build</code>.</li>
                     <li>Log in as a member of that group (you get admin). Create the real access grants in Settings
                         &rarr; Users &amp; Access.</li>
-                    <li><strong>Remove <code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code></strong> and run
+                    <li><strong>Remove <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></strong> and run
                         <code>docker compose up -d</code> again. Make sure that the warning stops.</li>
                 </ol>
 
@@ -4756,7 +4756,7 @@ APP_URL=https://amadeus.example.com \
 
                 <h3>8.5 The trusted-proxy control</h3>
                 <div class="callout danger">
-                    <div class="ct"><span class="em">🎯</span> Get <code>AMADEUS_TRUSTED_PROXIES</code> exactly right
+                    <div class="ct"><span class="em">🎯</span> Get <code>CRONOMICON_TRUSTED_PROXIES</code> exactly right
                     </div>
                     <p>It must be the IP that Cronomicon <em>really sees as the connecting peer</em>: the proxy's container
                         IP on a shared Docker network, or often the docker bridge gateway (<code>172.x.0.1</code>) when
@@ -4768,12 +4768,12 @@ APP_URL=https://amadeus.example.com \
 
                 <h3>8.6 Backups &amp; restore</h3>
                 <p>A retention and backup worker runs a daily sweep at a fixed <strong>wall-clock UTC time</strong>
-                    (<code>AMADEUS_BACKUP_AT</code>, default <strong>02:00</strong>). It prunes aged rows <em>and
+                    (<code>CRONOMICON_BACKUP_AT</code>, default <strong>02:00</strong>). It prunes aged rows <em>and
                         on-disk run logs</em>, per the eleven retention windows under <strong>Settings &rarr; Audit &amp;
                         Compliance</strong>. It reads the windows again at the top of each sweep; the
-                    <code>AMADEUS_RETENTION_*</code> env vars only seed those windows on first boot. It then takes a
+                    <code>CRONOMICON_RETENTION_*</code> env vars only seed those windows on first boot. It then takes a
                     consistent <code>VACUUM INTO</code> snapshot and uploads it to S3, if a bucket is configured.
-                    Backups are configured <strong>only</strong> through <code>AMADEUS_BACKUP_S3_*</code> env. There is
+                    Backups are configured <strong>only</strong> through <code>CRONOMICON_BACKUP_S3_*</code> env. There is
                     no DB-backed backup setting (the inert one was removed in FU-3). On boot, the worker runs an
                     immediate catch-up sweep <em>only if</em> the last successful backup is overdue (24h or more). Thus
                     frequent restarts cannot push the only durable backup past 24h. Success and failure export as
@@ -4882,7 +4882,7 @@ APP_URL=https://amadeus.example.com \
                                     event; group matching is case-sensitive). Then restart and sign in. Pass an
                                     <em>email</em> in its place to list that user's recorded AD groups, with no write.
                                     <strong>Trusted-header mode only:</strong> as an alternative, set
-                                    <code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code> temporarily, log in, correct the grants,
+                                    <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> temporarily, log in, correct the grants,
                                     and remove it again. The OIDC login path never applies that env var, so on OIDC it
                                     silently does nothing.</td>
                             </tr>
@@ -4965,8 +4965,8 @@ APP_URL=https://amadeus.example.com \
                                     stops receiving work, and logs the upgrade instruction every poll; it keeps its
                                     identity and its agency membership, so the recovery is to upgrade the binary and
                                     restart &mdash; no deregistration, no new id. Also in this band:
-                                    <code>AMADEUS_SECRET_KEK*</code> stopped being read in <strong>v1.5.41</strong>
-                                    (rename to <code>AMADEUS_KEK*</code> <em>before</em> upgrading, or the first
+                                    <code>CRONOMICON_SECRET_KEK*</code> stopped being read in <strong>v1.5.41</strong>
+                                    (rename to <code>CRONOMICON_KEK*</code> <em>before</em> upgrading, or the first
                                     stored-secret operation fails with &ldquo;no KEK configured&rdquo;); migration
                                     <strong>1140</strong> drops six unread <code>alert_config</code> columns; migration
                                     <strong>1150</strong> rewrites any pre-rich Apprise target to the object form, which
@@ -5010,9 +5010,9 @@ APP_URL=https://amadeus.example.com \
                     format, and destination, and that would silently reshape the audit record.</p>
                 <p><strong>Where it is.</strong> <code>audit.log</code> is in the run-log directory (<strong>Settings
                         &rarr; Log Storage</strong>), and it follows that directory live when the setting changes. Or
-                    pin an absolute path with <code>AMADEUS_AUDIT_LOG</code>. Mode <code>0640</code> in a
+                    pin an absolute path with <code>CRONOMICON_AUDIT_LOG</code>. Mode <code>0640</code> in a
                     <code>0750</code> directory: the same custody as the logs next to it.
-                    <code>AMADEUS_AUDIT_LOG_ENABLED=false</code> turns the file off fully.</p>
+                    <code>CRONOMICON_AUDIT_LOG_ENABLED=false</code> turns the file off fully.</p>
                 <p><strong>What it carries.</strong> The full <code>change_log</code> record (each configuration change,
                     with the actor); a <em>named subset</em> of activity (<code>run-end</code>,
                     <code>workflow-end</code>, <code>config</code>, <code>gitsync</code>, <code>push</code>); and
@@ -5086,7 +5086,7 @@ APP_URL=https://amadeus.example.com \
                         same signal in Prometheus. There is no switch to turn masking off, as for run logs. With a
                         730-day window, anything that does leak into <code>details</code> stays for two years; if you
                         treat the data volume as lower-trust than your log collector, set
-                        <code>AMADEUS_AUDIT_LOG_ENABLED=false</code>. You lose the stream, not the audit trail.</p>
+                        <code>CRONOMICON_AUDIT_LOG_ENABLED=false</code>. You lose the stream, not the audit trail.</p>
                 </div>
 
                 <h3>8.9 The authentication &amp; authorization trail</h3>
@@ -5139,12 +5139,12 @@ APP_URL=https://amadeus.example.com \
                             </tr>
                             <tr>
                                 <td><code>dev-auth</code></td>
-                                <td>The local-preview bypass (<code>AMADEUS_DEV_AUTH</code>) minted a session. If you
+                                <td>The local-preview bypass (<code>CRONOMICON_DEV_AUTH</code>) minted a session. If you
                                     see this in production, the flag is set and must not be.</td>
                             </tr>
                             <tr>
                                 <td><code>bootstrap-admin</code></td>
-                                <td>Admin came from <code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code>, not from a real mapping:
+                                <td>Admin came from <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code>, not from a real mapping:
                                     the emergency lever, now visible.</td>
                             </tr>
                             <tr>
@@ -5172,7 +5172,7 @@ APP_URL=https://amadeus.example.com \
                     <strong>If the two always match, your proxy does not set <code>X-Forwarded-For</code></strong>, and
                     the correction is a proxy-side change, not an Cronomicon change.</p>
                 <div class="callout danger">
-                    <div class="ct"><span class="em">🎯</span> <code>AMADEUS_TRUSTED_PROXIES</code> now has a second
+                    <div class="ct"><span class="em">🎯</span> <code>CRONOMICON_TRUSTED_PROXIES</code> now has a second
                         function</div>
                     <p>It always gated the <code>Remote-*</code> identity headers (&sect;8.5). It now <strong>also gates
                             client-IP attribution.</strong> The server derives <code>client_ip</code> with a walk of
@@ -5185,7 +5185,7 @@ APP_URL=https://amadeus.example.com \
                     <p style="margin-top:.6em">The result for you: <strong>with no trusted proxies configured, or with a
                             peer outside the list, the peer address is recorded verbatim</strong>, and each forwarding
                         header that it sent is ignored. That is the intended fail-safe: record what can be proven, not
-                        what was claimed. But it means that an unset or wrong <code>AMADEUS_TRUSTED_PROXIES</code> gives
+                        what was claimed. But it means that an unset or wrong <code>CRONOMICON_TRUSTED_PROXIES</code> gives
                         you an auth trail with <em>no</em> client attribution, not a wrong one. A too-wide CIDR now
                         weakens two things, not one.</p>
                 </div>
@@ -5214,11 +5214,11 @@ APP_URL=https://amadeus.example.com \
                 <details class="faq">
                     <summary>After a good SSO login I still get 401/403 everywhere</summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> <code>AMADEUS_TRUSTED_PROXIES</code> does not match
+                        <p class="faq-cause"><strong>Cause:</strong> <code>CRONOMICON_TRUSTED_PROXIES</code> does not match
                             the peer IP that Cronomicon sees. Thus the app removes the legitimate <code>Remote-*</code>
                             headers (fail-closed).</p>
                         <p><strong>Correction:</strong> start the app, call it through the proxy, and read the source IP
-                            from the request log. Set <code>AMADEUS_TRUSTED_PROXIES</code> to exactly that value (the
+                            from the request log. Set <code>CRONOMICON_TRUSTED_PROXIES</code> to exactly that value (the
                             proxy container IP on a shared network, or the docker bridge gateway through a published
                             port). In trusted-header mode, the app refuses to boot without it.</p>
                     </div>
@@ -5278,9 +5278,9 @@ APP_URL=https://amadeus.example.com \
                                 restart.&rdquo;</em> (SU-6 hardened this. A hash key under 32 bytes is now replaced with
                             a random ephemeral key, so HMAC does not become weaker. A non-base64 value is rejected
                             outside dev-auth, not used as raw bytes.)</p>
-                        <p><strong>Correction:</strong> set <code>AMADEUS_SESSION_HASH_KEY</code> and
-                            <code>AMADEUS_SESSION_BLOCK_KEY</code> to base64-encoded 32-byte values, and restart. Raw
-                            (non-base64) keys are accepted only under <code>AMADEUS_DEV_AUTH</code>.</p>
+                        <p><strong>Correction:</strong> set <code>CRONOMICON_SESSION_HASH_KEY</code> and
+                            <code>CRONOMICON_SESSION_BLOCK_KEY</code> to base64-encoded 32-byte values, and restart. Raw
+                            (non-base64) keys are accepted only under <code>CRONOMICON_DEV_AUTH</code>.</p>
                     </div>
                 </details>
 
@@ -5322,7 +5322,7 @@ APP_URL=https://amadeus.example.com \
                         <p class="faq-cause"><strong>Cause:</strong> the <code>X-Gitlab-Token</code> does not match
                             Cronomicon's webhook secret.</p>
                         <p><strong>Correction:</strong> copy the exact secret into the GitLab webhook again. If
-                            <code>AMADEUS_GITLAB_WEBHOOK_SECRET</code> is env-pinned, use that value (UI rotation is off
+                            <code>CRONOMICON_GITLAB_WEBHOOK_SECRET</code> is env-pinned, use that value (UI rotation is off
                             while it is pinned).</p>
                     </div>
                 </details>
@@ -5435,10 +5435,10 @@ APP_URL=https://amadeus.example.com \
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> no master KEK is set, so envelope encryption cannot
                             run.</p>
-                        <p><strong>Correction:</strong> configure <code>AMADEUS_KEK_FILE</code> (or inline
-                            <code>AMADEUS_KEK</code>, 32-byte base64) and restart. <em>(These moved out of the
-                                <code>AMADEUS_SECRET_</code> prefix, which read like a store secret. The old
-                                <code>AMADEUS_SECRET_KEK_FILE</code>/<code>AMADEUS_SECRET_KEK</code> names dual-read
+                        <p><strong>Correction:</strong> configure <code>CRONOMICON_KEK_FILE</code> (or inline
+                            <code>CRONOMICON_KEK</code>, 32-byte base64) and restart. <em>(These moved out of the
+                                <code>CRONOMICON_SECRET_</code> prefix, which read like a store secret. The old
+                                <code>CRONOMICON_SECRET_KEK_FILE</code>/<code>CRONOMICON_SECRET_KEK</code> names dual-read
                                 until v1.5.41 and no longer resolve.)</em></p>
                     </div>
                 </details>
@@ -5509,7 +5509,7 @@ APP_URL=https://amadeus.example.com \
                     </summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> one of a range of host problems: a schemeless or
-                            wrong <code>AMADEUS_RUNNER_SERVER</code>, an SSO login page in front of the API, an
+                            wrong <code>CRONOMICON_RUNNER_SERVER</code>, an SSO login page in front of the API, an
                             unresponsive <code>$PATH</code> entry (stale NFS/autofs), a stalled systemd sandbox, a key
                             name that does not resolve, or an unknown target host key.</p>
                         <p><strong>Correction:</strong> run <code>amadeus-runner doctor</code>. It is a bounded
@@ -5532,7 +5532,7 @@ APP_URL=https://amadeus.example.com \
                     <summary>Vault health shows &ldquo;degraded&rdquo; in Settings although Vault is reachable</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> a private-CA Vault. The Settings health probe once
-                            ignored <code>AMADEUS_VAULT_CA_FILE</code> and fell back to the system roots (different from
+                            ignored <code>CRONOMICON_VAULT_CA_FILE</code> and fell back to the system roots (different from
                             the KV client). Thus it never validated the cert and always read &ldquo;degraded.&rdquo;</p>
                         <p><strong>Correction:</strong> upgrade. The probe now builds the same CA-pinned, egress-guarded
                             transport as the KV client and checks <code>/v1/sys/health</code> correctly. If Vault is
@@ -5562,10 +5562,10 @@ APP_URL=https://amadeus.example.com \
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> row-name validation. A new row name must be a POSIX
                             identifier (<code>^[A-Za-z_][A-Za-z0-9_]*$</code>). It cannot start with
-                            <code>AMADEUS_</code>, and (Secrets only) it cannot be a reserved KEK name
+                            <code>CRONOMICON_</code>, and (Secrets only) it cannot be a reserved KEK name
                             (<code>KEK</code>/<code>KEK_FILE</code>/<code>KEK_VERSION</code>/<code>KEK_&lt;N&gt;</code>).
                             SSH-credential labels can no longer contain <code>-</code> or <code>.</code>: those broke
-                            the derived <code>AMADEUS_KEY_&lt;label&gt;</code> env-var name.</p>
+                            the derived <code>CRONOMICON_KEY_&lt;label&gt;</code> env-var name.</p>
                         <p><strong>Correction:</strong> change the name to snake_case and try again. Validation applies
                             to <em>writes only</em>. Existing rows are never validated again, so an upgrade does not
                             break a configuration that runs. (The demo seed SSH key got the new name
@@ -5577,10 +5577,10 @@ APP_URL=https://amadeus.example.com \
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the per-run log-ingest byte cap (SU-9). The log
                             endpoint is exempt from the 2 MiB body cap, because a run streams many chunks. Thus it has
-                            its own limit, <code>AMADEUS_MAX_RUN_LOG_BYTES</code> (default 512 MiB). Past the ceiling,
+                            its own limit, <code>CRONOMICON_MAX_RUN_LOG_BYTES</code> (default 512 MiB). Past the ceiling,
                             the runner gets <code>413</code>, and nothing more persists.</p>
                         <p><strong>Correction:</strong> if a run legitimately produces more than 512 MiB of log,
-                            increase <code>AMADEUS_MAX_RUN_LOG_BYTES</code> (set <code>0</code> to remove the cap). If
+                            increase <code>CRONOMICON_MAX_RUN_LOG_BYTES</code> (set <code>0</code> to remove the cap). If
                             not, decrease the run's output. Existing deployments need no action.</p>
                     </div>
                 </details>
@@ -5728,7 +5728,7 @@ APP_URL=https://amadeus.example.com \
                 <details class="faq">
                     <summary>The container refuses to boot / exits immediately</summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> <code>AMADEUS_TRUSTED_PROXIES</code> is empty in
+                        <p class="faq-cause"><strong>Cause:</strong> <code>CRONOMICON_TRUSTED_PROXIES</code> is empty in
                             trusted-header mode. The control is fail-closed.</p>
                         <p><strong>Correction:</strong> set it to the proxy peer's IP or CIDR (for example,
                             <code>172.28.0.2/32</code>) and deploy again.</p>
@@ -5830,12 +5830,12 @@ APP_URL=https://amadeus.example.com \
                     <dt>Apprise</dt>
                     <dd>A notification gateway that takes a URL or a DSN (data source name). It delivers one event to
                         many services (email, Slack, Discord). Configured in Settings &rarr; Notifications, or with
-                        <code>AMADEUS_APPRISE_URL</code>.</dd>
+                        <code>CRONOMICON_APPRISE_URL</code>.</dd>
                     <dt>authKeyEnvVar</dt>
                     <dd>The <em>name</em> of the env var or stored secret that holds the unencrypted SSH private key for
                         a host or bastion. The server sends only this name to runners. On this name path, key bytes
                         never cross the wire; the runner resolves them locally. Exception: a runner flagged for secret
-                        injection instead gets resolved key <em>material</em> for bound <code>AMADEUS_KEY_*</code>
+                        injection instead gets resolved key <em>material</em> for bound <code>CRONOMICON_KEY_*</code>
                         references, in the manifest Keys block. See Manifest. It is <strong>coequal</strong> with
                         <code>authCredentialId</code> (the first-class <a href="user-manual.html#envvars">SSH key
                             credential</a>) and <em>not</em> deprecated. The name path is <strong>permanent</strong> for
@@ -5859,7 +5859,7 @@ APP_URL=https://amadeus.example.com \
                         It is advisory only: it never blocks a sync, never drops a script, and never enters the content
                         hash. See <a href="user-manual.html#scripts">&sect;8.3</a>.</dd>
                     <dt>Bootstrap admin</dt>
-                    <dd>A first-run env var (<code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code>) that gives admin to each member
+                    <dd>A first-run env var (<code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code>) that gives admin to each member
                         of a named AD group, independent of the grants. With it, the first admin can seed the real
                         access grants. The server writes a clear warning; remove the variable after this.
                         <strong>Trusted-header mode only</strong>: the OIDC login path never applies it. The
@@ -5918,7 +5918,7 @@ APP_URL=https://amadeus.example.com \
                         occurs manually, or the reaper does it after the deregister window (default 14 days offline).
                     </dd>
                     <dt>Developer login bypass</dt>
-                    <dd>A non-production button (<code>AMADEUS_DEV_AUTH=true</code>) that mints a synthetic admin
+                    <dd>A non-production button (<code>CRONOMICON_DEV_AUTH=true</code>) that mints a synthetic admin
                         session with the explicit <code>*</code> (all-scopes) grant: unrestricted under the A5 scope
                         model. Use it for a local UI preview. It returns 404 in production.</dd>
                     <dt>Dirty schema</dt>
@@ -5951,7 +5951,7 @@ APP_URL=https://amadeus.example.com \
                     <dt>File-arrival trigger (watch)</dt>
                     <dd>A job's <code>watch:</code> globs, observed by runner agents polling inside their
                         <code>-watch-paths</code> allowlist. A stable file starts a run carrying
-                        <code>AMADEUS_WATCH_*</code> env; every arrival lands in the job's file-sightings ledger
+                        <code>CRONOMICON_WATCH_*</code> env; every arrival lands in the job's file-sightings ledger
                         (&sect;4.4, &sect;7.11).</dd>
                     <dt>Folder tree</dt>
                     <dd>Sub-folders in the GitOps repo (under <code>jobs/</code>, <code>scripts/</code>,
@@ -5989,16 +5989,16 @@ APP_URL=https://amadeus.example.com \
                         in the secrets system.</dd>
                     <dt>KEK (Key Encryption Key)</dt>
                     <dd>A 32-byte base64 master key that envelope-encrypts stored secrets and the SMTP password.
-                        Supplied with <code>AMADEUS_KEK_FILE</code> or <code>AMADEUS_KEK</code> (the old
-                        <code>AMADEUS_SECRET_KEK*</code> spellings stopped reading in v1.5.41). <strong>Back it up separately from the DB backup.</strong>
+                        Supplied with <code>CRONOMICON_KEK_FILE</code> or <code>CRONOMICON_KEK</code> (the old
+                        <code>CRONOMICON_SECRET_KEK*</code> spellings stopped reading in v1.5.41). <strong>Back it up separately from the DB backup.</strong>
                         If you lose it, stored secrets are unrecoverable.</dd>
                     <dt>Manifest</dt>
                     <dd>The execution payload that a runner gets after it claims a run: the trace id, the job, the run
                         type, the interpreter and body, an env snapshot (with the dispatcher-owned
-                        <code>AMADEUS_RUN_*</code> context), and target references with <code>authKeyEnvVar</code>
+                        <code>CRONOMICON_RUN_*</code> context), and target references with <code>authKeyEnvVar</code>
                         names. Before, it never carried secret bytes. Since protocol v6, a binding-bearing run to a
                         runner flagged for secret injection also carries resolved
-                        <code>AMADEUS_SECRET_*</code>/<code>AMADEUS_VAR_*</code> values in a dedicated Secrets block,
+                        <code>CRONOMICON_SECRET_*</code>/<code>CRONOMICON_VAR_*</code> values in a dedicated Secrets block,
                         and resolved SSH-key material in a Keys block. The Secrets block is keyed by each binding's
                         <strong>destination</strong>, not by the row name alone, so one aliased row can appear under two
                         keys (&sect;6.1b). It fails closed on each binding that cannot resolve, is refused to an
@@ -6027,7 +6027,7 @@ APP_URL=https://amadeus.example.com \
                         runner's lifecycle, and this is a freshness reading over it. Thus only <code>online</code>
                         degrades, and the reaper's sweep does not change. It names the window in which a dead runner
                         read <em>Online</em> before, because <code>offline</code> is declared only after
-                        <code>AMADEUS_RUNNER_OFFLINE_AFTER</code>. The UI counts it as <strong>reachable</strong>:
+                        <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code>. The UI counts it as <strong>reachable</strong>:
                         recovery actions stay available. See &sect;7.6.</dd>
                     <dt>Service account</dt>
                     <dd>A machine principal: a name, a role, an agency (or All scopes), and an
@@ -6037,8 +6037,8 @@ APP_URL=https://amadeus.example.com \
                         revokes the token but keeps the row as an audit actor (&sect;6.5).</dd>
                     <dt>Reaper</dt>
                     <dd>A server sweep (about 60s) that marks runners offline after
-                        <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> (default 5m) and deregisters runners offline longer
-                        than <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code> (default 14d). Reaping is reversible: an
+                        <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> (default 5m) and deregisters runners offline longer
+                        than <code>CRONOMICON_RUNNER_DEREGISTER_AFTER</code> (default 14d). Reaping is reversible: an
                         authenticated poll from an offline runner re-admits it to <code>online</code>.</dd>
                     <dt>Redacted log / [REDACTED]</dt>
                     <dd>Run output in which scope env values, decrypted stored-secret values, and stored <a
@@ -6054,17 +6054,17 @@ APP_URL=https://amadeus.example.com \
                         registered runners. To mint and revoke tokens is <strong>unrestricted-only</strong>: a new
                         runner joins the general pool and serves each department.</dd>
                     <dt>Reserved reference prefixes</dt>
-                    <dd>The closed set of four <code>AMADEUS_*</code> names that Cronomicon treats as run-injected
-                        <em>references</em>, not configuration: <code>AMADEUS_VAR_</code>, <code>AMADEUS_SECRET_</code>,
-                        <code>AMADEUS_KEY_</code>, <code>AMADEUS_RUN_</code>. A name under one is resolved and injected
-                        into runs. Each other <code>AMADEUS_*</code> name is server or runner config. The match is
-                        exact-prefix (<code>AMADEUS_SECRET_</code> never matches <code>AMADEUS_SECRETS_</code>), and
-                        operator-authored env can never define an <code>AMADEUS_*</code> key. The stdlib-only
+                    <dd>The closed set of four <code>CRONOMICON_*</code> names that Cronomicon treats as run-injected
+                        <em>references</em>, not configuration: <code>CRONOMICON_VAR_</code>, <code>CRONOMICON_SECRET_</code>,
+                        <code>CRONOMICON_KEY_</code>, <code>CRONOMICON_RUN_</code>. A name under one is resolved and injected
+                        into runs. Each other <code>CRONOMICON_*</code> name is server or runner config. The match is
+                        exact-prefix (<code>CRONOMICON_SECRET_</code> never matches <code>CRONOMICON_SECRETS_</code>), and
+                        operator-authored env can never define an <code>CRONOMICON_*</code> key. The stdlib-only
                         <code>internal/envref</code> package is the single source of truth, shared by the server and the
                         runner agent.</dd>
-                    <dt>AMADEUS_RUN_* (run context)</dt>
+                    <dt>CRONOMICON_RUN_* (run context)</dt>
                     <dd>The dispatcher-owned, non-bindable run-context prefix. A fixed set of log-safe run-metadata
-                        vars: <code>AMADEUS_RUN_ID</code>, <code>_JOB</code>, <code>_JOB_SOURCE</code> (git|amadeus),
+                        vars: <code>CRONOMICON_RUN_ID</code>, <code>_JOB</code>, <code>_JOB_SOURCE</code> (git|amadeus),
                         <code>_SCOPE</code> (<code>""</code>=global), <code>_TYPE</code>, <code>_TRIGGERED_BY</code>,
                         <code>_EXECUTOR</code> (ssh|runner). On the SSH path, they merge into the remote command env. On
                         the runner path, they merge into the manifest Env block. They never resolve from a store row,
@@ -6170,7 +6170,7 @@ APP_URL=https://amadeus.example.com \
                         overlap, Git wins on read. The one exception is the per-instance disabled-workflow control.</dd>
                     <dt>SSH executor (in-app)</dt>
                     <dd>The opt-in in-process worker pool that runs bash, perl, powershell, and python over SSH, direct
-                        or through a bastion. Off by default. <code>AMADEUS_SSH_EXECUTOR_ENABLED</code> turns it on.
+                        or through a bastion. Off by default. <code>CRONOMICON_SSH_EXECUTOR_ENABLED</code> turns it on.
                         Default concurrency: 4.</dd>
                     <dt>SSH key credential</dt>
                     <dd>A first-class, typed credential (the <code>ssh_credentials</code> entity) for the private keys
@@ -6213,7 +6213,7 @@ APP_URL=https://amadeus.example.com \
                     <dd>The default auth mode. A reverse proxy runs forward-auth against your identity provider and injects the
                         <code>Remote-User/-Email/-Name/-Groups</code> headers, which Cronomicon trusts per request. There
                         is no app session cookie.</dd>
-                    <dt>AMADEUS_TRUSTED_PROXIES</dt>
+                    <dt>CRONOMICON_TRUSTED_PROXIES</dt>
                     <dd>The CIDR/IP allowlist of the reverse-proxy peer whose <code>Remote-*</code> headers Cronomicon will
                         trust: the full trusted-header model. Fail-closed: empty means the server does not boot. It must
                         be the IP that Cronomicon sees as the connecting peer.</dd>
@@ -6341,7 +6341,7 @@ APP_URL=https://amadeus.example.com \
                                     plain runs), <code>/runs/{traceId}/references</code> (the injected-reference audit:
                                     names, kind, and derived reference, never values; scope-guarded),
                                     <code>/runs/{traceId}/log</code> (ingest limited by
-                                    <code>AMADEUS_MAX_RUN_LOG_BYTES</code>; <code>413</code> over the cap; the operator
+                                    <code>CRONOMICON_MAX_RUN_LOG_BYTES</code>; <code>413</code> over the cap; the operator
                                     read accepts <code>?offset=</code> and answers <code>X-Log-Offset</code> for the
                                     UI's incremental live tail — an offset past EOF is <code>200</code>-empty, never an
                                     error, so a tail whose bookmark outlived a reaped log recovers). List
@@ -6489,69 +6489,69 @@ APP_URL=https://amadeus.example.com \
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>AMADEUS_AUTH_MODE</code></td>
+                                <td><code>CRONOMICON_AUTH_MODE</code></td>
                                 <td><code>trusted-header</code></td>
                                 <td><code>trusted-header</code> or <code>oidc</code></td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_TRUSTED_PROXIES</code></td>
+                                <td><code>CRONOMICON_TRUSTED_PROXIES</code></td>
                                 <td><em>(empty)</em></td>
                                 <td><strong>Necessary</strong> in trusted-header mode. Fail-closed if empty</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_KEK_FILE</code> / <code>AMADEUS_KEK</code></td>
+                                <td><code>CRONOMICON_KEK_FILE</code> / <code>CRONOMICON_KEK</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>The mounted base64 KEK (a file path, or an inline value). Back it up separately from
-                                    the DB. Rotation forms: <code>AMADEUS_KEK_VERSION</code>,
-                                    <code>AMADEUS_KEK_&lt;N&gt;</code> / <code>AMADEUS_KEK_&lt;N&gt;_FILE</code>.
-                                    Renamed out of the <code>AMADEUS_SECRET_</code> reference prefix; the legacy
-                                    <code>AMADEUS_SECRET_KEK*</code> names no longer read (v1.5.41)</td>
+                                    the DB. Rotation forms: <code>CRONOMICON_KEK_VERSION</code>,
+                                    <code>CRONOMICON_KEK_&lt;N&gt;</code> / <code>CRONOMICON_KEK_&lt;N&gt;_FILE</code>.
+                                    Renamed out of the <code>CRONOMICON_SECRET_</code> reference prefix; the legacy
+                                    <code>CRONOMICON_SECRET_KEK*</code> names no longer read (v1.5.41)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SSH_EXECUTOR_ENABLED</code></td>
+                                <td><code>CRONOMICON_SSH_EXECUTOR_ENABLED</code></td>
                                 <td><code>false</code></td>
                                 <td>Turns on the in-app SSH executor (pool concurrency 4, from
-                                    <code>AMADEUS_SSH_EXECUTOR_CONCURRENCY</code>)</td>
+                                    <code>CRONOMICON_SSH_EXECUTOR_CONCURRENCY</code>)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SSH_EXECUTOR_STALE_AFTER</code></td>
+                                <td><code>CRONOMICON_SSH_EXECUTOR_STALE_AFTER</code></td>
                                 <td><code>24h</code></td>
                                 <td>The SSH-orphan reaper window. A <code>running</code> ssh run older than this becomes
                                     <code>executor_lost</code>. Keep it far above each job timeout</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code></td>
+                                <td><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>The first-deploy admin seed (trusted-header mode only; OIDC never applies it; see
                                     &sect;8.7 for <code>amadeus grant-admin</code>). Remove it after you seed the grants
                                 </td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_COOKIE_SECURE</code></td>
+                                <td><code>CRONOMICON_COOKIE_SECURE</code></td>
                                 <td><code>true</code></td>
                                 <td>Must stay <code>true</code> in production</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_DB_PATH</code></td>
+                                <td><code>CRONOMICON_DB_PATH</code></td>
                                 <td><code>/var/lib/amadeus/amadeus.db</code></td>
                                 <td>Keep it on the mounted volume</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_GITLAB_WEBHOOK_SECRET</code></td>
+                                <td><code>CRONOMICON_GITLAB_WEBHOOK_SECRET</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>When set, it pins the secret (UI rotation returns 409)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SECRETS_INJECTION_ENABLED</code></td>
+                                <td><code>CRONOMICON_SECRETS_INJECTION_ENABLED</code></td>
                                 <td><code>true</code></td>
                                 <td>The global kill-switch for dispatch-time reference injection. The spelling is
-                                    <em>plural</em>, so it sits outside the reserved <code>AMADEUS_SECRET_</code>
+                                    <em>plural</em>, so it sits outside the reserved <code>CRONOMICON_SECRET_</code>
                                     prefix. When <code>false</code>, the resolver injects nothing on the SSH path or the
                                     runner path. A run already dispatched with a secret stays fail-closed for redaction
                                     and ingest for its full life</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_MAX_RUN_LOG_BYTES</code></td>
+                                <td><code>CRONOMICON_MAX_RUN_LOG_BYTES</code></td>
                                 <td><code>536870912</code></td>
                                 <td>The per-run log-ingest byte cap (512&nbsp;MiB; <code>0</code> removes it). The
                                     <code>/runs/{traceId}/log</code> path is exempt from the 2&nbsp;MiB body cap. A
@@ -6559,12 +6559,12 @@ APP_URL=https://amadeus.example.com \
                                     persists</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_LOG_FILE_ENABLED</code> / <code>AMADEUS_LOG_FILE</code> /
+                                <td><code>CRONOMICON_LOG_FILE_ENABLED</code> / <code>CRONOMICON_LOG_FILE</code> /
                                     <code>_MAX_MB</code> / <code>_KEEP</code></td>
                                 <td><code>true</code> / <em>(empty)</em> / <code>64</code> / <code>5</code></td>
                                 <td>The server's <strong>process log</strong> on disk, written <strong>in addition to
                                         stdout</strong>. Stdout is never replaced, so journald and docker collection are
-                                    not affected. An empty <code>AMADEUS_LOG_FILE</code> gives <code>amadeus.log</code>
+                                    not affected. An empty <code>CRONOMICON_LOG_FILE</code> gives <code>amadeus.log</code>
                                     in the run-log directory (Settings &rarr; Log Storage), and it follows that
                                     directory when the setting changes. An explicit path must be
                                     <strong>absolute</strong> (rejected at boot if not), and it attaches earlier in
@@ -6578,7 +6578,7 @@ APP_URL=https://amadeus.example.com \
                                     see <a href="#secrets">&sect;6.2</a></td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_AUDIT_LOG_ENABLED</code> / <code>AMADEUS_AUDIT_LOG</code></td>
+                                <td><code>CRONOMICON_AUDIT_LOG_ENABLED</code> / <code>CRONOMICON_AUDIT_LOG</code></td>
                                 <td><code>true</code> / <em>(empty)</em></td>
                                 <td>The <strong>compliance audit stream</strong> (<code>audit.log</code>), a separate
                                     file from the process log: one JSON-Lines record per audited event (the
@@ -6594,7 +6594,7 @@ APP_URL=https://amadeus.example.com \
                                     see <a href="#deployment">&sect;8.8</a></td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_OUTBOUND_ALLOW_PRIVATE</code> / <code>_ALLOW_LOOPBACK</code></td>
+                                <td><code>CRONOMICON_OUTBOUND_ALLOW_PRIVATE</code> / <code>_ALLOW_LOOPBACK</code></td>
                                 <td><code>true</code> / <code>false</code></td>
                                 <td>The SSRF egress-guard posture on all operator-configured outbound targets. Private
                                     (RFC-1918/ULA) is permitted by default, so an internal Vault or GitLab continues to
@@ -6604,7 +6604,7 @@ APP_URL=https://amadeus.example.com \
                                     blocked. The S3 IAM-role provider is exempt, so EC2/ECS IMDS still operates</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_VAULT_NAMESPACE</code> / <code>_CA_FILE</code> /
+                                <td><code>CRONOMICON_VAULT_NAMESPACE</code> / <code>_CA_FILE</code> /
                                     <code>_SECRET_ID_WRAPPED</code></td>
                                 <td><em>(empty)</em> / <em>(empty)</em> / <code>false</code></td>
                                 <td>Optional Vault-client hardening; each is inactive until set. The
@@ -6616,12 +6616,12 @@ APP_URL=https://amadeus.example.com \
                                     <code>backend/deploy/vault-runbook.md</code></td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_RUNNER_OFFLINE_AFTER</code> / <code>_DEREGISTER_AFTER</code></td>
+                                <td><code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> / <code>_DEREGISTER_AFTER</code></td>
                                 <td><code>5m</code> / <code>14d</code></td>
                                 <td>The reaper's offline and auto-deregister windows</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_RUNNER_ALLOW_WATCH</code> / <code>AMADEUS_RUNNER_WATCH_PATHS</code></td>
+                                <td><code>CRONOMICON_RUNNER_ALLOW_WATCH</code> / <code>CRONOMICON_RUNNER_WATCH_PATHS</code></td>
                                 <td>off / <em>(empty)</em></td>
                                 <td><em>Agent-side.</em> The file-watch opt-in and its directory allowlist
                                     (comma-separated roots; equivalents of <code>-allow-watch</code> /
@@ -6629,7 +6629,7 @@ APP_URL=https://amadeus.example.com \
                                     <code>-allow-watch</code> with no paths logs a loud warning (&sect;7.11)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_RETENTION_RUNS_DAYS</code> / <code>_CHANGELOG_DAYS</code> /
+                                <td><code>CRONOMICON_RETENTION_RUNS_DAYS</code> / <code>_CHANGELOG_DAYS</code> /
                                     <code>_LOG_FILES_DAYS</code></td>
                                 <td><code>90</code> / <code>365</code> / <code>90</code></td>
                                 <td><strong>Bootstrap defaults only.</strong> They seed the retention blob on the first
@@ -6642,25 +6642,25 @@ APP_URL=https://amadeus.example.com \
                                     everywhere</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BACKUP_AT</code></td>
+                                <td><code>CRONOMICON_BACKUP_AT</code></td>
                                 <td><code>02:00</code></td>
                                 <td>The daily wall-clock UTC time (<code>HH:MM</code>) for the retention and backup
                                     sweep. The boot catch-up is gated on the last success</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BACKUP_S3_BUCKET</code></td>
+                                <td><code>CRONOMICON_BACKUP_S3_BUCKET</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>Empty gives local-only nightly snapshots</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_DEV_AUTH</code> / <code>AMADEUS_DEV_SEED</code></td>
+                                <td><code>CRONOMICON_DEV_AUTH</code> / <code>CRONOMICON_DEV_SEED</code></td>
                                 <td><code>false</code></td>
                                 <td><strong>Never in production</strong></td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <p>Precedence: an <code>AMADEUS_*</code> env var, when set, overrides the matching DB-backed Setting.
+                <p>Precedence: an <code>CRONOMICON_*</code> env var, when set, overrides the matching DB-backed Setting.
                     Most settings resolve one time, at startup. The exceptions are the retention windows (read again at
                     the top of each nightly sweep) and the <strong>run-log directory</strong>, which points each log
                     writer to the new location immediately on save (no restart). Build-time args (<code>VERSION</code>,
@@ -6766,7 +6766,7 @@ APP_URL=https://amadeus.example.com \
                     deliberately overloaded three ways: a GitLab webhook, a <em>service-account token trigger</em>
                     (actor <code>svc:&lt;name&gt;</code>), and a <em>file arrival</em>. Filtering History on
                     <code>webhook</code> returns all three; the actor and the run's environment
-                    (<code>AMADEUS_WATCH_*</code>) tell them apart.</p>
+                    (<code>CRONOMICON_WATCH_*</code>) tell them apart.</p>
             </section>
 
             <footer

@@ -95,7 +95,7 @@ func Doctor(ctx context.Context, cfg Config, quick bool) ([]Check, bool) {
 	if id, _ := loadIdentity(cfg.IdentityFile); id != nil {
 		add("registration", CheckPass, "resuming identity "+id.ID)
 	} else if cfg.RegistrationToken == "" {
-		add("registration", CheckFail, "no identity yet and no registration token — set AMADEUS_RUNNER_REGISTRATION_TOKEN (single-use, expires 24h; mint via Add Runner)")
+		add("registration", CheckFail, "no identity yet and no registration token — set CRONOMICON_RUNNER_REGISTRATION_TOKEN (single-use, expires 24h; mint via Add Runner)")
 	} else {
 		add("registration", CheckPass, "registration token present (single-use, expires 24h)")
 	}

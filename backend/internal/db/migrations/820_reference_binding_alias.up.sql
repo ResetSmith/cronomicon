@@ -2,14 +2,14 @@
 -- storage half of Phase A aliasing).
 --
 -- A binding has always injected under its own row name: bind the secret `X` and
--- the run gets AMADEUS_SECRET_X, full stop. That makes one shared job body
+-- the run gets CRONOMICON_SECRET_X, full stop. That makes one shared job body
 -- consumable by exactly ONE department's credential — a playbook that hardcodes
--- lookup('env','AMADEUS_SECRET_BECOME_PASSWORD') can only ever be fed the row
+-- lookup('env','CRONOMICON_SECRET_BECOME_PASSWORD') can only ever be fed the row
 -- literally named BECOME_PASSWORD. `alias` is the third field that breaks the
 -- tie: the DESTINATION name the resolved value is injected under.
 --
---     TEAMA_SUDO (agency TeamA) --alias--> AMADEUS_SECRET_BECOME_PASSWORD
---     TEAMB_SUDO (agency TeamB) --alias--> AMADEUS_SECRET_BECOME_PASSWORD
+--     TEAMA_SUDO (agency TeamA) --alias--> CRONOMICON_SECRET_BECOME_PASSWORD
+--     TEAMB_SUDO (agency TeamB) --alias--> CRONOMICON_SECRET_BECOME_PASSWORD
 --
 -- ⚠️ THE ALIAS IS A DESTINATION, NOT A SELECTOR (plan §2.2). Resolution is
 -- unchanged: ref_name still names the row, still resolved by runref.lookupScoped
@@ -46,7 +46,7 @@ CREATE TABLE reference_bindings_new (
     -- '' = inject under the row's own name (every pre-820 binding, and the
     -- default for every new one). Non-empty = the bare destination name, which
     -- carries the same charset rules as a row name of that kind so the derived
-    -- AMADEUS_<SECTION>_<alias> is always a legal env-var key.
+    -- CRONOMICON_<SECTION>_<alias> is always a legal env-var key.
     alias        TEXT NOT NULL DEFAULT '',
     created_by   TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL,

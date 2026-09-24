@@ -141,7 +141,7 @@ func (s *Service) applyBootstrapAdmin(groups, roles []string) ([]string, bool) {
 	if !containsFold(roles, "admin") {
 		roles = append(roles, "admin")
 	}
-	s.log.Warn("bootstrap admin group granted admin — remove AMADEUS_BOOTSTRAP_ADMIN_GROUP after seeding mappings",
+	s.log.Warn("bootstrap admin group granted admin — remove CRONOMICON_BOOTSTRAP_ADMIN_GROUP after seeding mappings",
 		"group", s.bootstrapAdminGroup)
 	return roles, true
 }
@@ -175,7 +175,7 @@ func (s *Service) recordLoginThrottled(ctx context.Context, r *http.Request, id 
 			Kind: auditlog.AuthBootstrapAdmin, Outcome: auditlog.OutcomeSuccess,
 			Actor: id.Email, Target: s.bootstrapAdminGroup,
 			Reason:  "bootstrap_admin_group",
-			Details: "admin granted outside ad_group_mappings by AMADEUS_BOOTSTRAP_ADMIN_GROUP",
+			Details: "admin granted outside ad_group_mappings by CRONOMICON_BOOTSTRAP_ADMIN_GROUP",
 		})
 	}
 }

@@ -20,7 +20,7 @@ import (
 // stored credential under the active KEK so an old key can actually be retired.
 //
 //	amadeus rewrap-secrets --dry-run   # what is outstanding, per store and version
-//	amadeus rewrap-secrets             # re-wrap everything to AMADEUS_KEK_VERSION
+//	amadeus rewrap-secrets             # re-wrap everything to CRONOMICON_KEK_VERSION
 //
 // KEK rotation is zero-downtime but LAZY: a row moves to the new version only
 // when it is rewritten, so without this an operator must hand-touch every secret,
@@ -41,11 +41,11 @@ import (
 func runRewrapSecrets(args []string) int {
 	fs := flag.NewFlagSet("rewrap-secrets", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "report what is outstanding per store and KEK version, change nothing")
-	dbPath := fs.String("db", "", "database path (default: AMADEUS_DB_PATH from config)")
+	dbPath := fs.String("db", "", "database path (default: CRONOMICON_DB_PATH from config)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `Usage: amadeus rewrap-secrets [--dry-run] [--db <path>]
 
-Re-wraps every stored credential under the active KEK (AMADEUS_KEK_VERSION) so a
+Re-wraps every stored credential under the active KEK (CRONOMICON_KEK_VERSION) so a
 superseded key can be retired. Covers three stores: stored secrets, SSH
 credentials, and the encrypted settings integrations (GitLab token + webhook
 secret, S3 log-storage key, Vault credentials, SMTP password, observability
@@ -54,9 +54,9 @@ bearer token).
 Safe to run with the server up, and safe to re-run: it is idempotent, and
 re-running is the recovery for a partial pass. Start with --dry-run.
 
-Both the old and the new KEK must be configured — the new one as AMADEUS_KEK /
-AMADEUS_KEK_FILE with AMADEUS_KEK_VERSION set, the old one as AMADEUS_KEK_<N> /
-AMADEUS_KEK_<N>_FILE.
+Both the old and the new KEK must be configured — the new one as CRONOMICON_KEK /
+CRONOMICON_KEK_FILE with CRONOMICON_KEK_VERSION set, the old one as CRONOMICON_KEK_<N> /
+CRONOMICON_KEK_<N>_FILE.
 
 NOTE: re-wrapping does not undo exposure. If the old key leaked, whoever held it
 also held the plaintexts; the remediation is rotating the underlying credentials
@@ -79,7 +79,7 @@ also held the plaintexts; the remediation is rotating the underlying credentials
 		target = cfg.DBPath
 	}
 	if target == "" {
-		fmt.Fprintln(os.Stderr, "rewrap-secrets: no DB path (set AMADEUS_DB_PATH or pass --db)")
+		fmt.Fprintln(os.Stderr, "rewrap-secrets: no DB path (set CRONOMICON_DB_PATH or pass --db)")
 		return 1
 	}
 
@@ -111,7 +111,7 @@ also held the plaintexts; the remediation is rotating the underlying credentials
 	if *dryRun {
 		if report.outstanding() == 0 {
 			fmt.Printf("\nRotation is COMPLETE — every stored credential is at version %d.\n", active)
-			fmt.Printf("It is safe to drop the superseded AMADEUS_KEK_<N> entries.\n")
+			fmt.Printf("It is safe to drop the superseded CRONOMICON_KEK_<N> entries.\n")
 		} else {
 			fmt.Printf("\n%d item(s) still sealed under a superseded KEK. Re-run without --dry-run to move them.\n", report.outstanding())
 		}
@@ -129,7 +129,7 @@ also held the plaintexts; the remediation is rotating the underlying credentials
 		// exit non-zero: the operator must NOT read a partial pass as complete and
 		// go on to drop the old KEK.
 		fmt.Fprintf(os.Stderr, "%d item(s) could not be re-wrapped — most likely the KEK that sealed them is not configured.\n", failed)
-		fmt.Fprintf(os.Stderr, "Supply it as AMADEUS_KEK_<N> / AMADEUS_KEK_<N>_FILE and re-run; do NOT drop a superseded key until --dry-run reports rotation complete.\n")
+		fmt.Fprintf(os.Stderr, "Supply it as CRONOMICON_KEK_<N> / CRONOMICON_KEK_<N>_FILE and re-run; do NOT drop a superseded key until --dry-run reports rotation complete.\n")
 		return 1
 	}
 	fmt.Printf("Re-run with --dry-run to confirm before dropping the superseded key.\n")

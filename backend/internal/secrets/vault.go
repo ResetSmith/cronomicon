@@ -31,4 +31,4 @@ var ErrVaultUnavailable = errors.New("vault unavailable: no Vault client configu
 type stubVaultClient struct{}
 
 func (stubVaultClient) Fetch(_ string) (string, error) { return "", ErrVaultUnavailable }
-func (stubVaultClient) Write(_, _ string) error         { return ErrVaultUnavailable }
+func (stubVaultClient) Write(_, _ string) error        { return ErrVaultUnavailable }

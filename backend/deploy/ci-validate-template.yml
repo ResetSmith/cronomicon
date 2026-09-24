@@ -7,14 +7,14 @@
 # Cronomicon, with line-numbered errors.
 #
 # The `amadeus` binary ships the same parser the runtime uses, so CI and runtime
-# never disagree. Pin AMADEUS_IMAGE to the version your Cronomicon deployment runs.
+# never disagree. Pin CRONOMICON_IMAGE to the version your Cronomicon deployment runs.
 
 variables:
-  AMADEUS_IMAGE: "registry.example.com/amadeus:latest"
+  CRONOMICON_IMAGE: "registry.example.com/amadeus:latest"
 
 validate-job-definitions:
   stage: test
-  image: "$AMADEUS_IMAGE"
+  image: "$CRONOMICON_IMAGE"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -44,7 +44,7 @@ validate-job-definitions:
 #
 # validate-and-comment:
 #   stage: test
-#   image: "$AMADEUS_IMAGE"
+#   image: "$CRONOMICON_IMAGE"
 #   rules:
 #     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 #   script:

@@ -1021,7 +1021,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		//
 		// RA-4 — `as` is the optional ALIAS: the bare destination name the value is
 		// injected under, so a caller can supply THEIR department's credential to a
-		// shared job body that reads a fixed AMADEUS_SECRET_<name>. It is a
+		// shared job body that reads a fixed CRONOMICON_SECRET_<name>. It is a
 		// destination only: `name` still selects the row, and it is still resolved
 		// under this run's scope and agency snapshot, so an alias can never widen
 		// what the caller may attach.
@@ -1617,7 +1617,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// operator's override — job-env is not added there, so it stays un-redacted like
 	// schedule env (JC12). NULL job-env + no override ⇒ nil ⇒ env_json NULL (R2).
 	// Reserved-namespace guard (W4, N-D1): a per-run override may not define any
-	// AMADEUS_* key. Enforced at ingest, BEFORE the merge, so a reserved key can
+	// CRONOMICON_* key. Enforced at ingest, BEFORE the merge, so a reserved key can
 	// never reach env_json.
 	if err := envref.ValidateOperatorEnv(body.Env); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
@@ -1718,7 +1718,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	//
 	// JR-Q1 — a scope Env Vars row of the same bare name does NOT satisfy a prompt and
 	// must not suppress the warning. Env Vars reach a run only via an explicit reference
-	// binding, under the derived AMADEUS_VAR_<name> key (internal/runref); nothing
+	// binding, under the derived CRONOMICON_VAR_<name> key (internal/runref); nothing
 	// publishes a bare `NAME` into the child env. `eff` is therefore the whole truth
 	// here, and the Run dialog's satisfied-check mirrors it exactly. (The dialog used to
 	// claim scope-level satisfaction and contradicted this record — fixed 2026-07-24.)

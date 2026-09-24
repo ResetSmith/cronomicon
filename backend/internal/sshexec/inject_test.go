@@ -99,7 +99,7 @@ func serveEcho(nConn net.Conn, cfg *ssh.ServerConfig) {
 
 // TestSSHExecutorInjectsReferences is the P1.3 end-to-end: a job declares a secret
 // + a variable reference binding; the executor resolves them at dispatch and
-// injects the derived AMADEUS_SECRET_*/AMADEUS_VAR_* values plus the AMADEUS_RUN_*
+// injects the derived CRONOMICON_SECRET_*/CRONOMICON_VAR_* values plus the CRONOMICON_RUN_*
 // context onto the remote command — and the injected secret VALUE is masked in the
 // log while the log-safe variable value is not.
 func TestSSHExecutorInjectsReferences(t *testing.T) {
@@ -212,18 +212,18 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 
 	// Injection reached the run via the stdin export prelude — the derived
 	// reference keys and the fixed run-context set are all present. (Values are
-	// asserted separately: AMADEUS_RUN_* renders verbatim; the reference VALUES are
+	// asserted separately: CRONOMICON_RUN_* renders verbatim; the reference VALUES are
 	// masked by the log redactor — see below.)
 	for _, want := range []string{
-		"export AMADEUS_SECRET_DB_PASS=",
-		"export AMADEUS_VAR_REGION=",
+		"export CRONOMICON_SECRET_DB_PASS=",
+		"export CRONOMICON_VAR_REGION=",
 		// V2-11 — the per-run ADDED variable rides the same prelude as declared ones.
-		"export AMADEUS_VAR_EXTRA=",
-		"export AMADEUS_RUN_ID='run-1'",
-		"export AMADEUS_RUN_JOB='j1'",
-		"export AMADEUS_RUN_SCOPE='" + scope + "'",
-		"export AMADEUS_RUN_TRIGGERED_BY='ops@x'",
-		"export AMADEUS_RUN_EXECUTOR='ssh'",
+		"export CRONOMICON_VAR_EXTRA=",
+		"export CRONOMICON_RUN_ID='run-1'",
+		"export CRONOMICON_RUN_JOB='j1'",
+		"export CRONOMICON_RUN_SCOPE='" + scope + "'",
+		"export CRONOMICON_RUN_TRIGGERED_BY='ops@x'",
+		"export CRONOMICON_RUN_EXECUTOR='ssh'",
 	} {
 		if !strings.Contains(logStr, want) {
 			t.Errorf("expected %q in the stdin prelude:\n%s", want, logStr)
@@ -234,7 +234,7 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	// line (argv) even before redaction. The echoed "cmd: " line carries the argv;
 	// assert the value is confined to the stdin section.
 	for line := range strings.SplitSeq(logStr, "\n") {
-		if strings.HasPrefix(line, "cmd: ") && strings.Contains(line, "AMADEUS_SECRET") {
+		if strings.HasPrefix(line, "cmd: ") && strings.Contains(line, "CRONOMICON_SECRET") {
 			t.Errorf("injected env leaked onto the command line (argv): %q", line)
 		}
 	}
@@ -523,7 +523,7 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 		t.Fatalf("run status = %q, want failure — the executor cannot deliver the key, so the run must not start", status)
 	}
 	logStr := readLog(t, logDir, "run-1")
-	if !strings.Contains(logStr, "AMADEUS_KEY_deploy_key") || !strings.Contains(logStr, "cannot deliver key files") {
+	if !strings.Contains(logStr, "CRONOMICON_KEY_deploy_key") || !strings.Contains(logStr, "cannot deliver key files") {
 		t.Errorf("run log should name the key and say why:\n%s", logStr)
 	}
 	if strings.Contains(logStr, "cmd: ") {

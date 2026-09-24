@@ -8,7 +8,7 @@
 -- reaped/deregistered runner needs a fresh token.
 --
 -- Existing rows (the old shared token) grandfather as unlabeled single-use
--- rows until their 24h expiry. AMADEUS_RUNNER_BOOTSTRAP_TOKEN is unchanged
+-- rows until their 24h expiry. CRONOMICON_RUNNER_BOOTSTRAP_TOKEN is unchanged
 -- (env-configured, multi-use, no row).
 ALTER TABLE registration_tokens ADD COLUMN label TEXT;              -- operator-chosen, e.g. the intended runner name
 ALTER TABLE registration_tokens ADD COLUMN used_at TEXT;            -- set atomically on the consuming registration

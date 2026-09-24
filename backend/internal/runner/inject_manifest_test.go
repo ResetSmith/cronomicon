@@ -79,7 +79,7 @@ func callManifest(t *testing.T, svc *Service, as *auth.Service, traceID, token s
 }
 
 // TestManifestInjectsReferences (P1.4): a binding-bearing run assigned to a v6,
-// injection-flagged runner ships resolved Secrets + the AMADEUS_RUN_* context.
+// injection-flagged runner ships resolved Secrets + the CRONOMICON_RUN_* context.
 func TestManifestInjectsReferences(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
@@ -91,19 +91,19 @@ func TestManifestInjectsReferences(t *testing.T) {
 	traceID, secretVal, varVal := seedInjectionRun(t, svc, runnerID, 6, true)
 	m := getManifest(t, svc, as, traceID, tok)
 
-	if m.Secrets["AMADEUS_SECRET_DB_PASS"] != secretVal {
-		t.Errorf("secret not injected: %q", m.Secrets["AMADEUS_SECRET_DB_PASS"])
+	if m.Secrets["CRONOMICON_SECRET_DB_PASS"] != secretVal {
+		t.Errorf("secret not injected: %q", m.Secrets["CRONOMICON_SECRET_DB_PASS"])
 	}
-	if m.Secrets["AMADEUS_VAR_REGION"] != varVal {
-		t.Errorf("variable not injected: %q", m.Secrets["AMADEUS_VAR_REGION"])
+	if m.Secrets["CRONOMICON_VAR_REGION"] != varVal {
+		t.Errorf("variable not injected: %q", m.Secrets["CRONOMICON_VAR_REGION"])
 	}
 	// Run context lands in the plaintext Env, NOT the Secrets block.
-	if m.Env["AMADEUS_RUN_ID"] != traceID || m.Env["AMADEUS_RUN_EXECUTOR"] != "runner" ||
-		m.Env["AMADEUS_RUN_JOB"] != "j1" || m.Env["AMADEUS_RUN_SCOPE"] != "prod" ||
-		m.Env["AMADEUS_RUN_TRIGGERED_BY"] != "ops@x" {
+	if m.Env["CRONOMICON_RUN_ID"] != traceID || m.Env["CRONOMICON_RUN_EXECUTOR"] != "runner" ||
+		m.Env["CRONOMICON_RUN_JOB"] != "j1" || m.Env["CRONOMICON_RUN_SCOPE"] != "prod" ||
+		m.Env["CRONOMICON_RUN_TRIGGERED_BY"] != "ops@x" {
 		t.Errorf("run context missing/wrong in Env: %+v", m.Env)
 	}
-	if _, leaked := m.Env["AMADEUS_SECRET_DB_PASS"]; leaked {
+	if _, leaked := m.Env["CRONOMICON_SECRET_DB_PASS"]; leaked {
 		t.Errorf("secret value leaked into plaintext Env: %+v", m.Env)
 	}
 }
@@ -132,14 +132,14 @@ func TestManifestInjectsOverrideReferences(t *testing.T) {
 	}
 
 	m := getManifest(t, svc, as, traceID, tok)
-	if m.Secrets["AMADEUS_VAR_EXTRA"] != "extra-value" {
-		t.Errorf("per-run added variable not injected: %q", m.Secrets["AMADEUS_VAR_EXTRA"])
+	if m.Secrets["CRONOMICON_VAR_EXTRA"] != "extra-value" {
+		t.Errorf("per-run added variable not injected: %q", m.Secrets["CRONOMICON_VAR_EXTRA"])
 	}
-	if m.Secrets["AMADEUS_SECRET_DB_PASS"] != secretVal {
-		t.Errorf("declared secret lost after per-run addition: %q", m.Secrets["AMADEUS_SECRET_DB_PASS"])
+	if m.Secrets["CRONOMICON_SECRET_DB_PASS"] != secretVal {
+		t.Errorf("declared secret lost after per-run addition: %q", m.Secrets["CRONOMICON_SECRET_DB_PASS"])
 	}
-	if m.Secrets["AMADEUS_VAR_REGION"] != varVal {
-		t.Errorf("declared variable lost after per-run addition: %q", m.Secrets["AMADEUS_VAR_REGION"])
+	if m.Secrets["CRONOMICON_VAR_REGION"] != varVal {
+		t.Errorf("declared variable lost after per-run addition: %q", m.Secrets["CRONOMICON_VAR_REGION"])
 	}
 }
 

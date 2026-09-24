@@ -62,7 +62,7 @@ func TestVaultConfigChangeReachesWiredServices(t *testing.T) {
 	}
 	cfg := &config.Config{
 		// The stored token is encrypted at rest, so the config needs a KEK; no
-		// AMADEUS_VAULT_* env, so the DB-backed vault_config is the live source.
+		// CRONOMICON_VAULT_* env, so the DB-backed vault_config is the live source.
 		SecretKEKEnv: base64.StdEncoding.EncodeToString(kek),
 		// The mock Vault is a loopback httptest server; allow it past the SU-7 guard.
 		OutboundAllowPrivate:  true,

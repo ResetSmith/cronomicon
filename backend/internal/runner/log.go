@@ -282,7 +282,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	// step's plaintext env_json (workflow engine), and into the run-detail API —
 	// around allow_secret_injection and the §8 "never persist an injected value to
 	// env_json" invariant, via the natural idiom
-	// `echo "::amadeus-output name=TOKEN::$AMADEUS_SECRET_API"`. Fail the run closed
+	// `echo "::amadeus-output name=TOKEN::$CRONOMICON_SECRET_API"`. Fail the run closed
 	// at this earliest choke point (before outputs_json is written): drop the
 	// captured outputs and mark the run failed so nothing propagates. The offending
 	// value is already masked in the persisted log (the redactor is seeded with the

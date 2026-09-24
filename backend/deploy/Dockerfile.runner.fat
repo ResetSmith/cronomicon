@@ -81,7 +81,7 @@ COPY --from=build /out/amadeus-runner /app/amadeus-runner
 # Identity + keys/inventory persist here (see install-runner.md).
 RUN mkdir -p /var/lib/amadeus-runner && chown amadeus:amadeus /var/lib/amadeus-runner
 VOLUME ["/var/lib/amadeus-runner"]
-ENV AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
+ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
 
 USER amadeus
 ENTRYPOINT ["/app/amadeus-runner"]

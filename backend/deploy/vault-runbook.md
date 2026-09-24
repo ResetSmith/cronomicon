@@ -39,9 +39,9 @@ env, or via the Settings → Vault page (DB-backed). Precedence: env wins over D
 the `*_FILE` form wins over the inline value.
 
 ```
-AMADEUS_VAULT_ADDR=https://vault.internal:8200
-AMADEUS_VAULT_ROLE_ID_FILE=/run/secrets/vault_role_id
-AMADEUS_VAULT_SECRET_ID_FILE=/run/secrets/vault_secret_id
+CRONOMICON_VAULT_ADDR=https://vault.internal:8200
+CRONOMICON_VAULT_ROLE_ID_FILE=/run/secrets/vault_role_id
+CRONOMICON_VAULT_SECRET_ID_FILE=/run/secrets/vault_secret_id
 ```
 
 Token refresh is automatic: the client re-logs in with the AppRole at 80% of the
@@ -69,10 +69,10 @@ as one field, e.g. `secret/data/amadeus/ssh/deploy#private_key`.
 
 ## 3. Namespace & private CA (D4 — dormant until set)
 
-- **Namespace** (Vault Enterprise / HCP): set `AMADEUS_VAULT_NAMESPACE` (or Settings
+- **Namespace** (Vault Enterprise / HCP): set `CRONOMICON_VAULT_NAMESPACE` (or Settings
   → Vault → namespace). Sent as `X-Vault-Namespace` on every request, including the
   AppRole login. Env overrides the DB value.
-- **Private CA**: point `AMADEUS_VAULT_CA_FILE` at a PEM bundle to pin the client's
+- **Private CA**: point `CRONOMICON_VAULT_CA_FILE` at a PEM bundle to pin the client's
   TLS trust to it instead of the system roots. A missing or unparseable bundle
   **fails loud** — the Vault client is left disabled rather than silently trusting
   system roots. Rotate the CA by replacing the file and restarting.
@@ -82,7 +82,7 @@ as one field, e.g. `secret/data/amadeus/ssh/deploy#private_key`.
 Default is a **static long-lived** `secret_id` (`secret_id_ttl=0`), delivered by
 mounted file. This is the simplest posture and needs no rotation.
 
-**Response-wrapped delivery** (optional, `AMADEUS_VAULT_SECRET_ID_WRAPPED=true`):
+**Response-wrapped delivery** (optional, `CRONOMICON_VAULT_SECRET_ID_WRAPPED=true`):
 deliver a single-use *wrapping token* in place of the secret_id, so the raw
 secret_id never lands in env/DB/file in plaintext. Cronomicon unwraps it once via
 `sys/wrapping/unwrap` at first login and caches the real secret_id in memory.
@@ -92,7 +92,7 @@ secret_id never lands in env/DB/file in plaintext. Cronomicon unwraps it once vi
 vault write -wrap-ttl=60m -f auth/approle/role/amadeus/secret-id   # → wrapping token
 ```
 
-Deliver the **wrapping token** as `AMADEUS_VAULT_SECRET_ID[_FILE]`. Note a wrapping
+Deliver the **wrapping token** as `CRONOMICON_VAULT_SECRET_ID[_FILE]`. Note a wrapping
 token is single-use: it is consumed at boot, so a *restart* needs a fresh wrapped
 token (or fall back to a static secret_id). Periodic, unattended **rotation** of a
 live secret_id (re-wrapping on a schedule and reloading without downtime) is not
@@ -128,7 +128,7 @@ fallback for runner-local keys.
 
 1. Create a vault-source secret (Settings → Env Vars, or migrate an existing stored
    secret) with a `vault_ref` your policy can read.
-2. Bind it on a job (`AMADEUS_SECRET_<name>`) and dispatch a run.
+2. Bind it on a job (`CRONOMICON_SECRET_<name>`) and dispatch a run.
 3. Confirm the value is injected and **masked** in the run log, and that Run detail
    → Injected references lists the reference (name only, source `vault`).
 4. For SSH: point a host's credential at a vault-source `ssh_credentials` row and

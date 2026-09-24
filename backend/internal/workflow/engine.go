@@ -1692,10 +1692,10 @@ func validateBranch(step Step, upstream map[string]bool, errs *[]ValidationError
 func validateInputs(step Step, upstream map[string]bool, errs *[]ValidationError) {
 	for key, ref := range step.Inputs {
 		// Reserved-namespace guard (W4, N-D1): a step input's KEY is the env var it
-		// injects into the child run, so it may not be an AMADEUS_* name — those are
+		// injects into the child run, so it may not be an CRONOMICON_* name — those are
 		// injector-owned references, not operator-set values.
 		if envref.HasAmadeusPrefix(key) {
-			addStepErr(errs, step, "inputs."+key, "input key is reserved: a workflow step may not define an AMADEUS_* env key (these are references Cronomicon injects into runs, not values you set)")
+			addStepErr(errs, step, "inputs."+key, "input key is reserved: a workflow step may not define an CRONOMICON_* env key (these are references Cronomicon injects into runs, not values you set)")
 		}
 		if ref.FromStep == "" {
 			addStepErr(errs, step, "inputs."+key, "input must name an upstream step (fromStep)")

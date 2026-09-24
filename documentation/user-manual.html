@@ -2377,7 +2377,7 @@
                         <p class="muted">Cronomicon itself opens an outbound SSH connection and runs the command — direct
                             or via a bastion. Handles <strong>bash, perl, powershell, python</strong>. <strong>Off by
                                 default</strong>; an operator enables it with
-                            <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code>.
+                            <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code>.
                         </p>
                     </div>
                     <div class="card">
@@ -2391,7 +2391,7 @@
                     <div class="ct"><span class="em">💡</span> “Why do my shell jobs never run?”</div>
                     <p>Shell jobs <em>default</em> to the SSH executor <strong>type</strong>, but the SSH executor
                         <strong>pool is disabled until an operator turns it on</strong>. If
-                        <code>AMADEUS_SSH_EXECUTOR_ENABLED</code> is not set, <code>ssh</code>-tagged runs sit in the
+                        <code>CRONOMICON_SSH_EXECUTOR_ENABLED</code> is not set, <code>ssh</code>-tagged runs sit in the
                         queue forever. Likewise, an <code>ansible</code>/<code>terraform</code> run with no capable
                         runner online stays queued as <em>“waiting for a {type}-capable runner.”</em>
                     </p>
@@ -3284,7 +3284,7 @@
                     them — each row lists the label/name, a <code>● required</code> marker, the default, and any allowed
                     options), a <strong>reference-bindings</strong> editor (<a href="#refbindings">§11.6</a>) where an
                     admin declares the Secrets / Variables / SSH keys this job injects at run time — that is <strong>one
-                        row per reference</strong> carrying the kind dot, the derived <code>AMADEUS_*</code> name, the
+                        row per reference</strong> carrying the kind dot, the derived <code>CRONOMICON_*</code> name, the
                     resolve verdict, the state pill, the reason and the remove control, instead of the old
                     chip-plus-a-repeated-line-beneath (healthy references get a row too, so the section stays a complete
                     inventory of what the job consumes) — a <strong>duration sparkline</strong> of the last ~20 runs,
@@ -3767,7 +3767,7 @@
                     <p>The dialog once claimed a required input was satisfied whenever an <a href="#envvars">Env
                             Vars</a> row of the same name existed in the scope. It never was: Env Vars reach a run only
                         through an explicit <a href="#refbindings">reference binding</a> and only under the derived
-                        <code>AMADEUS_VAR_&lt;name&gt;</code> key — nothing publishes a bare <code>NAME</code>. The run
+                        <code>CRONOMICON_VAR_&lt;name&gt;</code> key — nothing publishes a bare <code>NAME</code>. The run
                         proceeded with the variable missing and was recorded as unfilled anyway. The false reassurance
                         is gone; supply the value as a run input, a job-level env row, or an explicit reference.
                     </p>
@@ -4754,7 +4754,7 @@
                                     agent host holds and Cronomicon does not (a site licence key, a locally-injected
                                     token). Names only; the value never leaves the runner, and an unset name fails the
                                     run loudly rather than resolving empty. Not a way to inject stored Secrets or
-                                    Variables — reference those instead, and <code>AMADEUS_*</code> names are refused
+                                    Variables — reference those instead, and <code>CRONOMICON_*</code> names are refused
                                     for exactly that reason. The Git YAML equivalent is
                                     <code>spec.env_passthrough</code>, which this field finally makes authorable in-app.
                                 </td>
@@ -5403,13 +5403,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     department's value (<a href="#scopes">§11.2</a>).</p>
                 <figure class="shot">
                     <img class="dark" src="/manual/env-vars-dark.png"
-                        alt="The Env Vars view on the Variables tab: keys with scope, Used-by and description columns, the AMADEUS_VAR_ reference hint banner, a scope filter beside the search box, and the Secrets and SSH Keys tabs"
+                        alt="The Env Vars view on the Variables tab: keys with scope, Used-by and description columns, the CRONOMICON_VAR_ reference hint banner, a scope filter beside the search box, and the Secrets and SSH Keys tabs"
                         loading="lazy" width="1600" height="900">
                     <img class="light" src="/manual/env-vars-light.png"
-                        alt="The Env Vars view on the Variables tab: keys with scope, Used-by and description columns, the AMADEUS_VAR_ reference hint banner, a scope filter beside the search box, and the Secrets and SSH Keys tabs"
+                        alt="The Env Vars view on the Variables tab: keys with scope, Used-by and description columns, the CRONOMICON_VAR_ reference hint banner, a scope filter beside the search box, and the Secrets and SSH Keys tabs"
                         loading="lazy" width="1600" height="900">
                     <figcaption>The Variables tab: unscoped rows spell out <strong>global</strong>, Used-by counts the
-                        declared bindings, and the banner states the <code>AMADEUS_VAR_&lt;key&gt;</code> reference
+                        declared bindings, and the banner states the <code>CRONOMICON_VAR_&lt;key&gt;</code> reference
                         rule. Secrets and SSH Keys are the adjacent tabs.</figcaption>
                 </figure>
 
@@ -5478,7 +5478,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     copy) <strong>· Source</strong> (<span class="pill amad">Stored</span> / <span
                         class="pill git">Vault</span>) <strong>· Tags · Used By</strong> (the count of hosts/bastions
                     referencing it) <strong>· Bound By</strong> (the jobs/scripts that declare a
-                    <code>AMADEUS_KEY_&lt;label&gt;</code> binding to it, a different question from <em>Used By</em>: a
+                    <code>CRONOMICON_KEY_&lt;label&gt;</code> binding to it, a different question from <em>Used By</em>: a
                     key can authenticate hosts without any job binding it, and vice versa).
                 </p>
                 <ul>
@@ -5532,33 +5532,33 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>AMADEUS_VAR_&lt;key&gt;</code></td>
+                                <td><code>CRONOMICON_VAR_&lt;key&gt;</code></td>
                                 <td>a <strong>Variable</strong> value</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SECRET_&lt;key&gt;</code></td>
+                                <td><code>CRONOMICON_SECRET_&lt;key&gt;</code></td>
                                 <td>a <strong>Secret</strong> value (stored or Vault-resolved)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_KEY_&lt;label&gt;</code></td>
+                                <td><code>CRONOMICON_KEY_&lt;label&gt;</code></td>
                                 <td>an SSH <strong>key-file path</strong> on the executing host (not the key text)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_RUN_&lt;field&gt;</code></td>
+                                <td><code>CRONOMICON_RUN_&lt;field&gt;</code></td>
                                 <td>fixed <strong>run context</strong>, injected into every run (below)</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
                 <p>Because these prefixes are reserved, <strong>row names must be POSIX identifiers</strong>
-                    (<code>[A-Za-z_][A-Za-z0-9_]*</code>) and <strong>may not start with <code>AMADEUS_</code></strong>
+                    (<code>[A-Za-z_][A-Za-z0-9_]*</code>) and <strong>may not start with <code>CRONOMICON_</code></strong>
                     — a violation returns <code>422</code> (existing rows are grandfathered). New <strong>SSH-key labels
                         additionally drop <code>-</code> and <code>.</code></strong> (they would break the derived
-                    <code>AMADEUS_KEY_&lt;label&gt;</code> name) — use snake_case. And operator-authored env everywhere
+                    <code>CRONOMICON_KEY_&lt;label&gt;</code> name) — use snake_case. And operator-authored env everywhere
                     else (job env, schedule env, per-run overrides, workflow step inputs, inventories) may <strong>no
-                        longer <em>define</em> any <code>AMADEUS_*</code> key</strong> — a
-                    <code>lookup('env','AMADEUS_…')</code> <em>reference</em> is still fine, but a literal
-                    <code>AMADEUS_*=</code> assignment is rejected at save/ingest.
+                        longer <em>define</em> any <code>CRONOMICON_*</code> key</strong> — a
+                    <code>lookup('env','CRONOMICON_…')</code> <em>reference</em> is still fine, but a literal
+                    <code>CRONOMICON_*=</code> assignment is rejected at save/ingest.
                 </p>
 
                 <h4>Declaring bindings on a Job or Script</h4>
@@ -5566,7 +5566,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <strong>reference-bindings editor</strong>: pick a kind (<span class="tag">Secret</span> <span
                         class="tag">Variable</span> <span class="tag">SSH Key</span>), type the reference
                     <strong>name</strong> (a datalist offers your known Env Vars rows), and <strong>Add</strong>; each
-                    binding is <strong>one row</strong> carrying a coloured kind dot, the derived <code>AMADEUS_*</code>
+                    binding is <strong>one row</strong> carrying a coloured kind dot, the derived <code>CRONOMICON_*</code>
                     reference, the verdict, the state pill, the reason in words and a remove control. A bound name with
                     <em>no</em> matching Env Vars row shows a <strong>⚠</strong> — <em>“the run will fail closed unless
                         it is created.”</em> Rows render for <em>healthy</em> references too, so the section stays a
@@ -5618,12 +5618,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         declared (look for reasons like <code>vault_unreachable</code> in <a href="#history">History
                             §12.3</a>).</li>
                     <li><strong>Run context</strong> is always available without declaring it:
-                        <code>AMADEUS_RUN_ID</code>, <code>AMADEUS_RUN_JOB</code>, <code>_JOB_SOURCE</code>,
+                        <code>CRONOMICON_RUN_ID</code>, <code>CRONOMICON_RUN_JOB</code>, <code>_JOB_SOURCE</code>,
                         <code>_SCOPE</code>, <code>_TYPE</code>, <code>_TRIGGERED_BY</code>, <code>_EXECUTOR</code>.
                     </li>
-                    <li><strong>SSH-key material</strong> (<code>AMADEUS_KEY_*</code>) is delivered only on
+                    <li><strong>SSH-key material</strong> (<code>CRONOMICON_KEY_*</code>) is delivered only on
                         <strong>runner-dispatched</strong> runs — the key is materialized to a <code>0600</code> tmpfs
-                        file, exposed as <code>AMADEUS_KEY_&lt;name&gt;=&lt;path&gt;</code>, and wiped at run end. On
+                        file, exposed as <code>CRONOMICON_KEY_&lt;name&gt;=&lt;path&gt;</code>, and wiped at run end. On
                         the in-app <strong>SSH executor</strong> a key binding is <strong>refused</strong> (v1.5.35):
                         the executor connects <em>from</em> Cronomicon and cannot place a key file on the target, so a
                         run that resolves to it is rejected rather than started without the key &mdash; a manual run
@@ -5957,7 +5957,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">👁️</span> “Injected references (this run)”</div>
                     <p>If the run injected any declared <a href="#refbindings">reference bindings</a> (§11.6), the
                         drawer shows an <strong>“Injected references (N)”</strong> panel — the derived reference
-                        <em>names</em> (<code>AMADEUS_SECRET_/VAR/KEY_…</code>) actually resolved and injected at
+                        <em>names</em> (<code>CRONOMICON_SECRET_/VAR/KEY_…</code>) actually resolved and injected at
                         dispatch, from the audit trail. <strong>Values are never shown.</strong> A run that injected
                         none renders no panel.
                     </p>
@@ -6447,12 +6447,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">🧰</span> Retention is a Settings control; backup is not</div>
                     <p><strong>Retention now has a UI:</strong> the seven per-table windows live in <em>Settings → Audit
                             &amp; Compliance → Data Retention</em> and are authoritative. The
-                        <code>AMADEUS_RETENTION_*</code> environment variables only seed those values on a server's
+                        <code>CRONOMICON_RETENTION_*</code> environment variables only seed those values on a server's
                         <em>first</em> boot — after that, editing the env changes nothing and the panel is the place to
                         look.
                     </p>
                     <p><strong>The nightly VACUUM-to-S3 backup still has no UI</strong> and remains server-config
-                        (<code>AMADEUS_BACKUP_*</code>) — don't go hunting for knobs that aren't there. See <a
+                        (<code>CRONOMICON_BACKUP_*</code>) — don't go hunting for knobs that aren't there. See <a
                             href="administrator-manual.html#deployment">Deployment &amp; Day-2</a> (Administrator
                         Manual).</p>
                 </div>
@@ -6460,7 +6460,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">🕐</span> Settings mostly take effect on restart</div>
                     <p>The DB-backed integration settings (GitLab / Vault / Observability) resolve <strong>once at
                             startup</strong>; a save logs a loud warning and you must restart for it to take effect.
-                        Also, an <code>AMADEUS_*</code> env var, when set, <strong>overrides</strong> the matching DB
+                        Also, an <code>CRONOMICON_*</code> env var, when set, <strong>overrides</strong> the matching DB
                         value — unset it to manage via the UI. (Exception: metrics enabled/auth is evaluated live per
                         scrape, but a metrics-path change still needs a restart.)</p>
                     <p><strong>Log storage is no longer one of them:</strong> saving a new local log directory re-points
@@ -6469,7 +6469,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </div>
                 <div class="callout note">
                     <div class="ct"><span class="em">🔗</span> The GitLab webhook secret can be env-pinned</div>
-                    <p>If <code>AMADEUS_GITLAB_WEBHOOK_SECRET</code> is set, the secret is locked: the <strong>Rotate
+                    <p>If <code>CRONOMICON_GITLAB_WEBHOOK_SECRET</code> is set, the secret is locked: the <strong>Rotate
                             secret</strong> button is disabled and the rotation API returns <code>409</code>. Unset the
                         env var to manage it from the UI.</p>
                 </div>
@@ -6613,7 +6613,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p class="muted">Views: Env Vars → Secrets · SSH Keys · Settings → SSH Targets · History → Change Log
                 </p>
                 <ol class="steps">
-                    <li>Confirm a KEK is configured (<code>AMADEUS_KEK_FILE</code>) — without it,
+                    <li>Confirm a KEK is configured (<code>CRONOMICON_KEK_FILE</code>) — without it,
                         stored-secret operations fail with <em>“no KEK configured.”</em>
                     </li>
                     <li><a href="#envvars">Env Vars → Secrets → + Add Secret</a>. Enter a Key (respect the
@@ -6700,11 +6700,11 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <details class="faq">
                     <summary>After a good SSO login I still get 401/403 everywhere</summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> <code>AMADEUS_TRUSTED_PROXIES</code> doesn't match
+                        <p class="faq-cause"><strong>Cause:</strong> <code>CRONOMICON_TRUSTED_PROXIES</code> doesn't match
                             the peer IP Cronomicon sees, so it strips the legitimate <code>Remote-*</code> headers
                             (fail-closed).</p>
                         <p><strong>Fix:</strong> bring the app up, hit it through the proxy, read the source IP from the
-                            request log, and set <code>AMADEUS_TRUSTED_PROXIES</code> to exactly that (proxy container
+                            request log, and set <code>CRONOMICON_TRUSTED_PROXIES</code> to exactly that (proxy container
                             IP on a shared network, or the docker bridge gateway via a published port). The app refuses
                             to boot in trusted-header mode without it.</p>
                     </div>
@@ -6751,7 +6751,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <summary>My shell (bash/perl/powershell/python) jobs sit “queued” forever</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the in-app SSH executor is off by default.</p>
-                        <p><strong>Fix:</strong> deploy with <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code> (it logs a
+                        <p><strong>Fix:</strong> deploy with <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code> (it logs a
                             warning that it now holds SSH keys and has outbound SSH to targets).</p>
                     </div>
                 </details>
@@ -6927,7 +6927,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <p class="faq-cause"><strong>Cause:</strong> the <code>X-Gitlab-Token</code> doesn't match
                             Cronomicon's webhook secret.</p>
                         <p><strong>Fix:</strong> re-copy the exact secret into the GitLab webhook. If
-                            <code>AMADEUS_GITLAB_WEBHOOK_SECRET</code> is env-pinned, use that value (UI rotation is
+                            <code>CRONOMICON_GITLAB_WEBHOOK_SECRET</code> is env-pinned, use that value (UI rotation is
                             disabled while pinned).
                         </p>
                     </div>
@@ -6951,7 +6951,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> no master KEK is set, so envelope encryption can't
                             run.</p>
-                        <p><strong>Fix:</strong> configure <code>AMADEUS_KEK_FILE</code> (32-byte base64) and restart.
+                        <p><strong>Fix:</strong> configure <code>CRONOMICON_KEK_FILE</code> (32-byte base64) and restart.
                         </p>
                     </div>
                 </details>
@@ -7069,7 +7069,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <details class="faq">
                     <summary>The container refuses to boot / exits immediately</summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> <code>AMADEUS_TRUSTED_PROXIES</code> is empty in
+                        <p class="faq-cause"><strong>Cause:</strong> <code>CRONOMICON_TRUSTED_PROXIES</code> is empty in
                             trusted-header mode — it's fail-closed.</p>
                         <p><strong>Fix:</strong> set it to the proxy peer's IP/CIDR (e.g. <code>172.28.0.2/32</code>)
                             and redeploy.</p>
@@ -7143,7 +7143,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     </dd>
                     <dt>Apprise</dt>
                     <dd>A URL/DSN-based notification fan-out gateway delivering one event to many services (email,
-                        Slack, Discord). Configured in Settings → Notifications or via <code>AMADEUS_APPRISE_URL</code>.
+                        Slack, Discord). Configured in Settings → Notifications or via <code>CRONOMICON_APPRISE_URL</code>.
                     </dd>
                     <dt>authKeyEnvVar</dt>
                     <dd>The <em>name</em> of the env var or stored secret holding the unencrypted SSH private key for a
@@ -7170,7 +7170,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             href="#scripts">§8.3</a>.
                     </dd>
                     <dt>Bootstrap admin</dt>
-                    <dd>A first-run env var (<code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code>) granting admin to any member of
+                    <dd>A first-run env var (<code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code>) granting admin to any member of
                         a named AD group regardless of grants, so the first admin can seed real access grants. Logs a
                         loud warning; remove afterward. <strong>Trusted-header mode only</strong> — the OIDC login path
                         never applies it; lockout recovery on any deployment is the offline
@@ -7225,7 +7225,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dd>Permanent removal of a runner from the registry, revoking its API key immediately. Done manually
                         or by the reaper after the deregister window (default 14 days offline).</dd>
                     <dt>Developer login bypass</dt>
-                    <dd>A non-production button (<code>AMADEUS_DEV_AUTH=true</code>) that mints a synthetic admin
+                    <dd>A non-production button (<code>CRONOMICON_DEV_AUTH=true</code>) that mints a synthetic admin
                         session with no scope restrictions, for local UI preview. Returns 404 in production.</dd>
                     <dt>Dirty schema</dt>
                     <dd>A half-applied (failed) migration. <code>/readyz</code> returns 503 and the container stays
@@ -7289,7 +7289,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         override (later wins). Plaintext, not redacted — keep credentials in the secrets system.</dd>
                     <dt>KEK (Key Encryption Key)</dt>
                     <dd>A 32-byte base64 master key that envelope-encrypts stored secrets and the SMTP password.
-                        Supplied via <code>AMADEUS_KEK_FILE</code>. <strong>Back it up separately from the DB
+                        Supplied via <code>CRONOMICON_KEK_FILE</code>. <strong>Back it up separately from the DB
                             backup</strong> — losing it makes stored secrets unrecoverable.</dd>
                     <dt>Manifest</dt>
                     <dd>The execution payload a runner fetches after claiming a run: trace id, job, run type,
@@ -7312,8 +7312,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         triggers (<code>409 workflow_disabled</code>). The documented exception to Git-canonicality.
                     </dd>
                     <dt>Reaper</dt>
-                    <dd>A server sweep (~60s) that marks runners offline after <code>AMADEUS_RUNNER_OFFLINE_AFTER</code>
-                        (default 5m) and deregisters runners offline beyond <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code>
+                    <dd>A server sweep (~60s) that marks runners offline after <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code>
+                        (default 5m) and deregisters runners offline beyond <code>CRONOMICON_RUNNER_DEREGISTER_AFTER</code>
                         (default 14d). A separate <em>workflow orphan reaper</em> (startup + every 10 min) reclaims
                         workflows orphaned by a restart or running past 24h to failure with reason
                         <code>orchestrator_lost</code>, including their queued/running child runs.
@@ -7326,12 +7326,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         masked.</dd>
                     <dt>Reference binding (run injection)</dt>
                     <dd>A declaration on a Job or Script naming the Secrets, Variables and SSH keys it consumes, by
-                        their <strong>derived reference</strong> (<code>AMADEUS_SECRET_/VAR/KEY_&lt;name&gt;</code>,
+                        their <strong>derived reference</strong> (<code>CRONOMICON_SECRET_/VAR/KEY_&lt;name&gt;</code>,
                         v0.48). At dispatch Cronomicon resolves and injects <em>only</em> the declared set into the run
                         (stored or Vault-sourced), masked in logs and never persisted; a missing/out-of-scope reference
                         <strong>fails the run</strong> (fail-closed). Edited on the Job/Script detail panels (<em>Manage
                             env vars</em>, scope-checked); the injected names are shown read-only on the run detail.
-                        Runner runs also materialize <code>AMADEUS_KEY_*</code> to a <code>0600</code> tmpfs path; a
+                        Runner runs also materialize <code>CRONOMICON_KEY_*</code> to a <code>0600</code> tmpfs path; a
                         run that binds a key and resolves to the in-app SSH executor is <strong>refused</strong>
                         (<code>422 key_binding_requires_runner</code>). See <a href="#refbindings">§11.6</a>.
                     </dd>
@@ -7450,7 +7450,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     </dd>
                     <dt>SSH executor (in-app)</dt>
                     <dd>The opt-in in-process worker pool that runs bash/perl/powershell/python over SSH, direct or via
-                        a bastion. Off by default; enabled with <code>AMADEUS_SSH_EXECUTOR_ENABLED</code>; default
+                        a bastion. Off by default; enabled with <code>CRONOMICON_SSH_EXECUTOR_ENABLED</code>; default
                         concurrency 4.</dd>
                     <dt>SSH key credential</dt>
                     <dd>A first-class, typed credential (the <code>ssh_credentials</code> entity) for the private keys
@@ -7495,7 +7495,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <code>Remote-User/-Email/-Name/-Groups</code> headers Cronomicon trusts per request. No app session
                         cookie.
                     </dd>
-                    <dt>AMADEUS_TRUSTED_PROXIES</dt>
+                    <dt>CRONOMICON_TRUSTED_PROXIES</dt>
                     <dd>The CIDR/IP allowlist of the reverse-proxy peer whose <code>Remote-*</code> headers Cronomicon will
                         trust — the entire trusted-header model. Fail-closed: empty ⇒ won't boot. Must be the IP Cronomicon
                         sees as the connecting peer.</dd>
@@ -7693,60 +7693,60 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         </thead>
                         <tbody>
                             <tr>
-                                <td><code>AMADEUS_AUTH_MODE</code></td>
+                                <td><code>CRONOMICON_AUTH_MODE</code></td>
                                 <td><code>trusted-header</code></td>
                                 <td><code>trusted-header</code> or <code>oidc</code></td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_TRUSTED_PROXIES</code></td>
+                                <td><code>CRONOMICON_TRUSTED_PROXIES</code></td>
                                 <td><em>(empty)</em></td>
                                 <td><strong>Required</strong> in trusted-header mode — fail-closed if empty</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_KEK_FILE</code></td>
+                                <td><code>CRONOMICON_KEK_FILE</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>Mounted base64 KEK; back up separately from the DB</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SSH_EXECUTOR_ENABLED</code></td>
+                                <td><code>CRONOMICON_SSH_EXECUTOR_ENABLED</code></td>
                                 <td><code>false</code></td>
                                 <td>Enables the in-app SSH executor (pool concurrency 4 via
-                                    <code>AMADEUS_SSH_EXECUTOR_CONCURRENCY</code>)
+                                    <code>CRONOMICON_SSH_EXECUTOR_CONCURRENCY</code>)
                                 </td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_SSH_EXECUTOR_STALE_AFTER</code></td>
+                                <td><code>CRONOMICON_SSH_EXECUTOR_STALE_AFTER</code></td>
                                 <td><code>24h</code></td>
                                 <td>SSH-orphan reaper window — a <code>running</code> ssh run older than this is
                                     reconciled to <code>executor_lost</code> (keep well above any job timeout)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BOOTSTRAP_ADMIN_GROUP</code></td>
+                                <td><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>First-deploy admin seed; remove after seeding mappings</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_COOKIE_SECURE</code></td>
+                                <td><code>CRONOMICON_COOKIE_SECURE</code></td>
                                 <td><code>true</code></td>
                                 <td>Must stay <code>true</code> in production</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_DB_PATH</code></td>
+                                <td><code>CRONOMICON_DB_PATH</code></td>
                                 <td><code>/var/lib/amadeus/amadeus.db</code></td>
                                 <td>Keep on the mounted volume</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_GITLAB_WEBHOOK_SECRET</code></td>
+                                <td><code>CRONOMICON_GITLAB_WEBHOOK_SECRET</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>When set, pins the secret (UI rotation returns 409)</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_RUNNER_OFFLINE_AFTER</code> / <code>_DEREGISTER_AFTER</code></td>
+                                <td><code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> / <code>_DEREGISTER_AFTER</code></td>
                                 <td><code>5m</code> / <code>14d</code></td>
                                 <td>Reaper offline / auto-deregister windows</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_RETENTION_RUNS_DAYS</code> / <code>_CHANGELOG_DAYS</code> /
+                                <td><code>CRONOMICON_RETENTION_RUNS_DAYS</code> / <code>_CHANGELOG_DAYS</code> /
                                     <code>_LOG_FILES_DAYS</code>
                                 </td>
                                 <td><code>90</code> / <code>365</code> / <code>90</code></td>
@@ -7761,25 +7761,25 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 </td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BACKUP_AT</code></td>
+                                <td><code>CRONOMICON_BACKUP_AT</code></td>
                                 <td><code>02:00</code></td>
                                 <td>Daily wall-clock UTC time (<code>HH:MM</code>) for the retention/backup sweep; boot
                                     catch-up is last-success-gated</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_BACKUP_S3_BUCKET</code></td>
+                                <td><code>CRONOMICON_BACKUP_S3_BUCKET</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>Empty ⇒ local-only nightly snapshots</td>
                             </tr>
                             <tr>
-                                <td><code>AMADEUS_DEV_AUTH</code> / <code>AMADEUS_DEV_SEED</code></td>
+                                <td><code>CRONOMICON_DEV_AUTH</code> / <code>CRONOMICON_DEV_SEED</code></td>
                                 <td><code>false</code></td>
                                 <td><strong>Never in production</strong></td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <p>Precedence: an <code>AMADEUS_*</code> env var, when set, overrides the matching DB-backed Setting.
+                <p>Precedence: an <code>CRONOMICON_*</code> env var, when set, overrides the matching DB-backed Setting.
                     Most settings resolve once at startup. Build-time args (<code>VERSION</code>, <code>COMMIT</code>,
                     <code>BUILD_DATE</code>) are surfaced at <code>/version</code>.
                 </p>

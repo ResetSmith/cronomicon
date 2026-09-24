@@ -16,7 +16,7 @@ import (
 // Exit 0 = healthy (2xx), non-zero = unhealthy, so Docker/compose can gate on it.
 func runHealthcheck(args []string) int {
 	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
-	addr := fs.String("addr", envOr("AMADEUS_ADDR", ":8080"), "listen address to probe")
+	addr := fs.String("addr", envOr("CRONOMICON_ADDR", ":8080"), "listen address to probe")
 	ready := fs.Bool("ready", false, "probe /readyz instead of /healthz")
 	timeout := fs.Duration("timeout", 3*time.Second, "request timeout")
 	if err := fs.Parse(args); err != nil {
@@ -28,7 +28,7 @@ func runHealthcheck(args []string) int {
 		path = "/readyz"
 	}
 	// The probe runs inside the container, so it always targets loopback; only
-	// the port from AMADEUS_ADDR matters.
+	// the port from CRONOMICON_ADDR matters.
 	url := "http://127.0.0.1" + portOf(*addr) + path
 
 	client := &http.Client{Timeout: *timeout}

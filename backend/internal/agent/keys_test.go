@@ -8,12 +8,12 @@ import (
 )
 
 // TestMaterializeKeys (D8): delivered key material lands in 0600 files off the run
-// tree, with a bare-name key-map and an AMADEUS_KEY_<name> env map pointing at them;
+// tree, with a bare-name key-map and an CRONOMICON_KEY_<name> env map pointing at them;
 // cleanup wipes every file and removes the directory.
 func TestMaterializeKeys(t *testing.T) {
 	keys := []runnerproto.ManifestKey{
-		{Name: "deploy_key", Reference: "AMADEUS_KEY_deploy_key", Material: "PEM-DEPLOY"},
-		{Name: "backup_key", Reference: "AMADEUS_KEY_backup_key", Material: "PEM-BACKUP"},
+		{Name: "deploy_key", Reference: "CRONOMICON_KEY_deploy_key", Material: "PEM-DEPLOY"},
+		{Name: "backup_key", Reference: "CRONOMICON_KEY_backup_key", Material: "PEM-BACKUP"},
 	}
 	keyMap, keyEnv, cleanup, err := materializeKeys(keys)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestMaterializeKeysNormalizesLineEndings(t *testing.T) {
 		"already_clean": want,
 	} {
 		keyMap, _, cleanup, err := materializeKeys([]runnerproto.ManifestKey{
-			{Name: "k", Reference: "AMADEUS_KEY_k", Material: material},
+			{Name: "k", Reference: "CRONOMICON_KEY_k", Material: material},
 		})
 		if err != nil {
 			t.Fatalf("%s: materializeKeys: %v", name, err)

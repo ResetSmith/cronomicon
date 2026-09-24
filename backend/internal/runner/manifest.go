@@ -186,7 +186,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// CA-3b/RP-8 — apply the run's frozen identity. The credential rides as the
-		// derived AMADEUS_KEY_<label> reference (names only, D1): the same label's
+		// derived CRONOMICON_KEY_<label> reference (names only, D1): the same label's
 		// material is delivered through the D8 key channel (the implicit KindKey
 		// binding in collectReferenceBindings), and the agent's resolveKeyPath
 		// prefers a delivered key file for exactly this name.
@@ -362,7 +362,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// Dispatch-time reference injection (P1.4, D1 = 1C). Resolve the run's declared
 	// Secrets + Variables bindings and ship their VALUES in the sensitive Secrets
 	// block — the runner path deliberately relaxes the "never ship secret bytes"
-	// invariant, gated below. AMADEUS_RUN_* run context (log-safe) merges into the
+	// invariant, gated below. CRONOMICON_RUN_* run context (log-safe) merges into the
 	// plaintext Env. Gated by the injection kill-switch.
 	resolved := &runref.Resolved{Env: map[string]string{}}
 	if s.cfg.SecretsInjectionEnabled {
@@ -432,7 +432,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Env = the plaintext env_json snapshot overlaid with the log-safe AMADEUS_RUN_*
+	// Env = the plaintext env_json snapshot overlaid with the log-safe CRONOMICON_RUN_*
 	// run context (never redacted). Reference VALUES go in Secrets, not here.
 	runEnv := parseEnvSnapshot(envJSON.String)
 	if runEnv == nil {
@@ -476,7 +476,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		TimeoutSeconds:    int(timeoutSeconds.Int64),
 		Inventory:         inv,
 		SSHUser:           manifestSSHUser,                 // RP-8 — ansible identity override (names only)
-		SSHKeyRef:         manifestSSHKeyRef,               // RP-8 — derived AMADEUS_KEY_<label>, resolved agent-side
+		SSHKeyRef:         manifestSSHKeyRef,               // RP-8 — derived CRONOMICON_KEY_<label>, resolved agent-side
 		AnsibleOptions:    manifestAnsibleOptions(ansOpts), // RP-17 — advanced ansible flags (nil when none)
 		Limit:             limit,
 		EnvPassthrough:    envPassthrough,
@@ -487,7 +487,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 
 // resolveManifestReferences resolves the run's declared reference bindings (from
 // its job and, when it references one, its script) into injectable values for the
-// runner manifest (P1.4). It injects Secrets + Variables; an AMADEUS_KEY_
+// runner manifest (P1.4). It injects Secrets + Variables; an CRONOMICON_KEY_
 // reference is warned and skipped here — runner key-MATERIAL delivery (D8) is a
 // follow-up, mirroring the SSH executor's remote-key deferral. Fails closed on the
 // first out-of-scope / missing / un-revealable binding.
@@ -525,7 +525,7 @@ func manifestKeys(keys []runref.KeyMaterial) []runnerproto.ManifestKey {
 
 // resolveInjectableReferences is the shared resolve pass behind both manifest
 // injection (P1.4/D8) and ingest-log redaction (P1.5). It collects the run's
-// declared bindings and resolves them. D8: AMADEUS_KEY_ references are NO LONGER
+// declared bindings and resolves them. D8: CRONOMICON_KEY_ references are NO LONGER
 // dropped — their material is resolved into resolved.Keys (delivered to the runner)
 // and resolved.Redact (masked in logs), in lockstep so delivered key bytes cannot
 // land in logs un-masked. It reports whether the run injects any SENSITIVE value

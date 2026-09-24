@@ -93,9 +93,9 @@ func TestInstallEndpointAcceptsIPv6AndContainerHosts(t *testing.T) {
 func TestInstallEndpointRejectsNonToken(t *testing.T) {
 	for _, bad := range []string{
 		"not-a-token",
-		"amt_run_" + strings.Repeat("a", 64), // wrong prefix (runner key, not reg token)
-		"amt_reg_" + strings.Repeat("a", 63), // too short
-		"amt_reg_" + strings.Repeat("Z", 64), // non-hex
+		"amt_run_" + strings.Repeat("a", 64),                // wrong prefix (runner key, not reg token)
+		"amt_reg_" + strings.Repeat("a", 63),                // too short
+		"amt_reg_" + strings.Repeat("Z", 64),                // non-hex
 		"amt_reg_" + strings.Repeat("a", 64) + "; rm -rf /", // shell-meta
 	} {
 		rec := serveInstall(t, bad, nil)

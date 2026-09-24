@@ -204,10 +204,10 @@ func TestJobComposeEnvPassthrough(t *testing.T) {
 	}
 	done()
 
-	// AMADEUS_* is reserved: those are references Cronomicon injects, not variables
+	// CRONOMICON_* is reserved: those are references Cronomicon injects, not variables
 	// read from the runner's environment.
 	resp, done = do(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{
-		"name": "ep-res", "scriptRef": "site-play", "scope": "", "envPassthrough": []string{"AMADEUS_SECRET_X"},
+		"name": "ep-res", "scriptRef": "site-play", "scope": "", "envPassthrough": []string{"CRONOMICON_SECRET_X"},
 	})
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("reserved envPassthrough name = %d, want 422", resp.StatusCode)

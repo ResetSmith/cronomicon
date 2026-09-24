@@ -30,7 +30,7 @@ func TestShadowFindingsFlagsTheUnmemberedScopedRow(t *testing.T) {
 	if !f.Unrestricted {
 		t.Error("a scoped row with no membership must be flagged unrestricted — that is the severe case")
 	}
-	if f.Reference != "AMADEUS_SECRET_TOKEN" {
+	if f.Reference != "CRONOMICON_SECRET_TOKEN" {
 		t.Errorf("reference = %q", f.Reference)
 	}
 	if f.Reason == "" {
@@ -99,7 +99,7 @@ func TestShadowFindingsCoversVariablesToo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ShadowFindings: %v", err)
 	}
-	if len(got) != 1 || got[0].Kind != "var" || got[0].Reference != "AMADEUS_VAR_REGION" {
+	if len(got) != 1 || got[0].Kind != "var" || got[0].Reference != "CRONOMICON_VAR_REGION" {
 		t.Fatalf("variable shadow not detected: %+v", got)
 	}
 	if !got[0].Unrestricted {
@@ -177,7 +177,7 @@ func TestAmbiguitiesCoversKeyLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ambiguities: %v", err)
 	}
-	if len(got) != 1 || got[0].Kind != "key" || got[0].Reference != "AMADEUS_KEY_deploy_key" {
+	if len(got) != 1 || got[0].Kind != "key" || got[0].Reference != "CRONOMICON_KEY_deploy_key" {
 		t.Fatalf("key ambiguity not reported: %+v", got)
 	}
 	if got[0].Scope != "" {

@@ -11,7 +11,7 @@ import (
 // materializeSecretFiles writes each file-delivered secret (manifest.SecretFiles,
 // RA-12) to a 0600 file in a per-run directory OFF the run tree, and returns:
 //
-//   - fileEnv:  AMADEUS_SECRET_<name> reference → file path, injected into the run
+//   - fileEnv:  CRONOMICON_SECRET_<name> reference → file path, injected into the run
 //     env so a job body / inventory that references the derived form resolves to
 //     the delivered path rather than to the value.
 //   - cleanup:  best-effort zeroes each file then removes the directory. ALWAYS safe

@@ -14,7 +14,7 @@ import "encoding/json"
 // dispatch must not fail on a decode problem in an auxiliary audit blob. Entries
 // are validated defensively even though runJob validates at enqueue (an invalid
 // kind or empty name is dropped, never resolved), deduped by kind+name+alias
-// (RA-4), and carry the derived AMADEUS_<SECTION>_<name> reference like every read
+// (RA-4), and carry the derived CRONOMICON_<SECTION>_<name> reference like every read
 // path.
 //
 // RA-7: an entry's optional `as` is the alias the operator attached the row under.

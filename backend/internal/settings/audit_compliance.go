@@ -15,7 +15,7 @@ import (
 // Note: log redaction (S7) is unconditional — there is no toggle. The former
 // sensitiveLogging field was inert (runner/redact.go always masks) and was
 // removed in PP-M9. The former DB-stored Backup config (FU-3) was likewise inert
-// — the uploader is driven solely by the AMADEUS_BACKUP_S3_* env (see
+// — the uploader is driven solely by the CRONOMICON_BACKUP_S3_* env (see
 // internal/config + internal/backup), which never read this settings blob — so
 // it was removed to kill the "configured it but it did nothing" trap.
 type AuditCompliance struct {
@@ -50,7 +50,7 @@ type RetentionDays struct {
 	// snapshot stays available to be offered back (DR-7 / DR-Q6). 30 days, and
 	// deliberately NOT aligned with the 90-day runs/activity family: it covers a
 	// multi-week outage while leaving less standing exposure — do not "fix" it
-	// to match its neighbours. The window ADDS to AMADEUS_RUNNER_DEREGISTER_AFTER
+	// to match its neighbours. The window ADDS to CRONOMICON_RUNNER_DEREGISTER_AFTER
 	// (default 14d): a runner offline from day 0 is reaped at day 14 and its
 	// snapshot written THEN, so useful coverage is ~44 days of continuous outage.
 	RunnerPlacementHistory int `json:"runnerPlacementHistory"`
@@ -134,14 +134,14 @@ func (a AuditCompliance) validate() error {
 }
 
 // SeedAuditComplianceFromEnv writes the retention blob from the legacy
-// AMADEUS_RETENTION_* env values, exactly once, iff nothing has ever been
+// CRONOMICON_RETENTION_* env values, exactly once, iff nothing has ever been
 // stored. It reports whether it wrote.
 //
 // This is what makes LU-Q3(a) — "the DB is authoritative, env is the bootstrap
 // default" — safe to upgrade into. Until LU-2 the policy came from env alone and
 // the blob sat at its untouched defaults, so flipping the source of truth
 // without seeding would silently reset a deployment that had set
-// AMADEUS_RETENTION_RUNS_DAYS=30 back to 90 — a retention regression nobody
+// CRONOMICON_RETENTION_RUNS_DAYS=30 back to 90 — a retention regression nobody
 // notices until the disk fills or an auditor asks.
 //
 // The env vars are coarser than the blob (one knob for runs/activity/

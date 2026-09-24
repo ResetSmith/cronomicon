@@ -12,7 +12,7 @@ import (
 )
 
 // Agent binary distribution (provisioning D1, Phase 3): allowlisted filenames
-// served from AMADEUS_AGENT_DIR; everything else — unknown names, unbundled
+// served from CRONOMICON_AGENT_DIR; everything else — unknown names, unbundled
 // deployments — is a clean 404 with a distinguishing error code.
 
 func agentTestServer(t *testing.T, dir string) *Server {

@@ -89,10 +89,10 @@ func TestParseAuditReferences(t *testing.T) {
 	for _, b := range got {
 		byRef[b.Reference] = b
 	}
-	if b, ok := byRef["AMADEUS_SECRET_DB_PASS"]; !ok || b.Kind != KindSecret || b.Name != "DB_PASS" {
+	if b, ok := byRef["CRONOMICON_SECRET_DB_PASS"]; !ok || b.Kind != KindSecret || b.Name != "DB_PASS" {
 		t.Errorf("secret binding wrong: %+v", got)
 	}
-	if b, ok := byRef["AMADEUS_VAR_REGION"]; !ok || b.Kind != KindVar {
+	if b, ok := byRef["CRONOMICON_VAR_REGION"]; !ok || b.Kind != KindVar {
 		t.Errorf("var binding wrong: %+v", got)
 	}
 	if ParseAuditReferences("{not json") != nil {

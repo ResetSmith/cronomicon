@@ -71,7 +71,7 @@ type Service struct {
 	log           *slog.Logger
 	cloneDir      string // path to the local git clone
 	repoURL       string // full GitLab HTTPS URL
-	token         string // AMADEUS_GITLAB_TOKEN (may be empty — unauthenticated)
+	token         string // CRONOMICON_GITLAB_TOKEN (may be empty — unauthenticated)
 	webhookSecret string
 	Cfg           *config.Config // added for KEK-based webhook secret decryption
 
@@ -110,7 +110,7 @@ func NewService(db *sql.DB, log *slog.Logger, repoURL, token, cloneDir, webhookS
 }
 
 // ValidateWebhookToken validates the GitLab webhook token.
-// If AMADEUS_GITLAB_WEBHOOK_SECRET is set, only that secret is accepted.
+// If CRONOMICON_GITLAB_WEBHOOK_SECRET is set, only that secret is accepted.
 // Otherwise, it checks the active secret and, if the overlap window has not expired,
 // the previous secret stored in the database (encrypted using KEK).
 func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
@@ -121,7 +121,7 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	}
 
 	// 1. Env var override check
-	if envSecret := os.Getenv("AMADEUS_GITLAB_WEBHOOK_SECRET"); envSecret != "" {
+	if envSecret := os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET"); envSecret != "" {
 		return ctEq(token, envSecret)
 	}
 
@@ -802,7 +802,7 @@ func (s *Service) writeBranch(ctx context.Context) string {
 // scripts/playbooks — are present in the working tree for script discovery.
 func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 	if s.repoURL == "" {
-		return nil, fmt.Errorf("AMADEUS_GITLAB_BASE_URL not configured")
+		return nil, fmt.Errorf("CRONOMICON_GITLAB_BASE_URL not configured")
 	}
 	s.installGuardedGitTransport() // SU-7/SU-8: guard go-git http(s) egress (once)
 

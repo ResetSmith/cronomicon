@@ -56,8 +56,8 @@ func TestResolvePrecedence(t *testing.T) {
 	}
 
 	env := envMap(map[string]string{
-		"AMADEUS_RUNNER_SERVER":         "https://env-server",
-		"AMADEUS_RUNNER_MAX_CONCURRENT": "2",
+		"CRONOMICON_RUNNER_SERVER":         "https://env-server",
+		"CRONOMICON_RUNNER_MAX_CONCURRENT": "2",
 		// name not in env → should keep file value
 	})
 
@@ -213,8 +213,8 @@ func TestResolveScopedEnvKnobs(t *testing.T) {
 
 	// Env layer overrides file; flag layer overrides env.
 	env := envMap(map[string]string{
-		"AMADEUS_RUNNER_ENV_BASE_EXTRA":        "A,B",
-		"AMADEUS_RUNNER_EXCLUDE_SSH_AUTH_SOCK": "false",
+		"CRONOMICON_RUNNER_ENV_BASE_EXTRA":        "A,B",
+		"CRONOMICON_RUNNER_EXCLUDE_SSH_AUTH_SOCK": "false",
 	})
 	cfg, err = Resolve([]string{"-config", file, "-env-base-extra", "C"}, env)
 	if err != nil {
@@ -259,8 +259,8 @@ func TestResolveAuthBridgeKnobs(t *testing.T) {
 
 	// Env overrides file; flag overrides env.
 	env := envMap(map[string]string{
-		"AMADEUS_RUNNER_NO_AUTH_BRIDGE":          "false",
-		"AMADEUS_RUNNER_ANSIBLE_SSH_COMMON_ARGS": "-o Ciphers=aes256-gcm@openssh.com",
+		"CRONOMICON_RUNNER_NO_AUTH_BRIDGE":          "false",
+		"CRONOMICON_RUNNER_ANSIBLE_SSH_COMMON_ARGS": "-o Ciphers=aes256-gcm@openssh.com",
 	})
 	cfg, err = Resolve([]string{"-config", file, "-ansible-ssh-common-args", "-o StrictHostKeyChecking=yes"}, env)
 	if err != nil {

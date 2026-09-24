@@ -133,7 +133,7 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 
 	// In-app SSH executor (execution-update.md EX.4/EX.6): opt-in worker pool
 	// that claims executor='ssh' runs and executes them over SSH. Disabled by
-	// default — Start() no-ops unless AMADEUS_SSH_EXECUTOR_ENABLED is set (it
+	// default — Start() no-ops unless CRONOMICON_SSH_EXECUTOR_ENABLED is set (it
 	// still runs the startup orphan sweep). Bound to the process context (PP-M6)
 	// so SIGTERM unwinds it, and registered with the shutdown WaitGroup (PP-L15)
 	// so in-flight runs finalize before the pool closes.

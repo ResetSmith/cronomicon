@@ -33,7 +33,7 @@ interface Me {
 }
 
 // ── Repeat collapsing (VU-13 / E-1) ──────────────────────────────────────────
-// A dev install's default view is nine consecutive `AMADEUS_GITLAB_BASE_URL not
+// A dev install's default view is nine consecutive `CRONOMICON_GITLAB_BASE_URL not
 // configured` rows. The signal is "this happened nine times"; nine identical
 // lines bury it and push everything else off the screen.
 

@@ -17,7 +17,7 @@ import (
 
 // headerService builds a trusted-header-mode Service backed by a fresh migrated
 // DB. trustedCIDR is the single allowlisted proxy network; bootstrapGroup is the
-// optional AMADEUS_BOOTSTRAP_ADMIN_GROUP.
+// optional CRONOMICON_BOOTSTRAP_ADMIN_GROUP.
 func headerService(t *testing.T, trustedCIDR, bootstrapGroup string) *Service {
 	t.Helper()
 	pool, err := db.Open(filepath.Join(t.TempDir(), "hdr.db"))

@@ -48,44 +48,44 @@ function fullOpts(): ProvisionOptions {
 describe("generateRunnerEnv", () => {
   it("patches the defaults into the verbatim example (annotations survive)", () => {
     const env = generateRunnerEnv(example, { ...defaultProvisionOptions(ORIGIN) });
-    expect(env).toContain(`AMADEUS_RUNNER_SERVER=${ORIGIN}`);
-    expect(env).toContain("AMADEUS_RUNNER_REGISTRATION_TOKEN=<TOKEN>");
-    expect(env).toContain("AMADEUS_RUNNER_NAME=runner-01");
+    expect(env).toContain(`CRONOMICON_RUNNER_SERVER=${ORIGIN}`);
+    expect(env).toContain("CRONOMICON_RUNNER_REGISTRATION_TOKEN=<TOKEN>");
+    expect(env).toContain("CRONOMICON_RUNNER_NAME=runner-01");
     // Default = auto-detect: the capabilities line stays present but inactive
     // (unset ⇒ the agent probes the host's toolchains at startup).
-    expect(env).toMatch(/^# AMADEUS_RUNNER_CAPABILITIES=/m);
-    expect(env).not.toMatch(/^AMADEUS_RUNNER_CAPABILITIES=/m);
-    expect(env).toContain("AMADEUS_RUNNER_INVENTORY=amadeus");
-    expect(env).toContain("AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json");
+    expect(env).toMatch(/^# CRONOMICON_RUNNER_CAPABILITIES=/m);
+    expect(env).not.toMatch(/^CRONOMICON_RUNNER_CAPABILITIES=/m);
+    expect(env).toContain("CRONOMICON_RUNNER_INVENTORY=amadeus");
+    expect(env).toContain("CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json");
     // Untouched optionals stay commented; the example's annotations survive.
-    expect(env).toMatch(/^# AMADEUS_RUNNER_MAX_CONCURRENT=/m);
-    expect(env).toMatch(/^# AMADEUS_RUNNER_ALLOW_CHECKOUT=/m);
+    expect(env).toMatch(/^# CRONOMICON_RUNNER_MAX_CONCURRENT=/m);
+    expect(env).toMatch(/^# CRONOMICON_RUNNER_ALLOW_CHECKOUT=/m);
     expect(env).toContain("credential model b");
     // No key custody chosen → known_hosts line deactivated, not deleted.
-    expect(env).toMatch(/^# AMADEUS_RUNNER_KNOWN_HOSTS=/m);
+    expect(env).toMatch(/^# CRONOMICON_RUNNER_KNOWN_HOSTS=/m);
   });
 
   it("activates every optional the full form sets, with installer dest paths", () => {
     const env = generateRunnerEnv(example, fullOpts());
-    expect(env).toContain("AMADEUS_RUNNER_CAPABILITIES=ansible,bash");
-    expect(env).toContain("AMADEUS_RUNNER_INVENTORY=local");
-    expect(env).toContain("AMADEUS_RUNNER_LOCAL_INVENTORY=/etc/amadeus-runner/inventory.json");
-    expect(env).toContain("AMADEUS_RUNNER_MAX_CONCURRENT=8");
-    expect(env).toContain("AMADEUS_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts");
+    expect(env).toContain("CRONOMICON_RUNNER_CAPABILITIES=ansible,bash");
+    expect(env).toContain("CRONOMICON_RUNNER_INVENTORY=local");
+    expect(env).toContain("CRONOMICON_RUNNER_LOCAL_INVENTORY=/etc/amadeus-runner/inventory.json");
+    expect(env).toContain("CRONOMICON_RUNNER_MAX_CONCURRENT=8");
+    expect(env).toContain("CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts");
     // key-map values are rewritten to the installer's keys/<NAME> destinations.
     expect(env).toContain(
-      "AMADEUS_RUNNER_KEY_MAP=PROD_KEY=/var/lib/amadeus-runner/keys/PROD_KEY,DB_KEY=/var/lib/amadeus-runner/keys/DB_KEY",
+      "CRONOMICON_RUNNER_KEY_MAP=PROD_KEY=/var/lib/amadeus-runner/keys/PROD_KEY,DB_KEY=/var/lib/amadeus-runner/keys/DB_KEY",
     );
-    expect(env).toContain("AMADEUS_RUNNER_CA_CERT=/etc/amadeus-runner/ca.pem");
-    expect(env).toContain("AMADEUS_RUNNER_ALLOW_CHECKOUT=true");
-    expect(env).toContain("AMADEUS_RUNNER_CHECKOUT_REPOS=https://gitlab.example.com/infra/playbooks.git");
-    expect(env).toContain("AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE=/etc/amadeus-runner/checkout-token");
-    expect(env).toContain("AMADEUS_RUNNER_VAULT_PASSWORD_FILE=/etc/amadeus-runner/vault-pass");
-    expect(env).toContain("AMADEUS_RUNNER_SANDBOX_MEMORY_MAX=2G");
-    expect(env).toContain("AMADEUS_RUNNER_SANDBOX_CPU_QUOTA=150%");
-    expect(env).toContain("AMADEUS_RUNNER_SANDBOX_TASKS_MAX=512");
+    expect(env).toContain("CRONOMICON_RUNNER_CA_CERT=/etc/amadeus-runner/ca.pem");
+    expect(env).toContain("CRONOMICON_RUNNER_ALLOW_CHECKOUT=true");
+    expect(env).toContain("CRONOMICON_RUNNER_CHECKOUT_REPOS=https://gitlab.example.com/infra/playbooks.git");
+    expect(env).toContain("CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=/etc/amadeus-runner/checkout-token");
+    expect(env).toContain("CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=/etc/amadeus-runner/vault-pass");
+    expect(env).toContain("CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX=2G");
+    expect(env).toContain("CRONOMICON_RUNNER_SANDBOX_CPU_QUOTA=150%");
+    expect(env).toContain("CRONOMICON_RUNNER_SANDBOX_TASKS_MAX=512");
     // CHECKOUT_TOKEN_FILE was set — the bare-token alternative stays commented.
-    expect(env).toMatch(/^# AMADEUS_RUNNER_CHECKOUT_TOKEN=/m);
+    expect(env).toMatch(/^# CRONOMICON_RUNNER_CHECKOUT_TOKEN=/m);
   });
 
   it("key-dir mode activates KEY_DIR and leaves KEY_MAP commented", () => {
@@ -95,8 +95,8 @@ describe("generateRunnerEnv", () => {
       keyDirSrc: "/home/op/keys",
       knownHostsSrc: "/home/op/known_hosts",
     });
-    expect(env).toContain("AMADEUS_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys");
-    expect(env).toMatch(/^# AMADEUS_RUNNER_KEY_MAP=/m);
+    expect(env).toContain("CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys");
+    expect(env).toMatch(/^# CRONOMICON_RUNNER_KEY_MAP=/m);
   });
 
   it("does not interpret $-replacement patterns in operator values", () => {
@@ -105,8 +105,8 @@ describe("generateRunnerEnv", () => {
       name: "a$&b",
       vaultPasswordFile: "/etc/keys/a$$b$'c",
     });
-    expect(env).toContain("AMADEUS_RUNNER_NAME=a$&b");
-    expect(env).toContain("AMADEUS_RUNNER_VAULT_PASSWORD_FILE=/etc/keys/a$$b$'c");
+    expect(env).toContain("CRONOMICON_RUNNER_NAME=a$&b");
+    expect(env).toContain("CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=/etc/keys/a$$b$'c");
   });
 
   it("an explicit capability override activates the var", () => {
@@ -114,13 +114,13 @@ describe("generateRunnerEnv", () => {
       ...defaultProvisionOptions(ORIGIN),
       capabilities: ["bash", "python"],
     });
-    expect(env).toContain("AMADEUS_RUNNER_CAPABILITIES=bash,python");
+    expect(env).toContain("CRONOMICON_RUNNER_CAPABILITIES=bash,python");
   });
 
   it("throws loudly when the template loses a var it patches (drift guard)", () => {
     // The capabilities line must survive in BOTH modes: detect (commentVar +
     // assertVar) and override (setVar).
-    const mutilated = example.replace(/^#?\s*AMADEUS_RUNNER_CAPABILITIES=.*$/m, "");
+    const mutilated = example.replace(/^#?\s*CRONOMICON_RUNNER_CAPABILITIES=.*$/m, "");
     expect(() => generateRunnerEnv(mutilated, defaultProvisionOptions(ORIGIN))).toThrow(/drifted/);
     expect(() =>
       generateRunnerEnv(mutilated, { ...defaultProvisionOptions(ORIGIN), capabilities: ["bash"] }),
@@ -175,8 +175,8 @@ describe("provisionDockerRun", () => {
     const cmd = provisionDockerRun(defaultProvisionOptions(ORIGIN));
     expect(cmd).toContain("docker volume create amadeus-runner-data");
     expect(cmd).toContain("--name runner-01");
-    expect(cmd).toContain(`-e AMADEUS_RUNNER_SERVER=${ORIGIN}`);
-    expect(cmd).not.toContain("AMADEUS_RUNNER_CAPABILITIES"); // agent detects in-container
+    expect(cmd).toContain(`-e CRONOMICON_RUNNER_SERVER=${ORIGIN}`);
+    expect(cmd).not.toContain("CRONOMICON_RUNNER_CAPABILITIES"); // agent detects in-container
     expect(cmd).toContain("auto-detect");
     expect(cmd).toContain("-v amadeus-runner-data:/var/lib/amadeus-runner");
     expect(cmd.trim().endsWith("amadeus-runner:slim")).toBe(true);
@@ -184,20 +184,20 @@ describe("provisionDockerRun", () => {
 
   it("an explicit capability override rides the env", () => {
     const cmd = provisionDockerRun({ ...defaultProvisionOptions(ORIGIN), capabilities: ["bash", "perl"] });
-    expect(cmd).toContain("-e AMADEUS_RUNNER_CAPABILITIES=bash,perl");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_CAPABILITIES=bash,perl");
     expect(cmd.trim().endsWith("amadeus-runner:slim")).toBe(true);
   });
 
   it("switches to the fat image when a local-toolchain capability is picked", () => {
     const cmd = provisionDockerRun(fullOpts());
     expect(cmd.trim().endsWith("amadeus-runner:fat")).toBe(true);
-    expect(cmd).toContain("-e AMADEUS_RUNNER_INVENTORY=local");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_INVENTORY=local");
     // Container file paths live on the volume.
-    expect(cmd).toContain("-e AMADEUS_RUNNER_LOCAL_INVENTORY=/var/lib/amadeus-runner/inventory.json");
-    expect(cmd).toContain("-e AMADEUS_RUNNER_CA_CERT=/var/lib/amadeus-runner/ca.pem");
-    expect(cmd).toContain("-e AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE=/var/lib/amadeus-runner/checkout-token");
-    expect(cmd).toContain("-e AMADEUS_RUNNER_VAULT_PASSWORD_FILE=/var/lib/amadeus-runner/vault-pass");
-    expect(cmd).toContain("-e AMADEUS_RUNNER_SANDBOX_MEMORY_MAX=2G");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_LOCAL_INVENTORY=/var/lib/amadeus-runner/inventory.json");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_CA_CERT=/var/lib/amadeus-runner/ca.pem");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=/var/lib/amadeus-runner/checkout-token");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=/var/lib/amadeus-runner/vault-pass");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX=2G");
   });
 });
 

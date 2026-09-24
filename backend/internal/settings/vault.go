@@ -213,7 +213,7 @@ func checkVaultStatus(addr, authMethod, roleID, secretID, caFile string, egress 
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	// SU-7: guard egress (SSRF) — the probe dials the operator-configured Vault addr.
-	// Also honor AMADEUS_VAULT_CA_FILE, which this probe previously ignored (it fell
+	// Also honor CRONOMICON_VAULT_CA_FILE, which this probe previously ignored (it fell
 	// back to system roots, inconsistent with the KV client) — a private-CA Vault
 	// would then always read "degraded".
 	if caFile != "" {
@@ -248,7 +248,7 @@ type VaultRuntime struct {
 }
 
 // ResolveVaultRuntime returns the effective Vault credentials for wiring the
-// client: env (AMADEUS_VAULT_*) wins when fully set (E.3 precedence, and is
+// client: env (CRONOMICON_VAULT_*) wins when fully set (E.3 precedence, and is
 // always AppRole); otherwise the DB-backed vault_config is used with its stored
 // auth method. ok is false when neither source yields an addr plus the
 // credentials that method requires — Vault operations then fail "unavailable"
@@ -296,7 +296,7 @@ func ResolveVaultRuntime(ctx context.Context, database *sql.DB, appCfg *config.C
 }
 
 // ResolveVaultNamespace returns the effective Vault namespace for the client's
-// X-Vault-Namespace header (D4): env (AMADEUS_VAULT_NAMESPACE) wins when set,
+// X-Vault-Namespace header (D4): env (CRONOMICON_VAULT_NAMESPACE) wins when set,
 // otherwise the DB-backed vault_config.namespace. Empty ⇒ no namespace header
 // (single-namespace / OSS Vault) — the dormant-until-configured default.
 func ResolveVaultNamespace(ctx context.Context, database *sql.DB, appCfg *config.Config) string {
@@ -315,7 +315,7 @@ func ResolveVaultNamespace(ctx context.Context, database *sql.DB, appCfg *config
 // client (H4). WireVaultClient is called from every subsystem that resolves
 // vault-source rows (API server, SSH executor, runner, SSH-key backfill, and the
 // probe-only executor), and each previously built its OWN httpVaultClient. With
-// AMADEUS_VAULT_SECRET_ID_WRAPPED=true the wrapping token is single-use: whichever
+// CRONOMICON_VAULT_SECRET_ID_WRAPPED=true the wrapping token is single-use: whichever
 // client unwrapped it first won, and every other client 400'd forever on its own
 // resolveSecretID — so the losing executor failed closed on every vault-source
 // run. Caching by resolved config makes all callers with the same config (the

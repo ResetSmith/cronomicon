@@ -31,8 +31,8 @@ cd frontend && npm ci && npm run build && cd ..
 cd backend && make build
 
 # Run with dev auth and demo data
-AMADEUS_DEV_AUTH=true AMADEUS_DEV_SEED=true AMADEUS_COOKIE_SECURE=false \
-  AMADEUS_DB_PATH=/tmp/amadeus-dev.db ./bin/amadeus
+CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false \
+  CRONOMICON_DB_PATH=/tmp/amadeus-dev.db ./bin/amadeus
 
 # Visit http://localhost:8080 → click "Developer login"
 ```
@@ -131,7 +131,7 @@ Six producers can start a run, and each one records what it was:
 - **Reference-based secret injection (v0.49.x)**: A job binds **reference names** — an env var, a stored secret, or a Vault path — instead of embedding plaintext. At dispatch time the resolver injects only the declared references into the run's environment (on both the SSH and runner paths), redacts them from logs, and records a one-time audit entry of exactly what was injected
 - **HashiCorp Vault as a secret source (v0.49.x)**: Env vars and SSH credentials can resolve from Vault instead of the local encrypted store, configured under **Settings → Integrations → Vault** — authenticating via **AppRole or a static token** (token auth wired end-to-end in v0.52.29; switching methods requires re-entering the credential)
 - **Security remediation (v0.51.x)**: Scope-scoped reads (out-of-scope rows 404/drop from listings), 8-hour sessions with **revocation on RBAC edits**, bastion host-key pinning, an SSRF egress guard on credentialed outbound calls, git-token argv-leak fix, and secret zeroization
-- **KEK rotation you can finish (v1.5.30)**: `amadeus rewrap-secrets` re-encrypts all three encrypted stores (secrets, SSH credentials, encrypted settings) under the current key; `--dry-run` counts rows per key version without decrypting. A world-readable `AMADEUS_KEK_FILE` **refuses to boot**
+- **KEK rotation you can finish (v1.5.30)**: `amadeus rewrap-secrets` re-encrypts all three encrypted stores (secrets, SSH credentials, encrypted settings) under the current key; `--dry-run` counts rows per key version without decrypting. A world-readable `CRONOMICON_KEK_FILE` **refuses to boot**
 - **The audit stream is masked (v1.5.34)**: One process-wide redaction dictionary — stored secrets, SSH credentials, encrypted settings, multi-line variables — is applied to every compliance audit row before it is written, and the same dictionary feeds the per-run log redactor so the two cannot drift
 - **Env-var namespace references (v0.48.x)**: One env var or secret can derive its value from another through reserved reference prefixes, resolved when a run's environment is built
 - **Departmental access control (v0.56.x, superseding the A5 matrix of v0.50.x)**: Access is decided by **Access Grants** — each grant pairs an AD group with a role and the **agency** (department) it applies to, or "All scopes" for unrestricted reach — so "Operator, but only for Tax" is one row. Roles are **editable data** (seven permissions; custom roles are rows, not code), a permission and a scope must come from the **same grant** (holding Operator in Finance grants nothing in Tax), and secrets, variables, SSH keys and runners are **departmentally owned**: writes and secret reveal require the verb on the owning agency, and entities in no agency are shared infrastructure only unrestricted operators may change. **No grants means no access**; recovery from a lockout is the offline `amadeus grant-admin` subcommand. The legacy two-axis tables were dropped in v0.57.8 (schema 850)
@@ -900,12 +900,12 @@ docker run -d \
   -p 8080:8080 \
   -v /var/lib/amadeus:/var/lib/amadeus \
   -v /run/secrets:/run/secrets:ro \
-  -e AMADEUS_OIDC_ISSUER=https://auth.example.com \
-  -e AMADEUS_OIDC_CLIENT_ID=amadeus \
-  -e AMADEUS_OIDC_CLIENT_SECRET=... \
-  -e AMADEUS_OIDC_REDIRECT_URL=https://amadeus.example.com/api/v1/auth/callback \
-  -e AMADEUS_KEK_FILE=/run/secrets/amadeus-kek \
-  -e AMADEUS_BACKUP_S3_BUCKET=amadeus-backups \
+  -e CRONOMICON_OIDC_ISSUER=https://auth.example.com \
+  -e CRONOMICON_OIDC_CLIENT_ID=amadeus \
+  -e CRONOMICON_OIDC_CLIENT_SECRET=... \
+  -e CRONOMICON_OIDC_REDIRECT_URL=https://amadeus.example.com/api/v1/auth/callback \
+  -e CRONOMICON_KEK_FILE=/run/secrets/amadeus-kek \
+  -e CRONOMICON_BACKUP_S3_BUCKET=amadeus-backups \
   amadeus:1.5.45
 ```
 
@@ -965,7 +965,7 @@ Third-party components and trademarks are listed in [NOTICE](NOTICE).
 
 - **Logs**: `docker logs <container>`, the process log at `<log dir>/amadeus.log`, and run logs grouped in per-entity folders under the configured log directory (Settings → Execution → Log Storage; local path changes apply live, v0.52.9–.10)
 - **Database health**: `GET /readyz` (checks DB migrations, OIDC identity)
-- **Runner offline**: Check `AMADEUS_RUNNER_OFFLINE_AFTER` (default 5m); a runner with no heartbeat for over 2 minutes shows **degraded**, stale runners are marked offline, and rows silent for `AMADEUS_RUNNER_DEREGISTER_AFTER` (default 14d) are removed with their placement snapshotted for restore
+- **Runner offline**: Check `CRONOMICON_RUNNER_OFFLINE_AFTER` (default 5m); a runner with no heartbeat for over 2 minutes shows **degraded**, stale runners are marked offline, and rows silent for `CRONOMICON_RUNNER_DEREGISTER_AFTER` (default 14d) are removed with their placement snapshotted for restore
 - **SSH execution fails**: Verify bastion ProxyJump config and host keys in `~/.ssh/known_hosts`
 
 See the [Administrator Manual](documentation/administrator-manual.html) (deployment & day-2 operations) for detailed troubleshooting steps.

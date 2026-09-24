@@ -33,7 +33,7 @@ import (
 
 // errNoKEK is returned when no KEK is configured and a stored-secret operation
 // is attempted.
-var errNoKEK = errors.New("no KEK configured: set AMADEUS_KEK_FILE or AMADEUS_KEK")
+var errNoKEK = errors.New("no KEK configured: set CRONOMICON_KEK_FILE or CRONOMICON_KEK")
 
 // evaluateKEKFileMode applies the DR-Q4 two-tier permission policy to a
 // file-sourced KEK. It is the pure, testable half of VerifyKEKFileMode.
@@ -74,7 +74,7 @@ var (
 // hours later on the first secret operation; loadKEK calls it too, so the refusal
 // cannot be bypassed by a path that skips startup.
 //
-// It is a no-op for an env-supplied KEK (AMADEUS_KEK), which has no file and no
+// It is a no-op for an env-supplied KEK (CRONOMICON_KEK), which has no file and no
 // mode. That posture is discouraged for other reasons — see the administrator
 // manual §6.6 — but it is not something a startup refusal can express.
 func VerifyKEKFileMode(cfg *config.Config) error {
@@ -144,15 +144,15 @@ func loadKEK(cfg *config.Config) ([]byte, error) {
 
 // loadKEKForVersion loads the KEK for a specific version number.
 // For the active version (cfg.SecretKEKVersion) it delegates to loadKEK.
-// For historical versions it reads AMADEUS_KEK_<N>_FILE then AMADEUS_KEK_<N>.
-// This enables zero-downtime KEK rotation: set AMADEUS_KEK_VERSION=2, supply the new
-// KEK via the standard vars, and keep the old key at AMADEUS_KEK_1 / AMADEUS_KEK_1_FILE.
+// For historical versions it reads CRONOMICON_KEK_<N>_FILE then CRONOMICON_KEK_<N>.
+// This enables zero-downtime KEK rotation: set CRONOMICON_KEK_VERSION=2, supply the new
+// KEK via the standard vars, and keep the old key at CRONOMICON_KEK_1 / CRONOMICON_KEK_1_FILE.
 func loadKEKForVersion(cfg *config.Config, version int) ([]byte, error) {
 	if version == cfg.SecretKEKVersion {
 		return loadKEK(cfg)
 	}
-	fileEnv := fmt.Sprintf("AMADEUS_KEK_%d_FILE", version)
-	valEnv := fmt.Sprintf("AMADEUS_KEK_%d", version)
+	fileEnv := fmt.Sprintf("CRONOMICON_KEK_%d_FILE", version)
+	valEnv := fmt.Sprintf("CRONOMICON_KEK_%d", version)
 	var raw string
 	path := os.Getenv(fileEnv)
 	if path != "" {

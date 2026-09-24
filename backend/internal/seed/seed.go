@@ -1,5 +1,5 @@
 // Package seed loads representative demo data into the database for local
-// preview (AMADEUS_DEV_SEED). It exists so the operator UI can be browsed with
+// preview (CRONOMICON_DEV_SEED). It exists so the operator UI can be browsed with
 // realistic content before GitLab/SSO/runners are wired up. It is NOT part
 // of the production data path: GitLab remains the source of truth for job and
 // workflow definitions (architecture §2.1); these rows merely populate the
@@ -754,7 +754,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("seed commit: %w", err)
 	}
-	log.Warn("demo data seeded (AMADEUS_DEV_SEED=true) — local preview content; not a real sync")
+	log.Warn("demo data seeded (CRONOMICON_DEV_SEED=true) — local preview content; not a real sync")
 	return nil
 }
 
@@ -767,7 +767,7 @@ type runRow struct {
 
 // seedScopeProjection parses a scope's raw inventory and writes the advisory
 // projection tables + projection_status (M2), mirroring gitlab.writeScopeProjection
-// so AMADEUS_DEV_SEED can exercise the inventory group-tree panel.
+// so CRONOMICON_DEV_SEED can exercise the inventory group-tree panel.
 func seedScopeProjection(exec func(string, ...any), id, raw string) {
 	pr := inventory.ParseProjection(raw)
 	if pr.PreviewUnavailable {

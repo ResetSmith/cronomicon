@@ -12,7 +12,7 @@ import { setAppZone } from "../utils/datetime";
 // about order: collapsing non-adjacent events would reorder the timeline, so
 // that case is the headline test below.
 
-const at = (iso: string): Entry => ({ kind: "sync", outcome: "failure", summary: "AMADEUS_GITLAB_BASE_URL not configured", actor: "system", at: iso });
+const at = (iso: string): Entry => ({ kind: "sync", outcome: "failure", summary: "CRONOMICON_GITLAB_BASE_URL not configured", actor: "system", at: iso });
 
 afterEach(() => setAppZone(undefined));
 

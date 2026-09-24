@@ -17,7 +17,7 @@ import (
 // `amadeus grant-admin` — the break-glass recovery path for an ADMIN LOCKOUT
 // (RF-25 / RB-Q15, the RBAC-fixes plan; RF-Q4 resolved 2026-08-04).
 //
-// Why this exists: on an OIDC deployment, AMADEUS_BOOTSTRAP_ADMIN_GROUP does
+// Why this exists: on an OIDC deployment, CRONOMICON_BOOTSTRAP_ADMIN_GROUP does
 // NOTHING — the floor is applied on the trusted-header login path only, and the
 // OIDC path never calls it. Before this subcommand, an OIDC instance whose
 // grants were broken (group renamed in the IdP, last admin grant deleted, a bad
@@ -41,7 +41,7 @@ import (
 // that must be a human act performed with the group name in view.
 func runGrantAdmin(args []string) int {
 	fs := flag.NewFlagSet("grant-admin", flag.ContinueOnError)
-	dbPath := fs.String("db", "", "database path (default: AMADEUS_DB_PATH from config)")
+	dbPath := fs.String("db", "", "database path (default: CRONOMICON_DB_PATH from config)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, `usage: amadeus grant-admin [-db path] <ad-group | email>
 

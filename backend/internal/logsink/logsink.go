@@ -62,7 +62,7 @@ type Options struct {
 	// Keep is the number of rotated generations retained, and is taken
 	// LITERALLY: zero means keep none (the live file is truncated on rotate),
 	// not "use the default". Zero is a meaningful answer here, unlike MaxBytes,
-	// and an operator who sets AMADEUS_LOG_FILE_KEEP=0 must not silently get
+	// and an operator who sets CRONOMICON_LOG_FILE_KEEP=0 must not silently get
 	// five — a knob that quietly ignores what you set is the exact trap this
 	// whole change set exists to close. Negative is clamped to zero.
 	//

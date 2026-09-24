@@ -9,7 +9,7 @@
 #
 # Under this topology, amadeus is published directly on the host (port 8080).
 # Ensure your external proxy strips any client-supplied Remote-* headers before injecting.
-# Use AMADEUS_TRUSTED_PROXIES=10.0.0.0/8 (or your proxy's specific IP/CIDR).
+# Use CRONOMICON_TRUSTED_PROXIES=10.0.0.0/8 (or your proxy's specific IP/CIDR).
 
 name: amadeus
 
@@ -24,31 +24,31 @@ services:
       context: .
       dockerfile: backend/Dockerfile
       args:
-        VERSION: ${AMADEUS_VERSION:-dev}
-        COMMIT: ${AMADEUS_COMMIT:-none}
-        BUILD_DATE: ${AMADEUS_BUILD_DATE:-unknown}
+        VERSION: ${CRONOMICON_VERSION:-dev}
+        COMMIT: ${CRONOMICON_COMMIT:-none}
+        BUILD_DATE: ${CRONOMICON_BUILD_DATE:-unknown}
     # Image to run. Default: the CI-built image in the internal registry, which
     # DockHand re-pulls when the pipeline calls the stack webhook. To build
     # from source instead, set
-    # AMADEUS_IMAGE=amadeus:local and run `docker compose up -d --build` from a
+    # CRONOMICON_IMAGE=amadeus:local and run `docker compose up -d --build` from a
     # FRESH clone. DockHand's "Build images on deploy" must stay OFF.
-    image: ${AMADEUS_IMAGE:-registry.example.com/amadeus:latest}
+    image: ${CRONOMICON_IMAGE:-registry.example.com/amadeus:latest}
     restart: unless-stopped
     ports:
-      - "${AMADEUS_EXTPORT:-8079}:8080"
+      - "${CRONOMICON_EXTPORT:-8079}:8080"
     #env_file:
     #  - ./amadeus.env
     volumes:
       - amadeus-data:/var/lib/amadeus
       # Stored-secret KEK (S14) — app CONFIG, not a store secret, so it lives under
-      # AMADEUS_KEK*. Provision out-of-band; back up
-      # SEPARATELY from the SQLite S3 backup. Path matches AMADEUS_KEK_FILE in
+      # CRONOMICON_KEK*. Provision out-of-band; back up
+      # SEPARATELY from the SQLite S3 backup. Path matches CRONOMICON_KEK_FILE in
       # amadeus.env.
       # NOTE: under DockHand the repo is re-cloned each deploy and the KEK is not
       # in git, so a relative bind mount resolves to a non-existent source and
       # Docker creates an empty DIRECTORY here. We supply the KEK via the
-      # AMADEUS_KEK env var instead (DockHand env panel). To use a file, mount an
-      # ABSOLUTE host path that exists and set AMADEUS_KEK_FILE to it.
+      # CRONOMICON_KEK env var instead (DockHand env panel). To use a file, mount an
+      # ABSOLUTE host path that exists and set CRONOMICON_KEK_FILE to it.
       #- /absolute/host/path/amadeus_kek:/run/secrets/amadeus_kek:ro
     healthcheck:
       # Distroless has no shell/curl — the binary probes itself (B.5).
@@ -59,31 +59,30 @@ services:
       retries: 3
     environment:
       TZ: ${TZ:-America/Los_Angeles}
-      AMADEUS_APPRISE_URL: ${AMADEUS_APPRISE_URL}
-      AMADEUS_AUTH_MODE: ${AMADEUS_AUTH_MODE}
-      AMADEUS_BACKUP_S3_ACCESS_KEY: ${AMADEUS_BACKUP_S3_ACCESS_KEY}
-      AMADEUS_BACKUP_S3_BUCKET: ${AMADEUS_BACKUP_S3_BUCKET}
-      AMADEUS_BACKUP_S3_ENDPOINT: ${AMADEUS_BACKUP_S3_ENDPOINT}
-      AMADEUS_BACKUP_S3_REGION: ${AMADEUS_BACKUP_S3_REGION}
-      AMADEUS_BACKUP_S3_SECRET_KEY: ${AMADEUS_BACKUP_S3_SECRET_KEY}
-      AMADEUS_BACKUP_S3_USE_SSL: ${AMADEUS_BACKUP_S3_USE_SSL}
-      AMADEUS_BOOTSTRAP_ADMIN_GROUP: ${AMADEUS_BOOTSTRAP_ADMIN_GROUP}
-      AMADEUS_COOKIE_SECURE: ${AMADEUS_COOKIE_SECURE}
-      AMADEUS_GITLAB_BASE_URL: ${AMADEUS_GITLAB_BASE_URL}
-      AMADEUS_GITLAB_TOKEN: ${AMADEUS_GITLAB_TOKEN}
-      AMADEUS_GITLAB_WEBHOOK_SECRET: ${AMADEUS_GITLAB_WEBHOOK_SECRET}
-      # KEK = app config (namespace contract): AMADEUS_KEK*. (The
-      # AMADEUS_SECRET_KEK* passthrough was retired with the alias in v1.5.41.)
-      AMADEUS_KEK: ${AMADEUS_KEK:-}
-      AMADEUS_KEK_FILE: ${AMADEUS_KEK_FILE:-}
-      AMADEUS_LOGOUT_REDIRECT_URL: ${AMADEUS_LOGOUT_REDIRECT_URL}
-      AMADEUS_LOG_FORMAT: ${AMADEUS_LOG_FORMAT}
-      AMADEUS_LOG_LEVEL: ${AMADEUS_LOG_LEVEL}
-      AMADEUS_RETENTION_CHANGELOG_DAYS: ${AMADEUS_RETENTION_CHANGELOG_DAYS}
-      AMADEUS_RETENTION_RUNS_DAYS: ${AMADEUS_RETENTION_RUNS_DAYS}
-      AMADEUS_RUNNER_BOOTSTRAP_TOKEN: ${AMADEUS_RUNNER_BOOTSTRAP_TOKEN}
-      AMADEUS_SSH_EXECUTOR_ENABLED: ${AMADEUS_SSH_EXECUTOR_ENABLED}
-      AMADEUS_TRUSTED_PROXIES: ${AMADEUS_TRUSTED_PROXIES}
+      CRONOMICON_APPRISE_URL: ${CRONOMICON_APPRISE_URL}
+      CRONOMICON_AUTH_MODE: ${CRONOMICON_AUTH_MODE}
+      CRONOMICON_BACKUP_S3_ACCESS_KEY: ${CRONOMICON_BACKUP_S3_ACCESS_KEY}
+      CRONOMICON_BACKUP_S3_BUCKET: ${CRONOMICON_BACKUP_S3_BUCKET}
+      CRONOMICON_BACKUP_S3_ENDPOINT: ${CRONOMICON_BACKUP_S3_ENDPOINT}
+      CRONOMICON_BACKUP_S3_REGION: ${CRONOMICON_BACKUP_S3_REGION}
+      CRONOMICON_BACKUP_S3_SECRET_KEY: ${CRONOMICON_BACKUP_S3_SECRET_KEY}
+      CRONOMICON_BACKUP_S3_USE_SSL: ${CRONOMICON_BACKUP_S3_USE_SSL}
+      CRONOMICON_BOOTSTRAP_ADMIN_GROUP: ${CRONOMICON_BOOTSTRAP_ADMIN_GROUP}
+      CRONOMICON_COOKIE_SECURE: ${CRONOMICON_COOKIE_SECURE}
+      CRONOMICON_GITLAB_BASE_URL: ${CRONOMICON_GITLAB_BASE_URL}
+      CRONOMICON_GITLAB_TOKEN: ${CRONOMICON_GITLAB_TOKEN}
+      CRONOMICON_GITLAB_WEBHOOK_SECRET: ${CRONOMICON_GITLAB_WEBHOOK_SECRET}
+      # KEK = app config (namespace contract): CRONOMICON_KEK*.
+      CRONOMICON_KEK: ${CRONOMICON_KEK:-}
+      CRONOMICON_KEK_FILE: ${CRONOMICON_KEK_FILE:-}
+      CRONOMICON_LOGOUT_REDIRECT_URL: ${CRONOMICON_LOGOUT_REDIRECT_URL}
+      CRONOMICON_LOG_FORMAT: ${CRONOMICON_LOG_FORMAT}
+      CRONOMICON_LOG_LEVEL: ${CRONOMICON_LOG_LEVEL}
+      CRONOMICON_RETENTION_CHANGELOG_DAYS: ${CRONOMICON_RETENTION_CHANGELOG_DAYS}
+      CRONOMICON_RETENTION_RUNS_DAYS: ${CRONOMICON_RETENTION_RUNS_DAYS}
+      CRONOMICON_RUNNER_BOOTSTRAP_TOKEN: ${CRONOMICON_RUNNER_BOOTSTRAP_TOKEN}
+      CRONOMICON_SSH_EXECUTOR_ENABLED: ${CRONOMICON_SSH_EXECUTOR_ENABLED}
+      CRONOMICON_TRUSTED_PROXIES: ${CRONOMICON_TRUSTED_PROXIES}
   #    networks:
   #      internal: {}
 

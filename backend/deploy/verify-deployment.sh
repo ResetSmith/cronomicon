@@ -51,7 +51,7 @@ check "/api/v1/auth/dev-login absent (404)" 404 "$(code "$APP_URL/api/v1/auth/de
 echo "== Trusted-proxy enforcement (THE critical control) =="
 if [[ -n "$APP_DIRECT_URL" ]]; then
   # Hit the app port directly with spoofed identity headers. The app must strip
-  # them (peer not in AMADEUS_TRUSTED_PROXIES) → unauthenticated, NOT 200.
+  # them (peer not in CRONOMICON_TRUSTED_PROXIES) → unauthenticated, NOT 200.
   spoof_code="$(code -H 'Remote-User: attacker' -H 'Remote-Groups: amadeus-admins,admins' \
                     -H 'Remote-Email: attacker@evil.test' "$APP_DIRECT_URL/api/v1/me")"
   if [[ "$spoof_code" == "200" ]]; then

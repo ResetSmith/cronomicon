@@ -6,7 +6,7 @@
 #   docker run --rm authelia/authelia:4.38 authelia crypto hash generate argon2 --password 'your-password'
 #
 # The `groups` here become Authelia groups → Remote-Groups → Cronomicon roles.
-# Put your first operator in the group named by AMADEUS_BOOTSTRAP_ADMIN_GROUP on
+# Put your first operator in the group named by CRONOMICON_BOOTSTRAP_ADMIN_GROUP on
 # first deploy so they can sign in and seed the real ad_group_mappings.
 
 users:

@@ -15,8 +15,8 @@ import (
 )
 
 // KeyMaterial is a resolved SSH-key reference: the decrypted private-key PEM plus
-// its derived AMADEUS_KEY_<name> reference. The executor writes it to a
-// memfd/tmpfs file (0600) at dispatch (P1.4/D8) and points AMADEUS_KEY_<name> at
+// its derived CRONOMICON_KEY_<name> reference. The executor writes it to a
+// memfd/tmpfs file (0600) at dispatch (P1.4/D8) and points CRONOMICON_KEY_<name> at
 // the path; the resolver only surfaces material and never touches the filesystem.
 //
 // RA-5: Reference carries the ALIAS when the binding declared one (it is the env
@@ -42,10 +42,10 @@ type FileMaterial struct {
 // Resolved is the output of a resolve pass: injectable values plus the redaction
 // dictionary the run's log sinks must mask.
 type Resolved struct {
-	// Env maps a derived reference key (AMADEUS_SECRET_x / AMADEUS_VAR_x) to its
+	// Env maps a derived reference key (CRONOMICON_SECRET_x / CRONOMICON_VAR_x) to its
 	// value, injected verbatim into the run child env at the executor seam.
 	Env map[string]string
-	// Keys are resolved SSH key materials (AMADEUS_KEY_* references).
+	// Keys are resolved SSH key materials (CRONOMICON_KEY_* references).
 	Keys []KeyMaterial
 	// Files are resolved secrets the executor must deliver as FILES rather than as
 	// environment values (RA-12): the reference resolves to a path. Same delivery
@@ -101,7 +101,7 @@ var ErrAmbiguousReference = errors.New("reference resolves to more than one row"
 // precise "exists only outside run scope" vs "not found" distinction defeated
 // P1.7's 404-not-403 design, letting an actor probe any name one run at a time.
 type ReferenceError struct {
-	Ref string // the AMADEUS_* display name (Kind.Reference(Name)), which the operator already declared
+	Ref string // the CRONOMICON_* display name (Kind.Reference(Name)), which the operator already declared
 	err error  // wraps ErrOutOfScope or ErrMissingReference plus the precise detail
 }
 

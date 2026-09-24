@@ -55,7 +55,7 @@ usage() {
   echo "      --token-file <path>    Read the registration token from a file [PREFERRED]"
   echo "      --token -              Prompt for the registration token on stdin (input"
   echo "                             hidden). Required when the token is a long-lived"
-  echo "                             AMADEUS_RUNNER_BOOTSTRAP_TOKEN rather than a spent"
+  echo "                             CRONOMICON_RUNNER_BOOTSTRAP_TOKEN rather than a spent"
   echo "                             single-use amt_reg_* value."
   echo "  -n, --name <name>          Runner display name (default: hostname)"
   echo "  -c, --capabilities <list>  Comma-separated run-type capabilities. Default: omitted —"
@@ -486,17 +486,17 @@ KNOWN_HOSTS_LINE=""
 if [ -n "$KNOWN_HOSTS_SRC" ]; then
   echo ">> Installing known_hosts to ${KNOWN_HOSTS_DEST}..."
   install -o amadeus-runner -g amadeus-runner -m 0640 "$KNOWN_HOSTS_SRC" "$KNOWN_HOSTS_DEST"
-  KNOWN_HOSTS_LINE="AMADEUS_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
+  KNOWN_HOSTS_LINE="CRONOMICON_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
 fi
 
 # --- Install Private Keys (model b — the runner holds its own keys) ---
-# The keys/ dir and AMADEUS_RUNNER_KEY_DIR are ALWAYS provisioned so the installer
+# The keys/ dir and CRONOMICON_RUNNER_KEY_DIR are ALWAYS provisioned so the installer
 # owns the convention up front: a key dropped in later (or generated below) Just
 # Works without a runner.env hand-edit. --key-dir / --key-map / --generate-key
 # populate it; without them the dir is created empty. KEYS_PROVISIONED tracks
 # whether any actual key material landed (drives the post-install guidance).
 install -d -o amadeus-runner -g amadeus-runner -m 0700 "$KEYS_DEST"
-KEY_DIR_LINE="AMADEUS_RUNNER_KEY_DIR=${KEYS_DEST}"
+KEY_DIR_LINE="CRONOMICON_RUNNER_KEY_DIR=${KEYS_DEST}"
 KEY_MAP_LINE=""
 KEYS_PROVISIONED=0
 if [ -n "$KEY_DIR_SRC" ]; then
@@ -514,7 +514,7 @@ elif [ -n "$KEY_MAP_SPEC" ]; then
     install -o amadeus-runner -g amadeus-runner -m 0600 "$key_path" "${KEYS_DEST}/${key_name}"
     INSTALLED_MAP="${INSTALLED_MAP:+${INSTALLED_MAP},}${key_name}=${KEYS_DEST}/${key_name}"
   done
-  KEY_MAP_LINE="AMADEUS_RUNNER_KEY_MAP=${INSTALLED_MAP}"
+  KEY_MAP_LINE="CRONOMICON_RUNNER_KEY_MAP=${INSTALLED_MAP}"
   KEYS_PROVISIONED=1
 fi
 
@@ -547,7 +547,7 @@ CA_CERT_LINE=""
 if [ -n "$CA_CERT_SRC" ]; then
   echo ">> Installing CA certificate to ${CA_CERT_DEST}..."
   install -o root -g amadeus-runner -m 0640 "$CA_CERT_SRC" "$CA_CERT_DEST"
-  CA_CERT_LINE="AMADEUS_RUNNER_CA_CERT=${CA_CERT_DEST}"
+  CA_CERT_LINE="CRONOMICON_RUNNER_CA_CERT=${CA_CERT_DEST}"
 fi
 
 # --- Install Local Inventory (inventory=local, T-b isolated segments) ---
@@ -555,7 +555,7 @@ LOCAL_INVENTORY_LINE=""
 if [ -n "$LOCAL_INVENTORY_SRC" ]; then
   echo ">> Installing local inventory to ${LOCAL_INVENTORY_DEST}..."
   install -o root -g amadeus-runner -m 0640 "$LOCAL_INVENTORY_SRC" "$LOCAL_INVENTORY_DEST"
-  LOCAL_INVENTORY_LINE="AMADEUS_RUNNER_LOCAL_INVENTORY=${LOCAL_INVENTORY_DEST}"
+  LOCAL_INVENTORY_LINE="CRONOMICON_RUNNER_LOCAL_INVENTORY=${LOCAL_INVENTORY_DEST}"
 fi
 
 # --- Install Ansible secrets (Phase 3 — checkout deploy token, vault password) ---
@@ -613,26 +613,26 @@ fi
 CHECKOUT_TOKEN_FILE_LINE=""
 if [ -n "$CHECKOUT_TOKEN_SRC" ]; then
   install_secret_file "$CHECKOUT_TOKEN_SRC" "$CHECKOUT_TOKEN_DEST" "checkout deploy token"
-  CHECKOUT_TOKEN_FILE_LINE="AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
+  CHECKOUT_TOKEN_FILE_LINE="CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
 elif [ "$CHECKOUT_TOKEN_STDIN" = 1 ]; then
   prompt_secret "$CHECKOUT_TOKEN_DEST" "checkout deploy token"
-  CHECKOUT_TOKEN_FILE_LINE="AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
+  CHECKOUT_TOKEN_FILE_LINE="CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
 fi
 
 VAULT_PASS_LINE=""
 if [ -n "$VAULT_PASS_SRC" ]; then
   install_secret_file "$VAULT_PASS_SRC" "$VAULT_PASS_DEST" "vault password"
-  VAULT_PASS_LINE="AMADEUS_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
+  VAULT_PASS_LINE="CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
 elif [ "$VAULT_PASS_STDIN" = 1 ]; then
   prompt_secret "$VAULT_PASS_DEST" "vault password"
-  VAULT_PASS_LINE="AMADEUS_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
+  VAULT_PASS_LINE="CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
 fi
 
 # Checkout opt-in + repo allowlist are plain env writes (not secrets).
 ALLOW_CHECKOUT_LINE=""
-[ "$ALLOW_CHECKOUT" = 1 ] && ALLOW_CHECKOUT_LINE="AMADEUS_RUNNER_ALLOW_CHECKOUT=true"
+[ "$ALLOW_CHECKOUT" = 1 ] && ALLOW_CHECKOUT_LINE="CRONOMICON_RUNNER_ALLOW_CHECKOUT=true"
 CHECKOUT_REPOS_LINE=""
-[ -n "$CHECKOUT_REPOS" ] && CHECKOUT_REPOS_LINE="AMADEUS_RUNNER_CHECKOUT_REPOS=${CHECKOUT_REPOS}"
+[ -n "$CHECKOUT_REPOS" ] && CHECKOUT_REPOS_LINE="CRONOMICON_RUNNER_CHECKOUT_REPOS=${CHECKOUT_REPOS}"
 
 # --- Generate Config File ---
 echo ">> Writing ${CONF_DIR}/runner.env..."
@@ -641,14 +641,14 @@ echo ">> Writing ${CONF_DIR}/runner.env..."
 install -o root -g amadeus-runner -m 0640 /dev/null "${CONF_DIR}/runner.env"
 {
   echo "# Configuration for the Cronomicon runner agent (Ubuntu/RedHat VM instance)"
-  echo "AMADEUS_RUNNER_SERVER=${SERVER_URL}"
-  echo "AMADEUS_RUNNER_REGISTRATION_TOKEN=${REG_TOKEN}"
-  echo "AMADEUS_RUNNER_NAME=${RUNNER_NAME}"
+  echo "CRONOMICON_RUNNER_SERVER=${SERVER_URL}"
+  echo "CRONOMICON_RUNNER_REGISTRATION_TOKEN=${REG_TOKEN}"
+  echo "CRONOMICON_RUNNER_NAME=${RUNNER_NAME}"
   # No -c ⇒ omit the var entirely: the agent probes the host's toolchains at
   # startup (unset = auto-detect; set explicitly to narrow).
-  [ -n "$CAPABILITIES" ] && echo "AMADEUS_RUNNER_CAPABILITIES=${CAPABILITIES}"
-  echo "AMADEUS_RUNNER_INVENTORY=${INVENTORY}"
-  echo "AMADEUS_RUNNER_IDENTITY_FILE=${STATE_DIR}/identity.json"
+  [ -n "$CAPABILITIES" ] && echo "CRONOMICON_RUNNER_CAPABILITIES=${CAPABILITIES}"
+  echo "CRONOMICON_RUNNER_INVENTORY=${INVENTORY}"
+  echo "CRONOMICON_RUNNER_IDENTITY_FILE=${STATE_DIR}/identity.json"
   [ -n "$KNOWN_HOSTS_LINE" ] && echo "$KNOWN_HOSTS_LINE"
   [ -n "$KEY_DIR_LINE" ] && echo "$KEY_DIR_LINE"
   [ -n "$KEY_MAP_LINE" ] && echo "$KEY_MAP_LINE"
@@ -667,11 +667,11 @@ install -o root -g amadeus-runner -m 0640 /dev/null "${CONF_DIR}/runner.env"
 # startup and it crash-loops before registering. Reproduce the sandbox in a
 # bounded transient unit and stat a file; if it stalls or fails, generate the
 # unit with REDUCED hardening so the runner can start. Force with
-# AMADEUS_INSTALL_MINIMAL_HARDENING=1.
+# CRONOMICON_INSTALL_MINIMAL_HARDENING=1.
 HARDENING_OK=1
-if [ -n "${AMADEUS_INSTALL_MINIMAL_HARDENING:-}" ]; then
+if [ -n "${CRONOMICON_INSTALL_MINIMAL_HARDENING:-}" ]; then
   HARDENING_OK=0
-  echo ">> Minimal hardening forced (AMADEUS_INSTALL_MINIMAL_HARDENING set)."
+  echo ">> Minimal hardening forced (CRONOMICON_INSTALL_MINIMAL_HARDENING set)."
 elif ! command -v systemd-run >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
   echo ">> Sandbox self-probe skipped (systemd-run/timeout absent); applying full hardening."
 else
@@ -712,7 +712,7 @@ EnvironmentFile=-/etc/amadeus-runner/runner.env
 # Optional Vault Agent sidecar (deploy/vault-agent/): rendered secrets, if any.
 # The "-" makes this a no-op when the sidecar is not installed.
 EnvironmentFile=-/etc/amadeus-runner/secrets.env
-Environment=AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
+Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
 WorkingDirectory=/var/lib/amadeus-runner
 
 # Preflight self-check. Non-fatal ('-'): logs a labeled PASS/FAIL report to the
@@ -848,17 +848,17 @@ if [ -z "$KNOWN_HOSTS_LINE" ]; then
   echo "!!  1. Populate ${KNOWN_HOSTS_DEST}"
   echo "!!     (ssh-keyscan the targets from a trusted vantage).   !!"
   echo "!!  2. Add to ${CONF_DIR}/runner.env:"
-  echo "!!       AMADEUS_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
+  echo "!!       CRONOMICON_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
   if [ "$KEYS_PROVISIONED" = 0 ]; then
     echo "!!  3. Provision a private key: re-run with --generate-key   !!"
     echo "!!     NAME, or drop a key file into ${KEYS_DEST}"
-    echo "!!     (AMADEUS_RUNNER_KEY_DIR is already set for you).      !!"
+    echo "!!     (CRONOMICON_RUNNER_KEY_DIR is already set for you).      !!"
   fi
   echo "!!  Then: sudo systemctl restart amadeus-runner            !!"
   echo "!!========================================================!!"
   echo ""
 elif [ "$KEYS_PROVISIONED" = 0 ]; then
-  echo "NOTE: no private key was provisioned. AMADEUS_RUNNER_KEY_DIR is"
+  echo "NOTE: no private key was provisioned. CRONOMICON_RUNNER_KEY_DIR is"
   echo "set to ${KEYS_DEST}; before the first SSH run, drop a"
   echo "key file there (named after its authKeyEnvVar) or re-run with"
   echo "--generate-key NAME, then restart the service."

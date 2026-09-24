@@ -50,7 +50,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 
 	// D8: materialize any delivered SSH-key material to 0600 files off the run tree.
 	// deliveredKeys (bare NAME → path) feeds the key resolver (delivered wins,
-	// key-dir is the fallback); keyEnv (AMADEUS_KEY_<name> → path) is exposed in the
+	// key-dir is the fallback); keyEnv (CRONOMICON_KEY_<name> → path) is exposed in the
 	// run env. cleanup wipes the files when run returns — including on early error.
 	deliveredKeys, keyEnv, cleanupKeys, kerr := materializeKeys(m.Keys)
 	defer cleanupKeys()

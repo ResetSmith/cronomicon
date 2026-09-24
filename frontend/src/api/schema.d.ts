@@ -60,7 +60,7 @@ export interface paths {
          * Download a runner-agent binary or its checksums
          * @description Serves the cross-compiled `amadeus-runner` binaries and their
          *     `SHA256SUMS` baked into the server image (runner provisioning D1;
-         *     directory overridable via `AMADEUS_AGENT_DIR`). Allowlisted filenames
+         *     directory overridable via `CRONOMICON_AGENT_DIR`). Allowlisted filenames
          *     only: `amadeus-runner-linux-amd64`, `amadeus-runner-linux-arm64`,
          *     `SHA256SUMS`. Consumed by `runner-install.sh --download`, which
          *     verifies the checksum before installing. Served at the server root,
@@ -501,7 +501,7 @@ export interface paths {
          *     declares it consumes (vault-integration.md P1.1, D2 = 2B explicit
          *     binding). At dispatch the resolver injects ONLY these references, so two
          *     jobs sharing a scope do not see each other's secrets. Each binding carries
-         *     the BARE row name plus the derived AMADEUS_<SECTION>_<name> reference.
+         *     the BARE row name plus the derived CRONOMICON_<SECTION>_<name> reference.
          */
         get: operations["getJobReferenceBindings"];
         /**
@@ -559,7 +559,7 @@ export interface paths {
          * @description Scans a script's body and returns the reference bindings it declares in
          *     derived form (`suggested`), plus a bare-name lint (`bareReferences`):
          *     reference sites still using a bare name that matches a known Env Vars row,
-         *     which an operator should migrate to the derived AMADEUS_<SECTION>_<name>
+         *     which an operator should migrate to the derived CRONOMICON_<SECTION>_<name>
          *     form. The reserved prefix is what makes discovery precise (namespace plan
          *     W5 → this plan's D2). Suggestions prefill a script's binding set.
          */
@@ -2078,7 +2078,7 @@ export interface paths {
         put?: never;
         /**
          * Create a secret
-         * @description stored-source values are encrypted at rest (AES-256-GCM, HKDF from AMADEUS_SECRET_KEY per S14 recommendation). vault-source entries store the reference only.
+         * @description stored-source values are encrypted at rest (AES-256-GCM, HKDF from CRONOMICON_SECRET_KEY per S14 recommendation). vault-source entries store the reference only.
          */
         post: operations["createEnvSecret"];
         delete?: never;
@@ -2647,7 +2647,7 @@ export interface paths {
         get: operations["getGitlabConfig"];
         /**
          * Update GitLab connection config
-         * @description Omit pat to keep the stored value. AMADEUS_GITLAB_PAT env var overrides the DB value at startup (§11.2).
+         * @description Omit pat to keep the stored value. CRONOMICON_GITLAB_PAT env var overrides the DB value at startup (§11.2).
          */
         put: operations["updateGitlabConfig"];
         post?: never;
@@ -2773,7 +2773,7 @@ export interface paths {
          * Update per-run log storage config
          * @description A new local log directory applies **immediately** — no restart (LU-5).
          *     The save re-points the runner log writers, the SSH executor, the SSH
-         *     connection-test writer, and (unless pinned via `AMADEUS_LOG_FILE`) the
+         *     connection-test writer, and (unless pinned via `CRONOMICON_LOG_FILE`) the
          *     process log. In-flight runs keep writing to the file handle they already
          *     opened, and existing log files are **not** moved — the read path resolves
          *     against the current directory, so move the tree yourself if historical
@@ -4018,7 +4018,7 @@ export interface components {
             /** @description Warn once a run has been going this long (SL). Distinct from `timeoutSeconds`, which KILLS: a job running long is often healthy and merely slow, so this only raises an `sla-breach` alert and never touches the run. */
             warnAfterSeconds?: number | null;
             /**
-             * @description ET-D — file-arrival triggers. Each entry is an absolute path glob a capable runner polls; when a matching file's size has been unchanged for `stableSeconds`, the job runs with the path injected as `AMADEUS_WATCH_PATH` / `AMADEUS_WATCH_FILE` / `AMADEUS_WATCH_SIZE`.
+             * @description ET-D — file-arrival triggers. Each entry is an absolute path glob a capable runner polls; when a matching file's size has been unchanged for `stableSeconds`, the job runs with the path injected as `CRONOMICON_WATCH_PATH` / `CRONOMICON_WATCH_FILE` / `CRONOMICON_WATCH_SIZE`.
              *
              *     Declaring a watch IS this job's opt-in for being started by a file — `requestable` gates the service-account API, a different surface. The file itself is never delivered (PF-Q2): the job's script already runs where the file is.
              *
@@ -4146,7 +4146,7 @@ export interface components {
              *     value the agent host holds and Cronomicon does not. An unset name fails the
              *     run loudly rather than resolving empty. Local-toolchain run types only
              *     (ansible/terraform) — 422 on an ssh-family job, whose remote environment
-             *     is built entirely from its manifest. AMADEUS_* names are refused (422):
+             *     is built entirely from its manifest. CRONOMICON_* names are refused (422):
              *     those are references Cronomicon injects, not the runner's environment.
              */
             envPassthrough?: string[];
@@ -5739,7 +5739,7 @@ export interface components {
         };
         ReferenceBinding: {
             /**
-             * @description Which Env Vars section the reference targets (secret → AMADEUS_SECRET_, var → AMADEUS_VAR_, key → AMADEUS_KEY_).
+             * @description Which Env Vars section the reference targets (secret → CRONOMICON_SECRET_, var → CRONOMICON_VAR_, key → CRONOMICON_KEY_).
              * @enum {string}
              */
             kind: "secret" | "var" | "key";
@@ -5749,7 +5749,7 @@ export interface components {
              * @description RA-1 — the optional ALIAS: the bare DESTINATION name this binding's
              *     value is injected under, so one shared job body can consume any
              *     department's row (bind `TEAMA_SUDO as BECOME_PASSWORD` and the run
-             *     receives AMADEUS_SECRET_BECOME_PASSWORD). Omitted/empty ⇒ injected
+             *     receives CRONOMICON_SECRET_BECOME_PASSWORD). Omitted/empty ⇒ injected
              *     under the row's own name, the pre-Phase-A behaviour verbatim.
              *
              *     It is a DESTINATION, never a selector: `name` still identifies the row
@@ -5759,7 +5759,7 @@ export interface components {
              *     the reserved-KEK bar too) — a violation is 422.
              */
             as?: string;
-            /** @description Derived AMADEUS_<SECTION>_<name> reference for the ROW — the binding's identity. Read-only; server-derived from kind + name. When `as` is set the value actually lands on AMADEUS_<SECTION>_<as> instead. */
+            /** @description Derived CRONOMICON_<SECTION>_<name> reference for the ROW — the binding's identity. Read-only; server-derived from kind + name. When `as` is set the value actually lands on CRONOMICON_<SECTION>_<as> instead. */
             readonly reference: string;
         };
         ReferenceBindingList: {
@@ -5813,9 +5813,9 @@ export interface components {
             name: string;
             /** @description The alias the caller asked about, echoed back so a set of chips can be matched to verdicts when one row is bound twice under two destinations. */
             as?: string;
-            /** @description Derived AMADEUS_<SECTION>_<name> reference for the ROW, echoed back so a chip can label itself. */
+            /** @description Derived CRONOMICON_<SECTION>_<name> reference for the ROW, echoed back so a chip can label itself. */
             reference: string;
-            /** @description The key the value would actually land on: AMADEUS_<SECTION>_<as> when aliased, otherwise the same as `reference`. */
+            /** @description The key the value would actually land on: CRONOMICON_<SECTION>_<as> when aliased, otherwise the same as `reference`. */
             injectReference: string;
             /** @description True when dispatch would resolve this reference for a run in the requested scope. */
             ok: boolean;
@@ -5862,7 +5862,7 @@ export interface components {
              */
             readonly id?: string;
             key?: string;
-            /** @description Derived AMADEUS_VAR_<key> reference (namespace contract) — copy this to reference the value in a run. Read-only; the row keeps its bare key. */
+            /** @description Derived CRONOMICON_VAR_<key> reference (namespace contract) — copy this to reference the value in a run. Read-only; the row keeps its bare key. */
             readonly reference?: string;
             value?: string;
             scope?: string;
@@ -6077,7 +6077,7 @@ export interface components {
              */
             readonly id?: string;
             key?: string;
-            /** @description Derived AMADEUS_SECRET_<key> reference (namespace contract) — copy this to reference the secret in a run. Read-only; the row keeps its bare key. */
+            /** @description Derived CRONOMICON_SECRET_<key> reference (namespace contract) — copy this to reference the secret in a run. Read-only; the row keeps its bare key. */
             readonly reference?: string;
             /** @enum {string} */
             source?: "stored" | "vault";
@@ -6155,7 +6155,7 @@ export interface components {
             deregisteredAt?: string;
             /**
              * @description How the previous row was removed. `reaper` means the runner simply
-             *     stayed offline past AMADEUS_RUNNER_DEREGISTER_AFTER — during an
+             *     stayed offline past CRONOMICON_RUNNER_DEREGISTER_AFTER — during an
              *     outage that is most of them.
              * @enum {string}
              */
@@ -6370,7 +6370,7 @@ export interface components {
             kind: "secret" | "var" | "key";
             /** @description The bare row name the binding declares. */
             name: string;
-            /** @description The derived AMADEUS_<SECTION>_<name>. */
+            /** @description The derived CRONOMICON_<SECTION>_<name>. */
             reference: string;
             jobSource?: string;
             jobName: string;
@@ -6397,7 +6397,7 @@ export interface components {
             kind: "secret" | "var";
             /** @description The bare row name both rows share. */
             name: string;
-            /** @description The derived AMADEUS_<SECTION>_<name>. */
+            /** @description The derived CRONOMICON_<SECTION>_<name>. */
             reference: string;
             /** @description The SHADOWING row's scope. Never "" — a global row shadows nothing. */
             scope: string;
@@ -6434,7 +6434,7 @@ export interface components {
             kind: "secret" | "var" | "key";
             /** @description The key (or SSH label) the departments share. */
             name: string;
-            /** @description The derived AMADEUS_<SECTION>_<name>. */
+            /** @description The derived CRONOMICON_<SECTION>_<name>. */
             reference: string;
             /** @description The scope the collision is in. Always "" for keys — ssh_credentials has no scope column, which is why the key case is the easiest of the three to hit. */
             scope: string;
@@ -6672,7 +6672,7 @@ export interface components {
              */
             sshUser?: string;
             /**
-             * @description RP-8 (protocol v7) — the derived AMADEUS_KEY_<label> REFERENCE for the
+             * @description RP-8 (protocol v7) — the derived CRONOMICON_KEY_<label> REFERENCE for the
              *     run's overridden SSH key (names only, D1). The agent resolves it to the
              *     delivered 0600 key file and emits
              *     `-e ansible_ssh_private_key_file=<path>`. The material itself travels
@@ -6692,7 +6692,7 @@ export interface components {
             checkout?: components["schemas"]["ManifestCheckout"];
             /**
              * @description P1.4 (protocol v6) — dispatch-time resolved reference VALUES
-             *     (AMADEUS_SECRET_* / AMADEUS_VAR_*, plus AMADEUS_KEY_* mapped to their
+             *     (CRONOMICON_SECRET_* / CRONOMICON_VAR_*, plus CRONOMICON_KEY_* mapped to their
              *     delivered key-file PATHS) for a runner flagged allow_secret_injection.
              */
             secrets?: {
@@ -6770,7 +6770,7 @@ export interface components {
         ManifestKey: {
             /** @description The credential's bare LABEL; the agent keys its resolver on this. */
             name: string;
-            /** @description The derived AMADEUS_KEY_<label> form, as it appears in env and in sshKeyRef. */
+            /** @description The derived CRONOMICON_KEY_<label> form, as it appears in env and in sshKeyRef. */
             reference: string;
             /**
              * @description PEM private-key bytes. Written 0600 off the run tree, wiped on cleanup,
@@ -6860,7 +6860,7 @@ export interface components {
             repoUrl?: string;
             tokenExpiryNotifyDays?: number;
             webhookEnabled?: boolean;
-            /** @description Read-only. True when the webhook secret is pinned by the AMADEUS_GITLAB_WEBHOOK_SECRET env var; rotation via the API is rejected (409) while pinned. */
+            /** @description Read-only. True when the webhook secret is pinned by the CRONOMICON_GITLAB_WEBHOOK_SECRET env var; rotation via the API is rejected (409) while pinned. */
             readonly webhookSecretEnvPinned?: boolean;
             webhookEvents?: {
                 push?: boolean;
@@ -6922,7 +6922,7 @@ export interface components {
              *     `definitionRevisions`), the DR-7 window
              *     (`runnerPlacementHistory`), and the S3 archive window
              *     (`archivedLogFiles`, SL-4). `0` on any of them means keep forever. This blob
-             *     is authoritative — the `AMADEUS_RETENTION_*` env vars only seed it
+             *     is authoritative — the `CRONOMICON_RETENTION_*` env vars only seed it
              *     on the first boot that finds it unset (LU-2), and a change here
              *     applies on the next nightly sweep rather than at the next restart.
              */
@@ -6961,7 +6961,7 @@ export interface components {
                  *     Deliberately shorter than the 90-day row windows: it covers a
                  *     multi-week outage with less standing exposure. The window
                  *     starts when the runner is REAPED, not when it went offline —
-                 *     so it adds to `AMADEUS_RUNNER_DEREGISTER_AFTER` (default 14d)
+                 *     so it adds to `CRONOMICON_RUNNER_DEREGISTER_AFTER` (default 14d)
                  *     rather than competing with it.
                  * @default 30
                  */
@@ -6981,7 +6981,7 @@ export interface components {
                 archivedLogFiles: number;
                 /**
                  * @description On-disk **audit stream** window — `audit.log` and its dated
-                 *     `audit.log.YYYYMMDD` generations (`AMADEUS_AUDIT_LOG`), not the
+                 *     `audit.log.YYYYMMDD` generations (`CRONOMICON_AUDIT_LOG`), not the
                  *     per-run logs (`logFiles`) and not the process log (a keep count,
                  *     not a day window). Two years by design: deliberately longer than
                  *     `changeLog`'s 365 and `activity`'s 90, because the file is an
@@ -7245,7 +7245,7 @@ export interface components {
         SshCredential: {
             readonly id: string;
             label: string;
-            /** @description Derived AMADEUS_KEY_<label> reference (namespace contract); resolves to a key-file PATH on the executing host. Read-only; the credential keeps its bare label. */
+            /** @description Derived CRONOMICON_KEY_<label> reference (namespace contract); resolves to a key-file PATH on the executing host. Read-only; the credential keeps its bare label. */
             readonly reference?: string;
             description?: string | null;
             /** @enum {string} */
@@ -8020,7 +8020,7 @@ export interface operations {
                      *     key bytes never ride the request or the run's audit envelope). The
                      *     selected key replaces each resolved target's configured key for
                      *     THIS run: in-process signer resolution on the SSH executor;
-                     *     delivered-key-file resolution (D8, AMADEUS_KEY_<label>) on runner
+                     *     delivered-key-file resolution (D8, CRONOMICON_KEY_<label>) on runner
                      *     ssh-family runs — such runs are claimable only by
                      *     allow_secret_injection runners and refuse local-inventory runners
                      *     (409). On an ansible run the delivered key file is passed as the
@@ -8094,13 +8094,13 @@ export interface operations {
                          * @enum {string}
                          */
                         kind: "secret" | "var" | "key";
-                        /** @description The row's BARE name (never the derived AMADEUS_* form). */
+                        /** @description The row's BARE name (never the derived CRONOMICON_* form). */
                         name: string;
                         /**
                          * @description RA-4 — the optional ALIAS: the bare DESTINATION name this
                          *     row's value is injected under, so a caller can supply
                          *     THEIR department's credential to a shared job body that
-                         *     reads a fixed AMADEUS_SECRET_<name>. Omitted ⇒ injected
+                         *     reads a fixed CRONOMICON_SECRET_<name>. Omitted ⇒ injected
                          *     under the row's own name.
                          *
                          *     A destination, never a selector: `name` still selects the
@@ -8163,7 +8163,7 @@ export interface operations {
              *     bare name, or an invalid `as` alias (same rules as a stored binding
              *     write); or two entries naming DIFFERENT rows alias to the same
              *     destination (RA-Q2), which is refused rather than resolved by a silent
-             *     last-wins. The message names the contested AMADEUS_* key.
+             *     last-wins. The message names the contested CRONOMICON_* key.
              *     `key_binding_requires_runner` (KB) — the run RESOLVED to the ssh
              *     executor and the job, its script, or a per-run addition binds an SSH
              *     key; the in-app executor connects from Cronomicon and cannot place a key

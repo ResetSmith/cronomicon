@@ -45,7 +45,7 @@ Run periodically, not just at go-live:
 ## Bootstrap-admin re-enable (lockout recovery)
 
 If all admin mappings are lost (e.g. AD group renamed) and no one can administer:
-1. Set `AMADEUS_BOOTSTRAP_ADMIN_GROUP=<a group you control>` in `amadeus.env`.
+1. Set `CRONOMICON_BOOTSTRAP_ADMIN_GROUP=<a group you control>` in `amadeus.env`.
 2. `docker compose up -d amadeus`. A loud warning logs while it's active.
 3. Log in (you're now admin), fix `ad_group_mappings` in Settings.
 4. **Remove the var** and `docker compose up -d amadeus` again. Confirm the
@@ -60,8 +60,8 @@ short. Verify under load (D.4): SIGTERM mid-soak, confirm clean exit.
 
 ## Logging & retention
 
-- slog → stdout; set `AMADEUS_LOG_LEVEL` / `AMADEUS_LOG_FORMAT=json`; ship stdout
+- slog → stdout; set `CRONOMICON_LOG_LEVEL` / `CRONOMICON_LOG_FORMAT=json`; ship stdout
   to your collector. Health-probe lines are at debug to keep the access log clean.
 - Retention sweep + nightly `VACUUM INTO` (+ optional S3 upload) run every 24h
-  (`internal/backup`); windows via `AMADEUS_RETENTION_*`. Confirm they run on
+  (`internal/backup`); windows via `CRONOMICON_RETENTION_*`. Confirm they run on
   schedule (look for the periodic sweep log line).

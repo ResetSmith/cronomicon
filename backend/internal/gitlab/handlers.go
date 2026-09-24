@@ -367,7 +367,7 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 
 // DefaultCloneDir returns the default git clone directory under the data volume.
 func DefaultCloneDir() string {
-	if d := os.Getenv("AMADEUS_GIT_CACHE_DIR"); d != "" {
+	if d := os.Getenv("CRONOMICON_GIT_CACHE_DIR"); d != "" {
 		return d
 	}
 	return filepath.Join("/var/lib/amadeus/git-cache", "job-definitions")

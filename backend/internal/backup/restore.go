@@ -29,10 +29,10 @@ type Snapshot struct {
 }
 
 // NewDownloader builds a restore Downloader from config. It errors when no
-// bucket is configured — restore has nothing to read without AMADEUS_BACKUP_S3_*.
+// bucket is configured — restore has nothing to read without CRONOMICON_BACKUP_S3_*.
 func NewDownloader(cfg *config.Config, log *slog.Logger) (*Downloader, error) {
 	if cfg.BackupS3Bucket == "" {
-		return nil, fmt.Errorf("no backup bucket configured — set AMADEUS_BACKUP_S3_BUCKET (and the other AMADEUS_BACKUP_S3_* vars)")
+		return nil, fmt.Errorf("no backup bucket configured — set CRONOMICON_BACKUP_S3_BUCKET (and the other CRONOMICON_BACKUP_S3_* vars)")
 	}
 	client, err := newClient(cfg, log)
 	if err != nil {

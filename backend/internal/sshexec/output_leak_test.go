@@ -24,7 +24,7 @@ import (
 // prelude the executor delivers on stdin) and then emits a single
 // ::amadeus-output:: marker line carrying markerValue on stdout before exiting 0.
 // It lets a test drive the exact SU-1 leak idiom
-// (`echo "::amadeus-output name=TOKEN::$AMADEUS_SECRET_DB_PASS"`) without a real
+// (`echo "::amadeus-output name=TOKEN::$CRONOMICON_SECRET_DB_PASS"`) without a real
 // remote shell: pass the injected secret value as markerValue.
 func outputMarkerSSHServer(t *testing.T, clientPub ssh.PublicKey, markerValue string) (addr string, hostKey ssh.PublicKey) {
 	t.Helper()

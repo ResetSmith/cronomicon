@@ -60,7 +60,7 @@ func TestValidateReferencesUnrestricted(t *testing.T) {
 	if !res[0].OK || res[0].ResolvedScope == nil || *res[0].ResolvedScope != "" {
 		t.Errorf("SEC_GLOBAL should resolve from the global row, got %+v", res[0])
 	}
-	if res[0].Reference != "AMADEUS_SECRET_SEC_GLOBAL" {
+	if res[0].Reference != "CRONOMICON_SECRET_SEC_GLOBAL" {
 		t.Errorf("derived reference = %q", res[0].Reference)
 	}
 	if !res[1].OK || res[1].ResolvedScope == nil || *res[1].ResolvedScope != "prod" {

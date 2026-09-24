@@ -7,7 +7,7 @@ shipped offsite to S3-compatible storage.
 ## How the nightly backup works
 
 The retention worker (`internal/db/retention.go`), started at boot, runs the
-sweep at a fixed **wall-clock time** (default **02:00 UTC**, `AMADEUS_BACKUP_AT`)
+sweep at a fixed **wall-clock time** (default **02:00 UTC**, `CRONOMICON_BACKUP_AT`)
 and re-arms a timer for the next occurrence each day. It also runs one
 **boot catch-up** sweep at startup *iff* the last successful backup is overdue
 (older than ~24h or never) — gated on the persisted last-success time so a
@@ -48,12 +48,12 @@ time() - amadeus_backup_last_success_timestamp_seconds > 129600   # 36h
 
 | Var | Notes |
 |---|---|
-| `AMADEUS_BACKUP_S3_BUCKET` | target bucket; **empty disables upload** |
-| `AMADEUS_BACKUP_S3_ENDPOINT` | host:port for S3-compatible (MinIO/Ceph/R2); empty ⇒ AWS `s3.<region>.amazonaws.com` |
-| `AMADEUS_BACKUP_S3_REGION` | default `us-east-1` |
-| `AMADEUS_BACKUP_S3_ACCESS_KEY` / `_SECRET_KEY` | static credentials (env, not the DB). **Omit both to use the ambient IAM credential chain** — see below |
-| `AMADEUS_BACKUP_S3_USE_SSL` | default `true` |
-| `AMADEUS_BACKUP_AT` | daily sweep time, `HH:MM` UTC; default `02:00` (PP-H6) |
+| `CRONOMICON_BACKUP_S3_BUCKET` | target bucket; **empty disables upload** |
+| `CRONOMICON_BACKUP_S3_ENDPOINT` | host:port for S3-compatible (MinIO/Ceph/R2); empty ⇒ AWS `s3.<region>.amazonaws.com` |
+| `CRONOMICON_BACKUP_S3_REGION` | default `us-east-1` |
+| `CRONOMICON_BACKUP_S3_ACCESS_KEY` / `_SECRET_KEY` | static credentials (env, not the DB). **Omit both to use the ambient IAM credential chain** — see below |
+| `CRONOMICON_BACKUP_S3_USE_SSL` | default `true` |
+| `CRONOMICON_BACKUP_AT` | daily sweep time, `HH:MM` UTC; default `02:00` (PP-H6) |
 
 > **Credential resolution (V1.1-11).** When both `_ACCESS_KEY` and
 > `_SECRET_KEY` are set, those static keys are used (prior behaviour). When
@@ -76,13 +76,13 @@ SQLite restore is a file swap — no import step.
 ### Tooling: `amadeus restore` (FU-3)
 
 The binary bundles a restore subcommand that scripts the download + swap + verify
-steps below, reading the same `AMADEUS_BACKUP_S3_*` / `AMADEUS_DB_PATH` env the
+steps below, reading the same `CRONOMICON_BACKUP_S3_*` / `CRONOMICON_DB_PATH` env the
 server uses. **Stop the server first** — the swap replaces the live `.db` and its
 `-wal`/`-shm` sidecars.
 
 ```
 amadeus restore --list                          # show available snapshots (newest first)
-amadeus restore                                 # restore the LATEST snapshot over AMADEUS_DB_PATH
+amadeus restore                                 # restore the LATEST snapshot over CRONOMICON_DB_PATH
 amadeus restore --from amadeus-20260722.db      # restore a specific snapshot
 amadeus restore --db /var/lib/amadeus/amadeus.db --yes   # non-interactive
 ```
@@ -107,7 +107,7 @@ apply migrations and re-supply the KEK/OIDC keys (step 5 below).
 4. **Start** the process. On boot it applies any pending migrations (T4) and
    `/readyz` reports `database: ok` once schema state is clean.
 5. Re-supply out-of-band material that does **not** live in the DB: the secret
-   KEK (`AMADEUS_KEK*`) and
+   KEK (`CRONOMICON_KEK*`) and
    OIDC/session keys. Without the original KEK,
    stored secrets cannot be decrypted (vault-source secrets are unaffected).
 
@@ -135,7 +135,7 @@ happens next depends on which token they hold:
 
 | The runner presents | Outcome |
 |---|---|
-| The server's `AMADEUS_RUNNER_BOOTSTRAP_TOKEN` | Re-registration completes unattended. Nothing to do. |
+| The server's `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | Re-registration completes unattended. Nothing to do. |
 | A single-use `amt_reg_*` from its original install | Re-registration **fails** `token_used`. The runner is offline until an operator mints a fresh token, places it on the host, and restarts the unit. |
 
 Note that the agent discards its identity *before* it attempts to register, so a
@@ -143,7 +143,7 @@ runner in the second case cannot fall back to its old key — it stays down unti
 attended to. Per host.
 
 > **A long outage widens this.** A runner that stays offline past
-> `AMADEUS_RUNNER_DEREGISTER_AFTER` (default **14 days**) is reaped, which
+> `CRONOMICON_RUNNER_DEREGISTER_AFTER` (default **14 days**) is reaped, which
 > deletes its row. After a multi-week incident the second case is the normal
 > case, not the edge case — plan for re-enrollment across the fleet rather than
 > for a handful of stragglers.
@@ -206,7 +206,7 @@ journalctl -u amadeus-runner --since '30 min ago' | grep -Ei 'register|401|404'
 `sqlite3 amadeus-YYYYMMDD.db 'PRAGMA integrity_check; SELECT count(*) FROM runs;'`
 (`amadeus restore` runs this check automatically after installing a snapshot.)
 
-> Backups are configured **only** via `AMADEUS_BACKUP_S3_*` env (see Configuration
+> Backups are configured **only** via `CRONOMICON_BACKUP_S3_*` env (see Configuration
 > above) — there is no DB-stored backup setting. (The inert `BackupConfig` on the
 > audit-compliance settings blob was removed in FU-3 Phase B.)
 

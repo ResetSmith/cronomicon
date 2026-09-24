@@ -120,7 +120,7 @@ func detectRunTypes(ctx context.Context) []string {
 // Empty configured capabilities means auto-detect (D1: 1B): the run-types are
 // probed from the host's PATH instead. That errors only when the probe yields
 // nothing — a runner with zero run-types can never claim work, so it must not
-// register. Set -capabilities / AMADEUS_RUNNER_CAPABILITIES explicitly to
+// register. Set -capabilities / CRONOMICON_RUNNER_CAPABILITIES explicitly to
 // narrow ("this box has python but must not run python jobs").
 //
 // Detection is best-effort: a missing ansible/ansible-galaxy simply yields no
@@ -136,7 +136,7 @@ func detectCapabilities(ctx context.Context, cfg Config) ([]string, Toolchains, 
 	if len(set) == 0 {
 		detected := detectRunTypes(ctx)
 		if len(detected) == 0 {
-			return nil, Toolchains{}, fmt.Errorf("capability auto-detect found no run-type toolchains on PATH — set -capabilities / AMADEUS_RUNNER_CAPABILITIES explicitly")
+			return nil, Toolchains{}, fmt.Errorf("capability auto-detect found no run-type toolchains on PATH — set -capabilities / CRONOMICON_RUNNER_CAPABILITIES explicitly")
 		}
 		for _, rt := range detected {
 			set[rt] = true

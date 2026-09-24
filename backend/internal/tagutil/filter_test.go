@@ -62,11 +62,11 @@ func TestMatch(t *testing.T) {
 		f    Filter
 		want bool
 	}{
-		{Filter{}, true},                                             // empty ⇒ all
-		{Filter{Tags: []string{"prod"}}, true},                       // any-of hit
-		{Filter{Tags: []string{"production"}}, false},                // exact, not substring
-		{Filter{Tags: []string{"db"}}, false},                        // any-of miss
-		{Filter{Tags: []string{"prod", "db"}}, true},                 // OR: one hit
+		{Filter{}, true},                                              // empty ⇒ all
+		{Filter{Tags: []string{"prod"}}, true},                        // any-of hit
+		{Filter{Tags: []string{"production"}}, false},                 // exact, not substring
+		{Filter{Tags: []string{"db"}}, false},                         // any-of miss
+		{Filter{Tags: []string{"prod", "db"}}, true},                  // OR: one hit
 		{Filter{Tags: []string{"prod", "db"}, MatchAll: true}, false}, // AND: missing db
 		{Filter{Tags: []string{"prod", "web"}, MatchAll: true}, true}, // AND: both present
 	}

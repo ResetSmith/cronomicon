@@ -19,8 +19,8 @@ import (
 // to the redirect target.
 func TestRotateWebhookDoesNotFollowRedirectWithPAT(t *testing.T) {
 	// Keep the rotation path off the env-pinned early return.
-	t.Setenv("AMADEUS_GITLAB_WEBHOOK_SECRET", "")
-	t.Setenv("AMADEUS_GITLAB_TOKEN", "")
+	t.Setenv("CRONOMICON_GITLAB_WEBHOOK_SECRET", "")
+	t.Setenv("CRONOMICON_GITLAB_TOKEN", "")
 
 	var attackerHits atomic.Int32
 	var attackerGotPAT atomic.Bool

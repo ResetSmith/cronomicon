@@ -517,7 +517,7 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 	}
 	out = append(out, envSlice(m.Env)...)
 	// Dispatch-time resolved reference values (vault-integration.md P1.4): the
-	// AMADEUS_SECRET_*/AMADEUS_VAR_* the server resolved from the run's declared
+	// CRONOMICON_SECRET_*/CRONOMICON_VAR_* the server resolved from the run's declared
 	// bindings. Appended after the plaintext Env snapshot (last wins) so an
 	// injected reference value beats a same-named snapshot entry. Never persisted:
 	// they live only in this child env, which dies with the process.
@@ -543,7 +543,7 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 			// Supplied by the dispatch-time resolved Secrets block (appended above).
 			// Checked FIRST so the server-resolved (possibly rotated) value wins over
 			// ANY runner-local env var of the same name — including the exact
-			// prefixed form AMADEUS_SECRET_X a migrated secrets.env might hold, not
+			// prefixed form CRONOMICON_SECRET_X a migrated secrets.env might hold, not
 			// just the bare-name fallback (P1.4).
 			continue
 		}
@@ -558,14 +558,14 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 			continue
 		}
 		// Derived-reference bridge (W3, N-D5 decoupling): a value reference
-		// (AMADEUS_SECRET_X / AMADEUS_VAR_X) absent under its prefixed name falls
+		// (CRONOMICON_SECRET_X / CRONOMICON_VAR_X) absent under its prefixed name falls
 		// back to the BARE name in the runner env, so an updated inventory keeps
 		// resolving against an un-migrated secrets.env that still uses bare names.
 		// The child still receives the value under the referenced (prefixed) name.
 		if bare, ok := envref.StripValueReference(n); ok {
 			// DR-1: the fallback reads a DIFFERENT key than the one denied at the top
 			// of the loop, so it needs its own guard — a passthrough of
-			// AMADEUS_SECRET_AMADEUS_RUNNER_REGISTRATION_TOKEN strips to the agent's
+			// CRONOMICON_SECRET_CRONOMICON_RUNNER_REGISTRATION_TOKEN strips to the agent's
 			// own config name and would otherwise resolve it out of the agent env and
 			// hand it to the child under the prefixed name.
 			if envref.IsAgentConfig(bare) {

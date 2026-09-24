@@ -225,12 +225,12 @@ WORKDIR /app
 COPY --from=build /out/amadeus /app/amadeus
 COPY --from=build --chown=nonroot:nonroot /out/var/lib/amadeus /var/lib/amadeus
 # Runner-agent binaries + SHA256SUMS, served at GET /agents/{filename}
-# (AMADEUS_AGENT_DIR defaults here; see internal/api/agents.go).
+# (CRONOMICON_AGENT_DIR defaults here; see internal/api/agents.go).
 COPY --from=agents /out/agents /usr/share/amadeus/agents
 # Data volume: SQLite file + WAL + per-run logs + GitLab clone cache + local
 # backups (S13). One writer — single replica (SQLite single-node).
 VOLUME ["/var/lib/amadeus"]
-ENV AMADEUS_DB_PATH=/var/lib/amadeus/amadeus.db
+ENV CRONOMICON_DB_PATH=/var/lib/amadeus/amadeus.db
 
 EXPOSE 8080
 

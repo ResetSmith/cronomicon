@@ -69,8 +69,7 @@ func TestSpecRouteConformance(t *testing.T) {
 	// tracked work (the endpoint-update plan follow-ups) — do NOT add to this
 	// list to silence a failure; implement the endpoint instead. The test
 	// fails if an entry here becomes routed, so the list can't go stale.
-	knownGaps := map[string]bool{
-	}
+	knownGaps := map[string]bool{}
 
 	paramRe := regexp.MustCompile(`\{[^}]+\}`)
 	methods := []string{"get", "post", "put", "patch", "delete"}

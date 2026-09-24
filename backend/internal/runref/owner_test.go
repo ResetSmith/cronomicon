@@ -78,7 +78,7 @@ func (f *ownerFixture) resolveSecret(t *testing.T, name, scope string, agencies 
 	if err != nil {
 		return "", err
 	}
-	return out.Env["AMADEUS_SECRET_"+name], nil
+	return out.Env["CRONOMICON_SECRET_"+name], nil
 }
 
 // TestOwnedRowBeatsSharedPerDepartment is the headline: one key, one scope, two
@@ -151,7 +151,7 @@ func TestTwoOwnersFailClosed(t *testing.T) {
 	if !strings.Contains(msg, "ambiguous") {
 		t.Errorf("operator message does not name the ambiguity: %q", msg)
 	}
-	if !strings.Contains(msg, "AMADEUS_SECRET_BECOME_PASSWORD") {
+	if !strings.Contains(msg, "CRONOMICON_SECRET_BECOME_PASSWORD") {
 		t.Errorf("operator message does not name the reference: %q", msg)
 	}
 	// ...and it must NOT name the owning departments. That precision belongs to the
@@ -259,8 +259,8 @@ func TestVariablesGetTheSameTiers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TeamA var resolve: %v", err)
 	}
-	if out.Env["AMADEUS_VAR_REGION"] != "eu-west" {
-		t.Errorf("TeamA got %q, want eu-west", out.Env["AMADEUS_VAR_REGION"])
+	if out.Env["CRONOMICON_VAR_REGION"] != "eu-west" {
+		t.Errorf("TeamA got %q, want eu-west", out.Env["CRONOMICON_VAR_REGION"])
 	}
 	if _, err := f.r.Resolve(ctx, nil, "prod", []string{"TeamA", "TeamB"},
 		[]Binding{{Kind: KindVar, Name: "REGION"}}); !errors.Is(err, ErrAmbiguousReference) {
@@ -362,14 +362,14 @@ func TestFileDeliveryKeepsTheValueOutOfEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if _, present := out.Env["AMADEUS_SECRET_BECOME_PASSWORD"]; present {
+	if _, present := out.Env["CRONOMICON_SECRET_BECOME_PASSWORD"]; present {
 		t.Error("a file-delivered secret ALSO landed in Env — the value is exposed in the " +
 			"process environment, which is what file delivery exists to prevent")
 	}
 	if len(out.Files) != 1 {
 		t.Fatalf("expected 1 file material, got %d", len(out.Files))
 	}
-	if out.Files[0].Value != "sudo-pw" || out.Files[0].Reference != "AMADEUS_SECRET_BECOME_PASSWORD" {
+	if out.Files[0].Value != "sudo-pw" || out.Files[0].Reference != "CRONOMICON_SECRET_BECOME_PASSWORD" {
 		t.Errorf("file material = %+v", out.Files[0])
 	}
 	// Redaction still covers it: a playbook that cats the file has its bytes masked.
@@ -391,7 +391,7 @@ func TestFileDeliveryComposesWithAliasing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if len(out.Files) != 1 || out.Files[0].Reference != "AMADEUS_SECRET_BECOME_PASSWORD" {
+	if len(out.Files) != 1 || out.Files[0].Reference != "CRONOMICON_SECRET_BECOME_PASSWORD" {
 		t.Fatalf("alias not applied to file delivery: %+v", out.Files)
 	}
 	if out.Files[0].Name != "TEAMA_SUDO" {
@@ -409,7 +409,7 @@ func TestFileAndValueDeliveryAreDistinctBindings(t *testing.T) {
 		t.Fatal("value and file delivery of one secret collapse to the same dedupe key")
 	}
 	// ...and they DO collide when left on the same key. Both land on
-	// AMADEUS_SECRET_P with different contents — the secret, and a path to the
+	// CRONOMICON_SECRET_P with different contents — the secret, and a path to the
 	// secret — and whichever the agent writes last wins, so a job body would read a
 	// path where it expected a password with nothing saying so.
 	err := CheckAliasCollisions([]Binding{valueForm, fileForm})
@@ -417,7 +417,7 @@ func TestFileAndValueDeliveryAreDistinctBindings(t *testing.T) {
 		t.Fatal("value+file delivery on ONE key accepted — the agent would silently " +
 			"overwrite the value with the file path")
 	}
-	if !strings.Contains(err.Error(), "AMADEUS_SECRET_P") {
+	if !strings.Contains(err.Error(), "CRONOMICON_SECRET_P") {
 		t.Errorf("collision error should name the contested key: %v", err)
 	}
 	// Aliasing one of them resolves it: two keys, two meanings, no ambiguity.

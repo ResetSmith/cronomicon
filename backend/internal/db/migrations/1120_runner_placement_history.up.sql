@@ -10,7 +10,7 @@
 --
 -- Both deletion paths capture here, not just the obvious one: the operator
 -- handler (register.go HandleDeregisterRunner) AND the reaper's offline sweep
--- (reaper.go deregisterRunner, past AMADEUS_RUNNER_DEREGISTER_AFTER -- default
+-- (reaper.go deregisterRunner, past CRONOMICON_RUNNER_DEREGISTER_AFTER -- default
 -- 14 days). For disaster recovery the reaper is the DOMINANT path: in an outage
 -- runners go offline, get reaped, and return to a server with no record of them.
 -- Capturing only on manual deregister would miss the exact scenario this serves.

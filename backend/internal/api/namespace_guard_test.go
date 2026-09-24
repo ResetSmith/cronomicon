@@ -45,20 +45,20 @@ func TestNamespaceContractEnforcement(t *testing.T) {
 		body   map[string]any
 		want   int
 	}{
-		{"secret with AMADEUS_ key rejected", "POST", ts.URL + "/api/v1/env-secrets",
-			map[string]any{"key": "AMADEUS_SECRET_X", "source": "stored", "scope": "", "value": "v"}, http.StatusUnprocessableEntity},
+		{"secret with CRONOMICON_ key rejected", "POST", ts.URL + "/api/v1/env-secrets",
+			map[string]any{"key": "CRONOMICON_SECRET_X", "source": "stored", "scope": "", "value": "v"}, http.StatusUnprocessableEntity},
 		{"secret named KEK rejected", "POST", ts.URL + "/api/v1/env-secrets",
 			map[string]any{"key": "KEK", "source": "stored", "scope": "", "value": "v"}, http.StatusUnprocessableEntity},
 		{"secret with dash rejected", "POST", ts.URL + "/api/v1/env-secrets",
 			map[string]any{"key": "bad-key", "source": "stored", "scope": "", "value": "v"}, http.StatusUnprocessableEntity},
 		{"clean secret accepted", "POST", ts.URL + "/api/v1/env-secrets",
 			map[string]any{"key": "GOOD_SECRET", "source": "stored", "scope": "", "value": "v"}, http.StatusCreated},
-		{"env var with AMADEUS_ key rejected", "POST", ts.URL + "/api/v1/env-vars",
-			map[string]any{"key": "AMADEUS_VAR_X", "value": "v", "scope": ""}, http.StatusUnprocessableEntity},
+		{"env var with CRONOMICON_ key rejected", "POST", ts.URL + "/api/v1/env-vars",
+			map[string]any{"key": "CRONOMICON_VAR_X", "value": "v", "scope": ""}, http.StatusUnprocessableEntity},
 		{"ssh credential with dash rejected", "POST", ts.URL + "/api/v1/ssh/credentials",
 			map[string]any{"label": "bad-label", "source": "vault", "vaultRef": "kv/x"}, http.StatusUnprocessableEntity},
-		{"job env with AMADEUS_ key rejected", "POST", ts.URL + "/api/v1/jobs",
-			map[string]any{"name": "guardjob", "scriptRef": "backup", "scope": "", "env": map[string]string{"AMADEUS_SECRET_X": "v"}}, http.StatusUnprocessableEntity},
+		{"job env with CRONOMICON_ key rejected", "POST", ts.URL + "/api/v1/jobs",
+			map[string]any{"name": "guardjob", "scriptRef": "backup", "scope": "", "env": map[string]string{"CRONOMICON_SECRET_X": "v"}}, http.StatusUnprocessableEntity},
 	}
 
 	for _, tc := range cases {

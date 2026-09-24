@@ -9,7 +9,7 @@ import (
 )
 
 // TestIngestCapsRunLogSize (SU-9): the log-ingest endpoint is exempt from the
-// global 2 MiB body cap, so a per-run ceiling (AMADEUS_MAX_RUN_LOG_BYTES) is the
+// global 2 MiB body cap, so a per-run ceiling (CRONOMICON_MAX_RUN_LOG_BYTES) is the
 // only bound on how much a runner can write. Once a run's persisted log reaches
 // the ceiling, further ingest is refused with 413 and nothing more is appended —
 // and a subsequent chunk short-circuits to 413 without writing.

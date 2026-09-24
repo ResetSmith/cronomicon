@@ -46,7 +46,7 @@ type sessionCodec struct {
 // then don't survive a restart, which we surface to the caller via ephemeral=true.
 //
 // SU-6: the hash key was previously only checked for emptiness, so a short (weak)
-// but non-empty AMADEUS_SESSION_HASH_KEY was passed through to HMAC as-is. Require
+// but non-empty CRONOMICON_SESSION_HASH_KEY was passed through to HMAC as-is. Require
 // at least 32 bytes (mirroring the block-key validation below); a shorter key is
 // substituted with a random one rather than silently weakening session integrity.
 func newSessionCodec(hashKey, blockKey []byte, secure bool) (codec *sessionCodec, ephemeral bool) {

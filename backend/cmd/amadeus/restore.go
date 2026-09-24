@@ -26,10 +26,10 @@ import (
 // that runbook.
 //
 //	amadeus restore --list                 # show available snapshots
-//	amadeus restore                        # restore the latest over AMADEUS_DB_PATH
+//	amadeus restore                        # restore the latest over CRONOMICON_DB_PATH
 //	amadeus restore --from amadeus-20260722.db --db /var/lib/amadeus/amadeus.db
 //
-// It reads the same AMADEUS_BACKUP_S3_* / AMADEUS_DB_PATH env the server uses.
+// It reads the same CRONOMICON_BACKUP_S3_* / CRONOMICON_DB_PATH env the server uses.
 // The server must be STOPPED first — the swap replaces the live .db and its
 // -wal/-shm sidecars. A best-effort write-lock probe refuses an obviously-active
 // DB, but is not a substitute for stopping the service. The KEK/OIDC keys are
@@ -37,7 +37,7 @@ import (
 func runRestore(args []string) int {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	from := fs.String("from", "", "snapshot object key or filename to restore (default: the latest snapshot)")
-	dbPath := fs.String("db", "", "target DB path (default: AMADEUS_DB_PATH from config)")
+	dbPath := fs.String("db", "", "target DB path (default: CRONOMICON_DB_PATH from config)")
 	list := fs.Bool("list", false, "list available snapshots and exit")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation prompt")
 	downloadTo := fs.String("download-to", "", "keep the downloaded snapshot at this path (default: a temp file next to the target, removed after swap)")
@@ -98,7 +98,7 @@ func runRestore(args []string) int {
 		target = cfg.DBPath
 	}
 	if target == "" {
-		fmt.Fprintln(os.Stderr, "restore: no target DB path (set AMADEUS_DB_PATH or pass --db)")
+		fmt.Fprintln(os.Stderr, "restore: no target DB path (set CRONOMICON_DB_PATH or pass --db)")
 		return 1
 	}
 

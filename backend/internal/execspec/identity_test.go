@@ -50,9 +50,9 @@ func TestApplyIdentityOverride(t *testing.T) {
 	})
 
 	t.Run("runner keyEnvVar clears the credential id", func(t *testing.T) {
-		out := ApplyIdentityOverride(base(), "svc", "", "AMADEUS_KEY_prod")
+		out := ApplyIdentityOverride(base(), "svc", "", "CRONOMICON_KEY_prod")
 		for _, tg := range out[:2] {
-			if tg.AuthKeyEnvVar != "AMADEUS_KEY_prod" || tg.AuthCredentialID != "" {
+			if tg.AuthKeyEnvVar != "CRONOMICON_KEY_prod" || tg.AuthCredentialID != "" {
 				t.Errorf("derived key reference not applied on %q: %+v", tg.Name, tg)
 			}
 			if tg.User != "svc" {

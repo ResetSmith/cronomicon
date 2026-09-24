@@ -29,7 +29,7 @@ DEV_DB ?= $(HOME)/.local/share/amadeus/amadeus-dev.db
 # Optional env file that `make run` sources if present (e.g. the compose stack's
 # amadeus.env, or any KEY=value file). The binary itself has no .env autoloading
 # — it reads only the process environment — so this is how `make run` picks up
-# things like AMADEUS_TRUSTED_PROXIES. Override with `make run ENV_FILE=path`.
+# things like CRONOMICON_TRUSTED_PROXIES. Override with `make run ENV_FILE=path`.
 ENV_FILE ?= amadeus.env
 
 all: build
@@ -56,14 +56,14 @@ run: build stop
 	@set -a; \
 		if [ -f "$(ENV_FILE)" ]; then echo ">> loading env from $(ENV_FILE)"; . "./$(ENV_FILE)"; fi; \
 		set +a; \
-		AMADEUS_DB_PATH=$(DEV_DB) ./$(BIN)
+		CRONOMICON_DB_PATH=$(DEV_DB) ./$(BIN)
 
 # Local preview: dev-login bypass + demo seed, on a writable DB path. Browse the
 # UI before SSO/GitLab are wired up. NEVER use these flags in production.
 dev: build stop
 	@mkdir -p $(dir $(DEV_DB))
-	AMADEUS_DEV_AUTH=true AMADEUS_DEV_SEED=true AMADEUS_COOKIE_SECURE=false \
-	AMADEUS_DB_PATH=$(DEV_DB) ./$(BIN)
+	CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false \
+	CRONOMICON_DB_PATH=$(DEV_DB) ./$(BIN)
 
 # -race matches CI (the pipeline runs `go test -race ./...`). It is ~2-3x
 # slower on the internal/db and internal/api suites; that is the price of the

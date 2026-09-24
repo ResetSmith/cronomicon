@@ -91,7 +91,7 @@ func TestPreflightFlagsAGQ1(t *testing.T) {
 	if f.JobName != "dev-job" {
 		t.Errorf("flagged %q; prod-job is IN ag-dss and must not be flagged", f.JobName)
 	}
-	if f.Reference != "AMADEUS_SECRET_TOKEN" {
+	if f.Reference != "CRONOMICON_SECRET_TOKEN" {
 		t.Errorf("reference = %q", f.Reference)
 	}
 	if len(f.RowAgencies) != 1 || f.RowAgencies[0] != "DSS" {
@@ -123,7 +123,7 @@ func TestPreflightFlagsAGQ5(t *testing.T) {
 	if len(rep.KeyFindings) != 1 || rep.KeyFindings[0].JobName != "dev-job" {
 		t.Fatalf("keyFindings = %+v, want exactly the dev-job key binding", rep.KeyFindings)
 	}
-	if rep.KeyFindings[0].Reference != "AMADEUS_KEY_deploy_key" {
+	if rep.KeyFindings[0].Reference != "CRONOMICON_KEY_deploy_key" {
 		t.Errorf("reference = %q", rep.KeyFindings[0].Reference)
 	}
 	if len(rep.ReferenceFindings) != 0 {

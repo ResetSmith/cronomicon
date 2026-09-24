@@ -309,7 +309,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
 	}
-	// Reserved-namespace guard (W4, N-D1): no AMADEUS_* key in any (inline or
+	// Reserved-namespace guard (W4, N-D1): no CRONOMICON_* key in any (inline or
 	// reusable) schedule env bound to this workflow.
 	for _, e := range entries {
 		if err := envref.ValidateOperatorEnv(e.Env); err != nil {

@@ -28,7 +28,7 @@ func TestReferenceBindingsAPI(t *testing.T) {
 	// Seed a script (catalog row) whose body references two Env Vars, one via the
 	// derived form and one bare, plus an Env Vars secret row named DB_PASS so the
 	// bare-name lint has something known to flag.
-	body := "#!/bin/bash\necho \"$AMADEUS_SECRET_DB_PASS\"\ncurl -H \"t: $REGION\"\n"
+	body := "#!/bin/bash\necho \"$CRONOMICON_SECRET_DB_PASS\"\ncurl -H \"t: $REGION\"\n"
 	if _, err := pool.ExecContext(ctx,
 		`INSERT INTO scripts(name, run_type, script, content_hash, synced_at) VALUES('deploy','bash',?,'sha256:x',?)`,
 		body, now); err != nil {
@@ -95,7 +95,7 @@ func TestReferenceBindingsAPI(t *testing.T) {
 		t.Fatalf("want 2 bindings after dedupe, got %+v", out.Bindings)
 	}
 	// Sorted (kind, name): secret DB_PASS then var REGION.
-	if out.Bindings[0].Reference != "AMADEUS_SECRET_DB_PASS" || out.Bindings[1].Reference != "AMADEUS_VAR_REGION" {
+	if out.Bindings[0].Reference != "CRONOMICON_SECRET_DB_PASS" || out.Bindings[1].Reference != "CRONOMICON_VAR_REGION" {
 		t.Fatalf("derived references wrong: %+v", out.Bindings)
 	}
 
@@ -138,9 +138,9 @@ func TestReferenceBindingsAPI(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&scan)
 	resp.Body.Close()
-	// Body names AMADEUS_SECRET_DB_PASS (derived) → suggested; bare $REGION matches
+	// Body names CRONOMICON_SECRET_DB_PASS (derived) → suggested; bare $REGION matches
 	// the known var row → bareReferences.
-	if len(scan.Suggested) != 1 || scan.Suggested[0].Reference != "AMADEUS_SECRET_DB_PASS" {
+	if len(scan.Suggested) != 1 || scan.Suggested[0].Reference != "CRONOMICON_SECRET_DB_PASS" {
 		t.Fatalf("scan suggested wrong: %+v", scan.Suggested)
 	}
 	if len(scan.BareReferences) != 1 || scan.BareReferences[0].Name != "REGION" {
@@ -166,7 +166,7 @@ func TestReferenceBindingsAPI(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	resp.Body.Close()
-	if len(out.Bindings) != 1 || out.Bindings[0].Reference != "AMADEUS_KEY_deploy_key" {
+	if len(out.Bindings) != 1 || out.Bindings[0].Reference != "CRONOMICON_KEY_deploy_key" {
 		t.Fatalf("job binding wrong: %+v", out.Bindings)
 	}
 }
@@ -227,7 +227,7 @@ func TestRunReferencesAPI(t *testing.T) {
 	for _, b := range refs {
 		seen[b.Reference] = true
 	}
-	if !seen["AMADEUS_SECRET_DB_PASS"] || !seen["AMADEUS_VAR_REGION"] {
+	if !seen["CRONOMICON_SECRET_DB_PASS"] || !seen["CRONOMICON_VAR_REGION"] {
 		t.Fatalf("references wrong: %+v", refs)
 	}
 

@@ -24,11 +24,11 @@ func TestKeyBindingsOnSSH(t *testing.T) {
 		{"secret only, ssh", map[Owner][]Binding{job: {{Kind: KindSecret, Name: "DB_PASS"}}}, "ssh", nil},
 		{"key, runner", map[Owner][]Binding{job: {{Kind: KindKey, Name: "deploy_key"}}}, "runner", nil},
 		{"key, empty executor", map[Owner][]Binding{job: {{Kind: KindKey, Name: "deploy_key"}}}, "", nil},
-		{"key, ssh", map[Owner][]Binding{job: {{Kind: KindKey, Name: "deploy_key"}}}, "ssh", []string{"AMADEUS_KEY_deploy_key"}},
-		{"aliased key, ssh", map[Owner][]Binding{job: {{Kind: KindKey, Name: "deploy_key", As: "GIT_KEY"}}}, "ssh", []string{"AMADEUS_KEY_GIT_KEY"}},
+		{"key, ssh", map[Owner][]Binding{job: {{Kind: KindKey, Name: "deploy_key"}}}, "ssh", []string{"CRONOMICON_KEY_deploy_key"}},
+		{"aliased key, ssh", map[Owner][]Binding{job: {{Kind: KindKey, Name: "deploy_key", As: "GIT_KEY"}}}, "ssh", []string{"CRONOMICON_KEY_GIT_KEY"}},
 		{"job key + script key, ssh", map[Owner][]Binding{
 			job: {{Kind: KindKey, Name: "deploy_key"}}, script: {{Kind: KindSecret, Name: "X"}, {Kind: KindKey, Name: "script_key"}},
-		}, "ssh", []string{"AMADEUS_KEY_deploy_key", "AMADEUS_KEY_script_key"}},
+		}, "ssh", []string{"CRONOMICON_KEY_deploy_key", "CRONOMICON_KEY_script_key"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,7 +57,7 @@ func TestKeyBindingRefusalNamesTheReferenceAndTheWayOut(t *testing.T) {
 		t.Errorf("empty refusal = %q", got)
 	}
 	one := KeyBindingRefusal([]Binding{{Kind: KindKey, Name: "k", As: "GIT_KEY"}})
-	for _, want := range []string{"AMADEUS_KEY_GIT_KEY", "runner", "Secret"} {
+	for _, want := range []string{"CRONOMICON_KEY_GIT_KEY", "runner", "Secret"} {
 		if !strings.Contains(one, want) {
 			t.Errorf("refusal %q does not mention %q", one, want)
 		}

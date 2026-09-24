@@ -673,7 +673,7 @@ func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec 
 // EXISTING scope (M4) — the variable analogue of loadSecretWritable. Env-var
 // writes were wholly unscoped, which the resolver's scope-exact-beats-global
 // ordering turns into an INTEGRITY hole (a restricted manager POSTing
-// {key:"DB_HOST", scope:"prod"} makes a prod run's AMADEUS_VAR_DB_HOST resolve the
+// {key:"DB_HOST", scope:"prod"} makes a prod run's CRONOMICON_VAR_DB_HOST resolve the
 // attacker's value over the global row). 404 on a row out of read scope (no
 // existence oracle), 403 on a global row a restricted actor may not rewrite.
 func (s *Server) loadEnvVarWritable(w http.ResponseWriter, r *http.Request, evID string, actor auth.Identity) (*settings.EnvVar, bool) {

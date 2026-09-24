@@ -172,11 +172,11 @@ func TestFiredRunCarriesTheArrivalContext(t *testing.T) {
 	}
 	var env map[string]string
 	_ = json.Unmarshal([]byte(envJSON), &env)
-	if env["AMADEUS_WATCH_PATH"] != "/srv/incoming/a.csv" {
-		t.Errorf("AMADEUS_WATCH_PATH = %q, want the arrival's path", env["AMADEUS_WATCH_PATH"])
+	if env["CRONOMICON_WATCH_PATH"] != "/srv/incoming/a.csv" {
+		t.Errorf("CRONOMICON_WATCH_PATH = %q, want the arrival's path", env["CRONOMICON_WATCH_PATH"])
 	}
-	if env["AMADEUS_WATCH_FILE"] != "a.csv" {
-		t.Errorf("AMADEUS_WATCH_FILE = %q, want the basename", env["AMADEUS_WATCH_FILE"])
+	if env["CRONOMICON_WATCH_FILE"] != "a.csv" {
+		t.Errorf("CRONOMICON_WATCH_FILE = %q, want the basename", env["CRONOMICON_WATCH_FILE"])
 	}
 	if actor != "watcher:r1" {
 		t.Errorf("triggered_by = %q, want watcher:r1", actor)

@@ -147,7 +147,7 @@ func TestReactionFiresIntoAPendingRun(t *testing.T) {
 		t.Errorf("reaction_depth = %d, want 1 (upstream 0 + 1)", depth)
 	}
 	// RX-10 — the stamp is the only data that crosses a reaction edge.
-	for _, want := range []string{"AMADEUS_REACTED_TO_NAME", "upstream", "AMADEUS_REACTED_TO_OUTCOME", "success"} {
+	for _, want := range []string{"CRONOMICON_REACTED_TO_NAME", "upstream", "CRONOMICON_REACTED_TO_OUTCOME", "success"} {
 		if !contains(envJSON.String, want) {
 			t.Errorf("origin_env_json %q missing %q", envJSON.String, want)
 		}
@@ -641,7 +641,7 @@ func TestReactionParamsMatchACronFire(t *testing.T) {
 	}
 
 	got, err := s.buildReactionJobParams(ctxb(), "git", "rich", "", map[string]string{
-		"AMADEUS_REACTED_TO_NAME": "upstream",
+		"CRONOMICON_REACTED_TO_NAME": "upstream",
 	})
 	if err != nil {
 		t.Fatalf("buildReactionJobParams: %v", err)
@@ -677,7 +677,7 @@ func TestReactionParamsMatchACronFire(t *testing.T) {
 	if !contains(got.EnvJSON, `"A":"1"`) {
 		t.Errorf("env %q lost the job's own env", got.EnvJSON)
 	}
-	if !contains(got.EnvJSON, "AMADEUS_REACTED_TO_NAME") {
+	if !contains(got.EnvJSON, "CRONOMICON_REACTED_TO_NAME") {
 		t.Errorf("env %q lost the reaction stamp", got.EnvJSON)
 	}
 	// The provenance that makes it a reaction rather than a cron fire.
@@ -746,7 +746,7 @@ func TestPromotionThreadsReactionProvenanceOntoTheRun(t *testing.T) {
 		t.Errorf("reacted_to_run_id = %q, want r-src — this is the durable because-of link, and it "+
 			"must outlive the retention-pruned delivery log", reactedTo.String)
 	}
-	if !contains(envJSON.String, "AMADEUS_REACTED_TO_RUN_ID") {
+	if !contains(envJSON.String, "CRONOMICON_REACTED_TO_RUN_ID") {
 		t.Errorf("env_json %q lost the reaction stamp across promotion", envJSON.String)
 	}
 	// The pending row is consumed, not left to fire again.
@@ -1008,7 +1008,7 @@ func TestReactionFiresAWorkflowTarget(t *testing.T) {
 	if params.Valid {
 		t.Errorf("workflow pending row carried params_json = %q, want NULL", params.String)
 	}
-	if !contains(envJSON.String, "AMADEUS_REACTED_TO_OUTCOME") {
+	if !contains(envJSON.String, "CRONOMICON_REACTED_TO_OUTCOME") {
 		t.Errorf("origin_env_json %q lost the stamp", envJSON.String)
 	}
 
@@ -1036,7 +1036,7 @@ func TestReactionFiresAWorkflowTarget(t *testing.T) {
 	if got.ReactedToRunID != "r1" {
 		t.Errorf("reacted-to = %q, want r1", got.ReactedToRunID)
 	}
-	if !contains(got.EnvJSON, "AMADEUS_REACTED_TO_NAME") {
+	if !contains(got.EnvJSON, "CRONOMICON_REACTED_TO_NAME") {
 		t.Errorf("env %q lost the stamp across promotion", got.EnvJSON)
 	}
 }

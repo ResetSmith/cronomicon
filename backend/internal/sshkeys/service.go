@@ -20,7 +20,7 @@ import (
 type Credential struct {
 	ID             string  `json:"id"`
 	Label          string  `json:"label"`
-	Reference      string  `json:"reference"` // derived AMADEUS_KEY_<label> (read-only; resolves to a key-file PATH)
+	Reference      string  `json:"reference"` // derived CRONOMICON_KEY_<label> (read-only; resolves to a key-file PATH)
 	Description    *string `json:"description"`
 	Source         string  `json:"source"` // "stored" | "vault"
 	KeyType        *string `json:"keyType"`
@@ -204,8 +204,8 @@ func (s *Service) Create(ctx context.Context, inp CreateInput, actor string) (*C
 	if inp.Label == "" {
 		return nil, ErrLabelRequired
 	}
-	// The label is the bare row name behind an AMADEUS_KEY_<label> reference, so it
-	// must be a POSIX identifier and may not itself start with AMADEUS_ (W3).
+	// The label is the bare row name behind an CRONOMICON_KEY_<label> reference, so it
+	// must be a POSIX identifier and may not itself start with CRONOMICON_ (W3).
 	if err := envref.ValidateRowName(inp.Label); err != nil {
 		return nil, err
 	}

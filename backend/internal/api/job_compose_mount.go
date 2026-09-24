@@ -472,7 +472,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 
 	// RP-14 — env_passthrough: NAMES only, POSIX env-name charset, and never an
-	// AMADEUS_* name (those are Cronomicon's own injected references, not the
+	// CRONOMICON_* name (those are Cronomicon's own injected references, not the
 	// runner's environment — the ValidateOperatorEnv rule, same rationale).
 	// Local-toolchain run types only: an ssh-family run has no server-side
 	// environment to pass through, so accepting it there would be a silent no-op.
@@ -490,7 +490,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 			}
 			if envref.HasAmadeusPrefix(n) {
 				httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
-					"env passthrough name "+n+" is reserved: AMADEUS_* names are references Cronomicon injects, not variables read from the runner's environment")
+					"env passthrough name "+n+" is reserved: CRONOMICON_* names are references Cronomicon injects, not variables read from the runner's environment")
 				return
 			}
 			clean = append(clean, n)
@@ -658,7 +658,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 
 	// Reserved-namespace guard (W4, N-D1): operator-authored env may not define any
-	// AMADEUS_* key — neither the job-level env nor any (inline or reusable)
+	// CRONOMICON_* key — neither the job-level env nor any (inline or reusable)
 	// schedule env. Absolute, no carve-outs.
 	if err := envref.ValidateOperatorEnv(in.Env); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())

@@ -26,9 +26,9 @@ func buildRemoteCommand(m *runnerproto.ManifestResponse) remotecmd.Rendered {
 }
 
 // mergeInjectedEnv overlays dispatch-time resolved reference values (m.Secrets:
-// AMADEUS_SECRET_*/AMADEUS_VAR_*) onto the plaintext env snapshot for injection
+// CRONOMICON_SECRET_*/CRONOMICON_VAR_*) onto the plaintext env snapshot for injection
 // (vault-integration.md P1.4). Injected values win on collision; in practice the
-// key-spaces are disjoint (injected keys are all AMADEUS_*, barred from operator
+// key-spaces are disjoint (injected keys are all CRONOMICON_*, barred from operator
 // env_json by the W4 write guard). Returns env unchanged when there is nothing to
 // inject.
 func mergeInjectedEnv(env, injected map[string]string) map[string]string {

@@ -15,7 +15,7 @@ import (
 // Deregistration reasons recorded on a placement snapshot. The distinction
 // matters to whoever reads the history: an operator deregistration is a
 // deliberate act, while a reaper sweep means the runner simply stayed offline
-// past AMADEUS_RUNNER_DEREGISTER_AFTER — which during an outage is most of them.
+// past CRONOMICON_RUNNER_DEREGISTER_AFTER — which during an outage is most of them.
 const (
 	deregisterViaOperator = "operator"
 	deregisterViaReaper   = "reaper"

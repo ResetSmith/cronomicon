@@ -402,17 +402,17 @@ func TestBuildChildEnvRefusesAgentConfigPassthrough(t *testing.T) {
 	// not quietly resolved: under a multi-use bootstrap token this value is a
 	// permanent enrollment credential, and a passthrough value is not a declared
 	// secret binding, so nothing would redact it out of the run log.
-	environ := []string{"PATH=/usr/bin", "AMADEUS_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
-	m := &runnerproto.ManifestResponse{EnvPassthrough: []string{"AMADEUS_RUNNER_REGISTRATION_TOKEN"}}
+	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
+	m := &runnerproto.ManifestResponse{EnvPassthrough: []string{"CRONOMICON_RUNNER_REGISTRATION_TOKEN"}}
 
 	env, _, err := buildChildEnv(m, Config{}, environ, nil)
 	if err == nil {
-		t.Fatal("expected a refusal for an AMADEUS_RUNNER_* passthrough, got nil")
+		t.Fatal("expected a refusal for an CRONOMICON_RUNNER_* passthrough, got nil")
 	}
 	if env != nil {
 		t.Fatalf("a refused run must yield no child env at all, got %v", env)
 	}
-	if !strings.Contains(err.Error(), "AMADEUS_RUNNER_REGISTRATION_TOKEN") {
+	if !strings.Contains(err.Error(), "CRONOMICON_RUNNER_REGISTRATION_TOKEN") {
 		t.Errorf("error should name the refused var: %v", err)
 	}
 	if !strings.Contains(err.Error(), "refused") {
@@ -433,9 +433,9 @@ func TestBuildChildEnvAgentConfigRefusalPrecedesResolution(t *testing.T) {
 	// have resolved (manifest Env, or the dispatch-time Secrets block) is still
 	// refused rather than served from the other source.
 	m := &runnerproto.ManifestResponse{
-		Env:            map[string]string{"AMADEUS_RUNNER_SERVER": "https://evil.example"},
-		Secrets:        map[string]string{"AMADEUS_RUNNER_CHECKOUT_TOKEN": "glpat-xxx"},
-		EnvPassthrough: []string{"AMADEUS_RUNNER_CHECKOUT_TOKEN"},
+		Env:            map[string]string{"CRONOMICON_RUNNER_SERVER": "https://evil.example"},
+		Secrets:        map[string]string{"CRONOMICON_RUNNER_CHECKOUT_TOKEN": "glpat-xxx"},
+		EnvPassthrough: []string{"CRONOMICON_RUNNER_CHECKOUT_TOKEN"},
 	}
 	if _, _, err := buildChildEnv(m, Config{}, []string{"PATH=/usr/bin"}, nil); err == nil {
 		t.Fatal("a manifest-supplied agent-config name must still be refused")
@@ -448,9 +448,9 @@ func TestBuildChildEnvAgentConfigNotReachableViaBareFallback(t *testing.T) {
 	// passthrough name alone is not enough. A reference whose bare name is the
 	// agent's own config would otherwise be resolved and handed to the child under
 	// the prefixed name.
-	environ := []string{"PATH=/usr/bin", "AMADEUS_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
+	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
 	m := &runnerproto.ManifestResponse{
-		EnvPassthrough: []string{"AMADEUS_SECRET_AMADEUS_RUNNER_REGISTRATION_TOKEN"},
+		EnvPassthrough: []string{"CRONOMICON_SECRET_CRONOMICON_RUNNER_REGISTRATION_TOKEN"},
 	}
 
 	env, _, err := buildChildEnv(m, Config{}, environ, nil)
@@ -468,17 +468,17 @@ func TestBuildChildEnvAgentConfigNotReachableViaBareFallback(t *testing.T) {
 }
 
 func TestBuildChildEnvReferencePassthroughsUnaffected(t *testing.T) {
-	// The DR-Q1 guard: AMADEUS_RUNNER_ is denied, but the four reserved REFERENCE
-	// prefixes must keep resolving. AMADEUS_RUN_ in particular differs from
-	// AMADEUS_RUNNER_ only by "NER" and must not be caught by the denial.
+	// The DR-Q1 guard: CRONOMICON_RUNNER_ is denied, but the four reserved REFERENCE
+	// prefixes must keep resolving. CRONOMICON_RUN_ in particular differs from
+	// CRONOMICON_RUNNER_ only by "NER" and must not be caught by the denial.
 	environ := []string{
 		"PATH=/usr/bin",
-		"AMADEUS_SECRET_RH8_BECOME_PASS=becomepw",
-		"AMADEUS_KEY_ANSIBLE_RH8=/etc/amadeus-runner/keys/rh8",
-		"AMADEUS_RUN_ID=01a03520-0000-7000-0000-000000000000",
+		"CRONOMICON_SECRET_RH8_BECOME_PASS=becomepw",
+		"CRONOMICON_KEY_ANSIBLE_RH8=/etc/amadeus-runner/keys/rh8",
+		"CRONOMICON_RUN_ID=01a03520-0000-7000-0000-000000000000",
 	}
 	m := &runnerproto.ManifestResponse{EnvPassthrough: []string{
-		"AMADEUS_SECRET_RH8_BECOME_PASS", "AMADEUS_KEY_ANSIBLE_RH8", "AMADEUS_RUN_ID",
+		"CRONOMICON_SECRET_RH8_BECOME_PASS", "CRONOMICON_KEY_ANSIBLE_RH8", "CRONOMICON_RUN_ID",
 	}}
 
 	env, _, err := buildChildEnv(m, Config{}, environ, nil)
@@ -486,7 +486,7 @@ func TestBuildChildEnvReferencePassthroughsUnaffected(t *testing.T) {
 		t.Fatalf("reference-prefixed passthroughs must still resolve: %v", err)
 	}
 	got := envNames(env)
-	for _, n := range []string{"AMADEUS_SECRET_RH8_BECOME_PASS", "AMADEUS_KEY_ANSIBLE_RH8", "AMADEUS_RUN_ID"} {
+	for _, n := range []string{"CRONOMICON_SECRET_RH8_BECOME_PASS", "CRONOMICON_KEY_ANSIBLE_RH8", "CRONOMICON_RUN_ID"} {
 		if _, ok := got[n]; !ok {
 			t.Errorf("%s should have resolved: %v", n, env)
 		}
@@ -498,19 +498,19 @@ func TestBuildChildEnvBaseExtraCannotReadmitAgentConfig(t *testing.T) {
 	// only runs declaring a passthrough — so it must not become a second door to
 	// the same namespace. The refusal is reported through provenance rather than
 	// dropped silently.
-	environ := []string{"PATH=/usr/bin", "AMADEUS_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
-	cfg := Config{EnvBaseExtra: []string{"AMADEUS_RUNNER_REGISTRATION_TOKEN"}}
+	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
+	cfg := Config{EnvBaseExtra: []string{"CRONOMICON_RUNNER_REGISTRATION_TOKEN"}}
 	m := &runnerproto.ManifestResponse{}
 
 	env, provenance, err := buildChildEnv(m, cfg, environ, nil)
 	if err != nil {
 		t.Fatalf("a refused base-extra entry should not fail the run: %v", err)
 	}
-	if _, leaked := envNames(env)["AMADEUS_RUNNER_REGISTRATION_TOKEN"]; leaked {
+	if _, leaked := envNames(env)["CRONOMICON_RUNNER_REGISTRATION_TOKEN"]; leaked {
 		t.Fatalf("-env-base-extra must not re-admit an agent-config name: %v", env)
 	}
 	joined := strings.Join(provenance, "\n")
-	if !strings.Contains(joined, "AMADEUS_RUNNER_REGISTRATION_TOKEN") {
+	if !strings.Contains(joined, "CRONOMICON_RUNNER_REGISTRATION_TOKEN") {
 		t.Errorf("the refusal should be visible in provenance, got %q", joined)
 	}
 	if strings.Contains(joined, "amt_reg_supersecret") {
@@ -912,7 +912,7 @@ func TestLocalCommandIdentityExtraVars(t *testing.T) {
 		Body:      "- hosts: all\n",
 		Inventory: &runnerproto.ManifestInventory{Raw: "[web]\nweb1\n", Format: "ini"},
 		SSHUser:   "deploy",
-		SSHKeyRef: "AMADEUS_KEY_prod-key",
+		SSHKeyRef: "CRONOMICON_KEY_prod-key",
 	}
 	argv, _, prov, err := localCommand(m, Config{KeyDir: dir}, t.TempDir())
 	if err != nil {
@@ -921,7 +921,7 @@ func TestLocalCommandIdentityExtraVars(t *testing.T) {
 	if got := extraVar(argv, "ansible_user"); got != "deploy" {
 		t.Errorf("-e ansible_user = %q, want deploy; argv %v", got, argv)
 	}
-	// The derived AMADEUS_KEY_<label> reference resolves through the same key
+	// The derived CRONOMICON_KEY_<label> reference resolves through the same key
 	// custody as everything else — including a key DELIVERED for this run, which
 	// the executor merges into KeyMap before calling us.
 	if got := extraVar(argv, "ansible_ssh_private_key_file"); got != keyPath {
@@ -949,7 +949,7 @@ func TestLocalCommandIdentitySuppressesAutoPrivateKey(t *testing.T) {
 	m := &runnerproto.ManifestResponse{
 		RunType:   "ansible",
 		Body:      "- hosts: all\n",
-		SSHKeyRef: "AMADEUS_KEY_prod-key",
+		SSHKeyRef: "CRONOMICON_KEY_prod-key",
 		Targets:   []runnerproto.ManifestTarget{{Name: "web1", AuthKeyEnvVar: "inventory_key"}},
 	}
 	argv, _, prov, err := localCommand(m, Config{KeyDir: dir}, t.TempDir())
@@ -975,7 +975,7 @@ func TestLocalCommandIdentityUndeliveredKeyFails(t *testing.T) {
 	m := &runnerproto.ManifestResponse{
 		RunType:   "ansible",
 		Body:      "- hosts: all\n",
-		SSHKeyRef: "AMADEUS_KEY_never-delivered",
+		SSHKeyRef: "CRONOMICON_KEY_never-delivered",
 	}
 	_, _, _, err := localCommand(m, Config{KeyDir: t.TempDir()}, t.TempDir())
 	if err == nil {
@@ -1005,7 +1005,7 @@ func TestLocalCommandIdentityUserOnly(t *testing.T) {
 // if one ever arrived, the terraform branch must ignore it rather than invent a
 // flag its toolchain has no concept of.
 func TestLocalCommandTerraformIgnoresIdentity(t *testing.T) {
-	m := &runnerproto.ManifestResponse{RunType: "terraform", Body: "", SSHUser: "deploy", SSHKeyRef: "AMADEUS_KEY_prod-key"}
+	m := &runnerproto.ManifestResponse{RunType: "terraform", Body: "", SSHUser: "deploy", SSHKeyRef: "CRONOMICON_KEY_prod-key"}
 	argv, _, _, err := localCommand(m, Config{}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1076,7 +1076,7 @@ func TestLocalCommandIdentityWinsOverOperatorExtraVars(t *testing.T) {
 		RunType:   "ansible",
 		Body:      "- hosts: all\n",
 		SSHUser:   "deploy",
-		SSHKeyRef: "AMADEUS_KEY_prod-key",
+		SSHKeyRef: "CRONOMICON_KEY_prod-key",
 		AnsibleOptions: &runnerproto.ManifestAnsibleOptions{
 			ExtraVars: map[string]string{"ansible_user": "attacker", "ansible_ssh_private_key_file": "/tmp/evil"},
 		},

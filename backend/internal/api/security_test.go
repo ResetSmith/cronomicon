@@ -28,7 +28,7 @@ func get(t *testing.T, base, path string, headers map[string]string) int {
 }
 
 // TestSpoofedHeaderRejectedAtServer is the single most important deployment test
-// (D.1): a client that is not in AMADEUS_TRUSTED_PROXIES cannot authenticate by
+// (D.1): a client that is not in CRONOMICON_TRUSTED_PROXIES cannot authenticate by
 // sending Remote-* headers — they are stripped and the request is unauthenticated.
 func TestSpoofedHeaderRejectedAtServer(t *testing.T) {
 	spoofed := map[string]string{
@@ -102,7 +102,7 @@ func TestUnauthenticatedSurface(t *testing.T) {
 }
 
 // TestDevLoginMountedOnlyWhenEnabled (D.1) confirms the dev bypass route does not
-// exist unless AMADEUS_DEV_AUTH is set — production must not expose it.
+// exist unless CRONOMICON_DEV_AUTH is set — production must not expose it.
 func TestDevLoginMountedOnlyWhenEnabled(t *testing.T) {
 	off := serverForMode(t, &config.Config{
 		AuthMode:       config.AuthModeTrustedHeader,

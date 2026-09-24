@@ -28,10 +28,10 @@ var (
 	// ErrRotateNotConfigured → 422: rotation with updateGitlab=true needs a
 	// repo URL and PAT.
 	ErrRotateNotConfigured = errors.New("rotation not configured")
-	// ErrWebhookSecretEnvPinned → 409: AMADEUS_GITLAB_WEBHOOK_SECRET is set, so
+	// ErrWebhookSecretEnvPinned → 409: CRONOMICON_GITLAB_WEBHOOK_SECRET is set, so
 	// webhook validation only accepts the env value — rotating the DB secret
 	// (and updating the GitLab hook) would break every webhook delivery.
-	ErrWebhookSecretEnvPinned = errors.New("webhook secret is pinned by AMADEUS_GITLAB_WEBHOOK_SECRET; unset it to rotate via the API")
+	ErrWebhookSecretEnvPinned = errors.New("webhook secret is pinned by CRONOMICON_GITLAB_WEBHOOK_SECRET; unset it to rotate via the API")
 )
 
 type GitlabConfig struct {
@@ -45,7 +45,7 @@ type GitlabConfig struct {
 	WebhookEnabled        bool          `json:"webhookEnabled"`
 	WebhookEvents         WebhookEvents `json:"webhookEvents"`
 	// WebhookSecretEnvPinned is read-only (LB7): true when the webhook secret is
-	// pinned by the AMADEUS_GITLAB_WEBHOOK_SECRET env var, in which case API/UI
+	// pinned by the CRONOMICON_GITLAB_WEBHOOK_SECRET env var, in which case API/UI
 	// rotation is rejected (ErrWebhookSecretEnvPinned). Set on read; ignored on write.
 	WebhookSecretEnvPinned bool   `json:"webhookSecretEnvPinned"`
 	LastModifiedBy         string `json:"lastModifiedBy,omitempty"`
@@ -182,14 +182,14 @@ func GetGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Confi
 	if envURL := appCfg.GitLabBaseURL; envURL != "" {
 		cfg.RepoUrl = envURL
 	}
-	if envToken := os.Getenv("AMADEUS_GITLAB_TOKEN"); envToken != "" {
+	if envToken := os.Getenv("CRONOMICON_GITLAB_TOKEN"); envToken != "" {
 		cfg.PatSet = true
 		cfg.Pat = maskSecret(envToken)
 	}
 
 	// LB7: surface whether the webhook secret is env-pinned so the UI can disable
 	// rotation (which would otherwise 409 with ErrWebhookSecretEnvPinned).
-	cfg.WebhookSecretEnvPinned = os.Getenv("AMADEUS_GITLAB_WEBHOOK_SECRET") != ""
+	cfg.WebhookSecretEnvPinned = os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET") != ""
 
 	return cfg, nil
 }
@@ -265,7 +265,7 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 	// Rotation is meaningless while the env override pins validation to a
 	// single value — and worse, updating the GitLab hook to the new secret
 	// would break every webhook delivery.
-	if os.Getenv("AMADEUS_GITLAB_WEBHOOK_SECRET") != "" {
+	if os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET") != "" {
 		return "", false, time.Time{}, ErrWebhookSecretEnvPinned
 	}
 
@@ -306,7 +306,7 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 		}
 
 		var pat string
-		if envToken := os.Getenv("AMADEUS_GITLAB_TOKEN"); envToken != "" {
+		if envToken := os.Getenv("CRONOMICON_GITLAB_TOKEN"); envToken != "" {
 			pat = envToken
 		} else if gitlabCfg.PatSet {
 			var patEnc sql.NullString
@@ -418,12 +418,12 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 }
 
 // ResolveGitlabRuntime returns the effective repo URL and PAT for the sync
-// service: env (AMADEUS_GITLAB_BASE_URL / AMADEUS_GITLAB_TOKEN) wins when set
+// service: env (CRONOMICON_GITLAB_BASE_URL / CRONOMICON_GITLAB_TOKEN) wins when set
 // (E.3 precedence); otherwise the DB-backed gitlab_config is used. Read at
 // startup by mountGit — changes take effect on restart.
 func ResolveGitlabRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config) (repoURL, pat string) {
 	repoURL = appCfg.GitLabBaseURL
-	pat = os.Getenv("AMADEUS_GITLAB_TOKEN")
+	pat = os.Getenv("CRONOMICON_GITLAB_TOKEN")
 	if repoURL != "" && pat != "" {
 		return repoURL, pat
 	}

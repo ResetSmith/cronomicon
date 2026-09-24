@@ -182,7 +182,7 @@ func TestTrigger_NestedBranch_SkipsAndRuns(t *testing.T) {
 
 // TestMarkSkipped_UnresolvedJob_RowPersists (PP-H8 d): a skipped-arm job absent
 // from the DB (unresolved) still gets a 'skipped' row with run_type='bash' —
-// previously run_type='' violated the CHECK and the row was silently dropped.
+// previously run_type=” violated the CHECK and the row was silently dropped.
 func TestMarkSkipped_UnresolvedJob_RowPersists(t *testing.T) {
 	pool := openPool(t)
 	seedJob(t, pool, "check")

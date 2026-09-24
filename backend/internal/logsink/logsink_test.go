@@ -223,7 +223,7 @@ func TestKeepBoundsGenerationsOnDisk(t *testing.T) {
 // TestKeepZeroRetainsNoGenerations pins that Keep is taken literally.
 //
 // This was a real bug: New treated Keep==0 as "unset, use DefaultKeep", so an
-// operator who set AMADEUS_LOG_FILE_KEEP=0 — a value config explicitly accepts,
+// operator who set CRONOMICON_LOG_FILE_KEEP=0 — a value config explicitly accepts,
 // and the only value that means "no rotated copies" — silently got five. A knob
 // that quietly ignores what you set is precisely the failure this change set
 // exists to eliminate, so it must not be reintroduced. The default now lives in

@@ -27,7 +27,7 @@ browser ──TLS 443──▶ traefik ──forward-auth──▶ authelia (LDA
 ```
 
 In this topology `amadeus` is not exposed on the host — only Traefik publishes
-80/443. Use `AMADEUS_TRUSTED_PROXIES=172.28.0.2/32` (Traefik's static IP).
+80/443. Use `CRONOMICON_TRUSTED_PROXIES=172.28.0.2/32` (Traefik's static IP).
 
 **Option B — External proxy (our current setup)**
 
@@ -45,7 +45,7 @@ browser ──TLS──▶ Nginx Proxy Manager (existing; injects Remote-*)
 
 Publish amadeus on the host by adding a `ports` entry to the `amadeus` service
 and removing the `internal: true` constraint from the network so NPM can reach
-it. Use `AMADEUS_TRUSTED_PROXIES=10.0.0.0/8` (or NPM's specific IP).
+it. Use `CRONOMICON_TRUSTED_PROXIES=10.0.0.0/8` (or NPM's specific IP).
 
 **Our `amadeus.env` is already configured for Option B** (NPM on `10.x.x.x`,
 external Apprise at `apprise.example.com`). The steps below call out where
@@ -102,9 +102,9 @@ chmod 600 secrets/amadeus_kek
 > secret is permanently unrecoverable. The S3 backup alone is useless without it.
 
 The compose file mounts `secrets/amadeus_kek` read-only into the container at
-`/run/secrets/amadeus_kek`, which `AMADEUS_KEK_FILE` points at. (The KEK is app
-config, not a store secret, so it lives under `AMADEUS_KEK*`; the older
-`AMADEUS_SECRET_KEK*` spelling stopped reading in v1.5.41.)
+`/run/secrets/amadeus_kek`, which `CRONOMICON_KEK_FILE` points at. (The KEK is app
+config, not a store secret, so it lives under `CRONOMICON_KEK*`; the older
+`CRONOMICON_SECRET_KEK*` spelling stopped reading in v1.5.41.)
 
 If you already have a KEK from a previous instance (e.g. migrating from a dev
 box), copy the existing value here instead of generating a new one, or your
@@ -260,10 +260,10 @@ complete each section:
 ### Auth
 
 ```bash
-AMADEUS_AUTH_MODE=trusted-header
+CRONOMICON_AUTH_MODE=trusted-header
 ```
 
-**`AMADEUS_TRUSTED_PROXIES` — this is the most important setting and the #1
+**`CRONOMICON_TRUSTED_PROXIES` — this is the most important setting and the #1
 cause of login failures if wrong.** It must exactly match the IP (or CIDR) that
 amadeus sees as the source of requests from your reverse proxy.
 
@@ -272,7 +272,7 @@ network, not the bundled Traefik.** The env file is already set correctly for
 this:
 
 ```bash
-AMADEUS_TRUSTED_PROXIES=10.0.0.0/8
+CRONOMICON_TRUSTED_PROXIES=10.0.0.0/8
 ```
 
 If you are deploying behind a different edge, use the specific IP or CIDR of
@@ -286,41 +286,41 @@ docker compose logs amadeus | grep "peer not in trusted"
 ```
 
 The app is **fail-closed**: an empty value causes it to refuse to boot in
-`trusted-header` mode (unless `AMADEUS_DEV_AUTH=true`, which must never be set
+`trusted-header` mode (unless `CRONOMICON_DEV_AUTH=true`, which must never be set
 in production).
 
 ```bash
-AMADEUS_LOGOUT_REDIRECT_URL=https://auth.example.com/logout
-AMADEUS_BOOTSTRAP_ADMIN_GROUP=amadeus-admins   # FIRST DEPLOY ONLY — remove after step 10
-AMADEUS_COOKIE_SECURE=true
+CRONOMICON_LOGOUT_REDIRECT_URL=https://auth.example.com/logout
+CRONOMICON_BOOTSTRAP_ADMIN_GROUP=amadeus-admins   # FIRST DEPLOY ONLY — remove after step 10
+CRONOMICON_COOKIE_SECURE=true
 ```
 
 ### KEK
 
 ```bash
-AMADEUS_KEK_FILE=/run/secrets/amadeus_kek   # already set; matches the compose mount
+CRONOMICON_KEK_FILE=/run/secrets/amadeus_kek   # already set; matches the compose mount
 ```
 
 ### GitLab integration
 
 ```bash
-AMADEUS_GITLAB_BASE_URL=https://gitlab.example.com/ops/amadeus-ops.git
-AMADEUS_GITLAB_TOKEN=<read-scoped PAT — already set in amadeus.env>
-AMADEUS_GITLAB_WEBHOOK_SECRET=<already generated in amadeus.env>
+CRONOMICON_GITLAB_BASE_URL=https://gitlab.example.com/ops/amadeus-ops.git
+CRONOMICON_GITLAB_TOKEN=<read-scoped PAT — already set in amadeus.env>
+CRONOMICON_GITLAB_WEBHOOK_SECRET=<already generated in amadeus.env>
 ```
 
 The webhook secret is optional but recommended: it validates that push events
 come from GitLab. If left empty, sync still works on a timer and via manual
 trigger, but push-triggered syncs are unauthenticated.
 
-> **Note:** While `AMADEUS_GITLAB_WEBHOOK_SECRET` is set in env, the
+> **Note:** While `CRONOMICON_GITLAB_WEBHOOK_SECRET` is set in env, the
 > webhook-secret rotation API returns 409. Rotate only via env (redeploy), not
 > the UI, when using env-pinned secrets.
 
 ### Runner bootstrap token
 
 ```bash
-AMADEUS_RUNNER_BOOTSTRAP_TOKEN=<already generated in amadeus.env>
+CRONOMICON_RUNNER_BOOTSTRAP_TOKEN=<already generated in amadeus.env>
 ```
 
 Runners use this token to register themselves. It is valid for 24 hours per
@@ -329,7 +329,7 @@ registration. See [Registering a runner](#registering-a-runner) below.
 ### Notifications
 
 ```bash
-AMADEUS_APPRISE_URL=https://apprise.example.com   # already set
+CRONOMICON_APPRISE_URL=https://apprise.example.com   # already set
 ```
 
 SMTP server settings are configured in the UI (**Settings → Notifications**),
@@ -340,7 +340,7 @@ not via env. The SMTP password is stored envelope-encrypted with the KEK.
 Leave S3 fields empty to keep local-only snapshots on the volume:
 
 ```bash
-AMADEUS_BACKUP_S3_BUCKET=       # empty = local snapshots only
+CRONOMICON_BACKUP_S3_BUCKET=       # empty = local snapshots only
 ```
 
 To enable nightly S3 uploads (MinIO or AWS), fill in endpoint, region, and
@@ -349,8 +349,8 @@ credentials. See `backup-restore.md`.
 ### Dev flags — must stay commented out in production
 
 ```bash
-# AMADEUS_DEV_AUTH=true     # one-click admin login with no Authelia — NEVER in prod
-# AMADEUS_DEV_SEED=true     # seeds demo data — NEVER in prod
+# CRONOMICON_DEV_AUTH=true     # one-click admin login with no Authelia — NEVER in prod
+# CRONOMICON_DEV_SEED=true     # seeds demo data — NEVER in prod
 ```
 
 ---
@@ -403,10 +403,10 @@ From `backend/deploy/`:
 
 ```bash
 # Stamp the version from the git tag so /version shows v0.36.5
-export AMADEUS_VERSION=$(git -C ../.. describe --tags --exact-match 2>/dev/null \
+export CRONOMICON_VERSION=$(git -C ../.. describe --tags --exact-match 2>/dev/null \
   || git -C ../.. describe --tags --always --dirty)
-export AMADEUS_COMMIT=$(git -C ../.. rev-parse --short HEAD)
-export AMADEUS_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+export CRONOMICON_COMMIT=$(git -C ../.. rev-parse --short HEAD)
+export CRONOMICON_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 docker compose up -d --build
 ```
@@ -433,7 +433,7 @@ listening on :8080
 ```
 
 If the app refuses to boot with `trusted proxies required`, check
-`AMADEUS_TRUSTED_PROXIES` (Step 6).
+`CRONOMICON_TRUSTED_PROXIES` (Step 6).
 
 ---
 
@@ -475,7 +475,7 @@ APP_DIRECT_URL=http://127.0.0.1:8080 \
 ```
 
 `/api/v1/me` with spoofed `Remote-User: attacker` must **not** return 200. If it
-does, `AMADEUS_TRUSTED_PROXIES` is misconfigured.
+does, `CRONOMICON_TRUSTED_PROXIES` is misconfigured.
 
 Also verify manually:
 
@@ -492,7 +492,7 @@ curl https://amadeus.YOUR-DOMAIN  # must redirect to Authelia login
 1. Navigate to `https://amadeus.YOUR-DOMAIN` in a browser.
 2. Authelia redirects you to its login page.
 3. Log in as a user who is a member of the AD group set in
-   `AMADEUS_BOOTSTRAP_ADMIN_GROUP` (`amadeus-admins` in the example env).
+   `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` (`amadeus-admins` in the example env).
 4. You land in Cronomicon as an admin.
 5. Go to **Settings → Group Mappings** and create permanent `ad_group → role`
    mappings for your real groups (e.g. `amadeus-admins → admin`,
@@ -504,14 +504,14 @@ curl https://amadeus.YOUR-DOMAIN  # must redirect to Authelia login
 
 Once real group mappings are in place:
 
-1. Open `amadeus.env` and remove (or comment out) `AMADEUS_BOOTSTRAP_ADMIN_GROUP`.
+1. Open `amadeus.env` and remove (or comment out) `CRONOMICON_BOOTSTRAP_ADMIN_GROUP`.
 2. Redeploy:
    ```bash
    docker compose up -d
    ```
 3. Verify admin access still works via the real group mapping (not the bootstrap).
 
-Leaving `AMADEUS_BOOTSTRAP_ADMIN_GROUP` set after seeding is a security risk —
+Leaving `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` set after seeding is a security risk —
 it grants admin to any member of that group regardless of the DB mappings.
 
 ---
@@ -522,7 +522,7 @@ For push-triggered syncs (jobs update immediately on merge):
 
 1. In GitLab, go to your `amadeus-ops` repo → **Settings → Webhooks**.
 2. URL: `https://amadeus.YOUR-DOMAIN/api/v1/gitlab/webhook`
-3. Secret token: the value you set in `AMADEUS_GITLAB_WEBHOOK_SECRET`
+3. Secret token: the value you set in `CRONOMICON_GITLAB_WEBHOOK_SECRET`
 4. Trigger: **Push events**
 5. SSL verification: enabled
 
@@ -542,11 +542,11 @@ See `documentation/runner-install.html` for full instructions (and
 
 ```bash
 # On the runner host
-AMADEUS_RUNNER_URL=https://amadeus.YOUR-DOMAIN \
-AMADEUS_RUNNER_BOOTSTRAP_TOKEN=<value from amadeus.env> \
-AMADEUS_RUNNER_NAME=runner-1 \
-AMADEUS_RUNNER_OS=Linux \
-AMADEUS_RUNNER_CAPABILITIES=bash,python \
+CRONOMICON_RUNNER_URL=https://amadeus.YOUR-DOMAIN \
+CRONOMICON_RUNNER_BOOTSTRAP_TOKEN=<value from amadeus.env> \
+CRONOMICON_RUNNER_NAME=runner-1 \
+CRONOMICON_RUNNER_OS=Linux \
+CRONOMICON_RUNNER_CAPABILITIES=bash,python \
 ./amadeus-runner  # or use the systemd unit: amadeus-runner.service
 ```
 
@@ -558,7 +558,7 @@ Two runner images are available:
 | `Dockerfile.runner.fat` | Ansible + Terraform toolchains pre-installed |
 
 The bootstrap token is single-use per registration and expires after 24 hours.
-Regenerate via `AMADEUS_RUNNER_BOOTSTRAP_TOKEN` (redeploy) or via
+Regenerate via `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` (redeploy) or via
 **Settings → Runners** in the UI (manual re-issue).
 
 ---
@@ -595,9 +595,9 @@ git checkout v<new-version>
 
 cd backend/deploy
 
-export AMADEUS_VERSION=$(git -C ../.. describe --tags --exact-match)
-export AMADEUS_COMMIT=$(git -C ../.. rev-parse --short HEAD)
-export AMADEUS_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+export CRONOMICON_VERSION=$(git -C ../.. describe --tags --exact-match)
+export CRONOMICON_COMMIT=$(git -C ../.. rev-parse --short HEAD)
+export CRONOMICON_BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 docker compose up -d --build
 ```
@@ -646,9 +646,9 @@ In DockHand → the amadeus git stack → Edit:
    variable. Do **not** also point a Git-host push webhook at
    it — the pipeline calls it only after a tag's image has been pushed, and a
    push-triggered call would redeploy before the new image exists.
-3. **Environment variables:** remove `AMADEUS_IMAGE` and `AMADEUS_VERSION` if
+3. **Environment variables:** remove `CRONOMICON_IMAGE` and `CRONOMICON_VERSION` if
    present. The compose file defaults to `registry.example.com/amadeus:latest`
-   and CI stamps the version from the tag. (Set `AMADEUS_IMAGE` only to pin a
+   and CI stamps the version from the tag. (Set `CRONOMICON_IMAGE` only to pin a
    specific tag, e.g. to roll back to `…:v1.5.44`.)
 4. **Registry credential:** only if the internal registry requires authentication
    to pull — Settings → Registries → Add Registry. The sibling stacks pull
@@ -671,7 +671,7 @@ startup and cannot be rolled back — take a snapshot first, `backup-restore.md`
 
 ### Rolling back
 
-Set `AMADEUS_IMAGE=registry.example.com/amadeus:v<previous>` in the
+Set `CRONOMICON_IMAGE=registry.example.com/amadeus:v<previous>` in the
 DockHand stack's environment and Save and deploy; restore the DB snapshot if
 the upgrade ran migrations. Remove the variable again after the next good
 release so `:latest` resumes.
@@ -679,7 +679,7 @@ release so `:latest` resumes.
 ### Building on the host (break-glass)
 
 ```bash
-AMADEUS_IMAGE=amadeus:local docker compose up -d --build   # from a FRESH clone
+CRONOMICON_IMAGE=amadeus:local docker compose up -d --build   # from a FRESH clone
 ```
 
 Supported only from a clean checkout; not the normal path.
@@ -741,11 +741,11 @@ restart the app and update the router rule to match.
 ## Troubleshooting
 
 **App refuses to boot: `trusted proxies required`**
-`AMADEUS_TRUSTED_PROXIES` is empty or not set. Set it to the Traefik container's
+`CRONOMICON_TRUSTED_PROXIES` is empty or not set. Set it to the Traefik container's
 static IP (`172.28.0.2/32` for the bundled compose stack).
 
 **Login redirects to Authelia but comes back unauthenticated / loops**
-`AMADEUS_TRUSTED_PROXIES` does not match the actual source IP reaching the app.
+`CRONOMICON_TRUSTED_PROXIES` does not match the actual source IP reaching the app.
 Check amadeus logs for `peer not in trusted proxies`. Run
 `docker network inspect amadeus_internal` to see Traefik's actual IP.
 
@@ -754,7 +754,7 @@ Migrations are still running (normal for the first boot after an upgrade) or
 the DB volume is not writable. Check `docker compose logs amadeus`.
 
 **Version shows `dev` instead of `v0.36.5`**
-The `AMADEUS_VERSION` build arg was not passed. Run the stamped build from
+The `CRONOMICON_VERSION` build arg was not passed. Run the stamped build from
 Step 7. Confirm with `curl https://amadeus.YOUR-DOMAIN/version`.
 
 **Stored secrets fail to decrypt after moving from dev**
@@ -762,7 +762,7 @@ The KEK in `secrets/amadeus_kek` does not match the one used to encrypt the
 secrets in the DB. Replace with the original KEK, or re-enter the secrets in
 the UI after deploying with the correct KEK.
 
-**`AMADEUS_GITLAB_WEBHOOK_SECRET` set but rotation API returns 409**
+**`CRONOMICON_GITLAB_WEBHOOK_SECRET` set but rotation API returns 409**
 This is expected behaviour — the env value pins the secret and blocks the
 UI-based rotation API. To rotate: change the value in `amadeus.env` and
 `docker compose up -d`. Update the GitLab webhook to match.

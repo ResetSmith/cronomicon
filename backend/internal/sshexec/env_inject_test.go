@@ -30,17 +30,17 @@ func TestRemoteCommandEnvInjection(t *testing.T) {
 			interp:    []string{"bash", "-c"},
 			body:      "echo hi",
 			envJSON:   `{"STAGE":"prod"}`,
-			injected:  map[string]string{"AMADEUS_SECRET_DB_PASS": "s3cr3t", "AMADEUS_RUN_ID": "run-1"},
+			injected:  map[string]string{"CRONOMICON_SECRET_DB_PASS": "s3cr3t", "CRONOMICON_RUN_ID": "run-1"},
 			wantCmd:   "bash -s",
-			wantStdin: "export AMADEUS_RUN_ID='run-1'\nexport AMADEUS_SECRET_DB_PASS='s3cr3t'\nexport STAGE='prod'\necho hi",
+			wantStdin: "export CRONOMICON_RUN_ID='run-1'\nexport CRONOMICON_SECRET_DB_PASS='s3cr3t'\nexport STAGE='prod'\necho hi",
 		},
 		{
 			name:      "injected only, no env_json",
 			interp:    []string{"bash", "-c"},
 			body:      "echo hi",
-			injected:  map[string]string{"AMADEUS_VAR_REGION": "us-east"},
+			injected:  map[string]string{"CRONOMICON_VAR_REGION": "us-east"},
 			wantCmd:   "bash -s",
-			wantStdin: "export AMADEUS_VAR_REGION='us-east'\necho hi",
+			wantStdin: "export CRONOMICON_VAR_REGION='us-east'\necho hi",
 		},
 		{
 			name:      "injected wins over an env_json key collision",
@@ -102,7 +102,7 @@ func TestRemoteCommandEnvInjection(t *testing.T) {
 				t.Errorf("Stdin =\n  %q\nwant\n  %q", got.Stdin, c.wantStdin)
 			}
 			// Invariant: an injected secret value must never appear in the argv.
-			if v, ok := c.injected["AMADEUS_SECRET_DB_PASS"]; ok && strings.Contains(got.Cmd, v) {
+			if v, ok := c.injected["CRONOMICON_SECRET_DB_PASS"]; ok && strings.Contains(got.Cmd, v) {
 				t.Errorf("secret leaked into Cmd: %q", got.Cmd)
 			}
 		})

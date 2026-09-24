@@ -13,7 +13,7 @@ import (
 // GET /agents/{filename} serves the cross-compiled amadeus-runner binaries and
 // their SHA256SUMS from a directory baked into the server image (Dockerfile
 // `agents` stage → /usr/share/amadeus/agents, overridable via
-// AMADEUS_AGENT_DIR). A runner host by definition reaches the Cronomicon server,
+// CRONOMICON_AGENT_DIR). A runner host by definition reaches the Cronomicon server,
 // so this removes the "build the binary yourself / reach GitLab" prerequisite:
 // runner-install.sh --download fetches from here and verifies the checksum.
 //
@@ -47,7 +47,7 @@ func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
 	if err != nil || info.IsDir() {
 		// Bare-metal / source-built deployments don't bundle the binaries.
 		httpx.Fail(w, http.StatusNotFound, "agents_not_bundled",
-			"this deployment does not bundle runner-agent binaries — build one yourself: CGO_ENABLED=0 go build ./cmd/amadeus-runner (see /runner-install.html §2), or set AMADEUS_AGENT_DIR")
+			"this deployment does not bundle runner-agent binaries — build one yourself: CGO_ENABLED=0 go build ./cmd/amadeus-runner (see /runner-install.html §2), or set CRONOMICON_AGENT_DIR")
 		return
 	}
 

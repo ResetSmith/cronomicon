@@ -16,7 +16,7 @@ import (
 //   - keyMap:  bare credential NAME → file path, for the agent's key resolver
 //     (resolveKeyPath / loadSigner) so a delivered key takes precedence over the
 //     runner's own key-map / key-dir (which remains the fallback).
-//   - keyEnv:  AMADEUS_KEY_<name> reference → file path, injected into the run env
+//   - keyEnv:  CRONOMICON_KEY_<name> reference → file path, injected into the run env
 //     so a job body / inventory that references the derived form resolves to the
 //     delivered path directly.
 //   - cleanup: best-effort zeroes each file then removes the directory. ALWAYS safe

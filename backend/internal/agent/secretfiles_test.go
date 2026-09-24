@@ -18,14 +18,14 @@ import (
 
 func TestMaterializeSecretFilesWritesLockedDownFiles(t *testing.T) {
 	fileEnv, cleanup, err := materializeSecretFiles([]runnerproto.ManifestSecretFile{
-		{Name: "BECOME_PASSWORD", Reference: "AMADEUS_SECRET_BECOME_PASSWORD", Value: "s3cr3t"},
+		{Name: "BECOME_PASSWORD", Reference: "CRONOMICON_SECRET_BECOME_PASSWORD", Value: "s3cr3t"},
 	})
 	if err != nil {
 		t.Fatalf("materializeSecretFiles: %v", err)
 	}
 	defer cleanup()
 
-	path := fileEnv["AMADEUS_SECRET_BECOME_PASSWORD"]
+	path := fileEnv["CRONOMICON_SECRET_BECOME_PASSWORD"]
 	if path == "" {
 		t.Fatal("no path exposed under the derived reference")
 	}
@@ -61,12 +61,12 @@ func TestMaterializeSecretFilesWritesLockedDownFiles(t *testing.T) {
 func TestMaterializeSecretFilesPreservesAwkwardValues(t *testing.T) {
 	for _, want := range []string{"trailing-space ", "has\nnewline", "no-trailing-newline", " "} {
 		fileEnv, cleanup, err := materializeSecretFiles([]runnerproto.ManifestSecretFile{
-			{Name: "P", Reference: "AMADEUS_SECRET_P", Value: want},
+			{Name: "P", Reference: "CRONOMICON_SECRET_P", Value: want},
 		})
 		if err != nil {
 			t.Fatalf("materializeSecretFiles(%q): %v", want, err)
 		}
-		got, rerr := os.ReadFile(fileEnv["AMADEUS_SECRET_P"])
+		got, rerr := os.ReadFile(fileEnv["CRONOMICON_SECRET_P"])
 		cleanup()
 		if rerr != nil {
 			t.Fatalf("read: %v", rerr)
@@ -82,12 +82,12 @@ func TestMaterializeSecretFilesPreservesAwkwardValues(t *testing.T) {
 // exposure file delivery is supposed to shrink.
 func TestMaterializeSecretFilesCleanupWipes(t *testing.T) {
 	fileEnv, cleanup, err := materializeSecretFiles([]runnerproto.ManifestSecretFile{
-		{Name: "P", Reference: "AMADEUS_SECRET_P", Value: "gone-after-cleanup"},
+		{Name: "P", Reference: "CRONOMICON_SECRET_P", Value: "gone-after-cleanup"},
 	})
 	if err != nil {
 		t.Fatalf("materializeSecretFiles: %v", err)
 	}
-	path := fileEnv["AMADEUS_SECRET_P"]
+	path := fileEnv["CRONOMICON_SECRET_P"]
 	cleanup()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("secret file still present after cleanup (stat err = %v)", err)

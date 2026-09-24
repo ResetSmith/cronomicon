@@ -67,7 +67,7 @@ func TestManifestDeliversKeyMaterial(t *testing.T) {
 		t.Fatalf("expected 1 delivered key, got %d: %+v", len(m.Keys), m.Keys)
 	}
 	k := m.Keys[0]
-	if k.Name != "deploy_key" || k.Reference != "AMADEUS_KEY_deploy_key" || k.Material != keyMaterial {
+	if k.Name != "deploy_key" || k.Reference != "CRONOMICON_KEY_deploy_key" || k.Material != keyMaterial {
 		t.Errorf("delivered key wrong: %+v", k)
 	}
 	// The material must NOT leak into the plaintext Env or the Secrets value block.

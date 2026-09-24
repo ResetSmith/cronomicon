@@ -53,11 +53,11 @@ COPY --from=build /out/amadeus-runner /app/amadeus-runner
 # Persist it (see install-runner.md "identity persistence") so a restart resumes
 # the same runners row instead of orphaning it (R2.4 / D4).
 VOLUME ["/var/lib/amadeus-runner"]
-ENV AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
+ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
 
-# Config comes from AMADEUS_RUNNER_* env (and/or -config file). Required at run:
-#   AMADEUS_RUNNER_SERVER, AMADEUS_RUNNER_REGISTRATION_TOKEN,
-#   AMADEUS_RUNNER_NAME, AMADEUS_RUNNER_CAPABILITIES.
+# Config comes from CRONOMICON_RUNNER_* env (and/or -config file). Required at run:
+#   CRONOMICON_RUNNER_SERVER, CRONOMICON_RUNNER_REGISTRATION_TOKEN,
+#   CRONOMICON_RUNNER_NAME, CRONOMICON_RUNNER_CAPABILITIES.
 # See deploy/install-runner.md for the full surface and worked examples.
 
 USER nonroot:nonroot

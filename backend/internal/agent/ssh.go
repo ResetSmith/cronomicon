@@ -64,7 +64,7 @@ func resolveKeyPath(keyMap map[string]string, keyDir, name string) (path, src st
 	if p, s, ok := resolveKeyPathExact(keyMap, keyDir, name); ok {
 		return p, s, true
 	}
-	// Derived reference (W3): an AMADEUS_KEY_<bare> reference resolves to the same
+	// Derived reference (W3): an CRONOMICON_KEY_<bare> reference resolves to the same
 	// key-map entry / key-dir file as its BARE name — files and map entries are
 	// never renamed, only reference sites move to the prefixed form.
 	if bare, stripped := envref.StripKey(name); stripped {
@@ -158,7 +158,7 @@ func (r *sshRunner) loadSigner(authKeyEnvVar string) (ssh.Signer, error) {
 	// key-dir configured" from "configured but the file is not there" — the two
 	// have different remedies.
 	if r.keyDir == "" {
-		return nil, fmt.Errorf("no local key for %q: not in key-map, no PEM in env %s, and no key-dir configured — set -key-dir / AMADEUS_RUNNER_KEY_DIR (then drop a file named %s, %s.pem, or %s.key in it) or add a -key-map entry",
+		return nil, fmt.Errorf("no local key for %q: not in key-map, no PEM in env %s, and no key-dir configured — set -key-dir / CRONOMICON_RUNNER_KEY_DIR (then drop a file named %s, %s.pem, or %s.key in it) or add a -key-map entry",
 			authKeyEnvVar, authKeyEnvVar, authKeyEnvVar, authKeyEnvVar, authKeyEnvVar)
 	}
 	return nil, fmt.Errorf("no local key for %q: not in key-map, no PEM in env %s, and no file named %s, %s.pem, or %s.key under key-dir %q",

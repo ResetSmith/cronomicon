@@ -264,7 +264,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
 
       <NamespaceHelp>
         Reference a variable in a script or inventory as{" "}
-        <code style={{ fontFamily: c.mono }}>AMADEUS_VAR_&lt;key&gt;</code> — it resolves to the variable's plaintext value
+        <code style={{ fontFamily: c.mono }}>CRONOMICON_VAR_&lt;key&gt;</code> — it resolves to the variable's plaintext value
         at run time. Rows keep their bare key; the prefix is added only when you reference it.
       </NamespaceHelp>
 
@@ -277,7 +277,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
         <div style={{ color: c.textSec }}>
           {items.length === 0 ? (
             <>
-              <div>No variables yet. A variable is plaintext configuration a run can read as AMADEUS_VAR_&lt;key&gt;.</div>
+              <div>No variables yet. A variable is plaintext configuration a run can read as CRONOMICON_VAR_&lt;key&gt;.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>

@@ -10,7 +10,7 @@
 
 <h2>1 · How a PowerShell run reaches its target</h2>
 
-<p>Like Bash, a <code>powershell</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (default via the resolution chain; <strong>the pool is off until an operator sets <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the actual mechanics are identical: the dialing side opens an SSH connection to each target and runs</p>
+<p>Like Bash, a <code>powershell</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (default via the resolution chain; <strong>the pool is off until an operator sets <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the actual mechanics are identical: the dialing side opens an SSH connection to each target and runs</p>
 
 <pre><code>powershell -NonInteractive -Command &lt;your script&gt;</code></pre>
 
@@ -21,7 +21,7 @@
 <li><strong>Linux/macOS targets need one symlink.</strong> PowerShell 7 installs itself as <code>pwsh</code>, and the remote invocation calls <code>powershell</code> — so on a non-Windows target, provide the name (e.g. <code>ln -s /usr/bin/pwsh /usr/local/bin/powershell</code>) or the run fails per-host with <em>command not found</em>.</li>
 </ul>
 
-<blockquote><p><strong>Runner capability nuance.</strong> A runner claims the <code>powershell</code> run type when <code>pwsh</code> is on <em>its own</em> PATH (the auto-detect probe) — even though execution happens on the targets over SSH. For a Linux runner that serves a Windows fleet but has no local pwsh, declare the capability explicitly (<code>-capabilities bash,powershell</code> / <code>AMADEUS_RUNNER_CAPABILITIES</code>); otherwise the run queues <em>“waiting for a powershell-capable runner.”</em> A runner's <code>-os</code> flag records the runner host's own OS — it does not restrict what OS its targets run.</p></blockquote>
+<blockquote><p><strong>Runner capability nuance.</strong> A runner claims the <code>powershell</code> run type when <code>pwsh</code> is on <em>its own</em> PATH (the auto-detect probe) — even though execution happens on the targets over SSH. For a Linux runner that serves a Windows fleet but has no local pwsh, declare the capability explicitly (<code>-capabilities bash,powershell</code> / <code>CRONOMICON_RUNNER_CAPABILITIES</code>); otherwise the run queues <em>“waiting for a powershell-capable runner.”</em> A runner's <code>-os</code> flag records the runner host's own OS — it does not restrict what OS its targets run.</p></blockquote>
 
 <hr />
 
@@ -48,11 +48,11 @@
 
 <h3>Reading the environment</h3>
 
-<p>Injected environment (job env ← schedule env ← per-run overrides, plus bound references and the dispatcher's <code>AMADEUS_RUN_*</code> context set) arrives as an <code>$env:</code> prelude ahead of your body, delivered on stdin — never argv, never <code>/proc</code>-visible. Read it the normal way:</p>
+<p>Injected environment (job env ← schedule env ← per-run overrides, plus bound references and the dispatcher's <code>CRONOMICON_RUN_*</code> context set) arrives as an <code>$env:</code> prelude ahead of your body, delivered on stdin — never argv, never <code>/proc</code>-visible. Read it the normal way:</p>
 
 <pre><code>$release = $env:TARGET_RELEASE          # a run-input answer (§ below)
-$apiKey  = $env:AMADEUS_SECRET_API_KEY  # a bound secret reference
-Write-Output "run $($env:AMADEUS_RUN_ID) on scope $($env:AMADEUS_RUN_SCOPE)"</code></pre>
+$apiKey  = $env:CRONOMICON_SECRET_API_KEY  # a bound secret reference
+Write-Output "run $($env:CRONOMICON_RUN_ID) on scope $($env:CRONOMICON_RUN_SCOPE)"</code></pre>
 
 <h3>Run inputs, not <code>Read-Host</code></h3>
 
@@ -83,11 +83,11 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }</code></pre>
 
 <h2>5 · Secrets from PowerShell</h2>
 
-<p>The delivery model is the shared one (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §5): declare <a href="user-manual.html#refbindings">reference bindings</a> on the job, receive <code>$env:AMADEUS_SECRET_&lt;name&gt;</code> / <code>$env:AMADEUS_VAR_&lt;name&gt;</code>; the in-app executor resolves and injects fail-closed with STDIN delivery, the runner path needs the per-runner <strong>Secret injection</strong> flag, and <code>AMADEUS_KEY_*</code> material is runner-only. PowerShell-specific habits:</p>
+<p>The delivery model is the shared one (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §5): declare <a href="user-manual.html#refbindings">reference bindings</a> on the job, receive <code>$env:CRONOMICON_SECRET_&lt;name&gt;</code> / <code>$env:CRONOMICON_VAR_&lt;name&gt;</code>; the in-app executor resolves and injects fail-closed with STDIN delivery, the runner path needs the per-runner <strong>Secret injection</strong> flag, and <code>CRONOMICON_KEY_*</code> material is runner-only. PowerShell-specific habits:</p>
 
 <ul>
 <li><strong>Bridge to credential-taking cmdlets without echoing:</strong>
-<pre><code>$sec  = ConvertTo-SecureString $env:AMADEUS_SECRET_SVC_PASS -AsPlainText -Force
+<pre><code>$sec  = ConvertTo-SecureString $env:CRONOMICON_SECRET_SVC_PASS -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec)</code></pre></li>
 <li><strong>Don't re-broadcast.</strong> Redaction masks known injected values in stored logs, but a value your script fetches or decrypts itself was never registered — keep it out of <code>Write-Host</code>/<code>Write-Output</code>, out of other processes' argv, and away from <code>-Verbose</code> streams.</li>
 <li><strong>Nothing secret in the repo, schedule env or run overrides</strong> — plaintext by design; secrets belong in the encrypted store / Vault behind a binding.</li>
@@ -113,7 +113,7 @@ $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec
 <div class="tbl"><table>
 <thead><tr><th>Symptom</th><th>Likely cause → fix</th></tr></thead>
 <tbody>
-<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code>, or route to a runner.</td></tr>
+<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code>, or route to a runner.</td></tr>
 <tr><td>Queued, “waiting for a powershell-capable runner”</td><td>No online runner claims <code>powershell</code> — the probe needs local <code>pwsh</code>; declare <code>-capabilities</code> explicitly for a runner that only <em>dials</em> PowerShell targets (§1).</td></tr>
 <tr><td>Per-host failure: <code>powershell: command not found</code></td><td>A non-Windows target with only <code>pwsh</code> — add the <code>powershell</code> symlink/alias (§1). On Windows: the OpenSSH session's PATH is broken.</td></tr>
 <tr><td>Error “Read and Prompt functionality is not available”</td><td>Something asked a question under <code>-NonInteractive</code> — <code>Read-Host</code>, a confirm, a credential dialog. Replace with run inputs / <code>-Confirm:$false</code> (§4).</td></tr>

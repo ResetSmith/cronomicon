@@ -121,7 +121,7 @@ export function GitlabSection() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {form.webhookSecretEnvPinned ? (
                 <span style={{ fontSize: c.fontSm, color: c.textSec }}>
-                  Pinned by <code style={{ fontFamily: c.mono }}>AMADEUS_GITLAB_WEBHOOK_SECRET</code> — unset it to rotate via the API.
+                  Pinned by <code style={{ fontFamily: c.mono }}>CRONOMICON_GITLAB_WEBHOOK_SECRET</code> — unset it to rotate via the API.
                 </span>
               ) : (
                 rotateMsg && <span style={{ fontSize: c.fontSm, color: rotateMsg.startsWith("Rotate failed") ? c.danger : c.success }}>{rotateMsg}</span>

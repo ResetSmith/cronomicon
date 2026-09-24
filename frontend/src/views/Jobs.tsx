@@ -1687,7 +1687,7 @@ export function RunDialog({
   //
   // JR-Q1 — a scope Env Vars row of the same name is deliberately absent from this
   // chain. Env Vars reach a run only through an explicit reference binding and only
-  // under the derived AMADEUS_VAR_<name> key (internal/runref); nothing publishes a
+  // under the derived CRONOMICON_VAR_<name> key (internal/runref); nothing publishes a
   // bare `NAME`, so counting one claimed "✓" for a variable that would be missing at
   // run time while the server still recorded it unfilled.
   const resolveInput = (p: JobPrompt): { value: string; from: Provenance | null } => {
@@ -2627,7 +2627,7 @@ export function RunDialog({
             Making inputs prominent invites pasting credentials. */}
         <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 10 }}>
           Plain text, visible in the run log — never paste a password or key. Store it as a Secret and reference{" "}
-          <code style={{ fontFamily: c.mono }}>AMADEUS_SECRET_&lt;name&gt;</code>.
+          <code style={{ fontFamily: c.mono }}>CRONOMICON_SECRET_&lt;name&gt;</code>.
         </div>
       </Disclosure>
 

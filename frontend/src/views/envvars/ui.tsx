@@ -110,7 +110,7 @@ export function DetailRow({ label, value, last }: { label: string; value: ReactN
 }
 
 // NamespaceHelp is the per-tab explainer (namespace contract, W5): how to
-// reference a row's value in a run — the reserved AMADEUS_ prefix plus the
+// reference a row's value in a run — the reserved CRONOMICON_ prefix plus the
 // value-vs-path semantics of the section. Rendered as a subtle info banner above
 // the table; nothing here renames a row.
 export function NamespaceHelp({ children }: { children: ReactNode }) {

@@ -32,7 +32,7 @@ func jsonUnmarshalStrict(data []byte, v any) error {
 
 // Config is the fully-resolved runtime configuration for the agent. It is
 // populated from (lowest→highest precedence) built-in defaults, an optional
-// config file, environment variables (AMADEUS_RUNNER_*), and command-line
+// config file, environment variables (CRONOMICON_RUNNER_*), and command-line
 // flags. See Resolve for the precedence rules.
 type Config struct {
 	// ServerURL is the base URL of the Cronomicon server, e.g. https://amadeus:8080.
@@ -213,7 +213,7 @@ func defaultConfig() Config {
 }
 
 // Resolve builds the agent config from defaults, an optional config file, env
-// vars (AMADEUS_RUNNER_*), and flags, in that order of increasing precedence.
+// vars (CRONOMICON_RUNNER_*), and flags, in that order of increasing precedence.
 //
 // args is the flag argument slice (os.Args[1:]); getenv is the environment
 // lookup (os.Getenv in production, injectable in tests). The precedence is:
@@ -224,7 +224,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 
 	// Layer 1: optional config file. The file path itself may come from a flag or
 	// env; do a pre-pass to find it so file values sit below env/flags.
-	filePath := getenv("AMADEUS_RUNNER_CONFIG")
+	filePath := getenv("CRONOMICON_RUNNER_CONFIG")
 	for i, a := range args {
 		if a == "-config" || a == "--config" {
 			if i+1 < len(args) {
@@ -244,7 +244,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 		applyFileConfig(&cfg, fileCfg)
 	}
 
-	// Layer 2: environment (AMADEUS_RUNNER_*).
+	// Layer 2: environment (CRONOMICON_RUNNER_*).
 	applyEnv(&cfg, getenv)
 
 	// Layer 3: flags (highest precedence). We define flags whose defaults are the
@@ -359,7 +359,7 @@ func normalizeServerURL(raw string) string {
 // validate checks the required fields and closed-set values.
 func (c Config) validate() error {
 	if c.ServerURL == "" {
-		return fmt.Errorf("server URL is required (-server / AMADEUS_RUNNER_SERVER)")
+		return fmt.Errorf("server URL is required (-server / CRONOMICON_RUNNER_SERVER)")
 	}
 	if u, err := url.Parse(c.ServerURL); err != nil {
 		return fmt.Errorf("server URL %q is not a valid URL: %w", c.ServerURL, err)
@@ -369,7 +369,7 @@ func (c Config) validate() error {
 		return fmt.Errorf("server URL %q is missing a host", c.ServerURL)
 	}
 	if c.Name == "" {
-		return fmt.Errorf("runner name is required (-name / AMADEUS_RUNNER_NAME)")
+		return fmt.Errorf("runner name is required (-name / CRONOMICON_RUNNER_NAME)")
 	}
 	// Empty Capabilities is NOT an error: unset = auto-detect the run-types
 	// from the host's toolchains at startup (D1: 1B); set explicitly to narrow.
@@ -392,7 +392,7 @@ func (c Config) validate() error {
 	return nil
 }
 
-// applyEnv overlays AMADEUS_RUNNER_* environment variables onto cfg. Only set
+// applyEnv overlays CRONOMICON_RUNNER_* environment variables onto cfg. Only set
 // (non-empty) env vars override; everything else is left at its lower-layer
 // value.
 func applyEnv(cfg *Config, getenv func(string) string) {
@@ -401,92 +401,92 @@ func applyEnv(cfg *Config, getenv func(string) string) {
 			*dst = v
 		}
 	}
-	setStr("AMADEUS_RUNNER_SERVER", &cfg.ServerURL)
-	setStr("AMADEUS_RUNNER_CA_CERT", &cfg.CACertPath)
-	setStr("AMADEUS_RUNNER_REGISTRATION_TOKEN", &cfg.RegistrationToken)
-	setStr("AMADEUS_RUNNER_NAME", &cfg.Name)
-	setStr("AMADEUS_RUNNER_OS", &cfg.OS)
-	if v := getenv("AMADEUS_RUNNER_CAPABILITIES"); v != "" {
+	setStr("CRONOMICON_RUNNER_SERVER", &cfg.ServerURL)
+	setStr("CRONOMICON_RUNNER_CA_CERT", &cfg.CACertPath)
+	setStr("CRONOMICON_RUNNER_REGISTRATION_TOKEN", &cfg.RegistrationToken)
+	setStr("CRONOMICON_RUNNER_NAME", &cfg.Name)
+	setStr("CRONOMICON_RUNNER_OS", &cfg.OS)
+	if v := getenv("CRONOMICON_RUNNER_CAPABILITIES"); v != "" {
 		cfg.Capabilities = splitCSV(v)
 	}
-	if v := getenv("AMADEUS_RUNNER_MAX_CONCURRENT"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_MAX_CONCURRENT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.MaxConcurrent = n
 		}
 	}
-	setStr("AMADEUS_RUNNER_INVENTORY", &cfg.Inventory)
-	setStr("AMADEUS_RUNNER_IDENTITY_FILE", &cfg.IdentityFile)
-	if v := getenv("AMADEUS_RUNNER_POLL_INTERVAL"); v != "" {
+	setStr("CRONOMICON_RUNNER_INVENTORY", &cfg.Inventory)
+	setStr("CRONOMICON_RUNNER_IDENTITY_FILE", &cfg.IdentityFile)
+	if v := getenv("CRONOMICON_RUNNER_POLL_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.PollInterval = d
 		}
 	}
-	setStr("AMADEUS_RUNNER_KEY_DIR", &cfg.KeyDir)
-	if v := getenv("AMADEUS_RUNNER_KEY_MAP"); v != "" {
+	setStr("CRONOMICON_RUNNER_KEY_DIR", &cfg.KeyDir)
+	if v := getenv("CRONOMICON_RUNNER_KEY_MAP"); v != "" {
 		if km, err := parseKeyMap(v); err == nil {
 			cfg.KeyMap = km
 		}
 	}
-	setStr("AMADEUS_RUNNER_KNOWN_HOSTS", &cfg.KnownHostsFile)
-	setStr("AMADEUS_RUNNER_ANSIBLE_SSH_COMMON_ARGS", &cfg.AnsibleSSHCommonArgs)
-	if v := getenv("AMADEUS_RUNNER_NO_AUTH_BRIDGE"); v != "" {
+	setStr("CRONOMICON_RUNNER_KNOWN_HOSTS", &cfg.KnownHostsFile)
+	setStr("CRONOMICON_RUNNER_ANSIBLE_SSH_COMMON_ARGS", &cfg.AnsibleSSHCommonArgs)
+	if v := getenv("CRONOMICON_RUNNER_NO_AUTH_BRIDGE"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.NoAuthBridge = b
 		}
 	}
-	setStr("AMADEUS_RUNNER_LOCAL_INVENTORY", &cfg.LocalInventoryFile)
-	setStr("AMADEUS_RUNNER_STATE_DIR", &cfg.StateDir)
+	setStr("CRONOMICON_RUNNER_LOCAL_INVENTORY", &cfg.LocalInventoryFile)
+	setStr("CRONOMICON_RUNNER_STATE_DIR", &cfg.StateDir)
 	if cfg.StateDir == "" {
 		// systemd sets STATE_DIRECTORY to the unit's writable StateDirectory.
 		cfg.StateDir = getenv("STATE_DIRECTORY")
 	}
-	if v := getenv("AMADEUS_RUNNER_LOG_RETRY_BUDGET"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_LOG_RETRY_BUDGET"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.LogRetryBudget = n
 		}
 	}
-	if v := getenv("AMADEUS_RUNNER_FAN_OUT"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_FAN_OUT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.FanOut = n
 		}
 	}
-	if v := getenv("AMADEUS_RUNNER_ENV_BASE_EXTRA"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_ENV_BASE_EXTRA"); v != "" {
 		cfg.EnvBaseExtra = splitCSV(v)
 	}
-	if v := getenv("AMADEUS_RUNNER_EXCLUDE_SSH_AUTH_SOCK"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_EXCLUDE_SSH_AUTH_SOCK"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.ExcludeSSHAuthSock = b
 		}
 	}
-	if v := getenv("AMADEUS_RUNNER_ALLOW_CHECKOUT"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_ALLOW_CHECKOUT"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.AllowCheckout = b
 		}
 	}
-	if v := getenv("AMADEUS_RUNNER_CHECKOUT_REPOS"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_CHECKOUT_REPOS"); v != "" {
 		cfg.CheckoutRepos = splitCSV(v)
 	}
-	if v := getenv("AMADEUS_RUNNER_ALLOW_WATCH"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_ALLOW_WATCH"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.AllowWatch = b
 		}
 	}
-	if v := getenv("AMADEUS_RUNNER_WATCH_PATHS"); v != "" {
+	if v := getenv("CRONOMICON_RUNNER_WATCH_PATHS"); v != "" {
 		cfg.WatchPaths = splitCSV(v)
 	}
-	setStr("AMADEUS_RUNNER_MIRROR_DIR", &cfg.MirrorDir)
-	setStr("AMADEUS_RUNNER_CHECKOUT_TOKEN", &cfg.CheckoutToken)
-	setStr("AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE", &cfg.CheckoutTokenFile)
-	setStr("AMADEUS_RUNNER_GALAXY_SERVER", &cfg.GalaxyServer)
-	setStr("AMADEUS_RUNNER_VAULT_PASSWORD_FILE", &cfg.VaultPasswordFile)
-	if v := getenv("AMADEUS_RUNNER_NO_SANDBOX"); v != "" {
+	setStr("CRONOMICON_RUNNER_MIRROR_DIR", &cfg.MirrorDir)
+	setStr("CRONOMICON_RUNNER_CHECKOUT_TOKEN", &cfg.CheckoutToken)
+	setStr("CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE", &cfg.CheckoutTokenFile)
+	setStr("CRONOMICON_RUNNER_GALAXY_SERVER", &cfg.GalaxyServer)
+	setStr("CRONOMICON_RUNNER_VAULT_PASSWORD_FILE", &cfg.VaultPasswordFile)
+	if v := getenv("CRONOMICON_RUNNER_NO_SANDBOX"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.NoSandbox = b
 		}
 	}
-	setStr("AMADEUS_RUNNER_SANDBOX_MEMORY_MAX", &cfg.SandboxMemoryMax)
-	setStr("AMADEUS_RUNNER_SANDBOX_CPU_QUOTA", &cfg.SandboxCPUQuota)
-	setStr("AMADEUS_RUNNER_SANDBOX_TASKS_MAX", &cfg.SandboxTasksMax)
+	setStr("CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX", &cfg.SandboxMemoryMax)
+	setStr("CRONOMICON_RUNNER_SANDBOX_CPU_QUOTA", &cfg.SandboxCPUQuota)
+	setStr("CRONOMICON_RUNNER_SANDBOX_TASKS_MAX", &cfg.SandboxTasksMax)
 }
 
 func splitCSV(s string) []string {

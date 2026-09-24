@@ -68,7 +68,7 @@ type Validation struct {
 	// discovering that only on save is the shape this validator exists to avoid.
 	As string `json:"as,omitempty"`
 	// InjectReference is the derived key the value would actually land on: the
-	// alias's AMADEUS_<SECTION>_<as> when aliased, otherwise Reference.
+	// alias's CRONOMICON_<SECTION>_<as> when aliased, otherwise Reference.
 	InjectReference string  `json:"injectReference"`
 	Reference       string  `json:"reference"`
 	OK              bool    `json:"ok"`

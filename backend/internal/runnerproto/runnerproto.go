@@ -57,7 +57,7 @@ import (
 //	     bump: the server gates both ops on protocol_version >= 5 (keyscan.go),
 //	     the v2/v3/v4 gate precedent.
 //	v6 — adds the manifest Secrets block (vault-integration.md P1.4): dispatch-time
-//	     resolved AMADEUS_SECRET_*/AMADEUS_VAR_* reference values shipped to a
+//	     resolved CRONOMICON_SECRET_*/CRONOMICON_VAR_* reference values shipped to a
 //	     secret-injection-flagged runner. An older agent would ignore the field and
 //	     run WITHOUT the secrets the job declared, so — like the v2/v3 gates — the
 //	     server hard-failed such a run below v6 (manifest.go), until the floor
@@ -359,7 +359,7 @@ type ManifestResponse struct {
 	Inventory *ManifestInventory `json:"inventory,omitempty"`
 	// SSHUser / SSHKeyRef carry the run's frozen "connect as" identity override
 	// EXPLICITLY, for a local-toolchain (ansible) run (protocol v7, RP-8). Names
-	// only, never material (D1): SSHKeyRef is the derived AMADEUS_KEY_<label>
+	// only, never material (D1): SSHKeyRef is the derived CRONOMICON_KEY_<label>
 	// reference whose bytes travel — if at all — through the D8 Keys channel, and
 	// the agent resolves it to a delivered 0600 file path.
 	//
@@ -413,7 +413,7 @@ type ManifestResponse struct {
 	Checkout *ManifestCheckout `json:"checkout,omitempty"`
 
 	// Secrets carries dispatch-time RESOLVED reference VALUES (vault-integration.md
-	// P1.4, D1 = 1C): the derived AMADEUS_SECRET_*/AMADEUS_VAR_* keys mapped to
+	// P1.4, D1 = 1C): the derived CRONOMICON_SECRET_*/CRONOMICON_VAR_* keys mapped to
 	// their values, resolved server-side from the run's declared reference bindings
 	// (reference_bindings, migration 590). This DELIBERATELY breaks the historical
 	// "the manifest never carries secret bytes" invariant for the runner path — it
@@ -424,8 +424,8 @@ type ManifestResponse struct {
 	// agent injects these into the child/remote process env; they never touch the
 	// run tree. omitempty keeps a no-secrets manifest wire-identical to v5.
 	Secrets map[string]string `json:"secrets,omitempty"`
-	// Keys carries resolved SSH-key MATERIAL for AMADEUS_KEY_* references the agent
-	// writes to a 0600 file and points AMADEUS_KEY_<name> at (D8, shipped). Populated
+	// Keys carries resolved SSH-key MATERIAL for CRONOMICON_KEY_* references the agent
+	// writes to a 0600 file and points CRONOMICON_KEY_<name> at (D8, shipped). Populated
 	// for a flagged v6 runner whose run binds a key; the agent materializes each to a
 	// tmpfs 0600 file off the run tree (wiped at run end) and exposes its PATH — the
 	// material never travels beyond this field. omitempty keeps a no-keys manifest
@@ -435,7 +435,7 @@ type ManifestResponse struct {
 	// (RA-12, protocol v9). nil when none, keeping a file-free manifest wire-
 	// identical to v8.
 	SecretFiles []ManifestSecretFile `json:"secretFiles,omitempty"`
-	// BecomePasswordRef is the DERIVED REFERENCE (e.g. AMADEUS_SECRET_BECOME_PASSWORD)
+	// BecomePasswordRef is the DERIVED REFERENCE (e.g. CRONOMICON_SECRET_BECOME_PASSWORD)
 	// whose materialized file path the agent passes to
 	// `ansible-playbook --become-password-file` (RA-12). Empty ⇒ no become password,
 	// which is every pre-v9 run.
@@ -449,9 +449,9 @@ type ManifestResponse struct {
 }
 
 // ManifestKey is one resolved SSH-key reference: the bare row name, its derived
-// AMADEUS_KEY_<name> reference, and the decrypted private-key material. Ships only
+// CRONOMICON_KEY_<name> reference, and the decrypted private-key material. Ships only
 // to allow_secret_injection runners (D8). The agent writes Material to a 0600
-// file OFF the run tree, exposes AMADEUS_KEY_<name>=<that path>, and wipes it at
+// file OFF the run tree, exposes CRONOMICON_KEY_<name>=<that path>, and wipes it at
 // run end — the material never lands under the working tree.
 type ManifestKey struct {
 	Name      string `json:"name"`

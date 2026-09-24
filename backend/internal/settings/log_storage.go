@@ -77,7 +77,7 @@ type S3LogConfig struct {
 }
 
 // LogSyncConfig is the archive timetable (SL-Q3): an interval with a 60s floor,
-// or once a day at a UTC wall-clock time — the AMADEUS_BACKUP_AT shape.
+// or once a day at a UTC wall-clock time — the CRONOMICON_BACKUP_AT shape.
 type LogSyncConfig struct {
 	Mode            string `json:"mode"` // interval | daily
 	IntervalSeconds int    `json:"intervalSeconds"`

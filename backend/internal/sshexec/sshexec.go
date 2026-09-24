@@ -150,7 +150,7 @@ func (s *Service) Start(ctx context.Context) {
 	s.sweepOrphansOnStartup(ctx)
 
 	if !s.cfg.SSHExecutorEnabled {
-		s.log.Info("ssh executor disabled (AMADEUS_SSH_EXECUTOR_ENABLED unset) — ssh runs will queue")
+		s.log.Info("ssh executor disabled (CRONOMICON_SSH_EXECUTOR_ENABLED unset) — ssh runs will queue")
 		return
 	}
 	s.log.Warn("SSH executor ON — this process holds SSH private keys and has outbound SSH to job targets",
@@ -211,7 +211,7 @@ type claimedRun struct {
 	runType      string
 	scope        string
 	targetHost   string
-	triggeredBy  string    // actor that triggered the run (→ AMADEUS_RUN_TRIGGERED_BY)
+	triggeredBy  string    // actor that triggered the run (→ CRONOMICON_RUN_TRIGGERED_BY)
 	envJSON      string    // schedule env snapshot (JSON object string); injected at exec
 	overrideJSON string    // F3 ad-hoc override envelope (hosts/groups/bindings; env values are log-visible)
 	entityCode   string    // LU-7 log folder, stamped at enqueue; "" ⇒ the pre-710 flat layout
@@ -291,7 +291,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// Resolve the run's declared references BEFORE opening the log so the log
 	// redactor is seeded with the injected secret values (and key material). A
 	// nil resolved ⇒ injection is off (kill-switch, which intentionally reverts
-	// the WHOLE v0.49.x injection behavior including AMADEUS_RUN_* context) or
+	// the WHOLE v0.49.x injection behavior including CRONOMICON_RUN_* context) or
 	// resolution failed (rerr).
 	var resolved *runref.Resolved
 	var rerr error
@@ -439,7 +439,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// ::amadeus-output:: value that carries an injected secret would propagate that
 	// secret VERBATIM into outputs_json, into a child step's plaintext env_json
 	// (workflow engine), and into the run-detail API — via the natural idiom
-	// `echo "::amadeus-output name=TOKEN::$AMADEUS_SECRET_FOO"`. Fail the run closed
+	// `echo "::amadeus-output name=TOKEN::$CRONOMICON_SECRET_FOO"`. Fail the run closed
 	// at this earliest choke point (before outputs_json is written): drop the
 	// captured outputs and finalize the run failed so nothing propagates. The
 	// offending value is already masked in the persisted log (the sink redactor is
@@ -470,8 +470,8 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 // (vault-integration.md P1.3). Returns fail-closed on the first out-of-scope /
 // missing / un-revealable binding.
 //
-// Scope: the SSH executor injects Secrets + Variables (values) + the AMADEUS_RUN_*
-// context (D7). A declared AMADEUS_KEY_* reference resolves like any other
+// Scope: the SSH executor injects Secrets + Variables (values) + the CRONOMICON_RUN_*
+// context (D7). A declared CRONOMICON_KEY_* reference resolves like any other
 // binding — so its material enters the redaction dictionary and the audit row —
 // and then FAILS the run in execute (KB): the key file would have to land on
 // the TARGET host, which this executor cannot do. Producers refuse such a run at
@@ -542,7 +542,7 @@ func (s *Service) auditInjection(ctx context.Context, r claimedRun, resolved *ru
 }
 
 // injectedEnv is the dispatch-time env merged into the remote command: the fixed
-// AMADEUS_RUN_* run context plus the resolved reference values. Returns nil when
+// CRONOMICON_RUN_* run context plus the resolved reference values. Returns nil when
 // injection is off (kill-switch) so the command is built exactly as before.
 func (s *Service) injectedEnv(r claimedRun, resolved *runref.Resolved) map[string]string {
 	if resolved == nil {
@@ -557,7 +557,7 @@ func (s *Service) injectedEnv(r claimedRun, resolved *runref.Resolved) map[strin
 		TriggeredBy: r.triggeredBy,
 		Executor:    "ssh",
 	}.Env()
-	// Reference values (AMADEUS_SECRET_*/VAR_*) overlay the run context; the two
+	// Reference values (CRONOMICON_SECRET_*/VAR_*) overlay the run context; the two
 	// key-spaces are disjoint, so this only ever adds.
 	maps.Copy(out, resolved.Env)
 	return out

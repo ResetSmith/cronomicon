@@ -30,7 +30,7 @@ Type=simple
 User=amadeus-runner
 Group=amadeus-runner
 
-# Config: the env file carries AMADEUS_RUNNER_* (server URL, registration token,
+# Config: the env file carries CRONOMICON_RUNNER_* (server URL, registration token,
 # name, capabilities, inventory mode, key custody, etc.). A "-" prefix lets the
 # service start even if the file is absent on first install, but it WILL fail
 # fast in the agent's own validation until the required vars are set.
@@ -44,7 +44,7 @@ EnvironmentFile=-/etc/amadeus-runner/runner.env
 EnvironmentFile=-/etc/amadeus-runner/secrets.env
 
 # Identity persistence — keep this consistent with the env file value.
-Environment=AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
+Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
 WorkingDirectory=/var/lib/amadeus-runner
 
 ExecStart=/usr/local/bin/amadeus-runner
@@ -93,7 +93,7 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 # PrivateTmp). The agent additionally wraps each local-toolchain run in a per-run
 # `systemd-run --scope` transient cgroup for resource caps (configure with
 # -sandbox-memory-max / -sandbox-cpu-quota / -sandbox-tasks-max, or their
-# AMADEUS_RUNNER_SANDBOX_* env). Sandbox availability is probed at startup and
+# CRONOMICON_RUNNER_SANDBOX_* env). Sandbox availability is probed at startup and
 # reported per-run; where no usable systemd manager exists the run is executed
 # and reported UNSANDBOXED. Creating scopes requires the agent to reach the
 # systemd manager — if the directives above prove too restrictive for that on

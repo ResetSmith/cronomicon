@@ -303,7 +303,7 @@ func (s *Server) buildMux() *http.ServeMux {
 
 	// Runner-agent binary distribution (provisioning D1) — unauthenticated at
 	// root by design (see agents.go): allowlisted filenames only, served from
-	// AMADEUS_AGENT_DIR, 404 with a build-it-yourself hint when not bundled.
+	// CRONOMICON_AGENT_DIR, 404 with a build-it-yourself hint when not bundled.
 	mux.HandleFunc("GET /agents/{filename}", s.handleAgentDownload)
 
 	// One-click install script (provisioning plan 2 Phase 2) — unauthenticated

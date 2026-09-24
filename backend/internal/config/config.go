@@ -181,8 +181,8 @@ type Config struct {
 	// reference injection (vault-integration.md D5). Default ON: when a run's
 	// reference bindings resolve, their values are injected into the run env. The
 	// name is spelled PLURAL (SECRETS_) so it sits OUTSIDE the reserved
-	// AMADEUS_SECRET_* reference prefix — exact-prefix matching (envref) keeps
-	// config and references disjoint. Set AMADEUS_SECRETS_INJECTION_ENABLED=false
+	// CRONOMICON_SECRET_* reference prefix — exact-prefix matching (envref) keeps
+	// config and references disjoint. Set CRONOMICON_SECRETS_INJECTION_ENABLED=false
 	// to hard-disable injection for a release.
 	SecretsInjectionEnabled bool
 	// SSHExecutorStaleAfter bounds the periodic SSH-orphan reaper (PP-H2): an
@@ -246,124 +246,123 @@ func (o OIDCConfig) Enabled() bool {
 
 // Load reads configuration from the environment, applying defaults.
 func Load() (*Config, error) {
-	// The KEK is app config, not a store secret, so it lives under AMADEUS_KEK*,
-	// outside the reserved AMADEUS_SECRET_* reference prefix (namespace plan
-	// 2026-07-20, D6). The AMADEUS_SECRET_KEK* aliases that dual-read for a
-	// deprecation window were removed in v1.5.41 (DD Phase D).
-	kekFile := env("AMADEUS_KEK_FILE", "")
-	kekEnv := env("AMADEUS_KEK", "")
-	kekVersion := envInt("AMADEUS_KEK_VERSION", 1)
+	// The KEK is app config, not a store secret, so it lives under CRONOMICON_KEK*,
+	// outside the reserved CRONOMICON_SECRET_* reference prefix (namespace plan
+	// 2026-07-20, D6).
+	kekFile := env("CRONOMICON_KEK_FILE", "")
+	kekEnv := env("CRONOMICON_KEK", "")
+	kekVersion := envInt("CRONOMICON_KEK_VERSION", 1)
 
 	c := &Config{
-		Addr:                env("AMADEUS_ADDR", ":8080"),
-		LogLevel:            env("AMADEUS_LOG_LEVEL", "info"),
-		LogFormat:           env("AMADEUS_LOG_FORMAT", "json"),
-		LogFileEnabled:      envBool("AMADEUS_LOG_FILE_ENABLED", true),
-		LogFilePath:         env("AMADEUS_LOG_FILE", ""),
-		LogFileMaxMB:        envInt("AMADEUS_LOG_FILE_MAX_MB", 64),
-		LogFileKeep:         envInt("AMADEUS_LOG_FILE_KEEP", logsink.DefaultKeep),
-		AuditLogEnabled:     envBool("AMADEUS_AUDIT_LOG_ENABLED", true),
-		AuditLogPath:        env("AMADEUS_AUDIT_LOG", ""),
-		DBPath:              env("AMADEUS_DB_PATH", "/var/lib/amadeus/amadeus.db"),
-		AuthMode:            env("AMADEUS_AUTH_MODE", AuthModeTrustedHeader),
-		TrustedProxies:      envList("AMADEUS_TRUSTED_PROXIES"),
-		TrustedHeaderUser:   env("AMADEUS_TRUSTED_HEADER_USER", "Remote-User"),
-		TrustedHeaderEmail:  env("AMADEUS_TRUSTED_HEADER_EMAIL", "Remote-Email"),
-		TrustedHeaderName:   env("AMADEUS_TRUSTED_HEADER_NAME", "Remote-Name"),
-		TrustedHeaderGroups: env("AMADEUS_TRUSTED_HEADER_GROUPS", "Remote-Groups"),
-		BootstrapAdminGroup: env("AMADEUS_BOOTSTRAP_ADMIN_GROUP", ""),
-		LogoutRedirectURL:   env("AMADEUS_LOGOUT_REDIRECT_URL", ""),
+		Addr:                env("CRONOMICON_ADDR", ":8080"),
+		LogLevel:            env("CRONOMICON_LOG_LEVEL", "info"),
+		LogFormat:           env("CRONOMICON_LOG_FORMAT", "json"),
+		LogFileEnabled:      envBool("CRONOMICON_LOG_FILE_ENABLED", true),
+		LogFilePath:         env("CRONOMICON_LOG_FILE", ""),
+		LogFileMaxMB:        envInt("CRONOMICON_LOG_FILE_MAX_MB", 64),
+		LogFileKeep:         envInt("CRONOMICON_LOG_FILE_KEEP", logsink.DefaultKeep),
+		AuditLogEnabled:     envBool("CRONOMICON_AUDIT_LOG_ENABLED", true),
+		AuditLogPath:        env("CRONOMICON_AUDIT_LOG", ""),
+		DBPath:              env("CRONOMICON_DB_PATH", "/var/lib/amadeus/amadeus.db"),
+		AuthMode:            env("CRONOMICON_AUTH_MODE", AuthModeTrustedHeader),
+		TrustedProxies:      envList("CRONOMICON_TRUSTED_PROXIES"),
+		TrustedHeaderUser:   env("CRONOMICON_TRUSTED_HEADER_USER", "Remote-User"),
+		TrustedHeaderEmail:  env("CRONOMICON_TRUSTED_HEADER_EMAIL", "Remote-Email"),
+		TrustedHeaderName:   env("CRONOMICON_TRUSTED_HEADER_NAME", "Remote-Name"),
+		TrustedHeaderGroups: env("CRONOMICON_TRUSTED_HEADER_GROUPS", "Remote-Groups"),
+		BootstrapAdminGroup: env("CRONOMICON_BOOTSTRAP_ADMIN_GROUP", ""),
+		LogoutRedirectURL:   env("CRONOMICON_LOGOUT_REDIRECT_URL", ""),
 		OIDC: OIDCConfig{
-			Issuer:       env("AMADEUS_OIDC_ISSUER", ""),
-			ClientID:     env("AMADEUS_OIDC_CLIENT_ID", ""),
-			ClientSecret: env("AMADEUS_OIDC_CLIENT_SECRET", ""),
-			RedirectURL:  env("AMADEUS_OIDC_REDIRECT_URL", ""),
+			Issuer:       env("CRONOMICON_OIDC_ISSUER", ""),
+			ClientID:     env("CRONOMICON_OIDC_CLIENT_ID", ""),
+			ClientSecret: env("CRONOMICON_OIDC_CLIENT_SECRET", ""),
+			RedirectURL:  env("CRONOMICON_OIDC_REDIRECT_URL", ""),
 		},
-		SessionHashKey:          env("AMADEUS_SESSION_HASH_KEY", ""),
-		SessionBlockKey:         env("AMADEUS_SESSION_BLOCK_KEY", ""),
-		CookieSecure:            envBool("AMADEUS_COOKIE_SECURE", true),
-		DevAuth:                 envBool("AMADEUS_DEV_AUTH", false),
-		DevSeed:                 envBool("AMADEUS_DEV_SEED", false),
-		RunnerBootstrapToken:    env("AMADEUS_RUNNER_BOOTSTRAP_TOKEN", ""),
-		AgentDir:                env("AMADEUS_AGENT_DIR", "/usr/share/amadeus/agents"),
-		RunnerOfflineAfter:      envDuration("AMADEUS_RUNNER_OFFLINE_AFTER", 5*time.Minute),
-		RunnerDeregisterAfter:   envDuration("AMADEUS_RUNNER_DEREGISTER_AFTER", 336*time.Hour), // 14d (D4)
+		SessionHashKey:          env("CRONOMICON_SESSION_HASH_KEY", ""),
+		SessionBlockKey:         env("CRONOMICON_SESSION_BLOCK_KEY", ""),
+		CookieSecure:            envBool("CRONOMICON_COOKIE_SECURE", true),
+		DevAuth:                 envBool("CRONOMICON_DEV_AUTH", false),
+		DevSeed:                 envBool("CRONOMICON_DEV_SEED", false),
+		RunnerBootstrapToken:    env("CRONOMICON_RUNNER_BOOTSTRAP_TOKEN", ""),
+		AgentDir:                env("CRONOMICON_AGENT_DIR", "/usr/share/amadeus/agents"),
+		RunnerOfflineAfter:      envDuration("CRONOMICON_RUNNER_OFFLINE_AFTER", 5*time.Minute),
+		RunnerDeregisterAfter:   envDuration("CRONOMICON_RUNNER_DEREGISTER_AFTER", 336*time.Hour), // 14d (D4)
 		SecretKEKFile:           kekFile,
 		SecretKEKEnv:            kekEnv,
 		SecretKEKVersion:        kekVersion,
-		AppriseURL:              env("AMADEUS_APPRISE_URL", ""),
-		VaultAddr:               env("AMADEUS_VAULT_ADDR", ""),
-		VaultRoleID:             env("AMADEUS_VAULT_ROLE_ID", ""),
-		VaultRoleIDFile:         env("AMADEUS_VAULT_ROLE_ID_FILE", ""),
-		VaultSecretID:           env("AMADEUS_VAULT_SECRET_ID", ""),
-		VaultSecretIDFile:       env("AMADEUS_VAULT_SECRET_ID_FILE", ""),
-		VaultNamespace:          env("AMADEUS_VAULT_NAMESPACE", ""),
-		VaultCAFile:             env("AMADEUS_VAULT_CA_FILE", ""),
-		OutboundAllowPrivate:    envBool("AMADEUS_OUTBOUND_ALLOW_PRIVATE", true),
-		OutboundAllowLoopback:   envBool("AMADEUS_OUTBOUND_ALLOW_LOOPBACK", false),
-		VaultSecretIDWrapped:    envBool("AMADEUS_VAULT_SECRET_ID_WRAPPED", false),
-		GitLabBaseURL:           env("AMADEUS_GITLAB_BASE_URL", ""),
-		WebhookSecret:           env("AMADEUS_GITLAB_WEBHOOK_SECRET", ""),
-		GitLabWriteBranch:       env("AMADEUS_GITLAB_WRITE_BRANCH", ""),
-		SSHExecutorEnabled:      envBool("AMADEUS_SSH_EXECUTOR_ENABLED", false),
-		SSHExecutorConcurrency:  envInt("AMADEUS_SSH_EXECUTOR_CONCURRENCY", 4),
-		SecretsInjectionEnabled: envBool("AMADEUS_SECRETS_INJECTION_ENABLED", true),
-		SSHExecutorStaleAfter:   envDuration("AMADEUS_SSH_EXECUTOR_STALE_AFTER", 24*time.Hour),
-		MaxRunLogBytes:          envInt("AMADEUS_MAX_RUN_LOG_BYTES", 512<<20),
-		RetentionRunsDays:       envInt("AMADEUS_RETENTION_RUNS_DAYS", 90),
-		RetentionChangeLogDays:  envInt("AMADEUS_RETENTION_CHANGELOG_DAYS", 365),
-		RetentionLogFilesDays:   envInt("AMADEUS_RETENTION_LOG_FILES_DAYS", 90),
-		BackupS3Bucket:          env("AMADEUS_BACKUP_S3_BUCKET", ""),
-		BackupS3Endpoint:        env("AMADEUS_BACKUP_S3_ENDPOINT", ""),
-		BackupS3Region:          env("AMADEUS_BACKUP_S3_REGION", "us-east-1"),
-		BackupS3AccessKey:       env("AMADEUS_BACKUP_S3_ACCESS_KEY", ""),
-		BackupS3SecretKey:       env("AMADEUS_BACKUP_S3_SECRET_KEY", ""),
-		BackupS3UseSSL:          envBool("AMADEUS_BACKUP_S3_USE_SSL", true),
-		BackupS3CAFile:          env("AMADEUS_BACKUP_S3_CA_FILE", ""),
-		BackupAt:                env("AMADEUS_BACKUP_AT", "02:00"),
+		AppriseURL:              env("CRONOMICON_APPRISE_URL", ""),
+		VaultAddr:               env("CRONOMICON_VAULT_ADDR", ""),
+		VaultRoleID:             env("CRONOMICON_VAULT_ROLE_ID", ""),
+		VaultRoleIDFile:         env("CRONOMICON_VAULT_ROLE_ID_FILE", ""),
+		VaultSecretID:           env("CRONOMICON_VAULT_SECRET_ID", ""),
+		VaultSecretIDFile:       env("CRONOMICON_VAULT_SECRET_ID_FILE", ""),
+		VaultNamespace:          env("CRONOMICON_VAULT_NAMESPACE", ""),
+		VaultCAFile:             env("CRONOMICON_VAULT_CA_FILE", ""),
+		OutboundAllowPrivate:    envBool("CRONOMICON_OUTBOUND_ALLOW_PRIVATE", true),
+		OutboundAllowLoopback:   envBool("CRONOMICON_OUTBOUND_ALLOW_LOOPBACK", false),
+		VaultSecretIDWrapped:    envBool("CRONOMICON_VAULT_SECRET_ID_WRAPPED", false),
+		GitLabBaseURL:           env("CRONOMICON_GITLAB_BASE_URL", ""),
+		WebhookSecret:           env("CRONOMICON_GITLAB_WEBHOOK_SECRET", ""),
+		GitLabWriteBranch:       env("CRONOMICON_GITLAB_WRITE_BRANCH", ""),
+		SSHExecutorEnabled:      envBool("CRONOMICON_SSH_EXECUTOR_ENABLED", false),
+		SSHExecutorConcurrency:  envInt("CRONOMICON_SSH_EXECUTOR_CONCURRENCY", 4),
+		SecretsInjectionEnabled: envBool("CRONOMICON_SECRETS_INJECTION_ENABLED", true),
+		SSHExecutorStaleAfter:   envDuration("CRONOMICON_SSH_EXECUTOR_STALE_AFTER", 24*time.Hour),
+		MaxRunLogBytes:          envInt("CRONOMICON_MAX_RUN_LOG_BYTES", 512<<20),
+		RetentionRunsDays:       envInt("CRONOMICON_RETENTION_RUNS_DAYS", 90),
+		RetentionChangeLogDays:  envInt("CRONOMICON_RETENTION_CHANGELOG_DAYS", 365),
+		RetentionLogFilesDays:   envInt("CRONOMICON_RETENTION_LOG_FILES_DAYS", 90),
+		BackupS3Bucket:          env("CRONOMICON_BACKUP_S3_BUCKET", ""),
+		BackupS3Endpoint:        env("CRONOMICON_BACKUP_S3_ENDPOINT", ""),
+		BackupS3Region:          env("CRONOMICON_BACKUP_S3_REGION", "us-east-1"),
+		BackupS3AccessKey:       env("CRONOMICON_BACKUP_S3_ACCESS_KEY", ""),
+		BackupS3SecretKey:       env("CRONOMICON_BACKUP_S3_SECRET_KEY", ""),
+		BackupS3UseSSL:          envBool("CRONOMICON_BACKUP_S3_USE_SSL", true),
+		BackupS3CAFile:          env("CRONOMICON_BACKUP_S3_CA_FILE", ""),
+		BackupAt:                env("CRONOMICON_BACKUP_AT", "02:00"),
 	}
 
 	if c.SecretKEKVersion < 1 {
-		return nil, fmt.Errorf("invalid AMADEUS_KEK_VERSION %d (must be >= 1)", c.SecretKEKVersion)
+		return nil, fmt.Errorf("invalid CRONOMICON_KEK_VERSION %d (must be >= 1)", c.SecretKEKVersion)
 	}
 	if !validLogLevel(c.LogLevel) {
-		return nil, fmt.Errorf("invalid AMADEUS_LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)
+		return nil, fmt.Errorf("invalid CRONOMICON_LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)
 	}
 	if c.LogFormat != "json" && c.LogFormat != "text" {
-		return nil, fmt.Errorf("invalid AMADEUS_LOG_FORMAT %q (want json|text)", c.LogFormat)
+		return nil, fmt.Errorf("invalid CRONOMICON_LOG_FORMAT %q (want json|text)", c.LogFormat)
 	}
 	// A relative process-log path would resolve against the process's working
 	// directory, which differs between a systemd unit and a container — the one
 	// place an operator must not have to guess where their logs went.
 	if c.LogFilePath != "" && !filepath.IsAbs(c.LogFilePath) {
-		return nil, fmt.Errorf("invalid AMADEUS_LOG_FILE %q (must be an absolute path)", c.LogFilePath)
+		return nil, fmt.Errorf("invalid CRONOMICON_LOG_FILE %q (must be an absolute path)", c.LogFilePath)
 	}
 	if c.LogFileMaxMB < 1 {
-		return nil, fmt.Errorf("invalid AMADEUS_LOG_FILE_MAX_MB %d (must be >= 1)", c.LogFileMaxMB)
+		return nil, fmt.Errorf("invalid CRONOMICON_LOG_FILE_MAX_MB %d (must be >= 1)", c.LogFileMaxMB)
 	}
 	if c.LogFileKeep < 0 {
-		return nil, fmt.Errorf("invalid AMADEUS_LOG_FILE_KEEP %d (must be >= 0)", c.LogFileKeep)
+		return nil, fmt.Errorf("invalid CRONOMICON_LOG_FILE_KEEP %d (must be >= 0)", c.LogFileKeep)
 	}
 	if c.AuditLogPath != "" && !filepath.IsAbs(c.AuditLogPath) {
-		return nil, fmt.Errorf("invalid AMADEUS_AUDIT_LOG %q (must be an absolute path)", c.AuditLogPath)
+		return nil, fmt.Errorf("invalid CRONOMICON_AUDIT_LOG %q (must be an absolute path)", c.AuditLogPath)
 	}
 
 	switch c.AuthMode {
 	case AuthModeTrustedHeader, AuthModeOIDC:
 	default:
-		return nil, fmt.Errorf("invalid AMADEUS_AUTH_MODE %q (want %s|%s)", c.AuthMode, AuthModeTrustedHeader, AuthModeOIDC)
+		return nil, fmt.Errorf("invalid CRONOMICON_AUTH_MODE %q (want %s|%s)", c.AuthMode, AuthModeTrustedHeader, AuthModeOIDC)
 	}
 	for _, p := range c.TrustedProxies {
 		if _, err := parseCIDRorIP(p); err != nil {
-			return nil, fmt.Errorf("invalid AMADEUS_TRUSTED_PROXIES entry %q: %w", p, err)
+			return nil, fmt.Errorf("invalid CRONOMICON_TRUSTED_PROXIES entry %q: %w", p, err)
 		}
 	}
 	// Default-deny: in trusted-header mode the allowlist is the load-bearing
 	// control (anyone who can reach the app port could otherwise spoof
 	// Remote-Groups). Refuse to boot wide-open. The local dev bypass
-	// (AMADEUS_DEV_AUTH) is the documented no-proxy escape hatch and is exempt.
+	// (CRONOMICON_DEV_AUTH) is the documented no-proxy escape hatch and is exempt.
 	if c.AuthMode == AuthModeTrustedHeader && !c.DevAuth && len(c.TrustedProxies) == 0 {
-		return nil, fmt.Errorf("AMADEUS_AUTH_MODE=%s requires AMADEUS_TRUSTED_PROXIES "+
+		return nil, fmt.Errorf("CRONOMICON_AUTH_MODE=%s requires CRONOMICON_TRUSTED_PROXIES "+
 			"(comma-separated CIDR/IP allowlist of the reverse proxy); refusing to boot wide-open",
 			AuthModeTrustedHeader)
 	}

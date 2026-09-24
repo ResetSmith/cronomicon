@@ -46,7 +46,7 @@ func IDByLabel(ctx context.Context, database *sql.DB, label string) (id string, 
 
 // ResolveMaterialByName returns the decrypted private-key PEM for the SSH
 // credential whose label matches name — the raw material behind an
-// AMADEUS_KEY_<label> reference, for callers that must write a key FILE for remote
+// CRONOMICON_KEY_<label> reference, for callers that must write a key FILE for remote
 // key injection (runref.Resolver, P1.2/D8) rather than build an in-process signer.
 // found is false (nil error) when no credential carries that label. vault must be
 // the app's configured Vault client so a vault-source credential resolves (P2.4);

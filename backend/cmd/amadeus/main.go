@@ -89,7 +89,7 @@ func main() {
 		case "grant-admin":
 			// `amadeus grant-admin <ad-group|email>` is the break-glass admin
 			// lockout recovery (RF-25/RB-Q15): on OIDC deployments the
-			// AMADEUS_BOOTSTRAP_ADMIN_GROUP floor does not apply, so this is the
+			// CRONOMICON_BOOTSTRAP_ADMIN_GROUP floor does not apply, so this is the
 			// only supported way back in. Stop the server first.
 			os.Exit(runGrantAdmin(os.Args[2:]))
 		case "version":
@@ -113,7 +113,7 @@ func run() error {
 	logger, logSink := newLogger(cfg)
 	slog.SetDefault(logger)
 	// The file destination is attached below, once the DB can tell us where the
-	// log directory is. An explicit AMADEUS_LOG_FILE needs no lookup, so attach
+	// log directory is. An explicit CRONOMICON_LOG_FILE needs no lookup, so attach
 	// it now and capture the banner and config warnings too.
 	if cfg.LogFileEnabled && cfg.LogFilePath != "" {
 		if err := logSink.SetPath(cfg.LogFilePath); err != nil {
@@ -213,7 +213,7 @@ func run() error {
 		}
 	}
 
-	// Local-preview demo data (AMADEUS_DEV_SEED). No-op unless enabled and the DB
+	// Local-preview demo data (CRONOMICON_DEV_SEED). No-op unless enabled and the DB
 	// is empty, so it never touches a real (GitLab-synced) database.
 	if cfg.DevSeed {
 		if err := seed.Seed(ctx0, pool, logger); err != nil {
@@ -252,9 +252,9 @@ func run() error {
 		logger.Info("backup S3 upload enabled", "bucket", cfg.BackupS3Bucket)
 	}
 	// LU-2 (closes G2): the Audit & Compliance settings blob is authoritative for
-	// retention; the AMADEUS_RETENTION_* env vars are the bootstrap default only.
+	// retention; the CRONOMICON_RETENTION_* env vars are the bootstrap default only.
 	// Seed the blob from env once, on the first boot that finds it unset, so an
-	// existing deployment that set AMADEUS_RETENTION_RUNS_DAYS=30 keeps 30 across
+	// existing deployment that set CRONOMICON_RETENTION_RUNS_DAYS=30 keeps 30 across
 	// this upgrade instead of silently reverting to the blob's untouched 90.
 	// Non-fatal: on failure the reload below falls back to the env-derived policy.
 	if seeded, serr := settings.SeedAuditComplianceFromEnv(ctx0, pool,
@@ -465,7 +465,7 @@ func run() error {
 		LogArchiveChanged:      archiveSync.Kick,
 		// LU-5: the API re-points its own run-log writers; the process log is the
 		// one consumer it can't reach, because main owns the sink. A no-op when
-		// the path is pinned via AMADEUS_LOG_FILE or file logging is off —
+		// the path is pinned via CRONOMICON_LOG_FILE or file logging is off —
 		// processLogPath returns the same value, and SetPath ignores a re-set.
 		LogDirChanged: func(_ context.Context, dir string) {
 			p := processLogPath(cfg, dir)
@@ -575,7 +575,7 @@ func newLogger(cfg *config.Config) (*slog.Logger, *logsink.Writer) {
 }
 
 // processLogPath returns where amadeus.log should live: the explicit
-// AMADEUS_LOG_FILE when set, else amadeus.log beside the run logs. Empty means
+// CRONOMICON_LOG_FILE when set, else amadeus.log beside the run logs. Empty means
 // file logging is switched off.
 func processLogPath(cfg *config.Config, logDir string) string {
 	if !cfg.LogFileEnabled {
@@ -588,7 +588,7 @@ func processLogPath(cfg *config.Config, logDir string) string {
 }
 
 // auditLogPath returns where audit.log should live: the explicit
-// AMADEUS_AUDIT_LOG when set, else audit.log beside the run logs. Empty means
+// CRONOMICON_AUDIT_LOG when set, else audit.log beside the run logs. Empty means
 // the audit stream is switched off and only the database records events.
 func auditLogPath(cfg *config.Config, logDir string) string {
 	if !cfg.AuditLogEnabled {

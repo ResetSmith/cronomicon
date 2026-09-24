@@ -403,7 +403,7 @@ export function JobComposer() {
       });
       setTagsInput((j.tags ?? []).join(", "));
       // EV-6 parity — prefill the declared key bindings (labels only; the derived
-      // AMADEUS_KEY_ form is re-derived at render and on write).
+      // CRONOMICON_KEY_ form is re-derived at render and on write).
       const kb = await api.GET("/job-reference-bindings/{jobId}", {
         params: { path: { jobId: Number(loadId) } },
       });
@@ -775,7 +775,7 @@ export function JobComposer() {
     if (keysDirty || refsDirty) {
       const jobId = isEdit ? Number(editId) : (data as Job | undefined)?.id;
       const mine: ReferenceBinding[] = [
-        ...sshKeys.map((n) => ({ kind: "key" as const, name: n, reference: `AMADEUS_KEY_${n}` })),
+        ...sshKeys.map((n) => ({ kind: "key" as const, name: n, reference: `CRONOMICON_KEY_${n}` })),
         ...refBindings,
       ];
       const kerr =
@@ -1154,7 +1154,7 @@ export function JobComposer() {
         label="SSH keys"
         info={
           <>
-            Stored keys this job's runs receive as <code style={{ fontFamily: c.mono }}>AMADEUS_KEY_&lt;label&gt;</code>{" "}
+            Stored keys this job's runs receive as <code style={{ fontFamily: c.mono }}>CRONOMICON_KEY_&lt;label&gt;</code>{" "}
             key files — for a playbook or script that does its own SSH. Saved with the job; agency-filtered, not
             scope-filtered.
             {identityCapable && (
@@ -1300,7 +1300,7 @@ export function JobComposer() {
             ⚠ <code>{credentialishPrompts.join(", ")}</code> look{credentialishPrompts.length === 1 ? "s" : ""} like{" "}
             {credentialishPrompts.length === 1 ? "a credential" : "credentials"}. Run-input answers are stored, sent,
             and shown in run logs in plaintext. Keep credentials in the Secret Store and reference them as{" "}
-            <code>AMADEUS_SECRET_&lt;name&gt;</code> instead.
+            <code>CRONOMICON_SECRET_&lt;name&gt;</code> instead.
           </div>
         )}
         {selectedScript && (selectedScript.variables?.length ?? 0) > 0 && (
@@ -1639,7 +1639,7 @@ export function JobComposer() {
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: -6 }}>
               A runner watches these only if it was started with <code>-allow-watch</code> and the path is
               inside its <code>-watch-paths</code> allowlist. The job runs once per arrival with
-              <code> AMADEUS_WATCH_PATH</code> and <code>AMADEUS_WATCH_FILE</code> set; the file itself is
+              <code> CRONOMICON_WATCH_PATH</code> and <code>CRONOMICON_WATCH_FILE</code> set; the file itself is
               not copied anywhere. Set a per-path <code>stable_seconds</code> in YAML for large files.
             </div>
           )}

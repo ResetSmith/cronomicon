@@ -65,7 +65,7 @@ export function login(): void {
   window.location.href = "/api/v1/auth/login";
 }
 
-// Redirect into the local dev-login bypass (only works when AMADEUS_DEV_AUTH=true).
+// Redirect into the local dev-login bypass (only works when CRONOMICON_DEV_AUTH=true).
 export function devLogin(): void {
   window.location.href = "/api/v1/auth/dev-login";
 }

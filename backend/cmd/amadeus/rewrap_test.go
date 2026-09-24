@@ -86,7 +86,7 @@ func TestRewrapMovesEveryStoreAndPreservesPlaintext(t *testing.T) {
 
 	_, k2b64 := newKEK(t)
 	cfgV2 := &config.Config{SecretKEKEnv: k2b64, SecretKEKVersion: 2}
-	t.Setenv("AMADEUS_KEK_1", k1b64) // the superseded key stays available
+	t.Setenv("CRONOMICON_KEK_1", k1b64) // the superseded key stays available
 
 	ctx := context.Background()
 	before, err := survey(ctx, pool, 2)
@@ -166,7 +166,7 @@ func TestRewrapIsIdempotent(t *testing.T) {
 
 	_, k2b64 := newKEK(t)
 	cfgV2 := &config.Config{SecretKEKEnv: k2b64, SecretKEKVersion: 2}
-	t.Setenv("AMADEUS_KEK_1", k1b64)
+	t.Setenv("CRONOMICON_KEK_1", k1b64)
 
 	ctx := context.Background()
 	if moved, failed := rewrapAll(ctx, pool, cfgV2, secrets.NewSealer(cfgV2), 2); moved != 3 || failed != 0 {
@@ -189,7 +189,7 @@ func TestRewrapReportsMissingHistoricalKey(t *testing.T) {
 
 	_, k2b64 := newKEK(t)
 	cfgV2 := &config.Config{SecretKEKEnv: k2b64, SecretKEKVersion: 2}
-	// Deliberately do NOT provide AMADEUS_KEK_1.
+	// Deliberately do NOT provide CRONOMICON_KEK_1.
 
 	ctx := context.Background()
 	moved, failed := rewrapAll(ctx, pool, cfgV2, secrets.NewSealer(cfgV2), 2)

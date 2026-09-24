@@ -23,7 +23,7 @@ import (
 // inTestEchoSSHServer is a loopback sshd that, on exec, streams back the received
 // command line AND the bytes it received on stdin — so an e2e can inspect what the
 // agent actually delivered to the target (the H1 stdin env prelude, incl. the D8
-// AMADEUS_KEY_* path) without the material ever appearing in argv.
+// CRONOMICON_KEY_* path) without the material ever appearing in argv.
 func inTestEchoSSHServer(t *testing.T, clientPub ssh.PublicKey) (addr string, hostKey ssh.PublicKey) {
 	t.Helper()
 	_, hostPriv, _ := ed25519.GenerateKey(rand.Reader)
@@ -96,7 +96,7 @@ func serveEchoStdin(nConn net.Conn, cfg *ssh.ServerConfig) {
 // exec → log). It proves, end to end:
 //   - a bound SECRET is delivered on stdin (H1), never in argv;
 //   - a bound KEY's material is materialized to a 0600 file OFF the run tree, its
-//     PATH exposed as AMADEUS_KEY_<name> (the material itself never reaches the
+//     PATH exposed as CRONOMICON_KEY_<name> (the material itself never reaches the
 //     target), and the file is WIPED once the run completes.
 func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 	// Agent's OWN connection key (model b): the target references it by name.
@@ -138,9 +138,9 @@ func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 			Targets: []runnerproto.ManifestTarget{{
 				Name: "testhost", Address: host, Port: port, User: "tester", AuthKeyEnvVar: "AGENT_KEY",
 			}},
-			Secrets: map[string]string{"AMADEUS_SECRET_TOKEN": secretVal},
+			Secrets: map[string]string{"CRONOMICON_SECRET_TOKEN": secretVal},
 			Keys: []runnerproto.ManifestKey{
-				{Name: "deploy_key", Reference: "AMADEUS_KEY_deploy_key", Material: keyMaterial},
+				{Name: "deploy_key", Reference: "CRONOMICON_KEY_deploy_key", Material: keyMaterial},
 			},
 		},
 	}
@@ -197,7 +197,7 @@ func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 	// H1: env delivered on stdin (bash -s), never argv. The command line (the echoed
 	// "cmd: " line, which is host-prefixed) carries no injected value/path.
 	for line := range strings.SplitSeq(logStr, "\n") {
-		if strings.Contains(line, "cmd: ") && (strings.Contains(line, "AMADEUS_SECRET") || strings.Contains(line, "AMADEUS_KEY")) {
+		if strings.Contains(line, "cmd: ") && (strings.Contains(line, "CRONOMICON_SECRET") || strings.Contains(line, "CRONOMICON_KEY")) {
 			t.Errorf("injected env leaked onto the command line (argv): %q", line)
 		}
 	}
@@ -206,7 +206,7 @@ func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 	}
 
 	// The bound secret is delivered via the stdin export prelude.
-	if !strings.Contains(logStr, "export AMADEUS_SECRET_TOKEN='"+secretVal+"'") {
+	if !strings.Contains(logStr, "export CRONOMICON_SECRET_TOKEN='"+secretVal+"'") {
 		t.Errorf("bound secret not injected on stdin:\n%s", logStr)
 	}
 
@@ -214,9 +214,9 @@ func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 	if strings.Contains(logStr, keyMaterial) {
 		t.Errorf("delivered key MATERIAL reached the target (should stay on the runner):\n%s", logStr)
 	}
-	deliveredPath := exportValue(logStr, "AMADEUS_KEY_deploy_key")
+	deliveredPath := exportValue(logStr, "CRONOMICON_KEY_deploy_key")
 	if deliveredPath == "" {
-		t.Fatalf("AMADEUS_KEY_deploy_key path not exposed on stdin:\n%s", logStr)
+		t.Fatalf("CRONOMICON_KEY_deploy_key path not exposed on stdin:\n%s", logStr)
 	}
 	// Off the run tree: a dedicated materialize dir, not the job workdir.
 	if !strings.Contains(deliveredPath, "amadeus-keys-") {

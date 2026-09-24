@@ -1848,7 +1848,7 @@
 
 <p>The card's <strong>Install Command</strong> is a real, copy-pasteable §3 invocation: it <code>curl</code>s <code>/runner-install.sh</code> <strong>from the Cronomicon server itself</strong> and pipes it into <code>sudo bash</code> with this server's URL and the token filled in (the freshly minted token is substituted while its plaintext is revealed — otherwise a <code>&lt;TOKEN&gt;</code> placeholder). A <em>download-inspect-run</em> variant is available under the command for orgs that don't pipe curl into sudo. Run it on the target host next to a pre-built <code>amadeus-runner</code> binary (§2); capabilities are auto-detected from the host's toolchains at startup — add <code>-c</code> only to narrow them.</p>
 
-<p>(A registration credential can also be seeded out-of-band via <code>AMADEUS_RUNNER_BOOTSTRAP_TOKEN</code> on the <strong>server</strong> — unlike minted tokens it is multi-use; see <code>env-matrix.md</code>.)</p>
+<p>(A registration credential can also be seeded out-of-band via <code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code> on the <strong>server</strong> — unlike minted tokens it is multi-use; see <code>env-matrix.md</code>.)</p>
 
 <hr />
 
@@ -1875,7 +1875,7 @@ docker build -f deploy/Dockerfile.runner.fat -t amadeus-runner:fat  .</code></pr
 
 <p>Or get just the binary for a systemd install — <strong>download it from the server, or build it</strong>:</p>
 
-<ul><li><strong>Download (container-deployed server):</strong> the server image bundles cross-compiled agent binaries (linux amd64/arm64) plus a <code>SHA256SUMS</code> file, served unauthenticated at <code>/agents/amadeus-runner-linux-{amd64,arm64}</code>. The §3 installer's <code>--download</code> flag detects the host architecture, fetches the binary, and <strong>verifies its checksum</strong> before installing — so a host needs nothing but <code>curl</code> and reachability to the Cronomicon server. (A source-built/bare-metal server returns a clean 404 here — build instead, or point <code>AMADEUS_AGENT_DIR</code> at a directory holding the files.)</li><li><strong>Build:</strong></li></ul>
+<ul><li><strong>Download (container-deployed server):</strong> the server image bundles cross-compiled agent binaries (linux amd64/arm64) plus a <code>SHA256SUMS</code> file, served unauthenticated at <code>/agents/amadeus-runner-linux-{amd64,arm64}</code>. The §3 installer's <code>--download</code> flag detects the host architecture, fetches the binary, and <strong>verifies its checksum</strong> before installing — so a host needs nothing but <code>curl</code> and reachability to the Cronomicon server. (A source-built/bare-metal server returns a clean 404 here — build instead, or point <code>CRONOMICON_AGENT_DIR</code> at a directory holding the files.)</li><li><strong>Build:</strong></li></ul>
 
 <div class="codeblock"><pre><code>cd backend
 CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
@@ -1895,7 +1895,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
   --key-dir  ./keys \
   --ca-cert  ./internal-ca.pem   # only for a private/internal CA (§5)</code></pre></div>
 
-<p><strong>Capabilities are auto-detected.</strong> With no <code>-c</code>, the installer writes no <code>AMADEUS_RUNNER_CAPABILITIES</code> line at all and the agent probes the host's toolchains at startup (<code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>/<code>python</code>, <code>ansible-playbook</code>, <code>terraform</code>) to claim the matching run-types — install a toolchain later and a service restart propagates the new capability to the registry automatically (the config-drift resync). Pass <code>-c</code> only to <em>narrow</em> what the runner claims (e.g. the host has python but must not run python jobs).</p>
+<p><strong>Capabilities are auto-detected.</strong> With no <code>-c</code>, the installer writes no <code>CRONOMICON_RUNNER_CAPABILITIES</code> line at all and the agent probes the host's toolchains at startup (<code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>/<code>python</code>, <code>ansible-playbook</code>, <code>terraform</code>) to claim the matching run-types — install a toolchain later and a service restart propagates the new capability to the registry automatically (the config-drift resync). Pass <code>-c</code> only to <em>narrow</em> what the runner claims (e.g. the host has python but must not run python jobs).</p>
 
 <div class="tbl"><table>
 <thead><tr><th>Flag</th><th>Required</th><th>Default</th><th>Meaning</th></tr></thead>
@@ -1906,18 +1906,18 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
 <tr><td><code>-c, --capabilities</code></td><td>no</td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Omit ⇒ the agent auto-detects the host's toolchains at startup; set only to narrow.</td></tr>
 <tr><td><code>-b, --binary</code></td><td>no</td><td><code>./amadeus-runner</code>, <code>./bin/…</code>, <code>backend/bin/…</code></td><td>Path to the pre-built binary.</td></tr>
 <tr><td><code>--download</code></td><td>no</td><td>off</td><td>Fetch the agent binary from the server's <code>/agents/</code> endpoint (arch auto-detected, <strong>SHA-256 verified</strong> — a checksum mismatch aborts, never falls back). Falls back to <code>-b</code>/auto-search when the deployment doesn't bundle binaries (§2). Uses <code>--ca-cert</code> for the fetch when given.</td></tr>
-<tr><td><code>--known-hosts</code></td><td>no</td><td>—</td><td>OpenSSH <code>known_hosts</code> file — installed to <code>/var/lib/amadeus-runner/known_hosts</code> (<code>0640</code>, owner <code>amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_KNOWN_HOSTS</code> (§8).</td></tr>
-<tr><td><code>--key-dir</code></td><td>no</td><td>—</td><td>Directory of private keys — copied into <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code> dir, <code>0600</code> files, owner <code>amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_KEY_DIR</code> (§8). Mutually exclusive with <code>--key-map</code>.</td></tr>
-<tr><td><code>--key-map</code></td><td>no</td><td>—</td><td><code>NAME=path,NAME2=path2</code> — each key is copied to <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> and the rewritten map wired via <code>AMADEUS_RUNNER_KEY_MAP</code> (§8). Mutually exclusive with <code>--key-dir</code>.</td></tr>
+<tr><td><code>--known-hosts</code></td><td>no</td><td>—</td><td>OpenSSH <code>known_hosts</code> file — installed to <code>/var/lib/amadeus-runner/known_hosts</code> (<code>0640</code>, owner <code>amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_KNOWN_HOSTS</code> (§8).</td></tr>
+<tr><td><code>--key-dir</code></td><td>no</td><td>—</td><td>Directory of private keys — copied into <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code> dir, <code>0600</code> files, owner <code>amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_KEY_DIR</code> (§8). Mutually exclusive with <code>--key-map</code>.</td></tr>
+<tr><td><code>--key-map</code></td><td>no</td><td>—</td><td><code>NAME=path,NAME2=path2</code> — each key is copied to <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> and the rewritten map wired via <code>CRONOMICON_RUNNER_KEY_MAP</code> (§8). Mutually exclusive with <code>--key-dir</code>.</td></tr>
 <tr><td><code>--generate-key</code></td><td>no</td><td>—</td><td><code>&lt;NAME&gt;</code> — mint a fresh passphrase-less <code>ed25519</code> key at <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> (owned by <code>amadeus-runner</code>) and print its <strong>public</strong> key to add to each target's <code>authorized_keys</code>. The private key never leaves the host. Refuses to overwrite an existing key. Reference it in Cronomicon host config by <code>&lt;NAME&gt;</code> (the <code>authKeyEnvVar</code>).</td></tr>
-<tr><td><code>--ca-cert</code></td><td>no</td><td>—</td><td>Private CA bundle (PEM) — installed to <code>/etc/amadeus-runner/ca.pem</code> and wired via <code>AMADEUS_RUNNER_CA_CERT</code> (§5).</td></tr>
+<tr><td><code>--ca-cert</code></td><td>no</td><td>—</td><td>Private CA bundle (PEM) — installed to <code>/etc/amadeus-runner/ca.pem</code> and wired via <code>CRONOMICON_RUNNER_CA_CERT</code> (§5).</td></tr>
 <tr><td><code>--inventory</code></td><td>no</td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (§7); <code>local</code> requires <code>--local-inventory</code>.</td></tr>
-<tr><td><code>--local-inventory</code></td><td>no</td><td>—</td><td>Local inventory JSON (with <code>--inventory local</code>) — installed to <code>/etc/amadeus-runner/inventory.json</code> and wired via <code>AMADEUS_RUNNER_LOCAL_INVENTORY</code> (§7).</td></tr>
-<tr><td><code>--allow-checkout</code></td><td>no</td><td>off</td><td>Opt into runner-side pinned playbook checkout — writes <code>AMADEUS_RUNNER_ALLOW_CHECKOUT=true</code> (§12).</td></tr>
-<tr><td><code>--checkout-repos</code></td><td>no</td><td>—</td><td>Comma-separated allowlist of repo clone URLs the runner may check out — writes <code>AMADEUS_RUNNER_CHECKOUT_REPOS</code> (§12).</td></tr>
-<tr><td><code>--checkout-token-file</code></td><td>no</td><td>—</td><td>Path to a read-only deploy-token file — installed to <code>/etc/amadeus-runner/checkout-token</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE</code> (§12).</td></tr>
+<tr><td><code>--local-inventory</code></td><td>no</td><td>—</td><td>Local inventory JSON (with <code>--inventory local</code>) — installed to <code>/etc/amadeus-runner/inventory.json</code> and wired via <code>CRONOMICON_RUNNER_LOCAL_INVENTORY</code> (§7).</td></tr>
+<tr><td><code>--allow-checkout</code></td><td>no</td><td>off</td><td>Opt into runner-side pinned playbook checkout — writes <code>CRONOMICON_RUNNER_ALLOW_CHECKOUT=true</code> (§12).</td></tr>
+<tr><td><code>--checkout-repos</code></td><td>no</td><td>—</td><td>Comma-separated allowlist of repo clone URLs the runner may check out — writes <code>CRONOMICON_RUNNER_CHECKOUT_REPOS</code> (§12).</td></tr>
+<tr><td><code>--checkout-token-file</code></td><td>no</td><td>—</td><td>Path to a read-only deploy-token file — installed to <code>/etc/amadeus-runner/checkout-token</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE</code> (§12).</td></tr>
 <tr><td><code>--checkout-token -</code></td><td>no</td><td>—</td><td>Prompt for the deploy token on stdin (input hidden) and write it to the same path. <strong>Never pass the token as a flag value</strong> — it would leak via <code>ps</code>/shell history; the installer refuses.</td></tr>
-<tr><td><code>--vault-pass-file</code></td><td>no</td><td>—</td><td>Path to an Ansible Vault password file — installed to <code>/etc/amadeus-runner/vault-pass</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>AMADEUS_RUNNER_VAULT_PASSWORD_FILE</code> (§8/§12).</td></tr>
+<tr><td><code>--vault-pass-file</code></td><td>no</td><td>—</td><td>Path to an Ansible Vault password file — installed to <code>/etc/amadeus-runner/vault-pass</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_VAULT_PASSWORD_FILE</code> (§8/§12).</td></tr>
 <tr><td><code>--vault-pass -</code></td><td>no</td><td>—</td><td>Prompt for the vault password on stdin (input hidden) and write it to the same path (same no-secret-as-value rule).</td></tr>
 </tbody>
 </table></div>
@@ -1926,7 +1926,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
 
 <p>What it does: creates the <code>amadeus-runner</code> system user/group, <code>0750</code> <code>/var/lib/amadeus-runner</code> (state) and <code>/etc/amadeus-runner</code> (config), installs the binary to <code>/usr/local/bin/amadeus-runner</code> (with <code>--download</code>, fetching and checksum-verifying it from the server first), installs whatever the optional flags supplied (<code>known_hosts</code>, keys, CA bundle, local inventory — with the ownership/modes in the table above), writes <code>runner.env</code> (mode <code>0640</code>) wiring it all up, writes the hardened <code>amadeus-runner.service</code>, then <code>daemon-reload</code> + <code>enable</code> + <code>restart</code>. It prints the runner name, capabilities, inventory mode, installed paths, and <code>systemctl is-active</code> when done.</p>
 
-<blockquote><p><strong>SSH-capable runner? Pass the custody flags.</strong> With <code>--known-hosts</code> and <code>--key-dir</code>/<code>--key-map</code>/<code>--generate-key</code>, the runner is ready for its first SSH run when the script exits — nothing to hand-edit. The installer <strong>always</strong> creates <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code>) and wires <code>AMADEUS_RUNNER_KEY_DIR</code> to it, so if you omit the key flags you need only <em>drop a key file into that directory</em> (named after its <code>authKeyEnvVar</code>) or re-run with <code>--generate-key NAME</code> — no <code>runner.env</code> edit for the key path. The agent still refuses SSH without <code>known_hosts</code> (§8), so the script prints a loud <em>"before the first SSH run"</em> block when <code>--known-hosts</code> was omitted, and <code>known_hosts</code> can be seeded then via <strong>scan &amp; approve</strong>. See §4 for the full surface and §11 to verify.</p></blockquote>
+<blockquote><p><strong>SSH-capable runner? Pass the custody flags.</strong> With <code>--known-hosts</code> and <code>--key-dir</code>/<code>--key-map</code>/<code>--generate-key</code>, the runner is ready for its first SSH run when the script exits — nothing to hand-edit. The installer <strong>always</strong> creates <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code>) and wires <code>CRONOMICON_RUNNER_KEY_DIR</code> to it, so if you omit the key flags you need only <em>drop a key file into that directory</em> (named after its <code>authKeyEnvVar</code>) or re-run with <code>--generate-key NAME</code> — no <code>runner.env</code> edit for the key path. The agent still refuses SSH without <code>known_hosts</code> (§8), so the script prints a loud <em>"before the first SSH run"</em> block when <code>--known-hosts</code> was omitted, and <code>known_hosts</code> can be seeded then via <strong>scan &amp; approve</strong>. See §4 for the full surface and §11 to verify.</p></blockquote>
 
 <p>If you'd rather wire systemd up by hand (or need a non-default layout), skip the script and follow §9 instead.</p>
 
@@ -1936,29 +1936,29 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
 
 <blockquote><p><strong>Most installs use <code>+ Add Runner</code> (§1); this table is for pre-authoring.</strong> For a fully-specified install — config management, containers, or a locked-down one-liner — the Runners view's <strong>Advanced: pre-authored install</strong> helper (demoted from the headline) authors the artifacts for you: pick a <strong>profile</strong> (<em>SSH task runner</em> surfaces key/known_hosts custody; <em>Ansible control node</em> surfaces the checkout/vault secret-file inputs; <em>Custom</em> shows everything), then copy a complete annotated <code>runner.env</code>, the matching §3 one-liner, or the §10 <code>docker run</code> variant. Max jobs, sandbox caps, and checkout policy are no longer helper inputs — they're tuned on the runner's row after it registers (<code>runner-manage.html</code> §4.5). The table below remains the reference for hand-authoring and for the knobs the helper doesn't surface (poll cadence, tuning, scoped child env).</p></blockquote>
 
-<p>Config is resolved from three layers, <strong>low → high precedence</strong>: an optional JSON config file &lt; <code>AMADEUS_RUNNER_*</code> env vars &lt; command-line flags. Pick whichever fits your deployment (env file for systemd/containers; flags for ad-hoc).</p>
+<p>Config is resolved from three layers, <strong>low → high precedence</strong>: an optional JSON config file &lt; <code>CRONOMICON_RUNNER_*</code> env vars &lt; command-line flags. Pick whichever fits your deployment (env file for systemd/containers; flags for ad-hoc).</p>
 
 <div class="tbl"><table>
 <thead><tr><th>Flag</th><th>Env</th><th>Config-file key</th><th>Default</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>-server</code></td><td><code>AMADEUS_RUNNER_SERVER</code></td><td><code>serverUrl</code></td><td>— (required)</td><td>Cronomicon server base URL.</td></tr>
-<tr><td><code>-ca-cert</code></td><td><code>AMADEUS_RUNNER_CA_CERT</code></td><td><code>caCertPath</code></td><td>system store</td><td>PEM CA bundle to trust for TLS.</td></tr>
-<tr><td><code>-registration-token</code></td><td><code>AMADEUS_RUNNER_REGISTRATION_TOKEN</code></td><td><code>registrationToken</code></td><td>—</td><td>Shared <code>amt_reg_*</code> token (first run only).</td></tr>
-<tr><td><code>-name</code></td><td><code>AMADEUS_RUNNER_NAME</code></td><td><code>name</code></td><td>— (required)</td><td>Display name; <strong>stable across restarts</strong>.</td></tr>
-<tr><td><code>-os</code></td><td><code>AMADEUS_RUNNER_OS</code></td><td><code>os</code></td><td><code>Linux</code></td><td><code>Linux</code> or <code>Windows</code>.</td></tr>
-<tr><td><code>-capabilities</code></td><td><code>AMADEUS_RUNNER_CAPABILITIES</code></td><td><code>capabilities</code></td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Unset ⇒ probed from the host's toolchains at startup; set to narrow.</td></tr>
-<tr><td><code>-max-concurrent</code></td><td><code>AMADEUS_RUNNER_MAX_CONCURRENT</code></td><td><code>maxConcurrent</code></td><td><code>5</code></td><td>Max simultaneous runs.</td></tr>
-<tr><td><code>-inventory</code></td><td><code>AMADEUS_RUNNER_INVENTORY</code></td><td><code>inventory</code></td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (D8 — see §7).</td></tr>
-<tr><td><code>-identity-file</code></td><td><code>AMADEUS_RUNNER_IDENTITY_FILE</code></td><td><code>identityFile</code></td><td><code>amadeus-runner-identity.json</code></td><td>Where <code>{id, apiKey}</code> persists (§6).</td></tr>
-<tr><td><code>-poll-interval</code></td><td><code>AMADEUS_RUNNER_POLL_INTERVAL</code></td><td><code>pollInterval</code></td><td><code>60s</code></td><td>Heartbeat/poll cadence (D7).</td></tr>
-<tr><td><code>-key-dir</code></td><td><code>AMADEUS_RUNNER_KEY_DIR</code></td><td><code>keyDir</code></td><td>—</td><td>Dir searched for keys by name (§8).</td></tr>
-<tr><td><code>-key-map</code></td><td><code>AMADEUS_RUNNER_KEY_MAP</code></td><td><code>keyMap</code></td><td>—</td><td><code>NAME=path,NAME2=path2</code> key map (§8).</td></tr>
-<tr><td><code>-known-hosts</code></td><td><code>AMADEUS_RUNNER_KNOWN_HOSTS</code></td><td><code>knownHostsFile</code></td><td>—</td><td>OpenSSH known_hosts for target host-key verification (§8).</td></tr>
-<tr><td><code>-local-inventory</code></td><td><code>AMADEUS_RUNNER_LOCAL_INVENTORY</code></td><td><code>localInventoryFile</code></td><td>—</td><td>Local inventory file for <code>local</code> mode (§7).</td></tr>
-<tr><td><code>-state-dir</code></td><td><code>AMADEUS_RUNNER_STATE_DIR</code></td><td><code>stateDir</code></td><td>OS temp dir</td><td>Writable dir for transient run artifacts (falls back to systemd's <code>STATE_DIRECTORY</code>, then the OS temp dir).</td></tr>
-<tr><td><code>-log-retry-budget</code></td><td><code>AMADEUS_RUNNER_LOG_RETRY_BUDGET</code></td><td><code>logRetryBudget</code></td><td><code>5</code></td><td>Log-resume attempts before <code>log_stream_lost</code>.</td></tr>
-<tr><td><code>-fan-out</code></td><td><code>AMADEUS_RUNNER_FAN_OUT</code></td><td><code>fanOut</code></td><td><code>4</code></td><td>Max parallel SSH targets per run.</td></tr>
-<tr><td><code>-config</code></td><td><code>AMADEUS_RUNNER_CONFIG</code></td><td>—</td><td>—</td><td>Path to a JSON config file (the lowest layer).</td></tr>
+<tr><td><code>-server</code></td><td><code>CRONOMICON_RUNNER_SERVER</code></td><td><code>serverUrl</code></td><td>— (required)</td><td>Cronomicon server base URL.</td></tr>
+<tr><td><code>-ca-cert</code></td><td><code>CRONOMICON_RUNNER_CA_CERT</code></td><td><code>caCertPath</code></td><td>system store</td><td>PEM CA bundle to trust for TLS.</td></tr>
+<tr><td><code>-registration-token</code></td><td><code>CRONOMICON_RUNNER_REGISTRATION_TOKEN</code></td><td><code>registrationToken</code></td><td>—</td><td>Shared <code>amt_reg_*</code> token (first run only).</td></tr>
+<tr><td><code>-name</code></td><td><code>CRONOMICON_RUNNER_NAME</code></td><td><code>name</code></td><td>— (required)</td><td>Display name; <strong>stable across restarts</strong>.</td></tr>
+<tr><td><code>-os</code></td><td><code>CRONOMICON_RUNNER_OS</code></td><td><code>os</code></td><td><code>Linux</code></td><td><code>Linux</code> or <code>Windows</code>.</td></tr>
+<tr><td><code>-capabilities</code></td><td><code>CRONOMICON_RUNNER_CAPABILITIES</code></td><td><code>capabilities</code></td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Unset ⇒ probed from the host's toolchains at startup; set to narrow.</td></tr>
+<tr><td><code>-max-concurrent</code></td><td><code>CRONOMICON_RUNNER_MAX_CONCURRENT</code></td><td><code>maxConcurrent</code></td><td><code>5</code></td><td>Max simultaneous runs.</td></tr>
+<tr><td><code>-inventory</code></td><td><code>CRONOMICON_RUNNER_INVENTORY</code></td><td><code>inventory</code></td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (D8 — see §7).</td></tr>
+<tr><td><code>-identity-file</code></td><td><code>CRONOMICON_RUNNER_IDENTITY_FILE</code></td><td><code>identityFile</code></td><td><code>amadeus-runner-identity.json</code></td><td>Where <code>{id, apiKey}</code> persists (§6).</td></tr>
+<tr><td><code>-poll-interval</code></td><td><code>CRONOMICON_RUNNER_POLL_INTERVAL</code></td><td><code>pollInterval</code></td><td><code>60s</code></td><td>Heartbeat/poll cadence (D7).</td></tr>
+<tr><td><code>-key-dir</code></td><td><code>CRONOMICON_RUNNER_KEY_DIR</code></td><td><code>keyDir</code></td><td>—</td><td>Dir searched for keys by name (§8).</td></tr>
+<tr><td><code>-key-map</code></td><td><code>CRONOMICON_RUNNER_KEY_MAP</code></td><td><code>keyMap</code></td><td>—</td><td><code>NAME=path,NAME2=path2</code> key map (§8).</td></tr>
+<tr><td><code>-known-hosts</code></td><td><code>CRONOMICON_RUNNER_KNOWN_HOSTS</code></td><td><code>knownHostsFile</code></td><td>—</td><td>OpenSSH known_hosts for target host-key verification (§8).</td></tr>
+<tr><td><code>-local-inventory</code></td><td><code>CRONOMICON_RUNNER_LOCAL_INVENTORY</code></td><td><code>localInventoryFile</code></td><td>—</td><td>Local inventory file for <code>local</code> mode (§7).</td></tr>
+<tr><td><code>-state-dir</code></td><td><code>CRONOMICON_RUNNER_STATE_DIR</code></td><td><code>stateDir</code></td><td>OS temp dir</td><td>Writable dir for transient run artifacts (falls back to systemd's <code>STATE_DIRECTORY</code>, then the OS temp dir).</td></tr>
+<tr><td><code>-log-retry-budget</code></td><td><code>CRONOMICON_RUNNER_LOG_RETRY_BUDGET</code></td><td><code>logRetryBudget</code></td><td><code>5</code></td><td>Log-resume attempts before <code>log_stream_lost</code>.</td></tr>
+<tr><td><code>-fan-out</code></td><td><code>CRONOMICON_RUNNER_FAN_OUT</code></td><td><code>fanOut</code></td><td><code>4</code></td><td>Max parallel SSH targets per run.</td></tr>
+<tr><td><code>-config</code></td><td><code>CRONOMICON_RUNNER_CONFIG</code></td><td>—</td><td>—</td><td>Path to a JSON config file (the lowest layer).</td></tr>
 </tbody>
 </table></div>
 
@@ -2029,7 +2029,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
 
 <h2 id="5-tls-ca-trust">5 · TLS / CA trust</h2>
 
-<p>The agent connects to the server over HTTPS. If the server presents a certificate signed by a private/internal CA, point the agent at the CA bundle with <code>-ca-cert</code> / <code>AMADEUS_RUNNER_CA_CERT</code> (a PEM file). With a publicly-trusted cert, leave it unset to use the system trust store. (In containers, the slim/fat images ship <code>ca-certificates</code> for the public case.)</p>
+<p>The agent connects to the server over HTTPS. If the server presents a certificate signed by a private/internal CA, point the agent at the CA bundle with <code>-ca-cert</code> / <code>CRONOMICON_RUNNER_CA_CERT</code> (a PEM file). With a publicly-trusted cert, leave it unset to use the system trust store. (In containers, the slim/fat images ship <code>ca-certificates</code> for the public case.)</p>
 
 <hr />
 
@@ -2096,17 +2096,17 @@ journalctl -u amadeus-runner -f</code></pre></div>
 docker volume create amadeus-runner-data
 
 docker run -d --name amadeus-runner-01 --restart unless-stopped \
-  -e AMADEUS_RUNNER_SERVER=https://amadeus.example.com \
-  -e AMADEUS_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxxxxxxxxxx \
-  -e AMADEUS_RUNNER_NAME=runner-dc1-01 \
-  -e AMADEUS_RUNNER_CAPABILITIES=bash,perl,powershell,python \
-  -e AMADEUS_RUNNER_INVENTORY=amadeus \
-  -e AMADEUS_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
-  -e AMADEUS_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
+  -e CRONOMICON_RUNNER_SERVER=https://amadeus.example.com \
+  -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxxxxxxxxxx \
+  -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
+  -e CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python \
+  -e CRONOMICON_RUNNER_INVENTORY=amadeus \
+  -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
+  -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
   -v amadeus-runner-data:/var/lib/amadeus-runner \
   amadeus-runner:slim</code></pre></div>
 
-<p>The explicit <code>AMADEUS_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). For an ansible/terraform runner, swap <code>amadeus-runner:fat</code> and either omit the var (detect) or set <code>AMADEUS_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
+<p>The explicit <code>CRONOMICON_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). For an ansible/terraform runner, swap <code>amadeus-runner:fat</code> and either omit the var (detect) or set <code>CRONOMICON_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
 
 <hr />
 
@@ -2170,19 +2170,19 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 <div class="tbl"><table>
 <thead><tr><th>Flag</th><th>Env</th><th>Config-file key</th><th>Default</th><th>Meaning</th></tr></thead>
 <tbody>
-<tr><td><code>-allow-checkout</code></td><td><code>AMADEUS_RUNNER_ALLOW_CHECKOUT</code></td><td><code>allowCheckout</code></td><td><code>false</code></td><td>Opt into runner-side project checkout.</td></tr>
-<tr><td><code>-checkout-repos</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_REPOS</code></td><td><code>checkoutRepos</code></td><td>—</td><td>Comma-separated allowlist of repo clone URLs.</td></tr>
-<tr><td><code>-checkout-token-file</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE</code></td><td><code>checkoutTokenFile</code></td><td>—</td><td>File holding the read-only deploy token (preferred).</td></tr>
-<tr><td><code>-checkout-token</code></td><td><code>AMADEUS_RUNNER_CHECKOUT_TOKEN</code></td><td><code>checkoutToken</code></td><td>—</td><td>Deploy token literal (prefer the file form).</td></tr>
-<tr><td><code>-mirror-dir</code></td><td><code>AMADEUS_RUNNER_MIRROR_DIR</code></td><td><code>mirrorDir</code></td><td><code>&lt;state-dir&gt;/mirrors</code></td><td>Persistent bare-mirror directory.</td></tr>
-<tr><td><code>-galaxy-server</code></td><td><code>AMADEUS_RUNNER_GALAXY_SERVER</code></td><td><code>galaxyServer</code></td><td>public galaxy</td><td>ansible-galaxy source URL for per-run installs.</td></tr>
-<tr><td><code>-vault-password-file</code></td><td><code>AMADEUS_RUNNER_VAULT_PASSWORD_FILE</code></td><td><code>vaultPasswordFile</code></td><td>—</td><td>Ansible Vault password file (advertises <code>vault</code>).</td></tr>
-<tr><td><code>-env-base-extra</code></td><td><code>AMADEUS_RUNNER_ENV_BASE_EXTRA</code></td><td><code>envBaseExtra</code></td><td>—</td><td>Extra env-var NAMES forwarded to the scoped child env.</td></tr>
-<tr><td><code>-exclude-ssh-auth-sock</code></td><td><code>AMADEUS_RUNNER_EXCLUDE_SSH_AUTH_SOCK</code></td><td><code>excludeSshAuthSock</code></td><td><code>false</code></td><td>Drop <code>SSH_AUTH_SOCK</code> from the base safe-list.</td></tr>
-<tr><td><code>-no-sandbox</code></td><td><code>AMADEUS_RUNNER_NO_SANDBOX</code></td><td><code>noSandbox</code></td><td><code>false</code></td><td>Disable the per-run systemd-run scope wrapper.</td></tr>
-<tr><td><code>-sandbox-memory-max</code></td><td><code>AMADEUS_RUNNER_SANDBOX_MEMORY_MAX</code></td><td><code>sandboxMemoryMax</code></td><td>—</td><td>Per-run cgroup MemoryMax (e.g. <code>2G</code>).</td></tr>
-<tr><td><code>-sandbox-cpu-quota</code></td><td><code>AMADEUS_RUNNER_SANDBOX_CPU_QUOTA</code></td><td><code>sandboxCpuQuota</code></td><td>—</td><td>Per-run cgroup CPUQuota (e.g. <code>150%</code>).</td></tr>
-<tr><td><code>-sandbox-tasks-max</code></td><td><code>AMADEUS_RUNNER_SANDBOX_TASKS_MAX</code></td><td><code>sandboxTasksMax</code></td><td>—</td><td>Per-run cgroup TasksMax (e.g. <code>512</code>).</td></tr>
+<tr><td><code>-allow-checkout</code></td><td><code>CRONOMICON_RUNNER_ALLOW_CHECKOUT</code></td><td><code>allowCheckout</code></td><td><code>false</code></td><td>Opt into runner-side project checkout.</td></tr>
+<tr><td><code>-checkout-repos</code></td><td><code>CRONOMICON_RUNNER_CHECKOUT_REPOS</code></td><td><code>checkoutRepos</code></td><td>—</td><td>Comma-separated allowlist of repo clone URLs.</td></tr>
+<tr><td><code>-checkout-token-file</code></td><td><code>CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE</code></td><td><code>checkoutTokenFile</code></td><td>—</td><td>File holding the read-only deploy token (preferred).</td></tr>
+<tr><td><code>-checkout-token</code></td><td><code>CRONOMICON_RUNNER_CHECKOUT_TOKEN</code></td><td><code>checkoutToken</code></td><td>—</td><td>Deploy token literal (prefer the file form).</td></tr>
+<tr><td><code>-mirror-dir</code></td><td><code>CRONOMICON_RUNNER_MIRROR_DIR</code></td><td><code>mirrorDir</code></td><td><code>&lt;state-dir&gt;/mirrors</code></td><td>Persistent bare-mirror directory.</td></tr>
+<tr><td><code>-galaxy-server</code></td><td><code>CRONOMICON_RUNNER_GALAXY_SERVER</code></td><td><code>galaxyServer</code></td><td>public galaxy</td><td>ansible-galaxy source URL for per-run installs.</td></tr>
+<tr><td><code>-vault-password-file</code></td><td><code>CRONOMICON_RUNNER_VAULT_PASSWORD_FILE</code></td><td><code>vaultPasswordFile</code></td><td>—</td><td>Ansible Vault password file (advertises <code>vault</code>).</td></tr>
+<tr><td><code>-env-base-extra</code></td><td><code>CRONOMICON_RUNNER_ENV_BASE_EXTRA</code></td><td><code>envBaseExtra</code></td><td>—</td><td>Extra env-var NAMES forwarded to the scoped child env.</td></tr>
+<tr><td><code>-exclude-ssh-auth-sock</code></td><td><code>CRONOMICON_RUNNER_EXCLUDE_SSH_AUTH_SOCK</code></td><td><code>excludeSshAuthSock</code></td><td><code>false</code></td><td>Drop <code>SSH_AUTH_SOCK</code> from the base safe-list.</td></tr>
+<tr><td><code>-no-sandbox</code></td><td><code>CRONOMICON_RUNNER_NO_SANDBOX</code></td><td><code>noSandbox</code></td><td><code>false</code></td><td>Disable the per-run systemd-run scope wrapper.</td></tr>
+<tr><td><code>-sandbox-memory-max</code></td><td><code>CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX</code></td><td><code>sandboxMemoryMax</code></td><td>—</td><td>Per-run cgroup MemoryMax (e.g. <code>2G</code>).</td></tr>
+<tr><td><code>-sandbox-cpu-quota</code></td><td><code>CRONOMICON_RUNNER_SANDBOX_CPU_QUOTA</code></td><td><code>sandboxCpuQuota</code></td><td>—</td><td>Per-run cgroup CPUQuota (e.g. <code>150%</code>).</td></tr>
+<tr><td><code>-sandbox-tasks-max</code></td><td><code>CRONOMICON_RUNNER_SANDBOX_TASKS_MAX</code></td><td><code>sandboxTasksMax</code></td><td>—</td><td>Per-run cgroup TasksMax (e.g. <code>512</code>).</td></tr>
 </tbody>
 </table></div>
 

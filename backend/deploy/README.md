@@ -35,7 +35,7 @@ and topology.
 | `Dockerfile.runner` | Slim runner-agent image (SSH-onward; static/distroless). |
 | `Dockerfile.runner.fat` | Fat runner-agent image (+ ansible/terraform toolchains). |
 | `amadeus-runner.service` | systemd unit for the runner agent (non-root, hardened). |
-| `amadeus-runner.env.example` | Annotated `AMADEUS_RUNNER_*` env template. |
+| `amadeus-runner.env.example` | Annotated `CRONOMICON_RUNNER_*` env template. |
 
 The runner **Install / Config / Security guides** now live in `documentation/`
 (`runner-install.html`, `runner-manage.html`, `runner-security.html`). They are the
@@ -47,7 +47,7 @@ the frontend build publishes it into the app at `/runner-install.sh`.)
 The server image also **bundles the runner-agent binaries**: a Dockerfile stage
 cross-compiles `amadeus-runner` for linux amd64/arm64 (+ `SHA256SUMS`) into
 `/usr/share/amadeus/agents/`, served unauthenticated at `GET /agents/{filename}`
-(override the directory with `AMADEUS_AGENT_DIR`; see `env-matrix.md` and the
+(override the directory with `CRONOMICON_AGENT_DIR`; see `env-matrix.md` and the
 rationale in `security-review.md`). `runner-install.sh --download` consumes this —
 a runner host needs nothing but curl + reachability to the Cronomicon server.
 
@@ -67,19 +67,19 @@ checkout embeds a UI matching source HEAD — B.1). Compose sets `context: ../..
    `authelia/secrets/{jwt_secret,session_secret,storage_encryption_key}`.
    Ensure AD group membership surfaces in `Remote-Groups`.
 4. **App env** → `cp amadeus.env.example amadeus.env` and fill it in. Keep
-   `AMADEUS_TRUSTED_PROXIES` = Traefik's static internal IP (`172.28.0.2/32` in
+   `CRONOMICON_TRUSTED_PROXIES` = Traefik's static internal IP (`172.28.0.2/32` in
    this stack — the load-bearing half of the Phase A trusted-proxy control).
 5. **Secret KEK** → write the base64 KEK to `secrets/amadeus_kek` (mounted at
    `/run/secrets/amadeus_kek`). **Back this up separately from the S3 DB backup**
    (S14) — losing it makes stored secrets unrecoverable.
-6. **Bootstrap admin** → leave `AMADEUS_BOOTSTRAP_ADMIN_GROUP=amadeus-admins` set
+6. **Bootstrap admin** → leave `CRONOMICON_BOOTSTRAP_ADMIN_GROUP=amadeus-admins` set
    for the first deploy. Bring the stack up:
    ```
    docker compose up -d --build
    ```
 7. **Seed real mappings** → log in (via Authelia) as a member of that group; you
    land as admin. In Settings, create the real group→role `ad_group_mappings`.
-8. **Lock down** → remove `AMADEUS_BOOTSTRAP_ADMIN_GROUP` from `amadeus.env` and
+8. **Lock down** → remove `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` from `amadeus.env` and
    `docker compose up -d` again. Admin now comes only from DB mappings.
 
 ## Build provenance
@@ -100,8 +100,8 @@ All durable state lives on the `amadeus-data` volume at `/var/lib/amadeus`:
 
 | Path | Contents |
 |---|---|
-| `amadeus.db` (+ `-wal`, `-shm`) | SQLite database (`AMADEUS_DB_PATH`). |
-| `git-cache/` | GitLab clone cache (`AMADEUS_GIT_CACHE_DIR`). |
+| `amadeus.db` (+ `-wal`, `-shm`) | SQLite database (`CRONOMICON_DB_PATH`). |
+| `git-cache/` | GitLab clone cache (`CRONOMICON_GIT_CACHE_DIR`). |
 | `backups/` | Nightly local `VACUUM INTO` snapshots. |
 | run logs | Per-run execution logs. |
 
@@ -134,7 +134,7 @@ caught on the merge request instead of at the next sync.
 1. **Copy the template.** `ci-validate-template.yml` (next to this README) is a
    drop-in `.gitlab-ci.yml` for the job-definitions repo. Copy its contents into
    that repo's `.gitlab-ci.yml` (or `include:` it).
-2. **Pin the image.** Set `AMADEUS_IMAGE` to the same Cronomicon image tag your
+2. **Pin the image.** Set `CRONOMICON_IMAGE` to the same Cronomicon image tag your
    deployment runs (e.g. `registry.example.com/amadeus:v0.19.0`) — pinning keeps
    the validator and the runtime parser in lock-step. Verify the tag at
    `GET /version`.

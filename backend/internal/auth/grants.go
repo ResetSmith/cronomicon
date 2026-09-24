@@ -169,7 +169,7 @@ func ResolveGrants(ctx context.Context, db *sql.DB, groups []string) ([]RoleGran
 // WithBootstrapGrant adds the break-glass grant when the bootstrap admin floor
 // has fired, and is the grant-side counterpart of applyBootstrapAdmin.
 //
-// 🔴 THIS IS THE BREAK-GLASS PATH. AMADEUS_BOOTSTRAP_ADMIN_GROUP grants admin
+// 🔴 THIS IS THE BREAK-GLASS PATH. CRONOMICON_BOOTSTRAP_ADMIN_GROUP grants admin
 // OUTSIDE ad_group_mappings (decision #6 / A.6) precisely so an instance with no
 // working role mapping can still be repaired. Grants are resolved from
 // access_grants BY AD GROUP, and the bootstrap group has no grant row by

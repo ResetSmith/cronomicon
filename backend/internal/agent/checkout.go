@@ -183,7 +183,7 @@ func repoURLWithUser(repo, user string) string {
 }
 
 // writeAskpassHelper writes a tiny GIT_ASKPASS helper to a private temp file. The
-// helper prints the password from its own environment (AMADEUS_GIT_ASKPASS_PASS,
+// helper prints the password from its own environment (CRONOMICON_GIT_ASKPASS_PASS,
 // set on the git child and inherited here), so the secret is delivered via the
 // environment — /proc/<pid>/environ is mode 0400 and execve does not log environ,
 // unlike argv. The returned cleanup removes the file.
@@ -193,7 +193,7 @@ func writeAskpassHelper() (path string, cleanup func(), err error) {
 		return "", func() {}, err
 	}
 	name := f.Name()
-	const script = "#!/bin/sh\nprintf '%s' \"$AMADEUS_GIT_ASKPASS_PASS\"\n"
+	const script = "#!/bin/sh\nprintf '%s' \"$CRONOMICON_GIT_ASKPASS_PASS\"\n"
 	if _, werr := f.WriteString(script); werr != nil {
 		_ = f.Close()
 		_ = os.Remove(name)
@@ -343,10 +343,10 @@ func gitEnvAskpass(askpass string, extra ...string) []string {
 }
 
 // gitAuthEnv is the git env for a credential-bearing call: GIT_ASKPASS points at
-// the helper, and the password is delivered via AMADEUS_GIT_ASKPASS_PASS (env,
+// the helper, and the password is delivered via CRONOMICON_GIT_ASKPASS_PASS (env,
 // never argv).
 func gitAuthEnv(askpass, password string) []string {
-	return gitEnvAskpass(askpass, "AMADEUS_GIT_ASKPASS_PASS="+password)
+	return gitEnvAskpass(askpass, "CRONOMICON_GIT_ASKPASS_PASS="+password)
 }
 
 // urlCredRe matches a `scheme://userinfo@` prefix so credential-bearing URLs in

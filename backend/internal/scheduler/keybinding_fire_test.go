@@ -112,7 +112,7 @@ func TestReactionToKeyBoundJobOnSSHRecordsADeliveryErrorNotARun(t *testing.T) {
 	if len(d) != 1 || d[0].Result != "error" {
 		t.Fatalf("deliveries = %+v, want one 'error'", d)
 	}
-	if !strings.Contains(d[0].Detail, "AMADEUS_KEY_deploy_key") || !strings.Contains(d[0].Detail, "runner") {
+	if !strings.Contains(d[0].Detail, "CRONOMICON_KEY_deploy_key") || !strings.Contains(d[0].Detail, "runner") {
 		t.Errorf("delivery detail %q should name the key and the way out", d[0].Detail)
 	}
 }

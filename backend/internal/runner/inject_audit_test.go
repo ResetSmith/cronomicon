@@ -20,8 +20,8 @@ func TestManifestAuditsInjection(t *testing.T) {
 
 	// First fetch resolves + audits.
 	m := getManifest(t, svc, as, traceID, tok)
-	if m.Secrets["AMADEUS_SECRET_DB_PASS"] != secretVal {
-		t.Fatalf("precondition: secret not injected: %q", m.Secrets["AMADEUS_SECRET_DB_PASS"])
+	if m.Secrets["CRONOMICON_SECRET_DB_PASS"] != secretVal {
+		t.Fatalf("precondition: secret not injected: %q", m.Secrets["CRONOMICON_SECRET_DB_PASS"])
 	}
 
 	var count int
