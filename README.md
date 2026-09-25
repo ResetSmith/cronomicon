@@ -56,8 +56,8 @@ Cronomicon is deployed as **a single static Go binary** (`T1/T3`) — one contai
 
 | Path | Component | Status |
 |------|-----------|--------|
-| [`backend/`](backend/) | Go API server + embedded frontend | v1.5.45 — Stable (schema v1150, runner protocol v12) |
-| [`frontend/`](frontend/) | React + TypeScript + Vite | v1.5.45 — 15 routed views |
+| [`backend/`](backend/) | Go API server + embedded frontend | v2.0.0 — Stable (schema v1150, runner protocol v13) |
+| [`frontend/`](frontend/) | React + TypeScript + Vite | v2.0.0 — 15 routed views |
 
 ### Key Features
 
@@ -906,7 +906,7 @@ docker run -d \
   -e CRONOMICON_OIDC_REDIRECT_URL=https://cronomicon.example.com/api/v1/auth/callback \
   -e CRONOMICON_KEK_FILE=/run/secrets/cronomicon-kek \
   -e CRONOMICON_BACKUP_S3_BUCKET=cronomicon-backups \
-  cronomicon:1.5.45
+  cronomicon:2.0.0
 ```
 
 The full variable matrix is in [`backend/deploy/env-matrix.md`](backend/deploy/env-matrix.md) and the

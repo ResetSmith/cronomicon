@@ -6,6 +6,108 @@ From 1.0.0 on, this project adheres to [Semantic Versioning](https://semver.org/
 and this file follows [Keep a Changelog](https://keepachangelog.com/). Entries
 before 1.0.0 are kept in their original prose form.
 
+> **Name change.** The product was renamed from Amadeus to Cronomicon in
+> [2.0.0]. Entries before 2.0.0 keep their original text and name the product,
+> its binaries, environment variables and other identifiers by their former
+> name.
+
+---
+
+## [2.0.0] - 2026-09-25
+
+**BREAKING — the Cronomicon edition.** Every identifier a process reads, an
+operator types or a user writes into a repository changes name in this release,
+with **no compatibility readers**: this is the first release under the new name
+and nothing was deployed under the old one. The changelog entries below 2.0.0
+keep their original text and refer to the product and its identifiers by their
+former name, Amadeus.
+
+### Changed
+
+- **Environment prefix `AMADEUS_` → `CRONOMICON_`**, for every server knob
+  (`CRONOMICON_DB_PATH`, `CRONOMICON_KEK*`, `CRONOMICON_OIDC_*`, …) and every
+  runner-agent knob (`CRONOMICON_RUNNER_*`, including `CRONOMICON_RUNNER_CONFIG`).
+  The full list is `backend/deploy/env-matrix.md`; an old-prefixed variable is
+  simply not read.
+- **Injected run environment `AMADEUS_*` → `CRONOMICON_*`**: `CRONOMICON_RUN_*`,
+  `CRONOMICON_VAR_<key>`, `CRONOMICON_SECRET_<key>`, `CRONOMICON_KEY_<label>`,
+  `CRONOMICON_WATCH_{PATH,FILE,SIZE}`, `CRONOMICON_REACTED_TO_*`. The
+  reserved-name refusal now covers `CRONOMICON_*` only. Scripts, inventories and
+  `authKeyEnvVar` fields must use the new spelling.
+- **YAML `apiVersion: amadeus.io/v1` → `cronomicon.io/v1`**; the inventory
+  pragma `# amadeus:v1` → `# cronomicon:v1`; the inventory sidecar
+  `inventory/<name>.amadeus.yaml` → `<name>.cronomicon.yaml`; the per-host
+  inventory variable `amadeus_auth_key_env_var` → `cronomicon_auth_key_env_var`.
+  `cronomicon validate` rejects the old apiVersion like any unsupported one.
+- **Output marker `::amadeus-output name=KEY::VALUE` →
+  `::cronomicon-output name=KEY::VALUE`.** The old form is an ordinary log line.
+- **Token prefixes** `amt_reg_` → `crn_reg_` (registration), `amt_run_` →
+  `crn_run_` (runner API key), `amasvc_` → `crnsvc_` (service account). Update
+  secret-scanner patterns (`backend/deploy/security-review.md`).
+- **The `source` value `amadeus` → `cronomicon`** (API enums and defaults, YAML
+  `source:`, the `?source=` filters, the badge). Migrations are rewritten in
+  place — every CHECK constraint, default and comment — rather than layered,
+  since no database ever ran them under the old text. **Schema version is
+  unchanged (v1150). Delete any development database and let the server create
+  a fresh one.** Migration `410` is renamed `410_ssh_hosts_cronomicon_inv`.
+- **Runner inventory mode value** `CRONOMICON_RUNNER_INVENTORY=amadeus` →
+  `=cronomicon` (`local` is unchanged).
+- **Binaries and directories** `amadeus` → `cronomicon`, `amadeus-runner` →
+  `cronomicon-runner`; `cmd/cronomicon`, `cmd/cronomicon-runner`; the agent
+  artifacts `cronomicon-runner-linux-{amd64,arm64}` under `/agents/`.
+- **Paths and files**: `/var/lib/cronomicon/cronomicon.db` (default DB),
+  `cronomicon.log`, `cronomicon-<date>.db` snapshots, `cronomicon.env`,
+  `cronomicon-runner.env`, `/etc/cronomicon-runner/`, `/var/lib/cronomicon-runner/`,
+  `/usr/local/bin/cronomicon-runner`, the `cronomicon-runner` system user,
+  `cronomicon-runner.service`, `cronomicon-vault-agent.service`,
+  `/usr/share/cronomicon/agents`, `/app/cronomicon`, `~/.local/share/cronomicon/`.
+- **Container and compose**: image `registry.example.com/cronomicon`, override
+  `CRONOMICON_IMAGE`, compose project/service `cronomicon`, volume
+  `cronomicon-data`, secret mount `/run/secrets/cronomicon_kek`.
+- **S3 key prefix** for database backups `amadeus-backups/` → `cronomicon-backups/`.
+- **Cookies** `amadeus_session_v3` → `cronomicon_session_v3`, `amadeus_csrf` →
+  `cronomicon_csrf`. Every browser session is signed out once.
+- **Prometheus metrics**, all eighteen:
+
+  | Before | After |
+  |---|---|
+  | `amadeus_active_runners` | `cronomicon_active_runners` |
+  | `amadeus_backup_failures_total` | `cronomicon_backup_failures_total` |
+  | `amadeus_backup_last_success_timestamp_seconds` | `cronomicon_backup_last_success_timestamp_seconds` |
+  | `amadeus_http_request_duration_seconds` | `cronomicon_http_request_duration_seconds` |
+  | `amadeus_http_requests_total` | `cronomicon_http_requests_total` |
+  | `amadeus_log_archive_failures_total` | `cronomicon_log_archive_failures_total` |
+  | `amadeus_log_archive_last_success_timestamp_seconds` | `cronomicon_log_archive_last_success_timestamp_seconds` |
+  | `amadeus_log_archive_pending` | `cronomicon_log_archive_pending` |
+  | `amadeus_log_ingest_bytes_total` | `cronomicon_log_ingest_bytes_total` |
+  | `amadeus_log_ingest_chunks_total` | `cronomicon_log_ingest_chunks_total` |
+  | `amadeus_redaction_dictionary_rebuilds_total` | `cronomicon_redaction_dictionary_rebuilds_total` |
+  | `amadeus_redaction_dictionary_size` | `cronomicon_redaction_dictionary_size` |
+  | `amadeus_runs_finished_total` | `cronomicon_runs_finished_total` |
+  | `amadeus_runs_started_total` | `cronomicon_runs_started_total` |
+  | `amadeus_schedule_publishes_total` | `cronomicon_schedule_publishes_total` |
+  | `amadeus_sla_breaches_total` | `cronomicon_sla_breaches_total` |
+  | `amadeus_ssh_orphans_reconciled_total` | `cronomicon_ssh_orphans_reconciled_total` |
+  | `amadeus_webhook_syncs_total` | `cronomicon_webhook_syncs_total` |
+
+- **Identities**: GitLab bot `cronomicon-bot` / `cronomicon-bot@cronomicon.io`,
+  the SSH probe user `cronomicon-keyscan`, the seeded demo groups
+  `cronomicon-{admins,operators,viewers}`, the notification sender default
+  `cronomicon@example.com`, the process-log prefix `cronomicon:`.
+- **Wire protocol 13.** No message shape changed; the bump exists so an agent
+  built before the rename is refused at registration (`426 protocol_too_old`)
+  instead of assembling a run environment under the old prefix and scanning
+  for a marker no script emits any more. `MinProtocolVersion` tracks it.
+- **Documentation** — both manuals, the runner guides, the language guides, the
+  training courses, the README, the deploy tree and both OpenAPI copies use only
+  the new spellings. The historical prose about the pre-1.5.41 `_SECRET_KEK*`
+  alias is removed from the env matrix and the KEK config comment.
+
+### Removed
+
+- The `amadeus`-named binaries, units, example files and the published
+  `amadeus-runner.env.example`; nothing replaces them under the old name.
+
 ---
 
 ## [1.5.45] - 2026-09-18
