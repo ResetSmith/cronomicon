@@ -16,7 +16,7 @@
  Why self-hosted: these documents are served by the Cronomicon binary to operators
  on networks that may have no egress to fonts.googleapis.com, and a blocked
  stylesheet silently drops the whole manual to system-ui with no error — the
- same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ same defect frontend/index.html guards against. Faces copied from
  index.html unchanged (Google's own latin / latin-ext subsets); only the origin
  differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
  a wrapped guide at /runner-install.html alike: Vite copies public/ into
@@ -24,7 +24,7 @@
 
  Families track theme.ts so the manuals and the product read as one thing: IBM
  Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
- Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ Mono for code. No other families are loaded. Fraunces stays on the
  hero and headings only — the manuals are a brand surface; do not spread it.
 
  Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
@@ -143,17 +143,17 @@
 
  VU-18: these are hand-copied hex literals, so they silently rot
  the next time theme.ts moves. frontend/src/documentation-palette.test.ts
- now fails if any hex in this file (or the wrapped runner-guide
+ fails if any hex in this file (or the wrapped runner-guide
  fragments, which reuse this <style> verbatim) is absent from
  theme.ts. When the product palette changes, re-map by ROLE — a
  doc's page background takes the new `bg`, its cards `panel`, its
  links `primary`, its warning callouts `warning` — never by
  eyeballing which new hex looks closest to the old one.
 
- Two role moves landed in Phase C and are easy to get backwards:
- `warning` is now a distinct ORANGE (it used to be the same gold as
- `accent`, which made a warn badge and an in-flight badge
- indistinguishable), and `accent` gold is now the BRAND — the hero
+ Two role assignments are easy to get backwards:
+ `warning` is a distinct ORANGE, not the brand gold (sharing the gold
+ with `accent` would make a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is the BRAND — the hero
  spine, the h2 rule, the active TOC item.
  ============================================================ */
         :root {
@@ -280,10 +280,9 @@
         }
 
         /* ---------- Sidebar ----------
- Every colour in this block reads a token. It used to be hardcoded dark
- literals, which was survivable only because the rail was dark in BOTH
- themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
- pale-slate link would now be near-invisible on white. Tokens also keep the
+ Every colour in this block reads a token, never a hardcoded dark
+ literal: light mode has a true light rail (VU-9), so a hardcoded
+ pale-slate link would be near-invisible on white. Tokens also keep the
  VU-18 drift guard honest — nothing here to re-map by hand next time. */
         #sidebar {
             width: var(--nav-w);
@@ -1888,7 +1887,7 @@
                     <div class="persona">
                         <div class="ph"><span class="em">&#9881;&#65039;</span> I run the service</div>
                         <p class="pdesc">You deploy Cronomicon, onboard runner agents, manage secrets and single sign-on,
-                            and keep it healthy. That material now has its own book. <span class="adv">Advanced</span>
+                            and keep it healthy. That material has its own book. <span class="adv">Advanced</span>
                         </p>
                         <a class="ppath" href="administrator-manual.html">Your path: the Administrator Manual &rarr;</a>
                     </div>
@@ -1967,13 +1966,13 @@
                     <div class="card">
                         <h4>⚙️ Administrators</h4>
                         <p class="muted" style="margin:0">People who <strong>operate the service</strong> — deploying
-                            it, onboarding runners, wiring up GitLab and single sign-on, and managing secrets — now have
+                            it, onboarding runners, wiring up GitLab and single sign-on, and managing secrets — have
                             a dedicated book: the <a href="administrator-manual.html">Administrator Manual</a>. It
                             assumes comfort with SSH, cron and a reverse-proxy / SSO setup.</p>
                     </div>
                 </div>
                 <p>A few advanced asides that mainly concern administrators are still marked <span
-                        class="adv">Advanced</span> so you know you can skip them. Full service-operations coverage now
+                        class="adv">Advanced</span> so you know you can skip them. Full service-operations coverage
                     lives in the <a href="administrator-manual.html">Administrator Manual</a>. Nothing in the product
                     breaks if you read it out of order — follow the path that suits you.</p>
 
@@ -1982,8 +1981,8 @@
                     and the two training courses, each opening in a new tab, and several screens carry a quiet
                     <em>Learn more</em> link straight to the section that explains them (the Run dialog's Targets
                     section, the Calendars and Agencies tabs, the Composer's Script field, the empty Dashboard). It describes the product
-                    as it stands today; for the release-by-release history of how it got here &mdash; every feature,
-                    fix, and the reasoning behind them &mdash; see the project's <a
+                    as it stands; the release record &mdash; every feature, fix, and the reasoning behind them &mdash;
+                    is the project's <a
                         href="https://gitlab.example.com/ops/cronomicon/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
                     in the Cronomicon repository.</p>
 
@@ -2350,8 +2349,7 @@
                     types it supports. Examples: <code>Production</code>, <code>Staging</code>, <code>Cluster-A</code>.
                     A scope's declared capability is <strong>advisory</strong>: you may run a job whose type the scope
                     doesn't advertise — the Run dialog shows a soft warning but does not block you.</p>
-                <p><strong>Scopes live on their own top-level page</strong> now (<code>/scopes</code>) — promoted out of
-                    the Env Vars page. Beyond a host list and run-type capability, a scope can carry an <strong>Ansible
+                <p><strong>Scopes live on their own top-level page</strong> (<code>/scopes</code>). Beyond a host list and run-type capability, a scope can carry an <strong>Ansible
                         inventory</strong>, either git-synced from an <code>inventory/*.ini</code> or authored in-app on
                     an Cronomicon-source scope. The raw inventory is what actually executes
                     (<code>ansible-playbook -i</code>); Cronomicon parses it into an <strong>advisory, non-authoritative
@@ -2412,7 +2410,7 @@
                 </p>
                 <p>A run stopped by an operator <em>without</em> saying what the stop meant surfaces as <span
                         class="pill fail"><span class="dot"></span>danger</span> with reason <code>killed</code> — that
-                    is the unclassified case, and it still means exactly what it always did. A stop can instead be
+                    is the unclassified case. A stop can instead be
                     recorded as Success, Warning or Failed (<a href="#stop-disposition">§6.6</a>), in which case the run
                     carries <em>that</em> status and a <span class="pill mut"><span class="dot"></span>Stopped</span>
                     marker showing a person ended it. A <strong>warning</strong> is a partial outcome — e.g. a scope
@@ -2560,35 +2558,29 @@
                 </ul>
                 <div class="callout note">
                     <div class="ct"><span class="em">⌨️</span> Keyboard &amp; motion</div>
-                    <p>Every control the app draws — buttons, tabs, pager controls, sidebar links — now shows a
+                    <p>Every control the app draws — buttons, tabs, pager controls, sidebar links — shows a
                         <strong>visible focus ring</strong> when you reach it with the keyboard, and <strong>clickable
                             table rows are keyboard-reachable</strong>: Tab moves to the row, <span
-                            class="kbd">Enter</span> or <span class="kbd">Space</span> expands it. Before this a mouse
-                        was the only way to open an expandable row.
+                            class="kbd">Enter</span> or <span class="kbd">Space</span> expands it.
                     </p>
                 </div>
-                <p>Four things the app used to say four different ways have <strong>one spelling each</strong>, held
-                    by a shared component so they cannot drift apart again — you will notice them everywhere:</p>
+                <p>Four things the app says have <strong>one spelling each</strong>, held
+                    by a shared component so they cannot drift apart — you will notice them everywhere:</p>
                 <ul>
                     <li><strong>Copy</strong> — one copy control, always a real button with a name, always an
-                        announced confirmation. Nine hand-rolled implementations in five styles are gone. The worst
-                        of them — the runner-ID copy — was a bare clickable span with no keyboard path and <em>no
-                            feedback at all</em>, so clicking it told you nothing about whether it had worked; two
-                        others flashed “Copied” without waiting for the browser, and claimed success even when the
+                        announced confirmation that waits for the browser, so it never claims success when the
                         write was refused. Where the <em>value</em> is the thing you click (a runner id, a key
                         fingerprint) it stays monospace and readable while still being one tab stop. The control
                         hides itself when the browser withholds clipboard access.</li>
-                    <li><strong>Success feedback</strong> — one toast, announced to a screen reader. Runners'
-                        hand-rolled success <em>banner</em> became a toast too: banners are for conditions that
+                    <li><strong>Success feedback</strong> — one toast, announced to a screen reader. Even the Runners
+                        page's “connection verified” is a toast, not a <em>banner</em>: banners are for conditions that
                         persist and need dismissing, and “connection verified” is neither.</li>
                     <li><strong>Loading</strong> — table-shaped views reserve their layout with a <strong>row
                             skeleton</strong> instead of popping in and shifting the page under your cursor;
-                        everything else (forms, detail panes, inline values) shows one consistent inline indicator.
-                        There were eight different wordings in four paddings and two colours.</li>
+                        everything else (forms, detail panes, inline values) shows one consistent inline indicator.</li>
                     <li><strong>Expand / collapse</strong> — one <code>▼ / ▶</code> disclosure triangle, the same
-                        one your OS uses. Five different glyph pairs used to mean this, and one of them
-                        (<code>▲/▼</code>) was simultaneously being used for <strong>sort direction</strong> on the
-                        registration-token table — two meanings sharing one pair of arrows. A dropdown caret is
+                        one your OS uses. The other pair (<code>▲/▼</code>) is reserved for <strong>sort
+                            direction</strong>, so two meanings never share one pair of arrows. A dropdown caret is
                         still a caret; it is not a disclosure.</li>
                 </ul>
                 <p>Motion is <strong>opt-out at the operating-system level</strong>: with “reduce motion” enabled in
@@ -2643,7 +2635,7 @@
                 <p class="lead-p">Cronomicon does not store roles per user. Your access is <strong>derived at login from
                         your Active Directory groups</strong> via operator-managed <strong>access grants</strong> — each
                     grant names an AD group, a role, and where that role applies. Read the boxed callout below carefully
-                    — it is the single most important thing to understand about this release.</p>
+                    — it is the single most important thing to understand about access.</p>
 
                 <div class="callout note">
                     <div class="ct"><span class="em">🏠</span> The “Honest View”</div>
@@ -2651,9 +2643,8 @@
                         lists only users who have <strong>actually signed in at least once</strong>. Use its <em>AD
                             Groups</em> column to discover the exact group names to grant. Its <em>Access</em> column
                         lists each person's grants as they resolve at login &mdash; the role <em>and</em> the department
-                        it applies to. This was previously a single &ldquo;Resolved Role&rdquo; name, which was
-                        misleading for anyone holding more than one grant: someone who is Operator on Finance and Viewer
-                        on Tax read simply as &ldquo;operator&rdquo;. Unrestricted grants are shown as <em>All
+                        it applies to. The department matters for anyone holding more than one grant: someone who is
+                        Operator on Finance and Viewer on Tax is not simply &ldquo;operator&rdquo;. Unrestricted grants are shown as <em>All
                             scopes</em> and styled apart, because those are the rows worth auditing first.</p>
                 </div>
 
@@ -2679,7 +2670,7 @@
                 <h3>4.2 Roles and their permissions</h3>
                 <p>The Settings UI and the <code>/api/v1/roles</code> endpoint publish the permissions of each role as
                     <strong>data</strong> — the Roles card is where an admin edits them or defines new roles. There are
-                    <strong>six</strong> permissions, and <strong>every one of them is enforced server-side</strong> (a
+                    <strong>seven</strong> permissions, and <strong>every one of them is enforced server-side</strong> (a
                     caller whose role lacks it gets <code>403</code>, and the denial names the missing permission). The
                     built-ins ship as:
                 </p>
@@ -2746,9 +2737,9 @@
                     trigger/kill. <strong>Compose</strong> (all in-app authoring — Jobs, Workflows <em>and</em>
                     Schedules) remains admin-only. <strong>Viewer holds no permissions at all — correct, not an
                         oversight</strong>: a viewer's access is <em>visibility</em>, resolved from its granted scopes,
-                    and visibility is not a verb; the Roles card says so in place. The old <em>View</em> and <em>Edit
-                        schedules</em> columns were deleted — neither had, or could have, an enforcement point, and a
-                    permission that cannot be enforced must not be displayed as though it were.
+                    and visibility is not a verb; the Roles card says so in place. There is no “view” permission
+                    because it could have no enforcement point, and a permission that cannot be enforced must not be
+                    displayed as though it were.
                 </p>
 
                 <div class="callout danger">
@@ -2789,15 +2780,12 @@
                     scope carries. “Operator, but only for Tax” is one row.</p>
 
                 <div class="callout gotcha">
-                    <div class="ct"><span class="em">⚠️</span> No grant means no access — and grants replaced the old
-                        matrix</div>
+                    <div class="ct"><span class="em">⚠️</span> No grant means no access</div>
                     <p>Fail-closed is the rule: an identity matching no grant has <strong>no access at all</strong>, and
                         there is no empty-set-means-everything sentinel anywhere. “Unrestricted” is the deliberate,
-                        explicit <strong>All scopes</strong> choice on a grant. The old per-role Scope Restrictions
-                        matrix no longer exists in the UI — the upgrade migration converted it (with the AD-group
-                        mappings) into grants; the leftover mappings list was later removed from the UI, and both legacy
-                        tables were dropped. (A guard still blocks removing the last unrestricted admin:
-                        <code>409 last_admin_lockout</code>.)
+                        explicit <strong>All scopes</strong> choice on a grant. Grants are the only access mechanism;
+                        there is no separate per-role scope matrix. (A guard blocks removing the last unrestricted
+                        admin: <code>409 last_admin_lockout</code>.)
                     </p>
                 </div>
 
@@ -2805,13 +2793,13 @@
                     enforced on the manual-run write path: <code>POST /api/v1/jobs/{jobId}/run</code> returns
                     <code>403 “you do not have access to scope &lt;X&gt;”</code> when the effective scope (the job's
                     bound scope, or a per-trigger scope override) is not in your set. An <strong>unscoped job</strong>
-                    is no longer a free pass: if you are scope-restricted you must <strong>bind one of your
+                    is not a free pass: if you are scope-restricted you must <strong>bind one of your
                         scopes</strong> at trigger time — the Run dialog opens on the scope picker when a choice is
                     required — and only an unrestricted operator may run it unbound on the general pool. The check also
                     gates <em>reading</em> a run's details and log, reading a workflow run, and cancelling a workflow
                     run (an out-of-scope resource returns <code>403</code>); and it is enforced on <strong>reads across
                         the board</strong> — an out-of-scope job (<code>GET /jobs/{id}</code>) or first-class schedule
-                    now returns <code>404</code> instead of exposing its script body and plaintext env, and out-of-scope
+                    returns <code>404</code> instead of exposing its script body and plaintext env, and out-of-scope
                     rows are dropped from the Jobs, Workflow-run and Schedule listings. Your <a href="#envvars">Env Vars
                         and Secrets</a> lists are likewise scope-filtered: you see only your-scope and global rows.
                     (Separately, a per-run host subset whose host isn't a member of the bound scope is rejected
@@ -2897,7 +2885,7 @@
                 <p class="muted" style="font-size:13.5px">The row is left-aligned and sized to its content rather than
                     stretched across the page, and the two tiles that can demand action — <strong>Failed (24h)</strong>
                     and <strong>Running now</strong> — carry a colour tint <em>only while they are non-zero</em>. The
-                    two reference counts stay quiet always. A zero no longer looks like a five-alarm failure.
+                    two reference counts stay quiet always. A zero never looks like a five-alarm failure.
                     <strong>Every tile is a link</strong>: each one lifts on hover, and <span class="kbd">Enter</span>
                     or <span class="kbd">Space</span> follows it from the keyboard.</p>
 
@@ -2922,11 +2910,11 @@
                         a neutral ink — but a <strong>heavier ring</strong> than the surrounding muted text, because a
                         hollow mark <em>is</em> its ring, and the marks that predict the future should not be the
                         faintest thing on the plot.</li>
-                    <li><strong>Near-coincident marks merge into one, and draw as a chord</strong>. Two things changed
-                        here. Grouping used to require <em>exact</em> millisecond equality, so runs launched seconds or
-                        minutes apart drew separate noteheads at indistinguishable x and smeared into each other — marks
-                        merge by <strong>rendered proximity</strong> instead, at one notehead plus its gap, which on the
-                        fixed 36-hour window is about <strong>18½ minutes</strong>. A cluster anchors on its
+                    <li><strong>Near-coincident marks merge into one, and draw as a chord</strong>. Grouping is by
+                        <strong>rendered proximity</strong>, not exact timestamp equality, so runs launched seconds or
+                        minutes apart do not draw separate noteheads at indistinguishable x and smear into each other.
+                        The merge distance is one notehead plus its gap, which on the fixed 36-hour window is about
+                        <strong>18½ minutes</strong>. A cluster anchors on its
                         <em>earliest</em> member, so a lone mark never moves and nothing is displaced further than the
                         width of the mark itself. The group is drawn as a <strong>chord</strong> rather than a numeral:
                         <strong>one pip per member</strong>, stacked and severity-sorted with the worst outcome
@@ -2934,8 +2922,8 @@
                         way notation draws simultaneous notes. <strong>Each pip keeps its own outcome's colour</strong>,
                         so a cluster of six successes and one failure reads as six green and one red rather than
                         painting entirely red. The stack caps at <strong>8</strong> with a <code>+k</code> overflow that
-                        folds from the <em>mildest</em> end, so an overflow can never hide a failure. Marks are still
-                        never nudged along the axis: this changes the vertical, never the time.
+                        folds from the <em>mildest</em> end, so an overflow can never hide a failure. Marks are
+                        never nudged along the axis: clustering changes the vertical, never the time.
                     </li>
                 </ul>
                 <p><strong>Reading a mark.</strong> Hover anywhere along the staff and the nearest mark is picked up —
@@ -2972,11 +2960,10 @@
                     cannot see is still <em>accounted for</em>, which is why the fold names how many it holds rather
                     than silently dropping them — on a large install most of the panel's height was otherwise spent on
                     blank lanes.</p>
-                <p class="muted" style="font-size:13.5px">That control used to be a lone button in a right-aligned row
-                    <em>below</em> the compact Score, and clicking it appended a second, detached panel underneath — so
-                    you read one view stacked on another with the control stranded between them. Expanding
+                <p class="muted" style="font-size:13.5px">Expanding
                     <strong>replaces</strong> the single lane with the per-job staves <em>inside the same bordered
-                        panel</em>: one view at a time, and the header, caption and legend stay put across the swap.
+                        panel</em>: one view at a time, never one view stacked on another, and the header, caption and
+                    legend stay put across the swap.
                     Per-job staves cluster near-coincident runs exactly as the compact lane does.
                 </p>
                 <div class="callout note">
@@ -3132,7 +3119,7 @@
                                     to <a href="#schedules">Upcoming</a>, which the block links to. When nothing is
                                     projected it reads <em>“Nothing is <strong>scheduled</strong> in the next 24
                                         hours”</em> &mdash; qualified, because reactions are not projected here and
-                                    &ldquo;nothing scheduled&rdquo; no longer implies &ldquo;nothing will run&rdquo; (<a
+                                    &ldquo;nothing scheduled&rdquo; does not imply &ldquo;nothing will run&rdquo; (<a
                                         href="#reactions">§9.3</a>). A fire a <a href="#calendars">working calendar</a>
                                     will suppress is <strong>skipped over</strong> here and omitted from the Score — it
                                     is not an upcoming run — even though the <a href="#schedules">Upcoming</a> tab still
@@ -3189,8 +3176,7 @@
                 <p class="lead-p">The central table of every job (both sources), with status tabs, search, an expandable
                     detail panel, and inline lifecycle controls. It loads from <code>GET /jobs</code> and refreshes
                     after any successful action. The page describes itself as <em>“Run your scripts on a schedule,
-                        across your hosts”</em> — it used to say “scheduled scripts synced from GitLab”, which named
-                    the plumbing and stopped being true the day jobs could also be authored in Cronomicon (<a
+                        across your hosts”</em>, because jobs may be synced from GitLab or authored in Cronomicon (<a
                         href="#concepts">§2.2</a>).</p>
 
                 <figure class="shot">
@@ -3212,9 +3198,9 @@
                     <span class="tag">All</span> <span class="tag">Running → running</span> <span class="tag">Success →
                         success</span> <span class="tag">Failed → danger</span> <span class="tag">Paused → paused</span>
                 </p>
-                <p class="muted" style="font-size:13.5px">The <em>Healthy</em> tab was renamed <strong>Success</strong>:
-                    Workflows' equivalent tab already said Success, and one product should not have two words for one
-                    outcome. Every tab label now comes from the same vocabulary the rows themselves use (<a
+                <p class="muted" style="font-size:13.5px">The tab is called <strong>Success</strong> on Jobs and on
+                    Workflows alike: one product should not have two words for one outcome, and every tab label comes
+                    from the same vocabulary the rows themselves use (<a
                         href="#status-vocab">Appendix D</a>). A tab whose count is <strong>zero</strong> is
                     <em>dimmed</em> — still clickable, because “Failed (0)” is a real and welcome answer, but quiet
                     enough that your eye lands on the tabs with something behind them.</p>
@@ -3285,8 +3271,7 @@
                     options), a <strong>reference-bindings</strong> editor (<a href="#refbindings">§11.6</a>) where an
                     admin declares the Secrets / Variables / SSH keys this job injects at run time — that is <strong>one
                         row per reference</strong> carrying the kind dot, the derived <code>CRONOMICON_*</code> name, the
-                    resolve verdict, the state pill, the reason and the remove control, instead of the old
-                    chip-plus-a-repeated-line-beneath (healthy references get a row too, so the section stays a complete
+                    resolve verdict, the state pill, the reason and the remove control (healthy references get a row too, so the section stays a complete
                     inventory of what the job consumes) — a <strong>duration sparkline</strong> of the last ~20 runs,
                     and a <strong>Recent runs</strong> table. Click a run row to lazily load its <strong>redacted
                         log</strong>; a <code>Reason:</code> line appears above it for killed / lost / timed-out runs.
@@ -3302,7 +3287,7 @@
                     the <span class="pill fail">Critical</span> marker, a <strong>Contact</strong> (who to reach when
                     this breaks), and free-text notes with an attribution line saying who wrote them and when. Any
                     logged-in user can edit them (<strong>+ Add a note</strong> / <strong>Edit</strong>), they are
-                    stored in Cronomicon only — never written to Git, kept across syncs — and they now sit on their own
+                    stored in Cronomicon only — never written to Git, kept across syncs — and they sit on their own
                     <strong>opaque card</strong> so the prose reads clearly against the expanded row's tint instead of
                     floating on it. Long notes cap at five lines and scroll, with a fade hinting at more below.</p>
                 <p>Top right of the panel, before the lifecycle actions, sits <strong>Refresh</strong> — and the same
@@ -3314,7 +3299,7 @@
                     <em>Refreshing…</em> and disables; it needs no permission and is never hidden.</p>
                 <p>In the <strong>Recent runs</strong> table, opening the log of a run that is <em>still going</em>
                     follows it live — see the tailing note in <a href="#history">§12.3</a>; a finished run's log loads
-                    once, as before.</p>
+                    once.</p>
                 <p>Two of the panel's fields answer <em>where</em> the job runs, and they sit together.
                     <strong>Executor</strong> says what kind of thing runs it. <strong>Run on</strong> says which
                     runner may claim it: either <em>“Any eligible runner”</em>, or a <strong>runner tag</strong> that
@@ -3363,7 +3348,7 @@
                                     class="dot"></span>paused</span>, Next run → <code>—</code>). It
                             does <strong>not</strong> stop a running execution, and you can still trigger a manual Run
                             while paused. <strong>Resume</strong> is shown whenever a job's status is
-                            <span class="pill warn"><span class="dot"></span>paused</span> — it no longer depends on the
+                            <span class="pill warn"><span class="dot"></span>paused</span> — it does not depend on the
                             job still having a schedule (see below).
                         </p>
                     </div>
@@ -3389,17 +3374,16 @@
                             GitLab</em>.
                     </p>
                 </div>
-                <p class="muted" style="font-size:13.5px">Delete once lived only inside the Composer's edit view. That
-                    entry point still works — the row control is an addition, not a move.</p>
+                <p class="muted" style="font-size:13.5px">Delete is also available inside the Composer's edit view; the
+                    row control and the Composer's are the same action.</p>
                 <div class="callout note">
                     <div class="ct"><span class="em">🔓</span> A paused job can always be resumed</div>
                     <p>Pause is recorded independently of the schedule, and nothing about <em>removing</em> a schedule
-                        clears it — not the Composer, not deleting a schedule definition, not a GitLab sync. But the
-                        whole Pause/Resume control used to sit behind “is this job scheduled?”, so the moment a paused
-                        job's schedule went away its <strong>Resume</strong> button went with it. The job stayed paused,
-                        its badge still said so, and the only ways back were re-adding a schedule or calling the API
-                        directly. Resume now renders on the paused status alone. Pause keeps the schedule condition,
-                        which was always fair for it — pausing a manual-only job suppresses nothing.</p>
+                        clears it — not the Composer, not deleting a schedule definition, not a GitLab sync. So
+                        <strong>Resume</strong> renders on the paused status alone: a paused job whose schedule has gone
+                        away still shows its badge and still offers Resume, without re-adding a schedule or calling the
+                        API directly. Pause keeps the schedule condition, which is fair for it — pausing a manual-only
+                        job suppresses nothing.</p>
                 </div>
                 <div class="callout note">
                     <div class="ct"><span class="em">↔️</span> Pause ≠ Stop</div>
@@ -3569,8 +3553,8 @@
                             override</em> subgroup directly beneath the declared answers (its summary reads <em>N
                             set</em> or <em>none</em>): a <strong>+ Add variable</strong> key/value editor whose
                         plaintext map is applied to this run only, on top of any schedule env &mdash; the override wins
-                        per key, including over a declared input of the same name, which is exactly why the two now sit
-                        adjacent instead of in different sections.</p>
+                        per key, including over a declared input of the same name, which is exactly why the two sit
+                        adjacent rather than in different sections.</p>
                 </div>
                 <div class="card" style="margin:14px 0">
                     <h4>Run on &mdash; choosing a runner</h4>
@@ -3686,8 +3670,8 @@
                         </p>
                         <p>After it runs, History shows an ordinary manual run whose audit metadata records who
                             scheduled it and for when. Timing is also part of the review record: the
-                            <code>when-to-run</code> section joined the reviewed-sections audit key, so a run that kept
-                            <em>now</em> no longer looks identical to one where nobody considered timing at all.
+                            <code>when-to-run</code> section is one of the reviewed-sections audit keys, so a run that kept
+                            <em>now</em> does not look identical to one where nobody considered timing at all.
                         </p>
                     </div>
                 </details>
@@ -3709,9 +3693,8 @@
                             (comma-separated; only tagged tasks run), <strong>verbosity</strong>
                             (<code>-v</code>…<code>-vvvv</code>), <strong>become</strong> (+ become user), and
                             <strong>extra variables</strong> passed as <code>-e name=value</code>. The raw
-                            <strong>Ansible --limit</strong> passthrough also lives here &mdash; its own label had
-                            always said advanced &mdash; while the host and group pickers stay in
-                            <em>Targets</em>.
+                            <strong>Ansible --limit</strong> passthrough also lives here, while the host and group
+                            pickers stay in <em>Targets</em>.
                         </p>
                         <p>Two things to know about extra variables: they outrank inventory and playbook variables, and
                             they are <strong>visible in the process list</strong> on the runner host — never put a
@@ -3758,18 +3741,18 @@
                         answers&rdquo;</em> and stays disabled, the prose naming the missing inputs sits in the answers
                     panel beside the rows it describes, and you proceed by ticking the one-line <strong>Run without
                         it/them</strong> escape in the footer &mdash; the only part of the warning that stays pinned,
-                    because it is what ungates the button. The run is never blocked outright — the server has always
-                    accepted it either way — but the choice is now deliberate and recorded. Answers (defaults included,
+                    because it is what ungates the button. The run is never blocked outright — the server accepts it either way — but the choice is
+                    deliberate and recorded. Answers (defaults included,
                     even when untouched) ride the same per-run env path as the overrides below.</p>
                 <div class="callout warn">
                     <div class="ct"><span class="em">⚠</span> A scope Env Var does <em>not</em> satisfy a run input
                     </div>
-                    <p>The dialog once claimed a required input was satisfied whenever an <a href="#envvars">Env
-                            Vars</a> row of the same name existed in the scope. It never was: Env Vars reach a run only
-                        through an explicit <a href="#refbindings">reference binding</a> and only under the derived
-                        <code>CRONOMICON_VAR_&lt;name&gt;</code> key — nothing publishes a bare <code>NAME</code>. The run
-                        proceeded with the variable missing and was recorded as unfilled anyway. The false reassurance
-                        is gone; supply the value as a run input, a job-level env row, or an explicit reference.
+                    <p>An <a href="#envvars">Env Vars</a> row of the same name existing in the scope does not fill a
+                        required input, and the dialog never claims it does. Env Vars reach a run only through an
+                        explicit <a href="#refbindings">reference binding</a> and only under the derived
+                        <code>CRONOMICON_VAR_&lt;name&gt;</code> key — nothing publishes a bare <code>NAME</code>, so the
+                        run would proceed with the variable missing and be recorded as unfilled. Supply the value as a
+                        run input, a job-level env row, or an explicit reference.
                     </p>
                 </div>
                 <div class="callout note">
@@ -3802,11 +3785,11 @@
                         in the run's own scope/host/executor/env so both executors apply them with no change.</p>
                 </div>
                 <h3 id="stop-disposition">6.6 Stopping a run, and saying what it meant</h3>
-                <p>Ending a run used to record exactly one thing: <em>killed</em>. Whether you stopped it because it was
+                <p>Ending a run records a <strong>disposition</strong>: whether you stopped it because it was
                     destroying something, because its work was already done and the process had hung, or because you
-                    needed the host back &mdash; all three read the same afterwards, and all three counted as a failure.
+                    needed the host back should not read the same afterwards, and should not all count as a failure.
                 </p>
-                <p>The control is now <strong>Stop run&hellip;</strong>, and it asks one question: <strong>what
+                <p>The control is <strong>Stop run&hellip;</strong>, and it asks one question: <strong>what
                         happened?</strong></p>
                 <table>
                     <thead>
@@ -3820,8 +3803,7 @@
                             <td><strong>Stopped</strong> <span class="pill mut"><span class="dot"></span>default</span>
                             </td>
                             <td>You are not saying anything about the work. This is the unclassified stop &mdash; it
-                                counts as a failure in the job's health and in History's <em>Failed</em> filter, exactly
-                                as ending a run always did.</td>
+                                counts as a failure in the job's health and in History's <em>Failed</em> filter.</td>
                         </tr>
                         <tr>
                             <td><strong>Failed</strong></td>
@@ -3838,17 +3820,16 @@
                         </tr>
                     </tbody>
                 </table>
-                <p>Two halves are now recorded separately and both are kept: the <strong>status</strong> is what
+                <p>Two halves are recorded separately and both are kept: the <strong>status</strong> is what
                     happened, and <strong>stopped by</strong> is the proof a person ended it. So a run can legitimately
-                    read <em>Success &middot; stopped by you</em>, which is a state the console could not previously
-                    express.</p>
+                    read <em>Success &middot; stopped by you</em>.</p>
 
                 <div class="callout tip">
                     <div class="ct"><span class="em">&#129517;</span> The wedged workflow step</div>
                     <p>This is the case worth remembering. A workflow treats a stopped step as a failure and halts
-                        &mdash; so if step three hung with its work already finished, you previously had no way to let
-                        steps four and five run; you had to start the whole workflow again and redo step three's work.
-                        Stop it, record it as <strong>Success</strong>, and the workflow carries on. An
+                        &mdash; so if step three hung with its work already finished, you would otherwise have to start
+                        the whole workflow again and redo step three's work to reach steps four and five.
+                        Stop it, record it as <strong>Success</strong> instead, and the workflow carries on. An
                         <em>unclassified</em> stop still halts the workflow, deliberately: saying nothing about what
                         happened is not the same as saying it was fine.
                     </p>
@@ -3894,8 +3875,8 @@
                 <ul>
                     <li>Tabs <span class="tag">All</span> <span class="tag">Running</span> <span
                             class="tag">Success</span> <span class="tag">Failed</span> (live counts — and each tab
-                        counts what its label promises: the <em>Failed</em> tab previously missed a <em>killed</em>
-                        workflow run, and <em>Running</em> missed a queued one); search by name/description, and filter
+                        counts what its label promises: the <em>Failed</em> tab includes a <em>killed</em>
+                        workflow run, and <em>Running</em> includes a queued one); search by name/description, and filter
                         by user-authored tags using the <strong>Tag</strong> dropdown; <strong>+ Create</strong> opens
                         the editor. Like the other catalogs, workflows in GitOps sub-folders render as a <a
                             href="#scripts">folder tree</a>, and searching flattens to full-path results.</li>
@@ -3907,8 +3888,7 @@
                                 class="dot"></span>Success</span> <span class="pill warn"><span
                                 class="dot"></span>Warn</span> <span class="pill fail"><span
                                 class="dot"></span>Failed</span> — or a grey <strong>Paused</strong> pill (Next Run →
-                        <code>—</code>) when the pause is on. (This column once had a vocabulary of its own —
-                        <em>Passing</em> / <em>Warning</em> under a <em>Healthy</em> tab; it now uses the same words as
+                        <code>—</code>) when the pause is on. (This column uses the same words as
                         every other run surface.)
                     </li>
                     <li><strong>▶ Run</strong> on each row triggers immediately (toast: <em>“Run queued: {name}”</em> —
@@ -3917,14 +3897,14 @@
                         user), a <strong>↓ Run History</strong> filter, and the <strong>Pause / Resume</strong> toggle
                         (§7.3). Cronomicon-source rows also carry <strong>Edit</strong> and, <strong>Delete</strong> — both
                         gated on the Compose capability, Delete behind a confirm that keeps the run history and removes
-                        the definition, its schedule and its references. The editor's own delete is unchanged. All of
+                        the definition, its schedule and its references. The editor offers the same delete. All of
                         these sit together at the <strong>top right of the expanded detail</strong>, matching Jobs and
                         Runners.
                     </li>
                 </ul>
 
                 <p class="muted" style="font-size:13.5px">Note: a workflow's <em>notify-on-trigger</em> indicator is
-                    <strong>reserved and non-functional</strong> in this release — it has no backing data source, so the
+                    <strong>reserved and non-functional</strong> — it has no backing data source yet, so the
                     notify pill never renders and the matching “ops notified” trigger toast never fires. (The same field
                     on the Jobs detail panel always reads “No.”) Don't rely on it to signal that notifications are
                     wired.
@@ -4217,9 +4197,10 @@
                 </ul>
                 <div class="callout gotcha">
                     <div class="ct"><span class="em">🔄</span> Lint &amp; variables refresh on the next Git Pull</div>
-                    <p>Both are computed only at sync time. After upgrading to a release that adds a new scan, existing
-                        scripts read as having <em>no</em> findings/variables until the <strong>next Git Pull</strong>
-                        (full re-sync) recomputes every row — the columns default to empty, so pre-sync rows stay valid.
+                    <p>Both are computed only at sync time. A script's findings and variables reflect its body as of
+                        the last sync, and a <strong>Git Pull</strong> (full re-sync) recomputes every row — the columns
+                        default to empty, so a row that has not been scanned yet reads as having <em>no</em>
+                        findings/variables rather than failing.
                     </p>
                 </div>
 
@@ -4247,8 +4228,8 @@
                 <div class="view-hd"><span class="route">/schedules</span> <span class="gate any">Browsing:
                         everyone</span> <span class="gate admin">+ New / Edit / Delete: Admin (Compose)</span></div>
                 <p class="lead-p">The single complete scheduling surface, with four tabs deep-linked via
-                    <code>?tab=</code>. This is where the old standalone “Schedule” page's projections moved. The
-                    <strong>default landing tab is Upcoming</strong> — a bare <code>/schedules</code> (and the legacy
+                    <code>?tab=</code>. The
+                    <strong>default landing tab is Upcoming</strong> — a bare <code>/schedules</code> (and the
                     <code>/schedule</code> redirect) opens on Upcoming so you see what fires next first; Catalog,
                     Inventory and Calendars are a tab (or <code>?tab=</code>) away. The Catalog tab also supports <a
                         href="#scripts">folder browsing</a>.
@@ -4283,7 +4264,7 @@
                         <h4>🔮 Upcoming</h4>
                         <p class="muted">Projected fires as a flat, <strong>soonest-first column table</strong> (When ·
                             Type · Owner · Schedule · Cron) with resizable columns and a <strong>25 / 50 / 100</strong>
-                            pager (default 25) — the old day-header grouping is gone; the When column carries each
+                            pager (default 25); the When column carries each
                             fire’s date and time. A <strong>Next 24 hours</strong> / <strong>Next 7 days</strong> toggle
                             sets the window; only enabled, non-paused schedules with a future fire appear. The
                             projection is capped at <strong>500</strong> fires, after which a “first 500” note appears.
@@ -4381,7 +4362,7 @@
                         reason to check it.</p>
                     <p>The consequence is the thing to plan for. When a calendar's last date passes, it does not warn
                         you at fire time and it does not fail — a <em>skip</em> calendar simply stops suppressing, and
-                        the holiday runs it used to hold back quietly start happening again. So the Calendars tab flags
+                        the holiday runs it held back quietly start happening again. So the Calendars tab flags
                         a calendar that has <strong>expired</strong> or has only a little coverage left, and
                         <strong>renewing next year's dates is an annual task that needs an owner</strong>. Put it on
                         someone's calendar, in the other sense.
@@ -4492,11 +4473,11 @@
                         <code>TZ</code> — and it is the source of truth for <em>both</em> sides of scheduling: the
                         scheduler evaluates every cron expression in it <em>and</em> the UI renders every absolute
                         timestamp in it. So <code>2&nbsp;a.m.</code> means the same instant in the schedule editor, the
-                        <strong>Upcoming</strong> table, run <a href="#history">History</a>, and reality — the old
-                        browser-zone-vs-server-zone skew is gone. Only <em>relative</em> times (<em>“5m ago”</em>) stay
+                        <strong>Upcoming</strong> table, run <a href="#history">History</a>, and reality — there is no
+                        browser-zone-vs-server-zone skew. Only <em>relative</em> times (<em>“5m ago”</em>) stay
                         zone-agnostic.
                     </p>
-                    <p>The former “⏱ Timezone mismatch” warning is retired. The Settings banner is now purely
+                    <p>The Settings banner is purely
                         <strong>informational</strong> — <em>“Times are shown — and schedules fire — in the application
                             timezone ({appTimezone}). Your browser is {browserZone}.”</em> — and appears only when your
                         browser zone differs from the app zone. It changes no behaviour; it just names the zone so a
@@ -4510,9 +4491,9 @@
                         (Used by 0) never fires — bind it to something via <code>scheduleRefs</code>.</p>
                 </div>
                 <h3 id="reactions">9.3 Reactions &mdash; when this finishes, run that</h3>
-                <p>Until now, one job could only depend on another <em>inside a workflow</em>. A workflow reacts to the
-                    runs <em>it</em> started &mdash; so if a job fired from its own schedule, from the Run dialog, or
-                    from a different workflow, nothing downstream noticed. A <strong>reaction</strong> lifts that out:
+                <p>Inside a workflow, one job depends on another only for the runs the workflow <em>itself</em>
+                    started &mdash; if a job fired from its own schedule, from the Run dialog, or from a different
+                    workflow, nothing downstream in that workflow notices. A <strong>reaction</strong> lifts that out:
                     <strong>when this definition finishes, run that one</strong>, in any combination of jobs and
                     workflows, whichever way the first one was triggered.
                 </p>
@@ -4655,7 +4636,7 @@
                 <h3>10.1 Compose (the Job Composer)</h3>
                 <p>The Composer builds an <strong>cronomicon-source Job</strong> from existing pieces — no Git round-trip —
                     and makes the composable-primitive formula concrete: a Job is a binding of <strong>Script ×
-                        Schedule(s) × Scope × env</strong>. It has grown round-trip-safe full-state editing, inline
+                        Schedule(s) × Scope × env</strong>. It offers round-trip-safe full-state editing, inline
                     schedules, the scope-context and Advanced panels, job-level env, the script-variables hint, declared
                     Run inputs, and searchable Script/Scope pickers with a unified Schedule section, so it is
                     considerably richer than a plain form. Saving a new job goes live immediately, badged <span
@@ -4681,19 +4662,17 @@
                     <p>The compose <code>PUT</code> is a <strong>full-replace upsert</strong>: the form prefills
                         <em>every</em> field from the job and re-sends the complete set on save, so editing one field
                         can never silently strip the others (timeout, retries, concurrency, tags, inline-schedule env).
-                        This fixed an earlier data-loss bug where a partial save reset omitted fields — and resolved the
-                        old “enabled-vs-paused-schedule” gotcha: the form now reads the job's raw <code>enabled</code>
-                        flag, so an <em>enabled-but-schedule-paused</em> job loads with <strong>Enabled</strong>
-                        correctly ticked.
+                        The form reads the job's raw <code>enabled</code> flag, so an
+                        <em>enabled-but-schedule-paused</em> job loads with <strong>Enabled</strong> correctly ticked.
                     </p>
                 </div>
 
                 <div class="callout note">
                     <div class="ct"><span class="em">ⓘ</span> Section explanations live behind the ⓘ</div>
-                    <p>The Composer's sections used to open with their explanation printed permanently under the label —
-                        a wall of prose whether or not you needed it. Each section now carries a small
-                        <strong>ⓘ</strong> beside its label; click it and the explanation appears exactly where it used
-                        to be. Nothing was removed. What stays visible is what reacts to your input: validation
+                    <p>The Composer's sections do not print their explanation permanently under the label, which would
+                        be a wall of prose whether or not you needed it. Each section carries a small
+                        <strong>ⓘ</strong> beside its label; click it and the explanation appears beneath the label.
+                        What stays visible without clicking is what reacts to your input: validation
                         messages, the credential-name warning on Run inputs, permission notices, the
                         <em>“Save this job first”</em> note on Reactions, and the <strong>Manage in Env Vars →</strong>
                         link. The Workflow Editor's Reactions section behaves the same way.</p>
@@ -4733,8 +4712,7 @@
                                 <td>A <strong>searchable, creatable combobox</strong> (placeholder <em>“Pick or type a
                                         scope…”</em>): filter the known scopes — each annotated <code>— {types}</code>
                                     when it declares its run types — or type a custom one and commit it via the
-                                    <strong>Use “…”</strong> row (Enter or click commits; Esc/blur reverts). This
-                                    replaces the old select-plus-<strong>✎ Enter custom scope…</strong> toggle.
+                                    <strong>Use “…”</strong> row (Enter or click commits; Esc/blur reverts).
                                 </td>
                             </tr>
                             <tr>
@@ -4756,7 +4734,7 @@
                                     run loudly rather than resolving empty. Not a way to inject stored Secrets or
                                     Variables — reference those instead, and <code>CRONOMICON_*</code> names are refused
                                     for exactly that reason. The Git YAML equivalent is
-                                    <code>spec.env_passthrough</code>, which this field finally makes authorable in-app.
+                                    <code>spec.env_passthrough</code>, which this field makes authorable in-app.
                                 </td>
                             </tr>
                             <tr>
@@ -4912,8 +4890,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p>Once a job declares at least one <strong>required</strong> input, a <strong>“When a required input
                         has no value”</strong> selector appears:</p>
                 <ul>
-                    <li><strong>Warn</strong> (default) — the long-standing behavior, and what every existing job keeps.
-                        The run proceeds and the unfilled name is recorded on it. An operator is still shown the gap in
+                    <li><strong>Warn</strong> (default) —
+                        the run proceeds and the unfilled name is recorded on it. An operator is still shown the gap in
                         the Run dialog and must tick the <strong>Run without it/them</strong> escape.</li>
                     <li><strong>Block</strong> — any request to run the job is rejected <code>422 prompt_required</code>
                         until every required input has a value. The Run dialog offers <em>no</em> override for such a
@@ -4940,9 +4918,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>Import detected variables.</strong> When the selected script has detected variables, an
                         <strong>+ Import N detected variable(s) from script</strong> button seeds a row per referenced
                         variable not already declared (each row's <code>required</code> inferred from whether the script
-                        supplies a <code>${VAR:-default}</code> fallback). This is the old inferred “variables this
-                        script uses” heuristic — <em>demoted out of the run path</em> and repurposed as a curation aid;
-                        you then label, drop, or adjust each seeded row before saving.
+                        supplies a <code>${VAR:-default}</code> fallback). The seed is a curation aid, not part of the
+                        run path; you then label, drop, or adjust each seeded row before saving.
                     </li>
                     <li><strong>Drift lint (advisory).</strong> If the script references a variable that no prompt
                         declares <em>and</em> no job/schedule env or scope var/secret provides, an amber note lists them
@@ -5027,7 +5004,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">🔁</span> Three ways to say when — cron, every-N, or once</div>
                     <p><strong>On a schedule</strong> is cron: calendar-positional, and the right choice for anything
                         tied to a clock or a weekday — <em>every Wednesday at 17:00</em>, <em>weekdays at 09:00</em>. It
-                        is what every schedule used before this release.</p>
+                        is the default mode.</p>
                     <p><strong>Every N</strong> is a fixed gap measured from the start date: <em>every 7 days</em>,
                         <em>every 36 hours</em>, <em>every 90 minutes</em>. Cron genuinely cannot express this — “every
                         10 days” has no weekly or monthly position to sit at, so it needs a date to count from. That is
@@ -5174,8 +5151,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     is the <em>where</em> — host groups, declared run types, the Ansible inventory behind them, and the
                     network-isolation <strong>Agencies</strong> that own them; <strong>Env Vars</strong>
                     (<code>/env-vars</code>) is the <em>what</em> — the <strong>Variables</strong>,
-                    <strong>Secrets</strong> and <strong>SSH Keys</strong> a run carries. Scopes graduated from a tab on
-                    Env Vars to its own <strong>top-level page</strong> (the Agencies catalog came with it); the Env
+                    <strong>Secrets</strong> and <strong>SSH Keys</strong> a run carries. Scopes has its own
+                    <strong>top-level page</strong> (the Agencies catalog lives there too); the Env
                     Vars page is exactly <strong>Variables · Secrets · SSH Keys</strong>. Reading either page is open to
                     any signed-in user; every write is server-gated — scope, agency and SSH-key writes need
                     <strong>Configure app</strong>, while Variable and Secret writes need <strong>Manage env
@@ -5220,7 +5197,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         inventory is validated inline — a literal secret value is rejected, line-numbered — and
                         projected atomically on save. Editing a scope loads its existing inventory into the form;
                         switching an inventory scope back to a flat hosts list clears its projection. (The expanded
-                        row's inventory editor, below, still works for later edits.)</li>
+                        row's inventory editor, below, serves later edits.)</li>
                     <li><strong>↻ Re-sync from GitLab</strong> re-imports inventories and reports the delta — e.g.
                         <em>“Re-synced N scopes — N capability changes — N pragma errors.”</em> <strong>Git</strong>
                         scopes are read-only here; use <em>Edit in GitLab ↗</em>.
@@ -5306,50 +5283,43 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">⚠️</span> Deleting an in-use agency is blocked</div>
                     <p>An agency still referenced by a scope, a runner, <em>or</em> a secret, variable or SSH key cannot
                         be deleted — the request returns <code>409 agency_in_use</code>. Clear its membership first.
-                        Before that fix, an agency whose only members were a secret and a key deleted cleanly and took
-                        that membership with it, silently.</p>
+                        The guard covers an agency whose only members are a secret and a key, so deleting it can never
+                        silently take that membership with it.</p>
                 </div>
 
                 <h4>One membership axis</h4>
-                <p>Agencies used to constrain only <em>which runners</em> may execute a scope's jobs. They are now the
+                <p>Agencies are the
                     <strong>single membership axis</strong> for scopes, secrets, variables, SSH keys and runners — the
                     whole isolation model, on one dimension:
                 </p>
                 <ul>
-                    <li>A <strong>scope</strong> may belong to <strong>several</strong> agencies (it was one-or-none
-                        before). A run inherits its scope's set and may be claimed by a runner in <em>any</em> of them.
+                    <li>A <strong>scope</strong> may belong to <strong>several</strong> agencies. A run inherits its scope's set and may be claimed by a runner in <em>any</em> of them.
                     </li>
                     <li>A <strong>secret or variable</strong> is injectable only into runs whose agencies overlap its
-                        own — <em>and</em> the existing scope rule still applies. Both must pass; nobody lost a control
-                        they had.</li>
-                    <li>An <strong>SSH key</strong> is bindable only by jobs whose agencies overlap. <strong>This one is
-                            a tightening</strong> — previously any job could bind any key.</li>
+                        own — <em>and</em> the scope rule applies as well. Both must pass.</li>
+                    <li>An <strong>SSH key</strong> is bindable only by jobs whose agencies overlap.</li>
                 </ul>
                 <div class="callout note">
                     <div class="ct"><span class="em">🔓</span> No agency ticked means <em>unrestricted</em>, not
                         orphaned</div>
                     <p>This is the rule that makes the whole model safe to adopt gradually, and the one most likely to
                         be misread. A row belonging to <strong>no</strong> agency carries <strong>no agency
-                            restriction</strong> — it stays reachable from everywhere, exactly as it was before agencies
-                        existed. Nothing in your installation changed behavior when this shipped, because nothing had
-                        membership yet. The rules above only start biting on a given secret, variable or key once
-                        <em>you</em> put it in an agency.
+                            restriction</strong> — it stays reachable from everywhere. A fresh installation has no
+                        membership anywhere, so nothing is restricted until you say so. The rules above only start
+                        biting on a given secret, variable or key once <em>you</em> put it in an agency.
                     </p>
                 </div>
 
                 <h4>Editing membership</h4>
-                <p>There used to be three tabs here. The third was a <strong>Membership</strong> grid: rows were every
-                    scope, secret, variable, SSH key and runner, columns were your agencies, and a cell was the
-                    membership. It answered a real question, and at a handful of departments it answered it well — but
-                    the row-name cell did not stay pinned while you scrolled sideways, so past about a dozen agencies
-                    you were ticking checkboxes with no way to see which row you were on. It has been removed. Its two
-                    jobs now live where each question is actually asked:</p>
+                <p>There is deliberately no single membership grid (rows for every scope, secret, variable, SSH key and
+                    runner against a column per agency): past about a dozen agencies such a grid leaves you ticking
+                    checkboxes with no way to see which row you are on. Membership is edited where each question is
+                    actually asked:</p>
                 <ul>
                     <li><strong>&ldquo;What is in this agency?&rdquo;</strong> — the <strong>Agencies</strong> tab.
                         Expand a row and you get its contents grouped by kind, each member removable with an
                         <strong>✕</strong> and an <strong>+ Add…</strong> picker per kind (needs <strong>Configure
-                            app</strong>). The agency's name stays on screen the whole time, which is the thing the grid
-                        could not promise.
+                            app</strong>). The agency's name stays on screen the whole time.
                     </li>
                     <li><strong>&ldquo;Which agencies hold this one row?&rdquo;</strong> — an <strong>Agencies</strong>
                         column on the row's own catalogue: Variables, Secrets, SSH Keys, Scopes and Runners each carry
@@ -5381,8 +5351,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     </div>
                     <p>This is the trap. A run whose scope belongs to an agency with <strong>no online runner</strong>
                         is not failed — it sits <span class="pill warn"><span class="dot"></span>queued</span>
-                        indefinitely, so nothing alerts and no notification fires. Previously the only place that showed
-                        was one run's status line at a time. The expanded agency now says it outright and tells you
+                        indefinitely, so nothing alerts and no notification fires. Each waiting run's status line says so,
+                        and the expanded agency says it outright and tells you
                         <strong>how many runs are already waiting</strong>. Fix it by bringing a runner online in that
                         agency, or by moving the scope out of it.
                     </p>
@@ -5418,7 +5388,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <ul>
                     <li><strong>Scope</strong> spells out <strong>global</strong> for an unscoped row instead of leaving
                         the cell blank. The distinction matters: a global row is visible from — and injectable into —
-                        <em>every</em> scope, whereas a blank cell used to be indistinguishable from “not loaded”.
+                        <em>every</em> scope, whereas a blank cell would be indistinguishable from “not loaded”.
                     </li>
                     <li><strong>Used by</strong> counts the jobs and scripts that <em>declare a binding</em> to that row
                         (see <a href="#refbindings">§11.6</a>). Read it before you re-scope or rename anything: those
@@ -5472,7 +5442,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
 
                 <h3>11.5 SSH Keys</h3>
                 <p>The third Env Vars tab is a first-class store of <strong>SSH key credentials</strong> — a typed,
-                    envelope-encrypted entity that replaces the old “an SSH key is an opaque secret referenced by name.”
+                    envelope-encrypted entity, not an opaque secret referenced by name.
                     Its writes are <strong>Configure app</strong>-gated (distinct from the <em>Manage env vars</em> gate
                     on Variables/Secrets). Each row shows <strong>Label · Type · Fingerprint</strong> (SHA256, click to
                     copy) <strong>· Source</strong> (<span class="pill crn">Stored</span> / <span
@@ -5501,24 +5471,22 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         with the credential <strong>picker</strong> (it writes <code>authCredentialId</code>; a passing
                         <em>Test connection</em> then names the key that authenticated by type + SHA256 fingerprint).
                         The coequal <strong>“Key by name (runner / inventory)”</strong> option (writing
-                        <code>authKeyEnvVar</code>) is <strong>not deprecated</strong> — it is the <em>permanent</em>
+                        <code>authKeyEnvVar</code>) is <strong>fully supported</strong> — it is the <em>permanent</em>
                         path for runner-executed and inventory-imported hosts, which resolve keys by name
                         <em>locally</em> and never receive credential material.
                     </p>
                 </div>
 
-                <h3 id="refbindings">11.6 Reference bindings &amp; run-time injection <span
-                        class="pill crn">v0.49</span></h3>
-                <p>Historically Cronomicon <strong>never auto-injected</strong> a scope's Env Vars into a run — you
-                    referenced them from the script and the values came from the shell environment you supplied. Since
-                    <strong>v0.49</strong> there is an explicit, <strong>opt-in</strong> path: a job or script
+                <h3 id="refbindings">11.6 Reference bindings &amp; run-time injection</h3>
+                <p>Cronomicon <strong>never auto-injects</strong> a scope's Env Vars into a run. Instead there is an
+                    explicit, <strong>opt-in</strong> path: a job or script
                     <em>declares</em> which Secrets, Variables and SSH keys it consumes as <strong>reference
                         bindings</strong>, and at dispatch Cronomicon resolves and injects <em>only that declared set</em>
-                    into the run. Scope Env Vars you do <em>not</em> bind are still not auto-added — declaration is the
+                    into the run. Scope Env Vars you do <em>not</em> bind are not added — declaration is the
                     whole point.
                 </p>
 
-                <h4>Derived reference names (v0.48)</h4>
+                <h4>Derived reference names</h4>
                 <p>Every Variables / Secrets / SSH&nbsp;Keys row carries a canonical <strong>derived reference</strong>
                     name — shown in the expanded row in monospace with a <strong>copy-to-clipboard</strong> control and
                     a one-line hint. The four reserved prefixes are a closed set:</p>
@@ -5552,12 +5520,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </div>
                 <p>Because these prefixes are reserved, <strong>row names must be POSIX identifiers</strong>
                     (<code>[A-Za-z_][A-Za-z0-9_]*</code>) and <strong>may not start with <code>CRONOMICON_</code></strong>
-                    — a violation returns <code>422</code> (existing rows are grandfathered). New <strong>SSH-key labels
+                    — a violation returns <code>422</code>. <strong>SSH-key labels
                         additionally drop <code>-</code> and <code>.</code></strong> (they would break the derived
                     <code>CRONOMICON_KEY_&lt;label&gt;</code> name) — use snake_case. And operator-authored env everywhere
-                    else (job env, schedule env, per-run overrides, workflow step inputs, inventories) may <strong>no
-                        longer <em>define</em> any <code>CRONOMICON_*</code> key</strong> — a
-                    <code>lookup('env','CRONOMICON_…')</code> <em>reference</em> is still fine, but a literal
+                    else (job env, schedule env, per-run overrides, workflow step inputs, inventories) may <strong>not
+                        <em>define</em> any <code>CRONOMICON_*</code> key</strong> — a
+                    <code>lookup('env','CRONOMICON_…')</code> <em>reference</em> is fine, but a literal
                     <code>CRONOMICON_*=</code> assignment is rejected at save/ingest.
                 </p>
 
@@ -5573,15 +5541,15 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     complete inventory of what this job or script consumes rather than a list of only its problems.
                     Saving is a <strong>full replace</strong> of the set (<strong>Save references</strong> /
                     <strong>Reset</strong>). On a <strong>Script</strong>, <strong>Suggest from body</strong> scans the
-                    script text to prefill likely bindings and lists any bare-name references still on the legacy
-                    fallback. Editing bindings needs the <strong>Manage env vars</strong> permission (without it the
+                    script text to prefill likely bindings and lists any bare-name references that rely on the
+                    name-based fallback. Editing bindings needs the <strong>Manage env vars</strong> permission (without it the
                     editor is read-only chips) and is <strong>scope-checked</strong> — a job's bindings gate on the
                     job's scope; script bindings require an unrestricted manager.
                 </p>
 
                 <h4>Injecting under a different name &mdash; the alias</h4>
                 <p>Beside the name box is an optional <strong>&ldquo;inject as&rdquo;</strong> field. Leave it empty and
-                    the value arrives under the row's own derived name, exactly as before. Fill it in and the value
+                    the value arrives under the row's own derived name. Fill it in and the value
                     arrives under <em>that</em> name instead &mdash; the editor previews the key it will land on as you
                     type.</p>
                 <p>This exists for one situation, and it is a common one: <strong>a shared job that each department must
@@ -5624,7 +5592,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li><strong>SSH-key material</strong> (<code>CRONOMICON_KEY_*</code>) is delivered only on
                         <strong>runner-dispatched</strong> runs — the key is materialized to a <code>0600</code> tmpfs
                         file, exposed as <code>CRONOMICON_KEY_&lt;name&gt;=&lt;path&gt;</code>, and wiped at run end. On
-                        the in-app <strong>SSH executor</strong> a key binding is <strong>refused</strong> (v1.5.35):
+                        the in-app <strong>SSH executor</strong> a key binding is <strong>refused</strong>:
                         the executor connects <em>from</em> Cronomicon and cannot place a key file on the target, so a
                         run that resolves to it is rejected rather than started without the key &mdash; a manual run
                         gets a <code>422</code> naming the key, a scheduled fire records a skipped run, a workflow step
@@ -5638,11 +5606,11 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             app</em>-gated) — grant it only to runners you trust with the blast radius.</li>
                 </ul>
                 <h4>Checking a binding before you run it</h4>
-                <p>Previously the <em>only</em> feedback on a bad binding arrived at dispatch, as a failed run whose
-                    message says just <em>“reference X is unavailable for this run”</em>. That vagueness is deliberate —
-                    a run must not become a way to probe for secret names in scopes you cannot see — but it left you
-                    with no way to tell a <strong>typo</strong> apart from a <strong>scope mismatch</strong>. Cronomicon
-                    now answers that question <strong>where you declare the binding</strong>, before any run exists.</p>
+                <p>At dispatch, a bad binding produces a failed run whose message says just <em>“reference X is
+                        unavailable for this run”</em>. That vagueness is deliberate — a run must not become a way to
+                    probe for secret names in scopes you cannot see — but on its own it would leave you with no way to
+                    tell a <strong>typo</strong> apart from a <strong>scope mismatch</strong>. So Cronomicon answers
+                    that question <strong>where you declare the binding</strong>, before any run exists.</p>
                 <p>Each <em>saved</em> row in the reference-bindings editor carries a verdict and, next to it, the scope
                     the row actually resolved from:</p>
                 <div class="tbl-wrap">
@@ -5770,9 +5738,9 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </figure>
                 <div class="callout note">
                     <div class="ct"><span class="em">🧾</span> Repeats collapse into one row</div>
-                    <p><strong>Consecutive identical events</strong> now render as a single row with a count and a time
+                    <p><strong>Consecutive identical events</strong> render as a single row with a count and a time
                         range — <em>“×19 · 18:16 – 23:21”</em> — instead of nineteen identical lines. The signal in a
-                        repeated event is <em>that it happened nineteen times</em>, and the old feed buried it.</p>
+                        repeated event is <em>that it happened nineteen times</em>, and nineteen lines would bury it.</p>
                     <p>Collapsing is <strong>consecutive-only</strong>: <code>A A B A A</code> is three rows, not two,
                         because merging non-adjacent events would misrepresent order — the one thing a chronological
                         feed must not do. Nothing is lost either: the count is a button, and expanding it lists every
@@ -5782,8 +5750,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <h3>12.2 History — five tabs</h3>
                 <p>Deep-linked via <code>?tab=</code>; each tab keeps independent search/filter and does
                     <strong>server-side pagination</strong> — it fetches one page at a time as a
-                    <code>{page, pageSize, totalItems, totalPages, items}</code> envelope, so history beyond the old
-                    in-memory window is reachable. The page-size selector offers 25 / 50 / 100 (default 25); the server
+                    <code>{page, pageSize, totalItems, totalPages, items}</code> envelope, so the whole retained
+                    history is reachable. The page-size selector offers 25 / 50 / 100 (default 25); the server
                     clamps any request to a maximum of 200 rows.
                 </p>
                 <figure class="shot">
@@ -5929,7 +5897,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         position, with a <strong>↓ Resume following</strong> control to jump back. When the run
                         finishes, one final read collects the last lines and the polling stops. The same behaviour
                         applies wherever a live run's log is open — a workflow step's drill-in, or Recent runs on Jobs
-                        and Runners. Redaction is unchanged: logs are masked when they are <em>written</em>, so a
+                        and Runners. Logs are masked when they are <em>written</em>, so a
                         partial read shows exactly what a full read would.
                     </li>
                 </ol>
@@ -6031,39 +5999,36 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         next poll: same id and key, active jobs unaffected. Config changes usually propagate
                         automatically after a restart, so this is the don't-wait lever.</li>
                     <li><strong>Scan keys</strong> — scans a target's SSH host key so you can approve it.</li>
-                    <li>Neither carries a protocol-version requirement any more. The server's protocol floor
+                    <li>Neither carries a protocol-version requirement. The server's protocol floor
                         tracks the current wire protocol, so an agent old enough to ignore one of these
                         buttons cannot register, redeclare or even poll — it is refused outright rather than
-                        accepting a click that does nothing. The house rule these two once illustrated still
-                        holds elsewhere: <strong>a precondition disables with an explanation; only
+                        accepting a click that does nothing. The house rule elsewhere in the app:
+                        <strong>a precondition disables with an explanation; only
                             irrelevance hides.</strong>
                     </li>
                     <li><strong>Drain</strong> — finishes active jobs, then goes offline.</li>
                     <li><strong>Copy upgrade command</strong> — copies the one-line root command that upgrades (or
-                        reinstalls) the agent on that host. Moved up here from below the fold in the version section,
-                        and it is <strong>always offered whatever the version badge says</strong>: it is also the
+                        reinstalls) the agent on that host. It is <strong>always offered whatever the version badge
+                            says</strong>: it is also the
                         reinstall command, and “up to date” compares version <em>strings</em>, so a locally-built agent
                         can read current while speaking an older protocol.</li>
                     <li><strong>⚙ Settings</strong> sits on the <em>Managed settings</em> section header — the thing it
                         edits — and carries the pending-change dot.</li>
                 </ul>
                 <p>Resync, Scan keys and Drain are offered while the runner is <strong>reachable</strong> —
-                    <code>online</code> <em>or</em> <code>degraded</code>. They once required <code>online</code>, which
-                    took all three away from a degraded runner: the one state where you most need them, since a degraded
-                    runner is still heartbeating and still holding work. <code>offline</code> still hides them — there
-                    is nobody there to ask.
+                    <code>online</code> <em>or</em> <code>degraded</code>. A degraded runner is still heartbeating and
+                    still holding work, so it is the one state where you most need them. <code>offline</code> hides
+                    them — there is nobody there to ask.
                 </p>
                 <div class="callout tip">
                     <div class="ct"><span class="em">🔌</span> An offline runner comes back on its next poll</div>
-                    <p>Offline used to be a one-way trap: an offline runner&rsquo;s poll was answered with a drain op,
-                        the agent exited cleanly, and restarting the service just replayed the loop &mdash; the only
-                        escapes were editing the database or registering afresh. Now an authenticated poll from an
+                    <p>Offline is not a one-way trap. An authenticated poll from an
                         <em>offline</em> runner is treated as what it is, proof of life: the row flips back to <span
                             class="pill ok"><span class="dot"></span>Online</span>, the stale drain deadline is cleared,
                         the re-admission is recorded in Activity, and pending resync, managed settings and work are
                         delivered in the same round-trip. Bringing a reaped runner back is simply: start its service
-                        again. <em>Draining</em> is untouched &mdash; that is in-flight operator intent, and it still
-                        resolves to offline &mdash; and <strong>Deregister</strong> remains the deliberate lock-out: a
+                        again. <em>Draining</em> is different &mdash; that is in-flight operator intent, and it
+                        resolves to offline &mdash; and <strong>Deregister</strong> is the deliberate lock-out: a
                         runner that should stay out of rotation is a service you leave stopped.
                     </p>
                 </div>
@@ -6083,19 +6048,18 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </div>
                 <div class="callout note">
                     <div class="ct"><span class="em">🟠</span> <strong>Degraded</strong> is a real status</div>
-                    <p>The Degraded tile existed and read <strong>0</strong> forever: nothing could produce the status.
-                        The gap it names is real and was invisible — a runner's <em>last seen</em> is written on every
+                    <p>The gap it names is real: a runner's <em>last seen</em> is written on every
                         long-poll, but a runner is only called <strong>offline</strong> after the reaper's 5-minute
-                        window. So for up to five minutes a runner that had already died still read <span
-                            class="pill ok"><span class="dot"></span>Online</span> in its row, in the tile counts, and
-                        to anyone deciding where to send work.</p>
+                        window. Without a status in between, for up to five minutes a runner that had already died
+                        would still read <span class="pill ok"><span class="dot"></span>Online</span> in its row, in
+                        the tile counts, and to anyone deciding where to send work.</p>
                     <p><strong>Degraded is that window.</strong> It is reported when a runner's heartbeat is more than
                         <strong>two minutes</strong> old (agents poll about once a minute, so two missed polls — late
                         enough not to flag ordinary jitter), and for a runner that registered but has never polled. It
                         is <em>derived when the page is read</em>, not stored: the stored status is the runner's
                         <em>lifecycle</em>, and this is a freshness reading laid over it. Only <code>online</code>
                         degrades — <code>draining</code> is already leaving, and <code>offline</code> has been reaped.
-                        Nothing about pausing, draining or deregistering changes; the runner's own recorded status is
+                        Pausing, draining and deregistering are unaffected by it; the runner's own recorded status is
                         untouched.
                     </p>
                 </div>
@@ -6247,15 +6211,15 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p>On the right of the top bar, a blue <strong>Download</strong> button downloads the runner install
                     script <strong>from the app itself</strong> (<span class="route">/runner-install.sh</span> — the
                     same file the Install Command fetches; no external repository access needed from the target host).
-                    (It replaced the old in-view <em>Refresh</em>; the page-level <strong>Reload page</strong> in the
-                    top app bar still reloads everything, and the registry refetches on its own after drain /
+                    (There is no in-view <em>Refresh</em>; the page-level <strong>Reload page</strong> in the
+                    top app bar reloads everything, and the registry refetches on its own after drain /
                     deregister / token actions.)</p>
                 <h3>13.4 Advanced: pre-authored install (the helper)</h3>
                 <p>For most installs, use <strong>＋ Add Runner</strong> (§13.2) — one click, one flagless line on the
                     host, everything else auto-detected or tuned on the runner's row afterward. For a
                     <strong>pre-authored</strong> install — config management, containers, or a fully-specified
                     one-liner — the collapsed <strong>Advanced: pre-authored install</strong> panel at the bottom of the
-                    view (demoted from the old "Provision a Runner" headline) authors the artifacts. Pick a
+                    view authors the artifacts. Pick a
                     <strong>profile</strong> to show just the relevant fields: <em>SSH task runner</em> surfaces
                     key/known_hosts custody; <em>Ansible control node</em> surfaces the checkout/vault secret-file
                     inputs and collapses SSH custody behind an advanced toggle; <em>Custom</em> shows everything.
@@ -6263,7 +6227,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     reveals the run-type chips). It emits three copy-paste artifacts — an annotated
                     <code>runner.env</code>, the matching install one-liner (with the key/known_hosts/CA and — —
                     checkout/vault secret-file flags), and the <code>docker run</code> variant. Mint a token first
-                    (§13.2) and it's filled in automatically. Max jobs, sandbox caps, and checkout policy are no longer
+                    (§13.2) and it's filled in automatically. Max jobs, sandbox caps, and checkout policy are not
                     helper inputs — set them on the runner's row (<strong>⚙ Settings</strong>) after it registers
                     (§13.1).
                 </p>
@@ -6280,10 +6244,10 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     flashes “✓ Saved”). Secrets (PATs, tokens, passwords, S3 keys) are <strong>write-only</strong> —
                     masked on read, sent only when you type a new value. The help text under each field describes
                     <em>what you get</em> rather than the mechanism (“The most jobs that can run at once, across every
-                    runner”), with three factual corrections in the process — the GitLab branch also governs sync reads,
+                    runner”), and states the facts that matter — the GitLab branch also governs sync reads,
                     the change-log window also prunes sign-in events, and a metrics-path change only takes effect after
                     a restart. Security-relevant help (token validity, secret handling, host-key pinning, audit
-                    retention) was left exactly as written: a friendlier sentence that is wrong is worse than a blunt
+                    retention) is deliberately blunt: a friendlier sentence that is wrong is worse than a blunt
                     one that is right.
                 </p>
 
@@ -6319,41 +6283,31 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td><strong>General →</strong> Notifications</td>
                                 <td>Run notifications (<strong>Apprise</strong> URL fan-out or <strong>SMTP</strong>
-                                    relay), <strong>Alert Rules</strong> (specific-job/all-jobs × fails/succeeds ×
-                                    <strong>Email</strong>/<strong>Apprise</strong>), and, at one time, an <strong>Alert
-                                        Destinations</strong> list. That list was <strong>removed</strong>: nothing ever
-                                    read it to deliver anything (routing comes from the Apprise targets or the SMTP
-                                    relay above, plus each rule’s channels), and its “last fired” column could only ever
-                                    mean “something sent over this transport”. The Run Notifications card now says
-                                    exactly that, per transport — <em>“Email — sent 10:00”</em> — with a failed send
-                                    called out in red and “never sent” shown as nothing at all. <strong>Send
-                                        test</strong>, beside <em>Save Changes</em>, delivers a test message over every
-                                    configured transport and reports each one as <em>sent</em>, <em>failed</em> or
-                                    <em>not attempted</em> with the reason — so you can find out whether your relay
-                                    works without waiting for a job to fail. It uses the <strong>saved</strong> settings
-                                    and the <strong>default recipients</strong> only (never an alert rule’s), and a
-                                    successful test updates the last-sent line. A rule's condition column is headed
-                                    <strong>When</strong> (“Job fails”) — it was once called <em>Trigger</em>, which
-                                    read as a noun for the verb this app uses for <em>starting</em> a run; a rule stored
-                                    against a status the form no longer offers now displays as <em>“Job result:
-                                        Warn”</em> rather than the raw <code>warning</code>, and <strong>keeps</strong>
-                                    that status when you re-save it instead of silently becoming <em>Job fails</em>.
-                                    <strong>Five controls were removed outright</strong> rather than left inert —
-                                    <em>By&nbsp;Tag</em> targeting, the <em>N&nbsp;failures in window</em> trigger with
-                                    its count/window pair, and the <em>Slack</em>, <em>Webhook</em> and <em>In-App</em>
-                                    channels. None was ever wired to delivery: the notifier only ever spoke Email and
-                                    Apprise, and <strong>Apprise — which reaches Slack, Discord and webhooks — is
-                                        selectable on a rule for the first time.</strong> The API refuses the removed
-                                    values too (<code>422</code>). An older rule that names a dead channel still lists
-                                    it, struck through, so you can see which rules to re-point. Two fixes on that table:
-                                    <strong>deleting an alert rule now asks first</strong> — it used to go on the first
-                                    click, and one click removed the thing that tells you a job failed with nothing
-                                    naming what went; the prompt names the rule, its condition and its channels, and
-                                    distinguishes an <em>active</em> rule (something stops being sent) from an inactive
-                                    one (nothing was being sent anyway). And the <strong>Edit</strong> button now works
-                                    on every row it draws: an identity comparison mismatched on rules with no id, so for
-                                    those the button did nothing, forever. A row that genuinely cannot be edited renders
-                                    no button rather than a dead one.
+                                    relay) and <strong>Alert Rules</strong> (specific-job/all-jobs × fails/succeeds ×
+                                    <strong>Email</strong>/<strong>Apprise</strong>). Routing comes from the Apprise
+                                    targets or the SMTP relay, plus each rule’s channels; there is no separate
+                                    destinations list. The Run Notifications card reports delivery per transport —
+                                    <em>“Email — sent 10:00”</em> — with a failed send called out in red and “never
+                                    sent” shown as nothing at all. <strong>Send test</strong>, beside <em>Save
+                                        Changes</em>, delivers a test message over every configured transport and
+                                    reports each one as <em>sent</em>, <em>failed</em> or <em>not attempted</em> with
+                                    the reason — so you can find out whether your relay works without waiting for a
+                                    job to fail. It uses the <strong>saved</strong> settings and the <strong>default
+                                        recipients</strong> only (never an alert rule’s), and a successful test updates
+                                    the last-sent line. A rule's condition column is headed <strong>When</strong>
+                                    (“Job fails”), since <em>trigger</em> is the verb this app uses for
+                                    <em>starting</em> a run; a rule stored against a status the form does not offer
+                                    displays as <em>“Job result: Warn”</em> rather than the raw <code>warning</code>,
+                                    and <strong>keeps</strong> that status when you re-save it instead of silently
+                                    becoming <em>Job fails</em>. The only channels are <strong>Email</strong> and
+                                    <strong>Apprise</strong> (Apprise is how a rule reaches Slack, Discord and
+                                    webhooks), and the API refuses any other channel value (<code>422</code>); a rule
+                                    that names an unknown channel lists it struck through, so you can see which rules
+                                    to re-point. <strong>Deleting an alert rule asks first</strong>: the prompt names
+                                    the rule, its condition and its channels, and distinguishes an <em>active</em> rule
+                                    (something stops being sent) from an inactive one (nothing was being sent anyway).
+                                    A row that genuinely cannot be edited renders no <strong>Edit</strong> button
+                                    rather than a dead one.
                                 </td>
                             </tr>
                             <tr>
@@ -6361,10 +6315,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>Repo URL, Bot PAT, Bot name/email, <strong>Working Branch</strong>, the copyable
                                     read-only <strong>Webhook URL</strong>, <strong>Webhook Enabled</strong> +
                                     <strong>Webhook Events</strong> (<code>push</code> / <code>mr</code> /
-                                    <code>tag</code>), and the Webhook Secret (Rotate, unless env-pinned). <em>Working
-                                        Branch</em> was once called <em>Write Branch</em> — the old name described half
-                                    of what it does, since the branch governs sync <strong>reads</strong> as well as
-                                    schedule writes.
+                                    <code>tag</code>), and the Webhook Secret (Rotate, unless env-pinned). The <em>Working
+                                        Branch</em> governs sync <strong>reads</strong> as well as schedule writes.
                                 </td>
                             </tr>
                             <tr>
@@ -6385,7 +6337,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     <strong>SSH key credential</strong> (<a href="#envvars">Env Vars → SSH Keys</a>,
                                     writing <code>authCredentialId</code>) or, coequally, a key resolved <em>by name
                                         (runner / inventory)</em> (<code>authKeyEnvVar</code>) — the column then shows
-                                    the credential's label. <strong>Test connection</strong> now names the key that
+                                    the credential's label. <strong>Test connection</strong> names the key that
                                     authenticated (type + SHA256 fingerprint).
                                 </td>
                             </tr>
@@ -6403,27 +6355,26 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     opened, and <em>existing logs are not moved</em>, so move the tree yourself if older
                                     logs must stay readable. The usage line underneath breaks the directory down
                                     <strong>by file class</strong>: the headline (<em>“N run logs · size · oldest
-                                        …”</em>) is now <strong>run logs only</strong> — roughly one file per run, and
+                                        …”</em>) is <strong>run logs only</strong> — roughly one file per run, and
                                     the number the retention window actually governs — with <strong>Process
                                         log</strong>, <strong>Audit log</strong> and <strong>Other</strong> (the
                                     per-folder <code>_meta.json</code> sidecars) listed beneath it next to the directory
-                                    total, each shown only when present. Both the count and the oldest date previously
-                                    included the server's own process log, which made a single runaway file
-                                    indistinguishable from real run history.
+                                    total, each shown only when present. Keeping the server's own process log out of
+                                    the headline count and oldest date means a single runaway file can never be
+                                    mistaken for real run history.
                                 </td>
                             </tr>
                             <tr>
                                 <td><strong>Access &amp; Security →</strong> Users &amp; Access</td>
                                 <td>Recent Logins (the Honest View), <strong>Roles</strong> (role CRUD; built-ins
                                     undeletable), and <strong>Access Grants</strong> — the only list that decides
-                                    access, searchable and filterable. The legacy <strong>AD Group → Role
-                                        Mappings</strong> list has been removed.</td>
+                                    access, searchable and filterable.</td>
                             </tr>
                             <tr>
                                 <td><strong>Access &amp; Security →</strong> Audit &amp; Compliance</td>
                                 <td><strong>Data Retention</strong> — how long each record class is kept:
-                                    <strong>seven</strong> windows now (Run History, Activity Log, Workflow Runs, Change
-                                    Log, Schedule Pushes, on-disk <strong>Run Log Files</strong>, and the new
+                                    <strong>seven</strong> windows (Run History, Activity Log, Workflow Runs, Change
+                                    Log, Schedule Pushes, on-disk <strong>Run Log Files</strong>, and
                                     <strong>Audit Stream Files</strong>). <code>0</code> means keep forever, and a
                                     change applies on the next nightly sweep. <strong>Audit Stream Files</strong>
                                     (<code>auditLogFiles</code>, default <strong>730 days</strong>) bounds the on-disk
@@ -6431,12 +6382,10 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                     Log window, because that file is an <em>export</em> of these tables and is meant to
                                     outlive the rows it exported; setting it shorter throws the exported tail away
                                     early. Plus <strong>Audit Export</strong> (date range, event types, CSV/JSON) —
-                                    where the <strong>Auth Events</strong> filter now returns <em>real authentication
+                                    where the <strong>Auth Events</strong> filter returns <em>authentication
                                         and authorization events</em> (logins, failed logins, logouts, permission
-                                    denials, CSRF rejections). It previously behaved as an alias for <em>Config
-                                        Changes</em>: selecting it alone returned every config change and not one auth
-                                    event, so any saved filter that relied on that must now tick <em>Config Changes</em>
-                                    explicitly.
+                                    denials, CSRF rejections) and nothing else; to include configuration changes, tick
+                                    <em>Config Changes</em> explicitly.
                                 </td>
                             </tr>
                         </tbody>
@@ -6445,13 +6394,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
 
                 <div class="callout warn">
                     <div class="ct"><span class="em">🧰</span> Retention is a Settings control; backup is not</div>
-                    <p><strong>Retention now has a UI:</strong> the seven per-table windows live in <em>Settings → Audit
+                    <p><strong>Retention is a UI control:</strong> the seven per-table windows live in <em>Settings → Audit
                             &amp; Compliance → Data Retention</em> and are authoritative. The
                         <code>CRONOMICON_RETENTION_*</code> environment variables only seed those values on a server's
                         <em>first</em> boot — after that, editing the env changes nothing and the panel is the place to
                         look.
                     </p>
-                    <p><strong>The nightly VACUUM-to-S3 backup still has no UI</strong> and remains server-config
+                    <p><strong>The nightly VACUUM-to-S3 backup has no UI</strong> and is server-config
                         (<code>CRONOMICON_BACKUP_*</code>) — don't go hunting for knobs that aren't there. See <a
                             href="administrator-manual.html#deployment">Deployment &amp; Day-2</a> (Administrator
                         Manual).</p>
@@ -6463,8 +6412,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         Also, an <code>CRONOMICON_*</code> env var, when set, <strong>overrides</strong> the matching DB
                         value — unset it to manage via the UI. (Exception: metrics enabled/auth is evaluated live per
                         scrape, but a metrics-path change still needs a restart.)</p>
-                    <p><strong>Log storage is no longer one of them:</strong> saving a new local log directory re-points
-                        every log writer straight away — the restart warning is gone. Existing log files stay where they
+                    <p><strong>Log storage is the exception:</strong> saving a new local log directory re-points
+                        every log writer straight away, with no restart. Existing log files stay where they
                         are.</p>
                 </div>
                 <div class="callout note">
@@ -6646,7 +6595,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li>In <a href="#settings">Settings → SSH Targets → Bastion Configuration</a>, add a bastion (Name,
                         Address, Port, User, Auth Key). Click <strong>Test connection</strong> → Verified.</li>
                     <li>Edit the target host and set its <strong>Connect Via</strong> to the bastion's name.</li>
-                    <li><strong>Test</strong> the host — Cronomicon now dials the bastion, tunnels to the target, and
+                    <li><strong>Test</strong> the host — Cronomicon dials the bastion, tunnels to the target, and
                         verifies the <em>target's</em> host key over the tunnel.</li>
                     <li>Trigger/schedule the job against that host or its scope. (Bastion-hop host-key pinning is a
                         future refinement; the target hop is fully verified today.)</li>
@@ -6724,7 +6673,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <details class="faq">
                     <summary>A non-admin triggered or killed a job their role says they shouldn't</summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> this should no longer happen. The run lifecycle
+                        <p class="faq-cause"><strong>Cause:</strong> this should not happen. The run lifecycle
                             (trigger / kill / pause / resume a job, and workflow trigger / pause / cancel) is enforced
                             <strong>per-role and per-scope</strong>: the caller needs <code>triggerJobs</code> (or
                             <code>killJobs</code>, to stop something) on the run's scope, from the same grant. The
@@ -6789,7 +6738,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <summary>A scheduled job didn't fire when expected</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the job is paused, the concurrency cap was hit, a
-                            Forbid policy suppressed it, the cron is invalid, or it now fires in the <strong>effective
+                            Forbid policy suppressed it, the cron is invalid, or it fires in the <strong>effective
                                 application timezone</strong> (the Settings → General Timezone, else the host
                             <code>TZ</code>) rather than the zone you assumed.
                         </p>
@@ -6802,14 +6751,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <summary>A scheduled job suddenly runs on one host instead of the whole scope</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the job has a <strong>Target host</strong> pinned,
-                            and that pin is honored on every run path. It previously applied only when a human pressed
-                            <em>Run</em>; cron fires and workflow steps dropped it and fanned out across the entire
-                            scope, so a job may have been running everywhere for as long as it has existed.
+                            and that pin is honored on every run path — manual runs, cron fires and workflow steps alike.
                         </p>
-                        <p><strong>Fix:</strong> this is the pin doing what it always claimed. If the fan-out was what
-                            you actually wanted, open the job in <a href="#compose">Compose</a> and <strong>clear Target
-                                host</strong> — leaving it on <em>“all hosts in {scope}”</em> restores the fan-out,
-                            deliberately this time. Unpinned jobs were never affected.</p>
+                        <p><strong>Fix:</strong> this is the pin doing what it claims. If the fan-out is what
+                            you actually want, open the job in <a href="#compose">Compose</a> and <strong>clear Target
+                                host</strong> — leaving it on <em>“all hosts in {scope}”</em> restores the fan-out.
+                            Unpinned jobs are not affected.</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -6989,41 +6936,13 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     </div>
                 </details>
                 <details class="faq">
-                    <summary>Where did the Dashboard's histogram and its three list cards go?</summary>
-                    <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> the Dashboard redesign replaced the Recent Activity
-                            histogram, <em>Upcoming</em>, <em>Recent Completions</em> and <em>Currently Running</em>
-                            with the <a href="#dashboard">Score</a> — they were one dataset split by tense.</p>
-                        <p><strong>Fix:</strong> everything those cards listed is a mark on the Score: past runs are
-                            filled, scheduled fires are hollow, hover or arrow-key to a mark to read the job, outcome
-                            and duration, and use <strong>Full score</strong> for one staff per job. For the tabular
-                            view with filters and paging, go to <a href="#history">History → Executions</a> (past) or <a
-                                href="#schedules">Schedules → Upcoming</a> (future). There is deliberately no range
-                            picker — the window is fixed at 24h back / 12h ahead, which is also what keeps the forward
-                            half inside the server's projection caps.</p>
-                    </div>
-                </details>
-                <details class="faq">
-                    <summary>The red failed-run banner on the Dashboard is gone</summary>
-                    <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> removed deliberately. It named only the
-                            <em>latest</em> failure and truncated the rest to “+N more”, which is strictly less than
-                            what replaced it.
-                        </p>
-                        <p><strong>Fix:</strong> read <strong>Current status → Recent errors</strong> beneath the Score
-                            (<a href="#dashboard">§5.3</a>). It lists <em>every</em> affected job by name with its own
-                            count, failures before warnings, and each row opens that job's own run history. There is
-                            nothing to dismiss, so nothing to recover from — a new failure simply sorts to the top.</p>
-                    </div>
-                </details>
-                <details class="faq">
                     <summary>A runner reads <strong>Degraded</strong> — what is that, and what should I do?</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> its last heartbeat is more than <strong>two
                                 minutes</strong> old (or it registered and has never polled). Agents poll about once a
                             minute, so this means two missed polls. The status is <em>derived</em> when you load the
-                            page, not stored — the runner's own recorded lifecycle status is untouched. Before it
-                            existed, such a runner read <em>Online</em> for up to five minutes after it had actually
+                            page, not stored — the runner's own recorded lifecycle status is untouched. Without it,
+                            such a runner would read <em>Online</em> for up to five minutes after it had actually
                             died.</p>
                         <p><strong>Fix:</strong> check the host and the agent service. A degraded runner is treated as
                             <strong>reachable</strong>, so <em>Resync</em>, <em>Scan keys</em> and <em>Drain</em> all
@@ -7031,30 +6950,6 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             it <span class="pill mut"><span class="dot"></span>Offline</span> at the 5-minute mark and
                             reconcile its in-flight runs to <strong>Lost</strong>.
                         </p>
-                    </div>
-                </details>
-                <details class="faq">
-                    <summary>A status word I knew has changed — Healthy, Passing, Disable</summary>
-                    <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> the console settled its vocabulary at one word per
-                            concept; the console had been using several at once.</p>
-                        <p><strong>Fix:</strong> the current words are in <a href="#status-vocab">Appendix D</a>. The
-                            renames you are most likely to hit: Jobs' <em>Healthy</em> tab → <strong>Success</strong>;
-                            Workflows' <em>Passing</em> result → <strong>Success</strong>, <em>Warning</em> →
-                            <strong>Warn</strong>; a workflow's <em>Enable/Disable</em> → <strong>Pause/Resume</strong>;
-                            <em>Kill</em> → <strong>Kill run</strong>; Workflow Runs' <em>Status</em> column →
-                            <strong>Result</strong>; Settings' <em>Write Branch</em> → <strong>Working Branch</strong>.
-                            API field names and wire values did <em>not</em> change — only what is printed on screen.
-                        </p>
-                    </div>
-                </details>
-                <details class="faq">
-                    <summary>Where is the “Schedule” page the older docs describe?</summary>
-                    <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> the standalone Schedule hub was dissolved.</p>
-                        <p><strong>Fix:</strong> use the <a href="#schedules">Schedules</a> page tabs (Catalog ·
-                            Inventory · Upcoming) and <a href="#jobs">Jobs → + Publish to GitLab</a> for the publish
-                            builder. <code>/schedule</code> redirects to <code>/schedules</code>.</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -7149,7 +7044,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dd>The <em>name</em> of the env var or stored secret holding the unencrypted SSH private key for a
                         host or bastion. The server ships only this name to runners; key bytes never cross the wire.
                         <strong>Coequal</strong> with <code>authCredentialId</code> (the first-class <a
-                            href="#envvars">SSH key credential</a>) and <em>not</em> deprecated: the name path is
+                            href="#envvars">SSH key credential</a>) and fully supported: the name path is
                         <strong>permanent</strong> for runner-executed and inventory-imported hosts, which resolve keys
                         by name <em>locally</em> and never receive credential material.
                     </dd>
@@ -7326,8 +7221,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         masked.</dd>
                     <dt>Reference binding (run injection)</dt>
                     <dd>A declaration on a Job or Script naming the Secrets, Variables and SSH keys it consumes, by
-                        their <strong>derived reference</strong> (<code>CRONOMICON_SECRET_/VAR/KEY_&lt;name&gt;</code>,
-                        v0.48). At dispatch Cronomicon resolves and injects <em>only</em> the declared set into the run
+                        their <strong>derived reference</strong> (<code>CRONOMICON_SECRET_/VAR/KEY_&lt;name&gt;</code>).
+                        At dispatch Cronomicon resolves and injects <em>only</em> the declared set into the run
                         (stored or Vault-sourced), masked in logs and never persisted; a missing/out-of-scope reference
                         <strong>fails the run</strong> (fail-closed). Edited on the Job/Script detail panels (<em>Manage
                             env vars</em>, scope-checked); the injected names are shown read-only on the run detail.
@@ -7358,7 +7253,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         executors share one lifecycle (trigger → queued → running → terminal); a run row's
                         <code>executor</code> column keeps them from cross-claiming.
                     </dd>
-                    <dt>Run input (formerly “run prompt” / user-defined run variable)</dt>
+                    <dt>Run input</dt>
                     <dd>A value <em>declared</em> on a Job — or, on a Script and inherited by jobs built from it —
                         (name, label, required, default, options) that surfaces as a fillable field — text or a
                         <code>&lt;select&gt;</code> on options — in the ad-hoc Run dialog. Answers ride the per-run
@@ -7369,8 +7264,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         alike (not yet for schedule/workflow fires). the unfilled name is recorded under
                         <code>promptWarnings</code> in the run's override envelope for History, alongside
                         <code>promptAnswers</code> (where each value came from) and <code>promptAcknowledged</code>.
-                        Distinct from the old inferred <em>Script variables</em> heuristic, which was demoted out of the
-                        run path to a Composer seed + drift lint. See <a href="#jobs">§6</a>.
+                        Distinct from the inferred <em>Script variables</em> heuristic, which is only a Composer seed
+                        + drift lint and never part of the run path. See <a href="#jobs">§6</a>.
                     </dd>
                     <dt>Runner / runner agent</dt>
                     <dd>The external <code>cronomicon-runner</code> binary on a separate host that registers, long-polls
@@ -7410,8 +7305,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dt>Score</dt>
                     <dd>The Dashboard's single timeline, 24 hours back and 12 hours ahead: one mark per run — filled if
                         it ran, hollow if it is scheduled — with the stem's height showing duration on a log scale and a
-                        gold playhead at <em>now</em>. It replaced the histogram, Upcoming, Recent Completions and
-                        Currently Running, which were one dataset split by tense. Runs within about 18½ minutes of each
+                        gold playhead at <em>now</em>. Past runs, running runs and upcoming fires are one dataset
+                        on one axis rather than separate lists split by tense. Runs within about 18½ minutes of each
                         other share one mark, drawn as a <strong>chord</strong> — one pip per run, each in its own
                         outcome's colour. See <a href="#dashboard">§5.2</a>.</dd>
                     <dt>Chord (Score)</dt>
@@ -7419,14 +7314,12 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         per run, severity-sorted with the worst lowest, on one shared stem sized by the longest run.
                         Each pip keeps its own outcome's colour, so a mixed cluster is legible rather than painted the
                         worst colour throughout. Capped at 8 with a <code>+k</code> overflow that folds from the
-                        <em>mildest</em> end, so an overflow can never hide a failure. Replaced a single notehead
-                        carrying a small count numeral.
+                        <em>mildest</em> end, so an overflow can never hide a failure.
                     </dd>
                     <dt>Current status (Dashboard)</dt>
                     <dd>The section beneath the Score carrying the detail behind the verdict: <strong>Up next</strong>
                         names the next three scheduled runs, and <strong>Recent errors</strong> folds the last 24 hours
-                        of failures and warnings per job (appearing only when there are any). It replaced the red
-                        failed-run banner. See <a href="#dashboard">§5.3</a>.</dd>
+                        of failures and warnings per job (appearing only when there are any). See <a href="#dashboard">§5.3</a>.</dd>
                     <dt>Verdict strip (Dashboard)</dt>
                     <dd>The one-line answer to “is everything okay?” at the top of the Dashboard, above the stat tiles:
                         a quiet <em>“All 14 jobs healthy.”</em> when nothing is wrong, a red, clickable <em>“N jobs need
@@ -7439,8 +7332,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dd>A runner whose heartbeat is more than <strong>two minutes</strong> old, or which registered and
                         never polled. <strong>Derived at read time, not stored</strong> — the stored status is the
                         runner's lifecycle, and this is a freshness reading over it, so only <code>online</code>
-                        degrades. It names the window in which a dead runner used to still read <em>Online</em>, since
-                        <code>offline</code> is only declared after the reaper's 5-minute threshold. A degraded runner
+                        degrades. It names the window in which a dead runner would otherwise still read <em>Online</em>,
+                        since <code>offline</code> is only declared after the reaper's 5-minute threshold. A degraded runner
                         counts as <strong>reachable</strong>: its recovery actions stay offered. See <a
                             href="#runners">§13.1</a>.
                     </dd>
@@ -7472,7 +7365,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dd>The optional single host a job definition pins itself to (<code>targetHost</code>, set in <a
                             href="#compose">Compose</a>). Left empty, the run fans out across every host in its scope.
                         <strong>The pin is honored on all four run paths</strong> — manual trigger, cron fire, workflow
-                        step and ansible run — where previously only the manual trigger applied it. It wins outright
+                        step and ansible run. It wins outright
                         over a per-run host subset, and folds into an ansible <code>--limit</code> unless a raw
                         passthrough is supplied. A pin containing an ansible pattern metacharacter is refused
                         (<code>422</code> at authoring and trigger, <code>409</code> at run) rather than dropped, since
@@ -7798,8 +7691,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td><span class="pill ok"><span class="dot"></span>Success</span></td>
                                 <td><code>success</code>, <code>ok</code></td>
-                                <td>Runs; the Jobs and Workflows <em>Success</em> tabs (formerly called <em>Healthy</em>
-                                    / <em>Passing</em>)</td>
+                                <td>Runs; the Jobs and Workflows <em>Success</em> tabs</td>
                             </tr>
                             <tr>
                                 <td><span class="pill warn"><span class="dot"></span>Warn</span></td>
@@ -7876,7 +7768,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     needed a department-owned credential but had no scope — see below).
                 </p>
 
-                <p><strong>A run stuck on <span class="pill mut"><span class="dot"></span>queued</span> now tells you
+                <p><strong>A run stuck on <span class="pill mut"><span class="dot"></span>queued</span> tells you
                         why</strong>. A queued run is waiting for a runner that can take it, and several different
                     things can prevent that — the run records which one in its status reason, so you can hand the
                     sentence to whoever manages the fleet instead of describing a symptom:</p>

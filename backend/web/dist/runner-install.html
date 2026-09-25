@@ -13,7 +13,7 @@
  Why self-hosted: these documents are served by the Cronomicon binary to operators
  on networks that may have no egress to fonts.googleapis.com, and a blocked
  stylesheet silently drops the whole manual to system-ui with no error — the
- same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ same defect frontend/index.html guards against. Faces copied from
  index.html unchanged (Google's own latin / latin-ext subsets); only the origin
  differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
  a wrapped guide at /runner-install.html alike: Vite copies public/ into
@@ -21,7 +21,7 @@
 
  Families track theme.ts so the manuals and the product read as one thing: IBM
  Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
- Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ Mono for code. No other families are loaded. Fraunces stays on the
  hero and headings only — the manuals are a brand surface; do not spread it.
 
  Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
@@ -140,17 +140,17 @@
 
  VU-18: these are hand-copied hex literals, so they silently rot
  the next time theme.ts moves. frontend/src/documentation-palette.test.ts
- now fails if any hex in this file (or the wrapped runner-guide
+ fails if any hex in this file (or the wrapped runner-guide
  fragments, which reuse this <style> verbatim) is absent from
  theme.ts. When the product palette changes, re-map by ROLE — a
  doc's page background takes the new `bg`, its cards `panel`, its
  links `primary`, its warning callouts `warning` — never by
  eyeballing which new hex looks closest to the old one.
 
- Two role moves landed in Phase C and are easy to get backwards:
- `warning` is now a distinct ORANGE (it used to be the same gold as
- `accent`, which made a warn badge and an in-flight badge
- indistinguishable), and `accent` gold is now the BRAND — the hero
+ Two role assignments are easy to get backwards:
+ `warning` is a distinct ORANGE, not the brand gold (sharing the gold
+ with `accent` would make a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is the BRAND — the hero
  spine, the h2 rule, the active TOC item.
  ============================================================ */
         :root {
@@ -277,10 +277,9 @@
         }
 
         /* ---------- Sidebar ----------
- Every colour in this block reads a token. It used to be hardcoded dark
- literals, which was survivable only because the rail was dark in BOTH
- themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
- pale-slate link would now be near-invisible on white. Tokens also keep the
+ Every colour in this block reads a token, never a hardcoded dark
+ literal: light mode has a true light rail (VU-9), so a hardcoded
+ pale-slate link would be near-invisible on white. Tokens also keep the
  VU-18 drift guard honest — nothing here to re-map by hand next time. */
         #sidebar {
             width: var(--nav-w);
@@ -1831,7 +1830,7 @@
 
 <p>Have these ready before you start:</p>
 
-<ul><li><strong>Server URL</strong> — the reachable base URL of the Cronomicon server (<code>https://cronomicon.example.com</code>). If it presents a <strong>private/internal CA</strong> certificate, also have that CA bundle (PEM) on hand (§5).</li><li><strong>A registration token</strong> — single-use, one per install (§1).</li><li><strong>A capability decision — usually none</strong>: by default the agent auto-detects the host's toolchains at startup and claims the matching run-types; you only pass <code>-c</code> to narrow the set. For a <em>container</em> deployment you still pick slim vs fat, since the image decides which toolchains exist to detect (§2).</li><li><strong>For a systemd install:</strong> <code>root</code> on a Linux host (Debian/Ubuntu or RHEL-family) and an <code>cronomicon-runner</code> binary — either pre-built (§2) or fetched from the server itself with the installer's <code>--download</code> flag (§2/§3; container-deployed servers bundle the binaries).</li><li><strong><code>known_hosts</code> for the targets — optional pre-seeding now</strong>. Host-key verification is strict (the agent refuses an unknown/changed key), but <code>--known-hosts</code> is no longer required up front: you can <strong>scan &amp; approve</strong> a target's key from the Runners view when the first run fails verification (human-approved TOFU — see the Security Guide §8 and <a href="./runner-manage.html">Runner Config Guide</a>). Pre-seed a curated <code>known_hosts</code> with <code>--known-hosts</code> if you'd rather trust hosts ahead of time; either way, the runner's own keys still go in via <code>--key-dir</code> / <code>--key-map</code>.</li></ul>
+<ul><li><strong>Server URL</strong> — the reachable base URL of the Cronomicon server (<code>https://cronomicon.example.com</code>). If it presents a <strong>private/internal CA</strong> certificate, also have that CA bundle (PEM) on hand (§5).</li><li><strong>A registration token</strong> — single-use, one per install (§1).</li><li><strong>A capability decision — usually none</strong>: by default the agent auto-detects the host's toolchains at startup and claims the matching run-types; you only pass <code>-c</code> to narrow the set. For a <em>container</em> deployment you still pick slim vs fat, since the image decides which toolchains exist to detect (§2).</li><li><strong>For a systemd install:</strong> <code>root</code> on a Linux host (Debian/Ubuntu or RHEL-family) and an <code>cronomicon-runner</code> binary — either pre-built (§2) or fetched from the server itself with the installer's <code>--download</code> flag (§2/§3; container-deployed servers bundle the binaries).</li><li><strong><code>known_hosts</code> for the targets — optional pre-seeding</strong>. Host-key verification is strict (the agent refuses an unknown/changed key), but <code>--known-hosts</code> is not required up front: you can <strong>scan &amp; approve</strong> a target's key from the Runners view when the first run fails verification (human-approved TOFU — see the Security Guide §8 and <a href="./runner-manage.html">Runner Config Guide</a>). Pre-seed a curated <code>known_hosts</code> with <code>--known-hosts</code> if you'd rather trust hosts ahead of time; either way, the runner's own keys still go in via <code>--key-dir</code> / <code>--key-map</code>.</li></ul>
 
 <p>The fastest route on a Linux VM is the <strong><code>runner-install.sh</code></strong> script (§3), which does §2/§4/§9 in one shot. Read §1 first to get a token, then jump to §3.</p>
 
@@ -1950,7 +1949,7 @@ CGO_ENABLED=0 go build -o cronomicon-runner ./cmd/cronomicon-runner</code></pre>
 
 <h2 id="4-configure-the-full-surface">4 · Configure (the full surface)</h2>
 
-<blockquote><p><strong>Most installs use <code>+ Add Runner</code> (§1); this table is for pre-authoring.</strong> For a fully-specified install — config management, containers, or a locked-down one-liner — the Runners view's <strong>Advanced: pre-authored install</strong> helper (demoted from the headline) authors the artifacts for you: pick a <strong>profile</strong> (<em>SSH task runner</em> surfaces key/known_hosts custody; <em>Ansible control node</em> surfaces the checkout/vault secret-file inputs; <em>Custom</em> shows everything), then copy a complete annotated <code>runner.env</code>, the matching §3 one-liner, or the §10 <code>docker run</code> variant. Max jobs, sandbox caps, and checkout policy are no longer helper inputs — they're tuned on the runner's row after it registers (<code>runner-manage.html</code> §4.5). The table below remains the reference for hand-authoring and for the knobs the helper doesn't surface (poll cadence, tuning, scoped child env).</p></blockquote>
+<blockquote><p><strong>Most installs use <code>+ Add Runner</code> (§1); this table is for pre-authoring.</strong> For a fully-specified install — config management, containers, or a locked-down one-liner — the Runners view's <strong>Advanced: pre-authored install</strong> helper authors the artifacts for you: pick a <strong>profile</strong> (<em>SSH task runner</em> surfaces key/known_hosts custody; <em>Ansible control node</em> surfaces the checkout/vault secret-file inputs; <em>Custom</em> shows everything), then copy a complete annotated <code>runner.env</code>, the matching §3 one-liner, or the §10 <code>docker run</code> variant. Max jobs, sandbox caps, and checkout policy are not helper inputs; they are tuned on the runner's row after it registers (<code>runner-manage.html</code> §4.5). The table below remains the reference for hand-authoring and for the knobs the helper doesn't surface (poll cadence, tuning, scoped child env).</p></blockquote>
 
 <p>Config is resolved from three layers, <strong>low → high precedence</strong>: an optional JSON config file &lt; <code>CRONOMICON_RUNNER_*</code> env vars &lt; command-line flags. Pick whichever fits your deployment (env file for systemd/containers; flags for ad-hoc).</p>
 
@@ -2175,7 +2174,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
 
 <h3>Env scoping</h3>
 
-<p>A local-toolchain child no longer inherits the runner's full environment — it sees an explicit base safe-list + the run's env + an allowlist of NAMES (from inventory <code>lookup('env',…)</code>, target auth-key vars, and the job's <code>env_passthrough</code>). Add operator-needed names with <strong><code>-env-base-extra</code></strong>; drop <code>SSH_AUTH_SOCK</code> from the base with <strong><code>-exclude-ssh-auth-sock</code></strong> for runners that use per-host key files.</p>
+<p>A local-toolchain child does not inherit the runner's full environment. It sees an explicit base safe-list + the run's env + an allowlist of NAMES (from inventory <code>lookup('env',…)</code>, target auth-key vars, and the job's <code>env_passthrough</code>). Add operator-needed names with <strong><code>-env-base-extra</code></strong>; drop <code>SSH_AUTH_SOCK</code> from the base with <strong><code>-exclude-ssh-auth-sock</code></strong> for runners that use per-host key files.</p>
 
 <h3>Tier 2 sandbox</h3>
 

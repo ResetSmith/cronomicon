@@ -1,4 +1,4 @@
-# Backup & restore runbook (A4)
+# Backup & restore runbook
 
 Cronomicon keeps all durable state in one SQLite file on the mounted volume
 (`/var/lib/cronomicon/cronomicon.db`). Backups are a nightly consistent snapshot
@@ -12,25 +12,25 @@ and re-arms a timer for the next occurrence each day. It also runs one
 **boot catch-up** sweep at startup *iff* the last successful backup is overdue
 (older than ~24h or never) — gated on the persisted last-success time so a
 crash-loop or frequent redeploy backs up at most ~once/day rather than on every
-boot. (PP-H6: the old 24h-from-boot ticker never fired in environments that
-restart more often than daily, so the only durable backup could silently never
-run.) The sweep:
+boot. Anchoring to wall-clock time rather than a 24h-from-boot ticker matters in
+environments that restart more often than daily, where such a ticker would never
+fire and the only durable backup could silently never run. The sweep:
 
-1. Prunes aged rows per the A4 retention policy (90d runs/activity/workflow_runs,
+1. Prunes aged rows per the retention policy (90d runs/activity/workflow_runs,
    1yr change_log/schedule_pushes — configurable).
 2. `VACUUM INTO /var/lib/cronomicon/backups/cronomicon-YYYYMMDD.db` — a consistent
    snapshot taken without locking out live traffic (WAL). The write is
-   **idempotent**: a same-UTC-day re-run removes the prior snapshot first
-   (PP-M2), so a second sweep can't abort on SQLite's overwrite refusal *after*
+   **idempotent**: a same-UTC-day re-run removes the prior snapshot first,
+   so a second sweep can't abort on SQLite's overwrite refusal *after*
    the prune already ran.
 3. Uploads the snapshot to `s3://<bucket>/cronomicon-backups/cronomicon-YYYYMMDD.db`
    when S3 is configured (`internal/backup`). If unconfigured, the snapshot is
-   kept locally only (the step is skipped — A4 backup is optional, T12).
+   kept locally only (the step is skipped — the S3 upload is optional).
 4. On success, records the last-success time (flat-KV `settings.backupLastSuccessAt`)
    and sets the `cronomicon_backup_last_success_timestamp_seconds` gauge; on failure
    increments `cronomicon_backup_failures_total`.
 
-### Monitoring (PP-H6)
+### Monitoring
 
 Two Prometheus series are exported at `/metrics`:
 
@@ -53,10 +53,10 @@ time() - cronomicon_backup_last_success_timestamp_seconds > 129600   # 36h
 | `CRONOMICON_BACKUP_S3_REGION` | default `us-east-1` |
 | `CRONOMICON_BACKUP_S3_ACCESS_KEY` / `_SECRET_KEY` | static credentials (env, not the DB). **Omit both to use the ambient IAM credential chain** — see below |
 | `CRONOMICON_BACKUP_S3_USE_SSL` | default `true` |
-| `CRONOMICON_BACKUP_AT` | daily sweep time, `HH:MM` UTC; default `02:00` (PP-H6) |
+| `CRONOMICON_BACKUP_AT` | daily sweep time, `HH:MM` UTC; default `02:00` |
 
-> **Credential resolution (V1.1-11).** When both `_ACCESS_KEY` and
-> `_SECRET_KEY` are set, those static keys are used (prior behaviour). When
+> **Credential resolution.** When both `_ACCESS_KEY` and
+> `_SECRET_KEY` are set, those static keys are used. When
 > either is omitted, the uploader falls back to the standard AWS credential
 > chain: `AWS_*` env vars → shared credentials file → IAM (EC2 instance
 > profile / ECS task role / EKS IRSA web-identity token). In a cloud
@@ -65,7 +65,7 @@ time() - cronomicon_backup_last_success_timestamp_seconds > 129600   # 36h
 > log line `s3 backup client initialized creds=...` reports which path was
 > chosen (`static` vs `ambient chain (env/file/IAM)`); no key bytes are logged.
 
-> **S14 invariant:** the stored-secret KEK must **not** live in this bucket. A
+> **KEK invariant:** the stored-secret KEK must **not** live in this bucket. A
 > bucket compromise must not yield both the encrypted DB and the key that
 > decrypts its secrets. Back the KEK up separately.
 
@@ -73,7 +73,7 @@ time() - cronomicon_backup_last_success_timestamp_seconds > 129600   # 36h
 
 SQLite restore is a file swap — no import step.
 
-### Tooling: `cronomicon restore` (FU-3)
+### Tooling: `cronomicon restore`
 
 The binary bundles a restore subcommand that scripts the download + swap + verify
 steps below, reading the same `CRONOMICON_BACKUP_S3_*` / `CRONOMICON_DB_PATH` env the
@@ -104,19 +104,18 @@ apply migrations and re-supply the KEK/OIDC keys (step 5 below).
    rm -f /var/lib/cronomicon/cronomicon.db /var/lib/cronomicon/cronomicon.db-wal /var/lib/cronomicon/cronomicon.db-shm
    cp ./restore.db /var/lib/cronomicon/cronomicon.db
    ```
-4. **Start** the process. On boot it applies any pending migrations (T4) and
+4. **Start** the process. On boot it applies any pending migrations and
    `/readyz` reports `database: ok` once schema state is clean.
 5. Re-supply out-of-band material that does **not** live in the DB: the secret
    KEK (`CRONOMICON_KEK*`) and
    OIDC/session keys. Without the original KEK,
    stored secrets cannot be decrypted (vault-source secrets are unaffected).
 
-> **DR drill (FU-3 Phase A) — not yet executed.** The procedure above is written
-> but has never been run end-to-end against a live stack (an open Phase-D
-> operator checkbox). Execute it on staging — snapshot → fresh binary on an empty
-> volume → restore → confirm `/readyz` `database: ok`, `integrity_check`, and that
-> a stored secret decrypts with the re-supplied KEK (and fails without it) — then
-> record timings and fold any corrections back here.
+> **Rehearse before relying on it.** This procedure has not yet been exercised
+> end-to-end against a live stack. Run it on staging first: snapshot → fresh binary
+> on an empty volume → restore → confirm `/readyz` `database: ok`,
+> `integrity_check`, and that a stored secret decrypts with the re-supplied KEK
+> (and fails without it). Record timings and fold any corrections back here.
 
 ## After a restore: runners
 
@@ -170,13 +169,28 @@ while no longer claiming the departmental runs it existed to serve.
 
 That is an isolation change, not just an availability one. Green status is not
 evidence that the right work can be dispatched. Before declaring the restore
-complete, open **Runners** and check the per-agency coverage, then re-bind every
-runner that came back unplaced (agency, then tags).
+complete, open **Runners** and check the per-agency coverage, then review every
+runner that came back unplaced.
 
-> Interim step. A future release will offer the prior placement for an operator
-> to confirm rather than requiring a manual re-bind; until then this is manual.
-> The check itself does not go away either way — an unreviewed runner is an
-> unplaced runner.
+**Placement history makes the re-bind a confirmation, not a reconstruction.**
+Before a runner row is deleted, by an operator deregistering it or by the reaper
+sweeping it past `CRONOMICON_RUNNER_DEREGISTER_AFTER`, the server snapshots its
+agency membership and tags into `runner_placement_history`. When a runner
+re-registers unplaced and a snapshot matches, its row in **Runners** shows
+**Previous placement found**; expand the row to review the prior agencies and
+tags, then **Restore placement** to re-apply them in one step, or dismiss the
+suggestion. The match is offered for an operator to confirm, never applied
+automatically: the runner name is self-declared by the agent, so healing by name
+alone would let any agent inherit another runner's agency by claiming its name.
+The observed client IP of the runner's last contact is recorded beside the
+snapshot as the one signal the agent cannot assert. Accept and dismiss carry the
+same agency gate as manual placement (an unrestricted operator for the general
+pool).
+
+> The snapshot only exists in the database you restored: a runner reaped or
+> deregistered *after* the restore point has no history row, and comes back with
+> no suggestion. Those runners are re-bound by hand (agency, then tags). Either
+> way the check does not go away: an unreviewed runner is an unplaced runner.
 
 ### Verifying from the runner side
 
@@ -207,16 +221,15 @@ journalctl -u cronomicon-runner --since '30 min ago' | grep -Ei 'register|401|40
 (`cronomicon restore` runs this check automatically after installing a snapshot.)
 
 > Backups are configured **only** via `CRONOMICON_BACKUP_S3_*` env (see Configuration
-> above) — there is no DB-stored backup setting. (The inert `BackupConfig` on the
-> audit-compliance settings blob was removed in FU-3 Phase B.)
+> above) — there is no DB-stored backup setting.
 
-## Load / soak testing (pre-launch)
+## Load / soak testing
 
-The two endurance paths to exercise before launch (not part of CI):
+The two endurance paths to exercise before going to production (not part of CI):
 - **Runner long-poll** (`GET /runners/{id}/poll`): many idle runners holding
   30s long-polls — verify goroutine/connection headroom under the single-process
-  model (T3).
+  model.
 - **Log ingest** (`POST /runs/{traceId}/log`): sustained chunked streaming with
   mid-stream reconnects (`X-Resume-Offset`) — verify append throughput and that
-  redaction keeps up at ingest (T7/S7).
+  redaction keeps up at ingest.
 A simple `vegeta`/`k6` script against a seeded instance covers both.

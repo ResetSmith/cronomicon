@@ -13,7 +13,7 @@
  Why self-hosted: these documents are served by the Cronomicon binary to operators
  on networks that may have no egress to fonts.googleapis.com, and a blocked
  stylesheet silently drops the whole manual to system-ui with no error — the
- same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ same defect frontend/index.html guards against. Faces copied from
  index.html unchanged (Google's own latin / latin-ext subsets); only the origin
  differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
  a wrapped guide at /runner-install.html alike: Vite copies public/ into
@@ -21,7 +21,7 @@
 
  Families track theme.ts so the manuals and the product read as one thing: IBM
  Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
- Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ Mono for code. No other families are loaded. Fraunces stays on the
  hero and headings only — the manuals are a brand surface; do not spread it.
 
  Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
@@ -140,17 +140,17 @@
 
  VU-18: these are hand-copied hex literals, so they silently rot
  the next time theme.ts moves. frontend/src/documentation-palette.test.ts
- now fails if any hex in this file (or the wrapped runner-guide
+ fails if any hex in this file (or the wrapped runner-guide
  fragments, which reuse this <style> verbatim) is absent from
  theme.ts. When the product palette changes, re-map by ROLE — a
  doc's page background takes the new `bg`, its cards `panel`, its
  links `primary`, its warning callouts `warning` — never by
  eyeballing which new hex looks closest to the old one.
 
- Two role moves landed in Phase C and are easy to get backwards:
- `warning` is now a distinct ORANGE (it used to be the same gold as
- `accent`, which made a warn badge and an in-flight badge
- indistinguishable), and `accent` gold is now the BRAND — the hero
+ Two role assignments are easy to get backwards:
+ `warning` is a distinct ORANGE, not the brand gold (sharing the gold
+ with `accent` would make a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is the BRAND — the hero
  spine, the h2 rule, the active TOC item.
  ============================================================ */
         :root {
@@ -277,10 +277,9 @@
         }
 
         /* ---------- Sidebar ----------
- Every colour in this block reads a token. It used to be hardcoded dark
- literals, which was survivable only because the rail was dark in BOTH
- themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
- pale-slate link would now be near-invisible on white. Tokens also keep the
+ Every colour in this block reads a token, never a hardcoded dark
+ literal: light mode has a true light rail (VU-9), so a hardcoded
+ pale-slate link would be near-invisible on white. Tokens also keep the
  VU-18 drift guard honest — nothing here to re-map by hand next time. */
         #sidebar {
             width: var(--nav-w);
@@ -1984,7 +1983,7 @@ The runner scans the inventory for <code>lookup('env',NAME)</code> names, and br
 
 <ul>
 <li><strong>Runner-local env (names-only).</strong> The play references <code>{{ lookup('env','NAME') }}</code>; the value sits in the runner's <code>secrets.env</code> — provisioned by you, or continuously rendered by the opt-in <strong>Vault Agent sidecar</strong> (the runner never holds a Vault token; the value never crosses the control-plane channel). Zero server involvement, works on any agent.</li>
-<li><strong>Reference bindings with per-runner injection.</strong> Declare the Secrets / Variables / SSH keys a job consumes as <a href="user-manual.html#refbindings">reference bindings (§11.6)</a>; they arrive as <code>CRONOMICON_SECRET_&lt;name&gt;</code> / <code>CRONOMICON_VAR_&lt;name&gt;</code> env vars, and a bound key's material as a private <code>/dev/shm</code> file, <em>only</em> on a runner an operator has flagged with the <strong>Secret injection</strong> toggle (protocol v6+). Everything is fail-closed — an unresolvable binding or an un-flagged runner leaves the run <strong>queued</strong>, never partially supplied — injected values join the run's redaction dictionary, and every dispatch writes a value-free audit row. This is the door that lets Vault-backed secrets reach a play with no runner-side file at all.</li>
+<li><strong>Reference bindings with per-runner injection.</strong> Declare the Secrets / Variables / SSH keys a job consumes as <a href="user-manual.html#refbindings">reference bindings (§11.6)</a>; they arrive as <code>CRONOMICON_SECRET_&lt;name&gt;</code> / <code>CRONOMICON_VAR_&lt;name&gt;</code> env vars, and a bound key's material as a private <code>/dev/shm</code> file, <em>only</em> on a runner an operator has flagged with the <strong>Secret injection</strong> toggle. Everything is fail-closed — an unresolvable binding or an un-flagged runner leaves the run <strong>queued</strong>, never partially supplied — injected values join the run's redaction dictionary, and every dispatch writes a value-free audit row. This is the door that lets Vault-backed secrets reach a play with no runner-side file at all.</li>
 <li><strong>ansible-vault (checkout projects).</strong> The job declares <code>requires: [vault]</code>; a runner provisioned with <code>--vault-pass-file</code> supplies <code>--vault-password-file</code> itself (the password never travels, and the token claim-gates the run to vault-capable runners). Register that vault password as an Cronomicon stored secret too, so any accidental echo of it is masked.</li>
 </ul>
 
