@@ -13,6 +13,37 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.0.3] - 2026-09-25
+
+The manuals can be read before you deploy. Each release tag now publishes them
+to cronomicon.io/docs/ and attaches them to a GitHub Release, and the copies in
+a checkout open straight from disk. The application, its API, its schema
+(v1150) and the runner protocol (13) are unchanged.
+
+### Added
+
+- Add a `docs` job to `.github/workflows/publish-images.yml`. After the images
+  are pushed it rebuilds the manuals from the tagged source and:
+  - creates the GitHub Release for the tag, with that version's CHANGELOG
+    section and the image pull commands as its notes, and attaches
+    `cronomicon-docs-X.Y.Z.zip` (every manual and guide, the screenshots and the
+    fonts);
+  - copies the same pages into the `docs/` folder of the cronomicon.io site,
+    which GitHub Pages then serves at `https://cronomicon.io/docs/`. This step
+    needs a deploy key with write access to the site repository in the
+    `DOCS_DEPLOY_KEY` secret; without it the job warns and skips the step.
+- Add a guard to `documentation-palette.test.ts` that fails when a
+  documentation page references an asset by a root-absolute path.
+
+### Changed
+
+- The manuals reference their fonts and screenshots by relative paths
+  (`fonts/…`, `manual/…`) in place of `/fonts/…` and `/manual/…`. The app still
+  serves them at its root, where both resolve the same; the change is what lets
+  the same files work under `/docs/`, from the zip and from a checkout.
+- The README's Documentation section lists the four places to read the manuals
+  and links the online copies. Both manuals now stamp v2.0.3.
+
 ## [2.0.2] - 2026-09-25
 
 Release images are published to the GitHub Container Registry. Pushing a
