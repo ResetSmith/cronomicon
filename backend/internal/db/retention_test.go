@@ -141,7 +141,7 @@ func TestSweepIdempotentSameDay(t *testing.T) {
 	if err := runSweep(context.Background(), pool, policy, testLogger()); err != nil {
 		t.Fatalf("second same-day sweep failed (PP-M2 overwrite not handled): %v", err)
 	}
-	snap := filepath.Join(dir, "amadeus-20260616.db")
+	snap := filepath.Join(dir, "cronomicon-20260616.db")
 	if _, err := Open(snap); err != nil {
 		t.Fatalf("same-day snapshot missing/invalid after second sweep: %v", err)
 	}
@@ -229,7 +229,7 @@ func mustNotExist(t *testing.T, path, why string) {
 }
 
 // backupFailuresTotal scrapes the process-wide registry through its public
-// /metrics handler and returns amadeus_backup_failures_total. The counter field
+// /metrics handler and returns cronomicon_backup_failures_total. The counter field
 // is unexported and there is no getter, but the handler is the same surface
 // monitoring reads — so this observes exactly what an alert would see, without
 // adding a test-only hook to non-test code.
@@ -238,16 +238,16 @@ func backupFailuresTotal(t *testing.T) float64 {
 	rec := httptest.NewRecorder()
 	metrics.Default().Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
-		if !strings.HasPrefix(line, "amadeus_backup_failures_total ") {
+		if !strings.HasPrefix(line, "cronomicon_backup_failures_total ") {
 			continue
 		}
-		v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(line, "amadeus_backup_failures_total ")), 64)
+		v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(line, "cronomicon_backup_failures_total ")), 64)
 		if err != nil {
 			t.Fatalf("parse backup failures counter from %q: %v", line, err)
 		}
 		return v
 	}
-	t.Fatal("amadeus_backup_failures_total not present in /metrics output")
+	t.Fatal("cronomicon_backup_failures_total not present in /metrics output")
 	return 0
 }
 
@@ -308,18 +308,18 @@ func TestReapLogFilesEmptyDirIsNoop(t *testing.T) {
 // TestReapLogFilesOnlyTouchesDotLog is the safety property that makes the whole
 // feature acceptable: the log directory is operator-configurable, so a mistyped
 // path can point the reaper at a data directory. The *.log suffix filter is the
-// only thing standing between a typo and an aged amadeus.db being deleted on the
+// only thing standing between a typo and an aged cronomicon.db being deleted on the
 // next nightly sweep — the same discipline the snapshot GC applies with
-// amadeus-*.db. Every non-.log file here is aged far past the cutoff and MUST
+// cronomicon-*.db. Every non-.log file here is aged far past the cutoff and MUST
 // survive.
 func TestReapLogFilesOnlyTouchesDotLog(t *testing.T) {
 	logDir := t.TempDir()
 	survivors := []string{
-		filepath.Join(logDir, "amadeus.db"),     // the live database, if the path were mistyped
-		filepath.Join(logDir, "amadeus.db-wal"), // …and its sidecars
-		filepath.Join(logDir, "notes.txt"),      // an operator's own file
-		filepath.Join(logDir, "run.log.gz"),     // an externally rotated log
-		filepath.Join(logDir, "log"),            // suffix-lookalike without the dot
+		filepath.Join(logDir, "cronomicon.db"),     // the live database, if the path were mistyped
+		filepath.Join(logDir, "cronomicon.db-wal"), // …and its sidecars
+		filepath.Join(logDir, "notes.txt"),         // an operator's own file
+		filepath.Join(logDir, "run.log.gz"),        // an externally rotated log
+		filepath.Join(logDir, "log"),               // suffix-lookalike without the dot
 		filepath.Join(logDir, "nested", "a.json"),
 	}
 	for _, p := range survivors {
@@ -403,7 +403,7 @@ func TestSweepSurvivesBrokenLogDir(t *testing.T) {
 }
 
 // TestBrokenLogDirDoesNotTripBackupFailedMetric is the regression that keeps the
-// alerting honest. amadeus_backup_failures_total drives the "backups are broken"
+// alerting honest. cronomicon_backup_failures_total drives the "backups are broken"
 // alert; if a missing log directory incremented it, on-call would be paged for a
 // backup that in fact succeeded, and the alert would be trained into noise. This
 // is why reapLogFiles returns no error at all: runSweep's deferred hook fires the
@@ -421,7 +421,7 @@ func TestBrokenLogDirDoesNotTripBackupFailedMetric(t *testing.T) {
 	}
 
 	if after := backupFailuresTotal(t); after != before {
-		t.Errorf("amadeus_backup_failures_total went %v → %v: a log-dir problem must not be reported as a backup failure", before, after)
+		t.Errorf("cronomicon_backup_failures_total went %v → %v: a log-dir problem must not be reported as a backup failure", before, after)
 	}
 }
 
@@ -539,14 +539,14 @@ func TestPerTableRetentionKnobsAreIndependent(t *testing.T) {
 // so this would strike hardest on the idle systems nobody is watching.
 func TestReapLogFilesSpareKeepFiles(t *testing.T) {
 	logDir := t.TempDir()
-	processLog := filepath.Join(logDir, "amadeus.log")
+	processLog := filepath.Join(logDir, "cronomicon.log")
 	runLog := filepath.Join(logDir, "old-run.log")
 	// Equally aged, equally .log, in the same directory: the ONLY thing that
 	// may distinguish them is the keep list.
 	writeLogFileAged(t, processLog, 90*24*time.Hour)
 	writeLogFileAged(t, runLog, 90*24*time.Hour)
 
-	reapLogFiles(logDir, 30, []string{"amadeus.log"}, nil, testLogger())
+	reapLogFiles(logDir, 30, []string{"cronomicon.log"}, nil, testLogger())
 
 	mustExist(t, processLog, "a file named in KeepFiles must survive the reap however aged — it is held open by the writer")
 	mustNotExist(t, runLog, "an equally aged sibling not in KeepFiles must still be reaped")
@@ -560,7 +560,7 @@ func TestReapLogFilesSpareKeepFiles(t *testing.T) {
 func TestSweepPassesKeepFilesThrough(t *testing.T) {
 	pool := migratedPool(t)
 	logDir := t.TempDir()
-	processLog := filepath.Join(logDir, "amadeus.log")
+	processLog := filepath.Join(logDir, "cronomicon.log")
 	runLog := filepath.Join(logDir, "aged-run.log")
 	writeLogFileAged(t, processLog, 90*24*time.Hour)
 	writeLogFileAged(t, runLog, 90*24*time.Hour)
@@ -568,7 +568,7 @@ func TestSweepPassesKeepFilesThrough(t *testing.T) {
 	if err := runSweep(context.Background(), pool, RetentionPolicy{
 		LogDir:       logDir,
 		LogFilesDays: 7,
-		KeepFiles:    []string{"amadeus.log"},
+		KeepFiles:    []string{"cronomicon.log"},
 		BackupDir:    t.TempDir(),
 	}, testLogger()); err != nil {
 		t.Fatalf("sweep: %v", err)

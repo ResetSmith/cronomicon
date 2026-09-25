@@ -24,7 +24,7 @@ func seedTestCalendar(t *testing.T, pool *sql.DB, name string, global bool) {
 	}
 	if _, err := pool.ExecContext(context.Background(),
 		`INSERT INTO calendars(source, name, global, record_suppressed, created_at)
-		 VALUES('amadeus', ?, ?, 0, '2026-01-01T00:00:00Z')`, name, g); err != nil {
+		 VALUES('cronomicon', ?, ?, 0, '2026-01-01T00:00:00Z')`, name, g); err != nil {
 		t.Fatalf("seed calendar %s: %v", name, err)
 	}
 }

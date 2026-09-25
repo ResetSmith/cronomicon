@@ -1,5 +1,5 @@
 -- Reverse 170. A PK change cannot be undone by DROP COLUMN, so each rebuilt table
--- is rebuilt back to its pre-170 single-source schema. amadeus-source rows cannot
+-- is rebuilt back to its pre-170 single-source schema. cronomicon-source rows cannot
 -- exist in the old schema and are dropped on the way down (rollback to a schema
 -- that predates dual-source).
 

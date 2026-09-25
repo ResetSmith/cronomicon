@@ -99,7 +99,7 @@ func serveEcho(nConn net.Conn, cfg *ssh.ServerConfig) {
 
 // TestSSHExecutorInjectsReferences is the P1.3 end-to-end: a job declares a secret
 // + a variable reference binding; the executor resolves them at dispatch and
-// injects the derived AMADEUS_SECRET_*/AMADEUS_VAR_* values plus the AMADEUS_RUN_*
+// injects the derived CRONOMICON_SECRET_*/CRONOMICON_VAR_* values plus the CRONOMICON_RUN_*
 // context onto the remote command — and the injected secret VALUE is masked in the
 // log while the log-safe variable value is not.
 func TestSSHExecutorInjectsReferences(t *testing.T) {
@@ -155,7 +155,7 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	}
 	_ = sc
 
-	// Host + amadeus job + the job's reference bindings.
+	// Host + cronomicon job + the job's reference bindings.
 	if _, err := pool.Exec(`
 		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
 		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
@@ -163,21 +163,21 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	// Bind a secret and a variable. (A bound KEY is a different story on this
 	// executor — it fails the run before connecting; see
 	// TestSSHExecutorFailsBeforeConnectingOnKeyBinding.)
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','DB_PASS',?),('job','amadeus','j1','var','REGION',?)`, now, now); err != nil {
+		VALUES('job','cronomicon','j1','secret','DB_PASS',?),('job','cronomicon','j1','var','REGION',?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
 	// The run carries a per-run reference ADDITION in its override envelope: the
 	// undeclared EXTRA variable.
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, override_json, created_at)
-		VALUES('run-1','j1','amadeus','bash',?,'testhost','queued','ops@x','manual','ssh',
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',
 		       '{"references":[{"kind":"var","name":"EXTRA"}]}',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
@@ -212,18 +212,18 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 
 	// Injection reached the run via the stdin export prelude — the derived
 	// reference keys and the fixed run-context set are all present. (Values are
-	// asserted separately: AMADEUS_RUN_* renders verbatim; the reference VALUES are
+	// asserted separately: CRONOMICON_RUN_* renders verbatim; the reference VALUES are
 	// masked by the log redactor — see below.)
 	for _, want := range []string{
-		"export AMADEUS_SECRET_DB_PASS=",
-		"export AMADEUS_VAR_REGION=",
+		"export CRONOMICON_SECRET_DB_PASS=",
+		"export CRONOMICON_VAR_REGION=",
 		// V2-11 — the per-run ADDED variable rides the same prelude as declared ones.
-		"export AMADEUS_VAR_EXTRA=",
-		"export AMADEUS_RUN_ID='run-1'",
-		"export AMADEUS_RUN_JOB='j1'",
-		"export AMADEUS_RUN_SCOPE='" + scope + "'",
-		"export AMADEUS_RUN_TRIGGERED_BY='ops@x'",
-		"export AMADEUS_RUN_EXECUTOR='ssh'",
+		"export CRONOMICON_VAR_EXTRA=",
+		"export CRONOMICON_RUN_ID='run-1'",
+		"export CRONOMICON_RUN_JOB='j1'",
+		"export CRONOMICON_RUN_SCOPE='" + scope + "'",
+		"export CRONOMICON_RUN_TRIGGERED_BY='ops@x'",
+		"export CRONOMICON_RUN_EXECUTOR='ssh'",
 	} {
 		if !strings.Contains(logStr, want) {
 			t.Errorf("expected %q in the stdin prelude:\n%s", want, logStr)
@@ -234,7 +234,7 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	// line (argv) even before redaction. The echoed "cmd: " line carries the argv;
 	// assert the value is confined to the stdin section.
 	for line := range strings.SplitSeq(logStr, "\n") {
-		if strings.HasPrefix(line, "cmd: ") && strings.Contains(line, "AMADEUS_SECRET") {
+		if strings.HasPrefix(line, "cmd: ") && strings.Contains(line, "CRONOMICON_SECRET") {
 			t.Errorf("injected env leaked onto the command line (argv): %q", line)
 		}
 	}
@@ -306,16 +306,16 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	// Binding names a secret that does not exist → resolution must fail closed.
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','NOPE',?)`, now); err != nil {
+		VALUES('job','cronomicon','j1','secret','NOPE',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','amadeus','bash','s','testhost','queued','ops@x','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash','s','testhost','queued','ops@x','manual','ssh',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,15 +385,15 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','DB_PASS',?)`, now); err != nil {
+		VALUES('job','cronomicon','j1','secret','DB_PASS',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','amadeus','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 	// Break the audit sink so the injection audit write fails.
@@ -489,17 +489,17 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := runref.ReplaceBindings(context.Background(), pool,
-		runref.Owner{Kind: "job", Source: "amadeus", Name: "j1"},
+		runref.Owner{Kind: "job", Source: "cronomicon", Name: "j1"},
 		[]runref.Binding{{Kind: runref.KindKey, Name: "deploy_key"}}, "tester"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','amadeus','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -523,7 +523,7 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 		t.Fatalf("run status = %q, want failure — the executor cannot deliver the key, so the run must not start", status)
 	}
 	logStr := readLog(t, logDir, "run-1")
-	if !strings.Contains(logStr, "AMADEUS_KEY_deploy_key") || !strings.Contains(logStr, "cannot deliver key files") {
+	if !strings.Contains(logStr, "CRONOMICON_KEY_deploy_key") || !strings.Contains(logStr, "cannot deliver key files") {
 		t.Errorf("run log should name the key and say why:\n%s", logStr)
 	}
 	if strings.Contains(logStr, "cmd: ") {

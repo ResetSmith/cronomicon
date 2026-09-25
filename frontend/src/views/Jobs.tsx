@@ -56,7 +56,7 @@ const MAX_INLINE_TAGS = 2;
 
 // FB1 — a job's folder LOCATION is its source file path (the leading "jobs/"
 // stripped) so the browser mirrors the Git tree; its IDENTITY for detail/actions
-// stays the DB id (id ?? name). They diverge for amadeus-authored jobs, which may
+// stays the DB id (id ?? name). They diverge for cronomicon-authored jobs, which may
 // have no source file — fall back to the identity name so the job still appears
 // in the tree rather than being silently dropped.
 const jobDisplayPath = (j: Job) => {
@@ -64,7 +64,7 @@ const jobDisplayPath = (j: Job) => {
   // left (e.g. source_path is null or just "jobs/") fall back to the identity.
   const stripped = (j.sourcePath ?? "").replace(/^jobs\//, "").replace(/^\/+|\/+$/g, "");
   // Fall back to the HUMAN name, not jobName() — that resolves to the DB id, and
-  // an amadeus-authored job has no source file, so every such job used to enter
+  // an cronomicon-authored job has no source file, so every such job used to enter
   // the tree labelled with a UUIDv7 (mirrors Workflows/Schedules, which always
   // fell back to the name). Identity still keys off jobName via getName.
   return stripped || j.name || jobName(j);
@@ -184,7 +184,7 @@ export function Jobs() {
       return next;
     });
 
-  // Compose capability gates the amadeus-only Edit affordance (D6); publish gates
+  // Compose capability gates the cronomicon-only Edit affordance (D6); publish gates
   // the "+ Publish to GitLab" button on the PublishSchedule permission (PP-B1).
   // triggerJobs/killJobs gate Run/Kill/Pause/Resume (RB-3).
   const [canCompose, setCanCompose] = useState(false);
@@ -261,7 +261,7 @@ export function Jobs() {
   const [runFor, setRunFor] = useState<Job | null>(null);
   const [killFor, setKillFor] = useState<Job | null>(null);
   const [deleting, setDeleting] = useState<Job | null>(null);
-  // RH: which amadeus-source job's revision history is open, by name.
+  // RH: which cronomicon-source job's revision history is open, by name.
   const [historyFor, setHistoryFor] = useState<string | null>(null);
   const [delBusy, setDelBusy] = useState(false);
   // RX-24 — the server's refusal text when reactions watch the job being
@@ -458,7 +458,7 @@ export function Jobs() {
     return { ok: true };
   }
 
-  // Delete an amadeus-authored job from the expanded row. The same endpoint the
+  // Delete an cronomicon-authored job from the expanded row. The same endpoint the
   // JobComposer edit view uses; the server rejects git-source rows with a 409,
   // which is the real guard — the button gate below is only UX. Collapses the
   // row on success so the list doesn't re-expand onto a deleted id.
@@ -485,7 +485,7 @@ export function Jobs() {
       setDelBlock(null);
       const msg =
         response.status === 409
-          ? "Only amadeus-source jobs can be deleted in-app."
+          ? "Only cronomicon-source jobs can be deleted in-app."
           : (err as { message?: string } | undefined)?.message ?? `Delete failed (${response.status}).`;
       setActionError(`Delete failed for ${job.name}: ${msg}`);
       return;
@@ -668,8 +668,8 @@ export function Jobs() {
                 resolveAnnotation={(base) => inlineAnnotation.valueFor(j, base)}
                 onSaveAnnotation={(next) => inlineAnnotation.save(j, next)}
                 annotationErr={inlineAnnotation.errors[String(j.id)]}
-                canEdit={canCompose && j.source === "amadeus"}
-                actions={(rowCanRun(j) || (canCompose && j.source === "amadeus")) ? (
+                canEdit={canCompose && j.source === "cronomicon"}
+                actions={(rowCanRun(j) || (canCompose && j.source === "cronomicon")) ? (
                 <>
                   {/* Run stays available while a run is active — overlapping runs are
                       legal under the Allow policy (the default), and Forbid/Queue jobs
@@ -694,30 +694,30 @@ export function Jobs() {
                         <Btn small style={{ minWidth: 72 }} disabled={busy} onClick={() => act(j, "pause")}>Pause</Btn>
                       )
                     ))}
-                  {/* Edit + Delete only for amadeus rows the caller may compose (D6
+                  {/* Edit + Delete only for cronomicon rows the caller may compose (D6
                       hides them for git rows + non-admins). Delete was previously
                       editor-only (D4); it is now also a row action here, behind the
                       same confirm. */}
-                  {canCompose && j.source === "amadeus" && (
+                  {canCompose && j.source === "cronomicon" && (
                     <Link to={`/compose?id=${j.id}`} style={{ textDecoration: "none" }}>
                       <Btn small>Edit</Btn>
                     </Link>
                   )}
                   {/* Clone: the composer prefilled from this job, in create mode —
                       for "same settings, different purpose" (same gate as Edit:
-                      the result is an amadeus-source job). */}
-                  {canCompose && j.source === "amadeus" && (
+                      the result is an cronomicon-source job). */}
+                  {canCompose && j.source === "cronomicon" && (
                     <Link to={`/compose?cloneFrom=${j.id}`} style={{ textDecoration: "none" }}>
                       <Btn small>Clone</Btn>
                     </Link>
                   )}
                   {/* RH: in-app definitions get history here; git rows get it from Git. */}
-                  {canCompose && j.source === "amadeus" && (
+                  {canCompose && j.source === "cronomicon" && (
                     <Btn small onClick={() => setHistoryFor(j.name ?? "")}>
                       History
                     </Btn>
                   )}
-                  {canCompose && j.source === "amadeus" && (
+                  {canCompose && j.source === "cronomicon" && (
                     <Btn small dangerQuiet disabled={busy || delBusy} onClick={() => setDeleting(j)}>
                       Delete
                     </Btn>
@@ -1193,7 +1193,7 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
               scriptRef={j.scriptRef}
               scope={j.scope ?? ""}
               // JP-Q8 — the editor moved, so the section says where it went. Same
-              // gate as the row's Edit button (compose + amadeus source): a caller
+              // gate as the row's Edit button (compose + cronomicon source): a caller
               // who cannot reach the composer is not sent to it.
               action={
                 canEdit ? (
@@ -1259,7 +1259,7 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
           {/* SL-E — the windowed view. DurationTrend answers "what did the last
               twenty runs do"; this answers "is this getting worse". */}
           <Section title="Analytics">
-            <RunAnalytics job={j.name} source={j.source === "amadeus" ? "amadeus" : "git"} />
+            <RunAnalytics job={j.name} source={j.source === "cronomicon" ? "cronomicon" : "git"} />
           </Section>
           <Section title="Recent runs">
             <RecentRuns
@@ -1589,7 +1589,7 @@ export function RunDialog({
   // RP-1 — the host subset is offered for BOTH executors now: SSH connects to the
   // selection; a runner run carries it as targetHosts, which the server folds into
   // the ansible --limit (RunLimit) or the manifest target set. The per-executor
-  // truth ("amadeus-inventory runners only", "terraform ignores it") lives in the
+  // truth ("cronomicon-inventory runners only", "terraform ignores it") lives in the
   // helper line rather than in a hidden control.
   const canPickHosts = scopeHosts.length > 0;
   // RB-26/RB-29 — a job with no declared scope carries no authority of its own, so
@@ -1687,7 +1687,7 @@ export function RunDialog({
   //
   // JR-Q1 — a scope Env Vars row of the same name is deliberately absent from this
   // chain. Env Vars reach a run only through an explicit reference binding and only
-  // under the derived AMADEUS_VAR_<name> key (internal/runref); nothing publishes a
+  // under the derived CRONOMICON_VAR_<name> key (internal/runref); nothing publishes a
   // bare `NAME`, so counting one claimed "✓" for a variable that would be missing at
   // run time while the server still recorded it unfilled.
   const resolveInput = (p: JobPrompt): { value: string; from: Provenance | null } => {
@@ -2627,7 +2627,7 @@ export function RunDialog({
             Making inputs prominent invites pasting credentials. */}
         <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 10 }}>
           Plain text, visible in the run log — never paste a password or key. Store it as a Secret and reference{" "}
-          <code style={{ fontFamily: c.mono }}>AMADEUS_SECRET_&lt;name&gt;</code>.
+          <code style={{ fontFamily: c.mono }}>CRONOMICON_SECRET_&lt;name&gt;</code>.
         </div>
       </Disclosure>
 
@@ -2733,7 +2733,7 @@ export function RunDialog({
                     ? `Ansible: passes the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} as --limit.`
                     : job.type === "terraform"
                       ? "Recorded on the run for audit — terraform does not consume host targeting."
-                      : `Runner: limits the run to the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} (honored by amadeus-inventory runners).`
+                      : `Runner: limits the run to the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} (honored by cronomicon-inventory runners).`
           }
         >
           <label

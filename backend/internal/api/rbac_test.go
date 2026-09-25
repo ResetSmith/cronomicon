@@ -158,7 +158,7 @@ func TestRBACSshCredentialsWriteGate(t *testing.T) {
 		// An authenticated GET issues the CSRF cookie the POST must echo.
 		var csrf string
 		for _, ck := range asGroup(t, h, "/api/v1/capabilities", tc.group).Result().Cookies() {
-			if ck.Name == "amadeus_csrf" {
+			if ck.Name == "cronomicon_csrf" {
 				csrf = ck.Value
 			}
 		}
@@ -169,7 +169,7 @@ func TestRBACSshCredentialsWriteGate(t *testing.T) {
 		req.Header.Set("Remote-User", tc.group+"@example.com")
 		req.Header.Set("Remote-Groups", tc.group)
 		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: "amadeus_csrf", Value: csrf})
+		req.AddCookie(&http.Cookie{Name: "cronomicon_csrf", Value: csrf})
 		req.Header.Set("X-CSRF-Token", csrf)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -215,7 +215,7 @@ func TestRunPathScopeGuard(t *testing.T) {
 	// RB-15: the same matrix, expressed as grants — agency-shaped for the scoped
 	// roles (RB-Q1 has no single-scope shape) and "*" for the unrestricted admin.
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-a','agency-a','2026-01-01T00:00:00Z')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-a','ScopeA','amadeus','2026-01-01T00:00:00Z')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-a','ScopeA','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-a','ag-a')`)
 	exec(`INSERT INTO access_grants (id,ad_group,role,agency_id,all_scopes,created_at) VALUES
 		('gv','run-viewers','viewer','ag-a',0,'2026-01-01T00:00:00Z'),
@@ -255,7 +255,7 @@ func TestRunPathScopeGuard(t *testing.T) {
 		req.Header.Set("Remote-User", group+"@example.com")
 		req.Header.Set("Remote-Groups", group)
 		req.Header.Set("X-CSRF-Token", "tok")
-		req.AddCookie(&http.Cookie{Name: "amadeus_csrf", Value: "tok"})
+		req.AddCookie(&http.Cookie{Name: "cronomicon_csrf", Value: "tok"})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code

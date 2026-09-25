@@ -248,7 +248,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		// ceiling. Measured on the on-disk (redacted) size, so the file is strictly
 		// bounded (plus the one truncation-notice line). Write the notice and bail to 413.
 		if maxRunLog > 0 && persistedStart+int64(ingestBytes)+int64(len(redacted))+1 > maxRunLog {
-			_, _ = f.WriteString("amadeus: run log size limit reached; further output discarded\n")
+			_, _ = f.WriteString("cronomicon: run log size limit reached; further output discarded\n")
 			truncated = true
 			break
 		}
@@ -277,12 +277,12 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 			"run log has reached the maximum size; further output is discarded")
 		return
 	}
-	// H2/DEC-2 — refuse: an ::amadeus-output:: value that carries an injected
+	// H2/DEC-2 — refuse: an ::cronomicon-output:: value that carries an injected
 	// secret would propagate that secret VERBATIM into outputs_json, into a child
 	// step's plaintext env_json (workflow engine), and into the run-detail API —
 	// around allow_secret_injection and the §8 "never persist an injected value to
 	// env_json" invariant, via the natural idiom
-	// `echo "::amadeus-output name=TOKEN::$AMADEUS_SECRET_API"`. Fail the run closed
+	// `echo "::cronomicon-output name=TOKEN::$CRONOMICON_SECRET_API"`. Fail the run closed
 	// at this earliest choke point (before outputs_json is written): drop the
 	// captured outputs and mark the run failed so nothing propagates. The offending
 	// value is already masked in the persisted log (the redactor is seeded with the
@@ -292,7 +292,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("ingest: captured output would leak an injected secret; failing run closed",
 			"trace_id", traceID, "output", leakedOutput)
 		if _, werr := f.WriteString(fmt.Sprintf(
-			"amadeus: output %q would leak an injected secret value; refusing to capture it and failing the run\n",
+			"cronomicon: output %q would leak an injected secret value; refusing to capture it and failing the run\n",
 			leakedOutput)); werr != nil {
 			s.log.Error("write leak-refusal line", "trace_id", traceID, "error", werr)
 		}

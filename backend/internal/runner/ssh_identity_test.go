@@ -21,14 +21,14 @@ import (
 func seedIdentityRun(t *testing.T, svc *Service, runnerID, sshUser, sshCred string) string {
 	t.Helper()
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('idjob','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('idjob','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	seedScopeHost(t, svc, "prod", "web1", "HOST_KEY_NAME")
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, ssh_user, ssh_credential, started_at, created_at)
-		VALUES(?, 'idjob', 'amadeus', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
+		VALUES(?, 'idjob', 'cronomicon', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
 		traceID, runnerID, nullIfEmpty(sshUser), nullIfEmpty(sshCred), now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -44,14 +44,14 @@ func nullIfEmpty(s string) any {
 
 // TestManifestPerRunCredential — the frozen credential is delivered as key
 // material through the D8 channel WITHOUT any declared binding, every target's
-// AuthKeyEnvVar becomes the derived AMADEUS_KEY_<label> reference (which the
+// AuthKeyEnvVar becomes the derived CRONOMICON_KEY_<label> reference (which the
 // agent resolves to the delivered file), the user override lands on the target,
 // and no target ever carries key bytes.
 func TestManifestPerRunCredential(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-id1", "amt_run_id1"
+	runnerID, tok := "runner-id1", "crn_run_id1"
 	insertRunner(t, svc, runnerID, "id1", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -74,8 +74,8 @@ func TestManifestPerRunCredential(t *testing.T) {
 	if tg.User != "deploy" {
 		t.Errorf("target user = %q, want the per-run override 'deploy'", tg.User)
 	}
-	if tg.AuthKeyEnvVar != "AMADEUS_KEY_prod-key" {
-		t.Errorf("target AuthKeyEnvVar = %q, want the derived AMADEUS_KEY_prod-key reference", tg.AuthKeyEnvVar)
+	if tg.AuthKeyEnvVar != "CRONOMICON_KEY_prod-key" {
+		t.Errorf("target AuthKeyEnvVar = %q, want the derived CRONOMICON_KEY_prod-key reference", tg.AuthKeyEnvVar)
 	}
 	// D1 — targets are references only, never bytes.
 	for _, x := range m.Targets {
@@ -98,7 +98,7 @@ func TestManifestIdentityLocalInventoryRefused(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-id2", "amt_run_id2"
+	runnerID, tok := "runner-id2", "crn_run_id2"
 	insertRunner(t, svc, runnerID, "id2", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET inventory='local', protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -127,13 +127,13 @@ func TestClaimGatePerRunCredential(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('cjob','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('cjob','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, status, executor, triggered_by, trigger_kind, ssh_credential, created_at)
-		VALUES(?, 'cjob', 'amadeus', 'bash', 'queued', 'runner', 'ops@x', 'manual', 'prod-key', ?)`,
+		VALUES(?, 'cjob', 'cronomicon', 'bash', 'queued', 'runner', 'ops@x', 'manual', 'prod-key', ?)`,
 		traceID, now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestClaimGatePerRunCredential(t *testing.T) {
 func seedAnsibleIdentityRun(t *testing.T, svc *Service, runnerID, sshUser, sshCred string) string {
 	t.Helper()
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('ansjob','amadeus','ansible','site.yml','Allow',?)`, now()); err != nil {
+		VALUES('ansjob','cronomicon','ansible','site.yml','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	seedScopeHost(t, svc, "prod", "web1", "HOST_KEY_NAME")
@@ -188,7 +188,7 @@ func seedAnsibleIdentityRun(t *testing.T, svc *Service, runnerID, sshUser, sshCr
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, ssh_user, ssh_credential, started_at, created_at)
-		VALUES(?, 'ansjob', 'amadeus', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
+		VALUES(?, 'ansjob', 'cronomicon', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
 		traceID, runnerID, nullIfEmpty(sshUser), nullIfEmpty(sshCred), now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-rp8", "amt_run_rp8"
+	runnerID, tok := "runner-rp8", "crn_run_rp8"
 	insertRunner(t, svc, runnerID, "rp8", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -218,8 +218,8 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 	if m.SSHUser != "deploy" {
 		t.Errorf("manifest sshUser = %q, want deploy", m.SSHUser)
 	}
-	if m.SSHKeyRef != "AMADEUS_KEY_prod-key" {
-		t.Errorf("manifest sshKeyRef = %q, want the derived AMADEUS_KEY_prod-key reference", m.SSHKeyRef)
+	if m.SSHKeyRef != "CRONOMICON_KEY_prod-key" {
+		t.Errorf("manifest sshKeyRef = %q, want the derived CRONOMICON_KEY_prod-key reference", m.SSHKeyRef)
 	}
 	// Names only (D1) — the reference, never the bytes.
 	if m.SSHKeyRef == keyMaterial || m.SSHUser == keyMaterial {
@@ -233,7 +233,7 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 	// The targets keep their INVENTORY identity: the override is applied by
 	// ansible from the extra-vars, not by rewriting the host list.
 	for _, tg := range m.Targets {
-		if tg.AuthKeyEnvVar == "AMADEUS_KEY_prod-key" {
+		if tg.AuthKeyEnvVar == "CRONOMICON_KEY_prod-key" {
 			t.Errorf("ansible run overlaid the target key ref (%+v) — that would auto-wire --private-key, which the inventory outranks", tg)
 		}
 	}
@@ -244,7 +244,7 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 func TestManifestAnsibleNoIdentityOldAgentStillRuns(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-rp8plain", "amt_run_rp8plain"
+	runnerID, tok := "runner-rp8plain", "crn_run_rp8plain"
 	insertRunner(t, svc, runnerID, "rp8plain", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -265,7 +265,7 @@ func TestManifestSSHFamilyIdentityUnchanged(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-rp8ssh", "amt_run_rp8ssh"
+	runnerID, tok := "runner-rp8ssh", "crn_run_rp8ssh"
 	insertRunner(t, svc, runnerID, "rp8ssh", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -278,7 +278,7 @@ func TestManifestSSHFamilyIdentityUnchanged(t *testing.T) {
 	if m.SSHUser != "" || m.SSHKeyRef != "" {
 		t.Errorf("ssh-family run set the ansible-only fields: (%q,%q)", m.SSHUser, m.SSHKeyRef)
 	}
-	if len(m.Targets) != 1 || m.Targets[0].User != "deploy" || m.Targets[0].AuthKeyEnvVar != "AMADEUS_KEY_prod-key" {
+	if len(m.Targets) != 1 || m.Targets[0].User != "deploy" || m.Targets[0].AuthKeyEnvVar != "CRONOMICON_KEY_prod-key" {
 		t.Errorf("ssh-family target overlay regressed: %+v", m.Targets)
 	}
 }
@@ -290,7 +290,7 @@ func TestManifestSSHFamilyIdentityUnchanged(t *testing.T) {
 func seedAnsibleOptsRun(t *testing.T, svc *Service, runnerID, overrideJSON string) string {
 	t.Helper()
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('optjob','amadeus','ansible','site.yml','Allow',?)`, now()); err != nil {
+		VALUES('optjob','cronomicon','ansible','site.yml','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	seedScopeHost(t, svc, "prod", "web1", "HOST_KEY_NAME")
@@ -302,7 +302,7 @@ func seedAnsibleOptsRun(t *testing.T, svc *Service, runnerID, overrideJSON strin
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, override_json, started_at, created_at)
-		VALUES(?, 'optjob', 'amadeus', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?)`,
+		VALUES(?, 'optjob', 'cronomicon', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?)`,
 		traceID, runnerID, nullIfEmpty(overrideJSON), now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -312,7 +312,7 @@ func seedAnsibleOptsRun(t *testing.T, svc *Service, runnerID, overrideJSON strin
 func TestManifestAnsibleOptionsCarried(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-p3", "amt_run_p3"
+	runnerID, tok := "runner-p3", "crn_run_p3"
 	insertRunner(t, svc, runnerID, "p3", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -341,7 +341,7 @@ func TestManifestAnsibleOptionsCarried(t *testing.T) {
 func TestManifestNoAnsibleOptionsOldAgentStillRuns(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-p3plain", "amt_run_p3plain"
+	runnerID, tok := "runner-p3plain", "crn_run_p3plain"
 	insertRunner(t, svc, runnerID, "p3plain", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {

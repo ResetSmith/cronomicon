@@ -1273,7 +1273,7 @@
             background: var(--textMuted)
         }
 
-        .pill.amad {
+        .pill.crn {
             background: var(--accentBg);
             color: var(--accent)
         }
@@ -1826,17 +1826,17 @@
 
 <p><strong>On the host (systemd):</strong></p>
 
-<div class="codeblock"><pre><code>systemctl status amadeus-runner          # running / failed, recent log lines
-systemctl is-active amadeus-runner        # active | inactive | failed
-journalctl -u amadeus-runner -f           # tail the agent log
-journalctl -u amadeus-runner --since '1 hour ago'
-/usr/local/bin/amadeus-runner version     # build version + commit</code></pre></div>
+<div class="codeblock"><pre><code>systemctl status cronomicon-runner          # running / failed, recent log lines
+systemctl is-active cronomicon-runner        # active | inactive | failed
+journalctl -u cronomicon-runner -f           # tail the agent log
+journalctl -u cronomicon-runner --since '1 hour ago'
+/usr/local/bin/cronomicon-runner version     # build version + commit</code></pre></div>
 
 <p><strong>On the host (container):</strong></p>
 
-<div class="codeblock"><pre><code>docker ps --filter name=amadeus-runner    # Up / Exited
-docker logs -f amadeus-runner-01
-docker exec amadeus-runner-01 amadeus-runner version</code></pre></div>
+<div class="codeblock"><pre><code>docker ps --filter name=cronomicon-runner    # Up / Exited
+docker logs -f cronomicon-runner-01
+docker exec cronomicon-runner-01 cronomicon-runner version</code></pre></div>
 
 <p>Healthy logs show <code>registered with server</code> (first start) or <code>resumed runner identity</code> (restart), then steady <code>poll</code> activity on the cadence. A target dial that fails host-key verification surfaces per-host; a server reap shows <code>server returned 404 on poll — re-registering</code>.</p>
 
@@ -1848,11 +1848,11 @@ docker exec amadeus-runner-01 amadeus-runner version</code></pre></div>
 <tr><td><strong>online</strong></td><td>Polled within the offline threshold; claiming work.</td></tr>
 <tr><td><strong>degraded</strong></td><td>Still <code>online</code>, but its last heartbeat is more than <strong>2 minutes</strong> old — two missed polls — or it registered and has never polled. <strong>Derived when the row is read, never stored</strong>, so it is a freshness reading laid over the lifecycle status rather than a state the runner enters. It names the window in which a runner that had already died still read <em>online</em>: <code>offline</code> is only declared at the 5-minute threshold below. Dispatch and claiming are unaffected; the UI treats a degraded runner as <strong>reachable</strong> and keeps its recovery actions offered.</td></tr>
 <tr><td><strong>draining</strong></td><td>Asked to drain — finishing active runs, claiming nothing new.</td></tr>
-<tr><td><strong>offline</strong></td><td>No heartbeat for <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> (server default <strong>5m</strong>, ≈5 missed 60s polls). The reaper reconciles its in-flight runs to a terminal <code>failure</code> with <code>runner_lost</code> (History shows a <strong>Lost</strong> badge).</td></tr>
+<tr><td><strong>offline</strong></td><td>No heartbeat for <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> (server default <strong>5m</strong>, ≈5 missed 60s polls). The reaper reconciles its in-flight runs to a terminal <code>failure</code> with <code>runner_lost</code> (History shows a <strong>Lost</strong> badge).</td></tr>
 </tbody>
 </table></div>
 
-<p>A runner that stays <strong>offline</strong> for <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code> (server default <strong>14d</strong>) is deleted by a secondary sweep. An offline runner that comes back <strong>resumes its ID</strong> (D4) and flips to online on its next successful poll.</p>
+<p>A runner that stays <strong>offline</strong> for <code>CRONOMICON_RUNNER_DEREGISTER_AFTER</code> (server default <strong>14d</strong>) is deleted by a secondary sweep. An offline runner that comes back <strong>resumes its ID</strong> (D4) and flips to online on its next successful poll.</p>
 
 <p><strong>Click any runner row to expand its detail panel.</strong> The compact row carries only <strong>Test</strong> and <strong>Deregister</strong>; the remaining per-runner actions — <strong>⚙ Settings</strong>, <strong>Resync</strong>, <strong>Scan keys</strong>, <strong>Drain</strong> and <strong>Copy upgrade command</strong> — live in the expanded detail. The gating there follows one rule: <strong>Resync, Scan keys and Drain are offered while the runner is <em>reachable</em></strong> — <code>online</code> <em>or</em> <code>degraded</code>, because a degraded runner still heartbeats and still holds work, and that is the state where you most need them. <code>offline</code> still hides them: there is nobody there to ask. There is no longer any <strong>protocol-version</strong> gate on these buttons: The server's protocol floor tracks the current wire protocol, so every agent that can talk to this server speaks it: one below the floor is refused at registration, at redeclare and on every poll with <code>426 protocol_too_old</code>, never silently degraded. (Before v1.5.40 each button carried its own minimum, and Scan keys could vanish silently below protocol v5 while Resync, on the same bar, explained itself.) <strong>Copy upgrade command</strong> is always offered whatever the version badge says — it is also the reinstall command, and “up to date” compares version <em>strings</em>, so a locally-built agent can read current while speaking an older protocol. The detail panel also surfaces health-at-a-glance (status, live heartbeat age, load, sandbox posture), the <strong>full capability list</strong>, <strong>registration provenance</strong> (with a link to the token that created the runner), a read-only <strong>managed-settings</strong> summary, an <strong>agent-version</strong> upgrade hint, the runner's <strong>currently-running</strong> jobs, and its <strong>recent job history</strong>.</p>
 
@@ -1868,7 +1868,7 @@ docker exec amadeus-runner-01 amadeus-runner version</code></pre></div>
 
 <p>Draining lets active runs finish while the runner stops claiming new work — the safe way to take a runner out of rotation.</p>
 
-<ul><li><strong>From the UI:</strong> <strong>Runners → Drain</strong> (the button shows while the runner is <strong>reachable</strong> — <code>online</code> or <code>degraded</code>). On its next poll the agent stops claiming, lets active runs finish, and <strong>exits once idle</strong>. Because the generated unit is <code>Restart=on-failure</code>, a clean drain-exit (code 0) leaves the service stopped — bring it back later with <code>systemctl start amadeus-runner</code>. Starting it back up <strong>is</strong> the come-back signal: the restarted agent's first poll re-admits it — same id, same key, online and claiming work in one round-trip. There is no separate "activate" step; if you want a runner to <em>stay</em> out of rotation, leave the service stopped (or <strong>Deregister</strong> to revoke its key entirely).</li><li><strong>From the host:</strong> <code>systemctl stop amadeus-runner</code> sends <code>SIGTERM</code>, which triggers the <strong>same</strong> graceful drain. <code>TimeoutStopSec=300</code> in the unit gives long ansible/terraform plays up to 5 minutes to wind down before a hard kill.</li></ul>
+<ul><li><strong>From the UI:</strong> <strong>Runners → Drain</strong> (the button shows while the runner is <strong>reachable</strong> — <code>online</code> or <code>degraded</code>). On its next poll the agent stops claiming, lets active runs finish, and <strong>exits once idle</strong>. Because the generated unit is <code>Restart=on-failure</code>, a clean drain-exit (code 0) leaves the service stopped — bring it back later with <code>systemctl start cronomicon-runner</code>. Starting it back up <strong>is</strong> the come-back signal: the restarted agent's first poll re-admits it — same id, same key, online and claiming work in one round-trip. There is no separate "activate" step; if you want a runner to <em>stay</em> out of rotation, leave the service stopped (or <strong>Deregister</strong> to revoke its key entirely).</li><li><strong>From the host:</strong> <code>systemctl stop cronomicon-runner</code> sends <code>SIGTERM</code>, which triggers the <strong>same</strong> graceful drain. <code>TimeoutStopSec=300</code> in the unit gives long ansible/terraform plays up to 5 minutes to wind down before a hard kill.</li></ul>
 
 <p><strong>Always drain before maintenance</strong> so you don't kill mid-flight runs.</p>
 
@@ -1878,11 +1878,11 @@ docker exec amadeus-runner-01 amadeus-runner version</code></pre></div>
 
 <h3>Registration-token hygiene is <strong>not</strong> a kill-switch</h3>
 
-<p>Registration tokens are <strong>single-use per install</strong> (minted from the Runners view; each dies on its first successful registration and records which runner consumed it). <strong>Revoking an unused token</strong> only stops the install that would have used it. Runners that already registered keep their long-lived <code>amt_run_*</code> key and keep working until you <strong>deregister</strong> them (see "Remove"). To revoke a specific runner, use its <strong>Deregister</strong> button — token hygiene never touches registered runners.</p>
+<p>Registration tokens are <strong>single-use per install</strong> (minted from the Runners view; each dies on its first successful registration and records which runner consumed it). <strong>Revoking an unused token</strong> only stops the install that would have used it. Runners that already registered keep their long-lived <code>crn_run_*</code> key and keep working until you <strong>deregister</strong> them (see "Remove"). To revoke a specific runner, use its <strong>Deregister</strong> button — token hygiene never touches registered runners.</p>
 
 <h3>No hot reload</h3>
 
-<p>The agent has <strong>no SIGHUP/config-reload path</strong> — only <code>SIGINT</code>/<code>SIGTERM</code> (drain). Every config change needs a restart (<code>systemctl restart amadeus-runner</code>); the restart is also all a declared-config change needs — drift detection re-declares it on the next poll (see "Resync").</p>
+<p>The agent has <strong>no SIGHUP/config-reload path</strong> — only <code>SIGINT</code>/<code>SIGTERM</code> (drain). Every config change needs a restart (<code>systemctl restart cronomicon-runner</code>); the restart is also all a declared-config change needs — drift detection re-declares it on the next poll (see "Resync").</p>
 
 <hr />
 
@@ -1894,24 +1894,24 @@ docker exec amadeus-runner-01 amadeus-runner version</code></pre></div>
 
 <div class="codeblock"><pre><code># 1. Drain first so no run is interrupted.
 #    (UI → Drain, or `systemctl stop` which drains on SIGTERM.)
-sudo systemctl stop amadeus-runner
+sudo systemctl stop cronomicon-runner
 
 # 2. Build/copy the new binary and install it over the old one.
-cd backend &amp;&amp; CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner
-sudo install -m 0755 amadeus-runner /usr/local/bin/amadeus-runner
+cd backend &amp;&amp; CGO_ENABLED=0 go build -o cronomicon-runner ./cmd/cronomicon-runner
+sudo install -m 0755 cronomicon-runner /usr/local/bin/cronomicon-runner
 
 # 3. Start again — it resumes its identity from the identity file.
-sudo systemctl start amadeus-runner
-amadeus-runner version    # confirm the new build</code></pre></div>
+sudo systemctl start cronomicon-runner
+cronomicon-runner version    # confirm the new build</code></pre></div>
 
 <p><strong>Container:</strong> pull/rebuild the new image, then recreate the container against the <strong>same named volume</strong> so identity persists:</p>
 
-<div class="codeblock"><pre><code>docker pull amadeus-runner:slim       # or rebuild the image
-docker stop amadeus-runner-01 &amp;&amp; docker rm amadeus-runner-01
-docker run -d --name amadeus-runner-01 --restart unless-stopped \
-  -v amadeus-runner-data:/var/lib/amadeus-runner \
+<div class="codeblock"><pre><code>docker pull cronomicon-runner:slim       # or rebuild the image
+docker stop cronomicon-runner-01 &amp;&amp; docker rm cronomicon-runner-01
+docker run -d --name cronomicon-runner-01 --restart unless-stopped \
+  -v cronomicon-runner-data:/var/lib/cronomicon-runner \
   ...same -e flags as install... \
-  amadeus-runner:slim</code></pre></div>
+  cronomicon-runner:slim</code></pre></div>
 
 <blockquote><p><strong>The server keeps showing the OLD version/protocol until you re-register.</strong> A restart <strong>resumes the stored identity</strong> and never re-declares — so after an upgrade the <code>runners</code> row still reflects the version, capabilities, and <code>protocolVersion</code> from the <strong>last registration</strong>. This matters after an upgrade that changes the protocol version. The server's protocol floor tracks the current wire protocol, so every agent that can talk to this server speaks it: one below the floor is refused at registration, at redeclare and on every poll with <code>426 protocol_too_old</code>, never silently degraded. So an agent whose binary you upgraded across a protocol bump keeps working, while one you did <em>not</em> upgrade stops receiving work at its next poll and says so in its own log — rather than running on with fields it silently drops. The server picks up a new build <strong>automatically on the first poll after the restart</strong> (drift detection); the <strong>Resync</strong> button forces it. (Before v1.5.40 the floor sat at v1 and each capability carried its own minimum, hard-failing individual runs — managed inventory below v2, checkout below v3, injected secrets below v6. One loud refusal replaced all of them.)</p></blockquote>
 
@@ -1923,7 +1923,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 
 <h3>Case A — the server reaped/deregistered the runner (automatic)</h3>
 
-<p>If the server has deleted the runner (manual deregister, or 14-day offline sweep), the agent's next poll returns <strong>404</strong>; it logs <code>server returned 404 on poll — re-registering</code>, discards the stale identity, and <strong>re-registers automatically</strong> with its current config. <strong>Nothing to do</strong> — <em>provided the registration token in its env is still valid</em>. Its install token is long dead (single-use, consumed at first registration) — <strong>mint a fresh <code>amt_reg_*</code></strong> (Runners → Register New Runner), put it in the runner's env, and restart so the re-register can succeed. This is the one flow that still needs a registration token: the reaped row's <code>amt_run_*</code> key was revoked with it. (The <strong>Resync</strong> button can't help here — the row is gone and the runner's key revoked; this path always needs a registration token.)</p>
+<p>If the server has deleted the runner (manual deregister, or 14-day offline sweep), the agent's next poll returns <strong>404</strong>; it logs <code>server returned 404 on poll — re-registering</code>, discards the stale identity, and <strong>re-registers automatically</strong> with its current config. <strong>Nothing to do</strong> — <em>provided the registration token in its env is still valid</em>. Its install token is long dead (single-use, consumed at first registration) — <strong>mint a fresh <code>crn_reg_*</code></strong> (Runners → Register New Runner), put it in the runner's env, and restart so the re-register can succeed. This is the one flow that still needs a registration token: the reaped row's <code>crn_run_*</code> key was revoked with it. (The <strong>Resync</strong> button can't help here — the row is gone and the runner's key revoked; this path always needs a registration token.)</p>
 
 <h3>Case B — you changed declared config (capabilities / name / os / maxConcurrent / inventory / toolchains)</h3>
 
@@ -1931,7 +1931,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 
 <p>A plain restart will <strong>not</strong> propagate these — the agent resumes its identity and skips registration. To propagate:</p>
 
-<ul><li><strong>Just restart (preferred):</strong> restart the service so the agent is reading the new values (<code>systemctl restart amadeus-runner</code>). At startup it recomputes its config digest (re-probing toolchains, collections, and the sandbox), the first poll carries it, and the server requests the re-declare automatically — <strong>no click needed</strong>. The <strong>Resync</strong> button forces the same thing without waiting a poll (and a newly installed collection is re-detected at re-declare time even without a restart; flag-derived tokens like <code>checkout</code>/<code>vault</code> and the startup <code>sandboxed</code> probe still need the restart first). One caveat: the startup probe is what gets declared — if the agent starts before its toolchain is ready (e.g. ansible on a slow-booting venv), the reduced token set propagates; restart or Resync once the toolchain is healthy (the agent logs the detected set at startup). No registration token involved — the agent authenticates with its existing <code>amt_run_*</code> key.</li><li><strong>Alternative — deregister, let it re-register:</strong> edit the config (e.g. <code>/etc/amadeus-runner/runner.env</code>), then <strong>Runners → Deregister</strong> the runner. On its next poll the agent 404s and re-registers with the new config. The old row is gone; the runner keeps the <strong>same name</strong> but gets a new id. (Restart the service after editing config so it's reading the new values when it re-registers.)</li><li><strong>Last resort — delete the identity file:</strong> drain, stop the service, delete the identity file (e.g. <code>/var/lib/amadeus-runner/identity.json</code>), then start. The agent registers <strong>fresh</strong> with the new config. Note this mints a <strong>new id</strong>; the old <code>runners</code> row lingers as <strong>offline</strong> until the reaper deregisters it (5m → 14d). Prefer the deregister path so there's no orphan row.</li></ul>
+<ul><li><strong>Just restart (preferred):</strong> restart the service so the agent is reading the new values (<code>systemctl restart cronomicon-runner</code>). At startup it recomputes its config digest (re-probing toolchains, collections, and the sandbox), the first poll carries it, and the server requests the re-declare automatically — <strong>no click needed</strong>. The <strong>Resync</strong> button forces the same thing without waiting a poll (and a newly installed collection is re-detected at re-declare time even without a restart; flag-derived tokens like <code>checkout</code>/<code>vault</code> and the startup <code>sandboxed</code> probe still need the restart first). One caveat: the startup probe is what gets declared — if the agent starts before its toolchain is ready (e.g. ansible on a slow-booting venv), the reduced token set propagates; restart or Resync once the toolchain is healthy (the agent logs the detected set at startup). No registration token involved — the agent authenticates with its existing <code>crn_run_*</code> key.</li><li><strong>Alternative — deregister, let it re-register:</strong> edit the config (e.g. <code>/etc/cronomicon-runner/runner.env</code>), then <strong>Runners → Deregister</strong> the runner. On its next poll the agent 404s and re-registers with the new config. The old row is gone; the runner keeps the <strong>same name</strong> but gets a new id. (Restart the service after editing config so it's reading the new values when it re-registers.)</li><li><strong>Last resort — delete the identity file:</strong> drain, stop the service, delete the identity file (e.g. <code>/var/lib/cronomicon-runner/identity.json</code>), then start. The agent registers <strong>fresh</strong> with the new config. Note this mints a <strong>new id</strong>; the old <code>runners</code> row lingers as <strong>offline</strong> until the reaper deregisters it (5m → 14d). Prefer the deregister path so there's no orphan row.</li></ul>
 
 <p>The deregister and identity-file paths need a valid registration token at re-register time; the Resync button does not.</p>
 
@@ -1939,7 +1939,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 
 <p>These are <strong>runner-local</strong> and <strong>not declared to the server</strong>, so no re-registration is involved:</p>
 
-<ul><li><strong>Key files and <code>known_hosts</code></strong> are read <strong>at dial time</strong> — editing their <em>contents</em> in place takes effect on the <strong>next run</strong>, no restart needed. Only changing their <em>paths</em> (the <code>-key-dir</code> / <code>-key-map</code> / <code>-known-hosts</code> config) needs a restart.</li><li><strong>One key file now serves bash AND ansible.</strong> A key in <code>-key-dir</code>/<code>-key-map</code> named after the host's <code>authKeyEnvVar</code> is bridged to ansible automatically — you no longer provision the same name a second time as an env var. Each run's log shows what it used: <code>amadeus: auth: key "NAME" → &lt;path&gt;</code>, <code>amadeus: auth: --private-key NAME → &lt;path&gt;</code>, and <code>amadeus: trust: known_hosts → &lt;path&gt;</code>. Prove a name resolves with <code>amadeus-runner doctor --auth NAME [user@host]</code> before a run; the expanded Runner detail also lists a runner's resolvable key names as chips. (Opt out with <code>-no-auth-bridge</code>.) See <a href="./runner-security.html">Runner Security Guide</a> §2, "How a runner authenticates."</li><li><strong>Local inventory</strong> (<code>-local-inventory</code>, <code>local</code> mode) is loaded at agent <strong>start</strong> — edit it, then <code>systemctl restart amadeus-runner</code>.</li></ul>
+<ul><li><strong>Key files and <code>known_hosts</code></strong> are read <strong>at dial time</strong> — editing their <em>contents</em> in place takes effect on the <strong>next run</strong>, no restart needed. Only changing their <em>paths</em> (the <code>-key-dir</code> / <code>-key-map</code> / <code>-known-hosts</code> config) needs a restart.</li><li><strong>One key file now serves bash AND ansible.</strong> A key in <code>-key-dir</code>/<code>-key-map</code> named after the host's <code>authKeyEnvVar</code> is bridged to ansible automatically — you no longer provision the same name a second time as an env var. Each run's log shows what it used: <code>cronomicon: auth: key "NAME" → &lt;path&gt;</code>, <code>cronomicon: auth: --private-key NAME → &lt;path&gt;</code>, and <code>cronomicon: trust: known_hosts → &lt;path&gt;</code>. Prove a name resolves with <code>cronomicon-runner doctor --auth NAME [user@host]</code> before a run; the expanded Runner detail also lists a runner's resolvable key names as chips. (Opt out with <code>-no-auth-bridge</code>.) See <a href="./runner-security.html">Runner Security Guide</a> §2, "How a runner authenticates."</li><li><strong>Local inventory</strong> (<code>-local-inventory</code>, <code>local</code> mode) is loaded at agent <strong>start</strong> — edit it, then <code>systemctl restart cronomicon-runner</code>.</li></ul>
 
 <h3>Case D — protocol/version drift after an upgrade</h3>
 
@@ -2001,40 +2001,40 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 <h3>Retire one runner (keep the host)</h3>
 
 <div class="codeblock"><pre><code># 1. Drain (UI → Drain, or stop, which drains on SIGTERM).
-sudo systemctl stop amadeus-runner
+sudo systemctl stop cronomicon-runner
 # 2. Deregister on the server: Runners → Deregister.
 # 3. Delete the identity so a stray restart can't resume the (now-gone) row.
-sudo rm -f /var/lib/amadeus-runner/identity.json
+sudo rm -f /var/lib/cronomicon-runner/identity.json
 # 4. (optional) keep it from coming back on boot:
-sudo systemctl disable amadeus-runner</code></pre></div>
+sudo systemctl disable cronomicon-runner</code></pre></div>
 
 <p>Order matters: <strong>drain → deregister → delete identity</strong>. Deleting the identity without deregistering leaves an offline row to be reaped; deregistering without deleting the identity lets a restart re-register the runner right back.</p>
 
 <h3>Fully uninstall from the host (reverse of <code>runner-install.sh</code>)</h3>
 
-<div class="codeblock"><pre><code>sudo systemctl disable --now amadeus-runner
-sudo rm -f /etc/systemd/system/amadeus-runner.service
+<div class="codeblock"><pre><code>sudo systemctl disable --now cronomicon-runner
+sudo rm -f /etc/systemd/system/cronomicon-runner.service
 sudo systemctl daemon-reload
-sudo rm -f /usr/local/bin/amadeus-runner
-sudo rm -rf /etc/amadeus-runner          # config (runner.env)
-sudo rm -rf /var/lib/amadeus-runner      # state: identity + keys + known_hosts
-sudo userdel amadeus-runner              # remove the service account
-sudo groupdel amadeus-runner             # if it has no other members</code></pre></div>
+sudo rm -f /usr/local/bin/cronomicon-runner
+sudo rm -rf /etc/cronomicon-runner          # config (runner.env)
+sudo rm -rf /var/lib/cronomicon-runner      # state: identity + keys + known_hosts
+sudo userdel cronomicon-runner              # remove the service account
+sudo groupdel cronomicon-runner             # if it has no other members</code></pre></div>
 
 <p>Then <strong>Deregister</strong> the runner on the Runners view if you haven't already.</p>
 
 <h3>Container</h3>
 
 <div class="codeblock"><pre><code># Drain first (UI → Drain), then:
-docker stop amadeus-runner-01            # SIGTERM → graceful drain (up to the stop timeout)
-docker rm amadeus-runner-01
-docker volume rm amadeus-runner-data     # destroys identity + keys — only when fully retiring</code></pre></div>
+docker stop cronomicon-runner-01            # SIGTERM → graceful drain (up to the stop timeout)
+docker rm cronomicon-runner-01
+docker volume rm cronomicon-runner-data     # destroys identity + keys — only when fully retiring</code></pre></div>
 
 <h3>Retire a <strong>compromised</strong> runner (segment-local rotation)</h3>
 
 <p>Because custody is <strong>distributed</strong> (model b), retiring a compromised runner is a segment-local rotation, not an estate-wide one (<code>runner-security.html</code> §7):</p>
 
-<ol><li><strong>Deregister</strong> it on the Runners view (revokes its server access).</li><li><strong>Delete its identity file</strong> (the <code>amt_run_*</code> bearer) so the host can no longer act as that runner.</li><li><strong>Rotate the SSH keys it held</strong> — only the keys for <em>that runner's segment</em> are exposed; other runners' keys and the control plane's secrets are not.</li></ol>
+<ol><li><strong>Deregister</strong> it on the Runners view (revokes its server access).</li><li><strong>Delete its identity file</strong> (the <code>crn_run_*</code> bearer) so the host can no longer act as that runner.</li><li><strong>Rotate the SSH keys it held</strong> — only the keys for <em>that runner's segment</em> are exposed; other runners' keys and the control plane's secrets are not.</li></ol>
 
 <hr />
 
@@ -2066,7 +2066,7 @@ docker volume rm amadeus-runner-data     # destroys identity + keys — only whe
 
 <p>A runner appears in the Runners view the instant <code>POST /api/v1/runners/register</code> succeeds — there is <strong>no approval gate</strong>. So a service that is "active (running)" but never shows up means <strong>registration never completed</strong>. The agent logs every startup phase <em>before</em> it runs it, so the <strong>last line</strong> in the journal names exactly where it stopped:</p>
 
-<div class="codeblock"><pre><code>journalctl -u amadeus-runner -n 40 --no-pager</code></pre></div>
+<div class="codeblock"><pre><code>journalctl -u cronomicon-runner -n 40 --no-pager</code></pre></div>
 
 <p>The healthy startup sequence is:</p>
 
@@ -2082,11 +2082,11 @@ runner agent online</code></pre></div>
 <div class="tbl"><table>
 <thead><tr><th>Last line / error in the journal</th><th>Cause</th><th>Fix</th></tr></thead>
 <tbody>
-<tr><td><code>register request: Post "host/…": unsupported protocol scheme ""</code></td><td><code>AMADEUS_RUNNER_SERVER</code> has no <code>https://</code> scheme</td><td>Add the scheme in <code>runner.env</code> (recent agents auto-normalize a bare host).</td></tr>
-<tr><td><code>register: server returned 302</code>, or an HTML <code>&lt;!doctype html&gt;</code> snippet</td><td>The SSO / forward-auth proxy is intercepting runner endpoints and returning its login page</td><td>Add the runner paths to the proxy auth-bypass (Authelia <code>access_control</code>); see <code>deployment-guide.md</code>.</td></tr>
-<tr><td><code>register: server returned 401 … registration token invalid or expired</code></td><td>Registration token already used (single-use) or &gt;24h old</td><td>Mint a fresh token (<strong>Add Runner</strong>), update <code>AMADEUS_RUNNER_REGISTRATION_TOKEN</code>, restart.</td></tr>
+<tr><td><code>register request: Post "host/…": unsupported protocol scheme ""</code></td><td><code>CRONOMICON_RUNNER_SERVER</code> has no <code>https://</code> scheme</td><td>Add the scheme in <code>runner.env</code> (recent agents auto-normalize a bare host).</td></tr>
+<tr><td><code>register: server returned 302</code>, or an HTML <code>&lt;!doctype html&gt;</code> snippet</td><td>The SSO / forward-auth proxy is intercepting runner endpoints and returning its login page</td><td>Add the runner paths to the proxy auth-bypass (Authelia <code>access_control</code>); see the administrator manual, section 8.3 (runner provisioning behind SSO).</td></tr>
+<tr><td><code>register: server returned 401 … registration token invalid or expired</code></td><td>Registration token already used (single-use) or &gt;24h old</td><td>Mint a fresh token (<strong>Add Runner</strong>), update <code>CRONOMICON_RUNNER_REGISTRATION_TOKEN</code>, restart.</td></tr>
 <tr><td><code>poll failed … 401 … invalid or expired runner token</code></td><td>The runner was deleted, or the server's token store was reset/rebuilt</td><td>Recent agents re-register automatically on a 401; otherwise <code>rm</code> the identity file + supply a fresh registration token.</td></tr>
-<tr><td><code>register request: … x509: certificate signed by unknown authority</code></td><td>Server TLS uses an internal CA the runner doesn't trust</td><td>Set <code>AMADEUS_RUNNER_CA_CERT=/path/to/ca.pem</code> in <code>runner.env</code>, restart.</td></tr>
+<tr><td><code>register request: … x509: certificate signed by unknown authority</code></td><td>Server TLS uses an internal CA the runner doesn't trust</td><td>Set <code>CRONOMICON_RUNNER_CA_CERT=/path/to/ca.pem</code> in <code>runner.env</code>, restart.</td></tr>
 <tr><td>Last line is <code>registering with server</code> (hangs, no error)</td><td>Server unreachable, TLS stall, or a proxy black-holing the register POST</td><td>Run the reachability check below.</td></tr>
 <tr><td>Last line is <code>probing tier-2 sandbox…</code> or <code>detecting host capabilities…</code></td><td>A startup probe is wedged — almost always <code>exec.LookPath</code> stat-ing a <code>$PATH</code> dir on a hung mount</td><td>See <strong>Silent startup hang</strong> below.</td></tr>
 </tbody>
@@ -2096,7 +2096,7 @@ runner agent online</code></pre></div>
 
 <div class="codeblock"><pre><code>curl -sS -o /dev/null -w 'healthz %{http_code} %{time_total}s\n' https://SERVER/healthz
 curl -sS -m 20 -X POST https://SERVER/api/v1/runners/register \
-  -H 'Authorization: Bearer amt_reg_dummy' -H 'Content-Type: application/json' -d '{}' -i | head
+  -H 'Authorization: Bearer crn_reg_dummy' -H 'Content-Type: application/json' -d '{}' -i | head
 # Expect a FAST JSON 401 (unauthorized). An HTML/login page ⇒ SSO proxy intercept;
 # a hang/timeout ⇒ the network or proxy is black-holing the register endpoint.</code></pre></div>
 
@@ -2104,13 +2104,13 @@ curl -sS -m 20 -X POST https://SERVER/api/v1/runners/register \
 
 <p>If the agent logs the <code>runner agent starting</code> banner (and maybe a <code>probing…</code>/<code>detecting…</code> line) and then <strong>nothing</strong>, and systemd eventually reports <code>stop-sigterm timed out … Killing</code> with <code>status=9/KILL</code>, it is blocked inside a startup probe. The overwhelming cause is <code>exec.LookPath</code> — which stats every <code>$PATH</code> directory — hitting a directory on a <strong>hung mount</strong> (stale NFS / autofs to an unreachable server), where the <code>stat()</code> blocks uninterruptibly. Confirm the exact frame (Go dumps every goroutine's stack on SIGQUIT):</p>
 
-<div class="codeblock"><pre><code>systemctl kill --kill-who=main --signal=SIGQUIT amadeus-runner
-journalctl -u amadeus-runner --no-pager | grep -A20 'goroutine 1 \['
+<div class="codeblock"><pre><code>systemctl kill --kill-who=main --signal=SIGQUIT cronomicon-runner
+journalctl -u cronomicon-runner --no-pager | grep -A20 'goroutine 1 \['
 # A frame in probeSandbox / detectRunTypes / exec.LookPath confirms it.</code></pre></div>
 
 <p>Find the stuck directory:</p>
 
-<div class="codeblock"><pre><code>PID=$(systemctl show -p MainPID --value amadeus-runner)
+<div class="codeblock"><pre><code>PID=$(systemctl show -p MainPID --value cronomicon-runner)
 tr '\0' '\n' &lt; /proc/$PID/environ | grep '^PATH=' | cut -d= -f2 | tr ':' '\n' \
   | while read d; do printf '%-24s ' "$d"; timeout 3 stat "$d/." &gt;/dev/null 2&gt;&amp;1; echo "rc=$? (124=HUNG)"; done
 timeout 5 df -h    # if df itself hangs, a stale network mount is the culprit</code></pre></div>
@@ -2120,14 +2120,14 @@ timeout 5 df -h    # if df itself hangs, a stale network mount is the culprit</c
 <ol>
 <li><strong>Repair or unmount the stale mount — this is the real fix.</strong> Playbook runs resolve their toolchains through the same <code>PATH</code>, so a hung directory breaks <em>runs</em> too, not just registration. A runner on such a host can register but cannot reliably execute.</li>
 <li><strong>Pin a clean <code>PATH</code></strong> in <code>runner.env</code> that omits the hung directory (keep wherever <code>which ansible systemd-run</code> actually resolve), then restart. <code>runner-install.sh</code> (recent releases) does this automatically at install time and prints which directories it excluded.</li>
-<li><strong><code>AMADEUS_RUNNER_NO_SANDBOX=true</code></strong> skips the <code>systemd-run</code> probe specifically — useful when <code>systemd-run</code> itself stalls (e.g. a non-login system user with no reachable manager) rather than a broad <code>PATH</code> problem.</li>
+<li><strong><code>CRONOMICON_RUNNER_NO_SANDBOX=true</code></strong> skips the <code>systemd-run</code> probe specifically — useful when <code>systemd-run</code> itself stalls (e.g. a non-login system user with no reachable manager) rather than a broad <code>PATH</code> problem.</li>
 </ol>
 
 <blockquote><p>Recent agents bound every startup probe with a deadline, so a hung mount now <strong>degrades</strong> a probe (logged: <code>PATH lookup timed out — treating tool as absent</code>) instead of wedging startup — the runner registers and runs unsandboxed. The stale mount still needs repair for playbook runs to resolve their tools.</p></blockquote>
 
 <hr />
 
-<p>See also: <a href="./runner-install.html">Runner Install Guide</a> (install + configure), <code>runner-security.html</code> (credential-model posture &amp; blast radius), <code>env-matrix.md</code> (server-side vars such as <code>AMADEUS_RUNNER_OFFLINE_AFTER</code> / <code>AMADEUS_RUNNER_DEREGISTER_AFTER</code>), <code>amadeus-runner.service</code> (the hardened unit).</p>
+<p>See also: <a href="./runner-install.html">Runner Install Guide</a> (install + configure), <code>runner-security.html</code> (credential-model posture &amp; blast radius), <code>env-matrix.md</code> (server-side vars such as <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> / <code>CRONOMICON_RUNNER_DEREGISTER_AFTER</code>), <code>cronomicon-runner.service</code> (the hardened unit).</p>
 
 </main>
 </div>

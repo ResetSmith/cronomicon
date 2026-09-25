@@ -5,7 +5,7 @@
 // endpoint must resolve identically, from one place, so the two execution paths
 // can't drift (runners-update.md §3; the EX.4 warning that a parallel resolution
 // path is how drift and leaks happen). This package is importable by both the
-// server and cmd/amadeus-runner because they share the Go module.
+// server and cmd/cronomicon-runner because they share the Go module.
 //
 // These pieces are resolution only. The sshexec-specific shell-building helpers
 // (remoteCommand, env injection, quoting) stay in sshexec because they build the
@@ -28,12 +28,12 @@ import (
 
 // outputMarkerRe matches an A12 inter-job output marker emitted on a job's stdout:
 //
-//	::amadeus-output name=KEY::VALUE
+//	::cronomicon-output name=KEY::VALUE
 //
 // KEY is an env-var-style identifier; VALUE is the rest of the line. Both the
 // in-app SSH executor and the runner log-ingest seam parse these from the RAW
 // line (before redaction) and accumulate them into runs.outputs_json (Phase 5).
-var outputMarkerRe = regexp.MustCompile(`^::amadeus-output\s+name=([A-Za-z_][A-Za-z0-9_]*)::(.*)$`)
+var outputMarkerRe = regexp.MustCompile(`^::cronomicon-output\s+name=([A-Za-z_][A-Za-z0-9_]*)::(.*)$`)
 
 // ParseOutputMarker returns (key, value, true) if line is an A12 output marker.
 func ParseOutputMarker(line string) (key, value string, ok bool) {
@@ -53,7 +53,7 @@ func ParseOutputMarker(line string) (key, value string, ok bool) {
 // Both execution paths call this at the choke point BEFORE outputs are persisted:
 // the runner log-ingest seam (internal/runner) and the in-app SSH executor
 // (internal/sshexec). It lives here so the two paths cannot drift — an
-// ::amadeus-output:: value carrying an injected secret must fail the run closed
+// ::cronomicon-output:: value carrying an injected secret must fail the run closed
 // on either path, or the value would propagate verbatim into outputs_json, a
 // child step's plaintext env_json, and the run-detail API.
 func FirstOutputLeakingSecret(outputs map[string]string, injected []string) string {
@@ -128,7 +128,7 @@ type Target struct {
 // replaces every target's login; a credential replaces the target's key
 // selection outright — credentialID on the in-app SSH path (AuthKeyEnvVar
 // cleared so the legacy fallback can't race the override, SK.5), keyEnvVar
-// (the derived AMADEUS_KEY_<label> reference, CA-3b) on the runner path where
+// (the derived CRONOMICON_KEY_<label> reference, CA-3b) on the runner path where
 // the manifest carries names only (D1). Exactly one of credentialID/keyEnvVar
 // may be non-empty. Bastion hops are untouched (CA-Q4): the override changes
 // who logs in with which key, not how the connection is routed. Unresolved
@@ -290,7 +290,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 // ScopeHosts returns the host names belonging to a scope (scope_hosts → scopes) —
 // the single membership source shared by ResolveTargets' fan-out, the F2 subset
 // intersection, and the trigger-boundary membership check in runJob. Source-
-// agnostic: git scopes are materialized into scope_hosts during sync, amadeus
+// agnostic: git scopes are materialized into scope_hosts during sync, cronomicon
 // scopes via settings.
 func ScopeHosts(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
@@ -337,10 +337,10 @@ func OverrideHosts(overrideJSON string) []string {
 // scope-qualified by scope_id, NOT just by hostname, so a job in scope A never
 // dials scope B's same-named host:
 //   - A row with NULL scope_id is a GLOBAL operator overlay (a manually-authored
-//     amadeus host); it is a candidate for every scope and WINS.
+//     cronomicon host); it is a candidate for every scope and WINS.
 //   - A row whose scope_id belongs to the requested scope (a git import OR an
-//     amadeus import for THIS scope) is a candidate; other scopes' rows are not.
-//   - Within candidates: amadeus over git, global overlay (scope_id NULL) over a
+//     cronomicon import for THIS scope) is a candidate; other scopes' rows are not.
+//   - Within candidates: cronomicon over git, global overlay (scope_id NULL) over a
 //     scoped import, then most-recent, then id (a total, deterministic order).
 //
 // The TOFU host-key capture must write back to the SAME row id this resolves (see
@@ -351,7 +351,7 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		FROM ssh_hosts
 		WHERE hostname = ?
 		  AND (scope_id IS NULL OR scope_id IN (SELECT id FROM scopes WHERE name = ?))
-		ORDER BY (source='amadeus') DESC, (scope_id IS NULL) DESC, last_modified_at DESC, id DESC
+		ORDER BY (source='cronomicon') DESC, (scope_id IS NULL) DESC, last_modified_at DESC, id DESC
 		LIMIT 1`, hostname, scope)
 	var id, name string
 	var address, user, via, authKeyEnvVar, authCredentialID, hostKey sql.NullString

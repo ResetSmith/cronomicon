@@ -123,7 +123,7 @@ func TestWorkflowStep_BinnedJobStillReportsItsRealScope(t *testing.T) {
 
 	eng := workflow.New(pool, discardLog())
 	scopes, err := eng.JobScopes(context.Background(),
-		[]workflow.Step{{Type: "job", Name: "scoped-importer"}}, "amadeus")
+		[]workflow.Step{{Type: "job", Name: "scoped-importer"}}, "cronomicon")
 	if err != nil {
 		t.Fatalf("JobScopes: %v", err)
 	}
@@ -179,22 +179,22 @@ func seedJobAtSource(t *testing.T, pool *sql.DB, name, source, runType, scope st
 // This is the trap in the obvious fix. Filtering `enabled=1 AND deleted_at IS
 // NULL` inside the per-source probe turns the A11 precedence loop from "the
 // first source where the name EXISTS" into "the first source where it is
-// RUNNABLE" — so binning the amadeus job does not stop the step, it hands it the
+// RUNNABLE" — so binning the cronomicon job does not stop the step, it hands it the
 // git job of the same name: a different script, run type, scope and agency
 // snapshot, reported as success. A11 resolves on existence, so the search has to
 // STOP at the barred row rather than step over it.
 func TestWorkflowStep_BinnedJobDoesNotFallThroughToTheOtherSource(t *testing.T) {
 	pool := openPool(t)
-	seedJobAtSource(t, pool, "deploy", "amadeus", "python", "finance")
+	seedJobAtSource(t, pool, "deploy", "cronomicon", "python", "finance")
 	seedJobAtSource(t, pool, "deploy", "git", "bash", "ops")
 	if _, err := pool.Exec(
-		`UPDATE jobs SET deleted_at = '2026-08-12T00:00:00Z' WHERE name='deploy' AND source='amadeus'`); err != nil {
-		t.Fatalf("bin amadeus twin: %v", err)
+		`UPDATE jobs SET deleted_at = '2026-08-12T00:00:00Z' WHERE name='deploy' AND source='cronomicon'`); err != nil {
+		t.Fatalf("bin cronomicon twin: %v", err)
 	}
 
 	eng := workflow.New(pool, discardLog())
 	res, err := eng.Trigger(context.Background(), workflow.TriggerParams{
-		WorkflowName: "release", WorkflowSource: "amadeus", WorkflowID: 1, TriggeredBy: "t@example.com",
+		WorkflowName: "release", WorkflowSource: "cronomicon", WorkflowID: 1, TriggeredBy: "t@example.com",
 		Steps: []workflow.Step{{Type: "job", Name: "deploy"}},
 	})
 	if err != nil {
@@ -215,14 +215,14 @@ func TestWorkflowStep_BinnedJobDoesNotFallThroughToTheOtherSource(t *testing.T) 
 	}
 	if source == "git" || runType == "bash" || scope == "ops" {
 		t.Errorf("the step ran the GIT twin (source=%q run_type=%q scope=%q) — binning the "+
-			"amadeus job silently substituted a different definition instead of refusing",
+			"cronomicon job silently substituted a different definition instead of refusing",
 			source, runType, scope)
 	}
 
 	// JobScopes must not drift to the substituted job's scope either: it feeds
 	// workflowScopesPermit, so a flip here authorizes against the wrong definition.
 	scopes, err := eng.JobScopes(context.Background(),
-		[]workflow.Step{{Type: "job", Name: "deploy"}}, "amadeus")
+		[]workflow.Step{{Type: "job", Name: "deploy"}}, "cronomicon")
 	if err != nil {
 		t.Fatalf("JobScopes: %v", err)
 	}

@@ -61,7 +61,7 @@ type PendingWorkflowFire struct {
 	// TriggerKind is manual for an AR deferral and reaction for a reactor
 	// promotion. Empty is treated as manual by the engine.
 	TriggerKind string
-	// EnvJSON carries the AMADEUS_REACTED_TO_* stamp for a reaction; empty for
+	// EnvJSON carries the CRONOMICON_REACTED_TO_* stamp for a reaction; empty for
 	// an ad-hoc deferral, which has no provenance to pass on.
 	EnvJSON string
 	// ReactionDepth / ReactedToRunID — see workflow.TriggerParams. Zero-valued
@@ -592,7 +592,7 @@ type pendingReaction struct {
 	Params    *EnqueueParams
 	OriginRef string // the upstream run id — becomes runs.reacted_to_run_id
 	Depth     int    // the DOWNSTREAM depth (upstream + 1)
-	EnvJSON   string // the AMADEUS_REACTED_TO_* stamp
+	EnvJSON   string // the CRONOMICON_REACTED_TO_* stamp
 }
 
 // InsertReactionPendingRun parks a reaction-resolved run. Distinct from

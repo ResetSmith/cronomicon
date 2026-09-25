@@ -3,7 +3,7 @@ import type { components, paths } from "./schema";
 
 // Reads the non-httpOnly CSRF cookie the backend sets (T8 double-submit).
 function csrfToken(): string | null {
-  const m = document.cookie.match(/(?:^|;\s*)amadeus_csrf=([^;]+)/);
+  const m = document.cookie.match(/(?:^|;\s*)cronomicon_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
@@ -65,7 +65,7 @@ export function login(): void {
   window.location.href = "/api/v1/auth/login";
 }
 
-// Redirect into the local dev-login bypass (only works when AMADEUS_DEV_AUTH=true).
+// Redirect into the local dev-login bypass (only works when CRONOMICON_DEV_AUTH=true).
 export function devLogin(): void {
   window.location.href = "/api/v1/auth/dev-login";
 }

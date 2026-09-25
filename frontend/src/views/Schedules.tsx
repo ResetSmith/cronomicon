@@ -38,7 +38,7 @@ const SCHEDULE_COL_W: Record<string, number> = {
 // FB1 — a schedule's folder LOCATION is its source file path (the leading
 // "schedules/" stripped) so the browser mirrors the Git tree; its IDENTITY for
 // detail/actions stays the DB name (keyed by source:name since a name can recur
-// across the git and amadeus sources). Cronomicon-authored schedules have no file,
+// across the git and cronomicon sources). Cronomicon-authored schedules have no file,
 // so fall back to the name as the path so they still appear in the tree.
 const scheduleDisplayPath = (s: Schedule) => {
   // Strip the "schedules/" root and any stray leading/trailing slashes; if nothing
@@ -135,9 +135,9 @@ export function Schedules() {
 }
 
 // Read-only catalog over first-class Schedules (A10a) — schedules/*.yaml synced
-// from GitLab plus operator-authored (amadeus-source) rows. A schedule is the
+// from GitLab plus operator-authored (cronomicon-source) rows. A schedule is the
 // reusable cron primitive; the "used by" reverse index makes a shared schedule's
-// blast radius visible. Git authoring is via the publish flow; amadeus authoring
+// blast radius visible. Git authoring is via the publish flow; cronomicon authoring
 // is the Schedule Builder (+ New schedule). Rendered as the Catalog tab of the
 // Schedules surface.
 // Sortable columns (TS-8, the sorting-update plan); see the tableId note at
@@ -158,7 +158,7 @@ function CatalogTab() {
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   // Optimistic per-schedule tag edits keyed by source:name (a name can recur across
-  // the git and amadeus sources). Reset on refresh — the refetch is authoritative.
+  // the git and cronomicon sources). Reset on refresh — the refetch is authoritative.
   const inlineTags = useInlineTags<Schedule>(
     refresh,
     (s) => `${s.source}:${s.name ?? ""}`,
@@ -304,7 +304,7 @@ function CatalogTab() {
   // One catalog row, reused by the flat search results (displayName = display path,
   // so the folder is visible) and the folder browser (displayName = filename, since
   // the breadcrumb already shows the path). Identity/expand key is source:name — a
-  // name can recur across the git and amadeus sources, so name alone would make two
+  // name can recur across the git and cronomicon sources, so name alone would make two
   // same-named schedules expand together.
   const renderScheduleRow = (s: Schedule, displayName: string) => {
     const name = s.name ?? "";
@@ -419,7 +419,7 @@ function CatalogTab() {
 // `tags` is the parent's override-aware tag set (so the editor and the table column
 // stay in sync); onTagsSaved propagates an edit back up for the optimistic table
 // update. Tags are operator-owned and SQLite-only (tags-support.md) — editable for
-// both git and amadeus schedules (any logged-in user, D4), unlike Edit/Delete.
+// both git and cronomicon schedules (any logged-in user, D4), unlike Edit/Delete.
 function ScheduleDetail({ listRow, canCompose, onChanged, tags, onSaveTags, tagErr }: { listRow: Schedule; canCompose: boolean; onChanged: () => void; tags: string[]; onSaveTags: (tags: string[]) => void; tagErr?: string }) {
   const name = listRow.name ?? "";
   const { data } = useGet<Schedule>(
@@ -434,7 +434,7 @@ function ScheduleDetail({ listRow, canCompose, onChanged, tags, onSaveTags, tagE
   const ownerLabel = useNameDisambiguator(usedBy, (u) => ({ uid: u.uid, name: u.name, agencies: u.agencies, group: u.kind }));
   const env = s.env ?? {};
   const envKeys = Object.keys(env);
-  const isAmadeus = (s.source ?? listRow.source) === "amadeus";
+  const isCronomicon = (s.source ?? listRow.source) === "cronomicon";
 
   const [delErr, setDelErr] = useState<string | null>(null);
   const [pendingForce, setPendingForce] = useState(false);
@@ -518,7 +518,7 @@ function ScheduleDetail({ listRow, canCompose, onChanged, tags, onSaveTags, tagE
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${c.border}`, paddingTop: 12 }}>
-        {isAmadeus ? (
+        {isCronomicon ? (
           canCompose ? (
             <>
               <Link to={`/schedule-builder?name=${encodeURIComponent(name)}`} style={{ textDecoration: "none" }}>

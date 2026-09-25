@@ -82,7 +82,7 @@ func TestVaultClientWriteFetchRoundTrip(t *testing.T) {
 	srv, _ := fakeVault(t)
 	vc := loopbackVaultClient(srv.URL, "role-1", "secret-1")
 
-	ref := "secret/data/amadeus/app#DB_PASSWORD"
+	ref := "secret/data/cronomicon/app#DB_PASSWORD"
 	if err := vc.Write(ref, "s3cr3t"); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestVaultClientWriteFetchRoundTrip(t *testing.T) {
 	}
 
 	// A missing field is an explicit error, not a silent empty string.
-	if _, err := vc.Fetch("secret/data/amadeus/app#NOPE"); err == nil {
+	if _, err := vc.Fetch("secret/data/cronomicon/app#NOPE"); err == nil {
 		t.Error("expected error fetching absent field")
 	}
 }
@@ -281,7 +281,7 @@ func TestServiceRevealVaultSource(t *testing.T) {
 
 	// Create a vault-source secret (stores the vault_ref, no ciphertext).
 	sec, err := svc.Create(context.Background(),
-		CreateInput{Key: "DB_PASSWORD", Source: "vault", VaultPath: "secret/data/amadeus/app#DB_PASSWORD"}, "tester")
+		CreateInput{Key: "DB_PASSWORD", Source: "vault", VaultPath: "secret/data/cronomicon/app#DB_PASSWORD"}, "tester")
 	if err != nil {
 		t.Fatalf("create vault secret: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestServiceRevealVaultSource(t *testing.T) {
 
 	// Wire a real client against a fake Vault and seed the value.
 	srv, store := fakeVault(t)
-	store["secret/data/amadeus/app"] = map[string]string{"DB_PASSWORD": "s3cr3t"}
+	store["secret/data/cronomicon/app"] = map[string]string{"DB_PASSWORD": "s3cr3t"}
 	svc.WithVaultClient(loopbackVaultClient(srv.URL, "role-1", "secret-1"))
 
 	got, err := svc.Reveal(context.Background(), sec.ID)

@@ -106,7 +106,7 @@ func insertClaimedRunTargetHostOverride(t *testing.T, svc *Service, traceID, job
 func TestManifestPinnedLimitMetacharWithAnsibleLimitPassthrough(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-badpin-passthrough", "amt_run_badpin_pass"
+	runnerID, tok := "runner-badpin-passthrough", "crn_run_badpin_pass"
 	insertRunner(t, svc, runnerID, "badpinpass", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -132,7 +132,7 @@ func TestManifestPinnedLimitMetacharWithAnsibleLimitPassthrough(t *testing.T) {
 func TestManifestPinnedLimit(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-pin", "amt_run_pin"
+	runnerID, tok := "runner-pin", "crn_run_pin"
 	insertRunner(t, svc, runnerID, "pin", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -141,12 +141,12 @@ func TestManifestPinnedLimit(t *testing.T) {
 	seedAnsibleScope(t, svc, "prod", "[web]\nweb1\nweb2\n")
 	insertJobDef(t, svc, "patch", "ansible", "- hosts: web\n", 0)
 
-	// amadeus-mode pinned ansible run -> Limit == "<host>".
+	// cronomicon-mode pinned ansible run -> Limit == "<host>".
 	t1 := db.NewTraceID()
 	insertClaimedRunTargetHost(t, svc, t1, "patch", "ansible", "prod", runnerID, "web1")
 	m := getManifest(t, svc, as, t1, tok)
 	if m.Limit != "web1" {
-		t.Errorf("amadeus-mode pinned limit = %q, want web1", m.Limit)
+		t.Errorf("cronomicon-mode pinned limit = %q, want web1", m.Limit)
 	}
 
 	// local-inventory-mode pinned ansible run ships the SAME limit (names only,
@@ -173,7 +173,7 @@ func TestManifestPinnedLimit(t *testing.T) {
 func TestManifestPinnedLimitMetacharRejected(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-badpin", "amt_run_badpin"
+	runnerID, tok := "runner-badpin", "crn_run_badpin"
 	insertRunner(t, svc, runnerID, "badpin", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -200,12 +200,12 @@ func TestManifestPinnedLimitMetacharRejected(t *testing.T) {
 }
 
 // TestManifestLimit verifies the M3 --limit computation: structured group/host
-// names in amadeus mode, local-mode ships Limit but NO inventory (no-leak), and a
+// names in cronomicon mode, local-mode ships Limit but NO inventory (no-leak), and a
 // raw ansibleLimit passthrough takes precedence over the structured limit.
 func TestManifestLimit(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-lim", "amt_run_lim"
+	runnerID, tok := "runner-lim", "crn_run_lim"
 	insertRunner(t, svc, runnerID, "lim", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -214,7 +214,7 @@ func TestManifestLimit(t *testing.T) {
 	seedAnsibleScope(t, svc, "prod", "[web]\nweb1\n")
 	insertJobDef(t, svc, "patch", "ansible", "- hosts: web\n", 0)
 
-	// amadeus ansible run with override groups → Limit = group NAMES + Inventory shipped.
+	// cronomicon ansible run with override groups → Limit = group NAMES + Inventory shipped.
 	t1 := db.NewTraceID()
 	insertClaimedRunOverride(t, svc, t1, "patch", "ansible", "prod", runnerID, `{"groups":["web","db"]}`)
 	m := getManifest(t, svc, as, t1, tok)
@@ -222,7 +222,7 @@ func TestManifestLimit(t *testing.T) {
 		t.Errorf("structured limit = %q, want web,db", m.Limit)
 	}
 	if m.Inventory == nil {
-		t.Errorf("amadeus ansible run should ship inventory")
+		t.Errorf("cronomicon ansible run should ship inventory")
 	}
 
 	// Raw ansibleLimit passthrough takes precedence over the structured limit.
@@ -269,7 +269,7 @@ func seedScopeHost(t *testing.T, svc *Service, scope, host, authKeyEnvVar string
 	ts := now()
 	scopeID := db.NewID()
 	if _, err := svc.db.Exec(`
-		INSERT INTO scopes(id, name, source, created_at) VALUES (?, ?, 'amadeus', ?)`,
+		INSERT INTO scopes(id, name, source, created_at) VALUES (?, ?, 'cronomicon', ?)`,
 		scopeID, scope, ts); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
@@ -299,8 +299,8 @@ func TestManifestOwnership(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	ownerID, ownerTok := "runner-owner", "amt_run_owner"
-	otherID, otherTok := "runner-other", "amt_run_other"
+	ownerID, ownerTok := "runner-owner", "crn_run_owner"
+	otherID, otherTok := "runner-other", "crn_run_other"
 	insertRunner(t, svc, ownerID, "owner", "online", []string{"bash"})
 	insertRunner(t, svc, otherID, "other", "online", []string{"bash"})
 	bindRunnerToken(t, svc, ownerTok, ownerID)
@@ -341,13 +341,13 @@ func TestManifestOwnership(t *testing.T) {
 	}
 }
 
-// TestManifestAmadeusMode verifies the amadeus inventory mode: targets are
+// TestManifestCronomiconMode verifies the cronomicon inventory mode: targets are
 // fully resolved and carry the auth-key env-var NAME only (D1 — never key bytes).
-func TestManifestAmadeusMode(t *testing.T) {
+func TestManifestCronomiconMode(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-am", "amt_run_am"
+	runnerID, tok := "runner-am", "crn_run_am"
 	insertRunner(t, svc, runnerID, "am", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -359,8 +359,8 @@ func TestManifestAmadeusMode(t *testing.T) {
 
 	m := getManifest(t, svc, as, traceID, tok)
 
-	if m.InventoryMode != "amadeus" {
-		t.Errorf("inventoryMode = %q, want amadeus", m.InventoryMode)
+	if m.InventoryMode != "cronomicon" {
+		t.Errorf("inventoryMode = %q, want cronomicon", m.InventoryMode)
 	}
 	if m.Scope != "prod" || m.RunType != "bash" || m.JobName != "deploy" {
 		t.Errorf("manifest header mismatch: %+v", m)
@@ -398,7 +398,7 @@ func TestManifestEnvPassthrough(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-envp", "amt_run_envp"
+	runnerID, tok := "runner-envp", "crn_run_envp"
 	insertRunner(t, svc, runnerID, "envp", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -435,7 +435,7 @@ func TestManifestEnvPassthroughEmptyButPresent(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-envp0", "amt_run_envp0"
+	runnerID, tok := "runner-envp0", "crn_run_envp0"
 	insertRunner(t, svc, runnerID, "envp0", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -473,7 +473,7 @@ func TestManifestLocalMode(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-local", "amt_run_local"
+	runnerID, tok := "runner-local", "crn_run_local"
 	insertRunner(t, svc, runnerID, "local", "online", []string{"bash"})
 	// Flip this runner to local inventory.
 	if _, err := svc.db.Exec(`UPDATE runners SET inventory='local' WHERE id=?`, runnerID); err != nil {
@@ -505,7 +505,7 @@ func TestManifestConflictStates(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-x", "amt_run_x"
+	runnerID, tok := "runner-x", "crn_run_x"
 	insertRunner(t, svc, runnerID, "x", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	insertJobDef(t, svc, "j", "bash", "echo j", 0)
@@ -543,13 +543,13 @@ func seedAnsibleScope(t *testing.T, svc *Service, scope, raw string) {
 	}
 }
 
-// TestManifestAnsibleInventory: an amadeus-mode ansible run on a v2 agent ships
+// TestManifestAnsibleInventory: an cronomicon-mode ansible run on a v2 agent ships
 // the scope's byte-exact inventory for `-i` (M1 / §7.3).
 func TestManifestAnsibleInventory(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-ans", "amt_run_ans"
+	runnerID, tok := "runner-ans", "crn_run_ans"
 	insertRunner(t, svc, runnerID, "ans", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -565,7 +565,7 @@ func TestManifestAnsibleInventory(t *testing.T) {
 
 	m := getManifest(t, svc, as, traceID, tok)
 	if m.Inventory == nil {
-		t.Fatalf("expected inventory shipped for amadeus ansible run, got nil")
+		t.Fatalf("expected inventory shipped for cronomicon ansible run, got nil")
 	}
 	if m.Inventory.Raw != raw {
 		t.Errorf("inventory raw = %q, want byte-exact %q", m.Inventory.Raw, raw)
@@ -581,7 +581,7 @@ func TestManifestLocalModeAnsibleNoInventory(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-liso", "amt_run_liso"
+	runnerID, tok := "runner-liso", "crn_run_liso"
 	insertRunner(t, svc, runnerID, "liso", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET inventory='local', protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set local: %v", err)
@@ -603,20 +603,20 @@ func TestManifestLocalModeAnsibleNoInventory(t *testing.T) {
 	}
 }
 
-// TestManifestAnsibleNoInventoryRejected: an amadeus ansible run against a scope
+// TestManifestAnsibleNoInventoryRejected: an cronomicon ansible run against a scope
 // with NO managed inventory hard-fails (409) rather than run unscoped (§7.3/§15).
 func TestManifestAnsibleNoInventoryRejected(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-noi", "amt_run_noi"
+	runnerID, tok := "runner-noi", "crn_run_noi"
 	insertRunner(t, svc, runnerID, "noi", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
 	}
 	bindRunnerToken(t, svc, tok, runnerID)
 
-	// A scope with hosts but NO raw inventory (an amadeus host-list scope, or one
+	// A scope with hosts but NO raw inventory (an cronomicon host-list scope, or one
 	// not yet re-synced). seedScopeHost inserts a scope without raw_inventory.
 	seedScopeHost(t, svc, "prod", "web01", "PROD_KEY")
 	insertJobDef(t, svc, "patch", "ansible", "- hosts: web\n", 0)
@@ -645,7 +645,7 @@ func TestManifestTerraform(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-tf", "amt_run_tf"
+	runnerID, tok := "runner-tf", "crn_run_tf"
 	insertRunner(t, svc, runnerID, "tf", "online", []string{"terraform"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -714,7 +714,7 @@ func TestManifestCheckout(t *testing.T) {
 	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/job-defs.git"
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-co", "amt_run_co"
+	runnerID, tok := "runner-co", "crn_run_co"
 	insertRunner(t, svc, runnerID, "co", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -751,7 +751,7 @@ func TestManifestCheckoutVaultAndReqPath(t *testing.T) {
 	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/job-defs.git"
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-cv", "amt_run_cv"
+	runnerID, tok := "runner-cv", "crn_run_cv"
 	insertRunner(t, svc, runnerID, "cv", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)

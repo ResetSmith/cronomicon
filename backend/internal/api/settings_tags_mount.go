@@ -20,7 +20,7 @@ import (
 //
 // The one deliberate DIFFERENCE from the catalog tag endpoints: those gate on
 // session + CSRF only (any logged-in user) because they annotate a read-only Git
-// catalog. These three entities are amadeus-owned and already permission-gated on
+// catalog. These three entities are cronomicon-owned and already permission-gated on
 // every mutation, so the tag write carries the SAME permission as the entity's
 // other writes — ManageEnvVars for variables + secrets, ConfigureApp for SSH key
 // credentials. The routes are registered in mountSettings (settings_mount.go).

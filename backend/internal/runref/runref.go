@@ -7,11 +7,11 @@
 // row name. At dispatch the Resolver (resolve.go) turns those bindings into
 //
 //   - Secrets → sensitive VALUES (via secrets.Service.Reveal, which is
-//     source-transparent: stored-envelope OR Vault), keyed by AMADEUS_SECRET_<name>
-//   - Variables → log-safe VALUES (from env_vars), keyed by AMADEUS_VAR_<name>
-//   - SSH Keys → key MATERIAL (decrypted PEM), surfaced as AMADEUS_KEY_<name>
+//     source-transparent: stored-envelope OR Vault), keyed by CRONOMICON_SECRET_<name>
+//   - Variables → log-safe VALUES (from env_vars), keyed by CRONOMICON_VAR_<name>
+//   - SSH Keys → key MATERIAL (decrypted PEM), surfaced as CRONOMICON_KEY_<name>
 //
-// The derived reference form (AMADEUS_<SECTION>_<name>) is owned by envref; this
+// The derived reference form (CRONOMICON_<SECTION>_<name>) is owned by envref; this
 // package never stores a prefix. Because Reveal hides the storage backend, the
 // whole workflow is backend-agnostic — Vault is simply one secret source (Phase 2
 // wires it in behind the same seam with no change here).
@@ -45,7 +45,7 @@ func ValidKind(k Kind) bool {
 	return false
 }
 
-// Reference derives the AMADEUS_* reference for a (kind, bare name); "" for an
+// Reference derives the CRONOMICON_* reference for a (kind, bare name); "" for an
 // invalid kind.
 func (k Kind) Reference(name string) string {
 	switch k {
@@ -60,7 +60,7 @@ func (k Kind) Reference(name string) string {
 }
 
 // KindForSection is the inverse the scanner uses (envref.Split → Kind). ok is
-// false for SectionRun/SectionNone: AMADEUS_RUN_* is dispatcher-owned context,
+// false for SectionRun/SectionNone: CRONOMICON_RUN_* is dispatcher-owned context,
 // not a binding.
 func KindForSection(s envref.Section) (Kind, bool) {
 	switch s {
@@ -75,7 +75,7 @@ func KindForSection(s envref.Section) (Kind, bool) {
 }
 
 // Binding is a single declared reference a job/script consumes. Name is the BARE
-// row name; Reference is the derived AMADEUS_<SECTION>_<name> (populated on read,
+// row name; Reference is the derived CRONOMICON_<SECTION>_<name> (populated on read,
 // ignored on write).
 //
 // As is the optional ALIAS (RA-1): the bare DESTINATION name the resolved value is
@@ -100,7 +100,7 @@ type Binding struct {
 	//
 	// This is the generalised form RA-Q9 chose over a become-specific channel: the
 	// mechanism is "deliver this secret as a file", and `--become-password-file` is
-	// simply its first consumer. It mirrors AMADEUS_KEY_* exactly, where the
+	// simply its first consumer. It mirrors CRONOMICON_KEY_* exactly, where the
 	// reference has always resolved to a path rather than to material.
 	//
 	// Why it matters for a become password specifically: an environment variable is
@@ -119,7 +119,7 @@ func (b Binding) InjectName() string {
 	return b.Name
 }
 
-// InjectReference is the derived AMADEUS_<SECTION>_<name> KEY the value lands on —
+// InjectReference is the derived CRONOMICON_<SECTION>_<name> KEY the value lands on —
 // the alias-aware counterpart of Kind.Reference(Name). This is what both executor
 // seams must key their env maps by; Reference (the row's own derived form) stays
 // the binding's identity for display and audit.
@@ -127,7 +127,7 @@ func (b Binding) InjectReference() string { return b.Kind.Reference(b.InjectName
 
 // ValidateName applies the bare-name rules for a reference of this kind: a secret
 // carries the stricter reserved-KEK bar (a row named KEK/… would derive to the
-// evicted AMADEUS_KEK config name), var and key carry the base POSIX-identifier
+// evicted CRONOMICON_KEK config name), var and key carry the base POSIX-identifier
 // charset. Returns an *envref.Error, which every caller maps to 422.
 //
 // It is exported because FOUR surfaces must agree on the rule — ReplaceBindings,
@@ -179,7 +179,7 @@ func DedupeKey(b Binding) string {
 
 // CheckAliasCollisions rejects a binding set in which two DISTINCT bindings would
 // inject under the same key (RA-Q2). Aliasing makes this reachable in a way it
-// never was before: {secret X} and {secret Y as X} both target AMADEUS_SECRET_X,
+// never was before: {secret X} and {secret Y as X} both target CRONOMICON_SECRET_X,
 // as do {secret Y as X} and {secret Z as X}.
 //
 // There is no defensible silent winner. Map-write order decides which value lands,
@@ -223,7 +223,7 @@ func CheckAliasCollisions(bindings []Binding) error {
 }
 
 // Owner identifies the job or script a set of bindings belongs to. Source is the
-// job source ('amadeus'|'git'); scripts (a single-namespace catalog) use "".
+// job source ('cronomicon'|'git'); scripts (a single-namespace catalog) use "".
 //
 // R2F-1: UID is the owner's permanent identity, and once two departments may own
 // a job of the same name (R2-5) it is the ONLY thing that tells the twins apart.

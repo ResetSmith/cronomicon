@@ -18,7 +18,7 @@
 -- future generator (§4) can populate rows without a schema change; nothing reads
 -- it in Phase 1.
 --
--- ⚠️ AMADEUS SHIPS NO HOLIDAY CONTENT (CAL-Q8) — no seeded row here, and no
+-- ⚠️ CRONOMICON SHIPS NO HOLIDAY CONTENT (CAL-Q8) — no seeded row here, and no
 -- importable file anywhere in the tree. Operators author their own dates and own
 -- them end to end, so a wrong or stale list is never one we supplied. The direct
 -- consequence is that an unrenewed calendar is this feature's likeliest failure:
@@ -27,7 +27,7 @@
 --
 -- ── source: a one-line hedge, deliberately unexposed ────────────────────────
 -- Git-authored calendars are NOT PLANNED (CAL-Q2) — calendars are operator
--- authored, source='amadeus', full stop. The column and the (source, name) PK
+-- authored, source='cronomicon', full stop. The column and the (source, name) PK
 -- survive anyway because adding them LATER would mean rebuilding a table that
 -- `calendar_days` holds an ON DELETE CASCADE foreign key into, and that rebuild
 -- is precisely the hazard migration 830 documents at length. One column now is
@@ -42,7 +42,7 @@
 -- re-create the FK in the new table definition — a rebuild that forgets the FK
 -- silently turns cascade deletes into orphan rows.
 CREATE TABLE calendars (
-    source           TEXT NOT NULL DEFAULT 'amadeus',
+    source           TEXT NOT NULL DEFAULT 'cronomicon',
     name             TEXT NOT NULL,
     description      TEXT,
     -- CAL-27 (§2.8) — the global tier. A global calendar's days are unioned into

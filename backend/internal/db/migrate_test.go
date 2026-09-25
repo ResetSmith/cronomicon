@@ -398,7 +398,7 @@ func TestMigrate480WorkflowLayoutRoundTrip(t *testing.T) {
 	}
 	const steps = `[{"type":"job","name":"build"}]`
 	if _, err := pool.Exec(`INSERT INTO workflows(name, source, steps, layout_json)
-	      VALUES('deploy','amadeus',?,'{"build":{"x":40,"y":80}}')`, steps); err != nil {
+	      VALUES('deploy','cronomicon',?,'{"build":{"x":40,"y":80}}')`, steps); err != nil {
 		t.Fatalf("seed workflow: %v", err)
 	}
 
@@ -407,7 +407,7 @@ func TestMigrate480WorkflowLayoutRoundTrip(t *testing.T) {
 		t.Fatalf("down 480→470: %v", err)
 	}
 	var gotSteps string
-	if err := pool.QueryRow(`SELECT steps FROM workflows WHERE source='amadeus' AND name='deploy'`).Scan(&gotSteps); err != nil {
+	if err := pool.QueryRow(`SELECT steps FROM workflows WHERE source='cronomicon' AND name='deploy'`).Scan(&gotSteps); err != nil {
 		t.Fatalf("after down: workflow row lost in the DROP COLUMN rebuild: %v", err)
 	}
 	if gotSteps != steps {
@@ -424,7 +424,7 @@ func TestMigrate480WorkflowLayoutRoundTrip(t *testing.T) {
 		t.Fatalf("up 470→480: %v", err)
 	}
 	var layout sql.NullString
-	if err := pool.QueryRow(`SELECT layout_json FROM workflows WHERE source='amadeus' AND name='deploy'`).Scan(&layout); err != nil {
+	if err := pool.QueryRow(`SELECT layout_json FROM workflows WHERE source='cronomicon' AND name='deploy'`).Scan(&layout); err != nil {
 		t.Fatalf("read layout_json after re-up: %v", err)
 	}
 	if layout.Valid {
@@ -454,7 +454,7 @@ func TestMigrate490PythonRuntypeRoundTrip(t *testing.T) {
 		t.Fatalf("migrate to 480: %v", err)
 	}
 	// Pre-existing bash rows (data present across the rebuild).
-	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type) VALUES('j-bash','amadeus','bash')`); err != nil {
+	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type) VALUES('j-bash','cronomicon','bash')`); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, created_at)
@@ -476,7 +476,7 @@ func TestMigrate490PythonRuntypeRoundTrip(t *testing.T) {
 		t.Fatalf("up 480→490: %v", err)
 	}
 	for _, q := range []string{
-		`SELECT run_type FROM jobs WHERE source='amadeus' AND name='j-bash'`,
+		`SELECT run_type FROM jobs WHERE source='cronomicon' AND name='j-bash'`,
 		`SELECT run_type FROM runs WHERE id='run-bash'`,
 		`SELECT run_type FROM scripts WHERE name='s-bash'`,
 	} {
@@ -488,7 +488,7 @@ func TestMigrate490PythonRuntypeRoundTrip(t *testing.T) {
 			t.Errorf("after up: run_type = %q, want bash", rt)
 		}
 	}
-	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type) VALUES('j-py','amadeus','python')`); err != nil {
+	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type) VALUES('j-py','cronomicon','python')`); err != nil {
 		t.Fatalf("post-490: python job insert should succeed: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, created_at)
@@ -718,7 +718,7 @@ func TestMigrate400RoundTrip(t *testing.T) {
 		t.Fatalf("source still present at 390 after down")
 	}
 
-	// Back up 390→400: the columns return (DEFAULT 'amadeus').
+	// Back up 390→400: the columns return (DEFAULT 'cronomicon').
 	if err := m.Steps(1); err != nil {
 		t.Fatalf("up 390→400: %v", err)
 	}
@@ -756,7 +756,7 @@ func TestMigrate430RoundTrip(t *testing.T) {
 		t.Fatalf("seed agency: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO scopes(id, name, source, created_at, agency_id)
-	      VALUES('s1','prod','amadeus','t','a1')`); err != nil {
+	      VALUES('s1','prod','cronomicon','t','a1')`); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
 
@@ -912,7 +912,7 @@ func TestMigrate460RoundTrip(t *testing.T) {
 		t.Fatalf("seed credential: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, port, created_at, source, auth_credential_id)
-	      VALUES('h1','web1.example.com',22,'t','amadeus','c1')`); err != nil {
+	      VALUES('h1','web1.example.com',22,'t','cronomicon','c1')`); err != nil {
 		t.Fatalf("seed ssh host: %v", err)
 	}
 
@@ -1517,9 +1517,9 @@ func TestMigrate670RoundTrip(t *testing.T) {
 	const now = "2026-01-01T00:00:00Z"
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-dss','DSS',?)`, now)
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-nwd','NWD',?)`, now)
-	exec(`INSERT INTO scopes(id, name, source, created_at, agency_id) VALUES('sc-prod','prod','amadeus',?,'ag-dss')`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at, agency_id) VALUES('sc-prod','prod','cronomicon',?,'ag-dss')`, now)
 	// A scope with NO agency — the general pool. Must produce no membership row.
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-dev','dev','amadeus',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-dev','dev','cronomicon',?)`, now)
 	exec(`INSERT INTO secrets(id, key, scope, source, created_at) VALUES('s-prod','DB_PASS','prod','stored',?)`, now)
 	exec(`INSERT INTO secrets(id, key, source, created_at) VALUES('s-global','TOKEN','stored',?)`, now)
 	exec(`INSERT INTO secrets(id, key, scope, source, created_at) VALUES('s-dev','DEV_PASS','dev','stored',?)`, now)
@@ -1742,7 +1742,7 @@ func TestMigrate700RoundTrip(t *testing.T) {
 	}
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-a','A',?)`, now)
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-b','B',?)`, now)
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc','multi','amadeus',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc','multi','cronomicon',?)`, now)
 	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc','ag-b')`)
 	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc','ag-a')`)
 	exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, created_at, agencies_json)
@@ -1837,10 +1837,10 @@ func TestMigrate710RoundTrip(t *testing.T) {
 	// Seed BEFORE the up-step: TestMigrateUpDown only exercises empty DBs, so a
 	// backfill bug is invisible unless data is present at the moment it runs.
 	// The same NAME under both sources, because PRIMARY KEY (source, name) makes
-	// the git and amadeus namespaces deliberately disjoint — they must not
+	// the git and cronomicon namespaces deliberately disjoint — they must not
 	// collapse onto one code.
 	exec(`INSERT INTO jobs(source, name, run_type, created_at) VALUES('git','deploy','bash',?)`, now)
-	exec(`INSERT INTO jobs(source, name, run_type, created_at) VALUES('amadeus','deploy','bash',?)`, now)
+	exec(`INSERT INTO jobs(source, name, run_type, created_at) VALUES('cronomicon','deploy','bash',?)`, now)
 	exec(`INSERT INTO workflows(source, name, created_at) VALUES('git','deploy',?)`, now)
 	exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, created_at)
 	      VALUES('r-old','deploy','bash','success','t','manual',?)`, now)
@@ -1872,7 +1872,7 @@ func TestMigrate710RoundTrip(t *testing.T) {
 		return c
 	}
 	gitJob := codeOf("job", "git", "deploy")
-	amaJob := codeOf("job", "amadeus", "deploy")
+	amaJob := codeOf("job", "cronomicon", "deploy")
 	gitWF := codeOf("workflow", "git", "deploy")
 	seen := map[int64]bool{gitJob: true, amaJob: true, gitWF: true}
 	if len(seen) != 3 {
@@ -2368,7 +2368,7 @@ func TestMigrate920DefinitionRevisionsRoundTrip(t *testing.T) {
 	// Seed a definition BEFORE the migration so the ALTERs are exercised against
 	// real data rather than an empty table.
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, concurrency_policy, synced_at)
-	                        VALUES('nightly','amadeus','bash','Allow','2026-08-11T00:00:00Z')`); err != nil {
+	                        VALUES('nightly','cronomicon','bash','Allow','2026-08-11T00:00:00Z')`); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if err := m.Migrate(920); err != nil && err != migrate.ErrNoChange {
@@ -2393,7 +2393,7 @@ func TestMigrate920DefinitionRevisionsRoundTrip(t *testing.T) {
 	ins := func(kind, action string, no int) error {
 		_, err := pool.Exec(`
 			INSERT INTO definition_revisions(id, kind, source, name, revision_no, action, actor, created_at, snapshot_json, snapshot_digest)
-			VALUES(?, ?, 'amadeus', 'nightly', ?, ?, 'a@example.com', '2026-08-11T00:00:00Z', '{}', 'deadbeef')`,
+			VALUES(?, ?, 'cronomicon', 'nightly', ?, ?, 'a@example.com', '2026-08-11T00:00:00Z', '{}', 'deadbeef')`,
 			kind+action+strconv.Itoa(no), kind, no, action)
 		return err
 	}
@@ -2446,7 +2446,7 @@ func TestMigrate930SLAMonitoringRoundTrip(t *testing.T) {
 
 	if _, err := pool.Exec(`
 		INSERT INTO jobs(name, source, run_type, concurrency_policy, synced_at, warn_after_seconds, must_finish_by)
-		VALUES('nightly','amadeus','bash','Allow','t', 1800, '06:00')`); err != nil {
+		VALUES('nightly','cronomicon','bash','Allow','t', 1800, '06:00')`); err != nil {
 		t.Fatalf("seed job with deadlines: %v", err)
 	}
 	var warn int
@@ -2710,7 +2710,7 @@ func TestMigrate1010UIDBackfill(t *testing.T) {
 	// 'ambiguous' exists in BOTH source pools — legal today, since uniqueness is
 	// per-source. 'only-git' exists once.
 	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('ambiguous','git','uid-amb-git','bash','t')`)
-	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('ambiguous','amadeus','uid-amb-ama','bash','t')`)
+	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('ambiguous','cronomicon','uid-amb-ama','bash','t')`)
 	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('only-git','git','uid-onlygit','bash','t')`)
 	exec(`INSERT INTO workflows(name, source, uid, steps, synced_at) VALUES('wf-one','git','uid-wf-git','[]','t')`)
 
@@ -2719,7 +2719,7 @@ func TestMigrate1010UIDBackfill(t *testing.T) {
 	exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind, created_at)
 	      VALUES('r-git','ambiguous','git','bash','success','t','manual','2026-08-13T00:00:00Z')`)
 	exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind, created_at)
-	      VALUES('r-ama','ambiguous','amadeus','bash','success','t','manual','2026-08-13T00:00:00Z')`)
+	      VALUES('r-ama','ambiguous','cronomicon','bash','success','t','manual','2026-08-13T00:00:00Z')`)
 	exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, created_at)
 	      VALUES('r-legacy','only-git','bash','success','t','manual','2026-08-13T00:00:00Z')`)
 	exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind, created_at)
@@ -2753,7 +2753,7 @@ func TestMigrate1010UIDBackfill(t *testing.T) {
 		t.Errorf("git run job_uid = %v, want uid-amb-git", got)
 	}
 	if got := uidOf(`SELECT job_uid FROM runs WHERE id='r-ama'`); got.String != "uid-amb-ama" {
-		t.Errorf("amadeus run job_uid = %v, want uid-amb-ama", got)
+		t.Errorf("cronomicon run job_uid = %v, want uid-amb-ama", got)
 	}
 	// A NULL job_source is git (the 170 convention), not "unknown".
 	if got := uidOf(`SELECT job_uid FROM runs WHERE id='r-legacy'`); got.String != "uid-onlygit" {

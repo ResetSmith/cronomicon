@@ -34,14 +34,14 @@ CREATE TABLE reactions (
     -- primary key shape exactly, including `name` as the entry name, so a
     -- definition can carry several reactions the way it carries several
     -- schedule entries.
-    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind    TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name    TEXT NOT NULL,
     name          TEXT NOT NULL,
 
     -- The watched definition — the one that FINISHES. Deliberately NOT a foreign
     -- key: see the cascade asymmetry below.
-    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','amadeus')),
+    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','cronomicon')),
     on_kind       TEXT NOT NULL CHECK (on_kind IN ('job','workflow')),
     on_name       TEXT NOT NULL,
 
@@ -222,4 +222,4 @@ CREATE INDEX idx_workflow_runs_reacted_to
 ALTER TABLE pending_runs ADD COLUMN origin_kind     TEXT;    -- 'reaction' when a reactor produced this row
 ALTER TABLE pending_runs ADD COLUMN origin_ref      TEXT;    -- the upstream run id
 ALTER TABLE pending_runs ADD COLUMN reaction_depth  INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE pending_runs ADD COLUMN origin_env_json TEXT;    -- the AMADEUS_REACTED_TO_* stamp
+ALTER TABLE pending_runs ADD COLUMN origin_env_json TEXT;    -- the CRONOMICON_REACTED_TO_* stamp

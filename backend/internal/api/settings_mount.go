@@ -673,7 +673,7 @@ func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec 
 // EXISTING scope (M4) — the variable analogue of loadSecretWritable. Env-var
 // writes were wholly unscoped, which the resolver's scope-exact-beats-global
 // ordering turns into an INTEGRITY hole (a restricted manager POSTing
-// {key:"DB_HOST", scope:"prod"} makes a prod run's AMADEUS_VAR_DB_HOST resolve the
+// {key:"DB_HOST", scope:"prod"} makes a prod run's CRONOMICON_VAR_DB_HOST resolve the
 // attacker's value over the global row). 404 on a row out of read scope (no
 // existence oracle), 403 on a global row a restricted actor may not rewrite.
 func (s *Server) loadEnvVarWritable(w http.ResponseWriter, r *http.Request, evID string, actor auth.Identity) (*settings.EnvVar, bool) {
@@ -1091,7 +1091,7 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 			}{"inventory_secret_rejected", "the inventory contains inline secret values; use env-var-NAME indirection", validationErr.Errors})
 			return
 		}
-		if strings.Contains(err.Error(), "only amadeus-source") {
+		if strings.Contains(err.Error(), "only cronomicon-source") {
 			httpx.Fail(w, http.StatusConflict, "conflict", err.Error())
 			return
 		}
@@ -1131,7 +1131,7 @@ func (s *Server) handleDeleteScope(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("scopeId")
 	found, err := settings.DeleteScope(r.Context(), s.db, sid, id.Email)
 	if err != nil {
-		if strings.Contains(err.Error(), "only amadeus-source") || strings.Contains(err.Error(), "referenced by") {
+		if strings.Contains(err.Error(), "only cronomicon-source") || strings.Contains(err.Error(), "referenced by") {
 			httpx.Fail(w, http.StatusConflict, "conflict", err.Error())
 			return
 		}
@@ -1715,7 +1715,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	capSec := secrets.New(s.db, s.cfg, s.log)
 	settings.WireVaultClient(r.Context(), s.db, s.cfg, capSec, s.log)
 	vaultOK := capSec.VaultConfigured()
-	// compose = the caller may author amadeus-source jobs and workflows (A11). Was
+	// compose = the caller may author cronomicon-source jobs and workflows (A11). Was
 	// HasRole("admin") until AF-2 made it a grantable, agency-bound permission; it
 	// is now a flat-union flag like its siblings — "may you compose SOMEWHERE" —
 	// and like them it is for nav gating only. Per-object truth is the server's
@@ -1901,7 +1901,7 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	if format == "csv" {
 		contentType = "text/csv"
 	}
-	filename := fmt.Sprintf("amadeus-audit.%s", format)
+	filename := fmt.Sprintf("cronomicon-audit.%s", format)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	w.WriteHeader(http.StatusOK)

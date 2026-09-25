@@ -10,7 +10,7 @@
 
 <h2>1 · How a PowerShell run reaches its target</h2>
 
-<p>Like Bash, a <code>powershell</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (default via the resolution chain; <strong>the pool is off until an operator sets <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the actual mechanics are identical: the dialing side opens an SSH connection to each target and runs</p>
+<p>Like Bash, a <code>powershell</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (default via the resolution chain; <strong>the pool is off until an operator sets <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the actual mechanics are identical: the dialing side opens an SSH connection to each target and runs</p>
 
 <pre><code>powershell -NonInteractive -Command &lt;your script&gt;</code></pre>
 
@@ -21,13 +21,13 @@
 <li><strong>Linux/macOS targets need one symlink.</strong> PowerShell 7 installs itself as <code>pwsh</code>, and the remote invocation calls <code>powershell</code> — so on a non-Windows target, provide the name (e.g. <code>ln -s /usr/bin/pwsh /usr/local/bin/powershell</code>) or the run fails per-host with <em>command not found</em>.</li>
 </ul>
 
-<blockquote><p><strong>Runner capability nuance.</strong> A runner claims the <code>powershell</code> run type when <code>pwsh</code> is on <em>its own</em> PATH (the auto-detect probe) — even though execution happens on the targets over SSH. For a Linux runner that serves a Windows fleet but has no local pwsh, declare the capability explicitly (<code>-capabilities bash,powershell</code> / <code>AMADEUS_RUNNER_CAPABILITIES</code>); otherwise the run queues <em>“waiting for a powershell-capable runner.”</em> A runner's <code>-os</code> flag records the runner host's own OS — it does not restrict what OS its targets run.</p></blockquote>
+<blockquote><p><strong>Runner capability nuance.</strong> A runner claims the <code>powershell</code> run type when <code>pwsh</code> is on <em>its own</em> PATH (the auto-detect probe) — even though execution happens on the targets over SSH. For a Linux runner that serves a Windows fleet but has no local pwsh, declare the capability explicitly (<code>-capabilities bash,powershell</code> / <code>CRONOMICON_RUNNER_CAPABILITIES</code>); otherwise the run queues <em>“waiting for a powershell-capable runner.”</em> A runner's <code>-os</code> flag records the runner host's own OS — it does not restrict what OS its targets run.</p></blockquote>
 
 <hr />
 
 <h2>2 · Getting scripts in</h2>
 
-<p>Identical to the rest of the catalog (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §2 in depth): any raw <code>*.ps1</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>powershell</code>; or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>amadeus validate .</code> into CI — and <code>Invoke-ScriptAnalyzer</code> (PSScriptAnalyzer) sits beside it as naturally as shellcheck does for bash.</p>
+<p>Identical to the rest of the catalog (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §2 in depth): any raw <code>*.ps1</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>powershell</code>; or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>cronomicon validate .</code> into CI — and <code>Invoke-ScriptAnalyzer</code> (PSScriptAnalyzer) sits beside it as naturally as shellcheck does for bash.</p>
 
 <hr />
 
@@ -36,7 +36,7 @@
 <p>Targeting follows the shared shell-family rules — a scope fans out to its member hosts, a pinned <code>target_host</code> wins outright on every run path, a per-run host subset is SSH-executor-only (<code>422 scope_membership</code> otherwise) — with these Windows-fleet specifics:</p>
 
 <ul>
-<li><strong>Declare <code>powershell</code> on the scope.</strong> Supported run types are chips on the scope (the “bash floor” means <code>bash</code> is always present; add <code>powershell</code> for your Windows scopes — e.g. a <code>Windows-Fleet</code> scope declaring <span class="tag">powershell</span> <span class="tag">ansible</span>). A pragma does the same for a Git-synced inventory: <code># amadeus:v1 types=bash,powershell</code>.</li>
+<li><strong>Declare <code>powershell</code> on the scope.</strong> Supported run types are chips on the scope (the “bash floor” means <code>bash</code> is always present; add <code>powershell</code> for your Windows scopes — e.g. a <code>Windows-Fleet</code> scope declaring <span class="tag">powershell</span> <span class="tag">ansible</span>). A pragma does the same for a Git-synced inventory: <code># cronomicon:v1 types=bash,powershell</code>.</li>
 <li><strong>Host records are OS-agnostic.</strong> Address, port (22 for Windows OpenSSH too), user, optional bastion <code>via</code>, and the auth key. The <strong>OS</strong> field on a host record is descriptive; execution behavior comes from the run type.</li>
 <li><strong>Key-based auth on Windows OpenSSH</strong> works like anywhere else, with one server-side gotcha worth knowing when <em>Test connection</em> says <span class="pill fail"><span class="dot"></span>cred_error</span> but the key is right: for members of the Administrators group, Windows OpenSSH reads authorized keys from <code>C:\ProgramData\ssh\administrators_authorized_keys</code> (with restrictive ACLs), not the user profile's <code>authorized_keys</code>.</li>
 <li><strong>Host keys fail closed</strong> on both executors — stored-key strict match or loud TOFU on the in-app executor; the runner's <code>known_hosts</code> + <strong>Scan &amp; approve</strong> on the agent path. Bastion hops are pinned too. Same rules, same fixes as <a href="./bash-guide.html"><code>bash-guide.html</code></a> §3.</li>
@@ -48,11 +48,11 @@
 
 <h3>Reading the environment</h3>
 
-<p>Injected environment (job env ← schedule env ← per-run overrides, plus bound references and the dispatcher's <code>AMADEUS_RUN_*</code> context set) arrives as an <code>$env:</code> prelude ahead of your body, delivered on stdin — never argv, never <code>/proc</code>-visible. Read it the normal way:</p>
+<p>Injected environment (job env ← schedule env ← per-run overrides, plus bound references and the dispatcher's <code>CRONOMICON_RUN_*</code> context set) arrives as an <code>$env:</code> prelude ahead of your body, delivered on stdin — never argv, never <code>/proc</code>-visible. Read it the normal way:</p>
 
 <pre><code>$release = $env:TARGET_RELEASE          # a run-input answer (§ below)
-$apiKey  = $env:AMADEUS_SECRET_API_KEY  # a bound secret reference
-Write-Output "run $($env:AMADEUS_RUN_ID) on scope $($env:AMADEUS_RUN_SCOPE)"</code></pre>
+$apiKey  = $env:CRONOMICON_SECRET_API_KEY  # a bound secret reference
+Write-Output "run $($env:CRONOMICON_RUN_ID) on scope $($env:CRONOMICON_RUN_SCOPE)"</code></pre>
 
 <h3>Run inputs, not <code>Read-Host</code></h3>
 
@@ -75,7 +75,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }</code></pre>
 
 <p>Hand values to downstream workflow steps with the standard marker on stdout:</p>
 
-<pre><code>Write-Output "::amadeus-output name=HOTFIX_KB::KB5031364"</code></pre>
+<pre><code>Write-Output "::cronomicon-output name=HOTFIX_KB::KB5031364"</code></pre>
 
 <p>A downstream step binds an input to it and receives it as env. The <code>output_secret_leak</code> fail-close applies here too — never emit a bound secret as an output. See <a href="user-manual.html#workflows">User Manual §7.5</a>.</p>
 
@@ -83,11 +83,11 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }</code></pre>
 
 <h2>5 · Secrets from PowerShell</h2>
 
-<p>The delivery model is the shared one (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §5): declare <a href="user-manual.html#refbindings">reference bindings</a> on the job, receive <code>$env:AMADEUS_SECRET_&lt;name&gt;</code> / <code>$env:AMADEUS_VAR_&lt;name&gt;</code>; the in-app executor resolves and injects fail-closed with STDIN delivery, the runner path needs the per-runner <strong>Secret injection</strong> flag, and <code>AMADEUS_KEY_*</code> material is runner-only. PowerShell-specific habits:</p>
+<p>The delivery model is the shared one (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §5): declare <a href="user-manual.html#refbindings">reference bindings</a> on the job, receive <code>$env:CRONOMICON_SECRET_&lt;name&gt;</code> / <code>$env:CRONOMICON_VAR_&lt;name&gt;</code>; the in-app executor resolves and injects fail-closed with STDIN delivery, the runner path needs the per-runner <strong>Secret injection</strong> flag, and <code>CRONOMICON_KEY_*</code> material is runner-only. PowerShell-specific habits:</p>
 
 <ul>
 <li><strong>Bridge to credential-taking cmdlets without echoing:</strong>
-<pre><code>$sec  = ConvertTo-SecureString $env:AMADEUS_SECRET_SVC_PASS -AsPlainText -Force
+<pre><code>$sec  = ConvertTo-SecureString $env:CRONOMICON_SECRET_SVC_PASS -AsPlainText -Force
 $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec)</code></pre></li>
 <li><strong>Don't re-broadcast.</strong> Redaction masks known injected values in stored logs, but a value your script fetches or decrypts itself was never registered — keep it out of <code>Write-Host</code>/<code>Write-Output</code>, out of other processes' argv, and away from <code>-Verbose</code> streams.</li>
 <li><strong>Nothing secret in the repo, schedule env or run overrides</strong> — plaintext by design; secrets belong in the encrypted store / Vault behind a binding.</li>
@@ -103,7 +103,7 @@ $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec
 <li><strong>No prompts, ever:</strong> run inputs instead of <code>Read-Host</code>; <code>-Confirm:$false</code>/<code>-Force</code> on cmdlets that ask; <code>-NonInteractive</code> turns forgotten prompts into immediate errors, which is the good outcome.</li>
 <li><strong>Be idempotent</strong> — retries, schedule re-fires and re-runs all mean “again”; test with <code>-WhatIf</code> during authoring, then remove it.</li>
 <li><strong>Pin single-host jobs with <code>target_host</code></strong>; size <code>timeout_seconds</code> to reality (a hung Windows Update call is the classic overrun); <code>concurrency_policy: Forbid</code> for non-reentrant maintenance.</li>
-<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>, lint with PSScriptAnalyzer + <code>amadeus validate</code> in CI, and use <code>::amadeus-output</code> markers — not temp files — to pass data between workflow steps.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>, lint with PSScriptAnalyzer + <code>cronomicon validate</code> in CI, and use <code>::cronomicon-output</code> markers — not temp files — to pass data between workflow steps.</li>
 </ul>
 
 <hr />
@@ -113,13 +113,13 @@ $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec
 <div class="tbl"><table>
 <thead><tr><th>Symptom</th><th>Likely cause → fix</th></tr></thead>
 <tbody>
-<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code>, or route to a runner.</td></tr>
+<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code>, or route to a runner.</td></tr>
 <tr><td>Queued, “waiting for a powershell-capable runner”</td><td>No online runner claims <code>powershell</code> — the probe needs local <code>pwsh</code>; declare <code>-capabilities</code> explicitly for a runner that only <em>dials</em> PowerShell targets (§1).</td></tr>
 <tr><td>Per-host failure: <code>powershell: command not found</code></td><td>A non-Windows target with only <code>pwsh</code> — add the <code>powershell</code> symlink/alias (§1). On Windows: the OpenSSH session's PATH is broken.</td></tr>
 <tr><td>Error “Read and Prompt functionality is not available”</td><td>Something asked a question under <code>-NonInteractive</code> — <code>Read-Host</code>, a confirm, a credential dialog. Replace with run inputs / <code>-Confirm:$false</code> (§4).</td></tr>
 <tr><td>Run reads <strong>Success</strong> but the work failed</td><td>A non-terminating error or a failed native command didn't move the exit code. Add the §4 preamble and the <code>$LASTEXITCODE</code> check.</td></tr>
 <tr><td><span class="pill fail"><span class="dot"></span>cred_error</span> on a Windows host despite a correct key</td><td>The account is an Administrator and the key isn't in <code>administrators_authorized_keys</code> (§3).</td></tr>
-<tr><td>Host-key mismatch / <code>conn_error</code> / <code>unpinned_bastion_target</code> / <code>executor_lost</code> / <code>amadeus: job timed out</code></td><td>Shared shell-family causes — see the <a href="./bash-guide.html"><code>bash-guide.html</code></a> §7 table; the rules are identical for PowerShell.</td></tr>
+<tr><td>Host-key mismatch / <code>conn_error</code> / <code>unpinned_bastion_target</code> / <code>executor_lost</code> / <code>cronomicon: job timed out</code></td><td>Shared shell-family causes — see the <a href="./bash-guide.html"><code>bash-guide.html</code></a> §7 table; the rules are identical for PowerShell.</td></tr>
 </tbody>
 </table></div>
 

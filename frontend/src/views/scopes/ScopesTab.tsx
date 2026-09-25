@@ -23,7 +23,7 @@ import { RUN_TYPES, type RunType } from "../../runtypes";
 
 export interface ScopeRow {
   id?: string; // UUIDv7 (K-3)
-  source?: "git" | "amadeus";
+  source?: "git" | "cronomicon";
   scope: string;
   name?: string | null;
   description?: string;
@@ -95,7 +95,7 @@ const COL_W: Record<string, number> = {
 // actions stay unsortable.
 const SORT_COLS: SortColumn<ScopeRow>[] = [
   { key: "scope", get: (s) => s.scope, type: "text" },
-  { key: "source", get: (s) => (s.source === "amadeus" ? "Cronomicon" : "Git"), type: "text" },
+  { key: "source", get: (s) => (s.source === "cronomicon" ? "Cronomicon" : "Git"), type: "text" },
   { key: "hosts", get: (s) => s.hostCount ?? s.hosts?.length, type: "number" },
   { key: "updated", get: (s) => s.lastChangedAt, type: "date" },
 ];
@@ -175,7 +175,7 @@ export function ScopesTab({
       width: COL_W.source,
       fixed: true,
       cell: (row) => {
-        const isLocal = row.source === "amadeus";
+        const isLocal = row.source === "cronomicon";
         return <span style={{ fontSize: c.fontSm, color: isLocal ? c.info : c.textSec }}>{isLocal ? "Cronomicon" : "Git"}</span>;
       },
     },
@@ -272,7 +272,7 @@ export function ScopesTab({
       cell: (row) => (
         <span onClick={(e) => e.stopPropagation()}>
           <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-            {row.source === "amadeus" ? (
+            {row.source === "cronomicon" ? (
               canEdit ? <Btn onClick={() => setEditing(row)}>Edit</Btn> : null
             ) : row.gitlabUrl ? (
               <a
@@ -387,7 +387,7 @@ export function ScopesTab({
           <tbody>
             {sort.sorted.map((s) => {
               const isExp = expanded === s.id;
-              const isLocal = s.source === "amadeus";
+              const isLocal = s.source === "cronomicon";
               const cap = s.capability;
               const capErrors = cap?.errors ?? [];
               return (
@@ -608,7 +608,7 @@ function InventoryPanel({ scopeId }: { scopeId: string }) {
   const [doc, setDoc] = useState<InventoryDoc | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // M5 authoring state (amadeus scopes).
+  // M5 authoring state (cronomicon scopes).
   const [editing, setEditing] = useState(false);
   const [rawText, setRawText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -640,8 +640,8 @@ function InventoryPanel({ scopeId }: { scopeId: string }) {
   if (loading) return <InlineLoading what="inventory" />;
   if (err) return <div style={{ marginTop: 14, color: c.danger, fontSize: c.fontSm }}>Inventory: {err}</div>;
   if (!doc) return null;
-  const editable = !!doc.editable; // amadeus-source — operator can author in-app
-  // A git scope with no inventory has nothing to show; an amadeus scope always
+  const editable = !!doc.editable; // cronomicon-source — operator can author in-app
+  // A git scope with no inventory has nothing to show; an cronomicon scope always
   // offers the authoring affordance even when empty.
   if (!editable && !doc.hasInventory) return null;
 
@@ -771,7 +771,7 @@ function InventoryPanel({ scopeId }: { scopeId: string }) {
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             rows={12}
-            placeholder={"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\n\n[web:vars]\namadeus_auth_key_env_var=DEPLOY_KEY"}
+            placeholder={"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\n\n[web:vars]\ncronomicon_auth_key_env_var=DEPLOY_KEY"}
             style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm, resize: "vertical" }}
           />
           {lineErrs.length > 0 && (

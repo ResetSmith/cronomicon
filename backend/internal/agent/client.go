@@ -38,7 +38,7 @@ var errIdentityRejected = fmt.Errorf("runner token rejected by server (401 — d
 // protocol and is refused the same way. The identity file is kept, the agent
 // keeps polling (and keeps saying so in its log), and the fix — upgrading this
 // binary — resolves it with no operator surgery on the server side.
-var errProtocolTooOld = fmt.Errorf("server refused this agent's wire protocol (426 — upgrade the amadeus-runner binary)")
+var errProtocolTooOld = fmt.Errorf("server refused this agent's wire protocol (426 — upgrade the cronomicon-runner binary)")
 
 // errNoWork signals a poll that returned 204 No Content (no assignment, no
 // control). Not an error condition — the loop just waits for the next tick.
@@ -289,7 +289,7 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	looksHTML := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "html") ||
 		strings.Contains(strings.ToLower(snippet), "<!doctype") || strings.Contains(strings.ToLower(snippet), "<html")
 	if looksHTML {
-		return fmt.Errorf("got HTTP %d with an HTML body — a reverse proxy is intercepting runner endpoints (expected a plain health response). Add the runner paths to the proxy auth-bypass; see deployment-guide.md", resp.StatusCode)
+		return fmt.Errorf("got HTTP %d with an HTML body — a reverse proxy is intercepting runner endpoints (expected a plain health response). Add the runner paths to the proxy auth-bypass; see the runner install guide", resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned HTTP %d: %s", resp.StatusCode, snippet)

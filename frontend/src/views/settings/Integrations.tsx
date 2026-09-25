@@ -121,7 +121,7 @@ export function GitlabSection() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {form.webhookSecretEnvPinned ? (
                 <span style={{ fontSize: c.fontSm, color: c.textSec }}>
-                  Pinned by <code style={{ fontFamily: c.mono }}>AMADEUS_GITLAB_WEBHOOK_SECRET</code> — unset it to rotate via the API.
+                  Pinned by <code style={{ fontFamily: c.mono }}>CRONOMICON_GITLAB_WEBHOOK_SECRET</code> — unset it to rotate via the API.
                 </span>
               ) : (
                 rotateMsg && <span style={{ fontSize: c.fontSm, color: rotateMsg.startsWith("Rotate failed") ? c.danger : c.success }}>{rotateMsg}</span>
@@ -281,7 +281,7 @@ export function LogStorageSection() {
             hint="Applies immediately — the next run writes here, no restart. Runs already in progress finish writing to the old path, and existing logs are not moved."
             last={!isS3}
           >
-            <input value={form.local?.path ?? ""} onChange={(e) => patch({ local: { ...form.local, path: e.target.value } })} placeholder="/var/lib/amadeus/logs" style={wide()} />
+            <input value={form.local?.path ?? ""} onChange={(e) => patch({ local: { ...form.local, path: e.target.value } })} placeholder="/var/lib/cronomicon/logs" style={wide()} />
           </SettingRow>
           {isS3 && (
             <>
@@ -311,7 +311,7 @@ export function LogStorageSection() {
                 <input value={form.s3?.region ?? ""} onChange={(e) => patch({ s3: { ...form.s3, region: e.target.value } })} style={{ ...inputStyle(), width: 160 }} />
               </SettingRow>
               <SettingRow label="Key Prefix">
-                <input value={form.s3?.prefix ?? ""} onChange={(e) => patch({ s3: { ...form.s3, prefix: e.target.value } })} placeholder="amadeus/" style={wide()} />
+                <input value={form.s3?.prefix ?? ""} onChange={(e) => patch({ s3: { ...form.s3, prefix: e.target.value } })} placeholder="cronomicon/" style={wide()} />
               </SettingRow>
               <SettingRow label="Access Key" hint="Leave both keys empty to use the host's AWS credentials (env, profile, or IAM role).">
                 <input value={form.s3?.accessKey ?? ""} onChange={(e) => patch({ s3: { ...form.s3, accessKey: e.target.value } })} style={wide()} />

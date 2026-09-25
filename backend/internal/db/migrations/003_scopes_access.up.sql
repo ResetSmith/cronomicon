@@ -1,12 +1,12 @@
 -- 003 scopes + access control (A3.2 honest view, A5 role-level scope access,
 -- S8 local scopes, S9 rename cascade target).
 
--- Scopes (inventories). source='git' are read from GitLab; source='amadeus' are
+-- Scopes (inventories). source='git' are read from GitLab; source='cronomicon' are
 -- operator-managed in the UI and live here (S8).
 CREATE TABLE scopes (
     id               TEXT PRIMARY KEY,              -- UUIDv7
     name             TEXT NOT NULL UNIQUE,
-    source           TEXT NOT NULL CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     supported_types  TEXT NOT NULL DEFAULT '["bash"]', -- JSON array; bash floor (S10)
     created_by       TEXT,
@@ -15,7 +15,7 @@ CREATE TABLE scopes (
     last_modified_at TEXT                            -- S4
 );
 
--- Hosts for amadeus-source scopes (git scopes resolve hosts from the inventory file).
+-- Hosts for cronomicon-source scopes (git scopes resolve hosts from the inventory file).
 CREATE TABLE scope_hosts (
     scope_id TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
     host     TEXT NOT NULL,

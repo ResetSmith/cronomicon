@@ -28,7 +28,7 @@ export interface Workflow {
   // disambiguation on when two departments own a workflow of one name.
   uid?: string;
   name: string;
-  source?: string; // git | amadeus — gates the in-app Edit affordance (amadeus only)
+  source?: string; // git | cronomicon — gates the in-app Edit affordance (cronomicon only)
   sourcePath?: string | null; // repo-relative file path, for folder browsing
   description?: string;
   tags?: string[];
@@ -100,7 +100,7 @@ export { fmtDuration } from "../../utils/datetime";
 
 // ── Tiny shared atoms ──
 
-// Pill badge matching the prototype (amadeus-core.jsx Badge): rounded, tinted
+// Pill badge matching the prototype (cronomicon-core.jsx Badge): rounded, tinted
 // fill, no border. Pass the status color from runStatusColor/outcomeColor.
 export function badgeStyle(color: string): React.CSSProperties {
   return {

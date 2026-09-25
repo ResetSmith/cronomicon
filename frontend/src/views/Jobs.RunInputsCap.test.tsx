@@ -14,8 +14,8 @@ const prompt = (i: number) => ({ name: `INPUT_${i}`, label: `Input ${i}` });
 // Two jobs: one with 7 declared inputs, one with 3.
 const JOBS = {
   items: [
-    { id: 1, name: "many-inputs", type: "bash", scope: "Prod", source: "amadeus", status: "success" },
-    { id: 2, name: "few-inputs", type: "bash", scope: "Prod", source: "amadeus", status: "success" },
+    { id: 1, name: "many-inputs", type: "bash", scope: "Prod", source: "cronomicon", status: "success" },
+    { id: 2, name: "few-inputs", type: "bash", scope: "Prod", source: "cronomicon", status: "success" },
   ],
   totalItems: 2,
   totalPages: 1,

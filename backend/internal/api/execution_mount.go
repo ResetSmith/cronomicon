@@ -157,7 +157,7 @@ type jobRow struct {
 	// row. New integrations should prefer it; ID remains for compatibility.
 	UID        string  `json:"uid,omitempty"`
 	Name       string  `json:"name"`
-	Source     string  `json:"source"`               // git | amadeus (A9)
+	Source     string  `json:"source"`               // git | cronomicon (A9)
 	SourcePath *string `json:"sourcePath,omitempty"` // repo-relative file path (folder browsing)
 	Type       string  `json:"type"`
 	Host       *string `json:"host"`
@@ -233,7 +233,7 @@ type jobRow struct {
 	ScriptPath  *string `json:"scriptPath,omitempty"`
 	Executor    *string `json:"executor,omitempty"`
 	// RT-2 — the runner pin. RunnerTag is the declared pin (git-owned for git
-	// jobs, Composer-owned for amadeus ones). RunnerTagEffective is the resolved
+	// jobs, Composer-owned for cronomicon ones). RunnerTagEffective is the resolved
 	// job-level answer the Run dialog prefills from; it is computed server-side
 	// so clients cannot implement the precedence three ways, and it stays a
 	// separate field even though it now equals RunnerTag — the per-run rung above
@@ -347,7 +347,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			COALESCE(an.critical, 0) AS critical,
 			COALESCE(an.contact, '') AS contact
 		FROM jobs j
-		-- Joined on the uid, never the name: two amadeus jobs may share a name
+		-- Joined on the uid, never the name: two cronomicon jobs may share a name
 		-- (R2-5), and a name join would show one twin the other's chip.
 		LEFT JOIN annotations an ON an.owner_kind = 'job' AND an.owner_uid = j.uid
 		-- FX-D1: the newest EXECUTED run, not the newest ROW. A calendar veto, a
@@ -640,7 +640,7 @@ func (s *Server) fetchJobByID(r *http.Request, jobID string) *jobRow {
 	return s.fetchJobDetail(r, "rowid", jobID)
 }
 
-// defSource resolves a definition's source ('git'|'amadeus') by its rowid, for
+// defSource resolves a definition's source ('git'|'cronomicon') by its rowid, for
 // the source-aware paused_jobs key (migration 170 / Q-G). `table` is a fixed
 // identifier chosen by the caller (never user input). Defaults to 'git'.
 func (s *Server) defSource(r *http.Request, table, rowid string) string {
@@ -1021,7 +1021,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		//
 		// RA-4 — `as` is the optional ALIAS: the bare destination name the value is
 		// injected under, so a caller can supply THEIR department's credential to a
-		// shared job body that reads a fixed AMADEUS_SECRET_<name>. It is a
+		// shared job body that reads a fixed CRONOMICON_SECRET_<name>. It is a
 		// destination only: `name` still selects the row, and it is still resolved
 		// under this run's scope and agency snapshot, so an alias can never widen
 		// what the caller may attach.
@@ -1428,7 +1428,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		return
 	}
 	// KB — the same rule for a bound SSH key: the ssh executor connects FROM
-	// amadeus and cannot place a key file on the target, so a key-bound run that
+	// cronomicon and cannot place a key file on the target, so a key-bound run that
 	// resolves to ssh is refused here rather than started with an input it will
 	// never receive (the executor used to warn and skip). Tests the RESOLVED
 	// executor for the reason the block above gives; serves the token trigger
@@ -1617,7 +1617,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// operator's override — job-env is not added there, so it stays un-redacted like
 	// schedule env (JC12). NULL job-env + no override ⇒ nil ⇒ env_json NULL (R2).
 	// Reserved-namespace guard (W4, N-D1): a per-run override may not define any
-	// AMADEUS_* key. Enforced at ingest, BEFORE the merge, so a reserved key can
+	// CRONOMICON_* key. Enforced at ingest, BEFORE the merge, so a reserved key can
 	// never reach env_json.
 	if err := envref.ValidateOperatorEnv(body.Env); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
@@ -1718,7 +1718,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	//
 	// JR-Q1 — a scope Env Vars row of the same bare name does NOT satisfy a prompt and
 	// must not suppress the warning. Env Vars reach a run only via an explicit reference
-	// binding, under the derived AMADEUS_VAR_<name> key (internal/runref); nothing
+	// binding, under the derived CRONOMICON_VAR_<name> key (internal/runref); nothing
 	// publishes a bare `NAME` into the child env. `eff` is therefore the whole truth
 	// here, and the Run dialog's satisfied-check mirrors it exactly. (The dialog used to
 	// claim scope-level satisfaction and contradicted this record — fixed 2026-07-24.)
@@ -2246,7 +2246,7 @@ type workflowRow struct {
 	// UID — the stable surrogate identity (AF-4a); see jobRow.UID.
 	UID         string   `json:"uid,omitempty"`
 	Name        string   `json:"name"`
-	Source      string   `json:"source"`               // git | amadeus (A9)
+	Source      string   `json:"source"`               // git | cronomicon (A9)
 	SourcePath  *string  `json:"sourcePath,omitempty"` // repo-relative file path (folder browsing)
 	Description string   `json:"description"`
 	Tags        []string `json:"tags"`

@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// seedScopedJob inserts an amadeus job in the given scope (nil ⇒ global) and
+// seedScopedJob inserts an cronomicon job in the given scope (nil ⇒ global) and
 // returns its rowid (the {jobId} path segment).
 func seedScopedJob(t *testing.T, pool *sql.DB, name string, scope *string) string {
 	t.Helper()
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, scope, synced_at)
-		VALUES(?, 'amadeus', 'bash', 'echo hi', 'Allow', ?, '2026-01-01T00:00:00Z')`, name, scope); err != nil {
+		VALUES(?, 'cronomicon', 'bash', 'echo hi', 'Allow', ?, '2026-01-01T00:00:00Z')`, name, scope); err != nil {
 		t.Fatalf("seed job %s: %v", name, err)
 	}
 	var rowid string

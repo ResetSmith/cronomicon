@@ -1,5 +1,5 @@
 // Canonical UI kit — ported from the prototype's shared components
-// (amadeus-core.jsx). Views should prefer these over rolling their own so the
+// (cronomicon-core.jsx). Views should prefer these over rolling their own so the
 // app keeps one visual language. Everything reads the mutable `c` tokens during
 // render (theme.ts), so components repaint on theme toggle via the Outlet
 // remount in Shell.
@@ -683,18 +683,18 @@ export function EmptyCell() {
   );
 }
 
-// ── SourceBadge (definition origin: amadeus vs git) ──────────────────────────
+// ── SourceBadge (definition origin: cronomicon vs git) ──────────────────────────
 // Small uppercase marker of a definition's origin on list rows. Shared across
 // the Jobs/Schedules/Scripts lists (D3).
 //
 // VU2-4 — the two sources are deliberately ASYMMETRIC. Git is the majority in
 // every catalog that shows this (twelve identical chips per screen on Jobs,
 // every row on Scripts), so it renders as quiet text with no chip chrome;
-// amadeus keeps the tinted chip. The interesting value is the minority one,
+// cronomicon keeps the tinted chip. The interesting value is the minority one,
 // and the ink is now spent on it. Where source is a constant (Scripts is
 // all-git) the column correctly degrades to plain muted text.
 export function SourceBadge({ source }: { source?: string }) {
-  const isGit = source !== "amadeus";
+  const isGit = source !== "cronomicon";
   return (
     <span
       style={{

@@ -6,7 +6,7 @@ import "strconv"
 
 // HostConn is one host's connection detail derived from a parsed inventory, ready
 // to map into an ssh_hosts row (M4 / §9.1): ansible_host→Address, ansible_port→Port,
-// ansible_user→User, and the auth-key NAME (per-host amadeus_auth_key_env_var, else
+// ansible_user→User, and the auth-key NAME (per-host cronomicon_auth_key_env_var, else
 // the scope default). NAMES only — never a secret value (D1).
 type HostConn struct {
 	Host          string
@@ -20,7 +20,7 @@ type HostConn struct {
 // projection (ConnHosts — the [group:vars]/[group:children] phantoms are
 // excluded). Effective vars are group_vars of the host's containing groups
 // overlaid by host_vars (host_vars win). defaultAuthKey (a per-scope sidecar
-// NAME) is used when a host has no amadeus_auth_key_env_var. ansible_ssh_private_
+// NAME) is used when a host has no cronomicon_auth_key_env_var. ansible_ssh_private_
 // key_file is intentionally NOT consulted — the in-app executor needs a secret
 // NAME, not a runner-side path.
 func HostConns(p Projection, defaultAuthKey string) []HostConn {
@@ -74,7 +74,7 @@ func HostConns(p Projection, defaultAuthKey string) []HostConn {
 			Host:          h,
 			Address:       v["ansible_host"],
 			User:          v["ansible_user"],
-			AuthKeyEnvVar: v["amadeus_auth_key_env_var"],
+			AuthKeyEnvVar: v["cronomicon_auth_key_env_var"],
 		}
 		if hc.AuthKeyEnvVar == "" {
 			hc.AuthKeyEnvVar = defaultAuthKey

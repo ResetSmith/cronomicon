@@ -5,7 +5,7 @@
 //
 // # Why stdin hand-off (H1 / DEC-1)
 //
-// The env snapshot may carry INJECTED SECRET VALUES (resolved AMADEUS_SECRET_*/
+// The env snapshot may carry INJECTED SECRET VALUES (resolved CRONOMICON_SECRET_*/
 // vault-source values, vault-integration.md P1.3). The previous renderer emitted
 // them as a "K='value' bash -c '…'" prefix concatenated into the single command
 // string passed to session.Run — so the secret sat in the sshd-spawned process's

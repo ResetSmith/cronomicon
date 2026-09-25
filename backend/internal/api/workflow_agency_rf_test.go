@@ -28,29 +28,29 @@ func TestWorkflowListDerivesAgenciesFromItsJobs(t *testing.T) {
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-tax','Tax','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-tax','tax','amadeus','t')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-fin','finance','amadeus','t')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-tax','tax','cronomicon','t')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-fin','finance','cronomicon','t')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-tax','ag-tax')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-fin','ag-fin')`)
-	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled) VALUES ('j-tax','amadeus','bash','tax',1)`)
-	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled) VALUES ('j-fin','amadeus','bash','finance',1)`)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled) VALUES ('j-tax','cronomicon','bash','tax',1)`)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled) VALUES ('j-fin','cronomicon','bash','finance',1)`)
 	// A job whose scope belongs to NO agency — the orphan case the pre-flight
 	// reports and the catalog renders as an em-dash.
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-orph','orphan','amadeus','t')`)
-	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled) VALUES ('j-orph','amadeus','bash','orphan',1)`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-orph','orphan','cronomicon','t')`)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled) VALUES ('j-orph','cronomicon','bash','orphan',1)`)
 
 	exec(`INSERT INTO workflows (uid,name,source,steps,enabled,synced_at)
-	      VALUES ('uid-wf-tax','wf-tax','amadeus','[{"type":"job","name":"j-tax"}]',1,'t')`)
+	      VALUES ('uid-wf-tax','wf-tax','cronomicon','[{"type":"job","name":"j-tax"}]',1,'t')`)
 	// Spanning two departments: BOTH must appear. Picking one would be a lie, and
 	// picking none would hide that this workflow crosses a boundary — which is
 	// exactly what an operator needs to see.
 	exec(`INSERT INTO workflows (uid,name,source,steps,enabled,synced_at)
-	      VALUES ('uid-wf-both','wf-both','amadeus','[{"type":"job","name":"j-tax"},{"type":"job","name":"j-fin"}]',1,'t')`)
+	      VALUES ('uid-wf-both','wf-both','cronomicon','[{"type":"job","name":"j-tax"},{"type":"job","name":"j-fin"}]',1,'t')`)
 	exec(`INSERT INTO workflows (uid,name,source,steps,enabled,synced_at)
-	      VALUES ('uid-wf-orph','wf-orph','amadeus','[{"type":"job","name":"j-orph"}]',1,'t')`)
+	      VALUES ('uid-wf-orph','wf-orph','cronomicon','[{"type":"job","name":"j-orph"}]',1,'t')`)
 	// Nested steps: the union must walk the whole graph, not just top-level jobs.
 	exec(`INSERT INTO workflows (uid,name,source,steps,enabled,synced_at)
-	      VALUES ('uid-wf-nested','wf-nested','amadeus','[{"type":"parallel","jobs":[{"type":"job","name":"j-fin"}]}]',1,'t')`)
+	      VALUES ('uid-wf-nested','wf-nested','cronomicon','[{"type":"parallel","jobs":[{"type":"job","name":"j-fin"}]}]',1,'t')`)
 
 	rec := reqAs(t, h, http.MethodGet, "/api/v1/workflows", "sec-admins", "")
 	if rec.Code != http.StatusOK {

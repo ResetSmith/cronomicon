@@ -66,7 +66,7 @@ function Stat({ label, value, tone, hint }: { label: string; value: string; tone
   );
 }
 
-export function RunAnalytics({ job, source }: { job?: string; source?: "git" | "amadeus" }) {
+export function RunAnalytics({ job, source }: { job?: string; source?: "git" | "cronomicon" }) {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);

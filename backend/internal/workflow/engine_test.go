@@ -407,7 +407,7 @@ func TestEngineOrphanReaper(t *testing.T) {
 	// 1. Seed an orphaned workflow run and some child runs.
 	_, err := pool.ExecContext(ctx, `
 		INSERT INTO workflow_runs (id, workflow_id, workflow_name, workflow_source, status, triggered_by, trigger_kind, created_at, started_at)
-		VALUES ('wf-trace-1', 1, 'orphan-wf', 'amadeus', 'running', 'user@example.com', 'manual', '2026-07-08T00:00:00Z', '2026-07-08T00:00:00Z')
+		VALUES ('wf-trace-1', 1, 'orphan-wf', 'cronomicon', 'running', 'user@example.com', 'manual', '2026-07-08T00:00:00Z', '2026-07-08T00:00:00Z')
 	`)
 	if err != nil {
 		t.Fatalf("seed workflow_runs: %v", err)
@@ -469,4 +469,3 @@ func TestEngineOrphanReaper(t *testing.T) {
 		t.Errorf("expected 1 workflow-end activity, got %d", count)
 	}
 }
-

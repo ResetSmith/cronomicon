@@ -73,7 +73,7 @@ func newSyncTestServer(t *testing.T, syncer api.LogArchiveSyncer, s3 *fakes3.Ser
 			Backend: "s3",
 			Local:   &settings.LocalLogConfig{Path: t.TempDir()},
 			S3: &settings.S3LogConfig{Endpoint: s3.Endpoint(), Bucket: "logs", Region: "us-east-1",
-				AccessKey: "AK", SecretKey: "SK", Prefix: "amadeus/", UseSSL: &useSSL},
+				AccessKey: "AK", SecretKey: "SK", Prefix: "cronomicon/", UseSSL: &useSSL},
 		}, "seed"); err != nil {
 			t.Fatalf("seed s3 settings: %v", err)
 		}

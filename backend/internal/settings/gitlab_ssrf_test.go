@@ -15,8 +15,8 @@ import (
 // the SSRF guard is wired into this outbound path (not just the dialer). Metadata
 // is blocked regardless of the private/loopback posture.
 func TestRotateWebhookRefusesMetadataTarget(t *testing.T) {
-	t.Setenv("AMADEUS_GITLAB_WEBHOOK_SECRET", "")
-	t.Setenv("AMADEUS_GITLAB_TOKEN", "")
+	t.Setenv("CRONOMICON_GITLAB_WEBHOOK_SECRET", "")
+	t.Setenv("CRONOMICON_GITLAB_TOKEN", "")
 
 	pool := openTestPool(t)
 	ctx := context.Background()
@@ -27,7 +27,7 @@ func TestRotateWebhookRefusesMetadataTarget(t *testing.T) {
 
 	if _, err := UpdateGitlabConfig(ctx, pool, cfg, GitlabConfig{
 		Pat:         "super-secret-pat",
-		BotName:     "amadeus-bot",
+		BotName:     "cronomicon-bot",
 		BotEmail:    "bot@example.com",
 		WriteBranch: "main",
 		RepoUrl:     "https://169.254.169.254/org/repo.git",

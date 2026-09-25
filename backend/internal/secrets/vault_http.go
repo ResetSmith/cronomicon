@@ -24,7 +24,7 @@ import (
 // auth method); otherwise the stub remains.
 //
 // vaultRef format (matches the DB vault_ref contract): "<kvv2-path>#<field>",
-// e.g. "secret/data/amadeus/app#DB_PASSWORD". The field after '#' selects one
+// e.g. "secret/data/cronomicon/app#DB_PASSWORD". The field after '#' selects one
 // key from the secret's data map; if omitted it defaults to "value".
 //
 // Phase-2 hardening (D4) is layered via VaultOptions, each dormant until set:

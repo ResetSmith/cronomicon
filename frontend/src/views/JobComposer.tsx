@@ -166,10 +166,10 @@ function envRowsToMap(rows: EnvKV[]): Record<string, string> {
 }
 
 // In-app Job composition (A11 / v20 Phase 3): bind a Git Script × Schedule(s) ×
-// Scope × execution options into an amadeus-source Job — no Git round-trip. Gated
+// Scope × execution options into an cronomicon-source Job — no Git round-trip. Gated
 // on the Compose capability (Admin-only in v20); non-admins see a notice. ?id=
 // selects edit mode (V1.1-15), reusing the whole composer to PUT an existing
-// amadeus job; Delete lives in this view behind a confirm (D4). ?cloneFrom=
+// cronomicon job; Delete lives in this view behind a confirm (D4). ?cloneFrom=
 // prefills every field from an existing job but stays in create mode (POST,
 // name editable, no Delete); ?script= presets just the script ref, for the
 // Scripts catalog's "Create Job" hand-off.
@@ -319,7 +319,7 @@ export function JobComposer() {
   // message is the list of reactions the operator has to decide about.
   const [delBlock, setDelBlock] = useState<string | null>(null);
 
-  // Edit/clone mode: load the existing amadeus job into the form. A custom
+  // Edit/clone mode: load the existing cronomicon job into the form. A custom
   // (non-suggestion) scope round-trips as-is via the creatable ScopePicker (JC23),
   // so setScope alone suffices — no manual-mode flip, hence [loadId] is the only
   // dep. Clone differs from edit in exactly two lines here: the name gets a
@@ -339,7 +339,7 @@ export function JobComposer() {
         return;
       }
       const j = data as Job;
-      if (j.source !== "amadeus") {
+      if (j.source !== "cronomicon") {
         setGitSource(true);
         return;
       }
@@ -403,7 +403,7 @@ export function JobComposer() {
       });
       setTagsInput((j.tags ?? []).join(", "));
       // EV-6 parity — prefill the declared key bindings (labels only; the derived
-      // AMADEUS_KEY_ form is re-derived at render and on write).
+      // CRONOMICON_KEY_ form is re-derived at render and on write).
       const kb = await api.GET("/job-reference-bindings/{jobId}", {
         params: { path: { jobId: Number(loadId) } },
       });
@@ -629,7 +629,7 @@ export function JobComposer() {
       setDelErr(
         errMessage(error) ||
           (response.status === 409
-            ? "Only amadeus-source jobs can be deleted in-app."
+            ? "Only cronomicon-source jobs can be deleted in-app."
             : `Delete failed (${response.status}).`),
       );
       setPendingDelete(false);
@@ -775,7 +775,7 @@ export function JobComposer() {
     if (keysDirty || refsDirty) {
       const jobId = isEdit ? Number(editId) : (data as Job | undefined)?.id;
       const mine: ReferenceBinding[] = [
-        ...sshKeys.map((n) => ({ kind: "key" as const, name: n, reference: `AMADEUS_KEY_${n}` })),
+        ...sshKeys.map((n) => ({ kind: "key" as const, name: n, reference: `CRONOMICON_KEY_${n}` })),
         ...refBindings,
       ];
       const kerr =
@@ -793,7 +793,7 @@ export function JobComposer() {
       }
     }
     setBusy(false);
-    setOkMsg(`Job "${name.trim()}" ${isEdit ? "updated" : "created"} (amadeus-source).`);
+    setOkMsg(`Job "${name.trim()}" ${isEdit ? "updated" : "created"} (cronomicon-source).`);
     // Keep the form populated after an edit; only reset on create.
     if (isEdit) return;
     setName("");
@@ -830,7 +830,7 @@ export function JobComposer() {
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
         This job is <strong>Git-authored</strong> — read-only here. Edit it through the GitLab publish
-        flow; only amadeus-source jobs are editable in-app.
+        flow; only cronomicon-source jobs are editable in-app.
       </div>
     );
   }
@@ -857,19 +857,19 @@ export function JobComposer() {
       <div style={{ color: c.textSec, fontSize: c.fontSm }}>
         {isEdit ? (
           <>
-            Editing the <strong>amadeus-source</strong> job <span style={{ fontFamily: c.mono }}>{name}</span>.
+            Editing the <strong>cronomicon-source</strong> job <span style={{ fontFamily: c.mono }}>{name}</span>.
             Saving rebinds its script, schedules, scope, and execution options. It runs through the same
             engine as a Git job — only its origin differs.
           </>
         ) : cloneId ? (
           <>
-            Cloning an existing job into a <strong>new amadeus-source</strong> job: every setting is
+            Cloning an existing job into a <strong>new cronomicon-source</strong> job: every setting is
             prefilled from the original — adjust what differs (starting with the name) and create it.
             The original job is not touched.
           </>
         ) : (
           <>
-            Compose an <strong>amadeus-source</strong> job: bind a Git script to schedules, a scope, and
+            Compose an <strong>cronomicon-source</strong> job: bind a Git script to schedules, a scope, and
             execution options. It runs through the same engine as a Git job — only its origin differs.
           </>
         )}
@@ -1154,7 +1154,7 @@ export function JobComposer() {
         label="SSH keys"
         info={
           <>
-            Stored keys this job's runs receive as <code style={{ fontFamily: c.mono }}>AMADEUS_KEY_&lt;label&gt;</code>{" "}
+            Stored keys this job's runs receive as <code style={{ fontFamily: c.mono }}>CRONOMICON_KEY_&lt;label&gt;</code>{" "}
             key files — for a playbook or script that does its own SSH. Saved with the job; agency-filtered, not
             scope-filtered.
             {identityCapable && (
@@ -1229,12 +1229,12 @@ export function JobComposer() {
           onChange={reactions.setList}
           ownerKind="job"
           ownerName={isEdit ? name : ""}
-          ownerSource="amadeus"
+          ownerSource="cronomicon"
           loadError={reactions.loadError}
         />
-        {reactionsError({ kind: "job", name, source: "amadeus" }, reactions.list) && (
+        {reactionsError({ kind: "job", name, source: "cronomicon" }, reactions.list) && (
           <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>
-            {reactionsError({ kind: "job", name, source: "amadeus" }, reactions.list)}
+            {reactionsError({ kind: "job", name, source: "cronomicon" }, reactions.list)}
           </div>
         )}
         {reactionErr && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{reactionErr}</div>}
@@ -1300,7 +1300,7 @@ export function JobComposer() {
             ⚠ <code>{credentialishPrompts.join(", ")}</code> look{credentialishPrompts.length === 1 ? "s" : ""} like{" "}
             {credentialishPrompts.length === 1 ? "a credential" : "credentials"}. Run-input answers are stored, sent,
             and shown in run logs in plaintext. Keep credentials in the Secret Store and reference them as{" "}
-            <code>AMADEUS_SECRET_&lt;name&gt;</code> instead.
+            <code>CRONOMICON_SECRET_&lt;name&gt;</code> instead.
           </div>
         )}
         {selectedScript && (selectedScript.variables?.length ?? 0) > 0 && (
@@ -1619,7 +1619,7 @@ export function JobComposer() {
             <textarea
               style={{ ...input(), minHeight: 62, fontFamily: c.mono, resize: "vertical" }}
               value={preserved.watch.map((w) => w.path).join("\n")}
-              placeholder={"/srv/incoming/*.csv\n/var/spool/amadeus/*.xml"}
+              placeholder={"/srv/incoming/*.csv\n/var/spool/cronomicon/*.xml"}
               onChange={(e) =>
                 setP({
                   watch: e.target.value
@@ -1639,7 +1639,7 @@ export function JobComposer() {
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: -6 }}>
               A runner watches these only if it was started with <code>-allow-watch</code> and the path is
               inside its <code>-watch-paths</code> allowlist. The job runs once per arrival with
-              <code> AMADEUS_WATCH_PATH</code> and <code>AMADEUS_WATCH_FILE</code> set; the file itself is
+              <code> CRONOMICON_WATCH_PATH</code> and <code>CRONOMICON_WATCH_FILE</code> set; the file itself is
               not copied anywhere. Set a per-path <code>stable_seconds</code> in YAML for large files.
             </div>
           )}
@@ -1891,7 +1891,7 @@ function InlineScheduleRow({
 }
 
 // JC-P6 — one reusable (first-class) schedule as a rich, bindable row: a Source badge
-// (git vs amadeus, also disambiguating cross-source name collisions), human cron via
+// (git vs cronomicon, also disambiguating cross-source name collisions), human cron via
 // the shared cronPreview (tolerates 6-field), next fire, and an env-key summary.
 function ReusableScheduleRow({ schedule, checked, onToggle }: { schedule: Schedule; checked: boolean; onToggle: () => void }) {
   const preview = cronPreview(schedule.cron ?? "");

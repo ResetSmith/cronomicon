@@ -26,7 +26,7 @@ func TestApiScopeInventoryAuthoring(t *testing.T) {
 		}
 	}
 	amID := db.NewID()
-	exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','amadeus','t','["bash"]')`, amID)
+	exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, amID)
 	gitID := db.NewID()
 	exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'gitscope','git','t','["bash"]')`, gitID)
 
@@ -60,7 +60,7 @@ func TestApiScopeInventoryAuthoring(t *testing.T) {
 	if code, _ := req(http.MethodPut, fmt.Sprintf("/api/v1/scopes/%s/inventory", gitID), map[string]any{"raw": "[web]\nweb1\n"}); code != http.StatusConflict {
 		t.Errorf("git PUT = %d, want 409", code)
 	}
-	// import-hosts on the (now valid) amadeus inventory → 200.
+	// import-hosts on the (now valid) cronomicon inventory → 200.
 	if code, body := req(http.MethodPost, inv+"/import-hosts", map[string]any{"overwrite": true}); code != http.StatusOK {
 		t.Errorf("import-hosts = %d (%s), want 200", code, body)
 	}

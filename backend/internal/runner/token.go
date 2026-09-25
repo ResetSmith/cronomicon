@@ -251,7 +251,7 @@ type regTokenCheck struct {
 	OK bool
 	// RowID is the matched registration_tokens row (0 for the env bootstrap
 	// token, which has no row and is deliberately multi-use — Phase 7 leaves
-	// AMADEUS_RUNNER_BOOTSTRAP_TOKEN unchanged).
+	// CRONOMICON_RUNNER_BOOTSTRAP_TOKEN unchanged).
 	RowID int64
 	// Code/Msg describe the failure when !OK. Codes are deliberately distinct
 	// (Phase 7): "token_used" (with the consuming runner's name) tells the

@@ -253,7 +253,7 @@ func RbacPreflight(ctx context.Context, database *sql.DB) (*RbacPreflightReport,
 	//
 	// runs.job_source is nullable (NULL ⇒ legacy/git), so the join must COALESCE
 	// rather than compare directly — jobs are keyed (source, name), and matching on
-	// name alone would merge a git and an amadeus job of the same name and report
+	// name alone would merge a git and an cronomicon job of the same name and report
 	// their combined run count against both.
 	// FX-D3 — EXECUTED runs only. A calendar veto, a Forbid refusal and a
 	// missed-fire marker are all 'skipped' rows carrying trigger_kind='scheduled',

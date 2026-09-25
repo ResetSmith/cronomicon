@@ -10,20 +10,20 @@
 
 <h2>1 · How a Python run reaches its target</h2>
 
-<p>Like Bash, a <code>python</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (the default via the resolution chain; <strong>the pool is off until an operator sets <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell-family runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the mechanics are identical: the dialing side opens an SSH connection to each target and runs your script with <code>python3</code> on the <em>target</em>. A run with no injected environment invokes <code>python3 -c '&lt;your body&gt;'</code>; the moment the run carries env (job env, schedule env, overrides, bound references, run-input answers), the invocation becomes <code>python3 -</code> and the program — an <code>os.environ</code> prelude plus your body — arrives on <strong>stdin</strong>, so no value ever touches argv (§4). Two consequences worth internalizing:</p>
+<p>Like Bash, a <code>python</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (the default via the resolution chain; <strong>the pool is off until an operator sets <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell-family runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the mechanics are identical: the dialing side opens an SSH connection to each target and runs your script with <code>python3</code> on the <em>target</em>. A run with no injected environment invokes <code>python3 -c '&lt;your body&gt;'</code>; the moment the run carries env (job env, schedule env, overrides, bound references, run-input answers), the invocation becomes <code>python3 -</code> and the program — an <code>os.environ</code> prelude plus your body — arrives on <strong>stdin</strong>, so no value ever touches argv (§4). Two consequences worth internalizing:</p>
 
 <ul>
 <li><strong>The target needs <code>python3</code> on the SSH session's PATH.</strong> The invocation names <code>python3</code> explicitly — modern Linux distributions ship it; a legacy target that installs only <code>python</code> needs the name provided (a symlink, or the distro's <code>python-is-python3</code> package) or the run fails per-host with <em>command not found</em>. Python&nbsp;2 is never invoked: write for Python&nbsp;3, and treat the oldest interpreter across your fleet as the floor your syntax must clear.</li>
 <li><strong>Your program IS the stdin.</strong> With <code>python3 -</code>, the interpreter reads the whole program from stdin — which means your script cannot then read stdin itself: <code>input()</code> raises <code>EOFError</code>, and <code>sys.stdin</code> is exhausted. This is not a defect to work around; there is no operator at a TTY on either executor. Declare questions as <strong>run inputs</strong> and read the answers from the environment (§4).</li>
 </ul>
 
-<blockquote><p><strong>Runner capability nuance.</strong> A runner claims the <code>python</code> run type when <code>python3</code> (or <code>python</code>) is on <em>its own</em> PATH — the auto-detect probe — even though execution happens on the targets over SSH. For a runner host without a local interpreter that serves Python-capable targets, declare the capability explicitly (<code>-capabilities bash,python</code> / <code>AMADEUS_RUNNER_CAPABILITIES</code>); otherwise the run queues <em>“waiting for a python-capable runner.”</em></p></blockquote>
+<blockquote><p><strong>Runner capability nuance.</strong> A runner claims the <code>python</code> run type when <code>python3</code> (or <code>python</code>) is on <em>its own</em> PATH — the auto-detect probe — even though execution happens on the targets over SSH. For a runner host without a local interpreter that serves Python-capable targets, declare the capability explicitly (<code>-capabilities bash,python</code> / <code>CRONOMICON_RUNNER_CAPABILITIES</code>); otherwise the run queues <em>“waiting for a python-capable runner.”</em></p></blockquote>
 
 <hr />
 
 <h2>2 · Getting scripts in</h2>
 
-<p>Identical to the rest of the catalog (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §2 in depth): any raw <code>*.py</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>python</code> (the name keeps its extension; sub-folders shape the catalog's folder tree); or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>amadeus validate .</code> into CI — and <code>ruff</code> (or <code>flake8</code>) sits beside it as naturally as shellcheck does for bash.</p>
+<p>Identical to the rest of the catalog (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §2 in depth): any raw <code>*.py</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>python</code> (the name keeps its extension; sub-folders shape the catalog's folder tree); or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>cronomicon validate .</code> into CI — and <code>ruff</code> (or <code>flake8</code>) sits beside it as naturally as shellcheck does for bash.</p>
 
 <p><strong>The catalog reads your code for its variables.</strong> The Scripts view's <em>“Variables this script uses”</em> — the same list the Run dialog and Composer hint from — comes from a heuristic scan of environment access in the body:</p>
 
@@ -40,7 +40,7 @@
 <p>Targeting follows the shared shell-family rules — a scope fans out to its member hosts, a pinned <code>target_host</code> wins outright on every run path, a per-run host subset is SSH-executor-only (<code>422 scope_membership</code> otherwise), host keys fail closed on both executors. One thing is Python-specific:</p>
 
 <ul>
-<li><strong>Declare <code>python</code> on the scope.</strong> The “bash floor” means every scope supports <code>bash</code>; any other run type is a declared chip on the scope, so add <span class="tag">python</span> to the scopes whose hosts carry an interpreter. A pragma does the same for a Git-synced inventory: <code># amadeus:v1 types=bash,python</code>.</li>
+<li><strong>Declare <code>python</code> on the scope.</strong> The “bash floor” means every scope supports <code>bash</code>; any other run type is a declared chip on the scope, so add <span class="tag">python</span> to the scopes whose hosts carry an interpreter. A pragma does the same for a Git-synced inventory: <code># cronomicon:v1 types=bash,python</code>.</li>
 </ul>
 
 <hr />
@@ -49,14 +49,14 @@
 
 <h3>Reading the environment</h3>
 
-<p>Injected environment (job env ← schedule env ← per-run overrides, plus bound references and the dispatcher's <code>AMADEUS_RUN_*</code> context set) arrives as an <code>os.environ</code> prelude ahead of your body, delivered on stdin — never argv, never <code>/proc</code>-visible. By the time your first line runs it is ordinary environment:</p>
+<p>Injected environment (job env ← schedule env ← per-run overrides, plus bound references and the dispatcher's <code>CRONOMICON_RUN_*</code> context set) arrives as an <code>os.environ</code> prelude ahead of your body, delivered on stdin — never argv, never <code>/proc</code>-visible. By the time your first line runs it is ordinary environment:</p>
 
 <pre><code>import os
 
 release = os.environ["TARGET_RELEASE"]              # a run-input answer — required
-api_key = os.environ["AMADEUS_SECRET_API_KEY"]      # a bound secret reference
+api_key = os.environ["CRONOMICON_SECRET_API_KEY"]      # a bound secret reference
 region  = os.getenv("REGION", "us-east-1")          # optional, with a default
-print(f"run {os.environ['AMADEUS_RUN_ID']} on scope {os.environ['AMADEUS_RUN_SCOPE']}")</code></pre>
+print(f"run {os.environ['CRONOMICON_RUN_ID']} on scope {os.environ['CRONOMICON_RUN_SCOPE']}")</code></pre>
 
 <p>Because the prelude sets <code>os.environ</code> in-process, child processes you spawn (<code>subprocess.run</code>) inherit everything automatically, exactly as they would from an exported shell variable.</p>
 
@@ -72,7 +72,7 @@ print(f"run {os.environ['AMADEUS_RUN_ID']} on scope {os.environ['AMADEUS_RUN_SCO
 
 <p>Print the marker on stdout, exactly as in Bash:</p>
 
-<pre><code>print(f"::amadeus-output name=VERSION::{version}")</code></pre>
+<pre><code>print(f"::cronomicon-output name=VERSION::{version}")</code></pre>
 
 <p>A downstream step declares an input bound to that output and receives it as an env var. If a captured value carries an injected secret, the executor drops <em>all</em> captured outputs and fails the run (<code>output_secret_leak</code>) rather than let the secret propagate — emit something derived, never the secret itself. If your script prints volumes of output, remember the marker must be its own line on <strong>stdout</strong> (not stderr, not inside JSON you dump).</p>
 
@@ -80,12 +80,12 @@ print(f"run {os.environ['AMADEUS_RUN_ID']} on scope {os.environ['AMADEUS_RUN_SCO
 
 <h2>5 · Secrets in Python</h2>
 
-<p>The full model — reference bindings, fail-closed resolution, redactor seeding, the runner-side <strong>Secret injection</strong> flag — is in <a href="./bash-guide.html"><code>bash-guide.html</code></a> §5 and applies unchanged: bound Secrets and Variables arrive as <code>AMADEUS_SECRET_&lt;name&gt;</code> / <code>AMADEUS_VAR_&lt;name&gt;</code> in <code>os.environ</code>, delivered over stdin, never argv. The Python-shaped edges:</p>
+<p>The full model — reference bindings, fail-closed resolution, redactor seeding, the runner-side <strong>Secret injection</strong> flag — is in <a href="./bash-guide.html"><code>bash-guide.html</code></a> §5 and applies unchanged: bound Secrets and Variables arrive as <code>CRONOMICON_SECRET_&lt;name&gt;</code> / <code>CRONOMICON_VAR_&lt;name&gt;</code> in <code>os.environ</code>, delivered over stdin, never argv. The Python-shaped edges:</p>
 
 <ul>
 <li><strong>Keep secrets off child argv.</strong> <code>subprocess.run(["mytool", "--token", token])</code> puts the value in the target's process table — the exact <code>/proc/&lt;pid&gt;/cmdline</code> exposure the stdin delivery exists to prevent, and Cronomicon's log redaction cannot reach a remote process table. Pass it through the child's environment (<code>env={**os.environ, "TOKEN": token}</code> — or simple inheritance, since <code>os.environ</code> already carries it) or through <code>input=</code> on a pipe.</li>
 <li><strong>Don't re-broadcast what you fetch yourself.</strong> Redaction masks <em>injected</em> values in stored logs; a value your script retrieves at runtime (an API call, a decrypt step) was never registered with the redactor. Don't print it, don't log it, don't <code>json.dumps</code> a config object that embeds it.</li>
-<li><strong>Escalation follows the Bash rules.</strong> There is no <code>become</code> primitive for shell-family runs; prefer a scoped <code>NOPASSWD</code> rule. Where a password is unavoidable, bind it as a reference and feed <code>sudo -S</code> via a pipe: <code>subprocess.run(["sudo", "-S", "-p", "", "systemctl", "restart", "myapp"], input=os.environ["AMADEUS_SECRET_BECOME_PASSWORD"] + "\n", text=True)</code> — stdin again, never argv.</li>
+<li><strong>Escalation follows the Bash rules.</strong> There is no <code>become</code> primitive for shell-family runs; prefer a scoped <code>NOPASSWD</code> rule. Where a password is unavoidable, bind it as a reference and feed <code>sudo -S</code> via a pipe: <code>subprocess.run(["sudo", "-S", "-p", "", "systemctl", "restart", "myapp"], input=os.environ["CRONOMICON_SECRET_BECOME_PASSWORD"] + "\n", text=True)</code> — stdin again, never argv.</li>
 </ul>
 
 <hr />
@@ -97,9 +97,9 @@ print(f"run {os.environ['AMADEUS_RUN_ID']} on scope {os.environ['AMADEUS_RUN_SCO
 <li><strong>Write for the fleet's oldest <code>python3</code>.</strong> The target's interpreter runs your code; f-strings need 3.6, <code>:=</code> needs 3.8 — one ancient host in the scope decides.</li>
 <li><strong>Standard library first.</strong> Your script runs under the <em>target's</em> interpreter — a <code>pip install</code> dependency must exist on every host in the scope, and Cronomicon does not install packages for you. If you need real dependencies, manage them on the targets (or reach for Ansible, which exists for exactly that shape of work).</li>
 <li><strong>Be idempotent</strong> — retries, schedule re-fires and operator re-runs all mean “again.”</li>
-<li><strong>Run inputs instead of <code>input()</code></strong>, <code>::amadeus-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
+<li><strong>Run inputs instead of <code>input()</code></strong>, <code>::cronomicon-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
 <li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code>, <code>concurrency_policy: Forbid</code> (or <code>Queue</code>) for non-reentrant scripts.</li>
-<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>; lint with <code>ruff</code> + <code>amadeus validate</code> in CI.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>; lint with <code>ruff</code> + <code>cronomicon validate</code> in CI.</li>
 </ul>
 
 <hr />
@@ -114,9 +114,9 @@ print(f"run {os.environ['AMADEUS_RUN_ID']} on scope {os.environ['AMADEUS_RUN_SCO
 <tr><td><code>KeyError: 'NAME'</code> traceback</td><td>A required env var was not supplied — the direct-subscript form has no default. Bind the reference / declare the run input, or switch to <code>os.getenv("NAME", default)</code> if absence is legitimate.</td></tr>
 <tr><td><code>SyntaxError</code> on a construct that works on your machine</td><td>The <em>target's</em> interpreter is older than yours. Write for the fleet's floor (§6).</td></tr>
 <tr><td><code>ModuleNotFoundError</code></td><td>The import isn't installed on that target. Standard library first; real dependencies are managed on the targets, not by Cronomicon.</td></tr>
-<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code>, or route the job to a runner.</td></tr>
+<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code>, or route the job to a runner.</td></tr>
 <tr><td>Queued, “waiting for a python-capable runner”</td><td>No online runner claims <code>python</code> — the probe found no local interpreter on the runner host. Declare it: <code>-capabilities bash,python</code>.</td></tr>
-<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::amadeus-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead.</td></tr>
+<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::cronomicon-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead.</td></tr>
 <tr><td>A secret appears in a target's process listing</td><td>It was passed on a child's argv (§5). Move it to the child's environment or a stdin pipe — redaction cannot reach a remote process table.</td></tr>
 </tbody>
 </table></div>

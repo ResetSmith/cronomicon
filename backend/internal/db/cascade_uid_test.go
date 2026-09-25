@@ -173,15 +173,15 @@ func TestCascadeTriggersSpareOtherDefinitions(t *testing.T) {
 	}
 	// Same NAME, two source pools, each with its own schedule entry and pause.
 	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('twin','git','uid-git','bash','t')`)
-	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('twin','amadeus','uid-ama','bash','t')`)
+	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('twin','cronomicon','uid-ama','bash','t')`)
 	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, owner_uid)
 	      VALUES('git','job','twin','default','* * * * *','uid-git')`)
 	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, owner_uid)
-	      VALUES('amadeus','job','twin','default','* * * * *','uid-ama')`)
+	      VALUES('cronomicon','job','twin','default','* * * * *','uid-ama')`)
 	exec(`INSERT INTO paused_jobs(source, owner_kind, name, paused_by, paused_at, owner_uid)
 	      VALUES('git','job','twin','t','t','uid-git')`)
 	exec(`INSERT INTO paused_jobs(source, owner_kind, name, paused_by, paused_at, owner_uid)
-	      VALUES('amadeus','job','twin','t','t','uid-ama')`)
+	      VALUES('cronomicon','job','twin','t','t','uid-ama')`)
 
 	if _, err := pool.Exec(`DELETE FROM jobs WHERE name='twin' AND source='git'`); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -221,7 +221,7 @@ func TestMigrate1020Backfill(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('bf','git','uid-bf','bash','t')`)
-	exec(`INSERT INTO schedules(name, source, uid, cron, content_hash) VALUES('nightly','amadeus','uid-sched','0 2 * * *','h')`)
+	exec(`INSERT INTO schedules(name, source, uid, cron, content_hash) VALUES('nightly','cronomicon','uid-sched','0 2 * * *','h')`)
 	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, source_ref)
 	      VALUES('git','job','bf','nightly','0 2 * * *','nightly')`)
 	exec(`INSERT INTO paused_jobs(source, owner_kind, name, paused_by, paused_at) VALUES('git','job','bf','t','t')`)

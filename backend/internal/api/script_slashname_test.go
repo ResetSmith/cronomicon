@@ -17,7 +17,7 @@ func TestScriptSlashName(t *testing.T) {
 	ctx := context.Background()
 
 	clone := t.TempDir()
-	t.Setenv("AMADEUS_GIT_CACHE_DIR", clone) // getScriptContent reads gitlab.DefaultCloneDir()
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone) // getScriptContent reads gitlab.DefaultCloneDir()
 	if err := os.MkdirAll(filepath.Join(clone, "scripts", "ops-playbooks"), 0o750); err != nil {
 		t.Fatal(err)
 	}

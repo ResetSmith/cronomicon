@@ -45,14 +45,14 @@ const envMatrix = "../../deploy/env-matrix.md"
 // than hiding them would be.
 var undocumentedByDesign = map[string]string{}
 
-// configEnvNames returns every AMADEUS_* name config.go reads.
+// configEnvNames returns every CRONOMICON_* name config.go reads.
 func configEnvNames(t *testing.T) []string {
 	t.Helper()
 	src, err := os.ReadFile("config.go")
 	if err != nil {
 		t.Fatalf("read config.go: %v", err)
 	}
-	lit := regexp.MustCompile(`"(AMADEUS_[A-Z0-9_]+)"`)
+	lit := regexp.MustCompile(`"(CRONOMICON_[A-Z0-9_]+)"`)
 	seen := map[string]bool{}
 	var out []string
 	for _, m := range lit.FindAllStringSubmatch(string(src), -1) {
@@ -71,12 +71,12 @@ func configEnvNames(t *testing.T) []string {
 	return out
 }
 
-// allEnvNamesInTree collects every AMADEUS_* literal appearing in non-test Go
+// allEnvNamesInTree collects every CRONOMICON_* literal appearing in non-test Go
 // under root, which is the closest thing available to "names this codebase
 // actually reads".
 func allEnvNamesInTree(t *testing.T, root string) map[string]bool {
 	t.Helper()
-	lit := regexp.MustCompile(`"(AMADEUS_[A-Z0-9_]+)"`)
+	lit := regexp.MustCompile(`"(CRONOMICON_[A-Z0-9_]+)"`)
 	found := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
@@ -135,7 +135,7 @@ func TestEveryConfigEnvVarIsDocumented(t *testing.T) {
 // sets it, observes no effect, and has no way to tell whether they typo'd it or
 // the feature is broken. Renames leave exactly this residue.
 //
-// Scoped to AMADEUS_* names appearing in the matrix's own table rows, so prose
+// Scoped to CRONOMICON_* names appearing in the matrix's own table rows, so prose
 // mentioning a runner-side or third-party variable is not mistaken for a claim
 // about this binary.
 func TestEnvMatrixDocumentsNothingFictional(t *testing.T) {
@@ -156,7 +156,7 @@ func TestEnvMatrixDocumentsNothingFictional(t *testing.T) {
 	// Only inspect table rows (lines starting with "|"), where a name is a claim
 	// that the variable exists, rather than prose that may reference a removed
 	// knob historically.
-	row := regexp.MustCompile("`(AMADEUS_[A-Z0-9_]+)`")
+	row := regexp.MustCompile("`(CRONOMICON_[A-Z0-9_]+)`")
 	var fictional []string
 	seen := map[string]bool{}
 	for line := range strings.SplitSeq(string(doc), "\n") {

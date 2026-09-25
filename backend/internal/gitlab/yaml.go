@@ -1,10 +1,10 @@
 // Package gitlab implements the GitLab integration slice (B3):
 //   - Clone + cache the job-definitions repo (go-git).
 //   - Parse jobs/*.yaml, workflows/*.yaml, inventory/*.ini (pragma + sidecar).
-//   - Validate apiVersion (T10) and the amadeus:v1 inventory pragma (S10).
+//   - Validate apiVersion (T10) and the cronomicon:v1 inventory pragma (S10).
 //   - Upsert jobs/workflows/scopes into the shared DB tables on sync.
 //   - Implement the schedule write-path (POST /schedules/publish) with A2 If-Match OCC.
-//   - Expose ValidateFile for the `amadeus validate` CLI.
+//   - Expose ValidateFile for the `cronomicon validate` CLI.
 package gitlab
 
 import (
@@ -31,7 +31,7 @@ import (
 // API-version validation (T10)
 // ──────────────────────────────────────────────────────────────────────────────
 
-const requiredAPIVersion = "amadeus.io/v1"
+const requiredAPIVersion = "cronomicon.io/v1"
 
 // validKinds is the set of YAML kinds Cronomicon understands.
 var validKinds = map[string]bool{
@@ -44,8 +44,8 @@ var validKinds = map[string]bool{
 	"InventorySidecar": true,
 }
 
-// amadeusHeader is the top-level shape every Cronomicon YAML file must have.
-type amadeusHeader struct {
+// cronomiconHeader is the top-level shape every Cronomicon YAML file must have.
+type cronomiconHeader struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
 }
@@ -150,7 +150,7 @@ func (r ReactionEntry) OnSourceOrDefault() string {
 }
 
 // NormalizeReactions validates a definition's reaction list SHAPE — everything
-// checkable without a database, so `amadeus validate` can catch it at MR time
+// checkable without a database, so `cronomicon validate` can catch it at MR time
 // rather than at sync. Cross-reference checks (does the upstream exist, does it
 // close a cycle) need the DB and live in sync.go.
 //
@@ -198,10 +198,10 @@ func NormalizeReactions(in []ReactionEntry) ([]ReactionEntry, []ValidationError)
 			})
 			continue
 		}
-		if src := e.OnSourceOrDefault(); src != "git" && src != "amadeus" {
+		if src := e.OnSourceOrDefault(); src != "git" && src != "cronomicon" {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("spec.reactions[%s].onSource", name),
-				Message: fmt.Sprintf("onSource %q must be git or amadeus", src),
+				Message: fmt.Sprintf("onSource %q must be git or cronomicon", src),
 			})
 			continue
 		}
@@ -333,7 +333,7 @@ type JobYAML struct {
 // It surfaces as a fillable field in the ad-hoc Run dialog; the operator's answer
 // is submitted as env[Name]=value and merged into runs.env_json via the existing
 // per-run override path (UDV2). Persisted (as a JSON array) on jobs.prompts_json
-// for both git (sync) and amadeus (composer) jobs.
+// for both git (sync) and cronomicon (composer) jobs.
 type PromptSpec struct {
 	Name     string   `yaml:"name" json:"name"`                             // env var key the answer binds to (required, unique within a job)
 	Label    string   `yaml:"label,omitempty" json:"label,omitempty"`       // human-facing prompt text; defaults to Name in the UI
@@ -523,7 +523,7 @@ func NormalizeSchedules(legacy string, list []ScheduleEntry) ([]ScheduleEntry, [
 
 // ValidateFile parses and validates the YAML file at path, returning line-numbered
 // errors. The path is used only for error attribution; it is acceptable to call
-// this on a temp file. This is the entry point wired into `amadeus validate`.
+// this on a temp file. This is the entry point wired into `cronomicon validate`.
 func ValidateFile(path string) ([]ValidationError, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -532,7 +532,7 @@ func ValidateFile(path string) ([]ValidationError, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".ini" {
 		// Inventory file — validate pragma only.
-		_, errs := parseAmadeusPragma(string(data))
+		_, errs := parseCronomiconPragma(string(data))
 		var out []ValidationError
 		for _, e := range errs {
 			out = append(out, ValidationError{File: path, Line: e.Line, Message: e.Message})
@@ -657,7 +657,7 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 				}
 			}
 			// RX-13 — the SHAPE of a reaction is checkable without a database, so
-			// `amadeus validate` catches a bad outcome or a malformed name at MR
+			// `cronomicon validate` catches a bad outcome or a malformed name at MR
 			// time. This is strictly better than the calendar-binding precedent,
 			// which could check nothing offline because a binding names a row.
 			if _, rxErrs := NormalizeReactions(j.Spec.Reactions); len(rxErrs) > 0 {
@@ -969,7 +969,7 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 			// --limit`, which refuses any name carrying a pattern metacharacter. A
 			// refused pin means NO --limit, so the run would widen to the full
 			// inventory instead of the pinned host. A warning (not an error) so
-			// `amadeus validate` flags it pre-merge without failing CI on it; the
+			// `cronomicon validate` flags it pre-merge without failing CI on it; the
 			// sync path warns in the same terms, and the manifest hard-fails such a
 			// run with a 409.
 			//
@@ -1066,7 +1066,7 @@ var validRunTypes = map[string]bool{
 	"python":     true,
 }
 
-// PragmaDirectives holds the decoded amadeus:v1 pragma values from an inventory file.
+// PragmaDirectives holds the decoded cronomicon:v1 pragma values from an inventory file.
 type PragmaDirectives struct {
 	Types       []string // declared run types (validated)
 	Owner       string
@@ -1079,15 +1079,15 @@ type pragmaError struct {
 	Message string
 }
 
-// pragmaRe matches `# amadeus:v<N> key=value` comment lines.
-var pragmaRe = regexp.MustCompile(`^[#;]\s*amadeus:v(\d+)\s+(.+)$`)
+// pragmaRe matches `# cronomicon:v<N> key=value` comment lines.
+var pragmaRe = regexp.MustCompile(`^[#;]\s*cronomicon:v(\d+)\s+(.+)$`)
 var kvRe = regexp.MustCompile(`^(\w+)=(.+)$`)
 
-// parseAmadeusPragma parses `# amadeus:v1 key=value` directives from the top
+// parseCronomiconPragma parses `# cronomicon:v1 key=value` directives from the top
 // of an inventory file. Parsing is strict per S10: unknown directives, unsupported
 // versions, malformed lines, and unknown run-type values all produce line-numbered
 // errors. Errors do not stop parsing of subsequent lines.
-func parseAmadeusPragma(content string) (PragmaDirectives, []pragmaError) {
+func parseCronomiconPragma(content string) (PragmaDirectives, []pragmaError) {
 	var out PragmaDirectives
 	var errs []pragmaError
 
@@ -1150,7 +1150,7 @@ func parseAmadeusPragma(content string) (PragmaDirectives, []pragmaError) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Sidecar YAML shape (inventory/<name>.amadeus.yaml)
+// Sidecar YAML shape (inventory/<name>.cronomicon.yaml)
 // ──────────────────────────────────────────────────────────────────────────────
 
 type sidecarYAML struct {
@@ -1166,7 +1166,7 @@ type sidecarYAML struct {
 		// AuthKeyEnvVar (M4 / §9.2) is the per-scope default env-var NAME the in-app
 		// SSH executor resolves to a key when importing this inventory's hosts into
 		// ssh_hosts. A NAME only (never a secret value, D1); per-host
-		// `amadeus_auth_key_env_var` overrides it.
+		// `cronomicon_auth_key_env_var` overrides it.
 		AuthKeyEnvVar string `yaml:"authKeyEnvVar"`
 	} `yaml:"spec"`
 }
@@ -1198,7 +1198,7 @@ type ScopeCapability struct {
 // content is the raw .ini text; sidecar is the parsed sidecar (nil if absent); sidecarPath
 // is used in error attribution.
 func resolveInventoryCapability(content string, sidecar *sidecarYAML, sidecarPath string) ScopeCapability {
-	directives, pragmaErrs := parseAmadeusPragma(content)
+	directives, pragmaErrs := parseCronomiconPragma(content)
 
 	var valErrs []ValidationError
 	for _, e := range pragmaErrs {
@@ -1277,7 +1277,7 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 		if err != nil {
 			return nil // pass 2 reports read errors
 		}
-		var hdr amadeusHeader
+		var hdr cronomiconHeader
 		_ = yaml.Unmarshal(data, &hdr)
 		if hdr.APIVersion != requiredAPIVersion || hdr.Kind != "Script" {
 			return nil
@@ -1340,7 +1340,7 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 				errs = append(errs, fmt.Errorf("read %s: %w", rel, err))
 				return nil
 			}
-			var hdr amadeusHeader
+			var hdr cronomiconHeader
 			_ = yaml.Unmarshal(data, &hdr)
 			if hdr.APIVersion == requiredAPIVersion && hdr.Kind == "Script" {
 				// Wrappers are ALWAYS processed — a wrapper is never filtered by a

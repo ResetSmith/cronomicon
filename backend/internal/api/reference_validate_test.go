@@ -60,7 +60,7 @@ func TestValidateReferencesUnrestricted(t *testing.T) {
 	if !res[0].OK || res[0].ResolvedScope == nil || *res[0].ResolvedScope != "" {
 		t.Errorf("SEC_GLOBAL should resolve from the global row, got %+v", res[0])
 	}
-	if res[0].Reference != "AMADEUS_SECRET_SEC_GLOBAL" {
+	if res[0].Reference != "CRONOMICON_SECRET_SEC_GLOBAL" {
 		t.Errorf("derived reference = %q", res[0].Reference)
 	}
 	if !res[1].OK || res[1].ResolvedScope == nil || *res[1].ResolvedScope != "prod" {
@@ -171,14 +171,14 @@ func TestReferenceUsageCounts(t *testing.T) {
 	}
 	// Two jobs in different scopes, both binding SEC_GLOBAL; plus a script binding.
 	exec(`INSERT INTO jobs (source, name, run_type, scope, command, synced_at)
-	      VALUES ('amadeus','prod-job','bash','prod','true',?)`, now)
+	      VALUES ('cronomicon','prod-job','bash','prod','true',?)`, now)
 	exec(`INSERT INTO jobs (source, name, run_type, scope, command, synced_at)
-	      VALUES ('amadeus','staging-job','bash','staging','true',?)`, now)
+	      VALUES ('cronomicon','staging-job','bash','staging','true',?)`, now)
 	exec(`INSERT INTO scripts (name, run_type, script, content_hash, synced_at)
 	      VALUES ('deploy','bash','true','sha256:x',?)`, now)
 	for _, b := range []struct{ ok, os, on, rk, rn string }{
-		{"job", "amadeus", "prod-job", "secret", "SEC_GLOBAL"},
-		{"job", "amadeus", "staging-job", "secret", "SEC_GLOBAL"},
+		{"job", "cronomicon", "prod-job", "secret", "SEC_GLOBAL"},
+		{"job", "cronomicon", "staging-job", "secret", "SEC_GLOBAL"},
 		{"script", "", "deploy", "secret", "SEC_GLOBAL"},
 	} {
 		exec(`INSERT INTO reference_bindings (owner_kind, owner_source, owner_name, ref_kind, ref_name, created_by, created_at)

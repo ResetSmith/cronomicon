@@ -22,11 +22,11 @@ import { ReactionsNotProjectedNote } from "./ReactionsNotProjectedNote";
 const EDGE: Reaction = {
   ownerKind: "job",
   ownerName: "load",
-  ownerSource: "amadeus",
+  ownerSource: "cronomicon",
   name: "after-extract",
   onKind: "job",
   onName: "extract",
-  onSource: "amadeus",
+  onSource: "cronomicon",
   onOutcome: "success",
   delaySeconds: 0,
   minIntervalSeconds: 0,
@@ -119,16 +119,16 @@ describe("reaction edge helpers", () => {
   // the Phase C review caught on the backend's own per-definition read.
   it("does not merge same-named definitions from different sources", () => {
     const edges: Reaction[] = [EDGE, { ...EDGE, ownerSource: "git", name: "from-git" }];
-    expect(reactsTo(edges, "job", "amadeus", "load")).toHaveLength(1);
-    expect(reactsTo(edges, "job", "amadeus", "load")[0].name).toBe("after-extract");
+    expect(reactsTo(edges, "job", "cronomicon", "load")).toHaveLength(1);
+    expect(reactsTo(edges, "job", "cronomicon", "load")[0].name).toBe("after-extract");
     expect(reactsTo(edges, "job", "git", "load")[0].name).toBe("from-git");
   });
 
   it("reads the same edge from both ends", () => {
-    expect(reactsTo([EDGE], "job", "amadeus", "load")).toHaveLength(1);
-    expect(reactedOnBy([EDGE], "job", "amadeus", "extract")).toHaveLength(1);
+    expect(reactsTo([EDGE], "job", "cronomicon", "load")).toHaveLength(1);
+    expect(reactedOnBy([EDGE], "job", "cronomicon", "extract")).toHaveLength(1);
     // And not from the wrong end.
-    expect(reactedOnBy([EDGE], "job", "amadeus", "load")).toHaveLength(0);
+    expect(reactedOnBy([EDGE], "job", "cronomicon", "load")).toHaveLength(0);
   });
 });
 
@@ -138,7 +138,7 @@ describe("ReactionPanels (RX-16)", () => {
       <ReactionPanels
         edges={[EDGE, { ...EDGE, ownerName: "cleanup", name: "r2", onName: "load" }]}
         kind="job"
-        source="amadeus"
+        source="cronomicon"
         name="load"
       />,
     );
@@ -150,14 +150,14 @@ describe("ReactionPanels (RX-16)", () => {
 
   it("renders nothing at all when the definition has no edges", () => {
     const { container } = render(
-      <ReactionPanels edges={[EDGE]} kind="job" source="amadeus" name="unrelated" />,
+      <ReactionPanels edges={[EDGE]} kind="job" source="cronomicon" name="unrelated" />,
     );
     expect(container.textContent).toBe("");
   });
 
   it("warns in place when an upstream is missing", () => {
     const { container } = render(
-      <ReactionPanels edges={[{ ...EDGE, missing: true }]} kind="job" source="amadeus" name="load" />,
+      <ReactionPanels edges={[{ ...EDGE, missing: true }]} kind="job" source="cronomicon" name="load" />,
     );
     expect(within(container).getByText(/can never fire/)).toBeTruthy();
   });

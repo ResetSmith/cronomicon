@@ -64,7 +64,7 @@ func resolveKeyPath(keyMap map[string]string, keyDir, name string) (path, src st
 	if p, s, ok := resolveKeyPathExact(keyMap, keyDir, name); ok {
 		return p, s, true
 	}
-	// Derived reference (W3): an AMADEUS_KEY_<bare> reference resolves to the same
+	// Derived reference (W3): an CRONOMICON_KEY_<bare> reference resolves to the same
 	// key-map entry / key-dir file as its BARE name — files and map entries are
 	// never renamed, only reference sites move to the prefixed form.
 	if bare, stripped := envref.StripKey(name); stripped {
@@ -158,7 +158,7 @@ func (r *sshRunner) loadSigner(authKeyEnvVar string) (ssh.Signer, error) {
 	// key-dir configured" from "configured but the file is not there" — the two
 	// have different remedies.
 	if r.keyDir == "" {
-		return nil, fmt.Errorf("no local key for %q: not in key-map, no PEM in env %s, and no key-dir configured — set -key-dir / AMADEUS_RUNNER_KEY_DIR (then drop a file named %s, %s.pem, or %s.key in it) or add a -key-map entry",
+		return nil, fmt.Errorf("no local key for %q: not in key-map, no PEM in env %s, and no key-dir configured — set -key-dir / CRONOMICON_RUNNER_KEY_DIR (then drop a file named %s, %s.pem, or %s.key in it) or add a -key-map entry",
 			authKeyEnvVar, authKeyEnvVar, authKeyEnvVar, authKeyEnvVar, authKeyEnvVar)
 	}
 	return nil, fmt.Errorf("no local key for %q: not in key-map, no PEM in env %s, and no file named %s, %s.pem, or %s.key under key-dir %q",
@@ -233,7 +233,7 @@ func (r *sshRunner) fanOut(ctx context.Context, targets []runnerproto.ManifestTa
 	cmd remotecmd.Rendered, emit func(line string)) (exitCode int, reason string) {
 
 	if len(targets) == 0 {
-		emit("amadeus: no hosts resolved for this run")
+		emit("cronomicon: no hosts resolved for this run")
 		return 1, ""
 	}
 	conc := r.fanOutN
@@ -276,12 +276,12 @@ func (r *sshRunner) runTarget(ctx context.Context, t runnerproto.ManifestTarget,
 	cmd remotecmd.Rendered, emit func(host, line string)) hostResult {
 
 	if t.ResolveErr != "" {
-		emit(t.Name, "amadeus: "+t.ResolveErr)
+		emit(t.Name, "cronomicon: "+t.ResolveErr)
 		return hostResult{host: t.Name, exitCode: -1, err: fmt.Errorf("%s", t.ResolveErr)}
 	}
 	signer, err := r.loadSigner(t.AuthKeyEnvVar)
 	if err != nil {
-		emit(t.Name, "amadeus: auth: "+err.Error())
+		emit(t.Name, "cronomicon: auth: "+err.Error())
 		return hostResult{host: t.Name, exitCode: -1, err: err}
 	}
 	client, closeFn, err := r.dial(ctx, t, signer)
@@ -289,17 +289,17 @@ func (r *sshRunner) runTarget(ctx context.Context, t runnerproto.ManifestTarget,
 		if isHostKeyError(err) {
 			scan := dialAddr(t.Address, t.Name, t.Port)
 			// A parseable marker + a per-host reason the run's envelope carries.
-			emit(t.Name, "amadeus: host_key_unverified: "+scan+" — approve this host's key in the Runners view (Scan & approve), then retry")
+			emit(t.Name, "cronomicon: host_key_unverified: "+scan+" — approve this host's key in the Runners view (Scan & approve), then retry")
 			return hostResult{host: t.Name, exitCode: -1, err: err, hostKeyUnverified: true, scanTarget: scan}
 		}
-		emit(t.Name, "amadeus: connect: "+err.Error())
+		emit(t.Name, "cronomicon: connect: "+err.Error())
 		return hostResult{host: t.Name, exitCode: -1, err: err}
 	}
 	defer closeFn()
 
 	session, err := client.NewSession()
 	if err != nil {
-		emit(t.Name, "amadeus: session: "+err.Error())
+		emit(t.Name, "cronomicon: session: "+err.Error())
 		return hostResult{host: t.Name, exitCode: -1, err: err}
 	}
 	defer session.Close()
@@ -333,7 +333,7 @@ func (r *sshRunner) runTarget(ctx context.Context, t runnerproto.ManifestTarget,
 	//
 	// So if the remote closed the session while we were still writing stdin, the
 	// copy failed with io.EOF, which is not an *ssh.ExitError — the run scored -1,
-	// emitted "amadeus: EOF" and was marked FAILED even though the command exited 0.
+	// emitted "cronomicon: EOF" and was marked FAILED even though the command exited 0.
 	//
 	// That is reachable in production, not just in tests. Since H1 the interpreter
 	// is invoked in a form that reads its PROGRAM from stdin (`bash -s`, `python3 -`,
@@ -349,7 +349,7 @@ func (r *sshRunner) runTarget(ctx context.Context, t runnerproto.ManifestTarget,
 	if cmd.Stdin != "" {
 		stdinPipe, perr := session.StdinPipe()
 		if perr != nil {
-			emit(t.Name, "amadeus: stdin: "+perr.Error())
+			emit(t.Name, "cronomicon: stdin: "+perr.Error())
 			return hostResult{host: t.Name, exitCode: -1, err: perr}
 		}
 		go func() {
@@ -371,7 +371,7 @@ func (r *sshRunner) runTarget(ctx context.Context, t runnerproto.ManifestTarget,
 			exit = ee.ExitStatus()
 		} else {
 			exit = -1
-			emit(t.Name, "amadeus: "+runErr.Error())
+			emit(t.Name, "cronomicon: "+runErr.Error())
 		}
 	}
 	return hostResult{host: t.Name, exitCode: exit, err: runErr}

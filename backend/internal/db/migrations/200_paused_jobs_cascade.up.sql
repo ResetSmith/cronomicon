@@ -32,7 +32,7 @@ END;
 -- One-time cleanup of orphans that already accumulated while the bug was live:
 -- triggers only prevent FUTURE orphans, so an existing DB may carry git pauses
 -- whose definition was pruned long ago. Remove git-source pauses with no
--- matching git definition (amadeus-source pauses are operator-authored and left
+-- matching git definition (cronomicon-source pauses are operator-authored and left
 -- untouched, consistent with the prune's source guard).
 DELETE FROM paused_jobs
 WHERE (owner_kind = 'job'      AND source = 'git' AND name NOT IN (SELECT name FROM jobs      WHERE source = 'git'))

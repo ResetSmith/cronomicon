@@ -15,11 +15,11 @@ import (
 // (schedule env lives in Git in plaintext); real secrets belong to the scope/
 // secrets system and are masked in logs by the unconditional ingest-time redactor.
 //
-// injected carries dispatch-time reference values (resolved AMADEUS_SECRET_*/
-// AMADEUS_VAR_* and the AMADEUS_RUN_* run context, vault-integration.md P1.3). It
+// injected carries dispatch-time reference values (resolved CRONOMICON_SECRET_*/
+// CRONOMICON_VAR_* and the CRONOMICON_RUN_* run context, vault-integration.md P1.3). It
 // is merged over the parsed env in-memory only — NEVER written back to env_json —
 // and wins on any key collision (D5). In practice the key-spaces are disjoint:
-// injected keys are all AMADEUS_*, which the W4 write guard bars from
+// injected keys are all CRONOMICON_*, which the W4 write guard bars from
 // operator-authored env_json.
 //
 // H1: the merged env (which may include injected SECRET VALUES) is delivered on

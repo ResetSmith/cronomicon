@@ -41,7 +41,7 @@ func TestVaultClientDoesNotFollowRedirectWithToken(t *testing.T) {
 	vc := loopbackVaultClient(vault.URL, "role-1", "secret-1")
 	// The fetch fails (a 302 instead of a secret); we only care that the token was
 	// never delivered to the redirect target.
-	_, _ = vc.Fetch("secret/data/amadeus/app#DB_PASSWORD")
+	_, _ = vc.Fetch("secret/data/cronomicon/app#DB_PASSWORD")
 
 	if attackerGotToken.Load() {
 		t.Errorf("X-Vault-Token was leaked to the redirect target")

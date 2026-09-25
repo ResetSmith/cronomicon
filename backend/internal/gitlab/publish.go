@@ -117,13 +117,13 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 
 	msg := req.CommitMessage
 	if msg == "" {
-		msg = fmt.Sprintf("amadeus: update %s", req.FilePath)
+		msg = fmt.Sprintf("cronomicon: update %s", req.FilePath)
 	}
 
 	commit, err := wt.Commit(msg, &gogit.CommitOptions{
 		Author: &object.Signature{
 			Name:  "Cronomicon Scheduler",
-			Email: "amadeus-bot@amadeus.internal",
+			Email: "cronomicon-bot@cronomicon.internal",
 			When:  time.Now().UTC(),
 		},
 	})

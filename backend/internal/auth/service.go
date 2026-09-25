@@ -121,7 +121,7 @@ func NewService(ctx context.Context, cfg *config.Config, db *sql.DB, log *slog.L
 	codec, ephemeral := newSessionCodec(decodeKey(cfg.SessionHashKey, allowRawKeys), decodeKey(cfg.SessionBlockKey, allowRawKeys), cfg.CookieSecure)
 	if ephemeral {
 		log.Warn("session keys unset, too short, or invalid — using ephemeral keys; sessions won't survive restart " +
-			"(set AMADEUS_SESSION_HASH_KEY and AMADEUS_SESSION_BLOCK_KEY to base64-encoded 32-byte values)")
+			"(set CRONOMICON_SESSION_HASH_KEY and CRONOMICON_SESSION_BLOCK_KEY to base64-encoded 32-byte values)")
 	}
 
 	mode := cfg.AuthMode
@@ -155,11 +155,11 @@ func NewService(ctx context.Context, cfg *config.Config, db *sql.DB, log *slog.L
 		// callers that build Config directly (tests). Without an allowlist no
 		// peer is trusted, so all Remote-* headers are stripped and every
 		// request fails closed (401) — safe, if non-functional.
-		log.Warn("trusted-header mode with no AMADEUS_TRUSTED_PROXIES — all identity " +
+		log.Warn("trusted-header mode with no CRONOMICON_TRUSTED_PROXIES — all identity " +
 			"headers will be stripped and every operator request will be unauthorized")
 	}
 	if s.bootstrapAdminGroup != "" {
-		log.Warn("⚠️  BOOTSTRAP ADMIN ENABLED (AMADEUS_BOOTSTRAP_ADMIN_GROUP="+s.bootstrapAdminGroup+") — "+
+		log.Warn("⚠️  BOOTSTRAP ADMIN ENABLED (CRONOMICON_BOOTSTRAP_ADMIN_GROUP="+s.bootstrapAdminGroup+") — "+
 			"any user in this group is granted admin regardless of ad_group_mappings. "+
 			"Seed your real group→role mappings in Settings, then REMOVE this var and redeploy.",
 			"group", s.bootstrapAdminGroup)
@@ -179,13 +179,13 @@ func NewService(ctx context.Context, cfg *config.Config, db *sql.DB, log *slog.L
 		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_grants WHERE lower(role) = ?`, AdminRole).Scan(&admins)
 		if admins == 0 {
 			log.Warn("⚠️  NO ADMIN CONFIGURED — RBAC is enforced but no admin access grant exists " +
-				"and AMADEUS_BOOTSTRAP_ADMIN_GROUP is unset. No operator can reach admin-gated routes. " +
-				"Set AMADEUS_BOOTSTRAP_ADMIN_GROUP for the first login, then add an admin Access Grant in Settings.")
+				"and CRONOMICON_BOOTSTRAP_ADMIN_GROUP is unset. No operator can reach admin-gated routes. " +
+				"Set CRONOMICON_BOOTSTRAP_ADMIN_GROUP for the first login, then add an admin Access Grant in Settings.")
 		}
 	}
 
 	if cfg.DevAuth {
-		log.Warn("⚠️  DEV AUTH ENABLED (AMADEUS_DEV_AUTH=true) — /api/v1/auth/dev-login " +
+		log.Warn("⚠️  DEV AUTH ENABLED (CRONOMICON_DEV_AUTH=true) — /api/v1/auth/dev-login " +
 			"mints a synthetic admin session with NO identity-provider check. For local preview " +
 			"only; never enable this in a deployed/production environment.")
 	}
@@ -197,7 +197,7 @@ func NewService(ctx context.Context, cfg *config.Config, db *sql.DB, log *slog.L
 		return s
 	}
 	if !cfg.OIDC.Enabled() {
-		log.Warn("OIDC mode selected but OIDC not configured — operator login disabled (set AMADEUS_OIDC_*)")
+		log.Warn("OIDC mode selected but OIDC not configured — operator login disabled (set CRONOMICON_OIDC_*)")
 		return s
 	}
 

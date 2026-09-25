@@ -44,7 +44,7 @@ func TestPollStatusToSentinelError(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewClient: %v", err)
 			}
-			_, err = c.Poll(context.Background(), Identity{ID: "r1", APIKey: "amt_run_x"}, "", 0)
+			_, err = c.Poll(context.Background(), Identity{ID: "r1", APIKey: "crn_run_x"}, "", 0)
 			if !errors.Is(err, tc.want) {
 				t.Errorf("Poll on HTTP %d returned %v, want %v", tc.code, err, tc.want)
 			}
@@ -66,7 +66,7 @@ func TestPollProtocolTooOldKeepsIdentity(t *testing.T) {
 	defer srv.Close()
 
 	idFile := filepath.Join(t.TempDir(), "identity.json")
-	id := Identity{ID: "r1", APIKey: "amt_run_x"}
+	id := Identity{ID: "r1", APIKey: "crn_run_x"}
 	if err := saveIdentity(idFile, id); err != nil {
 		t.Fatalf("saveIdentity: %v", err)
 	}

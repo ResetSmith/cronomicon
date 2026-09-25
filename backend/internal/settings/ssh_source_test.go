@@ -7,7 +7,7 @@ import (
 )
 
 // TestSshHostGitReadOnly (M4 / §9.5): a git-source (imported) host is read-only —
-// Update/Delete are rejected; CreateSshHost writes amadeus rows; ListSshHosts
+// Update/Delete are rejected; CreateSshHost writes cronomicon rows; ListSshHosts
 // surfaces the source so the UI can render git rows read-only.
 func TestSshHostGitReadOnly(t *testing.T) {
 	pool := openTestPool(t)
@@ -18,10 +18,10 @@ func TestSshHostGitReadOnly(t *testing.T) {
 	}
 	am, err := CreateSshHost(ctx, pool, SshHostInput{Hostname: "web2"}, "op")
 	if err != nil || am == nil {
-		t.Fatalf("create amadeus host: %v", err)
+		t.Fatalf("create cronomicon host: %v", err)
 	}
-	if am.Source != "amadeus" {
-		t.Errorf("CreateSshHost source = %q, want amadeus", am.Source)
+	if am.Source != "cronomicon" {
+		t.Errorf("CreateSshHost source = %q, want cronomicon", am.Source)
 	}
 
 	hosts, err := ListSshHosts(ctx, pool)
@@ -32,20 +32,20 @@ func TestSshHostGitReadOnly(t *testing.T) {
 	for _, h := range hosts {
 		srcByHost[h.Hostname] = h.Source
 	}
-	if srcByHost["web1"] != "git" || srcByHost["web2"] != "amadeus" {
-		t.Errorf("ListSshHosts sources = %v, want web1=git web2=amadeus", srcByHost)
+	if srcByHost["web1"] != "git" || srcByHost["web2"] != "cronomicon" {
+		t.Errorf("ListSshHosts sources = %v, want web1=git web2=cronomicon", srcByHost)
 	}
 
 	// Git row: Update and Delete are rejected.
-	if _, err := UpdateSshHost(ctx, pool, "g1", SshHostInput{Hostname: "x"}, "op"); err == nil || !strings.Contains(err.Error(), "amadeus") {
+	if _, err := UpdateSshHost(ctx, pool, "g1", SshHostInput{Hostname: "x"}, "op"); err == nil || !strings.Contains(err.Error(), "cronomicon") {
 		t.Errorf("UpdateSshHost on git row err = %v, want a not-editable error", err)
 	}
-	if ok, err := DeleteSshHost(ctx, pool, "g1", "op"); ok || err == nil || !strings.Contains(err.Error(), "amadeus") {
+	if ok, err := DeleteSshHost(ctx, pool, "g1", "op"); ok || err == nil || !strings.Contains(err.Error(), "cronomicon") {
 		t.Errorf("DeleteSshHost on git row = (%v, %v), want (false, not-deletable)", ok, err)
 	}
 
 	// Cronomicon row: editable.
 	if _, err := UpdateSshHost(ctx, pool, am.ID, SshHostInput{Hostname: "web2b"}, "op"); err != nil {
-		t.Errorf("UpdateSshHost on amadeus row should succeed, got %v", err)
+		t.Errorf("UpdateSshHost on cronomicon row should succeed, got %v", err)
 	}
 }

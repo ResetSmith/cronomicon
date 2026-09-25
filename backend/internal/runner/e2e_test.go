@@ -228,7 +228,7 @@ func (h *e2eHarness) seedRunnerRun(t *testing.T, jobName, scope, hostName, authK
 	// scope → host wiring, with an ssh_hosts row pointed at the in-test server.
 	scopeID := db.NewID()
 	if _, err := h.svc.db.Exec(
-		`INSERT INTO scopes(id, name, source, created_at) VALUES (?, ?, 'amadeus', ?)`,
+		`INSERT INTO scopes(id, name, source, created_at) VALUES (?, ?, 'cronomicon', ?)`,
 		scopeID, scope, ts); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
@@ -266,7 +266,7 @@ func (h *e2eHarness) agentConfig(t *testing.T, name, authKeyEnvVar string) agent
 		OS:                "Linux",
 		Capabilities:      []string{"bash"},
 		MaxConcurrent:     2,
-		Inventory:         "amadeus",
+		Inventory:         "cronomicon",
 		IdentityFile:      filepath.Join(t.TempDir(), "id.json"),
 		PollInterval:      20 * time.Millisecond,
 		KeyMap:            map[string]string{authKeyEnvVar: h.agentKey},
@@ -555,7 +555,7 @@ func TestRunnerAgentE2EKill(t *testing.T) {
 	ts := now()
 	insertJobDef(t, svc, "long-job", "bash", "sleep 100", 0)
 	scopeID := db.NewID()
-	if _, err := svc.db.Exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'prod', 'amadeus', ?)`, scopeID, ts); err != nil {
+	if _, err := svc.db.Exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'prod', 'cronomicon', ?)`, scopeID, ts); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO scope_hosts(scope_id, host) VALUES (?, 'web01')`, scopeID); err != nil {
@@ -580,7 +580,7 @@ func TestRunnerAgentE2EKill(t *testing.T) {
 		OS:                "Linux",
 		Capabilities:      []string{"bash"},
 		MaxConcurrent:     2,
-		Inventory:         "amadeus",
+		Inventory:         "cronomicon",
 		IdentityFile:      filepath.Join(t.TempDir(), "id.json"),
 		PollInterval:      20 * time.Millisecond,
 		KeyMap:            map[string]string{"AGENT_KEY": keyPath},

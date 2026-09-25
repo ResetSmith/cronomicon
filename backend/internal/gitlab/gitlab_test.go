@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS workflows (
 );
 
 CREATE TABLE IF NOT EXISTS definition_schedules (
-    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind  TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name  TEXT NOT NULL,
     name        TEXT NOT NULL,
@@ -153,11 +153,11 @@ CREATE TABLE IF NOT EXISTS definition_schedules (
 -- trigger the prune tests would silently prove the wrong thing about what a
 -- deleted job takes with it.
 CREATE TABLE IF NOT EXISTS reactions (
-    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind    TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name    TEXT NOT NULL,
     name          TEXT NOT NULL,
-    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','amadeus')),
+    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','cronomicon')),
     on_kind       TEXT NOT NULL CHECK (on_kind IN ('job','workflow')),
     on_name       TEXT NOT NULL,
     on_outcome    TEXT NOT NULL CHECK (on_outcome IN ('success','failure','stopped','any')),
@@ -185,7 +185,7 @@ BEGIN
 END;
 
 CREATE TABLE IF NOT EXISTS calendars (
-    source            TEXT NOT NULL DEFAULT 'amadeus',
+    source            TEXT NOT NULL DEFAULT 'cronomicon',
     name              TEXT NOT NULL,
     description       TEXT,
     global            INTEGER NOT NULL DEFAULT 0,
@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS calendar_days (
 CREATE TABLE IF NOT EXISTS schedules (
     uid                TEXT, -- AF-4a surrogate identity (migration 1000)
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     cron             TEXT NOT NULL,
     env              TEXT,
@@ -350,15 +350,15 @@ END;
 // T1: pragma parsing — valid directives
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestParseAmadeusPragma_Valid(t *testing.T) {
-	content := `# amadeus:v1 types=bash,ansible,terraform
-# amadeus:v1 owner=infra-platform
-# amadeus:v1 description=Production inventory
+func TestParseCronomiconPragma_Valid(t *testing.T) {
+	content := `# cronomicon:v1 types=bash,ansible,terraform
+# cronomicon:v1 owner=infra-platform
+# cronomicon:v1 description=Production inventory
 
 [webservers]
 web-01.prod.internal
 `
-	dir, errs := parseAmadeusPragma(content)
+	dir, errs := parseCronomiconPragma(content)
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -374,9 +374,9 @@ web-01.prod.internal
 // T2: pragma parsing — unknown run types produce line-numbered errors
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestParseAmadeusPragma_UnknownRunType(t *testing.T) {
-	content := "# amadeus:v1 types=bahs,ansibl\n[qa_hosts]\nqa-01\n"
-	_, errs := parseAmadeusPragma(content)
+func TestParseCronomiconPragma_UnknownRunType(t *testing.T) {
+	content := "# cronomicon:v1 types=bahs,ansibl\n[qa_hosts]\nqa-01\n"
+	_, errs := parseCronomiconPragma(content)
 	if len(errs) == 0 {
 		t.Fatal("expected errors for unknown run types, got none")
 	}
@@ -392,9 +392,9 @@ func TestParseAmadeusPragma_UnknownRunType(t *testing.T) {
 // T3: pragma parsing — unsupported version
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestParseAmadeusPragma_UnsupportedVersion(t *testing.T) {
-	content := "# amadeus:v2 types=bash\n[hosts]\nhost-01\n"
-	_, errs := parseAmadeusPragma(content)
+func TestParseCronomiconPragma_UnsupportedVersion(t *testing.T) {
+	content := "# cronomicon:v2 types=bash\n[hosts]\nhost-01\n"
+	_, errs := parseCronomiconPragma(content)
 	if len(errs) == 0 {
 		t.Fatal("expected error for unsupported pragma version")
 	}
@@ -407,9 +407,9 @@ func TestParseAmadeusPragma_UnsupportedVersion(t *testing.T) {
 // T4: pragma parsing — unknown directive key
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestParseAmadeusPragma_UnknownDirective(t *testing.T) {
-	content := "# amadeus:v1 ownr=qa-team\n[hosts]\nhost-01\n"
-	_, errs := parseAmadeusPragma(content)
+func TestParseCronomiconPragma_UnknownDirective(t *testing.T) {
+	content := "# cronomicon:v1 ownr=qa-team\n[hosts]\nhost-01\n"
+	_, errs := parseCronomiconPragma(content)
 	if len(errs) == 0 {
 		t.Fatal("expected error for unknown directive")
 	}
@@ -422,9 +422,9 @@ func TestParseAmadeusPragma_UnknownDirective(t *testing.T) {
 // T5: pragma parsing — stops at first non-comment line
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestParseAmadeusPragma_StopsAtNonComment(t *testing.T) {
-	content := "[hosts]\n# amadeus:v1 types=bash\nhost-01\n"
-	dir, _ := parseAmadeusPragma(content)
+func TestParseCronomiconPragma_StopsAtNonComment(t *testing.T) {
+	content := "[hosts]\n# cronomicon:v1 types=bash\nhost-01\n"
+	dir, _ := parseCronomiconPragma(content)
 	if len(dir.Types) != 0 {
 		t.Errorf("expected no types (pragma after section), got %v", dir.Types)
 	}
@@ -435,7 +435,7 @@ func TestParseAmadeusPragma_StopsAtNonComment(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestValidateYAMLBytes_Valid(t *testing.T) {
-	content := "apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: test-job\nspec:\n  run_type: bash\n  command: echo hi\n"
+	content := "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: test-job\nspec:\n  run_type: bash\n  command: echo hi\n"
 	errs, err := validateYAMLBytes("test.yaml", []byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -450,7 +450,7 @@ func TestValidateYAMLBytes_Valid(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestValidateYAMLBytes_WrongAPIVersion(t *testing.T) {
-	content := "apiVersion: amadeus.io/v2\nkind: Job\nmetadata:\n  name: test-job\n"
+	content := "apiVersion: cronomicon.io/v2\nkind: Job\nmetadata:\n  name: test-job\n"
 	errs, err := validateYAMLBytes("test.yaml", []byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -468,7 +468,7 @@ func TestValidateYAMLBytes_WrongAPIVersion(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestValidateYAMLBytes_UnknownKind(t *testing.T) {
-	content := "apiVersion: amadeus.io/v1\nkind: CronJob\nmetadata:\n  name: test-job\n"
+	content := "apiVersion: cronomicon.io/v1\nkind: CronJob\nmetadata:\n  name: test-job\n"
 	errs, err := validateYAMLBytes("test.yaml", []byte(content))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -501,7 +501,7 @@ func TestValidateYAMLBytes_MissingFields(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestResolveInventoryCapability_PragmaPrecedence(t *testing.T) {
-	content := "# amadeus:v1 types=bash,terraform\n[hosts]\nhost-01\n"
+	content := "# cronomicon:v1 types=bash,terraform\n[hosts]\nhost-01\n"
 	cap := resolveInventoryCapability(content, nil, "")
 	if cap.Origin != OriginPragma {
 		t.Errorf("want origin=pragma, got %q", cap.Origin)
@@ -512,10 +512,10 @@ func TestResolveInventoryCapability_PragmaPrecedence(t *testing.T) {
 }
 
 func TestResolveInventoryCapability_SidecarWins(t *testing.T) {
-	content := "# amadeus:v1 types=bash\n[hosts]\nhost-01\n"
+	content := "# cronomicon:v1 types=bash\n[hosts]\nhost-01\n"
 	sc := &sidecarYAML{}
 	sc.Spec.Types = []string{"bash", "ansible", "terraform"}
-	cap := resolveInventoryCapability(content, sc, "inventory/foo.amadeus.yaml")
+	cap := resolveInventoryCapability(content, sc, "inventory/foo.cronomicon.yaml")
 	if cap.Origin != OriginSidecar {
 		t.Errorf("want origin=sidecar, got %q", cap.Origin)
 	}
@@ -547,7 +547,7 @@ func TestPublish_NoClone(t *testing.T) {
 	}
 	_, err := svc.Publish(context.Background(), PublishRequest{
 		FilePath: "jobs/test.yaml",
-		Content:  "apiVersion: amadeus.io/v1\nkind: Job\n",
+		Content:  "apiVersion: cronomicon.io/v1\nkind: Job\n",
 	}, "abc123", "user@example.com")
 	if err == nil {
 		t.Fatal("expected error when clone doesn't exist")
@@ -881,7 +881,7 @@ func TestValidateFile_YAML(t *testing.T) {
 
 	// Valid.
 	valid := filepath.Join(dir, "valid.yaml")
-	_ = os.WriteFile(valid, []byte("apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: x\nspec:\n  run_type: bash\n  command: echo hi\n"), 0o644)
+	_ = os.WriteFile(valid, []byte("apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: x\nspec:\n  run_type: bash\n  command: echo hi\n"), 0o644)
 	errs, err := ValidateFile(valid)
 	if err != nil {
 		t.Fatalf("ValidateFile error: %v", err)
@@ -892,7 +892,7 @@ func TestValidateFile_YAML(t *testing.T) {
 
 	// Invalid.
 	invalid := filepath.Join(dir, "invalid.yaml")
-	_ = os.WriteFile(invalid, []byte("apiVersion: amadeus.io/v9\nkind: Garbage\n"), 0o644)
+	_ = os.WriteFile(invalid, []byte("apiVersion: cronomicon.io/v9\nkind: Garbage\n"), 0o644)
 	errs2, err2 := ValidateFile(invalid)
 	if err2 != nil {
 		t.Fatalf("ValidateFile error: %v", err2)
@@ -905,7 +905,7 @@ func TestValidateFile_YAML(t *testing.T) {
 func TestValidateFile_INI(t *testing.T) {
 	dir := t.TempDir()
 	ini := filepath.Join(dir, "prod.ini")
-	_ = os.WriteFile(ini, []byte("# amadeus:v1 types=bahs\n[hosts]\nhost-01\n"), 0o644)
+	_ = os.WriteFile(ini, []byte("# cronomicon:v1 types=bahs\n[hosts]\nhost-01\n"), 0o644)
 	errs, err := ValidateFile(ini)
 	if err != nil {
 		t.Fatalf("ValidateFile error: %v", err)

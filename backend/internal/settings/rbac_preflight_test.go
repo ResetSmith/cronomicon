@@ -30,8 +30,8 @@ func rbacFixture(t *testing.T) *sql.DB {
 	}
 
 	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES
-		('s-tax','tax','amadeus','2026-01-01T00:00:00Z'),
-		('s-audit','tax-audit','amadeus','2026-01-01T00:00:00Z')`)
+		('s-tax','tax','cronomicon','2026-01-01T00:00:00Z'),
+		('s-audit','tax-audit','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('a-tax','Tax','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('s-tax','a-tax'),('s-audit','a-tax')`)
 

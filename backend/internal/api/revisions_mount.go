@@ -22,7 +22,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
-// Revision history + recycle bin for amadeus-source definitions
+// Revision history + recycle bin for cronomicon-source definitions
 // (RH, the prod-features plan §4).
 //
 // Git-source definitions get history and undelete from Git. In-app ones had
@@ -161,7 +161,7 @@ func detachedBindingsFromTombstone(ctx context.Context, tx *sql.Tx, name string)
 	var blob string
 	err := tx.QueryRowContext(ctx, `
 		SELECT snapshot_json FROM definition_revisions
-		 WHERE kind = ? AND source = 'amadeus' AND name = ? AND action = ?
+		 WHERE kind = ? AND source = 'cronomicon' AND name = ? AND action = ?
 		 ORDER BY revision_no DESC LIMIT 1`, revKindSchedule, name, revActionDeleted).Scan(&blob)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -203,7 +203,7 @@ func (s *Server) listRevisions(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT revision_no, action, actor, created_at, snapshot_digest, snapshot_json
 		  FROM definition_revisions
-		 WHERE kind = ? AND source = 'amadeus' AND name = ?
+		 WHERE kind = ? AND source = 'cronomicon' AND name = ?
 		 ORDER BY revision_no DESC
 		 LIMIT 100`, kind, name)
 	if err != nil {
@@ -248,7 +248,7 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 	var snap string
 	err = s.db.QueryRowContext(r.Context(), `
 		SELECT snapshot_json FROM definition_revisions
-		 WHERE kind = ? AND source = 'amadeus' AND name = ? AND revision_no = ?`,
+		 WHERE kind = ? AND source = 'cronomicon' AND name = ? AND revision_no = ?`,
 		kind, name, no).Scan(&snap)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "no such revision")
@@ -277,7 +277,7 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 	{
 		var n int
 		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT COUNT(*), MAX(uid) FROM `+revKindTable[kind]+` WHERE source='amadeus' AND name = ?`,
+			`SELECT COUNT(*), MAX(uid) FROM `+revKindTable[kind]+` WHERE source='cronomicon' AND name = ?`,
 			name).Scan(&n, &liveUID)
 		if n > 1 {
 			httpx.Fail(w, http.StatusConflict, "conflict", "more than one definition holds this name")
@@ -331,7 +331,7 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 func (s *Server) liveTags(ctx context.Context, table, name string) []string {
 	var raw string
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(tags,'[]') FROM `+table+` WHERE source='amadeus' AND name=?`, name).Scan(&raw); err != nil {
+		`SELECT COALESCE(tags,'[]') FROM `+table+` WHERE source='cronomicon' AND name=?`, name).Scan(&raw); err != nil {
 		return nil
 	}
 	var out []string
@@ -346,7 +346,7 @@ func (s *Server) definitionIsDeleted(ctx context.Context, kind, name string) (bo
 	}
 	var deletedAt sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT deleted_at FROM `+table+` WHERE source='amadeus' AND name=?`, name).Scan(&deletedAt)
+		`SELECT deleted_at FROM `+table+` WHERE source='cronomicon' AND name=?`, name).Scan(&deletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -375,7 +375,7 @@ func (s *Server) listRecycleBin(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.db.QueryContext(r.Context(), `
 			SELECT name, deleted_at, COALESCE(deleted_by,'')
 			  FROM `+revKindTable[kind]+`
-			 WHERE source='amadeus' AND deleted_at IS NOT NULL
+			 WHERE source='cronomicon' AND deleted_at IS NOT NULL
 			 ORDER BY deleted_at DESC`)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
@@ -445,12 +445,12 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	var binnedScopes []string
 	rows, err := tx.QueryContext(r.Context(),
 		`SELECT uid, COALESCE(scope,'') FROM `+table+`
-		  WHERE source='amadeus' AND name = ? AND deleted_at IS NOT NULL`, name)
+		  WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`, name)
 	if err != nil {
 		// schedules/workflows carry no scope column; fall back to uid-only.
 		rows, err = tx.QueryContext(r.Context(),
 			`SELECT uid, '' FROM `+table+`
-			  WHERE source='amadeus' AND name = ? AND deleted_at IS NOT NULL`, name)
+			  WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`, name)
 	}
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -475,7 +475,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	// The name may have been legitimately reused in an overlapping pool while
 	// this one sat in the bin — a restore is a create for uniqueness purposes.
 	if kind == revKindJob {
-		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "amadeus", name, binnedScopes[0], restoredUID)
+		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", name, binnedScopes[0], restoredUID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -486,7 +486,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if kind == revKindWorkflow {
-		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "amadeus", name, nil, restoredUID)
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", name, nil, restoredUID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -529,7 +529,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := snapshotRevision(r.Context(), tx, kind, "amadeus", name, restoredUID, id.Email, revActionRestored,
+	if err := snapshotRevision(r.Context(), tx, kind, "cronomicon", name, restoredUID, id.Email, revActionRestored,
 		map[string]any{"restoredFrom": "recycle-bin"}); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -627,7 +627,7 @@ func PurgeDefinition(ctx context.Context, database *sql.DB, logDir, kind, name s
 	var binned int
 	var purgedUID sql.NullString
 	_ = tx.QueryRowContext(ctx,
-		`SELECT COUNT(*), MAX(uid) FROM `+table+` WHERE source='amadeus' AND name = ? AND deleted_at IS NOT NULL`,
+		`SELECT COUNT(*), MAX(uid) FROM `+table+` WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`,
 		name).Scan(&binned, &purgedUID)
 	if binned > 1 {
 		return false, fmt.Errorf("more than one binned definition holds this name")
@@ -636,7 +636,7 @@ func PurgeDefinition(ctx context.Context, database *sql.DB, logDir, kind, name s
 	// The real DELETE — which is what finally fires trg_def_schedules_*_delete
 	// and trg_paused_jobs_*_delete. The soft delete could not, being an UPDATE.
 	res, err := tx.ExecContext(ctx,
-		`DELETE FROM `+table+` WHERE source='amadeus' AND name = ? AND deleted_at IS NOT NULL`, name)
+		`DELETE FROM `+table+` WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`, name)
 	if err != nil {
 		return false, err
 	}
@@ -653,7 +653,7 @@ func PurgeDefinition(ctx context.Context, database *sql.DB, logDir, kind, name s
 			`DELETE FROM paused_jobs WHERE owner_kind=? AND owner_uid=?`, kind, purgedUID.String)
 	} else {
 		_, _ = tx.ExecContext(ctx,
-			`DELETE FROM paused_jobs WHERE source='amadeus' AND owner_kind=? AND name=?`, kind, name)
+			`DELETE FROM paused_jobs WHERE source='cronomicon' AND owner_kind=? AND name=?`, kind, name)
 	}
 	if kind == revKindSchedule {
 		// Schedules have no delete trigger; their runtime expansions are keyed by

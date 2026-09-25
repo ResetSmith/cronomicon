@@ -10,7 +10,7 @@ import (
 )
 
 // TestAuditComplianceBackupRemoved guards FU-3 Phase B: the DB-stored backup
-// config was inert (the uploader is driven solely by AMADEUS_BACKUP_S3_* env)
+// config was inert (the uploader is driven solely by CRONOMICON_BACKUP_S3_* env)
 // and was removed. A legacy settings blob that still carries a "backup" object
 // must load without error and without resurrecting it — env stays the sole
 // backup-config surface.
@@ -49,12 +49,12 @@ func TestAuditComplianceBackupRemoved(t *testing.T) {
 }
 
 // TestBackupConfigComesFromEnv asserts the wired backup surface is the
-// AMADEUS_BACKUP_S3_* env, not the settings table (FU-3 Phase B).
+// CRONOMICON_BACKUP_S3_* env, not the settings table (FU-3 Phase B).
 func TestBackupConfigComesFromEnv(t *testing.T) {
 	// DEV_AUTH sidesteps the trusted-header boot guard (see config loadWith).
-	t.Setenv("AMADEUS_DEV_AUTH", "true")
-	t.Setenv("AMADEUS_BACKUP_S3_BUCKET", "env-bucket")
-	t.Setenv("AMADEUS_BACKUP_S3_REGION", "eu-west-1")
+	t.Setenv("CRONOMICON_DEV_AUTH", "true")
+	t.Setenv("CRONOMICON_BACKUP_S3_BUCKET", "env-bucket")
+	t.Setenv("CRONOMICON_BACKUP_S3_REGION", "eu-west-1")
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
@@ -165,7 +165,7 @@ func TestSeedAuditComplianceMatchesDefaultsExceptEnvKnobs(t *testing.T) {
 // TestSeedAuditComplianceIsOnceOnly is the upgrade-safety property. Seeding runs
 // on every boot, so a second call must be a no-op: an operator who has saved the
 // Audit & Compliance panel must never have their values reverted to whatever the
-// (possibly stale, possibly absent) AMADEUS_RETENTION_* env still says on the
+// (possibly stale, possibly absent) CRONOMICON_RETENTION_* env still says on the
 // next restart.
 func TestSeedAuditComplianceIsOnceOnly(t *testing.T) {
 	pool := openTestPool(t)
@@ -203,7 +203,7 @@ func TestSeedAuditComplianceIsOnceOnly(t *testing.T) {
 
 // TestSeedAuditCompliancePreservesZero pins that a seeded 0 stays 0. Zero is the
 // "keep forever" sentinel shared with db.RetentionPolicy, so coercing it to a
-// default would turn a deliberate AMADEUS_RETENTION_RUNS_DAYS=0 into a 90-day
+// default would turn a deliberate CRONOMICON_RETENTION_RUNS_DAYS=0 into a 90-day
 // window and start deleting history the operator asked to keep.
 func TestSeedAuditCompliancePreservesZero(t *testing.T) {
 	pool := openTestPool(t)

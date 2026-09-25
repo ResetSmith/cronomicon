@@ -36,7 +36,7 @@ func TestRenderNoEnvPreservesArgvForm(t *testing.T) {
 // TestRenderBashEnvOnStdin: env is delivered via stdin exports, NEVER in the
 // command line — the core H1 property.
 func TestRenderBashEnvOnStdin(t *testing.T) {
-	env := map[string]string{"AMADEUS_SECRET_DB": "s3cr3t", "STAGE": "prod"}
+	env := map[string]string{"CRONOMICON_SECRET_DB": "s3cr3t", "STAGE": "prod"}
 	got := Render("bash", "echo hi", env)
 	if got.Cmd != "bash -s" {
 		t.Errorf("Cmd = %q, want 'bash -s'", got.Cmd)
@@ -45,7 +45,7 @@ func TestRenderBashEnvOnStdin(t *testing.T) {
 		t.Fatalf("secret leaked into argv: %q", got.Cmd)
 	}
 	// Sorted exports precede the body.
-	wantStdin := "export AMADEUS_SECRET_DB='s3cr3t'\nexport STAGE='prod'\necho hi"
+	wantStdin := "export CRONOMICON_SECRET_DB='s3cr3t'\nexport STAGE='prod'\necho hi"
 	if got.Stdin != wantStdin {
 		t.Errorf("Stdin =\n  %q\nwant\n  %q", got.Stdin, wantStdin)
 	}
@@ -55,7 +55,7 @@ func TestRenderBashEnvOnStdin(t *testing.T) {
 // value appears only on stdin.
 func TestRenderSecretNeverInArgv(t *testing.T) {
 	const secret = "sup3r-s3cr3t-value"
-	env := map[string]string{"AMADEUS_SECRET_X": secret}
+	env := map[string]string{"CRONOMICON_SECRET_X": secret}
 	for _, interp := range []string{"bash", "python3", "perl", "powershell", "othersh"} {
 		t.Run(interp, func(t *testing.T) {
 			got := Render(interp, "run-body", env)

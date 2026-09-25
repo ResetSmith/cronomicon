@@ -173,7 +173,7 @@ export function ServiceAccountsSection() {
             style={inputStyle()}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Nagios check_amadeus wrapper"
+            placeholder="Nagios check_cronomicon wrapper"
           />
         </SettingRow>
         <SettingRow label="Role" hint="The permissions the token acts with — the same roles people hold.">

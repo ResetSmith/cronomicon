@@ -118,7 +118,7 @@ func (s *Service) takeResync(ctx context.Context, runnerID string) bool {
 
 // HandleRedeclare is the id-preserving re-registration (Phase 4, protocol v4).
 // The agent calls it on receipt of the "re-register" control op, authenticated
-// with its EXISTING amt_run_* runner key — never a registration token (D6:
+// with its EXISTING crn_run_* runner key — never a registration token (D6:
 // single-use registration tokens are first-contact credentials and are dead by
 // resync time). The existing row is updated in place: same id, same agency
 // membership, same API key, no orphan row. The reaped/404 poll path keeps its

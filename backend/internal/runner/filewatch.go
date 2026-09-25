@@ -323,12 +323,12 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	}
 
 	// The arrival's provenance rides the run's env, in the reserved namespace —
-	// the same shape RX uses for AMADEUS_REACTED_TO_*. Path only, never content
+	// the same shape RX uses for CRONOMICON_REACTED_TO_*. Path only, never content
 	// (PF-Q2): the job's script already runs where the file is.
 	envJSON, _ := json.Marshal(map[string]string{
-		"AMADEUS_WATCH_PATH": sg.Path,
-		"AMADEUS_WATCH_FILE": baseName(sg.Path),
-		"AMADEUS_WATCH_SIZE": fmt.Sprintf("%d", sg.SizeBytes),
+		"CRONOMICON_WATCH_PATH": sg.Path,
+		"CRONOMICON_WATCH_FILE": baseName(sg.Path),
+		"CRONOMICON_WATCH_SIZE": fmt.Sprintf("%d", sg.SizeBytes),
 	})
 
 	scopeAgencies, _ := execspec.ScopeAgencies(ctx, s.db, scope)

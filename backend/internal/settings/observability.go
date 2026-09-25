@@ -89,7 +89,7 @@ func UpdateObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *co
 	switch inp.AuthType {
 	case "", "none", "bearer":
 		// Only these two: basic auth on the scrape path is a reverse-proxy job
-		// (see deploy/deployment-guide.md "Health endpoints"), so the enum
+		// (see the administrator manual, "Health, persistence & verification"), so the enum
 		// deliberately stops at bearer rather than carrying a value the gate
 		// could never honour.
 	default:

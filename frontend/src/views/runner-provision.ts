@@ -4,7 +4,7 @@
 //
 // Single-source rule (the plan's drift requirement): the env artifact is NOT
 // authored here — it patches values into the VERBATIM
-// backend/deploy/amadeus-runner.env.example, published by
+// backend/deploy/cronomicon-runner.env.example, published by
 // vite-manuals-plugin.js at ENV_EXAMPLE_PATH. setVar throws if a var it needs
 // is missing from the template, so a rename in the example (or config.go)
 // breaks loudly here and in the unit tests instead of drifting silently.
@@ -15,7 +15,7 @@
 import { RUNNER_INSTALL_SCRIPT_PATH } from "./runner-install-cmd";
 import { RUN_TYPES, RUNNER_ONLY_TYPES } from "../runtypes";
 
-export const ENV_EXAMPLE_PATH = "/amadeus-runner.env.example";
+export const ENV_EXAMPLE_PATH = "/cronomicon-runner.env.example";
 
 // The closed run-type vocabulary now lives in runtypes.ts (RP-5); re-exported
 // under the provisioning names. ansible/terraform are runner-only local
@@ -25,8 +25,8 @@ export const FAT_RUN_TYPES = RUNNER_ONLY_TYPES;
 
 // Installer-standard destination paths (runner-install.sh header constants).
 // The env artifact references these so it matches what the script installs.
-const STATE_DIR = "/var/lib/amadeus-runner";
-const CONF_DIR = "/etc/amadeus-runner";
+const STATE_DIR = "/var/lib/cronomicon-runner";
+const CONF_DIR = "/etc/cronomicon-runner";
 const DEST = {
   knownHosts: `${STATE_DIR}/known_hosts`,
   keysDir: `${STATE_DIR}/keys`,
@@ -43,7 +43,7 @@ export interface ProvisionOptions {
   // Empty ⇒ auto-detect: the agent probes the host's toolchains at startup
   // (D1: 1B). Non-empty is an explicit narrowing override (-c).
   capabilities: string[];
-  inventory: "amadeus" | "local";
+  inventory: "cronomicon" | "local";
   // Source paths on the installing host (ride the one-liner's Phase-1 flags;
   // the env/docker artifacts reference the installed DEST paths).
   knownHostsSrc?: string;
@@ -68,7 +68,7 @@ export function defaultProvisionOptions(origin: string): ProvisionOptions {
     token: "<TOKEN>",
     name: "",
     capabilities: [], // auto-detect on the host (override to narrow)
-    inventory: "amadeus",
+    inventory: "cronomicon",
     keyMode: "none",
     checkout: false,
   };
@@ -80,7 +80,7 @@ function assertVar(text: string, name: string): RegExp {
   const re = new RegExp(`^#?[ \\t]*${name}=.*$`, "m");
   if (!re.test(text)) {
     throw new Error(
-      `env template is missing ${name} — backend/deploy/amadeus-runner.env.example and runner-provision.ts have drifted`,
+      `env template is missing ${name} — backend/deploy/cronomicon-runner.env.example and runner-provision.ts have drifted`,
     );
   }
   return re;
@@ -120,56 +120,56 @@ export function keyMapDestSpec(spec: string): string {
 // example (fetched from ENV_EXAMPLE_PATH). All annotations survive.
 export function generateRunnerEnv(exampleText: string, o: ProvisionOptions): string {
   let t = exampleText;
-  t = setVar(t, "AMADEUS_RUNNER_SERVER", o.origin);
-  t = setVar(t, "AMADEUS_RUNNER_REGISTRATION_TOKEN", o.token);
-  t = setVar(t, "AMADEUS_RUNNER_NAME", o.name || "runner-01");
+  t = setVar(t, "CRONOMICON_RUNNER_SERVER", o.origin);
+  t = setVar(t, "CRONOMICON_RUNNER_REGISTRATION_TOKEN", o.token);
+  t = setVar(t, "CRONOMICON_RUNNER_NAME", o.name || "runner-01");
   if (o.capabilities.length > 0) {
-    t = setVar(t, "AMADEUS_RUNNER_CAPABILITIES", o.capabilities.join(","));
+    t = setVar(t, "CRONOMICON_RUNNER_CAPABILITIES", o.capabilities.join(","));
   } else {
     // Detect mode: the var stays in the artifact but inactive (unset ⇒ the
     // agent probes the host's toolchains at startup). commentVar, not removal —
     // and assertVar keeps the drift guard alive on this branch too.
-    assertVar(t, "AMADEUS_RUNNER_CAPABILITIES");
-    t = commentVar(t, "AMADEUS_RUNNER_CAPABILITIES");
+    assertVar(t, "CRONOMICON_RUNNER_CAPABILITIES");
+    t = commentVar(t, "CRONOMICON_RUNNER_CAPABILITIES");
   }
-  t = setVar(t, "AMADEUS_RUNNER_INVENTORY", o.inventory);
-  t = setVar(t, "AMADEUS_RUNNER_IDENTITY_FILE", `${STATE_DIR}/identity.json`);
+  t = setVar(t, "CRONOMICON_RUNNER_INVENTORY", o.inventory);
+  t = setVar(t, "CRONOMICON_RUNNER_IDENTITY_FILE", `${STATE_DIR}/identity.json`);
 
   if (o.maxConcurrent != null && o.maxConcurrent > 0 && o.maxConcurrent !== 5) {
-    t = setVar(t, "AMADEUS_RUNNER_MAX_CONCURRENT", String(o.maxConcurrent));
+    t = setVar(t, "CRONOMICON_RUNNER_MAX_CONCURRENT", String(o.maxConcurrent));
   }
   if (o.inventory === "local") {
-    t = setVar(t, "AMADEUS_RUNNER_LOCAL_INVENTORY", DEST.localInventory);
+    t = setVar(t, "CRONOMICON_RUNNER_LOCAL_INVENTORY", DEST.localInventory);
   }
 
   // Key custody: the env references the installed destinations.
   if (o.knownHostsSrc) {
-    t = setVar(t, "AMADEUS_RUNNER_KNOWN_HOSTS", DEST.knownHosts);
+    t = setVar(t, "CRONOMICON_RUNNER_KNOWN_HOSTS", DEST.knownHosts);
   } else {
     // Leave the strict-host-key requirement visible but inactive — the loud
     // "before the first SSH run" story lives in the guide.
-    t = commentVar(t, "AMADEUS_RUNNER_KNOWN_HOSTS");
+    t = commentVar(t, "CRONOMICON_RUNNER_KNOWN_HOSTS");
   }
   if (o.keyMode === "key-dir") {
-    t = setVar(t, "AMADEUS_RUNNER_KEY_DIR", DEST.keysDir);
+    t = setVar(t, "CRONOMICON_RUNNER_KEY_DIR", DEST.keysDir);
   } else if (o.keyMode === "key-map" && o.keyMapSpec) {
-    t = setVar(t, "AMADEUS_RUNNER_KEY_MAP", keyMapDestSpec(o.keyMapSpec));
+    t = setVar(t, "CRONOMICON_RUNNER_KEY_MAP", keyMapDestSpec(o.keyMapSpec));
   }
   if (o.caCertSrc) {
-    t = setVar(t, "AMADEUS_RUNNER_CA_CERT", DEST.caCert);
+    t = setVar(t, "CRONOMICON_RUNNER_CA_CERT", DEST.caCert);
   }
 
   if (o.checkout) {
-    t = setVar(t, "AMADEUS_RUNNER_ALLOW_CHECKOUT", "true");
-    if (o.checkoutRepos) t = setVar(t, "AMADEUS_RUNNER_CHECKOUT_REPOS", o.checkoutRepos);
-    t = setVar(t, "AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE", o.checkoutTokenFile || DEST.checkoutTokenFile);
+    t = setVar(t, "CRONOMICON_RUNNER_ALLOW_CHECKOUT", "true");
+    if (o.checkoutRepos) t = setVar(t, "CRONOMICON_RUNNER_CHECKOUT_REPOS", o.checkoutRepos);
+    t = setVar(t, "CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE", o.checkoutTokenFile || DEST.checkoutTokenFile);
   }
   if (o.vaultPasswordFile) {
-    t = setVar(t, "AMADEUS_RUNNER_VAULT_PASSWORD_FILE", o.vaultPasswordFile);
+    t = setVar(t, "CRONOMICON_RUNNER_VAULT_PASSWORD_FILE", o.vaultPasswordFile);
   }
-  if (o.sandboxMemoryMax) t = setVar(t, "AMADEUS_RUNNER_SANDBOX_MEMORY_MAX", o.sandboxMemoryMax);
-  if (o.sandboxCpuQuota) t = setVar(t, "AMADEUS_RUNNER_SANDBOX_CPU_QUOTA", o.sandboxCpuQuota);
-  if (o.sandboxTasksMax) t = setVar(t, "AMADEUS_RUNNER_SANDBOX_TASKS_MAX", o.sandboxTasksMax);
+  if (o.sandboxMemoryMax) t = setVar(t, "CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX", o.sandboxMemoryMax);
+  if (o.sandboxCpuQuota) t = setVar(t, "CRONOMICON_RUNNER_SANDBOX_CPU_QUOTA", o.sandboxCpuQuota);
+  if (o.sandboxTasksMax) t = setVar(t, "CRONOMICON_RUNNER_SANDBOX_TASKS_MAX", o.sandboxTasksMax);
 
   return t;
 }
@@ -189,7 +189,7 @@ export function provisionOneLiner(o: ProvisionOptions): string {
   const parts = [
     `curl -fsSL ${o.origin}${RUNNER_INSTALL_SCRIPT_PATH} | sudo bash -s --`,
     `-s ${o.origin}`,
-    `-t ${shellArg(o.token)}`, // quotes the <TOKEN> placeholder; a real amt_reg_* passes verbatim
+    `-t ${shellArg(o.token)}`, // quotes the <TOKEN> placeholder; a real crn_reg_* passes verbatim
     `-n ${o.name ? shellArg(o.name) : "$(hostname)"}`,
   ];
   // No -c in detect mode: the agent probes the host's toolchains at startup.
@@ -206,7 +206,7 @@ export function provisionOneLiner(o: ProvisionOptions): string {
   if (o.checkout) parts.push(`--allow-checkout`);
   if (o.checkoutRepos) parts.push(`--checkout-repos ${shellArg(o.checkoutRepos)}`);
   // The *-file flags take a SOURCE path on the installing host; the installer
-  // copies it to the standard /etc/amadeus-runner/{checkout-token,vault-pass}.
+  // copies it to the standard /etc/cronomicon-runner/{checkout-token,vault-pass}.
   if (o.checkoutTokenFile) parts.push(`--checkout-token-file ${shellArg(o.checkoutTokenFile)}`);
   if (o.vaultPasswordFile) parts.push(`--vault-pass-file ${shellArg(o.vaultPasswordFile)}`);
   return parts.join(" ");
@@ -219,32 +219,32 @@ export function provisionDockerRun(o: ProvisionOptions): string {
   const fat = o.capabilities.some((c) => FAT_RUN_TYPES.has(c));
   const name = o.name || "runner-01";
   const env: string[] = [
-    `AMADEUS_RUNNER_SERVER=${o.origin}`,
-    `AMADEUS_RUNNER_REGISTRATION_TOKEN=${o.token}`,
-    `AMADEUS_RUNNER_NAME=${name}`,
+    `CRONOMICON_RUNNER_SERVER=${o.origin}`,
+    `CRONOMICON_RUNNER_REGISTRATION_TOKEN=${o.token}`,
+    `CRONOMICON_RUNNER_NAME=${name}`,
     // Detect mode omits the var: the agent probes the image's toolchains at
     // startup (slim ⇒ the SSH-onward run-types; fat adds ansible/terraform).
-    ...(o.capabilities.length > 0 ? [`AMADEUS_RUNNER_CAPABILITIES=${o.capabilities.join(",")}`] : []),
-    `AMADEUS_RUNNER_INVENTORY=${o.inventory}`,
+    ...(o.capabilities.length > 0 ? [`CRONOMICON_RUNNER_CAPABILITIES=${o.capabilities.join(",")}`] : []),
+    `CRONOMICON_RUNNER_INVENTORY=${o.inventory}`,
   ];
   if (o.maxConcurrent != null && o.maxConcurrent > 0 && o.maxConcurrent !== 5) {
-    env.push(`AMADEUS_RUNNER_MAX_CONCURRENT=${o.maxConcurrent}`);
+    env.push(`CRONOMICON_RUNNER_MAX_CONCURRENT=${o.maxConcurrent}`);
   }
   // File-backed options live on the persistent volume in the container story.
-  if (o.inventory === "local") env.push(`AMADEUS_RUNNER_LOCAL_INVENTORY=${STATE_DIR}/inventory.json`);
-  if (o.knownHostsSrc) env.push(`AMADEUS_RUNNER_KNOWN_HOSTS=${DEST.knownHosts}`);
-  if (o.keyMode === "key-dir") env.push(`AMADEUS_RUNNER_KEY_DIR=${DEST.keysDir}`);
-  if (o.keyMode === "key-map" && o.keyMapSpec) env.push(`AMADEUS_RUNNER_KEY_MAP=${keyMapDestSpec(o.keyMapSpec)}`);
-  if (o.caCertSrc) env.push(`AMADEUS_RUNNER_CA_CERT=${STATE_DIR}/ca.pem`);
+  if (o.inventory === "local") env.push(`CRONOMICON_RUNNER_LOCAL_INVENTORY=${STATE_DIR}/inventory.json`);
+  if (o.knownHostsSrc) env.push(`CRONOMICON_RUNNER_KNOWN_HOSTS=${DEST.knownHosts}`);
+  if (o.keyMode === "key-dir") env.push(`CRONOMICON_RUNNER_KEY_DIR=${DEST.keysDir}`);
+  if (o.keyMode === "key-map" && o.keyMapSpec) env.push(`CRONOMICON_RUNNER_KEY_MAP=${keyMapDestSpec(o.keyMapSpec)}`);
+  if (o.caCertSrc) env.push(`CRONOMICON_RUNNER_CA_CERT=${STATE_DIR}/ca.pem`);
   if (o.checkout) {
-    env.push(`AMADEUS_RUNNER_ALLOW_CHECKOUT=true`);
-    if (o.checkoutRepos) env.push(`AMADEUS_RUNNER_CHECKOUT_REPOS=${o.checkoutRepos}`);
-    env.push(`AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE=${STATE_DIR}/checkout-token`);
+    env.push(`CRONOMICON_RUNNER_ALLOW_CHECKOUT=true`);
+    if (o.checkoutRepos) env.push(`CRONOMICON_RUNNER_CHECKOUT_REPOS=${o.checkoutRepos}`);
+    env.push(`CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=${STATE_DIR}/checkout-token`);
   }
-  if (o.vaultPasswordFile) env.push(`AMADEUS_RUNNER_VAULT_PASSWORD_FILE=${STATE_DIR}/vault-pass`);
-  if (o.sandboxMemoryMax) env.push(`AMADEUS_RUNNER_SANDBOX_MEMORY_MAX=${o.sandboxMemoryMax}`);
-  if (o.sandboxCpuQuota) env.push(`AMADEUS_RUNNER_SANDBOX_CPU_QUOTA=${o.sandboxCpuQuota}`);
-  if (o.sandboxTasksMax) env.push(`AMADEUS_RUNNER_SANDBOX_TASKS_MAX=${o.sandboxTasksMax}`);
+  if (o.vaultPasswordFile) env.push(`CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=${STATE_DIR}/vault-pass`);
+  if (o.sandboxMemoryMax) env.push(`CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX=${o.sandboxMemoryMax}`);
+  if (o.sandboxCpuQuota) env.push(`CRONOMICON_RUNNER_SANDBOX_CPU_QUOTA=${o.sandboxCpuQuota}`);
+  if (o.sandboxTasksMax) env.push(`CRONOMICON_RUNNER_SANDBOX_TASKS_MAX=${o.sandboxTasksMax}`);
 
   const lines = [
     `# Persist identity + keys across restarts on a named volume; place any`,
@@ -255,12 +255,12 @@ export function provisionDockerRun(o: ProvisionOptions): string {
           `# (slim ⇒ SSH-onward run-types; use :fat for ansible/terraform).`,
         ]
       : []),
-    `docker volume create amadeus-runner-data`,
+    `docker volume create cronomicon-runner-data`,
     ``,
     `docker run -d --name ${shellArg(name)} --restart unless-stopped \\`,
     ...env.map((e) => `  -e ${shellArg(e)} \\`),
-    `  -v amadeus-runner-data:${STATE_DIR} \\`,
-    `  amadeus-runner:${fat ? "fat" : "slim"}`,
+    `  -v cronomicon-runner-data:${STATE_DIR} \\`,
+    `  cronomicon-runner:${fat ? "fat" : "slim"}`,
   ];
   return lines.join("\n");
 }

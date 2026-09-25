@@ -110,12 +110,12 @@ type reactionRow struct {
 	// ownerUID is the reacting definition's identity (R2-5): what the delivery
 	// claim de-dupes on and what a job fire resolves its target by — the name
 	// pair may now mean a sibling.
-	ownerUID string
-	onOutcome                               string
-	delaySeconds                            int
-	minIntervalSeconds                      int
-	includeWorkflowChildren                 bool
-	enabled                                 bool
+	ownerUID                string
+	onOutcome               string
+	delaySeconds            int
+	minIntervalSeconds      int
+	includeWorkflowChildren bool
+	enabled                 bool
 }
 
 // ScanReactions runs one reactor pass. Exported for tests, which drive it
@@ -143,7 +143,7 @@ func (s *Scheduler) ScanReactions(ctx context.Context) {
 	// concatenated. Without this the rate brake's "which event won" depends on
 	// DB row order, so after a backlog (a restart, or a burst inside one tick) a
 	// reaction with a min_interval would fire for an arbitrary upstream and
-	// stamp AMADEUS_REACTED_TO_RUN_ID with it. Chronological order makes the
+	// stamp CRONOMICON_REACTED_TO_RUN_ID with it. Chronological order makes the
 	// survivor the earliest event and every later one a recorded suppression,
 	// which is at least explicable.
 	sort.Slice(events, func(i, j int) bool {
@@ -495,11 +495,11 @@ func (s *Scheduler) fireReaction(ctx context.Context, ev srcEvent, r reactionRow
 // why §4 keeps "run as a reaction to…" open as a future Run-dialog mode.
 func reactionEnvStamp(ev srcEvent) map[string]string {
 	return map[string]string{
-		"AMADEUS_REACTED_TO_KIND":    ev.kind,
-		"AMADEUS_REACTED_TO_SOURCE":  ev.source,
-		"AMADEUS_REACTED_TO_NAME":    ev.name,
-		"AMADEUS_REACTED_TO_RUN_ID":  ev.runID,
-		"AMADEUS_REACTED_TO_OUTCOME": string(ev.outcome),
+		"CRONOMICON_REACTED_TO_KIND":    ev.kind,
+		"CRONOMICON_REACTED_TO_SOURCE":  ev.source,
+		"CRONOMICON_REACTED_TO_NAME":    ev.name,
+		"CRONOMICON_REACTED_TO_RUN_ID":  ev.runID,
+		"CRONOMICON_REACTED_TO_OUTCOME": string(ev.outcome),
 	}
 }
 

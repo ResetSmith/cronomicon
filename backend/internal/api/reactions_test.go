@@ -76,7 +76,7 @@ func newRxAPI(t *testing.T) (rxAPI, *sql.DB) {
 func seedRxJob(t *testing.T, pool *sql.DB, name string) {
 	t.Helper()
 	if _, err := pool.ExecContext(context.Background(),
-		`INSERT INTO jobs (name, uid, source, run_type, enabled, synced_at) VALUES (?, 'uid-'||?, 'amadeus', 'bash', 1, 't')`,
+		`INSERT INTO jobs (name, uid, source, run_type, enabled, synced_at) VALUES (?, 'uid-'||?, 'cronomicon', 'bash', 1, 't')`,
 		name, name); err != nil {
 		t.Fatalf("seed job %s: %v", name, err)
 	}
@@ -85,7 +85,7 @@ func seedRxJob(t *testing.T, pool *sql.DB, name string) {
 func seedRxWorkflow(t *testing.T, pool *sql.DB, name string) {
 	t.Helper()
 	if _, err := pool.ExecContext(context.Background(),
-		`INSERT INTO workflows (name, source, steps, enabled, synced_at) VALUES (?, 'amadeus', '[]', 1, 't')`,
+		`INSERT INTO workflows (name, source, steps, enabled, synced_at) VALUES (?, 'cronomicon', '[]', 1, 't')`,
 		name); err != nil {
 		t.Fatalf("seed workflow %s: %v", name, err)
 	}
@@ -94,7 +94,7 @@ func seedRxWorkflow(t *testing.T, pool *sql.DB, name string) {
 func rx(name, onKind, onName, outcome string) map[string]any {
 	return map[string]any{
 		"name": name, "onKind": onKind, "onName": onName,
-		"onSource": "amadeus", "onOutcome": outcome,
+		"onSource": "cronomicon", "onOutcome": outcome,
 	}
 }
 
@@ -108,7 +108,7 @@ func TestReactionCRUDRoundTrip(t *testing.T) {
 	code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/load", map[string]any{
 		"reactions": []map[string]any{
 			{"name": "after-extract", "onKind": "job", "onName": "extract",
-				"onSource": "amadeus", "onOutcome": "success", "delaySeconds": 30,
+				"onSource": "cronomicon", "onOutcome": "success", "delaySeconds": 30,
 				"minIntervalSeconds": 300, "includeWorkflowChildren": true},
 		},
 	})
@@ -236,7 +236,7 @@ func TestReactionValidationRefusals(t *testing.T) {
 		{
 			name: "negative delay", wantIn: "cannot be negative",
 			reactions: []map[string]any{{"name": "r", "onKind": "job", "onName": "up",
-				"onSource": "amadeus", "onOutcome": "success", "delaySeconds": -1}},
+				"onSource": "cronomicon", "onOutcome": "success", "delaySeconds": -1}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -306,7 +306,7 @@ func TestCycleIsRejectedWithThePathNamed(t *testing.T) {
 	// The path must be named — "there is a cycle somewhere" is not actionable in
 	// a graph the operator cannot see on one screen.
 	for _, node := range []string{"a", "b", "c"} {
-		if !strings.Contains(body, "job:amadeus/"+node) {
+		if !strings.Contains(body, "job:cronomicon/"+node) {
 			t.Errorf("refusal %q should name every node in the cycle path (missing %q)", body, node)
 		}
 	}
@@ -393,7 +393,7 @@ func TestDeleteWatchedDefinitionRequiresForce(t *testing.T) {
 	// git-source one. They are cleared by different things — this by
 	// ?force=true, that by nothing — so a client keying on the status alone has
 	// to guess, and the console guessed wrong for a release: every refusal here
-	// rendered "Only amadeus-source jobs can be deleted in-app", which cannot be
+	// rendered "Only cronomicon-source jobs can be deleted in-app", which cannot be
 	// true, since the git check has already passed by the time this fires.
 	if !strings.Contains(body, `"code":"`+apipkg.ErrCodeReactionsWatching+`"`) {
 		t.Errorf("refusal %q should carry code %q, not the generic conflict", body, apipkg.ErrCodeReactionsWatching)
@@ -545,10 +545,10 @@ func TestCannotAuthorReactionsOnAGitSourceDefinition(t *testing.T) {
 
 // When the SAME name exists in both sources, the in-app one wins — it is the
 // one this API can own without a sync destroying the result.
-func TestAmbiguousNamePrefersTheAmadeusDefinition(t *testing.T) {
+func TestAmbiguousNamePrefersTheCronomiconDefinition(t *testing.T) {
 	api, pool := newRxAPI(t)
 	seedRxJob(t, pool, "up")
-	seedRxJob(t, pool, "shared") // amadeus
+	seedRxJob(t, pool, "shared") // cronomicon
 	if _, err := pool.ExecContext(context.Background(),
 		`INSERT INTO jobs (name, source, run_type, enabled, synced_at) VALUES ('shared','git','bash',1,'t')`); err != nil {
 		t.Fatal(err)
@@ -556,15 +556,15 @@ func TestAmbiguousNamePrefersTheAmadeusDefinition(t *testing.T) {
 
 	if code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/shared",
 		map[string]any{"reactions": []map[string]any{rx("r", "job", "up", "success")}}); code != http.StatusOK {
-		t.Fatalf("PUT = %d, want 200 — the amadeus definition is writable (%s)", code, body)
+		t.Fatalf("PUT = %d, want 200 — the cronomicon definition is writable (%s)", code, body)
 	}
 	var src string
 	if err := pool.QueryRowContext(context.Background(),
 		`SELECT owner_source FROM reactions WHERE owner_name='shared'`).Scan(&src); err != nil {
 		t.Fatal(err)
 	}
-	if src != "amadeus" {
-		t.Errorf("owner_source = %q, want amadeus — a 'git' row here would be wiped by the next sync", src)
+	if src != "cronomicon" {
+		t.Errorf("owner_source = %q, want cronomicon — a 'git' row here would be wiped by the next sync", src)
 	}
 }
 
@@ -579,7 +579,7 @@ func TestCycleCannotBeBuiltThroughTheDisabledFlag(t *testing.T) {
 
 	// a → b, but disabled.
 	disabled := map[string]any{"name": "r", "onKind": "job", "onName": "a",
-		"onSource": "amadeus", "onOutcome": "success", "enabled": false}
+		"onSource": "cronomicon", "onOutcome": "success", "enabled": false}
 	if code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/b",
 		map[string]any{"reactions": []map[string]any{disabled}}); code != http.StatusOK {
 		t.Fatalf("seed disabled edge = %d (%s)", code, body)
@@ -602,7 +602,7 @@ func TestCycleCannotBeBuiltThroughTheDisabledFlag(t *testing.T) {
 func TestPerDefinitionReadIsSourceScoped(t *testing.T) {
 	api, pool := newRxAPI(t)
 	seedRxJob(t, pool, "up")
-	seedRxJob(t, pool, "shared") // amadeus
+	seedRxJob(t, pool, "shared") // cronomicon
 	if _, err := pool.ExecContext(context.Background(),
 		`INSERT INTO jobs (name, source, run_type, enabled, synced_at) VALUES ('shared','git','bash',1,'t')`); err != nil {
 		t.Fatal(err)
@@ -611,10 +611,10 @@ func TestPerDefinitionReadIsSourceScoped(t *testing.T) {
 	if _, err := pool.ExecContext(context.Background(), `
 		INSERT INTO reactions (owner_source, owner_kind, owner_name, name,
 		                       on_source, on_kind, on_name, on_outcome)
-		VALUES ('git','job','shared','from-git','amadeus','job','up','failure')`); err != nil {
+		VALUES ('git','job','shared','from-git','cronomicon','job','up','failure')`); err != nil {
 		t.Fatal(err)
 	}
-	// And an in-app one on the amadeus twin.
+	// And an in-app one on the cronomicon twin.
 	if code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/shared",
 		map[string]any{"reactions": []map[string]any{rx("from-app", "job", "up", "success")}}); code != http.StatusOK {
 		t.Fatalf("PUT = %d (%s)", code, body)
@@ -640,7 +640,7 @@ func TestMinIntervalBeyondRetentionIsRefused(t *testing.T) {
 	seedRxJob(t, pool, "down")
 
 	tooLong := map[string]any{"name": "r", "onKind": "job", "onName": "up",
-		"onSource": "amadeus", "onOutcome": "success",
+		"onSource": "cronomicon", "onOutcome": "success",
 		"minIntervalSeconds": 400 * 24 * 60 * 60} // > the 90-day default
 	code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/down",
 		map[string]any{"reactions": []map[string]any{tooLong}})

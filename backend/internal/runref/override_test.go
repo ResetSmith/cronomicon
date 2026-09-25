@@ -22,9 +22,9 @@ func TestOverrideBindings(t *testing.T) {
 		]}`
 		got := OverrideBindings(in)
 		want := []Binding{
-			{Kind: KindSecret, Name: "DB_PASS", Reference: "AMADEUS_SECRET_DB_PASS"},
-			{Kind: KindVar, Name: "REGION", Reference: "AMADEUS_VAR_REGION"},
-			{Kind: KindKey, Name: "deploy", Reference: "AMADEUS_KEY_deploy"},
+			{Kind: KindSecret, Name: "DB_PASS", Reference: "CRONOMICON_SECRET_DB_PASS"},
+			{Kind: KindVar, Name: "REGION", Reference: "CRONOMICON_VAR_REGION"},
+			{Kind: KindKey, Name: "deploy", Reference: "CRONOMICON_KEY_deploy"},
 		}
 		if len(got) != len(want) {
 			t.Fatalf("got %d bindings, want %d: %v", len(got), len(want), got)

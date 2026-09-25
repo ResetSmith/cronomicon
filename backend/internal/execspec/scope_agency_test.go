@@ -28,8 +28,8 @@ func TestScopeAgency(t *testing.T) {
 	}
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('a1','alpha','t')`)
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('a2','beta','t')`)
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s1','prod','amadeus','t')`)
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s2','staging','amadeus','t')`)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s1','prod','cronomicon','t')`)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s2','staging','cronomicon','t')`)
 	// T3.6 — membership lives in scope_agencies now; scopes.agency_id was dropped in
 	// migration 700. A scope may belong to SEVERAL agencies, which is the whole
 	// reason the scalar had to go.

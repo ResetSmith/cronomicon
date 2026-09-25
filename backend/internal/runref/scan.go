@@ -10,13 +10,13 @@ import (
 // refScanRe matches a derived reference token — one of the reserved prefixes
 // followed by a POSIX identifier — anywhere in a script body or inventory. The
 // reserved prefix is exactly what makes discovery precise (namespace plan W5): a
-// bare env name is indistinguishable from any other identifier, but AMADEUS_VAR_X
+// bare env name is indistinguishable from any other identifier, but CRONOMICON_VAR_X
 // can only be a reference. The leading \b prevents matching a reference embedded
-// in a longer identifier (e.g. MY_AMADEUS_SECRET_X must NOT suggest a binding X).
-var refScanRe = regexp.MustCompile(`\bAMADEUS_(?:SECRET|VAR|KEY)_[A-Za-z_][A-Za-z0-9_]*`)
+// in a longer identifier (e.g. MY_CRONOMICON_SECRET_X must NOT suggest a binding X).
+var refScanRe = regexp.MustCompile(`\bCRONOMICON_(?:SECRET|VAR|KEY)_[A-Za-z_][A-Za-z0-9_]*`)
 
 // ScanBody extracts the reference bindings a script body declares by naming them
-// in derived form (AMADEUS_SECRET_X, …). Deduped, sorted (kind, name). This is the
+// in derived form (CRONOMICON_SECRET_X, …). Deduped, sorted (kind, name). This is the
 // W5 scanner handoff feeding D2 explicit binding: the suggestions prefill a
 // job/script's binding set.
 func ScanBody(body string) []Binding {
@@ -33,7 +33,7 @@ func scanTokens(tokens []string) []Binding {
 		}
 		kind, ok := KindForSection(section)
 		if !ok {
-			continue // AMADEUS_RUN_* is dispatcher context, not a binding
+			continue // CRONOMICON_RUN_* is dispatcher context, not a binding
 		}
 		key := string(kind) + "\x00" + bare
 		if seen[key] {
@@ -60,14 +60,14 @@ var bareWordRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
 
 // LintBareNames flags bare tokens in body that match a known Env Vars row name
 // (known maps bare name → the row's kind). Each hit is a reference site not yet
-// migrated to the derived AMADEUS_<SECTION>_<name> form; the returned Binding
+// migrated to the derived CRONOMICON_<SECTION>_<name> form; the returned Binding
 // carries the derived reference the operator should switch to. Deduped, sorted.
 // A token already written in derived form is skipped (it is not "bare").
 func LintBareNames(body string, known map[string]Kind) []Binding {
 	seen := map[string]bool{}
 	var out []Binding
 	for _, tok := range bareWordRe.FindAllString(body, -1) {
-		if envref.HasAmadeusPrefix(tok) {
+		if envref.HasCronomiconPrefix(tok) {
 			continue // already a namespaced reference, not a bare site
 		}
 		kind, ok := known[tok]

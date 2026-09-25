@@ -169,7 +169,7 @@ func newServiceToken() (string, error) {
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return "amasvc_" + base64.RawURLEncoding.EncodeToString(buf), nil
+	return "crnsvc_" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
@@ -340,13 +340,13 @@ func (s *Server) revokeServiceAccount(w http.ResponseWriter, r *http.Request) {
 // resolveDefinitionByName maps a name (+ optional ?source=) to a rowid under the
 // dual-source model. Returns ok=false having already written the response.
 //
-// The ambiguity case matters: git and amadeus namespaces are disjoint, so the
+// The ambiguity case matters: git and cronomicon namespaces are disjoint, so the
 // SAME name can name two different definitions. Picking one silently would mean
 // a monitoring system triggering whichever the query planner returned first.
 func (s *Server) resolveDefinitionByName(w http.ResponseWriter, r *http.Request, table, name string) (int64, string, bool) {
 	source := strings.TrimSpace(r.URL.Query().Get("source"))
-	if source != "" && source != "git" && source != "amadeus" {
-		httpx.Fail(w, http.StatusBadRequest, "validation", "source must be 'git' or 'amadeus'")
+	if source != "" && source != "git" && source != "cronomicon" {
+		httpx.Fail(w, http.StatusBadRequest, "validation", "source must be 'git' or 'cronomicon'")
 		return 0, "", false
 	}
 

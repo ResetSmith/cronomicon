@@ -231,7 +231,7 @@ func TestResumeOffset(t *testing.T) {
 
 	// Insert a running run owned by a known runner (R1.4: ingest is authorized by
 	// run ownership, so the request must be runner-authed and own the run).
-	runnerID, tok := "runner-resume", "amt_run_resume"
+	runnerID, tok := "runner-resume", "crn_run_resume"
 	insertRunner(t, svc, runnerID, "resume", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID := db.NewTraceID()
@@ -299,7 +299,7 @@ func TestRunFinalization(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-final", "amt_run_final"
+	runnerID, tok := "runner-final", "crn_run_final"
 	insertRunner(t, svc, runnerID, "final", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID := db.NewTraceID()
@@ -433,7 +433,7 @@ func TestRegistrationToken(t *testing.T) {
 	// Insert a token and verify it validates and carries its row id.
 	ts := now()
 	expiry := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
-	token := "amt_reg_testtoken123"
+	token := "crn_reg_testtoken123"
 	res, err := svc.db.Exec(`
 		INSERT INTO registration_tokens(token_hash, created_by, created_at, expires_at)
 		VALUES (?, 'admin', ?, ?)`, hashToken(token), ts, expiry)

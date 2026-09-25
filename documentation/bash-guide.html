@@ -15,14 +15,14 @@
 <div class="tbl"><table>
 <thead><tr><th></th><th><code>ssh</code> — in-app SSH executor</th><th><code>runner</code> — agent in the segment</th></tr></thead>
 <tbody>
-<tr><td><strong>Who dials the target</strong></td><td>The Cronomicon server (direct or via bastion)</td><td>A registered <code>amadeus-runner</code> host</td></tr>
+<tr><td><strong>Who dials the target</strong></td><td>The Cronomicon server (direct or via bastion)</td><td>A registered <code>cronomicon-runner</code> host</td></tr>
 <tr><td><strong>Reaches</strong></td><td>Anything the server (or its bastions) can route to</td><td>Network-isolated segments; only outbound HTTP to the server</td></tr>
 <tr><td><strong>Keys live</strong></td><td>On the server (named secrets / stored credentials)</td><td>On the runner (key-dir, names-only manifests)</td></tr>
-<tr><td><strong>Enable</strong></td><td><strong>Off by default</strong> — <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code> (pool concurrency <code>AMADEUS_SSH_EXECUTOR_CONCURRENCY</code>, default 4)</td><td>Install a runner; the <strong>slim</strong> image / any host with a shell claims <code>bash</code> automatically</td></tr>
+<tr><td><strong>Enable</strong></td><td><strong>Off by default</strong> — <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code> (pool concurrency <code>CRONOMICON_SSH_EXECUTOR_CONCURRENCY</code>, default 4)</td><td>Install a runner; the <strong>slim</strong> image / any host with a shell claims <code>bash</code> automatically</td></tr>
 </tbody>
 </table></div>
 
-<blockquote><p><strong>The classic first-day symptom: shell jobs queue forever.</strong> Shell runs <em>default</em> to the SSH executor type, but the executor <strong>pool is disabled until an operator turns it on</strong>. If <code>AMADEUS_SSH_EXECUTOR_ENABLED</code> is unset, every <code>ssh</code>-tagged run sits queued indefinitely. Enable it — the server then logs a loud warning that it holds SSH keys and has outbound SSH — or route the job to a runner instead.</p></blockquote>
+<blockquote><p><strong>The classic first-day symptom: shell jobs queue forever.</strong> Shell runs <em>default</em> to the SSH executor type, but the executor <strong>pool is disabled until an operator turns it on</strong>. If <code>CRONOMICON_SSH_EXECUTOR_ENABLED</code> is unset, every <code>ssh</code>-tagged run sits queued indefinitely. Enable it — the server then logs a loud warning that it holds SSH keys and has outbound SSH — or route the job to a runner instead.</p></blockquote>
 
 <p><strong>The life of an SSH run</strong> (<a href="administrator-manual.html#execution">Administrator Manual §4.2</a>): claim the oldest queued run → open the log and load the scope's redactor → resolve the command (inline command, inline script, or a sandbox-checked <code>scriptPath</code> from the Git clone) → resolve targets (a pinned <code>target_host</code> wins over scope fan-out) → apply <code>timeout_seconds</code> → fan out across the hosts, up to 4 in parallel, each host's output prefixed <code>[hostname]</code> when more than one is involved → aggregate: all ok → <strong>success</strong>; all failed → <strong>failure</strong>; mixed → <strong>warning (partial)</strong>.</p>
 
@@ -33,9 +33,9 @@
 <ul>
 <li><strong>Raw files, auto-discovered.</strong> Any <code>*.sh</code> under <code>scripts/</code> in the definitions repo becomes a Script named with its extension (sub-folders just shape the catalog's folder tree). <code>*.pl</code>, <code>*.ps1</code> and <code>*.py</code> discover the sibling run types the same way.</li>
 <li><strong>Or a <code>kind: Script</code> YAML</strong> with exactly one of <code>command</code> (one-liner), <code>script</code> (inline multi-line body), or <code>scriptPath</code> (repo-relative file) — plus optional declared <code>prompts</code> (§4).</li>
-<li><strong>Jobs bind by reference.</strong> A job carries <code>script_ref: &lt;name&gt;</code> rather than its own copy, so one reviewed script serves many jobs. In-app, the <a href="user-manual.html#compose">Composer</a> builds the same binding for amadeus-source jobs.</li>
+<li><strong>Jobs bind by reference.</strong> A job carries <code>script_ref: &lt;name&gt;</code> rather than its own copy, so one reviewed script serves many jobs. In-app, the <a href="user-manual.html#compose">Composer</a> builds the same binding for cronomicon-source jobs.</li>
 <li><strong>Let the catalog help you.</strong> The Scripts view lints script bodies and surfaces <a href="user-manual.html#scripts">“Variables this script uses”</a> — a heuristic scan of <code>$VARS</code> in the body that the Run dialog and Composer use to hint at unsatisfied variables. Declared run inputs always beat the inferred list.</li>
-<li><strong>Validate at merge time.</strong> Wire <code>amadeus validate .</code> into the repo's CI (<a href="administrator-manual.html#gitops">§5.4</a>) — and there is no reason not to run <code>shellcheck</code> beside it.</li>
+<li><strong>Validate at merge time.</strong> Wire <code>cronomicon validate .</code> into the repo's CI (<a href="administrator-manual.html#gitops">§5.4</a>) — and there is no reason not to run <code>shellcheck</code> beside it.</li>
 </ul>
 
 <hr />
@@ -65,7 +65,7 @@
 
 <h3>Environment layering</h3>
 
-<p>A run's env assembles as <em>job env ← schedule env ← per-run overrides</em> (override wins per key), plus your bound references (§5) and the dispatcher-owned <code>AMADEUS_RUN_*</code> context set — <code>AMADEUS_RUN_ID</code>, <code>_JOB</code>, <code>_SCOPE</code>, <code>_TYPE</code>, <code>_TRIGGERED_BY</code>, <code>_EXECUTOR</code> and friends — handy for logging and branching inside a script. The <code>AMADEUS_*</code> namespace is injector-owned: operator env may reference those names but never define one (<code>422</code>).</p>
+<p>A run's env assembles as <em>job env ← schedule env ← per-run overrides</em> (override wins per key), plus your bound references (§5) and the dispatcher-owned <code>CRONOMICON_RUN_*</code> context set — <code>CRONOMICON_RUN_ID</code>, <code>_JOB</code>, <code>_SCOPE</code>, <code>_TYPE</code>, <code>_TRIGGERED_BY</code>, <code>_EXECUTOR</code> and friends — handy for logging and branching inside a script. The <code>CRONOMICON_*</code> namespace is injector-owned: operator env may reference those names but never define one (<code>422</code>).</p>
 
 <h3>Run inputs, not <code>read -p</code></h3>
 
@@ -79,7 +79,7 @@
 
 <p>A script hands values to later workflow steps by printing a marker line on stdout:</p>
 
-<pre><code>echo "::amadeus-output name=VERSION::1.4.2"</code></pre>
+<pre><code>echo "::cronomicon-output name=VERSION::1.4.2"</code></pre>
 
 <p>A downstream step declares an input bound to that output (in the Workflow Editor or Git YAML) and receives it as an env var. Markers are captured from the raw output before redaction — and if a captured value carries an injected secret, the executor drops <em>all</em> captured outputs and fails the run (<code>output_secret_leak</code>) rather than let the secret propagate. Details: <a href="user-manual.html#workflows">User Manual §7.5</a>.</p>
 
@@ -87,10 +87,10 @@
 
 <h2>5 · Secrets in scripts</h2>
 
-<p>Declare the Secrets / Variables a job consumes as <a href="user-manual.html#refbindings">reference bindings (§11.6)</a>; they arrive in the run env as <code>AMADEUS_SECRET_&lt;name&gt;</code> / <code>AMADEUS_VAR_&lt;name&gt;</code>. On the <strong>in-app SSH executor</strong> the server resolves the bindings itself: resolution is fail-closed (a missing or out-of-scope binding fails the run without leaking why to the run log), injected values seed the run's redactor <em>before</em> any output is captured, and delivery to the remote command rides <strong>STDIN — never argv</strong>, so a secret never lands in <code>/proc/&lt;pid&gt;/cmdline</code>. On the <strong>runner path</strong> the same bindings require the per-runner <strong>Secret injection</strong> flag (protocol v6+) — un-flagged runners leave a binding-bearing run queued; see <a href="./ansible-guide.html"><code>ansible-guide.html</code></a> §6.</p>
+<p>Declare the Secrets / Variables a job consumes as <a href="user-manual.html#refbindings">reference bindings (§11.6)</a>; they arrive in the run env as <code>CRONOMICON_SECRET_&lt;name&gt;</code> / <code>CRONOMICON_VAR_&lt;name&gt;</code>. On the <strong>in-app SSH executor</strong> the server resolves the bindings itself: resolution is fail-closed (a missing or out-of-scope binding fails the run without leaking why to the run log), injected values seed the run's redactor <em>before</em> any output is captured, and delivery to the remote command rides <strong>STDIN — never argv</strong>, so a secret never lands in <code>/proc/&lt;pid&gt;/cmdline</code>. On the <strong>runner path</strong> the same bindings require the per-runner <strong>Secret injection</strong> flag (protocol v6+) — un-flagged runners leave a binding-bearing run queued; see <a href="./ansible-guide.html"><code>ansible-guide.html</code></a> §6.</p>
 
 <ul>
-<li><strong><code>AMADEUS_KEY_*</code> (SSH-key material) is runner-only.</strong> On the in-app SSH path a declared key reference is warned and skipped — remote key-file delivery is deliberately not done, because the file would have to land on the <em>target</em>. Host authentication uses the host record's own credential instead. This asymmetry is <strong>accepted as permanent</strong>: “use the department's key” for a shell run means <em>connect as</em> it, which the per-run <strong>Connect as</strong> picker and a job's <code>spec.ssh_credential</code> both do. Secrets and Variables reach a bash run normally; only key <em>material</em> is withheld. If a script genuinely needs a key file <em>on the target</em>, deliver it as a secret and write it out yourself — with the same <code>umask 077</code> and <code>trap</code> cleanup as below.</li>
+<li><strong><code>CRONOMICON_KEY_*</code> (SSH-key material) is runner-only.</strong> On the in-app SSH path a declared key reference is warned and skipped — remote key-file delivery is deliberately not done, because the file would have to land on the <em>target</em>. Host authentication uses the host record's own credential instead. This asymmetry is <strong>accepted as permanent</strong>: “use the department's key” for a shell run means <em>connect as</em> it, which the per-run <strong>Connect as</strong> picker and a job's <code>spec.ssh_credential</code> both do. Secrets and Variables reach a bash run normally; only key <em>material</em> is withheld. If a script genuinely needs a key file <em>on the target</em>, deliver it as a secret and write it out yourself — with the same <code>umask 077</code> and <code>trap</code> cleanup as below.</li>
 <li><strong>Don't re-broadcast what you were given.</strong> Redaction masks known secret values in stored logs, but a value your script <em>fetches itself</em> (curl to a vault, a decrypt step) was never registered with the redactor — treat it like ansible's <code>no_log</code>: don't echo it, don't put it on another process's argv.</li>
 <li><strong>Nothing secret in the repo, schedule env, or run overrides</strong> — those are plaintext by design and the UI says so. Secrets belong in the encrypted store / Vault, referenced by binding.</li>
 </ul>
@@ -102,8 +102,8 @@
 <p>Bash has no <code>become</code> primitive: unlike an Ansible run, there is no flag Cronomicon can pass on your behalf, so escalation is whatever the script author writes. Declare the password as a reference binding and feed it to <code>sudo -S</code>, which reads from <strong>stdin</strong>:</p>
 
 <pre><code>set -euo pipefail
-# AMADEUS_SECRET_BECOME_PASSWORD arrives from a declared reference binding.
-printf '%s\n' "$AMADEUS_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl restart myapp</code></pre>
+# CRONOMICON_SECRET_BECOME_PASSWORD arrives from a declared reference binding.
+printf '%s\n' "$CRONOMICON_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl restart myapp</code></pre>
 
 <blockquote><p><strong>⚠ The sharp edge: the process table on the target.</strong> <code>sudo -S</code> is safe because the value crosses a <em>pipe</em>. The moment you put it anywhere else on a command line — <code>sudo -S &lt;&lt;&lt; "$PASS"</code> is fine, but <code>echo "$PASS" | ...</code> inside a <code>bash -c</code> string, or passing it as an argument to any helper — it lands in <code>/proc/&lt;pid&gt;/cmdline</code> on the <strong>target host</strong>, readable by any local user there for the life of the process. <strong>Cronomicon's redaction cannot reach that.</strong> Redaction masks injected values in the <em>run log</em>; it has no visibility into a remote process table. The same applies to writing the value to a file on the target without <code>umask 077</code>, and to <code>set -x</code>, which will happily echo the whole pipeline.</p></blockquote>
 
@@ -125,9 +125,9 @@ printf '%s\n' "$AMADEUS_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl restar
 <li><strong>Be idempotent.</strong> Retries (<code>retries:</code>), schedule re-fires and operator re-runs all mean the script will run again; make “again” safe.</li>
 <li><strong>Exit codes are the contract.</strong> <code>0</code> only when the work truly succeeded; per-host failures aggregate into the partial-warning state for free.</li>
 <li><strong>Pin single-host jobs with <code>target_host</code></strong> rather than a one-host scope — and remember the pin now holds on scheduled and workflow paths too.</li>
-<li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code> (the overrun kill logs <code>amadeus: job timed out</code>), <code>concurrency_policy: Forbid</code> for non-reentrant scripts.</li>
-<li><strong>Run inputs instead of prompts</strong>, <code>::amadeus-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
-<li><strong>Keep scripts in Git behind <code>script_ref</code></strong> so they are reviewed, versioned and reused; save inline <code>command:</code> for true one-liners. Lint with <code>shellcheck</code> + <code>amadeus validate</code> in CI.</li>
+<li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code> (the overrun kill logs <code>cronomicon: job timed out</code>), <code>concurrency_policy: Forbid</code> for non-reentrant scripts.</li>
+<li><strong>Run inputs instead of prompts</strong>, <code>::cronomicon-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong> so they are reviewed, versioned and reused; save inline <code>command:</code> for true one-liners. Lint with <code>shellcheck</code> + <code>cronomicon validate</code> in CI.</li>
 </ul>
 
 <hr />
@@ -137,7 +137,7 @@ printf '%s\n' "$AMADEUS_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl restar
 <div class="tbl"><table>
 <thead><tr><th>Symptom</th><th>Likely cause → fix</th></tr></thead>
 <tbody>
-<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled. Set <code>AMADEUS_SSH_EXECUTOR_ENABLED=true</code> — or give the job <code>executor: runner</code>.</td></tr>
+<tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled. Set <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code> — or give the job <code>executor: runner</code>.</td></tr>
 <tr><td>Queued, “waiting for a bash-capable runner”</td><td>Executor <code>runner</code> but no online runner claims <code>bash</code> — runner down, or a <code>capabilityMask</code> narrowed it. Check the Runners view.</td></tr>
 <tr><td>Queued, status reason <strong>names a missing runner property</strong></td><td>A run that no online runner can claim records <em>why</em>: <em>no runner is online</em>, <em>no online runner can run bash jobs</em>, <em>no online runner belongs to &lt;agency&gt;</em>, <em>no eligible runner is flagged for secret injection</em>, or a named missing capability token. Read the reason before inspecting the fleet — it names the one gate that failed.</td></tr>
 <tr><td>Queued: “only a runner with no agencies can claim it”</td><td>The run has <strong>no scope</strong>, and an untagged run is claimable only by an untagged runner (the general pool is <em>disjoint</em>, not a fallback). Every online runner belongs to a department. <strong>Bind a scope</strong> to the run.</td></tr>
@@ -148,9 +148,9 @@ printf '%s\n' "$AMADEUS_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl restar
 <tr><td><code>422 scope_membership</code></td><td>A per-run host subset names a host outside the effective scope.</td></tr>
 <tr><td>Per-host failure “no matching host record”</td><td>A scope member has no SSH host record — add it in Settings → SSH Targets (or fix the inventory import).</td></tr>
 <tr><td><code>unpinned_bastion_target</code></td><td>A secret-injecting run over a bastion to a target with no pinned host key. Probe the target (Test connection) or run once without secrets to capture it.</td></tr>
-<tr><td>Run killed with <code>amadeus: job timed out</code></td><td><code>timeout_seconds</code> is smaller than reality — or the script hung (interactive prompt, dead remote). Fix the hang first, then size the timeout.</td></tr>
+<tr><td>Run killed with <code>cronomicon: job timed out</code></td><td><code>timeout_seconds</code> is smaller than reality — or the script hung (interactive prompt, dead remote). Fix the hang first, then size the timeout.</td></tr>
 <tr><td>Run failed, reason <code>executor_lost</code></td><td>The server restarted mid-run and reconciled it at startup (plain Failed badge — distinct from a runner's amber <strong>Lost</strong>). Re-run.</td></tr>
-<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::amadeus-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead of the secret itself.</td></tr>
+<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::cronomicon-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead of the secret itself.</td></tr>
 <tr><td>Manual run rejected <code>409</code> / cron fire skipped</td><td>The global <code>maxConcurrent</code> cap is reached, or a <code>Forbid</code> policy suppressed the overlap (recorded once as a <span class="pill mut"><span class="dot"></span>skipped</span> run).</td></tr>
 </tbody>
 </table></div>

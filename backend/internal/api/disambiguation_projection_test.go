@@ -26,7 +26,7 @@ func TestActivityProjectsIdentityAndAgencies(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','FIN','2026-01-01T00:00:00Z')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-fin','fin-prod','amadeus','t')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-fin','fin-prod','cronomicon','t')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-fin','ag-fin')`)
 	exec(`INSERT INTO activity (kind, actor, job_name, job_uid, scope, at, created_at)
 	      VALUES ('run-end','ops@x','deploy','uid-deploy-fin','fin-prod','2026-08-14T00:00:00Z','2026-08-14T00:00:00Z')`)
@@ -85,16 +85,16 @@ func TestScheduleUsedByProjectsOwnerIdentity(t *testing.T) {
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','FIN','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-dss','DSS','2026-01-01T00:00:00Z')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-fin','fin-prod','amadeus','t')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-dss','dss-prod','amadeus','t')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-fin','fin-prod','cronomicon','t')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-dss','dss-prod','cronomicon','t')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-fin','ag-fin')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-dss','ag-dss')`)
 	// Two departments' jobs of ONE name — the state that makes this necessary.
-	exec(`INSERT INTO jobs (uid,name,source,run_type,scope,enabled) VALUES ('uid-fin','nightly','amadeus','bash','fin-prod',1)`)
+	exec(`INSERT INTO jobs (uid,name,source,run_type,scope,enabled) VALUES ('uid-fin','nightly','cronomicon','bash','fin-prod',1)`)
 	exec(`INSERT INTO jobs (uid,name,source,run_type,scope,enabled) VALUES ('uid-dss','nightly','git','bash','dss-prod',1)`)
 	exec(`INSERT INTO schedules (name,source,cron,content_hash,synced_at) VALUES ('overnight','git','0 2 * * *','sha256:x','t')`)
 	exec(`INSERT INTO definition_schedules (owner_source,owner_kind,owner_name,owner_uid,name,cron,source_ref)
-	      VALUES ('amadeus','job','nightly','uid-fin','overnight','0 2 * * *','overnight')`)
+	      VALUES ('cronomicon','job','nightly','uid-fin','overnight','0 2 * * *','overnight')`)
 	exec(`INSERT INTO definition_schedules (owner_source,owner_kind,owner_name,owner_uid,name,cron,source_ref)
 	      VALUES ('git','job','nightly','uid-dss','overnight','0 2 * * *','overnight')`)
 

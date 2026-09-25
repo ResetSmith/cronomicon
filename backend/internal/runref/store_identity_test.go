@@ -15,7 +15,7 @@ import (
 // with RA-17's fail-closed ambiguity rule), but editing one twin's bindings
 // destroyed the other's — cross-agency data loss on an ordinary save.
 
-// seedTwinJobs inserts two amadeus jobs sharing a name, each with its own uid,
+// seedTwinJobs inserts two cronomicon jobs sharing a name, each with its own uid,
 // and returns the two owners. The uids follow the band's 'uid-'||name convention
 // with a suffix, because the whole point is that the NAMES are identical.
 func seedTwinJobs(t *testing.T, pool *sql.DB, name string) (a, b Owner) {
@@ -23,12 +23,12 @@ func seedTwinJobs(t *testing.T, pool *sql.DB, name string) (a, b Owner) {
 	const now = "2026-01-01T00:00:00Z"
 	for _, uid := range []string{"uid-" + name + "-a", "uid-" + name + "-b"} {
 		if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
-			VALUES(?,?,'amadeus','bash','echo','sha256:x',?)`, uid, name, now); err != nil {
+			VALUES(?,?,'cronomicon','bash','echo','sha256:x',?)`, uid, name, now); err != nil {
 			t.Fatalf("seed twin %s: %v", uid, err)
 		}
 	}
-	return Owner{Kind: "job", Source: "amadeus", Name: name, UID: "uid-" + name + "-a"},
-		Owner{Kind: "job", Source: "amadeus", Name: name, UID: "uid-" + name + "-b"}
+	return Owner{Kind: "job", Source: "cronomicon", Name: name, UID: "uid-" + name + "-a"},
+		Owner{Kind: "job", Source: "cronomicon", Name: name, UID: "uid-" + name + "-b"}
 }
 
 func bindingNames(bs []Binding) []string {
@@ -138,7 +138,7 @@ func TestScriptBindingsKeepNameIdentity(t *testing.T) {
 		t.Errorf("script binding stamped owner_uid = %q, want NULL", uid.String)
 	}
 	// The job twins must be unaffected by the script's name collision.
-	if got, _ := ListBindings(ctx, pool, Owner{Kind: "job", Source: "amadeus", Name: "build", UID: "uid-build-a"}); len(got) != 0 {
+	if got, _ := ListBindings(ctx, pool, Owner{Kind: "job", Source: "cronomicon", Name: "build", UID: "uid-build-a"}); len(got) != 0 {
 		t.Errorf("job twin sees the script's bindings: %v", bindingNames(got))
 	}
 }
@@ -153,10 +153,10 @@ func TestUIDLessJobOwnerStampsOnlyWhenUnambiguous(t *testing.T) {
 	ctx := context.Background()
 	const now = "2026-01-01T00:00:00Z"
 	if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
-		VALUES('uid-solo','solo','amadeus','bash','echo','sha256:x',?)`, now); err != nil {
+		VALUES('uid-solo','solo','cronomicon','bash','echo','sha256:x',?)`, now); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
-	solo := Owner{Kind: "job", Source: "amadeus", Name: "solo"} // no UID
+	solo := Owner{Kind: "job", Source: "cronomicon", Name: "solo"} // no UID
 	if err := ReplaceBindings(ctx, pool, solo, []Binding{{Kind: KindVar, Name: "REGION"}}, "alice"); err != nil {
 		t.Fatal(err)
 	}
@@ -168,14 +168,14 @@ func TestUIDLessJobOwnerStampsOnlyWhenUnambiguous(t *testing.T) {
 		t.Errorf("unambiguous name stamped %q, want uid-solo (the cascade depends on it)", uid.String)
 	}
 	// Reading by uid finds it, and so does reading by name — the same row.
-	byUID, _ := ListBindings(ctx, pool, Owner{Kind: "job", Source: "amadeus", Name: "solo", UID: "uid-solo"})
+	byUID, _ := ListBindings(ctx, pool, Owner{Kind: "job", Source: "cronomicon", Name: "solo", UID: "uid-solo"})
 	if len(byUID) != 1 {
 		t.Errorf("uid read of a name-written binding = %v, want it found", bindingNames(byUID))
 	}
 
 	// Ambiguous: no stamp, because there is no non-guessing answer.
 	twinA, _ := seedTwinJobs(t, pool, "twinned")
-	nameOnly := Owner{Kind: "job", Source: "amadeus", Name: "twinned"}
+	nameOnly := Owner{Kind: "job", Source: "cronomicon", Name: "twinned"}
 	if err := ReplaceBindings(ctx, pool, nameOnly, []Binding{{Kind: KindVar, Name: "TENANT"}}, "alice"); err != nil {
 		t.Fatal(err)
 	}

@@ -9,20 +9,20 @@ import (
 )
 
 // TestIngestRefusesOutputLeakingSecret (H2/DEC-2): a run that captures an injected
-// secret value into an ::amadeus-output:: marker is failed CLOSED at ingest — the
+// secret value into an ::cronomicon-output:: marker is failed CLOSED at ingest — the
 // output is not persisted (nothing propagates downstream), the run is marked
 // failed with reason output_secret_leak, and the secret is still masked in the log.
 func TestIngestRefusesOutputLeakingSecret(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-leak", "amt_run_leak"
+	runnerID, tok := "runner-leak", "crn_run_leak"
 	insertRunner(t, svc, runnerID, "leak", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true)
 
 	// The natural leak idiom: echo the injected secret into an output marker.
-	body := "::amadeus-output name=TOKEN::" + secretVal + "\n" +
+	body := "::cronomicon-output name=TOKEN::" + secretVal + "\n" +
 		`{"exitCode":0,"durationMs":10,"endedAt":"2026-07-20T00:00:00Z"}` + "\n"
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+traceID+"/log", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -72,12 +72,12 @@ func TestIngestCapturesNonLeakingOutput(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-ok", "amt_run_ok"
+	runnerID, tok := "runner-ok", "crn_run_ok"
 	insertRunner(t, svc, runnerID, "ok", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, _, _ := seedInjectionRun(t, svc, runnerID, 6, true)
 
-	body := "::amadeus-output name=DB_HOST::pg-prod-01\n" +
+	body := "::cronomicon-output name=DB_HOST::pg-prod-01\n" +
 		`{"exitCode":0,"durationMs":10,"endedAt":"2026-07-20T00:00:00Z"}` + "\n"
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+traceID+"/log", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+tok)

@@ -58,13 +58,13 @@ func TestWorkflowRunDetailGraphAndContext(t *testing.T) {
 			ContextSnapshot map[string]string `json:"contextSnapshot"`
 		} `json:"steps"`
 		Graph []struct {
-			Type      string `json:"type"`
-			Name      string `json:"name"`
-			Jobs      []struct{ Name string } `json:"jobs"`
-			Pass      []struct {
+			Type string                  `json:"type"`
+			Name string                  `json:"name"`
+			Jobs []struct{ Name string } `json:"jobs"`
+			Pass []struct {
 				Name, Status string
 			} `json:"pass"`
-			Fail      []struct {
+			Fail []struct {
 				Name, Status string
 			} `json:"fail"`
 			Condition *struct{ Label string } `json:"condition"`

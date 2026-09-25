@@ -49,16 +49,16 @@ func TestAliasInjectsUnderTheAliasNotTheRowName(t *testing.T) {
 		t.Fatalf("Resolve: %v", err)
 	}
 
-	if got := out.Env["AMADEUS_SECRET_BECOME_PASSWORD"]; got != "a-pw" {
+	if got := out.Env["CRONOMICON_SECRET_BECOME_PASSWORD"]; got != "a-pw" {
 		t.Errorf("secret did not land on the alias key: %q", got)
 	}
-	if _, present := out.Env["AMADEUS_SECRET_TEAMA_SUDO"]; present {
+	if _, present := out.Env["CRONOMICON_SECRET_TEAMA_SUDO"]; present {
 		t.Error("aliased secret ALSO injected under its row name — the alias must REPLACE the key, not add one")
 	}
-	if got := out.Env["AMADEUS_VAR_REGION"]; got != "us-east" {
+	if got := out.Env["CRONOMICON_VAR_REGION"]; got != "us-east" {
 		t.Errorf("variable did not land on the alias key: %q", got)
 	}
-	if _, present := out.Env["AMADEUS_VAR_TEAMA_REGION"]; present {
+	if _, present := out.Env["CRONOMICON_VAR_TEAMA_REGION"]; present {
 		t.Error("aliased variable ALSO injected under its row name")
 	}
 
@@ -68,7 +68,7 @@ func TestAliasInjectsUnderTheAliasNotTheRowName(t *testing.T) {
 	if len(out.Keys) != 1 {
 		t.Fatalf("expected 1 key material, got %d", len(out.Keys))
 	}
-	if out.Keys[0].Reference != "AMADEUS_KEY_DEPLOY_KEY" {
+	if out.Keys[0].Reference != "CRONOMICON_KEY_DEPLOY_KEY" {
 		t.Errorf("key reference not aliased: %q", out.Keys[0].Reference)
 	}
 	if out.Keys[0].Name != "teama_key" {
@@ -77,7 +77,7 @@ func TestAliasInjectsUnderTheAliasNotTheRowName(t *testing.T) {
 }
 
 // TestTwoAgenciesAliasToOneName is the whole point of Phase A: one shared job body
-// reading a fixed AMADEUS_SECRET_BECOME_PASSWORD, two departments, each run fed its
+// reading a fixed CRONOMICON_SECRET_BECOME_PASSWORD, two departments, each run fed its
 // OWN department's row. The two runs differ only in their agency snapshot.
 func TestTwoAgenciesAliasToOneName(t *testing.T) {
 	pool := openDB(t)
@@ -120,11 +120,11 @@ func TestTwoAgenciesAliasToOneName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TeamB resolve: %v", err)
 	}
-	if runA.Env["AMADEUS_SECRET_BECOME_PASSWORD"] != "teama-pw" {
-		t.Errorf("TeamA got %q", runA.Env["AMADEUS_SECRET_BECOME_PASSWORD"])
+	if runA.Env["CRONOMICON_SECRET_BECOME_PASSWORD"] != "teama-pw" {
+		t.Errorf("TeamA got %q", runA.Env["CRONOMICON_SECRET_BECOME_PASSWORD"])
 	}
-	if runB.Env["AMADEUS_SECRET_BECOME_PASSWORD"] != "teamb-pw" {
-		t.Errorf("TeamB got %q", runB.Env["AMADEUS_SECRET_BECOME_PASSWORD"])
+	if runB.Env["CRONOMICON_SECRET_BECOME_PASSWORD"] != "teamb-pw" {
+		t.Errorf("TeamB got %q", runB.Env["CRONOMICON_SECRET_BECOME_PASSWORD"])
 	}
 }
 
@@ -178,7 +178,7 @@ func TestAliasIsNotABypass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("aliasing to another row's name must be legal (it is only a key): %v", err)
 	}
-	if got := out.Env["AMADEUS_SECRET_TEAMB_SUDO"]; got != "teama-pw" {
+	if got := out.Env["CRONOMICON_SECRET_TEAMB_SUDO"]; got != "teama-pw" {
 		t.Errorf("alias selected a row instead of naming a key: got %q, want teama-pw", got)
 	}
 }
@@ -244,7 +244,7 @@ func TestAliasCollisionFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("two rows aliased to one key resolved — one credential silently won")
 	}
-	if !strings.Contains(err.Error(), "AMADEUS_SECRET_BECOME_PASSWORD") {
+	if !strings.Contains(err.Error(), "CRONOMICON_SECRET_BECOME_PASSWORD") {
 		t.Errorf("collision error should name the contested key, got: %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestAliasValidationAndStorage(t *testing.T) {
 		name string
 		b    Binding
 	}{
-		{"amadeus-prefixed alias", Binding{Kind: KindVar, Name: "OK", As: "AMADEUS_FOO"}},
+		{"cronomicon-prefixed alias", Binding{Kind: KindVar, Name: "OK", As: "CRONOMICON_FOO"}},
 		{"non-posix alias", Binding{Kind: KindVar, Name: "OK", As: "has-dash"}},
 		{"reserved KEK alias on a secret", Binding{Kind: KindSecret, Name: "OK", As: "KEK"}},
 	}
@@ -323,10 +323,10 @@ func TestAliasValidationAndStorage(t *testing.T) {
 		if b.Kind != KindSecret {
 			continue
 		}
-		if b.Reference != "AMADEUS_SECRET_TEAMA_SUDO" {
+		if b.Reference != "CRONOMICON_SECRET_TEAMA_SUDO" {
 			t.Errorf("Reference should stay the row's own form, got %q", b.Reference)
 		}
-		if b.InjectReference() != "AMADEUS_SECRET_"+b.As {
+		if b.InjectReference() != "CRONOMICON_SECRET_"+b.As {
 			t.Errorf("InjectReference %q does not follow alias %q", b.InjectReference(), b.As)
 		}
 	}
@@ -353,10 +353,10 @@ func TestOverrideBindingsCarryAlias(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("expected 3 bindings, got %d: %+v", len(got), got)
 	}
-	if got[0].As != "BECOME_PASSWORD" || got[0].InjectReference() != "AMADEUS_SECRET_BECOME_PASSWORD" {
+	if got[0].As != "BECOME_PASSWORD" || got[0].InjectReference() != "CRONOMICON_SECRET_BECOME_PASSWORD" {
 		t.Errorf("alias not carried: %+v", got[0])
 	}
-	if got[1].As != "" || got[1].InjectReference() != "AMADEUS_VAR_REGION" {
+	if got[1].As != "" || got[1].InjectReference() != "CRONOMICON_VAR_REGION" {
 		t.Errorf("un-aliased binding changed: %+v", got[1])
 	}
 	if got[2].As != "" {

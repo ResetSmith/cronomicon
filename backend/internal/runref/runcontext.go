@@ -10,21 +10,21 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envref"
 )
 
-// RunContext is the fixed AMADEUS_RUN_* set the dispatcher injects into every run
+// RunContext is the fixed CRONOMICON_RUN_* set the dispatcher injects into every run
 // (D7 / namespace plan N-D4). Unlike references it is not bound and not resolved
 // from a store — it is the run's own metadata, always log-safe (never redacted).
 // The executor fills the fields it has and calls Env() to get the injectable map.
 type RunContext struct {
 	ID          string // run / trace id
 	Job         string // job name
-	JobSource   string // git | amadeus
+	JobSource   string // git | cronomicon
 	Scope       string // "" = global
 	Type        string // run_type
 	TriggeredBy string // actor email
 	Executor    string // ssh | runner
 }
 
-// Env renders the run context as its AMADEUS_RUN_* env map. Every field is
+// Env renders the run context as its CRONOMICON_RUN_* env map. Every field is
 // emitted (empty string when unset) so a run author can rely on the key existing;
 // Scope in particular is legitimately empty for a global run.
 func (rc RunContext) Env() map[string]string {

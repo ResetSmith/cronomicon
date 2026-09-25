@@ -5,13 +5,13 @@
 -- references, so two jobs sharing a scope no longer see each other's secrets
 -- (D2 = 2B explicit binding).
 --
--- Rows keep BARE names — the reference AMADEUS_<SECTION>_<name> is DERIVED at use
+-- Rows keep BARE names — the reference CRONOMICON_<SECTION>_<name> is DERIVED at use
 -- time (envref, namespace plan D6), never stored; ref_kind selects the section
--- (secret → AMADEUS_SECRET_, var → AMADEUS_VAR_, key → AMADEUS_KEY_).
+-- (secret → CRONOMICON_SECRET_, var → CRONOMICON_VAR_, key → CRONOMICON_KEY_).
 --
 -- Owner is the (kind, source, name) triple mirroring definition_schedules'
 -- owner_* model: jobs are dual-source ((source,name) PK) so owner_source
--- disambiguates git vs amadeus; scripts are a single-namespace catalog (PK name),
+-- disambiguates git vs cronomicon; scripts are a single-namespace catalog (PK name),
 -- stored with owner_source=''. Bindings are full-replaced per owner (the
 -- tags/schedules authoring pattern) — the API DELETEs all rows for an owner then
 -- INSERTs the new set in one transaction.

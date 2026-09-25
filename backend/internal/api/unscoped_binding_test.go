@@ -31,7 +31,7 @@ func TestUnscopedJobRequiresBoundScope(t *testing.T) {
 	}
 	// `tax` and its agency come from the fixture (restrict{"operator":"tax"}); only
 	// the scope the operator does NOT hold needs adding.
-	seed(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('s-fin','finance','amadeus','2026-01-01T00:00:00Z')`)
+	seed(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('s-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
 	// The template: no scope of its own.
 	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('restart-service','git','bash',NULL,1)`)
 
@@ -287,16 +287,16 @@ func TestDeferredWorkflowTriggerIsAuthorizedAtCreation(t *testing.T) {
 		}
 	}
 	seed(`INSERT OR IGNORE INTO scopes (id,name,source,created_at)
-	      VALUES ('s-fin','finance','amadeus','2026-01-01T00:00:00Z')`)
+	      VALUES ('s-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('step-tax','amadeus','bash','tax',1)`)
+	      VALUES ('step-tax','cronomicon','bash','tax',1)`)
 	seed(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('step-fin','amadeus','bash','finance',1)`)
+	      VALUES ('step-fin','cronomicon','bash','finance',1)`)
 	seed(`INSERT INTO workflows (name, source, steps, enabled, synced_at)
-	      VALUES ('wf-tax','amadeus','[{"type":"job","name":"step-tax"}]',1,'t')`)
+	      VALUES ('wf-tax','cronomicon','[{"type":"job","name":"step-tax"}]',1,'t')`)
 	// A workflow reaching into a department the operator does NOT hold.
 	seed(`INSERT INTO workflows (name, source, steps, enabled, synced_at)
-	      VALUES ('wf-mixed','amadeus','[{"type":"job","name":"step-tax"},{"type":"job","name":"step-fin"}]',1,'t')`)
+	      VALUES ('wf-mixed','cronomicon','[{"type":"job","name":"step-tax"},{"type":"job","name":"step-fin"}]',1,'t')`)
 
 	trigger := func(name string) string {
 		var rowid int64

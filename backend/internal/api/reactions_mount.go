@@ -149,7 +149,7 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 			kind+" is in the recycle bin — restore it before editing its reactions")
 		return
 	}
-	if !s.requireAmadeusOwner(w, kind, source, name) {
+	if !s.requireCronomiconOwner(w, kind, source, name) {
 		return
 	}
 
@@ -245,7 +245,7 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", kind+" not found")
 		return
 	}
-	if !s.requireAmadeusOwner(w, kind, source, name) {
+	if !s.requireCronomiconOwner(w, kind, source, name) {
 		return
 	}
 	res, err := s.db.ExecContext(r.Context(),
@@ -466,7 +466,7 @@ func (s *Server) detectReactionCycle(r *http.Request, owner reactionRef, propose
 // definitionSource resolves which source's definition a bare name refers to.
 //
 // The two sources are disjoint namespaces, so the SAME name can exist in both.
-// 'amadeus' sorts before 'git' and therefore wins, which is the right
+// 'cronomicon' sorts before 'git' and therefore wins, which is the right
 // preference for a write path: the in-app definition is the one this API can
 // own. A git-only name still resolves to 'git', and writeGuard below is what
 // stops that from becoming a silent data loss.
@@ -508,7 +508,7 @@ func (s *Server) definitionIsBinned(r *http.Request, kind, source, name string) 
 	return binned == 1
 }
 
-// requireAmadeusOwner refuses to author reactions onto a GIT-source definition.
+// requireCronomiconOwner refuses to author reactions onto a GIT-source definition.
 //
 // Without this the write appears to succeed and is then silently destroyed: a
 // reaction stored with owner_source='git' sits in exactly the rows
@@ -518,11 +518,11 @@ func (s *Server) definitionIsBinned(r *http.Request, kind, source, name string) 
 // anywhere saying why.
 //
 // Refusing matches how every other in-app authoring path treats git rows —
-// compose 409s with "only amadeus-source jobs are deletable in-app" — and it
+// compose 409s with "only cronomicon-source jobs are deletable in-app" — and it
 // states the real rule: a Git-defined definition's configuration belongs in
 // Git, which is what RX-13's YAML surface is for.
-func (s *Server) requireAmadeusOwner(w http.ResponseWriter, kind, source, name string) bool {
-	if source == "amadeus" {
+func (s *Server) requireCronomiconOwner(w http.ResponseWriter, kind, source, name string) bool {
+	if source == "cronomicon" {
 		return true
 	}
 	httpx.Fail(w, http.StatusConflict, "conflict",
@@ -729,7 +729,7 @@ func (s *Server) reactionsWatching(r *http.Request, kind, source, name string) (
 // the generic "conflict". Both delete routes can 409 for two unrelated reasons —
 // git-source, and this — and a client that cannot tell them apart has to guess:
 // the console guessed wrong for a whole release, telling operators an
-// amadeus-source job was Git-authored. A distinguishable code is also what lets
+// cronomicon-source job was Git-authored. A distinguishable code is also what lets
 // the UI offer "delete anyway" for exactly the refusal that ?force=true clears,
 // and not for the one it cannot.
 func (s *Server) reactionDeleteGuard(r *http.Request, kind, source, name string) (string, error) {

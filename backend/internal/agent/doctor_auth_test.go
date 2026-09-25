@@ -91,7 +91,7 @@ func TestInspectKeysIgnoresPubAndBareNonKeys(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "deploy"), genKeyPEM(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "deploy.pub"), []byte("ssh-ed25519 AAAA... amadeus-runner:deploy"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "deploy.pub"), []byte("ssh-ed25519 AAAA... cronomicon-runner:deploy"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("keys live here"), 0o644); err != nil {

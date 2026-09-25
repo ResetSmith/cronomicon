@@ -1,4 +1,4 @@
--- 180 Inter-job env var passing (amadeus-v20.md — A12, Phase 5).
+-- 180 Inter-job env var passing (cronomicon-v20.md — A12, Phase 5).
 --
 -- A workflow step may emit named outputs (KEY=value) that downstream steps consume
 -- as injected env (per-step bus + explicit {fromStep,fromOutput}, decision Q-F).

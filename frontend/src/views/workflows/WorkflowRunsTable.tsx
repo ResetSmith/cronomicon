@@ -165,7 +165,7 @@ export function WorkflowRunsTable({
             pageSize: pager.pageSize,
             // WB-D2: filter by the stable workflow name (+source) rather than the
             // reusable rowid, so renames/recreates don't strand or mis-attribute runs.
-            ...(filterWorkflow ? { workflowName: filterWorkflow.name, ...(filterWorkflow.source ? { workflowSource: filterWorkflow.source as "git" | "amadeus" } : {}) } : {}),
+            ...(filterWorkflow ? { workflowName: filterWorkflow.name, ...(filterWorkflow.source ? { workflowSource: filterWorkflow.source as "git" | "cronomicon" } : {}) } : {}),
             ...(wireFor(status) ? { status: wireFor(status) } : {}),
             // "*" matches any calendar suppression; a name matches one.
             ...(calendarFilter ? { calendar: calendarFilter } : {}),

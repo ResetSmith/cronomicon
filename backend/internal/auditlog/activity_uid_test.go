@@ -92,7 +92,7 @@ func TestWriteActivityResolvesJobUID(t *testing.T) {
 func TestWriteActivityAmbiguousNameStaysNull(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
-	for _, src := range []struct{ source, uid string }{{"git", "uid-a"}, {"amadeus", "uid-b"}} {
+	for _, src := range []struct{ source, uid string }{{"git", "uid-a"}, {"cronomicon", "uid-b"}} {
 		if _, err := pool.Exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at)
 		                        VALUES('shared', ?, ?, 'bash','t')`, src.source, src.uid); err != nil {
 			t.Fatalf("seed job: %v", err)
@@ -110,7 +110,7 @@ func TestWriteActivityAmbiguousNameStaysNull(t *testing.T) {
 
 	// …but naming the run removes the ambiguity, because the run knows its source.
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at)
-	                        VALUES('trace-2','shared','amadeus','uid-b','bash','success','t','manual','2026-08-13T00:00:00Z')`); err != nil {
+	                        VALUES('trace-2','shared','cronomicon','uid-b','bash','success','t','manual','2026-08-13T00:00:00Z')`); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 	if err := auditlog.WriteActivity(ctx, pool, auditlog.ActivityParams{

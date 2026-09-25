@@ -38,7 +38,7 @@ describe("EmptyCell", () => {
 
 describe("SourceBadge", () => {
   // The asymmetry is the whole point: git is the majority in every catalog that
-  // shows this column, so it renders as quiet text while amadeus keeps the chip.
+  // shows this column, so it renders as quiet text while cronomicon keeps the chip.
   it("gives git no chip chrome", () => {
     const { container } = render(<SourceBadge source="git" />);
     const span = container.querySelector("span")!;
@@ -46,8 +46,8 @@ describe("SourceBadge", () => {
     expect(span.style.border).toBe("");
   });
 
-  it("keeps the chip for amadeus", () => {
-    const { container } = render(<SourceBadge source="amadeus" />);
+  it("keeps the chip for cronomicon", () => {
+    const { container } = render(<SourceBadge source="cronomicon" />);
     const span = container.querySelector("span")!;
     expect(span.style.background).not.toBe("transparent");
     expect(span.style.border).toContain("1px solid");

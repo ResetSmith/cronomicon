@@ -18,7 +18,7 @@ import (
 )
 
 func jobYAML(name string) string {
-	return "apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: " + name +
+	return "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: " + name +
 		"\nspec:\n  run_type: bash\n  command: echo hi\n"
 }
 
@@ -131,7 +131,7 @@ func TestSyncPruneSkippedOnParseError(t *testing.T) {
 
 	// Corrupt keep.yaml (unknown apiVersion → validation error in parseJobs).
 	gitCommitFile(t, repo, remote, "jobs/keep.yaml",
-		"apiVersion: amadeus.io/v2\nkind: Job\nmetadata:\n  name: keep\n", "corrupt keep")
+		"apiVersion: cronomicon.io/v2\nkind: Job\nmetadata:\n  name: keep\n", "corrupt keep")
 
 	r := svc.SyncBlocking(ctx, "t")
 	if jobCount(t, svc.db, "keep") != 1 {

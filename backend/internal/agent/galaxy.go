@@ -51,7 +51,7 @@ func galaxyInstall(ctx context.Context, cfg Config, workdir, reqRel string, emit
 			return nil, fmt.Errorf("collection %q is not version-pinned; refusing a non-reproducible install", c.Name)
 		}
 		if base[c.Name] == c.Version {
-			emit(fmt.Sprintf("amadeus: galaxy skip %s:%s (satisfied by runner base)", c.Name, c.Version))
+			emit(fmt.Sprintf("cronomicon: galaxy skip %s:%s (satisfied by runner base)", c.Name, c.Version))
 			continue
 		}
 		args := []string{"collection", "install", c.Name + ":" + c.Version, "-p", depsDir}
@@ -61,7 +61,7 @@ func galaxyInstall(ctx context.Context, cfg Config, workdir, reqRel string, emit
 		if err := runGalaxy(ctx, emit, args...); err != nil {
 			return nil, fmt.Errorf("install collection %s:%s failed (no fallback to an unpinned copy): %w", c.Name, c.Version, err)
 		}
-		emit(fmt.Sprintf("amadeus: galaxy installed %s:%s", c.Name, c.Version))
+		emit(fmt.Sprintf("cronomicon: galaxy installed %s:%s", c.Name, c.Version))
 	}
 
 	if len(reqs.Roles) > 0 {
@@ -69,7 +69,7 @@ func galaxyInstall(ctx context.Context, cfg Config, workdir, reqRel string, emit
 		if err := runGalaxy(ctx, emit, "role", "install", "-r", reqAbs, "-p", rolesDir); err != nil {
 			return nil, fmt.Errorf("install roles failed: %w", err)
 		}
-		emit(fmt.Sprintf("amadeus: galaxy installed %d role(s) from %s", len(reqs.Roles), reqRel))
+		emit(fmt.Sprintf("cronomicon: galaxy installed %d role(s) from %s", len(reqs.Roles), reqRel))
 	}
 
 	// workdir-first collection path so project deps win over the base (§4); the
@@ -148,5 +148,5 @@ func emitAnsibleCoreVersion(ctx context.Context, emit func(string)) {
 		return
 	}
 	first, _, _ := strings.Cut(string(out), "\n")
-	emit("amadeus: " + strings.TrimSpace(first))
+	emit("cronomicon: " + strings.TrimSpace(first))
 }

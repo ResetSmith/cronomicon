@@ -35,8 +35,8 @@ VAULT_PASS_SRC=""
 VAULT_PASS_STDIN=0
 
 # Install destinations (fixed layout — matches the hardened unit's paths).
-STATE_DIR="/var/lib/amadeus-runner"
-CONF_DIR="/etc/amadeus-runner"
+STATE_DIR="/var/lib/cronomicon-runner"
+CONF_DIR="/etc/cronomicon-runner"
 KEYS_DEST="${STATE_DIR}/keys"
 KNOWN_HOSTS_DEST="${STATE_DIR}/known_hosts"
 CA_CERT_DEST="${CONF_DIR}/ca.pem"
@@ -48,21 +48,21 @@ VAULT_PASS_DEST="${CONF_DIR}/vault-pass"
 usage() {
   echo "Usage: $0 [options]"
   echo "Options:"
-  echo "  -s, --server <url>         Cronomicon server URL (e.g., https://amadeus.example.com) [REQUIRED]"
-  echo "  -t, --token <token>        Registration token (amt_reg_*). DISCOURAGED: a flag"
+  echo "  -s, --server <url>         Cronomicon server URL (e.g., https://cronomicon.example.com) [REQUIRED]"
+  echo "  -t, --token <token>        Registration token (crn_reg_*). DISCOURAGED: a flag"
   echo "                             value is visible in ps(1) and shell history. Prefer"
   echo "                             --token-file, or '--token -' to be prompted."
   echo "      --token-file <path>    Read the registration token from a file [PREFERRED]"
   echo "      --token -              Prompt for the registration token on stdin (input"
   echo "                             hidden). Required when the token is a long-lived"
-  echo "                             AMADEUS_RUNNER_BOOTSTRAP_TOKEN rather than a spent"
-  echo "                             single-use amt_reg_* value."
+  echo "                             CRONOMICON_RUNNER_BOOTSTRAP_TOKEN rather than a spent"
+  echo "                             single-use crn_reg_* value."
   echo "  -n, --name <name>          Runner display name (default: hostname)"
   echo "  -c, --capabilities <list>  Comma-separated run-type capabilities. Default: omitted —"
   echo "                             the agent auto-detects the host's toolchains at startup."
   echo "                             Set explicitly to narrow what this runner claims."
-  echo "  -b, --binary <path>        Path to pre-built amadeus-runner binary"
-  echo "      --download             Download the amadeus-runner binary from the server"
+  echo "  -b, --binary <path>        Path to pre-built cronomicon-runner binary"
+  echo "      --download             Download the cronomicon-runner binary from the server"
   echo "                             (--server)/agents/, verify its SHA-256 checksum, and"
   echo "                             install it. Falls back to -b/auto-search when the"
   echo "                             server does not bundle binaries. Requires curl."
@@ -76,19 +76,19 @@ usage() {
   echo "                             ${KEYS_DEST}/<NAME> and print its public key to add to"
   echo "                             each target's authorized_keys. Refuses to overwrite."
   echo "      --ca-cert <pem>        Private CA bundle (PEM) to trust for server TLS"
-  echo "      --inventory <mode>     Inventory mode: amadeus (default) or local"
+  echo "      --inventory <mode>     Inventory mode: cronomicon (default) or local"
   echo "      --local-inventory <f>  Local inventory JSON (required with --inventory local)"
   echo "      --allow-checkout       Opt this runner into pinned playbook checkout"
   echo "      --checkout-repos <csv> Allowlist of repo clone URLs the runner may check out"
   echo "      --checkout-token-file <path>"
   echo "                             Install a read-only deploy-token file to"
-  echo "                             ${CHECKOUT_TOKEN_DEST} (0640 root:amadeus-runner)"
+  echo "                             ${CHECKOUT_TOKEN_DEST} (0640 root:cronomicon-runner)"
   echo "      --checkout-token -     Prompt for the deploy token on stdin (input hidden) and"
   echo "                             write it to ${CHECKOUT_TOKEN_DEST}. NEVER pass the token"
   echo "                             as a flag value (visible in ps / shell history)."
   echo "      --vault-pass-file <path>"
   echo "                             Install an Ansible Vault password file to"
-  echo "                             ${VAULT_PASS_DEST} (0640 root:amadeus-runner)"
+  echo "                             ${VAULT_PASS_DEST} (0640 root:cronomicon-runner)"
   echo "      --vault-pass -         Prompt for the vault password on stdin (input hidden)."
   echo "  -h, --help                 Show this help message"
   exit "${1:-1}"
@@ -114,7 +114,7 @@ require_value() {
 while [[ "$#" -gt 0 ]]; do
   case $1 in
     -s|--server) require_value "$1" "${2:-}"; SERVER_URL="$2"; shift ;;
-    # A per-install amt_reg_* is single-use and expires in 24h, so an inline value
+    # A per-install crn_reg_* is single-use and expires in 24h, so an inline value
     # was historically harmless. A bootstrap token is multi-use and never expires,
     # so the same flag now carries a permanent credential: inline is accepted for
     # compatibility but warned, and the file/stdin forms are the documented path.
@@ -218,8 +218,8 @@ if [ -n "$GENERATE_KEY_NAME" ]; then
 fi
 
 case "$INVENTORY" in
-  ""|amadeus|local) ;;
-  *) echo "Error: --inventory must be 'amadeus' or 'local' (got: ${INVENTORY})." >&2; exit 1 ;;
+  ""|cronomicon|local) ;;
+  *) echo "Error: --inventory must be 'cronomicon' or 'local' (got: ${INVENTORY})." >&2; exit 1 ;;
 esac
 
 if [ "$INVENTORY" = "local" ] && [ -z "$LOCAL_INVENTORY_SRC" ]; then
@@ -262,7 +262,7 @@ if [ "$VAULT_PASS_STDIN" = 1 ] && [ ! -t 0 ]; then
   exit 1
 fi
 
-[ -z "$INVENTORY" ] && INVENTORY="amadeus"
+[ -z "$INVENTORY" ] && INVENTORY="cronomicon"
 
 if [ -n "$KEY_MAP_SPEC" ]; then
   if [[ ! "$KEY_MAP_SPEC" =~ ^[^=,]+=[^=,]+(,[^=,]+=[^=,]+)*$ ]]; then
@@ -371,7 +371,7 @@ if [ "$ALLOW_CHECKOUT" = 1 ] || [ -n "$CHECKOUT_REPOS" ] || [ -n "$CHECKOUT_TOKE
     echo "!!       Capability auto-detection will NOT claim 'ansible', so ansible jobs"
     echo "!!       will stay queued. Install the toolchain, then restart the service:"
     echo "!!         ${install_hint}"
-    echo "!!         sudo systemctl restart amadeus-runner"
+    echo "!!         sudo systemctl restart cronomicon-runner"
   fi
 fi
 
@@ -393,11 +393,11 @@ if [ "$DOWNLOAD" = "1" ]; then
     x86_64|amd64) AGENT_ARCH="amd64" ;;
     aarch64|arm64) AGENT_ARCH="arm64" ;;
     *)
-      echo "Error: no published amadeus-runner binary for architecture $(uname -m) — use -b/--binary." >&2
+      echo "Error: no published cronomicon-runner binary for architecture $(uname -m) — use -b/--binary." >&2
       exit 1
       ;;
   esac
-  AGENT_FILE="amadeus-runner-linux-${AGENT_ARCH}"
+  AGENT_FILE="cronomicon-runner-linux-${AGENT_ARCH}"
   CURL_OPTS=(-fsSL)
   [ -n "$CA_CERT_SRC" ] && CURL_OPTS+=(--cacert "$CA_CERT_SRC")
   DL_DIR=$(mktemp -d)
@@ -422,14 +422,14 @@ fi
 # --- Binary Location Check ---
 if [ -z "$BINARY_PATH" ]; then
   # Try to find a pre-built binary in common locations
-  if [ -f "./amadeus-runner" ]; then
-    BINARY_PATH="./amadeus-runner"
-  elif [ -f "./bin/amadeus-runner" ]; then
-    BINARY_PATH="./bin/amadeus-runner"
-  elif [ -f "backend/bin/amadeus-runner" ]; then
-    BINARY_PATH="backend/bin/amadeus-runner"
+  if [ -f "./cronomicon-runner" ]; then
+    BINARY_PATH="./cronomicon-runner"
+  elif [ -f "./bin/cronomicon-runner" ]; then
+    BINARY_PATH="./bin/cronomicon-runner"
+  elif [ -f "backend/bin/cronomicon-runner" ]; then
+    BINARY_PATH="backend/bin/cronomicon-runner"
   else
-    echo "Error: amadeus-runner binary not specified (-b | --binary) and not found in default paths." >&2
+    echo "Error: cronomicon-runner binary not specified (-b | --binary) and not found in default paths." >&2
     echo "       (Tip: --download fetches it from the Cronomicon server when the deployment bundles binaries.)" >&2
     exit 1
   fi
@@ -448,24 +448,24 @@ if [ ! -x "$SHELL_PATH" ]; then
   SHELL_PATH="/bin/false"
 fi
 
-# --- Create amadeus-runner System Account ---
-if ! getent group amadeus-runner >/dev/null; then
-  echo ">> Creating group: amadeus-runner"
-  groupadd --system amadeus-runner
+# --- Create cronomicon-runner System Account ---
+if ! getent group cronomicon-runner >/dev/null; then
+  echo ">> Creating group: cronomicon-runner"
+  groupadd --system cronomicon-runner
 fi
 
-if ! getent passwd amadeus-runner >/dev/null; then
-  echo ">> Creating user: amadeus-runner"
+if ! getent passwd cronomicon-runner >/dev/null; then
+  echo ">> Creating user: cronomicon-runner"
   useradd --system \
-          --gid amadeus-runner \
+          --gid cronomicon-runner \
           --home-dir "$STATE_DIR" \
           --shell "$SHELL_PATH" \
           --create-home \
-          amadeus-runner
+          cronomicon-runner
 else
-  echo ">> User amadeus-runner already exists. Ensuring home directory is created..."
+  echo ">> User cronomicon-runner already exists. Ensuring home directory is created..."
   mkdir -p "$STATE_DIR"
-  chown amadeus-runner:amadeus-runner "$STATE_DIR"
+  chown cronomicon-runner:cronomicon-runner "$STATE_DIR"
 fi
 
 # Set directory permissions
@@ -474,35 +474,35 @@ chmod 0750 "$STATE_DIR"
 # --- Create Config Directories ---
 echo ">> Creating configuration directories..."
 mkdir -p "$CONF_DIR"
-chown root:amadeus-runner "$CONF_DIR"
+chown root:cronomicon-runner "$CONF_DIR"
 chmod 0750 "$CONF_DIR"
 
 # --- Install Binary ---
 echo ">> Installing binary to /usr/local/bin..."
-install -m 0755 "$BINARY_PATH" /usr/local/bin/amadeus-runner
+install -m 0755 "$BINARY_PATH" /usr/local/bin/cronomicon-runner
 
 # --- Install known_hosts (target host-key verification) ---
 KNOWN_HOSTS_LINE=""
 if [ -n "$KNOWN_HOSTS_SRC" ]; then
   echo ">> Installing known_hosts to ${KNOWN_HOSTS_DEST}..."
-  install -o amadeus-runner -g amadeus-runner -m 0640 "$KNOWN_HOSTS_SRC" "$KNOWN_HOSTS_DEST"
-  KNOWN_HOSTS_LINE="AMADEUS_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
+  install -o cronomicon-runner -g cronomicon-runner -m 0640 "$KNOWN_HOSTS_SRC" "$KNOWN_HOSTS_DEST"
+  KNOWN_HOSTS_LINE="CRONOMICON_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
 fi
 
 # --- Install Private Keys (model b — the runner holds its own keys) ---
-# The keys/ dir and AMADEUS_RUNNER_KEY_DIR are ALWAYS provisioned so the installer
+# The keys/ dir and CRONOMICON_RUNNER_KEY_DIR are ALWAYS provisioned so the installer
 # owns the convention up front: a key dropped in later (or generated below) Just
 # Works without a runner.env hand-edit. --key-dir / --key-map / --generate-key
 # populate it; without them the dir is created empty. KEYS_PROVISIONED tracks
 # whether any actual key material landed (drives the post-install guidance).
-install -d -o amadeus-runner -g amadeus-runner -m 0700 "$KEYS_DEST"
-KEY_DIR_LINE="AMADEUS_RUNNER_KEY_DIR=${KEYS_DEST}"
+install -d -o cronomicon-runner -g cronomicon-runner -m 0700 "$KEYS_DEST"
+KEY_DIR_LINE="CRONOMICON_RUNNER_KEY_DIR=${KEYS_DEST}"
 KEY_MAP_LINE=""
 KEYS_PROVISIONED=0
 if [ -n "$KEY_DIR_SRC" ]; then
   echo ">> Copying keys from ${KEY_DIR_SRC} to ${KEYS_DEST}..."
   find "$KEY_DIR_SRC" -maxdepth 1 -type f -print0 | while IFS= read -r -d '' key_file; do
-    install -o amadeus-runner -g amadeus-runner -m 0600 "$key_file" "${KEYS_DEST}/$(basename "$key_file")"
+    install -o cronomicon-runner -g cronomicon-runner -m 0600 "$key_file" "${KEYS_DEST}/$(basename "$key_file")"
   done
   KEYS_PROVISIONED=1
 elif [ -n "$KEY_MAP_SPEC" ]; then
@@ -511,10 +511,10 @@ elif [ -n "$KEY_MAP_SPEC" ]; then
   for entry in "${KEY_MAP_ENTRIES[@]}"; do
     key_name="${entry%%=*}"
     key_path="${entry#*=}"
-    install -o amadeus-runner -g amadeus-runner -m 0600 "$key_path" "${KEYS_DEST}/${key_name}"
+    install -o cronomicon-runner -g cronomicon-runner -m 0600 "$key_path" "${KEYS_DEST}/${key_name}"
     INSTALLED_MAP="${INSTALLED_MAP:+${INSTALLED_MAP},}${key_name}=${KEYS_DEST}/${key_name}"
   done
-  KEY_MAP_LINE="AMADEUS_RUNNER_KEY_MAP=${INSTALLED_MAP}"
+  KEY_MAP_LINE="CRONOMICON_RUNNER_KEY_MAP=${INSTALLED_MAP}"
   KEYS_PROVISIONED=1
 fi
 
@@ -534,8 +534,8 @@ if [ -n "$GENERATE_KEY_NAME" ]; then
     exit 1
   fi
   echo ">> Generating ed25519 key ${gen_dest} (no passphrase)..."
-  ssh-keygen -t ed25519 -N '' -C "amadeus-runner:${GENERATE_KEY_NAME}" -f "$gen_dest" >/dev/null
-  chown amadeus-runner:amadeus-runner "$gen_dest" "${gen_dest}.pub"
+  ssh-keygen -t ed25519 -N '' -C "cronomicon-runner:${GENERATE_KEY_NAME}" -f "$gen_dest" >/dev/null
+  chown cronomicon-runner:cronomicon-runner "$gen_dest" "${gen_dest}.pub"
   chmod 0600 "$gen_dest"
   chmod 0644 "${gen_dest}.pub"
   GENERATED_PUB="$(cat "${gen_dest}.pub")"
@@ -546,21 +546,21 @@ fi
 CA_CERT_LINE=""
 if [ -n "$CA_CERT_SRC" ]; then
   echo ">> Installing CA certificate to ${CA_CERT_DEST}..."
-  install -o root -g amadeus-runner -m 0640 "$CA_CERT_SRC" "$CA_CERT_DEST"
-  CA_CERT_LINE="AMADEUS_RUNNER_CA_CERT=${CA_CERT_DEST}"
+  install -o root -g cronomicon-runner -m 0640 "$CA_CERT_SRC" "$CA_CERT_DEST"
+  CA_CERT_LINE="CRONOMICON_RUNNER_CA_CERT=${CA_CERT_DEST}"
 fi
 
 # --- Install Local Inventory (inventory=local, T-b isolated segments) ---
 LOCAL_INVENTORY_LINE=""
 if [ -n "$LOCAL_INVENTORY_SRC" ]; then
   echo ">> Installing local inventory to ${LOCAL_INVENTORY_DEST}..."
-  install -o root -g amadeus-runner -m 0640 "$LOCAL_INVENTORY_SRC" "$LOCAL_INVENTORY_DEST"
-  LOCAL_INVENTORY_LINE="AMADEUS_RUNNER_LOCAL_INVENTORY=${LOCAL_INVENTORY_DEST}"
+  install -o root -g cronomicon-runner -m 0640 "$LOCAL_INVENTORY_SRC" "$LOCAL_INVENTORY_DEST"
+  LOCAL_INVENTORY_LINE="CRONOMICON_RUNNER_LOCAL_INVENTORY=${LOCAL_INVENTORY_DEST}"
 fi
 
 # --- Install Ansible secrets (Phase 3 — checkout deploy token, vault password) ---
-# Same custody posture as runner.env: 0640 root:amadeus-runner, so the agent
-# (group amadeus-runner) can read but the file is never world-readable. The
+# Same custody posture as runner.env: 0640 root:cronomicon-runner, so the agent
+# (group cronomicon-runner) can read but the file is never world-readable. The
 # server never sees these bytes. Two paths: install a file the operator staged,
 # or read one typed at a hidden prompt (echo off).
 #
@@ -568,7 +568,7 @@ fi
 # world-readable even briefly), then fills it.
 install_secret_file() {  # <src> <dest> <label>
   echo ">> Installing $3 to $2..."
-  install -o root -g amadeus-runner -m 0640 "$1" "$2"
+  install -o root -g cronomicon-runner -m 0640 "$1" "$2"
 }
 prompt_secret() {  # <dest> <label>
   local secret=""
@@ -580,7 +580,7 @@ prompt_secret() {  # <dest> <label>
     echo "Error: empty $2 — aborting (nothing written to $1)." >&2
     exit 1
   fi
-  install -o root -g amadeus-runner -m 0640 /dev/null "$1"
+  install -o root -g cronomicon-runner -m 0640 /dev/null "$1"
   printf '%s' "$secret" > "$1"
   unset secret
   echo ">> Wrote $2 to $1."
@@ -613,42 +613,42 @@ fi
 CHECKOUT_TOKEN_FILE_LINE=""
 if [ -n "$CHECKOUT_TOKEN_SRC" ]; then
   install_secret_file "$CHECKOUT_TOKEN_SRC" "$CHECKOUT_TOKEN_DEST" "checkout deploy token"
-  CHECKOUT_TOKEN_FILE_LINE="AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
+  CHECKOUT_TOKEN_FILE_LINE="CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
 elif [ "$CHECKOUT_TOKEN_STDIN" = 1 ]; then
   prompt_secret "$CHECKOUT_TOKEN_DEST" "checkout deploy token"
-  CHECKOUT_TOKEN_FILE_LINE="AMADEUS_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
+  CHECKOUT_TOKEN_FILE_LINE="CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=${CHECKOUT_TOKEN_DEST}"
 fi
 
 VAULT_PASS_LINE=""
 if [ -n "$VAULT_PASS_SRC" ]; then
   install_secret_file "$VAULT_PASS_SRC" "$VAULT_PASS_DEST" "vault password"
-  VAULT_PASS_LINE="AMADEUS_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
+  VAULT_PASS_LINE="CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
 elif [ "$VAULT_PASS_STDIN" = 1 ]; then
   prompt_secret "$VAULT_PASS_DEST" "vault password"
-  VAULT_PASS_LINE="AMADEUS_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
+  VAULT_PASS_LINE="CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=${VAULT_PASS_DEST}"
 fi
 
 # Checkout opt-in + repo allowlist are plain env writes (not secrets).
 ALLOW_CHECKOUT_LINE=""
-[ "$ALLOW_CHECKOUT" = 1 ] && ALLOW_CHECKOUT_LINE="AMADEUS_RUNNER_ALLOW_CHECKOUT=true"
+[ "$ALLOW_CHECKOUT" = 1 ] && ALLOW_CHECKOUT_LINE="CRONOMICON_RUNNER_ALLOW_CHECKOUT=true"
 CHECKOUT_REPOS_LINE=""
-[ -n "$CHECKOUT_REPOS" ] && CHECKOUT_REPOS_LINE="AMADEUS_RUNNER_CHECKOUT_REPOS=${CHECKOUT_REPOS}"
+[ -n "$CHECKOUT_REPOS" ] && CHECKOUT_REPOS_LINE="CRONOMICON_RUNNER_CHECKOUT_REPOS=${CHECKOUT_REPOS}"
 
 # --- Generate Config File ---
 echo ">> Writing ${CONF_DIR}/runner.env..."
 # Create with final ownership/mode BEFORE writing — the file carries the
 # registration token, so it must never be world-readable, even briefly.
-install -o root -g amadeus-runner -m 0640 /dev/null "${CONF_DIR}/runner.env"
+install -o root -g cronomicon-runner -m 0640 /dev/null "${CONF_DIR}/runner.env"
 {
   echo "# Configuration for the Cronomicon runner agent (Ubuntu/RedHat VM instance)"
-  echo "AMADEUS_RUNNER_SERVER=${SERVER_URL}"
-  echo "AMADEUS_RUNNER_REGISTRATION_TOKEN=${REG_TOKEN}"
-  echo "AMADEUS_RUNNER_NAME=${RUNNER_NAME}"
+  echo "CRONOMICON_RUNNER_SERVER=${SERVER_URL}"
+  echo "CRONOMICON_RUNNER_REGISTRATION_TOKEN=${REG_TOKEN}"
+  echo "CRONOMICON_RUNNER_NAME=${RUNNER_NAME}"
   # No -c ⇒ omit the var entirely: the agent probes the host's toolchains at
   # startup (unset = auto-detect; set explicitly to narrow).
-  [ -n "$CAPABILITIES" ] && echo "AMADEUS_RUNNER_CAPABILITIES=${CAPABILITIES}"
-  echo "AMADEUS_RUNNER_INVENTORY=${INVENTORY}"
-  echo "AMADEUS_RUNNER_IDENTITY_FILE=${STATE_DIR}/identity.json"
+  [ -n "$CAPABILITIES" ] && echo "CRONOMICON_RUNNER_CAPABILITIES=${CAPABILITIES}"
+  echo "CRONOMICON_RUNNER_INVENTORY=${INVENTORY}"
+  echo "CRONOMICON_RUNNER_IDENTITY_FILE=${STATE_DIR}/identity.json"
   [ -n "$KNOWN_HOSTS_LINE" ] && echo "$KNOWN_HOSTS_LINE"
   [ -n "$KEY_DIR_LINE" ] && echo "$KEY_DIR_LINE"
   [ -n "$KEY_MAP_LINE" ] && echo "$KEY_MAP_LINE"
@@ -667,11 +667,11 @@ install -o root -g amadeus-runner -m 0640 /dev/null "${CONF_DIR}/runner.env"
 # startup and it crash-loops before registering. Reproduce the sandbox in a
 # bounded transient unit and stat a file; if it stalls or fails, generate the
 # unit with REDUCED hardening so the runner can start. Force with
-# AMADEUS_INSTALL_MINIMAL_HARDENING=1.
+# CRONOMICON_INSTALL_MINIMAL_HARDENING=1.
 HARDENING_OK=1
-if [ -n "${AMADEUS_INSTALL_MINIMAL_HARDENING:-}" ]; then
+if [ -n "${CRONOMICON_INSTALL_MINIMAL_HARDENING:-}" ]; then
   HARDENING_OK=0
-  echo ">> Minimal hardening forced (AMADEUS_INSTALL_MINIMAL_HARDENING set)."
+  echo ">> Minimal hardening forced (CRONOMICON_INSTALL_MINIMAL_HARDENING set)."
 elif ! command -v systemd-run >/dev/null 2>&1 || ! command -v timeout >/dev/null 2>&1; then
   echo ">> Sandbox self-probe skipped (systemd-run/timeout absent); applying full hardening."
 else
@@ -693,7 +693,7 @@ else
 fi
 
 # --- Generate Systemd Unit File ---
-echo ">> Writing /etc/systemd/system/amadeus-runner.service..."
+echo ">> Writing /etc/systemd/system/cronomicon-runner.service..."
 {
 cat << 'EOF'
 # systemd unit for the Cronomicon runner agent.
@@ -704,23 +704,23 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=amadeus-runner
-Group=amadeus-runner
+User=cronomicon-runner
+Group=cronomicon-runner
 
 # Load runner config variables
-EnvironmentFile=-/etc/amadeus-runner/runner.env
-# Optional Vault Agent sidecar (deploy/vault-agent/): rendered secrets, if any.
+EnvironmentFile=-/etc/cronomicon-runner/runner.env
+# Optional Vault Agent sidecar, if you run one on the host: rendered secrets, if any.
 # The "-" makes this a no-op when the sidecar is not installed.
-EnvironmentFile=-/etc/amadeus-runner/secrets.env
-Environment=AMADEUS_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
-WorkingDirectory=/var/lib/amadeus-runner
+EnvironmentFile=-/etc/cronomicon-runner/secrets.env
+Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
+WorkingDirectory=/var/lib/cronomicon-runner
 
 # Preflight self-check. Non-fatal ('-'): logs a labeled PASS/FAIL report to the
 # journal right before the agent starts, so an env problem (unreachable/proxied
 # server, missing token, hung PATH dir) is visible immediately instead of as a
 # silent non-appearance in the UI.
-ExecStartPre=-/usr/local/bin/amadeus-runner doctor --quick
-ExecStart=/usr/local/bin/amadeus-runner
+ExecStartPre=-/usr/local/bin/cronomicon-runner doctor --quick
+ExecStart=/usr/local/bin/cronomicon-runner
 
 # Graceful drain on SIGTERM
 KillSignal=SIGTERM
@@ -768,34 +768,34 @@ fi
 
 cat << 'EOF'
 
-StateDirectory=amadeus-runner
-ReadWritePaths=/var/lib/amadeus-runner
+StateDirectory=cronomicon-runner
+ReadWritePaths=/var/lib/cronomicon-runner
 
 [Install]
 WantedBy=multi-user.target
 EOF
-} > /etc/systemd/system/amadeus-runner.service
+} > /etc/systemd/system/cronomicon-runner.service
 
-chown root:root /etc/systemd/system/amadeus-runner.service
-chmod 0644 /etc/systemd/system/amadeus-runner.service
+chown root:root /etc/systemd/system/cronomicon-runner.service
+chmod 0644 /etc/systemd/system/cronomicon-runner.service
 
 # --- Systemd Reload & Start ---
 echo ">> Reloading systemd and starting service..."
 systemctl daemon-reload
-systemctl enable amadeus-runner
-systemctl restart amadeus-runner
+systemctl enable cronomicon-runner
+systemctl restart cronomicon-runner
 
 # --- Post-install self-check ---
 # Validate the environment (server reachable, token present, toolchains found)
 # as the runner user BEFORE declaring success, so a broken deploy is caught here
 # instead of surfacing later as a runner that never appears in the UI.
 if command -v runuser >/dev/null 2>&1; then
-  echo ">> Running post-install self-check (amadeus-runner doctor)..."
-  if runuser -u amadeus-runner -- bash -c 'set -a; . /etc/amadeus-runner/runner.env; set +a; exec /usr/local/bin/amadeus-runner doctor'; then
+  echo ">> Running post-install self-check (cronomicon-runner doctor)..."
+  if runuser -u cronomicon-runner -- bash -c 'set -a; . /etc/cronomicon-runner/runner.env; set +a; exec /usr/local/bin/cronomicon-runner doctor'; then
     echo ">> Self-check passed."
   else
     echo "!! Self-check reported issues (above) — the runner may not register until they are resolved."
-    echo "!! Re-run: sudo runuser -u amadeus-runner -- bash -c 'set -a; . /etc/amadeus-runner/runner.env; set +a; exec /usr/local/bin/amadeus-runner doctor'"
+    echo "!! Re-run: sudo runuser -u cronomicon-runner -- bash -c 'set -a; . /etc/cronomicon-runner/runner.env; set +a; exec /usr/local/bin/cronomicon-runner doctor'"
   fi
 fi
 
@@ -819,7 +819,7 @@ echo "Inventory:    ${INVENTORY}"
 [ -n "$CHECKOUT_REPOS_LINE" ]  && echo "Checkout repos: ${CHECKOUT_REPOS}"
 [ -n "$CHECKOUT_TOKEN_FILE_LINE" ] && echo "Checkout tok: ${CHECKOUT_TOKEN_DEST}"
 [ -n "$VAULT_PASS_LINE" ]      && echo "Vault pass:   ${VAULT_PASS_DEST}"
-echo "Status:       $(systemctl is-active amadeus-runner)"
+echo "Status:       $(systemctl is-active cronomicon-runner)"
 echo ""
 
 if [ -n "$GENERATE_KEY_NAME" ]; then
@@ -848,17 +848,17 @@ if [ -z "$KNOWN_HOSTS_LINE" ]; then
   echo "!!  1. Populate ${KNOWN_HOSTS_DEST}"
   echo "!!     (ssh-keyscan the targets from a trusted vantage).   !!"
   echo "!!  2. Add to ${CONF_DIR}/runner.env:"
-  echo "!!       AMADEUS_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
+  echo "!!       CRONOMICON_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
   if [ "$KEYS_PROVISIONED" = 0 ]; then
     echo "!!  3. Provision a private key: re-run with --generate-key   !!"
     echo "!!     NAME, or drop a key file into ${KEYS_DEST}"
-    echo "!!     (AMADEUS_RUNNER_KEY_DIR is already set for you).      !!"
+    echo "!!     (CRONOMICON_RUNNER_KEY_DIR is already set for you).      !!"
   fi
-  echo "!!  Then: sudo systemctl restart amadeus-runner            !!"
+  echo "!!  Then: sudo systemctl restart cronomicon-runner            !!"
   echo "!!========================================================!!"
   echo ""
 elif [ "$KEYS_PROVISIONED" = 0 ]; then
-  echo "NOTE: no private key was provisioned. AMADEUS_RUNNER_KEY_DIR is"
+  echo "NOTE: no private key was provisioned. CRONOMICON_RUNNER_KEY_DIR is"
   echo "set to ${KEYS_DEST}; before the first SSH run, drop a"
   echo "key file there (named after its authKeyEnvVar) or re-run with"
   echo "--generate-key NAME, then restart the service."
@@ -866,8 +866,8 @@ elif [ "$KEYS_PROVISIONED" = 0 ]; then
 fi
 
 echo "To check runner status:"
-echo "  sudo systemctl status amadeus-runner"
+echo "  sudo systemctl status cronomicon-runner"
 echo ""
 echo "To tail the service logs:"
-echo "  sudo journalctl -u amadeus-runner -f"
+echo "  sudo journalctl -u cronomicon-runner -f"
 echo "=========================================================="

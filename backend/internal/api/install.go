@@ -15,7 +15,7 @@ import (
 // server's URL and the registration token baked in, so the whole install is a
 // single flagless pipe:
 //
-//	curl -fsSL https://amadeus.example.com/install/amt_reg_… | sudo bash
+//	curl -fsSL https://cronomicon.example.com/install/crn_reg_… | sudo bash
 //
 // A DUMB endpoint by design: it does NOT read the DB or validate the token
 // against it. Registration remains the sole enforcement point (single-use,
@@ -37,16 +37,16 @@ import (
 // auto-detects the host's toolchains at startup.
 
 // regTokenPathRe matches a syntactically valid registration token in the path:
-// the amt_reg_ prefix + 64 lowercase hex chars (32 random bytes, see
+// the crn_reg_ prefix + 64 lowercase hex chars (32 random bytes, see
 // runner.generateToken). Restricting to hex makes shell-meta injection into the
 // baked assignment impossible.
-var regTokenPathRe = regexp.MustCompile(`^amt_reg_[0-9a-f]{64}$`)
+var regTokenPathRe = regexp.MustCompile(`^crn_reg_[0-9a-f]{64}$`)
 
 // installHostRe bounds the reconstructed Host to URL-safe characters so it can
 // be baked into a double-quoted shell assignment without escaping (no quotes,
 // spaces, `$`, backticks, or backslashes can reach the script). Brackets are
 // allowed for IPv6 literals (`[2001:db8::1]:443`) and `_` for container-DNS
-// hostnames (`amadeus_backend`) — both inert inside double quotes.
+// hostnames (`cronomicon_backend`) — both inert inside double quotes.
 var installHostRe = regexp.MustCompile(`^[A-Za-z0-9._\-:\[\]]+$`)
 
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {

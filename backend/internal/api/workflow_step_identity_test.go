@@ -30,11 +30,11 @@ func TestWorkflowComposeStepIdentity(t *testing.T) {
 	// Two departments' jobs sharing one name — the state R2-5 made legal and that
 	// a name-only step cannot express.
 	seed(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
-	      VALUES('uid-deploy-fin','deploy','amadeus','bash','make fin','sha256:a','t')`)
+	      VALUES('uid-deploy-fin','deploy','cronomicon','bash','make fin','sha256:a','t')`)
 	seed(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
-	      VALUES('uid-deploy-dss','deploy','amadeus','bash','make dss','sha256:b','t')`)
+	      VALUES('uid-deploy-dss','deploy','cronomicon','bash','make dss','sha256:b','t')`)
 	seed(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
-	      VALUES('uid-build','build','amadeus','bash','make','sha256:c','t')`)
+	      VALUES('uid-build','build','cronomicon','bash','make','sha256:c','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
 	post := func(body any) *http.Response {

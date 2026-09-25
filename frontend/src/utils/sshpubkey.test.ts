@@ -6,11 +6,11 @@ import { NotAnOpenSshKeyError, headerComment, openSshBlob, pubKeyFilename, toOpe
 // byte-for-byte; only the Comment header differs, because we name the key by its
 // Cronomicon label instead of ssh-keygen's "converted by <user>@<host>" text.
 const ED25519 =
-  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNkHFq+5PglXPMnY8R7YmcEdV+cMjshwknXLaeT4rzE amadeus-test";
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNkHFq+5PglXPMnY8R7YmcEdV+cMjshwknXLaeT4rzE cronomicon-test";
 const ED25519_BODY = ["AAAAC3NzaC1lZDI1NTE5AAAAIHNkHFq+5PglXPMnY8R7YmcEdV+cMjshwknXLaeT4rzE"];
 
 const RSA =
-  "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCuYktu2rGS9DmmvZivHZtUAL6a52EBn8krcPatSTEYFEngt4IknwefugYIMjtJW1a3g7v/rvrpxPPp4UbrvUdMa/1mLVjxOIIHnm60anK255A3VSEs5wdu5ONhCsAyI0RTY7phxkiUEy/eU1gv54H9p4ahHeDNmJYzmvWcDSUVDrDrwlfDoVKhJpwTYUlXMgsYAqVKtx+PcV3+FbXKleha/YxkxhO9emkN9CEemg+024yFM1LaTVBCcv21pUgms8gcX2cFOAn2HN4/w7uNJ0BbKFjpF0XWJ70fvytjgaK62unHyD8VSczgZHn70EehGWYI/McvwtozwTfmgCsaBrh3 amadeus-test";
+  "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCuYktu2rGS9DmmvZivHZtUAL6a52EBn8krcPatSTEYFEngt4IknwefugYIMjtJW1a3g7v/rvrpxPPp4UbrvUdMa/1mLVjxOIIHnm60anK255A3VSEs5wdu5ONhCsAyI0RTY7phxkiUEy/eU1gv54H9p4ahHeDNmJYzmvWcDSUVDrDrwlfDoVKhJpwTYUlXMgsYAqVKtx+PcV3+FbXKleha/YxkxhO9emkN9CEemg+024yFM1LaTVBCcv21pUgms8gcX2cFOAn2HN4/w7uNJ0BbKFjpF0XWJ70fvytjgaK62unHyD8VSczgZHn70EehGWYI/McvwtozwTfmgCsaBrh3 cronomicon-test";
 const RSA_BODY = [
   "AAAAB3NzaC1yc2EAAAADAQABAAABAQCuYktu2rGS9DmmvZivHZtUAL6a52EBn8krcPatST",
   "EYFEngt4IknwefugYIMjtJW1a3g7v/rvrpxPPp4UbrvUdMa/1mLVjxOIIHnm60anK255A3",
@@ -57,8 +57,8 @@ describe("toRFC4716", () => {
   });
 
   it("ignores the OpenSSH trailing comment rather than carrying it over", () => {
-    // The source line ends in "amadeus-test"; the header must come from the label.
-    expect(toRFC4716(ED25519, "deploy-key")).not.toContain("amadeus-test");
+    // The source line ends in "cronomicon-test"; the header must come from the label.
+    expect(toRFC4716(ED25519, "deploy-key")).not.toContain("cronomicon-test");
   });
 
   it("refuses material that is not an OpenSSH public line", () => {

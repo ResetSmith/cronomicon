@@ -19,7 +19,7 @@ const SCOPES = [
 const GLOBAL_JOB = {
   id: 8,
   name: "legacy-global",
-  source: "amadeus",
+  source: "cronomicon",
   scriptRef: "tools/backup.sh",
   scope: null,
   prompts: [],

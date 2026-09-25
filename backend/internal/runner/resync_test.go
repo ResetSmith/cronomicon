@@ -60,7 +60,7 @@ func TestPollDeliversResyncOnce(t *testing.T) {
 
 	// No capabilities → the handler never enters the 30s long-poll: it returns
 	// 200 when control is pending, else 204.
-	id, tok := "runner-rs", "amt_run_rs"
+	id, tok := "runner-rs", "crn_run_rs"
 	insertRunner(t, svc, id, "rs", "online", nil)
 	mustExec(t, svc, `UPDATE runners SET capabilities='[]', protocol_version=?, resync_requested=1 WHERE id=?`, runnerproto.ProtocolVersion, id)
 	bindRunnerToken(t, svc, tok, id)
@@ -103,7 +103,7 @@ func TestRedeclareUpdatesInPlace(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	id, tok := "runner-rd", "amt_run_rd"
+	id, tok := "runner-rd", "crn_run_rd"
 	insertRunner(t, svc, id, "rd", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 
@@ -172,8 +172,8 @@ func TestRedeclareOwnershipAndVersion(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	aID, aTok := "runner-a", "amt_run_a"
-	bID, bTok := "runner-b", "amt_run_b"
+	aID, aTok := "runner-a", "crn_run_a"
+	bID, bTok := "runner-b", "crn_run_b"
 	insertRunner(t, svc, aID, "a", "online", []string{"bash"})
 	insertRunner(t, svc, bID, "b", "online", []string{"bash"})
 	bindRunnerToken(t, svc, aTok, aID)

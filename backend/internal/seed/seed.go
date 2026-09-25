@@ -1,5 +1,5 @@
 // Package seed loads representative demo data into the database for local
-// preview (AMADEUS_DEV_SEED). It exists so the operator UI can be browsed with
+// preview (CRONOMICON_DEV_SEED). It exists so the operator UI can be browsed with
 // realistic content before GitLab/SSO/runners are wired up. It is NOT part
 // of the production data path: GitLab remains the source of truth for job and
 // workflow definitions (architecture §2.1); these rows merely populate the
@@ -73,14 +73,14 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	iso := func(t time.Time) string { return t.Format(time.RFC3339) }
 	ago := func(d time.Duration) string { return iso(now.Add(-d)) }
 	const (
-		dev    = "developer@amadeus.local"
+		dev    = "developer@cronomicon.local"
 		hour   = time.Hour
 		minute = time.Minute
 		day    = 24 * time.Hour
 	)
 	nowStr := iso(now)
 
-	// ── Scopes (operator-managed / amadeus-source so they list in Settings) ────
+	// ── Scopes (operator-managed / cronomicon-source so they list in Settings) ────
 	type scopeSpec struct {
 		name, desc, types string
 		hosts             []string
@@ -107,7 +107,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			rawInv = "[all]\n" + strings.Join(sc.hosts, "\n") + "\n"
 		}
 		exec(`INSERT INTO scopes (id, name, source, description, supported_types, raw_inventory, inventory_format, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, 'amadeus', ?, ?, ?, 'ini', ?, ?, ?, ?)`,
+		      VALUES (?, ?, 'cronomicon', ?, ?, ?, 'ini', ?, ?, ?, ?)`,
 			id, sc.name, sc.desc, sc.types, rawInv, dev, ago(20*day), dev, ago(2*day))
 		for _, h := range sc.hosts {
 			exec(`INSERT INTO scope_hosts (scope_id, host) VALUES (?, ?)`, id, h)
@@ -174,13 +174,13 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		group, role, agency string
 		all                 bool
 	}{
-		{"amadeus-admins", "admin", "", true},
+		{"cronomicon-admins", "admin", "", true},
 		// operator reaches Cluster-A (alpha) and Staging/Reporting (beta).
-		{"amadeus-operators", "operator", agencies[0].id, false},
-		{"amadeus-operators", "operator", agencies[1].id, false},
+		{"cronomicon-operators", "operator", agencies[0].id, false},
+		{"cronomicon-operators", "operator", agencies[1].id, false},
 		{"infra-oncall", "operator", agencies[1].id, false},
 		// viewer sees Reporting, which lives in beta.
-		{"amadeus-viewers", "viewer", agencies[1].id, false},
+		{"cronomicon-viewers", "viewer", agencies[1].id, false},
 	}
 	for _, g := range grants {
 		var agency any
@@ -201,10 +201,10 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		email, name, groups string
 		first, last         time.Duration
 	}{
-		{"alice@corp.example", "Alice Chen", `["amadeus-admins"]`, 60 * day, 2 * hour},
-		{"bob@corp.example", "Bob Diaz", `["amadeus-operators","infra-oncall"]`, 45 * day, 6 * hour},
-		{"carol@corp.example", "Carol Singh", `["amadeus-viewers"]`, 30 * day, 28 * hour},
-		{dev, "Developer (bypass)", `["amadeus-admins"]`, 10 * day, 0},
+		{"alice@corp.example", "Alice Chen", `["cronomicon-admins"]`, 60 * day, 2 * hour},
+		{"bob@corp.example", "Bob Diaz", `["cronomicon-operators","infra-oncall"]`, 45 * day, 6 * hour},
+		{"carol@corp.example", "Carol Singh", `["cronomicon-viewers"]`, 30 * day, 28 * hour},
+		{dev, "Developer (bypass)", `["cronomicon-admins"]`, 10 * day, 0},
 	}
 	for _, l := range logins {
 		exec(`INSERT INTO recent_logins (email, display_name, groups, first_seen_at, last_login_at)
@@ -323,7 +323,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			e.kind, e.owner, e.owner)
 	}
 
-	// ── First-class Schedules catalog (operator-authored amadeus rows) ─────────
+	// ── First-class Schedules catalog (operator-authored cronomicon rows) ─────────
 	// So the Schedules catalog + the Schedule Builder edit/delete affordances are
 	// populated in dev preview. content_hash is a placeholder digest (the catalog
 	// shows only a short prefix; the real digest is recomputed on any in-app edit).
@@ -333,7 +333,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"nightly-window", "Nightly maintenance window", "0 0 2 * * *", "", "sha256:seednight"},
 	} {
 		exec(`INSERT INTO schedules (name, source, description, cron, env, content_hash, created_by, created_at, last_modified_by, last_modified_at, uid)
-		      VALUES (?, 'amadeus', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		      VALUES (?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			sd.name, sd.desc, sd.cron, nullStr(sd.env), sd.hash, dev, ago(10*day), dev, ago(2*day), db.NewID())
 	}
 
@@ -345,7 +345,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			st := runStatuses[runIdx%len(runStatuses)]
 			created := now.Add(-time.Duration(runIdx)*4*hour - time.Duration(pass)*7*minute)
 			triggerKind := "scheduled"
-			triggeredBy := "scheduler@amadeus"
+			triggeredBy := "scheduler@cronomicon"
 			if ji%2 == 1 {
 				triggerKind, triggeredBy = "manual", []string{"alice@corp.example", "bob@corp.example", dev}[runIdx%3]
 			}
@@ -430,11 +430,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		age                                                                                time.Duration
 	}
 	acts := []actRow{
-		{"run-end", "success", "scheduler@amadeus", "nightly-db-backup", "", "Production", "", "", "Backup completed (2.3 GB)", "", "", "", 1 * hour},
-		{"run-end", "failure", "scheduler@amadeus", "cert-renewal", "", "Production", "", "", "ACME challenge failed for lb-01", "", "", "", 8 * hour},
+		{"run-end", "success", "scheduler@cronomicon", "nightly-db-backup", "", "Production", "", "", "Backup completed (2.3 GB)", "", "", "", 1 * hour},
+		{"run-end", "failure", "scheduler@cronomicon", "cert-renewal", "", "Production", "", "", "ACME challenge failed for lb-01", "", "", "", 8 * hour},
 		{"run-start", "", "alice@corp.example", "terraform-plan-prod", "", "Production", "", "", "Plan started", "", "", "", 2 * hour},
 		{"workflow-end", "warning", "alice@corp.example", "", "patch-and-report", "Production", "", "", "1 host reported a warning", "", "", "", 50 * hour},
-		{"workflow-start", "", "scheduler@amadeus", "", "nightly-maintenance", "Production", "", "", "Nightly maintenance triggered", "", "", "", 8 * hour},
+		{"workflow-start", "", "scheduler@cronomicon", "", "nightly-maintenance", "Production", "", "", "Nightly maintenance triggered", "", "", "", 8 * hour},
 		{"config", "", "bob@corp.example", "vault-token-rotate", "", "Production", "Jobs", "Paused", "Paused scheduled runs", "", "", "", 5 * hour},
 		{"config", "", "alice@corp.example", "", "", "", "Settings", "updated", "Updated max concurrency to 8", "", "", "", 30 * hour},
 		{"config", "", "alice@corp.example", "", "", "", "Secrets", "revealed", "Revealed GITLAB_PAT", "", "", "", 4 * hour},
@@ -442,8 +442,8 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"gitsync", "failure", "poll", "", "", "", "Git", "sync", "Clone failed: auth error", "infra/job-defs", "main", "", 10 * hour},
 		{"push", "success", "alice@corp.example", "", "", "Production", "Schedule", "publish", "Published nightly-db-backup schedule", "infra/job-defs", "main", "f00ba12", 3 * hour},
 		{"run-end", "failure", "bob@corp.example", "k8s-node-drain", "", "Cluster-A", "", "", "Run killed by operator", "", "", "", 6 * hour},
-		{"run-end", "success", "scheduler@amadeus", "disk-usage-audit", "", "", "", "", "All hosts under threshold", "", "", "", 30 * minute},
-		{"run-end", "warning", "scheduler@amadeus", "win-update-check", "", "Windows-Fleet", "", "", "Reboot pending on win-app-01", "", "", "", 12 * hour},
+		{"run-end", "success", "scheduler@cronomicon", "disk-usage-audit", "", "", "", "", "All hosts under threshold", "", "", "", 30 * minute},
+		{"run-end", "warning", "scheduler@cronomicon", "win-update-check", "", "Windows-Fleet", "", "", "Reboot pending on win-app-01", "", "", "", 12 * hour},
 	}
 	for _, a := range acts {
 		// Backdated via At: the spread of ages is the point — it is what the
@@ -588,11 +588,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 
 	// ── Secrets (vault-backed refs only — no KEK needed for demo) ──────────────
 	secs := []struct{ key, scope, ref, desc string }{
-		{"GITLAB_PAT", "", "secret/data/amadeus/gitlab#pat", "Personal access token for cloning Git-source definitions"},
-		{"VAULT_TOKEN", "Production", "secret/data/amadeus/vault#token", "Vault token used by Production jobs"},
-		{"SMTP_PASSWORD", "", "secret/data/amadeus/smtp#password", "SMTP relay password for alert email delivery"},
-		{"DB_BACKUP_KEY", "Production", "secret/data/amadeus/backup#key", "Encryption key for nightly database backups"},
-		{"WIN_ADMIN_PASS", "Windows-Fleet", "secret/data/amadeus/windows#admin", "Local administrator password for the Windows fleet"},
+		{"GITLAB_PAT", "", "secret/data/cronomicon/gitlab#pat", "Personal access token for cloning Git-source definitions"},
+		{"VAULT_TOKEN", "Production", "secret/data/cronomicon/vault#token", "Vault token used by Production jobs"},
+		{"SMTP_PASSWORD", "", "secret/data/cronomicon/smtp#password", "SMTP relay password for alert email delivery"},
+		{"DB_BACKUP_KEY", "Production", "secret/data/cronomicon/backup#key", "Encryption key for nightly database backups"},
+		{"WIN_ADMIN_PASS", "Windows-Fleet", "secret/data/cronomicon/windows#admin", "Local administrator password for the Windows fleet"},
 	}
 	for _, s := range secs {
 		var scope any
@@ -612,7 +612,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 
 	// ── SSH key credential (SK.13) ─────────────────────────────────────────────
-	// A first-class SSH key the amadeus hosts + bastions below attach to via FK,
+	// A first-class SSH key the cronomicon hosts + bastions below attach to via FK,
 	// so the SK.10/SK.11 picker and the Env Vars → SSH Keys management tab are
 	// browsable in dev preview. Display-only: dev preview has no KEK to seal real
 	// key material, so this stored row carries the DERIVED metadata (type +
@@ -625,7 +625,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
 		sshCredID, "prod_deploy_ed25519", "Primary deploy key for the Production fleet (demo).",
 		"SHA256:Jm6h0vQ2nC8x7yQk9rTfLwApZ3Bd1sEoUvHnMxRkY4w",
-		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrQ2vJk8hPzXmC5dLwoYbApZ3Bd1sEoUvHnMxRkY4w amadeus-deploy",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrQ2vJk8hPzXmC5dLwoYbApZ3Bd1sEoUvHnMxRkY4w cronomicon-deploy",
 		dev, ago(18*day), dev, ago(5*day))
 
 	// T2.10 — a SECOND key so the membership matrix has one per agency. Note that
@@ -639,7 +639,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
 		stagingCredID, "staging_deploy_ed25519", "Deploy key for the Staging fleet (demo).",
 		"SHA256:Qw3rTy7uIoP2aSdFgHjKlZxCvBnM4eRt6YuIoP8aSdF",
-		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKp7QwErTyUiOpAsDfGhJkLzXcVbNm4eRt6YuIoP8aSd amadeus-staging",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKp7QwErTyUiOpAsDfGhJkLzXcVbNm4eRt6YuIoP8aSd cronomicon-staging",
 		dev, ago(16*day), dev, ago(4*day))
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, sshCredID, agencies[0].id)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, stagingCredID, agencies[1].id)
@@ -670,7 +670,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			via = h.via
 		}
 		exec(`INSERT INTO ssh_hosts (id, hostname, address, port, os, via, auth_credential_id, username, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, 22, ?, ?, ?, 'amadeus', 'verified', ?, ?, ?, ?, ?)`,
+		      VALUES (?, ?, ?, 22, ?, ?, ?, 'cronomicon', 'verified', ?, ?, ?, ?, ?)`,
 			db.NewID(), h.host, h.addr, h.os, via, sshCredID, ago(2*day), dev, ago(16*day), dev, ago(3*day))
 	}
 	// One git-IMPORTED host (M4) so the demo shows the read-only "git" badge + the
@@ -733,7 +733,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 
 	// ── Singleton configs + global settings ────────────────────────────────────
 	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, apprise_targets, last_modified_by, last_modified_at)
-	      VALUES (1, 'smtp.corp.example', 587, 'amadeus@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
+	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
 	exec(`INSERT INTO gitlab_config (id, base_url, project_path, webhook_secret, branch, last_modified_by, last_modified_at)
 	      VALUES (1, 'https://gitlab.corp.example', 'infra/job-defs', 'demo-webhook-secret', 'main', ?, ?)`, dev, ago(9*day))
 
@@ -754,7 +754,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("seed commit: %w", err)
 	}
-	log.Warn("demo data seeded (AMADEUS_DEV_SEED=true) — local preview content; not a real sync")
+	log.Warn("demo data seeded (CRONOMICON_DEV_SEED=true) — local preview content; not a real sync")
 	return nil
 }
 
@@ -767,7 +767,7 @@ type runRow struct {
 
 // seedScopeProjection parses a scope's raw inventory and writes the advisory
 // projection tables + projection_status (M2), mirroring gitlab.writeScopeProjection
-// so AMADEUS_DEV_SEED can exercise the inventory group-tree panel.
+// so CRONOMICON_DEV_SEED can exercise the inventory group-tree panel.
 func seedScopeProjection(exec func(string, ...any), id, raw string) {
 	pr := inventory.ParseProjection(raw)
 	if pr.PreviewUnavailable {

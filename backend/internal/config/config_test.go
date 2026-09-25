@@ -9,18 +9,18 @@ import (
 
 // TestNoConfigNameUnderReservedPrefix locks the namespace contract (§2, W4): no
 // server/runner CONFIG env name may live under a reserved reference prefix
-// (AMADEUS_VAR_/SECRET_/KEY_/RUN_). It scans every AMADEUS_-identifier literal in
+// (CRONOMICON_VAR_/SECRET_/KEY_/RUN_). It scans every CRONOMICON_-identifier literal in
 // config.go — the source of truth for config reads. There are no exceptions:
-// the evicted KEK family's AMADEUS_SECRET_KEK* aliases were the last one and
+// the evicted KEK family's CRONOMICON_SECRET_KEK* aliases were the last one and
 // were removed in v1.5.41. A reserved-prefixed config read must fail this test.
 func TestNoConfigNameUnderReservedPrefix(t *testing.T) {
 	src, err := os.ReadFile("config.go")
 	if err != nil {
 		t.Fatalf("read config.go: %v", err)
 	}
-	reserved := []string{"AMADEUS_VAR_", "AMADEUS_SECRET_", "AMADEUS_KEY_", "AMADEUS_RUN_"}
+	reserved := []string{"CRONOMICON_VAR_", "CRONOMICON_SECRET_", "CRONOMICON_KEY_", "CRONOMICON_RUN_"}
 	allowed := map[string]bool{}
-	lit := regexp.MustCompile(`"(AMADEUS_[A-Za-z0-9_]+)"`)
+	lit := regexp.MustCompile(`"(CRONOMICON_[A-Za-z0-9_]+)"`)
 	for _, m := range lit.FindAllStringSubmatch(string(src), -1) {
 		name := m[1]
 		for _, p := range reserved {
@@ -31,11 +31,11 @@ func TestNoConfigNameUnderReservedPrefix(t *testing.T) {
 	}
 }
 
-// loadWith runs Load with AMADEUS_DEV_AUTH set so the trusted-header boot guard
-// (which requires AMADEUS_TRUSTED_PROXIES) does not interfere with KEK tests.
+// loadWith runs Load with CRONOMICON_DEV_AUTH set so the trusted-header boot guard
+// (which requires CRONOMICON_TRUSTED_PROXIES) does not interfere with KEK tests.
 func loadWith(t *testing.T, env map[string]string) *Config {
 	t.Helper()
-	t.Setenv("AMADEUS_DEV_AUTH", "true")
+	t.Setenv("CRONOMICON_DEV_AUTH", "true")
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
@@ -46,16 +46,16 @@ func loadWith(t *testing.T, env map[string]string) *Config {
 	return c
 }
 
-// TestKEKNewNames verifies the AMADEUS_KEK* names are read and produce no
+// TestKEKNewNames verifies the CRONOMICON_KEK* names are read and produce no
 // deprecation warning.
 func TestKEKNewNames(t *testing.T) {
 	c := loadWith(t, map[string]string{
-		"AMADEUS_KEK_FILE":    "/run/secrets/amadeus_kek",
-		"AMADEUS_KEK":         "inline-kek",
-		"AMADEUS_KEK_VERSION": "3",
+		"CRONOMICON_KEK_FILE":    "/run/secrets/cronomicon_kek",
+		"CRONOMICON_KEK":         "inline-kek",
+		"CRONOMICON_KEK_VERSION": "3",
 	})
-	if c.SecretKEKFile != "/run/secrets/amadeus_kek" {
-		t.Errorf("SecretKEKFile = %q, want /run/secrets/amadeus_kek", c.SecretKEKFile)
+	if c.SecretKEKFile != "/run/secrets/cronomicon_kek" {
+		t.Errorf("SecretKEKFile = %q, want /run/secrets/cronomicon_kek", c.SecretKEKFile)
 	}
 	if c.SecretKEKEnv != "inline-kek" {
 		t.Errorf("SecretKEKEnv = %q, want inline-kek", c.SecretKEKEnv)
@@ -89,7 +89,7 @@ func TestKEKDefaults(t *testing.T) {
 // environment and returns the error for message assertions.
 func loadErrWith(t *testing.T, env map[string]string) error {
 	t.Helper()
-	t.Setenv("AMADEUS_DEV_AUTH", "true")
+	t.Setenv("CRONOMICON_DEV_AUTH", "true")
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
@@ -126,13 +126,13 @@ func TestLogFileDefaults(t *testing.T) {
 // container is usually "/" and for a systemd unit is whatever WorkingDirectory
 // happens to be. Nobody discovers this until they need the log.
 func TestLogFilePathMustBeAbsolute(t *testing.T) {
-	err := loadErrWith(t, map[string]string{"AMADEUS_LOG_FILE": "logs/amadeus.log"})
-	if !strings.Contains(err.Error(), "AMADEUS_LOG_FILE") {
-		t.Errorf("error %q should name AMADEUS_LOG_FILE so the operator knows which knob to fix", err)
+	err := loadErrWith(t, map[string]string{"CRONOMICON_LOG_FILE": "logs/cronomicon.log"})
+	if !strings.Contains(err.Error(), "CRONOMICON_LOG_FILE") {
+		t.Errorf("error %q should name CRONOMICON_LOG_FILE so the operator knows which knob to fix", err)
 	}
 
-	c := loadWith(t, map[string]string{"AMADEUS_LOG_FILE": "/var/log/amadeus/amadeus.log"})
-	if c.LogFilePath != "/var/log/amadeus/amadeus.log" {
+	c := loadWith(t, map[string]string{"CRONOMICON_LOG_FILE": "/var/log/cronomicon/cronomicon.log"})
+	if c.LogFilePath != "/var/log/cronomicon/cronomicon.log" {
 		t.Errorf("LogFilePath = %q, want the absolute path to be accepted verbatim", c.LogFilePath)
 	}
 }
@@ -143,12 +143,12 @@ func TestLogFilePathMustBeAbsolute(t *testing.T) {
 // operator's typo.
 func TestLogFileMaxMBMustBeAtLeastOne(t *testing.T) {
 	for _, v := range []string{"0", "-1"} {
-		err := loadErrWith(t, map[string]string{"AMADEUS_LOG_FILE_MAX_MB": v})
-		if !strings.Contains(err.Error(), "AMADEUS_LOG_FILE_MAX_MB") {
+		err := loadErrWith(t, map[string]string{"CRONOMICON_LOG_FILE_MAX_MB": v})
+		if !strings.Contains(err.Error(), "CRONOMICON_LOG_FILE_MAX_MB") {
 			t.Errorf("MAX_MB=%s: error %q should name the knob", v, err)
 		}
 	}
-	if c := loadWith(t, map[string]string{"AMADEUS_LOG_FILE_MAX_MB": "1"}); c.LogFileMaxMB != 1 {
+	if c := loadWith(t, map[string]string{"CRONOMICON_LOG_FILE_MAX_MB": "1"}); c.LogFileMaxMB != 1 {
 		t.Errorf("LogFileMaxMB = %d, want 1 to be the accepted minimum", c.LogFileMaxMB)
 	}
 }
@@ -159,12 +159,12 @@ func TestLogFileMaxMBMustBeAtLeastOne(t *testing.T) {
 // count is meaningless and must be an error rather than being clamped, since a
 // clamp would leave the operator believing they had configured something.
 func TestLogFileKeepAllowsZeroButNotNegative(t *testing.T) {
-	err := loadErrWith(t, map[string]string{"AMADEUS_LOG_FILE_KEEP": "-1"})
-	if !strings.Contains(err.Error(), "AMADEUS_LOG_FILE_KEEP") {
-		t.Errorf("error %q should name AMADEUS_LOG_FILE_KEEP", err)
+	err := loadErrWith(t, map[string]string{"CRONOMICON_LOG_FILE_KEEP": "-1"})
+	if !strings.Contains(err.Error(), "CRONOMICON_LOG_FILE_KEEP") {
+		t.Errorf("error %q should name CRONOMICON_LOG_FILE_KEEP", err)
 	}
 
-	c := loadWith(t, map[string]string{"AMADEUS_LOG_FILE_KEEP": "0"})
+	c := loadWith(t, map[string]string{"CRONOMICON_LOG_FILE_KEEP": "0"})
 	if c.LogFileKeep != 0 {
 		t.Errorf("LogFileKeep = %d, want 0 to survive as an explicit choice", c.LogFileKeep)
 	}

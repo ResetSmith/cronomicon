@@ -24,7 +24,7 @@ const STATS = {
 
 const LOCAL = {
   backend: "local",
-  local: { path: "/var/lib/amadeus/logs" },
+  local: { path: "/var/lib/cronomicon/logs" },
   sync: { mode: "interval", intervalSeconds: 900 },
   stats: STATS,
   lastModifiedAt: "2026-09-09T12:00:00Z",
@@ -32,8 +32,8 @@ const LOCAL = {
 
 const S3 = {
   backend: "s3",
-  local: { path: "/var/lib/amadeus/logs" },
-  s3: { endpoint: "minio:9000", bucket: "logs", region: "us-east-1", accessKey: "AK", prefix: "amadeus/", useSsl: false },
+  local: { path: "/var/lib/cronomicon/logs" },
+  s3: { endpoint: "minio:9000", bucket: "logs", region: "us-east-1", accessKey: "AK", prefix: "cronomicon/", useSsl: false },
   sync: { mode: "interval", intervalSeconds: 300 },
   archive: {
     count: 12,

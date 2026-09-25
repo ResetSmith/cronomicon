@@ -289,7 +289,7 @@ func TestRedactionValuesIncludesSshCredentials(t *testing.T) {
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek)}
 	ctx := context.Background()
 
-	material := "AMADEUS-TEST-SSH-PRIVATE-KEY-7f3a9c2e"
+	material := "CRONOMICON-TEST-SSH-PRIVATE-KEY-7f3a9c2e"
 	sealed, err := NewSealer(cfg).Seal([]byte(material))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
@@ -344,7 +344,7 @@ func TestLoadKEKNoConfig(t *testing.T) {
 
 // TestKEKRotation proves PP-L5: after rotating the active KEK version, a secret
 // wrapped under the old version still reveals (via the historical key supplied at
-// AMADEUS_KEK_<N>), while new writes are wrapped under the new active version.
+// CRONOMICON_KEK_<N>), while new writes are wrapped under the new active version.
 func TestKEKRotation(t *testing.T) {
 	pool, cleanup := openTestDB(t)
 	defer cleanup()
@@ -368,8 +368,8 @@ func TestKEKRotation(t *testing.T) {
 		t.Fatalf("secret written under v1 has kek_version=%d, want 1", storedVer)
 	}
 
-	// Phase 2: rotate — active version 2 (new key), old key kept at AMADEUS_KEK_1.
-	t.Setenv("AMADEUS_KEK_1", kek1B64)
+	// Phase 2: rotate — active version 2 (new key), old key kept at CRONOMICON_KEK_1.
+	t.Setenv("CRONOMICON_KEK_1", kek1B64)
 	cfgV2 := &config.Config{SecretKEKEnv: kek2B64, SecretKEKVersion: 2}
 	svc2 := New(pool, cfgV2, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
@@ -430,7 +430,7 @@ func TestEncryptStringRotation(t *testing.T) {
 	}
 
 	// Rotate to v2; keep v1 key available.
-	t.Setenv("AMADEUS_KEK_1", kek1B64)
+	t.Setenv("CRONOMICON_KEK_1", kek1B64)
 	cfgV2 := &config.Config{SecretKEKEnv: kek2B64, SecretKEKVersion: 2}
 	got, err := DecryptString(cfgV2, tok)
 	if err != nil {
@@ -473,7 +473,7 @@ func TestDeleteSecret(t *testing.T) {
 }
 
 // TestLoadKEKForVersionNames proves the historical-KEK lookup reads the
-// AMADEUS_KEK_<N>[_FILE] names. (The deprecated AMADEUS_SECRET_KEK_<N> fallback
+// CRONOMICON_KEK_<N>[_FILE] names. (The deprecated CRONOMICON_SECRET_KEK_<N> fallback
 // was removed in v1.5.41.)
 func TestLoadKEKForVersionNames(t *testing.T) {
 	kek, _ := randomBytes(32)
@@ -482,10 +482,10 @@ func TestLoadKEKForVersionNames(t *testing.T) {
 	cfg := &config.Config{SecretKEKVersion: 5}
 
 	t.Run("new name", func(t *testing.T) {
-		t.Setenv("AMADEUS_KEK_3", b64)
+		t.Setenv("CRONOMICON_KEK_3", b64)
 		got, err := loadKEKForVersion(cfg, 3)
 		if err != nil {
-			t.Fatalf("loadKEKForVersion via AMADEUS_KEK_3: %v", err)
+			t.Fatalf("loadKEKForVersion via CRONOMICON_KEK_3: %v", err)
 		}
 		if !bytes.Equal(got, kek) {
 			t.Fatal("KEK mismatch via new name")

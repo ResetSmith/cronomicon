@@ -12,7 +12,7 @@ import { RecycleBinSection } from "./settings/RecycleBin";
 import { GitlabSection, VaultSection, LogStorageSection, ObservabilitySection } from "./settings/Integrations";
 import { TimezoneAlert } from "./settings/TimezoneAlert";
 
-// Settings — left-rail sections mirroring the prototype (amadeus-settings.jsx).
+// Settings — left-rail sections mirroring the prototype (cronomicon-settings.jsx).
 // Runners has its own top-level view and is intentionally not duplicated here.
 // `requires` is the /capabilities permission the backend enforces for that
 // section (PP-B1); sections the caller can't manage are hidden so the UI matches

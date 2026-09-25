@@ -39,7 +39,7 @@ import (
 type ShadowFinding struct {
 	Kind      string `json:"kind"`      // secret | var
 	Name      string `json:"name"`      // the bare row name both rows share
-	Reference string `json:"reference"` // the derived AMADEUS_<SECTION>_<name>
+	Reference string `json:"reference"` // the derived CRONOMICON_<SECTION>_<name>
 	Scope     string `json:"scope"`     // the SHADOWING row's scope (never "")
 	// Agencies is the shadowing row's membership; empty means no restriction, which
 	// is the case this exists to surface.
@@ -66,7 +66,7 @@ type ShadowFinding struct {
 type AmbiguityFinding struct {
 	Kind      string `json:"kind"`      // secret | var | key
 	Name      string `json:"name"`      // the shared key/label
-	Reference string `json:"reference"` // the derived AMADEUS_<SECTION>_<name>
+	Reference string `json:"reference"` // the derived CRONOMICON_<SECTION>_<name>
 	Scope     string `json:"scope"`     // "" for keys, which carry no scope
 	// Owners are the departments holding a row of this name here, sorted. Always
 	// two or more — one owner is not an ambiguity.

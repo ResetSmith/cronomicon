@@ -10,7 +10,7 @@ import (
 )
 
 // TestWorkflowComposeCRUD exercises the in-app Workflow composition write API
-// (A11, Phase 4): create an amadeus-source workflow over existing jobs, the
+// (A11, Phase 4): create an cronomicon-source workflow over existing jobs, the
 // unknown-job 422, the disjoint-namespace 409, that git workflows are read-only
 // (409), and that delete cascades schedule bindings.
 func TestWorkflowComposeCRUD(t *testing.T) {
@@ -71,8 +71,8 @@ func TestWorkflowComposeCRUD(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
-	if created.Source != "amadeus" || len(created.Steps) != 2 {
-		t.Errorf("created source=%q steps=%d, want amadeus/2", created.Source, len(created.Steps))
+	if created.Source != "cronomicon" || len(created.Steps) != 2 {
+		t.Errorf("created source=%q steps=%d, want cronomicon/2", created.Source, len(created.Steps))
 	}
 
 	// ── Unknown job in steps → 422 ──────────────────────────────────────────────
@@ -85,12 +85,12 @@ func TestWorkflowComposeCRUD(t *testing.T) {
 		t.Errorf("unknown-job steps = %d, want 422", code)
 	}
 
-	// ── Duplicate amadeus name → 409 ────────────────────────────────────────────
+	// ── Duplicate cronomicon name → 409 ────────────────────────────────────────────
 	resp = post(http.MethodPost, ts.URL+"/api/v1/workflows", map[string]any{"name": "release", "steps": steps})
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusConflict {
-		t.Errorf("duplicate amadeus workflow = %d, want 409", code)
+		t.Errorf("duplicate cronomicon workflow = %d, want 409", code)
 	}
 
 	// ── Git workflow read-only (409 on PUT) ─────────────────────────────────────
@@ -103,7 +103,7 @@ func TestWorkflowComposeCRUD(t *testing.T) {
 		t.Errorf("PUT git workflow = %d, want 409", code)
 	}
 
-	// ── Delete amadeus workflow → 204 ───────────────────────────────────────────
+	// ── Delete cronomicon workflow → 204 ───────────────────────────────────────────
 	resp = post(http.MethodDelete, ts.URL+"/api/v1/workflows/"+itoa(created.ID), nil)
 	code = resp.StatusCode
 	resp.Body.Close()
@@ -113,8 +113,8 @@ func TestWorkflowComposeCRUD(t *testing.T) {
 	// RH: delete is now a soft delete — the row is stamped, not removed, so an
 	// undelete is one lossless UPDATE. "Deleted" means absent from the catalog.
 	var live, binned int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM workflows WHERE source='amadeus' AND name='release' AND deleted_at IS NULL`).Scan(&live)
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM workflows WHERE source='amadeus' AND name='release' AND deleted_at IS NOT NULL`).Scan(&binned)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM workflows WHERE source='cronomicon' AND name='release' AND deleted_at IS NULL`).Scan(&live)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM workflows WHERE source='cronomicon' AND name='release' AND deleted_at IS NOT NULL`).Scan(&binned)
 	if live != 0 {
 		t.Errorf("workflow is still live after delete: %d", live)
 	}
@@ -210,7 +210,7 @@ func TestWorkflowComposeLayoutRoundTrip(t *testing.T) {
 
 	// The layout lives in its own column, NOT in steps — so steps_hash is unaffected.
 	var stepsCol, layoutCol string
-	_ = pool.QueryRow(`SELECT steps, COALESCE(layout_json,'') FROM workflows WHERE source='amadeus' AND name='laidout'`).Scan(&stepsCol, &layoutCol)
+	_ = pool.QueryRow(`SELECT steps, COALESCE(layout_json,'') FROM workflows WHERE source='cronomicon' AND name='laidout'`).Scan(&stepsCol, &layoutCol)
 	if strings.Contains(stepsCol, `"x"`) || strings.Contains(stepsCol, "layout") {
 		t.Errorf("layout leaked into steps column: %s", stepsCol)
 	}
@@ -314,7 +314,7 @@ func TestWorkflowStructuralValidation(t *testing.T) {
 		t.Errorf("valid graph: ok=%v errors=%v, want ok/0-errors", vr.OK, vr.Errors)
 	}
 	var persisted int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM workflows WHERE source='amadeus' AND name='ok-flow'`).Scan(&persisted)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM workflows WHERE source='cronomicon' AND name='ok-flow'`).Scan(&persisted)
 	if persisted != 0 {
 		t.Errorf("validate persisted a workflow: %d rows, want 0 (dry-run)", persisted)
 	}

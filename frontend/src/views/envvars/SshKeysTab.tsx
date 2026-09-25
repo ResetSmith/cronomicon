@@ -114,7 +114,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
   const usedBy = (id: string) =>
     hosts.filter((h) => h.authCredentialId === id).length + bastions.filter((b) => b.authCredentialId === id).length;
   // T1.9 — distinct from "Used By" above: that counts hosts/bastions this key
-  // AUTHENTICATES; this counts jobs/scripts that BIND it as AMADEUS_KEY_<label>.
+  // AUTHENTICATES; this counts jobs/scripts that BIND it as CRONOMICON_KEY_<label>.
   // The two answer different questions and a key can have one without the other.
   const usage = useReferenceUsage(dep);
 
@@ -293,7 +293,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
 
       <NamespaceHelp>
         Reference a key in a script or inventory as{" "}
-        <code style={{ fontFamily: c.mono }}>AMADEUS_KEY_&lt;label&gt;</code> — unlike the other tabs it resolves to a{" "}
+        <code style={{ fontFamily: c.mono }}>CRONOMICON_KEY_&lt;label&gt;</code> — unlike the other tabs it resolves to a{" "}
         <strong>key-file path</strong> on the executing host (use it where a tool expects a key file, e.g.{" "}
         <code style={{ fontFamily: c.mono }}>ssh -i</code>), not the key bytes. Labels are POSIX identifiers so the
         reference is a valid env-var name.

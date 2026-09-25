@@ -21,7 +21,7 @@ func enableInjection(svc *Service) {
 	svc.cfg.SecretKEKEnv = testKEK
 }
 
-// seedInjectionRun seeds an amadeus job 'j1' + a stored secret + variable (scope
+// seedInjectionRun seeds an cronomicon job 'j1' + a stored secret + variable (scope
 // 'prod') + reference bindings for the job + a claimed runner run, and returns the
 // trace id. protocolVersion + allowInject configure the assigned runner.
 func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersion int, allowInject bool) (traceID, secretVal, varVal string) {
@@ -34,7 +34,7 @@ func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersi
 		t.Fatalf("configure runner: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	sc, err := secrets.New(svc.db, svc.cfg, svc.log).Create(ctx,
@@ -48,7 +48,7 @@ func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersi
 		t.Fatalf("seed var: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','DB_PASS',?),('job','amadeus','j1','var','REGION',?)`, now(), now()); err != nil {
+		VALUES('job','cronomicon','j1','secret','DB_PASS',?),('job','cronomicon','j1','var','REGION',?)`, now(), now()); err != nil {
 		t.Fatalf("seed bindings: %v", err)
 	}
 	traceID = db.NewTraceID()
@@ -58,7 +58,7 @@ func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersi
 	// must reflect a dispatched secret-bearing run.
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, injects_secret, started_at, created_at)
-		VALUES(?, 'j1', 'amadeus', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', 1, ?, ?)`,
+		VALUES(?, 'j1', 'cronomicon', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', 1, ?, ?)`,
 		traceID, runnerID, now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -79,31 +79,31 @@ func callManifest(t *testing.T, svc *Service, as *auth.Service, traceID, token s
 }
 
 // TestManifestInjectsReferences (P1.4): a binding-bearing run assigned to a v6,
-// injection-flagged runner ships resolved Secrets + the AMADEUS_RUN_* context.
+// injection-flagged runner ships resolved Secrets + the CRONOMICON_RUN_* context.
 func TestManifestInjectsReferences(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-inj", "amt_run_inj"
+	runnerID, tok := "runner-inj", "crn_run_inj"
 	insertRunner(t, svc, runnerID, "inj", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
 	traceID, secretVal, varVal := seedInjectionRun(t, svc, runnerID, 6, true)
 	m := getManifest(t, svc, as, traceID, tok)
 
-	if m.Secrets["AMADEUS_SECRET_DB_PASS"] != secretVal {
-		t.Errorf("secret not injected: %q", m.Secrets["AMADEUS_SECRET_DB_PASS"])
+	if m.Secrets["CRONOMICON_SECRET_DB_PASS"] != secretVal {
+		t.Errorf("secret not injected: %q", m.Secrets["CRONOMICON_SECRET_DB_PASS"])
 	}
-	if m.Secrets["AMADEUS_VAR_REGION"] != varVal {
-		t.Errorf("variable not injected: %q", m.Secrets["AMADEUS_VAR_REGION"])
+	if m.Secrets["CRONOMICON_VAR_REGION"] != varVal {
+		t.Errorf("variable not injected: %q", m.Secrets["CRONOMICON_VAR_REGION"])
 	}
 	// Run context lands in the plaintext Env, NOT the Secrets block.
-	if m.Env["AMADEUS_RUN_ID"] != traceID || m.Env["AMADEUS_RUN_EXECUTOR"] != "runner" ||
-		m.Env["AMADEUS_RUN_JOB"] != "j1" || m.Env["AMADEUS_RUN_SCOPE"] != "prod" ||
-		m.Env["AMADEUS_RUN_TRIGGERED_BY"] != "ops@x" {
+	if m.Env["CRONOMICON_RUN_ID"] != traceID || m.Env["CRONOMICON_RUN_EXECUTOR"] != "runner" ||
+		m.Env["CRONOMICON_RUN_JOB"] != "j1" || m.Env["CRONOMICON_RUN_SCOPE"] != "prod" ||
+		m.Env["CRONOMICON_RUN_TRIGGERED_BY"] != "ops@x" {
 		t.Errorf("run context missing/wrong in Env: %+v", m.Env)
 	}
-	if _, leaked := m.Env["AMADEUS_SECRET_DB_PASS"]; leaked {
+	if _, leaked := m.Env["CRONOMICON_SECRET_DB_PASS"]; leaked {
 		t.Errorf("secret value leaked into plaintext Env: %+v", m.Env)
 	}
 }
@@ -116,7 +116,7 @@ func TestManifestInjectsOverrideReferences(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-ovr", "amt_run_ovr"
+	runnerID, tok := "runner-ovr", "crn_run_ovr"
 	insertRunner(t, svc, runnerID, "ovr", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -132,14 +132,14 @@ func TestManifestInjectsOverrideReferences(t *testing.T) {
 	}
 
 	m := getManifest(t, svc, as, traceID, tok)
-	if m.Secrets["AMADEUS_VAR_EXTRA"] != "extra-value" {
-		t.Errorf("per-run added variable not injected: %q", m.Secrets["AMADEUS_VAR_EXTRA"])
+	if m.Secrets["CRONOMICON_VAR_EXTRA"] != "extra-value" {
+		t.Errorf("per-run added variable not injected: %q", m.Secrets["CRONOMICON_VAR_EXTRA"])
 	}
-	if m.Secrets["AMADEUS_SECRET_DB_PASS"] != secretVal {
-		t.Errorf("declared secret lost after per-run addition: %q", m.Secrets["AMADEUS_SECRET_DB_PASS"])
+	if m.Secrets["CRONOMICON_SECRET_DB_PASS"] != secretVal {
+		t.Errorf("declared secret lost after per-run addition: %q", m.Secrets["CRONOMICON_SECRET_DB_PASS"])
 	}
-	if m.Secrets["AMADEUS_VAR_REGION"] != varVal {
-		t.Errorf("declared variable lost after per-run addition: %q", m.Secrets["AMADEUS_VAR_REGION"])
+	if m.Secrets["CRONOMICON_VAR_REGION"] != varVal {
+		t.Errorf("declared variable lost after per-run addition: %q", m.Secrets["CRONOMICON_VAR_REGION"])
 	}
 }
 
@@ -149,7 +149,7 @@ func TestManifestSecretInjectionRunnerNotFlagged(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-noinj", "amt_run_noinj"
+	runnerID, tok := "runner-noinj", "crn_run_noinj"
 	insertRunner(t, svc, runnerID, "noinj", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -175,12 +175,12 @@ func TestClaimRunSecretInjectionGate(t *testing.T) {
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES(?, 'jb', 'amadeus', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
+		VALUES(?, 'jb', 'cronomicon', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
 		traceID, now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','jb','secret','DB_PASS',?)`, now()); err != nil {
+		VALUES('job','cronomicon','jb','secret','DB_PASS',?)`, now()); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
 
@@ -216,12 +216,12 @@ func TestClaimRunGateDisarmedByKillSwitch(t *testing.T) {
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES(?, 'jb', 'amadeus', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
+		VALUES(?, 'jb', 'cronomicon', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
 		traceID, now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','jb','secret','DB_PASS',?)`, now()); err != nil {
+		VALUES('job','cronomicon','jb','secret','DB_PASS',?)`, now()); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
 

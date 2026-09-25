@@ -14,7 +14,7 @@
 --     the constraint lets sync keep its atomic upsert (ON CONFLICT against the
 --     partial index), and the sync validator refuses a duplicate pair in the
 --     repo BEFORE it gets here.
---   * the amadeus pool has NO unique (source, name): per-agency uniqueness is
+--   * the cronomicon pool has NO unique (source, name): per-agency uniqueness is
 --     a SET-OVERLAP rule ("unique within EACH agency the scope maps to; the
 --     All pool overlaps everything"), which no SQLite UNIQUE can express. It
 --     is enforced as a checked invariant in the compose/sync/restore write
@@ -57,7 +57,7 @@ UPDATE schedules SET uid = lower(hex(randomblob(16))) WHERE uid IS NULL OR uid =
 CREATE TABLE jobs_new (
     uid                TEXT PRIMARY KEY,
     name               TEXT NOT NULL,
-    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     run_type           TEXT NOT NULL CHECK (run_type IN ('bash','ansible','terraform','powershell','perl','python')),
     description        TEXT,
     scope              TEXT,
@@ -126,7 +126,7 @@ CREATE UNIQUE INDEX uq_jobs_git_name ON jobs(source, name) WHERE source = 'git';
 CREATE TABLE workflows_new (
     uid              TEXT PRIMARY KEY,
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     steps            TEXT NOT NULL DEFAULT '[]',
     schedule         TEXT,
@@ -162,7 +162,7 @@ CREATE UNIQUE INDEX uq_workflows_git_name ON workflows(source, name) WHERE sourc
 CREATE TABLE schedules_new (
     uid              TEXT PRIMARY KEY,
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     cron             TEXT NOT NULL,
     env              TEXT,
@@ -229,7 +229,7 @@ CREATE UNIQUE INDEX uq_definition_revisions
 -- for its SCRIPT owners, whose identity is deliberately still the name.
 
 CREATE TABLE definition_schedules_new (
-    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind   TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name   TEXT NOT NULL,
     name         TEXT NOT NULL,
@@ -256,7 +256,7 @@ CREATE INDEX idx_def_schedules_owner_uid ON definition_schedules(owner_uid);
 CREATE UNIQUE INDEX uq_def_schedules_entry ON definition_schedules(owner_kind, owner_uid, name);
 
 CREATE TABLE paused_jobs_new (
-    source     TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source     TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     owner_kind TEXT NOT NULL DEFAULT 'job' CHECK (owner_kind IN ('job','workflow')),
     name       TEXT NOT NULL,
     paused_by  TEXT NOT NULL,
@@ -270,11 +270,11 @@ CREATE INDEX idx_paused_jobs_owner_uid ON paused_jobs(owner_uid);
 CREATE UNIQUE INDEX uq_paused_owner ON paused_jobs(owner_kind, owner_uid);
 
 CREATE TABLE reactions_new (
-    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind    TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name    TEXT NOT NULL,
     name          TEXT NOT NULL,
-    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','amadeus')),
+    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','cronomicon')),
     on_kind       TEXT NOT NULL CHECK (on_kind IN ('job','workflow')),
     on_name       TEXT NOT NULL,
     on_outcome    TEXT NOT NULL CHECK (on_outcome IN ('success','failure','stopped','any')),

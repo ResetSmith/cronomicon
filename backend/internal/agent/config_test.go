@@ -33,7 +33,7 @@ func TestResolveDefaults(t *testing.T) {
 	if cfg.PollInterval != 60*time.Second {
 		t.Errorf("default poll interval = %v, want 60s (D7)", cfg.PollInterval)
 	}
-	if cfg.Inventory != "amadeus" {
+	if cfg.Inventory != "cronomicon" {
 		t.Errorf("default inventory = %q", cfg.Inventory)
 	}
 	if got := cfg.Capabilities; len(got) != 2 || got[0] != "bash" || got[1] != "perl" {
@@ -56,8 +56,8 @@ func TestResolvePrecedence(t *testing.T) {
 	}
 
 	env := envMap(map[string]string{
-		"AMADEUS_RUNNER_SERVER":         "https://env-server",
-		"AMADEUS_RUNNER_MAX_CONCURRENT": "2",
+		"CRONOMICON_RUNNER_SERVER":         "https://env-server",
+		"CRONOMICON_RUNNER_MAX_CONCURRENT": "2",
 		// name not in env → should keep file value
 	})
 
@@ -111,11 +111,11 @@ func TestResolveServerURLScheme(t *testing.T) {
 	ok := []struct {
 		name, in, want string
 	}{
-		{"bare host", "amadeus.example.com", "https://amadeus.example.com"},
-		{"bare host:port", "amadeus.example.com:8080", "https://amadeus.example.com:8080"},
+		{"bare host", "cronomicon.example.com", "https://cronomicon.example.com"},
+		{"bare host:port", "cronomicon.example.com:8080", "https://cronomicon.example.com:8080"},
 		{"https preserved + slash trimmed", "https://srv/", "https://srv"},
 		{"http preserved (dev/local)", "http://localhost:8080", "http://localhost:8080"},
-		{"surrounding whitespace trimmed", "  amadeus.example.com  ", "https://amadeus.example.com"},
+		{"surrounding whitespace trimmed", "  cronomicon.example.com  ", "https://cronomicon.example.com"},
 	}
 	for _, tc := range ok {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestResolveServerURLScheme(t *testing.T) {
 	}
 
 	bad := []struct{ name, in string }{
-		{"unusable scheme", "ftp://amadeus.example.com"},
+		{"unusable scheme", "ftp://cronomicon.example.com"},
 		{"scheme but no host", "https:///only-a-path"},
 	}
 	for _, tc := range bad {
@@ -213,8 +213,8 @@ func TestResolveScopedEnvKnobs(t *testing.T) {
 
 	// Env layer overrides file; flag layer overrides env.
 	env := envMap(map[string]string{
-		"AMADEUS_RUNNER_ENV_BASE_EXTRA":        "A,B",
-		"AMADEUS_RUNNER_EXCLUDE_SSH_AUTH_SOCK": "false",
+		"CRONOMICON_RUNNER_ENV_BASE_EXTRA":        "A,B",
+		"CRONOMICON_RUNNER_EXCLUDE_SSH_AUTH_SOCK": "false",
 	})
 	cfg, err = Resolve([]string{"-config", file, "-env-base-extra", "C"}, env)
 	if err != nil {
@@ -259,8 +259,8 @@ func TestResolveAuthBridgeKnobs(t *testing.T) {
 
 	// Env overrides file; flag overrides env.
 	env := envMap(map[string]string{
-		"AMADEUS_RUNNER_NO_AUTH_BRIDGE":          "false",
-		"AMADEUS_RUNNER_ANSIBLE_SSH_COMMON_ARGS": "-o Ciphers=aes256-gcm@openssh.com",
+		"CRONOMICON_RUNNER_NO_AUTH_BRIDGE":          "false",
+		"CRONOMICON_RUNNER_ANSIBLE_SSH_COMMON_ARGS": "-o Ciphers=aes256-gcm@openssh.com",
 	})
 	cfg, err = Resolve([]string{"-config", file, "-ansible-ssh-common-args", "-o StrictHostKeyChecking=yes"}, env)
 	if err != nil {

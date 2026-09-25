@@ -24,7 +24,7 @@ CREATE INDEX idx_runs_claimable ON runs (status, executor, created_at);
 
 CREATE TABLE jobs_old (
     name               TEXT NOT NULL,
-    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     run_type           TEXT NOT NULL CHECK (run_type IN ('bash','ansible','terraform','powershell','perl','python')),
     description        TEXT,
     scope              TEXT,

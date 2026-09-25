@@ -93,7 +93,7 @@ func fmtSscan(s string, p *int) (int, error) {
 
 func TestSMTPSend(t *testing.T) {
 	host, port, got, wg := fakeSMTP(t)
-	s := SMTP{Host: host, Port: port, Encryption: "none", From: "amadeus@example.com", FromName: "Cronomicon"}
+	s := SMTP{Host: host, Port: port, Encryption: "none", From: "cronomicon@example.com", FromName: "Cronomicon"}
 	if err := s.Send([]string{"ops@example.com"}, "[Cronomicon] job FAILED", "Job: nightly\nStatus: failure\n"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestDispatcherMatchAndSend(t *testing.T) {
 	// Seed notification_config: SMTP host + apprise targets.
 	_, err = pool.Exec(`INSERT INTO notification_config
 		(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_url, apprise_targets, last_modified_at)
-		VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','[]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`)
+		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`)
 	if err != nil {
 		t.Fatalf("seed notif config: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestInertChannelSendsNothing(t *testing.T) {
 	}
 	if _, err := pool.Exec(`INSERT INTO notification_config
 		(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_url, apprise_targets, last_modified_at)
-		VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','[]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`); err != nil {
+		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`); err != nil {
 		t.Fatalf("seed notif config: %v", err)
 	}
 	sent := 0
@@ -392,7 +392,7 @@ func TestSendTestReportsPerTransport(t *testing.T) {
 		d, pool := newDispatcherDB(t)
 		if _, err := pool.Exec(`INSERT INTO notification_config
 			(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_url, apprise_targets, last_modified_at)
-			VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','["ops@example.com"]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`); err != nil {
+			VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','["ops@example.com"]',1,'http://apprise:8000','[{"label":"On-call","service":"slack","url":"slack://x","enabled":true}]','now')`); err != nil {
 			t.Fatalf("seed config: %v", err)
 		}
 		var mailedTo []string
@@ -476,7 +476,7 @@ func TestSendTestReportsPerTransport(t *testing.T) {
 		d, pool := newDispatcherDB(t)
 		if _, err := pool.Exec(`INSERT INTO notification_config
 			(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_targets, last_modified_at)
-			VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','[]','[]','now')`); err != nil {
+			VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]','[]','now')`); err != nil {
 			t.Fatalf("seed config: %v", err)
 		}
 		if _, err := pool.Exec(`INSERT INTO alert_config
@@ -501,7 +501,7 @@ func TestSendTestReportsPerTransport(t *testing.T) {
 		d, pool := newDispatcherDB(t)
 		if _, err := pool.Exec(`INSERT INTO notification_config
 			(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_targets, last_modified_at)
-			VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','["ops@example.com"]','[]','now')`); err != nil {
+			VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','["ops@example.com"]','[]','now')`); err != nil {
 			t.Fatalf("seed config: %v", err)
 		}
 		d.sendEmail = func(SMTP, []string, string, string) error { return errRefused }

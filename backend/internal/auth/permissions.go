@@ -47,7 +47,7 @@ type Permissions struct {
 	PublishSchedule bool `json:"publishSchedule"`
 	ConfigureApp    bool `json:"configureApp"`
 	ManageRoles     bool `json:"manageRoles"`
-	// Compose (AF-2) — authoring amadeus-source JOBS and WORKFLOWS. Grantable and
+	// Compose (AF-2) — authoring cronomicon-source JOBS and WORKFLOWS. Grantable and
 	// AGENCY-BOUND: holding it means you may author within the scopes your grant
 	// reaches, never everywhere. The four other surfaces the old admin-only gate
 	// covered (schedule-defs, calendars, reactions, revisions/recycle-bin) act on

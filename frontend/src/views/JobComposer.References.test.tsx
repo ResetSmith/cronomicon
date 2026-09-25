@@ -14,7 +14,7 @@ import { MemoryRouter } from "react-router-dom";
 const EDIT_JOB = {
   id: 7,
   name: "nightly-backup",
-  source: "amadeus",
+  source: "cronomicon",
   scriptRef: "tools/backup.sh",
   scope: "Prod",
   prompts: [],
@@ -26,7 +26,7 @@ const EDIT_JOB = {
 // composer used to discard on load.
 const SAVED_BINDINGS = [
   { kind: "key", name: "deploy-key" },
-  { kind: "secret", name: "DB_PASSWORD", reference: "AMADEUS_SECRET_DB_PASSWORD" },
+  { kind: "secret", name: "DB_PASSWORD", reference: "CRONOMICON_SECRET_DB_PASSWORD" },
 ];
 
 let manageEnvVars = true;
@@ -94,18 +94,18 @@ const sentBindings = () =>
 describe("JobComposer — secrets & variables (JP-4a)", () => {
   it("prefills the job's declared secret/variable bindings in edit mode", async () => {
     const q = renderComposer("/compose?id=7");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
     // The key binding still prefills into its own section, unchanged.
-    expect(q.getByText("AMADEUS_KEY_deploy-key")).toBeTruthy();
+    expect(q.getByText("CRONOMICON_KEY_deploy-key")).toBeTruthy();
   });
 
   it("sends a newly declared reference with the keys in ONE bindings write", async () => {
     const q = renderComposer("/compose?id=7");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
 
     fireEvent.change(q.getByLabelText("Reference name"), { target: { value: "API_TOKEN" } });
     fireEvent.click(q.getAllByRole("button", { name: "Add" })[0]);
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_API_TOKEN")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_API_TOKEN")).toBeTruthy());
 
     fireEvent.click(q.getByRole("button", { name: /Save changes|Save|Update/ }));
     await waitFor(() => expect(bindingsPut()).toBeTruthy());
@@ -120,7 +120,7 @@ describe("JobComposer — secrets & variables (JP-4a)", () => {
 
   it("carries the inject-as alias through to the write", async () => {
     const q = renderComposer("/compose?id=7");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
 
     fireEvent.change(q.getByLabelText("Reference name"), { target: { value: "API_TOKEN" } });
     fireEvent.change(q.getByLabelText(/^Alias/), { target: { value: "TOKEN" } });
@@ -133,7 +133,7 @@ describe("JobComposer — secrets & variables (JP-4a)", () => {
 
   it("writes no bindings at all when they were not touched", async () => {
     const q = renderComposer("/compose?id=7");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
     fireEvent.click(q.getByRole("button", { name: /Save changes|Save|Update/ }));
     // The job PUT lands; the bindings PUT must not (an untouched save should not
     // require ManageEnvVars).
@@ -144,7 +144,7 @@ describe("JobComposer — secrets & variables (JP-4a)", () => {
   it("withholds the picker's controls without the Manage Env Vars permission", async () => {
     manageEnvVars = false;
     const q = renderComposer("/compose?id=7");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
     // Rows still render (they are the job's declared set) but nothing can edit them.
     expect(q.queryByLabelText("Reference name")).toBeNull();
     expect(q.queryByRole("button", { name: /^Remove reference/ })).toBeNull();

@@ -17,9 +17,9 @@ func TestAgenciesAPI(t *testing.T) {
 	ctx := context.Background()
 	client, csrf := devLoginWithCSRF(t, ts)
 
-	// A scope to bind (amadeus-source; id is opaque text).
+	// A scope to bind (cronomicon-source; id is opaque text).
 	if _, err := pool.ExecContext(ctx,
-		`INSERT INTO scopes(id, name, source, created_at) VALUES('s1','prod','amadeus','t')`); err != nil {
+		`INSERT INTO scopes(id, name, source, created_at) VALUES('s1','prod','cronomicon','t')`); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
 

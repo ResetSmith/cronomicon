@@ -1,12 +1,12 @@
-// Package envref is the single source of truth for the AMADEUS_* env-var
+// Package envref is the single source of truth for the CRONOMICON_* env-var
 // namespace contract (the namespace-update plan, Option B).
 //
-// Rule: if an AMADEUS_* name starts with one of the reserved reference prefixes
+// Rule: if an CRONOMICON_* name starts with one of the reserved reference prefixes
 // (VAR_, SECRET_, KEY_, RUN_) it is a REFERENCE the app resolves and injects into
-// runs; every other AMADEUS_* name is server/runner configuration.
+// runs; every other CRONOMICON_* name is server/runner configuration.
 //
 // The prefix is reference syntax, not stored data: rows keep bare names and the
-// reference is DERIVED at use time (reference = AMADEUS_<SECTION>_<bare name>).
+// reference is DERIVED at use time (reference = CRONOMICON_<SECTION>_<bare name>).
 // Resolution strips the known prefix verbatim (case-preserved) to locate the
 // row/file.
 //
@@ -23,27 +23,27 @@ import (
 
 // Namespace is the umbrella prefix for every Cronomicon-owned env-var name (config
 // AND references).
-const Namespace = "AMADEUS_"
+const Namespace = "CRONOMICON_"
 
 // Reserved reference prefixes (the closed allowlist). Exact-prefix matching:
-// AMADEUS_SECRET_ never matches AMADEUS_SECRETS_.
+// CRONOMICON_SECRET_ never matches CRONOMICON_SECRETS_.
 const (
-	PrefixVar    = "AMADEUS_VAR_"
-	PrefixSecret = "AMADEUS_SECRET_"
-	PrefixKey    = "AMADEUS_KEY_"
-	PrefixRun    = "AMADEUS_RUN_"
+	PrefixVar    = "CRONOMICON_VAR_"
+	PrefixSecret = "CRONOMICON_SECRET_" //nolint:gosec // G101: an env-var name prefix, not a credential
+	PrefixKey    = "CRONOMICON_KEY_"
+	PrefixRun    = "CRONOMICON_RUN_"
 )
 
 // PrefixRunnerConfig is the runner agent's own configuration namespace
-// (AMADEUS_RUNNER_SERVER, _REGISTRATION_TOKEN, _CHECKOUT_TOKEN, _VAULT_PASSWORD_FILE,
+// (CRONOMICON_RUNNER_SERVER, _REGISTRATION_TOKEN, _CHECKOUT_TOKEN, _VAULT_PASSWORD_FILE,
 // …). It is NOT a reference prefix: nothing under it resolves to a store row, and
 // a job may never read it — see IsAgentConfig.
 //
-// Deliberately distinct from PrefixRun ("AMADEUS_RUN_", the run-context names a
+// Deliberately distinct from PrefixRun ("CRONOMICON_RUN_", the run-context names a
 // job MAY read). The two differ only by the letters "NER" and are easy to misread,
-// but they are separate namespaces with OPPOSITE access rules: AMADEUS_RUN_* is
-// injected into every run on purpose; AMADEUS_RUNNER_* is refused outright.
-const PrefixRunnerConfig = "AMADEUS_RUNNER_"
+// but they are separate namespaces with OPPOSITE access rules: CRONOMICON_RUN_* is
+// injected into every run on purpose; CRONOMICON_RUNNER_* is refused outright.
+const PrefixRunnerConfig = "CRONOMICON_RUNNER_"
 
 // IsAgentConfig reports whether name belongs to the runner agent's own
 // configuration namespace, and is therefore never a legitimate job env
@@ -69,7 +69,7 @@ func (e *Error) Error() string { return e.Msg }
 
 func errf(format string, a ...any) error { return &Error{Msg: fmt.Sprintf(format, a...)} }
 
-// Reserved AMADEUS_RUN_* run-context names — the fixed, dispatcher-owned set
+// Reserved CRONOMICON_RUN_* run-context names — the fixed, dispatcher-owned set
 // (namespace plan N-D4, vault-integration.md D7). The executor injects these into
 // every run; they are NOT bindable (KindForSection rejects SectionRun) and never
 // resolve from a store row. Extend deliberately: each is a stable contract a run
@@ -77,7 +77,7 @@ func errf(format string, a ...any) error { return &Error{Msg: fmt.Sprintf(format
 const (
 	RunID          = PrefixRun + "ID"           // the run / trace id (runs.id)
 	RunJob         = PrefixRun + "JOB"          // job name
-	RunJobSource   = PrefixRun + "JOB_SOURCE"   // git | amadeus
+	RunJobSource   = PrefixRun + "JOB_SOURCE"   // git | cronomicon
 	RunScope       = PrefixRun + "SCOPE"        // run scope ("" = global)
 	RunType        = PrefixRun + "TYPE"         // bash | ansible | terraform | ...
 	RunTriggeredBy = PrefixRun + "TRIGGERED_BY" // the actor that triggered the run
@@ -95,10 +95,10 @@ const (
 	SectionRun
 )
 
-// HasAmadeusPrefix reports whether name is in the AMADEUS_ namespace at all. This
+// HasCronomiconPrefix reports whether name is in the CRONOMICON_ namespace at all. This
 // is the test the run-env guard uses: operator-authored env may never define ANY
-// AMADEUS_* key (N-D1, absolute, no carve-outs).
-func HasAmadeusPrefix(name string) bool {
+// CRONOMICON_* key (N-D1, absolute, no carve-outs).
+func HasCronomiconPrefix(name string) bool {
 	return strings.HasPrefix(name, Namespace)
 }
 
@@ -118,7 +118,7 @@ func Split(name string) (section Section, bare string, ok bool) {
 	return SectionNone, "", false
 }
 
-// StripKey returns the bare name behind an AMADEUS_KEY_ reference; ok is false
+// StripKey returns the bare name behind an CRONOMICON_KEY_ reference; ok is false
 // (and the input is returned unchanged) when name has no key prefix.
 func StripKey(name string) (bare string, ok bool) {
 	if strings.HasPrefix(name, PrefixKey) {
@@ -127,8 +127,8 @@ func StripKey(name string) (bare string, ok bool) {
 	return name, false
 }
 
-// StripValueReference returns the bare name behind an AMADEUS_SECRET_ or
-// AMADEUS_VAR_ reference (both resolve to a value); ok is false when name is
+// StripValueReference returns the bare name behind an CRONOMICON_SECRET_ or
+// CRONOMICON_VAR_ reference (both resolve to a value); ok is false when name is
 // neither. Used by the agent env bridge's prefixed→bare fallback.
 func StripValueReference(name string) (bare string, ok bool) {
 	if strings.HasPrefix(name, PrefixSecret) {
@@ -156,11 +156,11 @@ var rowNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // the KEK_<N> / KEK_<N>_FILE rotation forms).
 //
 // The bar originally existed because a Secrets row named KEK derived to
-// AMADEUS_SECRET_KEK, which WAS a live config alias for the key-encryption key
+// CRONOMICON_SECRET_KEK, which WAS a live config alias for the key-encryption key
 // until v1.5.41 removed the alias — so the collision it was written to prevent
 // no longer exists. It stays anyway, as naming hygiene rather than as a
 // correctness guard: the KEK is app config and explicitly NOT a stored secret
-// (that distinction is the whole point of evicting it from the AMADEUS_SECRET_*
+// (that distinction is the whole point of evicting it from the CRONOMICON_SECRET_*
 // prefix), so a Secrets row called KEK invites exactly the confusion the
 // eviction was meant to end. Removing it would only widen what is accepted, and
 // nobody has asked for the name.
@@ -173,11 +173,11 @@ func ValidateRowName(name string) error {
 	if name == "" {
 		return errf("name is required")
 	}
-	if HasAmadeusPrefix(name) {
-		return errf("invalid name %q: a row name may not start with AMADEUS_ — the prefix is reference syntax, derived automatically", name)
+	if HasCronomiconPrefix(name) {
+		return errf("invalid name %q: a row name may not start with CRONOMICON_ — the prefix is reference syntax, derived automatically", name)
 	}
 	if !rowNameRe.MatchString(name) {
-		return errf("invalid name %q: must match %s (a POSIX identifier) so its AMADEUS_ reference is a legal env-var name", name, rowNameRe.String())
+		return errf("invalid name %q: must match %s (a POSIX identifier) so its CRONOMICON_ reference is a legal env-var name", name, rowNameRe.String())
 	}
 	return nil
 }
@@ -190,12 +190,12 @@ func ValidateSecretRowName(name string) error {
 		return err
 	}
 	if kekRe.MatchString(name) {
-		return errf("invalid secret name %q: reserved — its %s reference would collide with the KEK config name AMADEUS_%s", name, SecretReference(name), name)
+		return errf("invalid secret name %q: reserved — its %s reference would collide with the KEK config name CRONOMICON_%s", name, SecretReference(name), name)
 	}
 	return nil
 }
 
-// ValidateOperatorEnv rejects any AMADEUS_-namespaced key in operator-authored
+// ValidateOperatorEnv rejects any CRONOMICON_-namespaced key in operator-authored
 // run env (job env, schedule env, per-run override, workflow step inputs).
 // Absolute — no carve-outs (N-D1): these names are injector-owned, so allowing
 // an operator to define one would let them spoof/shadow a reference or run
@@ -203,7 +203,7 @@ func ValidateSecretRowName(name string) error {
 func ValidateOperatorEnv(env map[string]string) error {
 	var bad []string
 	for k := range env {
-		if HasAmadeusPrefix(k) {
+		if HasCronomiconPrefix(k) {
 			bad = append(bad, k)
 		}
 	}
@@ -211,5 +211,5 @@ func ValidateOperatorEnv(env map[string]string) error {
 		return nil
 	}
 	sort.Strings(bad)
-	return errf("env key %q is reserved: operator-authored env may not define any AMADEUS_* name — these are references Cronomicon injects, not settings. To use a stored value, reference it (e.g. lookup('env','%s…') in an inventory) rather than defining the key here", bad[0], Namespace)
+	return errf("env key %q is reserved: operator-authored env may not define any CRONOMICON_* name — these are references Cronomicon injects, not settings. To use a stored value, reference it (e.g. lookup('env','%s…') in an inventory) rather than defining the key here", bad[0], Namespace)
 }

@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	stateCookie = "amadeus_oidc_state"
-	nonceCookie = "amadeus_oidc_nonce"
+	stateCookie = "cronomicon_oidc_state"
+	nonceCookie = "cronomicon_oidc_nonce"
 	loginTTL    = 10 * time.Minute
 )
 

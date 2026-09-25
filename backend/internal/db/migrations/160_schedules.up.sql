@@ -1,4 +1,4 @@
--- 160 First-class Schedules (amadeus-v20.md — A10a).
+-- 160 First-class Schedules (cronomicon-v20.md — A10a).
 --
 -- A Schedule becomes a standalone, browsable, REFERENCEABLE primitive (cron +
 -- optional env), the way A8 promoted Scripts. A job/workflow may reference one or
@@ -9,19 +9,19 @@
 --
 -- Born DUAL-SOURCE aware (PK (source,name)) so Phase 2's dual-source work needs no
 -- rebuild of this table. GitLab is the source of truth for source='git' rows;
--- source='amadeus' rows are operator-authored in-app (Phase 3+). Like
+-- source='cronomicon' rows are operator-authored in-app (Phase 3+). Like
 -- scripts/jobs/definition_schedules, the git rows are a Git-derived read-model cache.
 CREATE TABLE schedules (
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     cron             TEXT NOT NULL,
     env              TEXT,                  -- optional JSON map[string]string; plaintext if git (§3.7)
     -- 'sha256:'-prefixed digest of cron+env, for run-snapshot reproducibility (§5.5).
     content_hash     TEXT NOT NULL,
-    source_path      TEXT,                  -- schedules/<name>.yaml in git (NULL for amadeus)
+    source_path      TEXT,                  -- schedules/<name>.yaml in git (NULL for cronomicon)
     synced_at        TEXT,                  -- git only
-    -- S4 provenance for operator-authored (source='amadeus') rows.
+    -- S4 provenance for operator-authored (source='cronomicon') rows.
     created_by       TEXT,
     created_at       TEXT,
     last_modified_by TEXT,

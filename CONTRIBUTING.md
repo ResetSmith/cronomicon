@@ -32,8 +32,8 @@ npm run build        # tsc -b && vite build → backend/web/dist
 A local development instance with dev auth and demo data:
 
 ```bash
-AMADEUS_DEV_AUTH=true AMADEUS_DEV_SEED=true AMADEUS_COOKIE_SECURE=false \
-  AMADEUS_DB_PATH=/tmp/amadeus-dev.db ./backend/bin/amadeus
+CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false \
+  CRONOMICON_DB_PATH=/tmp/cronomicon-dev.db ./backend/bin/cronomicon
 ```
 
 ## Making changes

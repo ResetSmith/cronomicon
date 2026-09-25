@@ -15,7 +15,7 @@ import (
 // another origin can't read the cookie (SameSite=Lax + same-origin JS), they
 // can't forge the header.
 const (
-	csrfCookieName = "amadeus_csrf"
+	csrfCookieName = "cronomicon_csrf"
 	csrfHeaderName = "X-CSRF-Token"
 )
 

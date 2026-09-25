@@ -33,17 +33,17 @@ func preflightDB(t *testing.T) (*sql.DB, func(string, ...any)) {
 	const now = "2026-01-01T00:00:00Z"
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-dss','DSS',?)`, now)
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-nwd','NWD',?)`, now)
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-prod','prod','amadeus',?)`, now)
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-dev','dev','amadeus',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-prod','prod','cronomicon',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-dev','dev','cronomicon',?)`, now)
 	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc-prod','ag-dss')`)
 	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc-dev','ag-nwd')`)
-	exec(`INSERT INTO jobs(source, name, run_type, command, scope, synced_at) VALUES('amadeus','prod-job','bash','true','prod',?)`, now)
-	exec(`INSERT INTO jobs(source, name, run_type, command, scope, synced_at) VALUES('amadeus','dev-job','bash','true','dev',?)`, now)
+	exec(`INSERT INTO jobs(source, name, run_type, command, scope, synced_at) VALUES('cronomicon','prod-job','bash','true','prod',?)`, now)
+	exec(`INSERT INTO jobs(source, name, run_type, command, scope, synced_at) VALUES('cronomicon','dev-job','bash','true','dev',?)`, now)
 	exec(`INSERT INTO secrets(id, key, source, created_at) VALUES('s-global','TOKEN','stored',?)`, now)
 	exec(`INSERT INTO ssh_credentials(id, label, source, created_at, last_modified_at) VALUES('k1','deploy_key','stored',?,?)`, now, now)
 	bind := func(job, kind, name string) {
 		exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_by, created_at)
-		      VALUES('job','amadeus',?,?,?,'seed',?)`, job, kind, name, now)
+		      VALUES('job','cronomicon',?,?,?,'seed',?)`, job, kind, name, now)
 	}
 	bind("prod-job", "secret", "TOKEN")
 	bind("dev-job", "secret", "TOKEN")
@@ -91,7 +91,7 @@ func TestPreflightFlagsAGQ1(t *testing.T) {
 	if f.JobName != "dev-job" {
 		t.Errorf("flagged %q; prod-job is IN ag-dss and must not be flagged", f.JobName)
 	}
-	if f.Reference != "AMADEUS_SECRET_TOKEN" {
+	if f.Reference != "CRONOMICON_SECRET_TOKEN" {
 		t.Errorf("reference = %q", f.Reference)
 	}
 	if len(f.RowAgencies) != 1 || f.RowAgencies[0] != "DSS" {
@@ -123,7 +123,7 @@ func TestPreflightFlagsAGQ5(t *testing.T) {
 	if len(rep.KeyFindings) != 1 || rep.KeyFindings[0].JobName != "dev-job" {
 		t.Fatalf("keyFindings = %+v, want exactly the dev-job key binding", rep.KeyFindings)
 	}
-	if rep.KeyFindings[0].Reference != "AMADEUS_KEY_deploy_key" {
+	if rep.KeyFindings[0].Reference != "CRONOMICON_KEY_deploy_key" {
 		t.Errorf("reference = %q", rep.KeyFindings[0].Reference)
 	}
 	if len(rep.ReferenceFindings) != 0 {

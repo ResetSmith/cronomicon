@@ -25,7 +25,7 @@
 CREATE TABLE entity_codes (
     code       INTEGER PRIMARY KEY AUTOINCREMENT,  -- legal here: sole INTEGER PK
     kind       TEXT NOT NULL,                      -- 'job' | 'workflow'
-    source     TEXT NOT NULL,                      -- 'git' | 'amadeus'
+    source     TEXT NOT NULL,                      -- 'git' | 'cronomicon'
     name       TEXT NOT NULL,
     created_at TEXT NOT NULL,
     deleted_at TEXT                                -- NULL = live (LU-Q6(b))

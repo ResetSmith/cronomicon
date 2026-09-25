@@ -130,7 +130,7 @@ func TestRunJobReferences(t *testing.T) {
 
 // TestRunJobReferenceAliases — RA-4/RA-7: a per-run addition may declare `as`, the
 // bare destination name its value is injected under, so a caller can feed their own
-// department's row to a shared job body that reads a fixed AMADEUS_SECRET_<name>.
+// department's row to a shared job body that reads a fixed CRONOMICON_SECRET_<name>.
 // The envelope records BOTH names (an entry carrying only the destination could not
 // answer whose credential the run was given), and the RA-Q2 collision is refused at
 // the boundary rather than as a 409 after the run is queued.
@@ -206,7 +206,7 @@ func TestRunJobReferenceAliases(t *testing.T) {
 	// an alias mints an env-var key exactly as a row name does.
 	for _, bad := range []map[string]string{
 		{"kind": "var", "name": "OK", "as": "not-a-posix-name"},
-		{"kind": "var", "name": "OK", "as": "AMADEUS_FOO"},
+		{"kind": "var", "name": "OK", "as": "CRONOMICON_FOO"},
 		{"kind": "secret", "name": "OK", "as": "KEK"},
 	} {
 		resp := do(http.MethodPost, runURL, map[string]any{"references": []map[string]string{bad}})
@@ -230,7 +230,7 @@ func TestRunJobReferenceAliases(t *testing.T) {
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("colliding aliases = %d, want 422 (%s)", resp.StatusCode, body)
 	}
-	if !strings.Contains(string(body), "AMADEUS_SECRET_BECOME_PASSWORD") {
+	if !strings.Contains(string(body), "CRONOMICON_SECRET_BECOME_PASSWORD") {
 		t.Errorf("collision 422 should name the contested key: %s", body)
 	}
 }
@@ -287,7 +287,7 @@ func TestRunJobReferencesPermGate(t *testing.T) {
 		req.Header.Set("Remote-User", group+"@example.com")
 		req.Header.Set("Remote-Groups", group)
 		req.Header.Set("X-CSRF-Token", "tok")
-		req.AddCookie(&http.Cookie{Name: "amadeus_csrf", Value: "tok"})
+		req.AddCookie(&http.Cookie{Name: "cronomicon_csrf", Value: "tok"})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code

@@ -13,15 +13,15 @@ func TestManifestAuditsInjection(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-audit", "amt_run_audit"
+	runnerID, tok := "runner-audit", "crn_run_audit"
 	insertRunner(t, svc, runnerID, "audit", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true)
 
 	// First fetch resolves + audits.
 	m := getManifest(t, svc, as, traceID, tok)
-	if m.Secrets["AMADEUS_SECRET_DB_PASS"] != secretVal {
-		t.Fatalf("precondition: secret not injected: %q", m.Secrets["AMADEUS_SECRET_DB_PASS"])
+	if m.Secrets["CRONOMICON_SECRET_DB_PASS"] != secretVal {
+		t.Fatalf("precondition: secret not injected: %q", m.Secrets["CRONOMICON_SECRET_DB_PASS"])
 	}
 
 	var count int
@@ -66,7 +66,7 @@ func TestManifestFailsClosedOnAuditError(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-audit-fc", "amt_run_audit_fc"
+	runnerID, tok := "runner-audit-fc", "crn_run_audit_fc"
 	insertRunner(t, svc, runnerID, "auditfc", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, _, _ := seedInjectionRun(t, svc, runnerID, 6, true)

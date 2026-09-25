@@ -172,11 +172,11 @@ func TestFiredRunCarriesTheArrivalContext(t *testing.T) {
 	}
 	var env map[string]string
 	_ = json.Unmarshal([]byte(envJSON), &env)
-	if env["AMADEUS_WATCH_PATH"] != "/srv/incoming/a.csv" {
-		t.Errorf("AMADEUS_WATCH_PATH = %q, want the arrival's path", env["AMADEUS_WATCH_PATH"])
+	if env["CRONOMICON_WATCH_PATH"] != "/srv/incoming/a.csv" {
+		t.Errorf("CRONOMICON_WATCH_PATH = %q, want the arrival's path", env["CRONOMICON_WATCH_PATH"])
 	}
-	if env["AMADEUS_WATCH_FILE"] != "a.csv" {
-		t.Errorf("AMADEUS_WATCH_FILE = %q, want the basename", env["AMADEUS_WATCH_FILE"])
+	if env["CRONOMICON_WATCH_FILE"] != "a.csv" {
+		t.Errorf("CRONOMICON_WATCH_FILE = %q, want the basename", env["CRONOMICON_WATCH_FILE"])
 	}
 	if actor != "watcher:r1" {
 		t.Errorf("triggered_by = %q, want watcher:r1", actor)
@@ -432,12 +432,12 @@ func TestGlobalFreezeStopsAnArrival(t *testing.T) {
 	day := time.Now().UTC().Format("2006-01-02")
 	if _, err := svc.db.Exec(
 		`INSERT INTO calendars (name, source, global, created_at)
-		 VALUES ('change-freeze','amadeus',1,'2026-08-12T00:00:00Z')`); err != nil {
+		 VALUES ('change-freeze','cronomicon',1,'2026-08-12T00:00:00Z')`); err != nil {
 		t.Fatalf("seed calendar: %v", err)
 	}
 	if _, err := svc.db.Exec(
 		`INSERT INTO calendar_days (calendar_source, calendar_name, day, label)
-		 VALUES ('amadeus','change-freeze',?,'Change freeze')`, day); err != nil {
+		 VALUES ('cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
 		t.Fatalf("seed calendar day: %v", err)
 	}
 

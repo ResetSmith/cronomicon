@@ -315,7 +315,7 @@ export function WorkflowEditor() {
         return;
       }
       const wf = data as Workflow;
-      if (wf.source !== "amadeus") {
+      if (wf.source !== "cronomicon") {
         setGitSource(true);
         return;
       }
@@ -465,7 +465,7 @@ export function WorkflowEditor() {
       return;
     }
     await persistReactions();
-    setOkMsg(`Workflow "${name.trim()}" ${isEdit ? "updated" : "created"} (amadeus-source).`);
+    setOkMsg(`Workflow "${name.trim()}" ${isEdit ? "updated" : "created"} (cronomicon-source).`);
     if (isEdit) return;
     setName("");
     setDescription("");
@@ -489,7 +489,7 @@ export function WorkflowEditor() {
         setDelErr(null);
         return; // stay in the confirm row, now offering the forced delete
       }
-      setDelErr(errMessage(error) || (response.status === 409 ? "Only amadeus-source workflows can be deleted in-app." : `Delete failed (${response.status}).`));
+      setDelErr(errMessage(error) || (response.status === 409 ? "Only cronomicon-source workflows can be deleted in-app." : `Delete failed (${response.status}).`));
       setPendingDelete(false);
       setDelBlock(null);
       return;
@@ -555,7 +555,7 @@ export function WorkflowEditor() {
       return;
     }
     await persistReactions();
-    setOkMsg(`Workflow "${name.trim()}" ${isEdit ? "updated" : "created"} (amadeus-source).`);
+    setOkMsg(`Workflow "${name.trim()}" ${isEdit ? "updated" : "created"} (cronomicon-source).`);
     setCanvasDirty(false);
     if (!isEdit) {
       setName("");
@@ -581,7 +581,7 @@ export function WorkflowEditor() {
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
         This workflow is <strong>Git-authored</strong> — read-only here. Edit it through the GitLab publish flow;
-        only amadeus-source workflows are editable in-app.
+        only cronomicon-source workflows are editable in-app.
       </div>
     );
   if ((complexGraph || forceCanvas) && canvasTree) {
@@ -597,9 +597,9 @@ export function WorkflowEditor() {
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ color: c.textSec, fontSize: c.fontSm, maxWidth: 760 }}>
           {isEdit ? (
-            <>Editing the <strong>amadeus-source</strong> workflow <span style={{ fontFamily: c.mono }}>{name}</span> in the <strong>graph editor</strong>.</>
+            <>Editing the <strong>cronomicon-source</strong> workflow <span style={{ fontFamily: c.mono }}>{name}</span> in the <strong>graph editor</strong>.</>
           ) : (
-            <>Composing a new <strong>amadeus-source</strong> workflow in the <strong>graph editor</strong>.</>
+            <>Composing a new <strong>cronomicon-source</strong> workflow in the <strong>graph editor</strong>.</>
           )}{" "}
           The canvas authors the full structure — jobs, parallel groups, and nested branch arms.
           {canvasDirty && <span style={{ color: c.warning, marginLeft: 6, fontWeight: 600 }}>• unsaved changes</span>}
@@ -692,11 +692,11 @@ export function WorkflowEditor() {
       <div style={{ color: c.textSec, fontSize: c.fontSm }}>
         {isEdit ? (
           <>
-            Editing the <strong>amadeus-source</strong> workflow <span style={{ fontFamily: c.mono }}>{name}</span>.
+            Editing the <strong>cronomicon-source</strong> workflow <span style={{ fontFamily: c.mono }}>{name}</span>.
             Steps can be jobs, parallel groups, or a branch; it runs through the same engine as a Git workflow.
           </>
         ) : (
-          <>Compose an <strong>amadeus-source</strong> workflow: a chain of job, parallel, and branch steps, optionally scheduled.</>
+          <>Compose an <strong>cronomicon-source</strong> workflow: a chain of job, parallel, and branch steps, optionally scheduled.</>
         )}
       </div>
 
@@ -777,12 +777,12 @@ export function WorkflowEditor() {
           onChange={reactions.setList}
           ownerKind="workflow"
           ownerName={isEdit ? name : ""}
-          ownerSource="amadeus"
+          ownerSource="cronomicon"
           loadError={reactions.loadError}
         />
-        {reactionsError({ kind: "workflow", name, source: "amadeus" }, reactions.list) && (
+        {reactionsError({ kind: "workflow", name, source: "cronomicon" }, reactions.list) && (
           <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>
-            {reactionsError({ kind: "workflow", name, source: "amadeus" }, reactions.list)}
+            {reactionsError({ kind: "workflow", name, source: "cronomicon" }, reactions.list)}
           </div>
         )}
         {reactionErr && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{reactionErr}</div>}

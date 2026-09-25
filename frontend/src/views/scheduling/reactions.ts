@@ -47,7 +47,7 @@ export function reactedOnBy(edges: Reaction[], kind: string, source?: string, na
 // is git-source (never clearable here), or reactions watch it (clearable with
 // ?force=true). Branching on the status alone cannot tell them apart, and the
 // four delete surfaces did exactly that for a release — every refusal rendered
-// "Only amadeus-source jobs can be deleted in-app", which is guaranteed FALSE
+// "Only cronomicon-source jobs can be deleted in-app", which is guaranteed FALSE
 // for this one, since the git check has already passed by the time it fires.
 //
 // Keyed on the server's error CODE rather than its prose, so rewording the

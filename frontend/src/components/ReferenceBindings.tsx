@@ -119,7 +119,7 @@ function UnresolvedList({ verdicts }: { verdicts: ReferenceValidation[] }) {
   );
 }
 
-// A binding chip: the derived AMADEUS_<SECTION>_<name> reference with a kind dot,
+// A binding chip: the derived CRONOMICON_<SECTION>_<name> reference with a kind dot,
 // optionally removable, and — when a verdict is available — the resolution state
 // plus the scope the row resolved from.
 function BindingChip({ b, onRemove, v }: { b: ReferenceBinding; onRemove?: () => void; v?: ReferenceValidation }) {
@@ -345,7 +345,7 @@ const bkey = (b: { kind: string; name: string; as?: string }) => `${b.kind} ${b.
 type Owner = { job: number } | { script: string };
 
 const derived = (kind: Kind, name: string) =>
-  `AMADEUS_${kind === "secret" ? "SECRET" : kind === "key" ? "KEY" : "VAR"}_${name}`;
+  `CRONOMICON_${kind === "secret" ? "SECRET" : kind === "key" ? "KEY" : "VAR"}_${name}`;
 
 // aliasDestination — the key an aliased binding's value actually lands on. Derived
 // locally rather than read from the row so it renders on an UNSAVED draft too, where
@@ -668,7 +668,7 @@ export function ReferenceBindingsEditor({
 // A declared key is not payload the way a secret or a variable is. It resolves to
 // key MATERIAL that the executor writes out as a key FILE for the run to use
 // (runref/resolve.go's Keys / D8), so it is what a playbook or script consumes as
-// AMADEUS_KEY_<label> — and in practice it is single-valued, a second one only for a
+// CRONOMICON_KEY_<label> — and in practice it is single-valued, a second one only for a
 // bastion. It is also the one kind outside the References section's scope model:
 // ssh_credentials carries no scope column, so a key is agency-filtered rather than
 // scope-filtered and NEVER gets a resolved-scope pill (runref/validate.go — keys take
@@ -745,7 +745,7 @@ export function JobKeyField({
       {keys.length === 0 ? (
         <div style={{ fontSize: c.fontSm, color: c.textMuted, maxWidth: "70ch" }}>
           None declared — for a playbook or script that reads{" "}
-          <span style={{ fontFamily: c.mono }}>AMADEUS_KEY_&lt;label&gt;</span>. In-app SSH auth uses the host record's
+          <span style={{ fontFamily: c.mono }}>CRONOMICON_KEY_&lt;label&gt;</span>. In-app SSH auth uses the host record's
           own key.
         </div>
       ) : (
@@ -776,7 +776,7 @@ export function JobKeyField({
       )}
       {/* The picker renders only while NO key is bound. Assigning the FIRST key must
           stay here — for a git-synced job this field is the only persistent authoring
-          surface (the composer is amadeus-source only, D6). But once one is bound the
+          surface (the composer is cronomicon-source only, D6). But once one is bound the
           "Add another key…" state is gone by request: the multi-key case (a second
           key for a bastion) is composer territory, and here it read as an open-ended
           list invitation on every expanded job. Remove (×) above still works, so

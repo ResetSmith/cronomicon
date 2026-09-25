@@ -1,6 +1,6 @@
 -- Reverse 1050 — restore PRIMARY KEY (source, name) on all three tables.
 --
--- REFUSES, LOUDLY, if duplicate names exist. If two amadeus jobs named
+-- REFUSES, LOUDLY, if duplicate names exist. If two cronomicon jobs named
 -- 'backup' were created after the up-migration, this INSERT hits the restored
 -- PK and the migration fails dirty rather than silently discarding one
 -- department's job. That is the correct behaviour: rolling back past the
@@ -14,7 +14,7 @@ DROP TRIGGER IF EXISTS reference_bindings_script_cleanup;
 CREATE TABLE jobs_old (
     uid                TEXT,
     name               TEXT NOT NULL,
-    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     run_type           TEXT NOT NULL CHECK (run_type IN ('bash','ansible','terraform','powershell','perl','python')),
     description        TEXT,
     scope              TEXT,
@@ -88,7 +88,7 @@ CREATE UNIQUE INDEX idx_jobs_uid ON jobs(uid);
 CREATE TABLE workflows_old (
     uid              TEXT,
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     steps            TEXT NOT NULL DEFAULT '[]',
     schedule         TEXT,
@@ -124,7 +124,7 @@ CREATE UNIQUE INDEX idx_workflows_uid ON workflows(uid);
 CREATE TABLE schedules_old (
     uid              TEXT,
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     cron             TEXT NOT NULL,
     env              TEXT,
@@ -174,7 +174,7 @@ CREATE UNIQUE INDEX idx_entity_codes_live
 -- PKs and fail the rollback loudly.
 
 CREATE TABLE definition_schedules_old (
-    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind   TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name   TEXT NOT NULL,
     name         TEXT NOT NULL,
@@ -201,7 +201,7 @@ CREATE INDEX idx_def_schedules_owner ON definition_schedules(owner_source, owner
 CREATE INDEX idx_def_schedules_owner_uid ON definition_schedules(owner_uid);
 
 CREATE TABLE paused_jobs_old (
-    source     TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source     TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     owner_kind TEXT NOT NULL DEFAULT 'job' CHECK (owner_kind IN ('job','workflow')),
     name       TEXT NOT NULL,
     paused_by  TEXT NOT NULL,
@@ -215,11 +215,11 @@ ALTER TABLE paused_jobs_old RENAME TO paused_jobs;
 CREATE INDEX idx_paused_jobs_owner_uid ON paused_jobs(owner_uid);
 
 CREATE TABLE reactions_old (
-    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind    TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name    TEXT NOT NULL,
     name          TEXT NOT NULL,
-    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','amadeus')),
+    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','cronomicon')),
     on_kind       TEXT NOT NULL CHECK (on_kind IN ('job','workflow')),
     on_name       TEXT NOT NULL,
     on_outcome    TEXT NOT NULL CHECK (on_outcome IN ('success','failure','stopped','any')),

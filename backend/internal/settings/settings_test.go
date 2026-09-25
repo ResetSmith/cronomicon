@@ -645,7 +645,7 @@ func TestGitlabConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.BotName != "amadeus-bot" || initial.WriteBranch != "main" {
+	if initial.BotName != "cronomicon-bot" || initial.WriteBranch != "main" {
 		t.Fatalf("unexpected defaults: %+v", initial)
 	}
 
@@ -740,19 +740,19 @@ func TestLogStorageConfig(t *testing.T) {
 	// the s3 *backend* itself is gated).
 	updated, err := UpdateLogStorageConfig(ctx, pool, cfg, LogStorageConfig{
 		Backend: "local",
-		Local:   &LocalLogConfig{Path: "/var/lib/amadeus/custom-logs"},
+		Local:   &LocalLogConfig{Path: "/var/lib/cronomicon/custom-logs"},
 		S3: &S3LogConfig{
 			Bucket: "my-bucket", Endpoint: "http://s3.example.com", Region: "us-east-1",
-			AccessKey: "key", SecretKey: "secret", Prefix: "amadeus/",
+			AccessKey: "key", SecretKey: "secret", Prefix: "cronomicon/",
 		},
 	}, "tester")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Local.Path != "/var/lib/amadeus/custom-logs" {
+	if updated.Local.Path != "/var/lib/cronomicon/custom-logs" {
 		t.Fatalf("local.path not persisted: %+v", updated.Local)
 	}
-	if updated.S3 == nil || updated.S3.AccessKey != "key" || updated.S3.Prefix != "amadeus/" {
+	if updated.S3 == nil || updated.S3.AccessKey != "key" || updated.S3.Prefix != "cronomicon/" {
 		t.Fatalf("s3 fields not persisted: %+v", updated.S3)
 	}
 	if updated.S3.SecretKey != "" {
@@ -849,7 +849,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 
 	// 3. Insert a git-source scope (simulating gitlab sync).
 	gitScopeID := db.NewID()
-	capJSON := `{"types":["bash","ansible"],"origin":"git","owner":"plat-eng","sidecarPath":"inventory/dev.amadeus.yaml","errors":[{"file":"inventory/dev.amadeus.yaml","line":5,"field":"owner","message":"owner not found"}]}`
+	capJSON := `{"types":["bash","ansible"],"origin":"git","owner":"plat-eng","sidecarPath":"inventory/dev.cronomicon.yaml","errors":[{"file":"inventory/dev.cronomicon.yaml","line":5,"field":"owner","message":"owner not found"}]}`
 	_, err = pool.ExecContext(ctx, `
 		INSERT INTO scopes (id, name, source, description, supported_types, created_by, created_at, last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -874,20 +874,20 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 	}
 
 	// Check sorting and details.
-	// source DESC, name: "local-env" is "amadeus" so it comes before "git", wait.
-	// Wait, "local-env" source is "amadeus", "dev-env" source is "git".
+	// source DESC, name: "local-env" is "cronomicon" so it comes before "git", wait.
+	// Wait, "local-env" source is "cronomicon", "dev-env" source is "git".
 	// 'local' vs 'git'. If sorting is source DESC, "local" (starts with l) comes before "git" (starts with g). Wait, no: "local" > "git" alphabetically so DESC puts "local" first.
-	var gitScope, amadeusScope Scope
+	var gitScope, cronomiconScope Scope
 	for _, sc := range allList {
 		if sc.Source == "git" {
 			gitScope = sc
-		} else if sc.Source == "amadeus" {
-			amadeusScope = sc
+		} else if sc.Source == "cronomicon" {
+			cronomiconScope = sc
 		}
 	}
 
-	if amadeusScope.ID != localScope.ID {
-		t.Errorf("amadeus scope ID mismatch")
+	if cronomiconScope.ID != localScope.ID {
+		t.Errorf("cronomicon scope ID mismatch")
 	}
 
 	if gitScope.ID != gitScopeID {
@@ -905,7 +905,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 	if gitScope.GitLabURL == nil || *gitScope.GitLabURL != "https://gitlab.example.com/org/repo/-/blob/main/inventory/dev-env.ini" {
 		t.Errorf("git scope GitLabURL mismatch: %+v", gitScope.GitLabURL)
 	}
-	if gitScope.SidecarPath == nil || *gitScope.SidecarPath != "inventory/dev.amadeus.yaml" {
+	if gitScope.SidecarPath == nil || *gitScope.SidecarPath != "inventory/dev.cronomicon.yaml" {
 		t.Errorf("git scope SidecarPath mismatch: %+v", gitScope.SidecarPath)
 	}
 	if len(gitScope.Hosts) != 1 || gitScope.Hosts[0] != "dev-host.example.com" {
@@ -921,7 +921,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 		t.Errorf("git scope capability errors count mismatch: %d", len(gitScope.Capability.Errors))
 	} else {
 		le := gitScope.Capability.Errors[0]
-		if le.File != "inventory/dev.amadeus.yaml" || le.Line != 5 || le.Field != "owner" || le.Message != "owner not found" {
+		if le.File != "inventory/dev.cronomicon.yaml" || le.Line != 5 || le.Field != "owner" || le.Message != "owner not found" {
 			t.Errorf("git scope capability line error mismatch: %+v", le)
 		}
 	}
@@ -938,13 +938,13 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 		t.Fatalf("expected 1 git scope, got %d", len(gitOnly))
 	}
 
-	// 6. Test ListScopes (filtered by amadeus).
-	localOnly, err := ListScopes(ctx, pool, "amadeus")
+	// 6. Test ListScopes (filtered by cronomicon).
+	localOnly, err := ListScopes(ctx, pool, "cronomicon")
 	if err != nil {
-		t.Fatalf("ListScopes(amadeus) failed: %v", err)
+		t.Fatalf("ListScopes(cronomicon) failed: %v", err)
 	}
 	if len(localOnly) != 1 || localOnly[0].ID != localScope.ID {
-		t.Fatalf("expected 1 amadeus scope, got %d", len(localOnly))
+		t.Fatalf("expected 1 cronomicon scope, got %d", len(localOnly))
 	}
 
 	// 7. Test GetScope.
@@ -971,7 +971,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 //   - FileCount read as "roughly how many runs are on disk" was inflated by
 //     files that have nothing to do with runs.
 //   - OldestLogAt was pinned to whichever file was oldest — in practice
-//     amadeus.log, which is created once at first boot and appended to forever.
+//     cronomicon.log, which is created once at first boot and appended to forever.
 //     So the "oldest log" never moved, exactly when an operator was trying to
 //     judge whether retention was working.
 //
@@ -999,8 +999,8 @@ func logTreeFixture(t *testing.T) (dir string, totalBytes int64) {
 	}{
 		{filepath.Join(code, "trace-foldered.log"), 100, 2 * time.Hour}, // run log (foldered)
 		{"trace-flat.log", 200, 3 * time.Hour},                          // run log (flat, pre-710)
-		{"amadeus.log", 400, 100 * time.Hour},                           // process log — OLDEST FILE IN THE TREE
-		{"amadeus.log.1", 800, 90 * time.Hour},                          // rotated process log
+		{"cronomicon.log", 400, 100 * time.Hour},                        // process log — OLDEST FILE IN THE TREE
+		{"cronomicon.log.1", 800, 90 * time.Hour},                       // rotated process log
 		{"audit.log", 1600, 4 * time.Hour},                              // audit stream
 		{filepath.Join(code, "_meta.json"), 3200, 5 * time.Hour},        // folder sidecar
 	}
@@ -1034,7 +1034,7 @@ func TestLogStatsCountOnlyRunLogsButSizeEverything(t *testing.T) {
 	}
 }
 
-// TestLogStatsOldestIgnoresTheProcessLog is the LU-11 bug itself. amadeus.log is
+// TestLogStatsOldestIgnoresTheProcessLog is the LU-11 bug itself. cronomicon.log is
 // the oldest file in the fixture by a wide margin and is rewritten continuously,
 // so letting it set OldestLogAt makes the value permanently stale — the operator
 // sees an ancient timestamp no matter how aggressively retention runs.
@@ -1055,7 +1055,7 @@ func TestLogStatsOldestIgnoresTheProcessLog(t *testing.T) {
 		t.Fatalf("stat flat run log: %v", err)
 	}
 	if diff := got.Sub(flatInfo.ModTime().UTC()); diff > time.Second || diff < -time.Second {
-		procInfo, _ := os.Stat(filepath.Join(dir, "amadeus.log"))
+		procInfo, _ := os.Stat(filepath.Join(dir, "cronomicon.log"))
 		t.Errorf("OldestLogAt = %v, want the oldest RUN log %v (the process log at %v must not set it)",
 			got, flatInfo.ModTime().UTC(), procInfo.ModTime().UTC())
 	}
@@ -1077,7 +1077,7 @@ func TestLogStatsClassifyEachFileKind(t *testing.T) {
 		size  int64
 	}{
 		{"runLogs", stats.Classes.RunLogs, 2, 100 + 200},
-		{"processLog", stats.Classes.ProcessLog, 2, 400 + 800}, // amadeus.log + amadeus.log.1
+		{"processLog", stats.Classes.ProcessLog, 2, 400 + 800}, // cronomicon.log + cronomicon.log.1
 		{"auditLog", stats.Classes.AuditLog, 1, 1600},
 		{"other", stats.Classes.Other, 1, 3200}, // the _meta.json sidecar
 	}

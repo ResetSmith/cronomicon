@@ -17,7 +17,7 @@ import (
 type EnvVar struct {
 	ID             string  `json:"id"`
 	Key            string  `json:"key"`
-	Reference      string  `json:"reference"` // derived AMADEUS_VAR_<key> (read-only; namespace contract)
+	Reference      string  `json:"reference"` // derived CRONOMICON_VAR_<key> (read-only; namespace contract)
 	Value          string  `json:"value"`
 	Scope          *string `json:"scope"`
 	Description    *string `json:"description"`
@@ -118,7 +118,7 @@ var ErrKeyConflict = errors.New("a secret with this key already exists for this 
 // nested iterator (pool deadlock — see db.maxOpenConns).
 // RA-16 (Phase E): the conflict is now scoped to the same OWNER as well. A secret
 // and a variable still may not share a key within one department's rows — that is
-// the collision A13 exists to prevent, since both derive an AMADEUS_* reference an
+// the collision A13 exists to prevent, since both derive an CRONOMICON_* reference an
 // author would read as one thing — but TeamA's secret X no longer blocks TeamB's
 // variable X. The check narrows in step with the uniqueness key; leaving it on
 // (key, scope) alone would have made Phase E half-real, allowing two departments'

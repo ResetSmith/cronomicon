@@ -33,7 +33,7 @@ import (
 const (
 	// DefaultLogDir is the fallback per-run log directory, used until the
 	// settings-resolved path is pushed in via SetLogDir (and by tests).
-	DefaultLogDir = "/var/lib/amadeus/logs"
+	DefaultLogDir = "/var/lib/cronomicon/logs"
 
 	// pollTimeout is the server-side long-poll timeout (A6.2).
 	pollTimeout = 30 * time.Second
@@ -45,10 +45,10 @@ const (
 	drainDefaultMinutes = 60
 
 	// tokenPrefix is the prefix for shared registration tokens (A6.1).
-	tokenPrefix = "amt_reg_"
+	tokenPrefix = "crn_reg_" //nolint:gosec // G101: a token-format prefix, not a credential
 
 	// runnerTokenPrefix is the prefix for per-runner API keys.
-	runnerTokenPrefix = "amt_run_"
+	runnerTokenPrefix = "crn_run_"
 
 	// tokenBytes is the number of random bytes in a generated token.
 	tokenBytes = 32

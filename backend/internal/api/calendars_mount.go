@@ -211,7 +211,7 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 	if _, err := tx.ExecContext(r.Context(), `
 		INSERT INTO calendars(source, name, description, global, record_suppressed,
 		                      created_by, created_at, last_modified_by, last_modified_at)
-		VALUES('amadeus', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES('cronomicon', ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, nullStrIf(in.Description), boolInt(in.Global), boolInt(in.RecordSuppressed),
 		id.Email, now, id.Email, now); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -643,7 +643,7 @@ func writeCalendarDays(ctx context.Context, tx *sql.Tx, name string, days []cale
 	for _, d := range days {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO calendar_days(calendar_source, calendar_name, day, label)
-			VALUES('amadeus', ?, ?, ?)`, name, d.Day, nullStrIf(d.Label)); err != nil {
+			VALUES('cronomicon', ?, ?, ?)`, name, d.Day, nullStrIf(d.Label)); err != nil {
 			return err
 		}
 	}

@@ -31,7 +31,7 @@ import {
   type ProvisionOptions,
 } from "./runner-provision";
 
-// Ported from the prototype's RunnersSection (amadeus-settings.jsx).
+// Ported from the prototype's RunnersSection (cronomicon-settings.jsx).
 // GET /runners, GET|POST /runners/registration-tokens (single-use, Phase 7),
 // DELETE /runners/registration-tokens/{id}, POST /runners/{id}/drain,
 // POST /runners/{id}/resync, DELETE /runners/{id}.
@@ -44,7 +44,7 @@ interface Runner {
   status?: "online" | "offline" | "degraded" | "draining" | string;
   os?: string;
   capabilities?: string[];
-  inventory?: "amadeus" | "local" | string;
+  inventory?: "cronomicon" | "local" | string;
   load?: number;
   maxConcurrent?: number;
   version?: string;
@@ -521,7 +521,7 @@ function RunnerDetail({
   const overview: { label: string; value: React.ReactNode; mono?: boolean; wide?: boolean; present: boolean }[] = [
     { label: "Runner ID", mono: true, wide: true, present: !!runner.id, value: runner.id ? <CopyText text={runner.id} /> : null },
     { label: "OS", present: !!runner.os, value: runner.os },
-    { label: "Inventory", present: true, value: runner.inventory ?? "amadeus" },
+    { label: "Inventory", present: true, value: runner.inventory ?? "cronomicon" },
     {
       label: "Version",
       present: !!runner.version,
@@ -877,7 +877,7 @@ function fmtDate(iso?: string): string {
 // registration and polling, and it is what publishes /agents/). A function, not a
 // module const, so it is not evaluated at import time in a non-browser context.
 function runnerOrigin(): string {
-  return typeof window !== "undefined" ? window.location.origin : "https://amadeus.example.com";
+  return typeof window !== "undefined" ? window.location.origin : "https://cronomicon.example.com";
 }
 
 
@@ -909,7 +909,7 @@ export function Runners() {
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontWeight: 600 }}>{r.name}</span>
-            {(r.inventory === "amadeus" || r.inventory === "local") && <InventoryChip mode={r.inventory} />}
+            {(r.inventory === "cronomicon" || r.inventory === "local") && <InventoryChip mode={r.inventory} />}
           </div>
           {r.version && <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 1 }}>v{r.version}</div>}
           {(r.tags ?? []).length > 0 && (
@@ -1265,7 +1265,7 @@ export function Runners() {
   // LB8: a usable, copyable plaintext exists only when freshly minted — the
   // list never carries plaintext — so gate every copyable affordance on this.
   const revealable = minted != null && token !== "";
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://amadeus.example.com";
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://cronomicon.example.com";
 
   const tiles = [
     { l: "Total", v: runners.length, color: c.text },
@@ -1587,7 +1587,7 @@ export function Runners() {
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Run on the target host. <code>--download</code> fetches the agent binary from this server with
                   checksum verification (deployments without bundled binaries fall back to a local{" "}
-                  <code>amadeus-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected from
+                  <code>cronomicon-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected from
                   the host's toolchains at startup; add <code>-c</code> only to narrow them — see the Install
                   Guide.{" "}
                   <button
@@ -2323,7 +2323,7 @@ function RunnerSettingsDrawer({
 
 // ProvisionPanel turns one set of choices into three copy-paste artifacts: a
 // complete annotated runner.env (patched into the verbatim
-// amadeus-runner.env.example — single-sourced, fetched from the app), the
+// cronomicon-runner.env.example — single-sourced, fetched from the app), the
 // matching runner-install.sh one-liner (Phase-1 flags included), and the
 // docker run variant (slim/fat derived from the capability pick). Pure
 // frontend; the generators live in runner-provision.ts with unit tests.
@@ -2347,7 +2347,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
   // "Override" toggle, and narrow what the runner claims.
   const [capsOverride, setCapsOverride] = useState(false);
   const [caps, setCaps] = useState<string[]>([]);
-  const [inventory, setInventory] = useState<"amadeus" | "local">("amadeus");
+  const [inventory, setInventory] = useState<"cronomicon" | "local">("cronomicon");
   const [localInventorySrc, setLocalInventorySrc] = useState("");
   const [knownHostsSrc, setKnownHostsSrc] = useState("");
   const [keyMode, setKeyMode] = useState<"none" | "key-dir" | "key-map">("none");
@@ -2612,9 +2612,9 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
               <select
                 style={inputStyle}
                 value={inventory}
-                onChange={(e) => setInventory(e.target.value as "amadeus" | "local")}
+                onChange={(e) => setInventory(e.target.value as "cronomicon" | "local")}
               >
-                <option value="amadeus">amadeus — server resolves targets</option>
+                <option value="cronomicon">cronomicon — server resolves targets</option>
                 <option value="local">local — runner resolves its own inventory</option>
               </select>
               {inventory === "local" && (
@@ -2634,7 +2634,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
               )}
             </div>
             <div style={hintStyle}>
-              Who turns a job's scope into concrete hosts. <strong>amadeus</strong> (the default): the server
+              Who turns a job's scope into concrete hosts. <strong>cronomicon</strong> (the default): the server
               resolves targets and ships them with each job — pick this unless you know otherwise.{" "}
               <strong>local</strong>: the runner resolves scopes against its own <code>inventory.json</code> —
               for network segments only the runner can see (the server never learns those hosts). Local mode
@@ -2720,7 +2720,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
             </div>
             <div style={hintStyle}>
               Leave blank for non-ansible runners. These are <strong>source files on this host</strong> the
-              installer copies to <code>/etc/amadeus-runner/</code> at <code>0640</code> — the server never ships
+              installer copies to <code>/etc/cronomicon-runner/</code> at <code>0640</code> — the server never ships
               secret bytes. The checkout <strong>policy</strong> (allow-checkout + the repo allowlist), max jobs,
               and sandbox caps are no longer set here: enable and tune them on the runner's row (
               <strong>⚙ Settings</strong>) once it registers, and they apply on the next poll (v0.47.12). Register
@@ -2755,7 +2755,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
                 oneLiner,
                 <>
                   Run as root on the runner host: downloads the agent binary from this server, creates the
-                  service user and <code>amadeus-runner</code> systemd unit, installs any referenced files
+                  service user and <code>cronomicon-runner</code> systemd unit, installs any referenced files
                   (known_hosts, keys, inventory, checkout token, vault password) into the standard paths, writes
                   the env, and starts the agent. Max jobs, sandbox caps, and checkout policy are then tuned on the
                   runner's row — no env merge, no restart.
@@ -2765,7 +2765,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
                 envText,
                 <>
                   The annotated template with your choices applied — for hand-rolled installs or pushing via
-                  Ansible/Puppet. Place it at <code>/etc/amadeus-runner/runner.env</code> (mode 0640) and stage
+                  Ansible/Puppet. Place it at <code>/etc/cronomicon-runner/runner.env</code> (mode 0640) and stage
                   any referenced files at the standard paths it names; the Install Guide's manual section covers
                   the service unit.
                 </>,
@@ -2789,7 +2789,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
                 <strong style={{ color: c.text }}>After the install:</strong> the agent registers itself with the
                 token, then polls every 60 seconds. It appears in the Runner Registry above within about a
                 minute — press <strong>Test</strong> on its row to confirm, then run a job scoped to one of its
-                capabilities. If it never appears, check <code>journalctl -u amadeus-runner</code> (or{" "}
+                capabilities. If it never appears, check <code>journalctl -u cronomicon-runner</code> (or{" "}
                 <code>docker logs</code>) on the host; the usual causes are an expired/used token or the host
                 not reaching <code>{origin}</code>.
               </div>
@@ -2804,11 +2804,11 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
 // ── local UI bits ────────────────────────────────────────────────────────────
 
 
-// Inventory-canonicality label (D8 / R7.4). `amadeus` — Cronomicon resolves the
+// Inventory-canonicality label (D8 / R7.4). `cronomicon` — Cronomicon resolves the
 // scope→hosts targets and ships them in the manifest. `local` — the runner
 // resolves hosts against its own inventory (network-isolated segments). Small,
 // subtle chip matching the capability-tag styling above.
-function InventoryChip({ mode }: { mode: "amadeus" | "local" }) {
+function InventoryChip({ mode }: { mode: "cronomicon" | "local" }) {
   const col = mode === "local" ? "#8466c4" : c.info;
   return (
     <span

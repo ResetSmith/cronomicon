@@ -28,7 +28,7 @@ func TestPerAgencyJobNames(t *testing.T) {
 	}
 	// Two agencies, two disjoint scopes, one shared script.
 	seed(`INSERT INTO agencies(id, name, created_at) VALUES('ag-fin','FIN','t'),('ag-dss','DSS','t')`)
-	seed(`INSERT OR IGNORE INTO scopes(id, name, source, created_at) VALUES('sc-fin','fin-prod','amadeus','t'),('sc-dss','dss-prod','amadeus','t')`)
+	seed(`INSERT OR IGNORE INTO scopes(id, name, source, created_at) VALUES('sc-fin','fin-prod','cronomicon','t'),('sc-dss','dss-prod','cronomicon','t')`)
 	seed(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc-fin','ag-fin'),('sc-dss','ag-dss')`)
 	seed(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES('backup-db','bash','pg_dump','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)

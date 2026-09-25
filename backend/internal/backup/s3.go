@@ -26,7 +26,7 @@ type Uploader func(ctx context.Context, localPath string) error
 
 // backupPrefix is the object-key prefix all snapshots live under. Shared by the
 // uploader and the restore Downloader so both agree on where snapshots are.
-const backupPrefix = "amadeus-backups/"
+const backupPrefix = "cronomicon-backups/"
 
 // newClient builds the SSRF-guarded minio client shared by the uploader and the
 // restore Downloader. Credentials default to AWS S3 when no endpoint is given;
@@ -49,7 +49,7 @@ func newClient(cfg *config.Config, log *slog.Logger) (*minio.Client, error) {
 	if cfg.BackupS3CAFile != "" {
 		b, rerr := os.ReadFile(cfg.BackupS3CAFile)
 		if rerr != nil {
-			return nil, fmt.Errorf("read AMADEUS_BACKUP_S3_CA_FILE: %w", rerr)
+			return nil, fmt.Errorf("read CRONOMICON_BACKUP_S3_CA_FILE: %w", rerr)
 		}
 		caPEM = string(b)
 	}

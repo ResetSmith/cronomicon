@@ -225,7 +225,7 @@ export function PublishBuilder() {
 
   // ── canonical YAML (apiVersion/kind/metadata/spec) with the full Gap B set ──
   const buildYaml = (): string => {
-    let y = "apiVersion: amadeus.io/v1\n";
+    let y = "apiVersion: cronomicon.io/v1\n";
     y += "kind: Job\n";
     y += "metadata:\n";
     y += `  name: ${yamlScalar(jobName || "my-scheduled-job")}\n`;

@@ -9,7 +9,7 @@ import (
 
 // Identity is the persisted {id, apiKey} pair that lets a restarted agent
 // resume its runners row instead of orphaning it on every restart (R2.4). The
-// apiKey is the per-runner long-lived bearer (amt_run_*).
+// apiKey is the per-runner long-lived bearer (crn_run_*).
 type Identity struct {
 	ID     string `json:"id"`
 	APIKey string `json:"apiKey"`

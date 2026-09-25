@@ -30,9 +30,9 @@ import (
 // EVERY exit path — success, failure, and kill (the process dies via ctx; the
 // defer still runs). Previously only the inventory temp file was cleaned.
 func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg Config, emit func(line string)) int {
-	workdir, err := os.MkdirTemp(cfg.StateDir, "amadeus-run-*")
+	workdir, err := os.MkdirTemp(cfg.StateDir, "cronomicon-run-*")
 	if err != nil {
-		emit("amadeus: create run workdir: " + err.Error())
+		emit("cronomicon: create run workdir: " + err.Error())
 		return -1
 	}
 	defer func() { _ = os.RemoveAll(workdir) }()
@@ -44,7 +44,7 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 	var galaxyEnv map[string]string
 	if m.Checkout != nil {
 		if cerr := materializeCheckout(ctx, m, cfg, workdir, emit); cerr != nil {
-			emit("amadeus: " + cerr.Error())
+			emit("cronomicon: " + cerr.Error())
 			return -1
 		}
 		emitAnsibleCoreVersion(ctx, emit) // provenance (RX.12)
@@ -56,7 +56,7 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 			if fi, serr := os.Stat(reqAbs); serr == nil && !fi.IsDir() {
 				ge, gerr := galaxyInstall(ctx, cfg, workdir, m.Checkout.ReqPath, emit)
 				if gerr != nil {
-					emit("amadeus: " + gerr.Error())
+					emit("cronomicon: " + gerr.Error())
 					return -1
 				}
 				galaxyEnv = ge
@@ -66,7 +66,7 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 
 	argv, stdinBody, cmdProv, err := localCommand(m, cfg, workdir)
 	if err != nil {
-		emit("amadeus: " + err.Error())
+		emit("cronomicon: " + err.Error())
 		return -1
 	}
 	// Argv-shaping provenance (Phase 3): the auto --private-key decision (wired,
@@ -83,7 +83,7 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 	// paths into the workdir) is layered on so the playbook resolves per-run deps.
 	childEnv, provenance, err := buildChildEnv(m, cfg, os.Environ(), galaxyEnv)
 	if err != nil {
-		emit("amadeus: " + err.Error())
+		emit("cronomicon: " + err.Error())
 		return -1
 	}
 	// Auth/trust provenance (Phase 1): show exactly which local key each bridged
@@ -117,16 +117,16 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		emit("amadeus: stdout pipe: " + err.Error())
+		emit("cronomicon: stdout pipe: " + err.Error())
 		return -1
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		emit("amadeus: stderr pipe: " + err.Error())
+		emit("cronomicon: stderr pipe: " + err.Error())
 		return -1
 	}
 	if err := cmd.Start(); err != nil {
-		emit("amadeus: start " + argv[0] + ": " + err.Error())
+		emit("cronomicon: start " + argv[0] + ": " + err.Error())
 		return -1
 	}
 
@@ -140,7 +140,7 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
 		}
-		emit("amadeus: " + err.Error())
+		emit("cronomicon: " + err.Error())
 		return -1
 	}
 	return 0
@@ -152,7 +152,7 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 // itself owns no cleanup.
 //
 // ansible: the playbook body is fed on stdin via `ansible-playbook /dev/stdin`.
-// An amadeus-mode run ships a managed inventory (m.Inventory); it is materialized
+// An cronomicon-mode run ships a managed inventory (m.Inventory); it is materialized
 // to a temp file and passed with `-i` so the playbook targets the resolved hosts.
 // A local-mode run carries no inventory and runs as before (no -i; the runner's
 // own ansible config supplies any inventory). `--limit` is appended when set.
@@ -211,7 +211,7 @@ func localCommand(m *runnerproto.ManifestResponse, cfg Config, workdir string) (
 				provenance = append(provenance, pkProv)
 			}
 		} else if names := distinctAuthKeyNames(m.Targets); len(names) > 0 {
-			provenance = append(provenance, "amadeus: auth: --private-key auto-wiring skipped — this run carries an SSH key override: "+strings.Join(names, ", "))
+			provenance = append(provenance, "cronomicon: auth: --private-key auto-wiring skipped — this run carries an SSH key override: "+strings.Join(names, ", "))
 		}
 		// Defense-in-depth (no-leak, D2): the server never ships an inventory to a
 		// local-mode runner. If one arrives anyway (server bug/regression), refuse
@@ -295,18 +295,18 @@ func ansibleOptionArgs(m *runnerproto.ManifestResponse) (args []string, provenan
 	}
 	if o.Check {
 		args = append(args, "--check")
-		provenance = append(provenance, "amadeus: ansible: --check — DRY RUN, no changes are applied")
+		provenance = append(provenance, "cronomicon: ansible: --check — DRY RUN, no changes are applied")
 	}
 	if o.Diff {
 		args = append(args, "--diff")
 	}
 	if len(o.Tags) > 0 {
 		args = append(args, "--tags", strings.Join(o.Tags, ","))
-		provenance = append(provenance, "amadeus: ansible: --tags "+strings.Join(o.Tags, ",")+" — only tasks carrying these tags run")
+		provenance = append(provenance, "cronomicon: ansible: --tags "+strings.Join(o.Tags, ",")+" — only tasks carrying these tags run")
 	}
 	if len(o.SkipTags) > 0 {
 		args = append(args, "--skip-tags", strings.Join(o.SkipTags, ","))
-		provenance = append(provenance, "amadeus: ansible: --skip-tags "+strings.Join(o.SkipTags, ","))
+		provenance = append(provenance, "cronomicon: ansible: --skip-tags "+strings.Join(o.SkipTags, ","))
 	}
 	if o.Verbosity > 0 {
 		v := min(o.Verbosity,
@@ -353,7 +353,7 @@ func identityArgs(m *runnerproto.ManifestResponse, cfg Config) (args []string, p
 	}
 	if m.SSHUser != "" {
 		args = append(args, "-e", "ansible_user="+m.SSHUser)
-		provenance = append(provenance, "amadeus: auth: connect as "+m.SSHUser+" (-e ansible_user, overrides inventory)")
+		provenance = append(provenance, "cronomicon: auth: connect as "+m.SSHUser+" (-e ansible_user, overrides inventory)")
 	}
 	if m.SSHKeyRef != "" {
 		path, src, ok := resolveKeyPath(cfg.KeyMap, cfg.KeyDir, m.SSHKeyRef)
@@ -361,7 +361,7 @@ func identityArgs(m *runnerproto.ManifestResponse, cfg Config) (args []string, p
 			return nil, nil, fmt.Errorf("run carries an SSH key override (%s) but no key material was delivered to this runner and no local key file matches; the run would have connected with the inventory's key instead", m.SSHKeyRef)
 		}
 		args = append(args, "-e", "ansible_ssh_private_key_file="+path)
-		provenance = append(provenance, fmt.Sprintf("amadeus: auth: -e ansible_ssh_private_key_file %s → %s (%s, overrides inventory)", m.SSHKeyRef, path, src))
+		provenance = append(provenance, fmt.Sprintf("cronomicon: auth: -e ansible_ssh_private_key_file %s → %s (%s, overrides inventory)", m.SSHKeyRef, path, src))
 	}
 	return args, provenance, nil
 }
@@ -388,13 +388,13 @@ func privateKeyArgs(m *runnerproto.ManifestResponse, cfg Config) (args []string,
 		return nil, ""
 	case 1:
 		if path, src, ok := resolveKeyPath(cfg.KeyMap, cfg.KeyDir, names[0]); ok {
-			return []string{"--private-key", path}, fmt.Sprintf("amadeus: auth: --private-key %s → %s (%s)", names[0], path, src)
+			return []string{"--private-key", path}, fmt.Sprintf("cronomicon: auth: --private-key %s → %s (%s)", names[0], path, src)
 		}
 		// Single key but no local FILE (env-PEM, or unresolved): the env bridge and
 		// inventory lookup still apply — nothing to auto-wire, nothing to warn.
 		return nil, ""
 	default:
-		return nil, "amadeus: auth: multiple key names — --private-key not auto-wired (inventory ansible_ssh_private_key_file / env bridge applies): " + strings.Join(names, ", ")
+		return nil, "cronomicon: auth: multiple key names — --private-key not auto-wired (inventory ansible_ssh_private_key_file / env bridge applies): " + strings.Join(names, ", ")
 	}
 }
 
@@ -425,7 +425,7 @@ func writeInventoryFile(dir string, inv *runnerproto.ManifestInventory) (string,
 	case "yaml", "yml":
 		ext = "yaml"
 	}
-	f, err := os.CreateTemp(dir, "amadeus-inv-*."+ext)
+	f, err := os.CreateTemp(dir, "cronomicon-inv-*."+ext)
 	if err != nil {
 		return "", fmt.Errorf("create inventory temp file: %w", err)
 	}
@@ -505,7 +505,7 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 	}
 	for _, n := range refusedBase {
 		provenance = append(provenance, fmt.Sprintf(
-			"amadeus: env: refused %q from -env-base-extra (%s is agent config, never readable by a job)",
+			"cronomicon: env: refused %q from -env-base-extra (%s is agent config, never readable by a job)",
 			n, envref.PrefixRunnerConfig))
 	}
 
@@ -517,7 +517,7 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 	}
 	out = append(out, envSlice(m.Env)...)
 	// Dispatch-time resolved reference values (vault-integration.md P1.4): the
-	// AMADEUS_SECRET_*/AMADEUS_VAR_* the server resolved from the run's declared
+	// CRONOMICON_SECRET_*/CRONOMICON_VAR_* the server resolved from the run's declared
 	// bindings. Appended after the plaintext Env snapshot (last wins) so an
 	// injected reference value beats a same-named snapshot entry. Never persisted:
 	// they live only in this child env, which dies with the process.
@@ -543,7 +543,7 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 			// Supplied by the dispatch-time resolved Secrets block (appended above).
 			// Checked FIRST so the server-resolved (possibly rotated) value wins over
 			// ANY runner-local env var of the same name — including the exact
-			// prefixed form AMADEUS_SECRET_X a migrated secrets.env might hold, not
+			// prefixed form CRONOMICON_SECRET_X a migrated secrets.env might hold, not
 			// just the bare-name fallback (P1.4).
 			continue
 		}
@@ -558,14 +558,14 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 			continue
 		}
 		// Derived-reference bridge (W3, N-D5 decoupling): a value reference
-		// (AMADEUS_SECRET_X / AMADEUS_VAR_X) absent under its prefixed name falls
+		// (CRONOMICON_SECRET_X / CRONOMICON_VAR_X) absent under its prefixed name falls
 		// back to the BARE name in the runner env, so an updated inventory keeps
 		// resolving against an un-migrated secrets.env that still uses bare names.
 		// The child still receives the value under the referenced (prefixed) name.
 		if bare, ok := envref.StripValueReference(n); ok {
 			// DR-1: the fallback reads a DIFFERENT key than the one denied at the top
 			// of the loop, so it needs its own guard — a passthrough of
-			// AMADEUS_SECRET_AMADEUS_RUNNER_REGISTRATION_TOKEN strips to the agent's
+			// CRONOMICON_SECRET_CRONOMICON_RUNNER_REGISTRATION_TOKEN strips to the agent's
 			// own config name and would otherwise resolve it out of the agent env and
 			// hand it to the child under the prefixed name.
 			if envref.IsAgentConfig(bare) {
@@ -574,7 +574,7 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 			}
 			if v, present := agentEnv[bare]; present {
 				out = append(out, n+"="+v)
-				provenance = append(provenance, fmt.Sprintf("amadeus: env: %s ← bare %q (prefixed→bare fallback)", n, bare))
+				provenance = append(provenance, fmt.Sprintf("cronomicon: env: %s ← bare %q (prefixed→bare fallback)", n, bare))
 				continue
 			}
 		}
@@ -586,7 +586,7 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 		if !cfg.NoAuthBridge {
 			if path, src, ok := resolveKeyPath(cfg.KeyMap, cfg.KeyDir, n); ok {
 				out = append(out, n+"="+path)
-				provenance = append(provenance, fmt.Sprintf("amadeus: auth: key %q → %s (%s)", n, path, src))
+				provenance = append(provenance, fmt.Sprintf("cronomicon: auth: key %q → %s (%s)", n, path, src))
 				continue
 			}
 		}
@@ -618,10 +618,10 @@ func buildChildEnv(m *runnerproto.ManifestResponse, cfg Config, environ []string
 		switch {
 		case cfg.AnsibleSSHCommonArgs != "":
 			val = cfg.AnsibleSSHCommonArgs
-			prov = "amadeus: trust: ANSIBLE_SSH_COMMON_ARGS ← operator override (-ansible-ssh-common-args)"
+			prov = "cronomicon: trust: ANSIBLE_SSH_COMMON_ARGS ← operator override (-ansible-ssh-common-args)"
 		case cfg.KnownHostsFile != "":
 			val = fmt.Sprintf("-o UserKnownHostsFile=%s -o StrictHostKeyChecking=yes", cfg.KnownHostsFile)
-			prov = "amadeus: trust: known_hosts → " + cfg.KnownHostsFile
+			prov = "cronomicon: trust: known_hosts → " + cfg.KnownHostsFile
 		}
 		if val != "" {
 			out = append(out, "ANSIBLE_SSH_COMMON_ARGS="+val)

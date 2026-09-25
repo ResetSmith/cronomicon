@@ -55,7 +55,7 @@ func TestJobComposePromptsRoundTrip(t *testing.T) {
 	}
 	dbPrompts := func() string {
 		var v string
-		_ = pool.QueryRow(`SELECT prompts_json FROM jobs WHERE source='amadeus' AND name='prompty'`).Scan(&v)
+		_ = pool.QueryRow(`SELECT prompts_json FROM jobs WHERE source='cronomicon' AND name='prompty'`).Scan(&v)
 		return v
 	}
 
@@ -203,7 +203,7 @@ func TestRunJobPromptWarnings(t *testing.T) {
 
 	// JR-Q1 regression — a scope Env Vars row named identically to the required prompt
 	// must NOT suppress the warning. Env Vars are injected only via an explicit
-	// reference binding and only as AMADEUS_VAR_<name> (internal/runref); nothing
+	// reference binding and only as CRONOMICON_VAR_<name> (internal/runref); nothing
 	// publishes a bare TARGET_ENV into the run env, so the prompt is genuinely unfilled.
 	// The Run dialog used to claim "Satisfied by a scope env var." here and contradicted
 	// this record; both surfaces now agree.

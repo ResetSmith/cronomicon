@@ -33,7 +33,7 @@ func membershipDB(t *testing.T) *sql.DB {
 	const now = "2026-01-01T00:00:00Z"
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-dss','DSS',?)`, now)
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-nwd','NWD',?)`, now)
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-prod','prod','amadeus',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-prod','prod','cronomicon',?)`, now)
 	exec(`INSERT INTO secrets(id, key, source, created_at) VALUES('s1','DB_PASS','stored',?)`, now)
 	exec(`INSERT INTO env_vars(id, key, value, created_at) VALUES('v1','REGION','us-east',?)`, now)
 	exec(`INSERT INTO ssh_credentials(id, label, source, created_at, last_modified_at) VALUES('k1','deploy_key','stored',?,?)`, now, now)

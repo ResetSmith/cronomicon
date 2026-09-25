@@ -10,7 +10,7 @@
 #     --build-arg COMMIT=$(git rev-parse --short HEAD) \
 #     --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) .
 #
-# (docker-compose.yml at the repo root sets context: . and passes these args.)
+# (your build pipeline or compose stack sets context: . and passes these args.)
 
 # ── Stage 1: build the frontend so the embed is fresh, not a stale committed dist.
 # Pin by digest in a hardened pipeline; tag-pinned here for readability.
@@ -26,13 +26,13 @@ RUN npm ci
 # ../documentation/*.html — user/administrator manuals + runner-*.html guides).
 # The plugin's FILES class also publishes backend/deploy/runner-install.sh to
 # /runner-install.sh (the Runners view's Download button + install one-liner) and
-# backend/deploy/amadeus-runner.env.example to /amadeus-runner.env.example,
+# backend/deploy/cronomicon-runner.env.example to /cronomicon-runner.env.example,
 # so those files must exist in this stage too — the plugin fails the build if a
 # FILES source is missing.
 COPY frontend/ ./
 COPY documentation/ /repo/documentation/
 COPY backend/deploy/runner-install.sh /repo/backend/deploy/runner-install.sh
-COPY backend/deploy/amadeus-runner.env.example /repo/backend/deploy/amadeus-runner.env.example
+COPY backend/deploy/cronomicon-runner.env.example /repo/backend/deploy/cronomicon-runner.env.example
 # ── Bundle the frontend. NOTE: `vite build`, not `npm run build` (v0.52.27).
 #
 # The npm script is `tsc -b && vite build`. Type-checking is a SOURCE gate — it
@@ -64,7 +64,7 @@ RUN mkdir -p /repo/backend/web && npx vite build
 
 # ── Stage 2: cross-compile the runner-agent binaries the server distributes
 # at GET /agents/{filename} (runner provisioning D1). CGO off → static binaries
-# (same recipe as deploy/Dockerfile.runner); D5: linux amd64 + arm64 only.
+# (the same recipe a standalone runner image uses); D5: linux amd64 + arm64 only.
 # SHA256SUMS is generated alongside so runner-install.sh --download can verify.
 FROM golang:1.26-bookworm AS agents
 WORKDIR /src
@@ -75,11 +75,11 @@ ARG VERSION=dev
 ARG COMMIT=none
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-      -o /out/agents/amadeus-runner-linux-amd64 ./cmd/amadeus-runner && \
+      -o /out/agents/cronomicon-runner-linux-amd64 ./cmd/cronomicon-runner && \
     CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-      -o /out/agents/amadeus-runner-linux-arm64 ./cmd/amadeus-runner && \
-    cd /out/agents && sha256sum amadeus-runner-linux-amd64 amadeus-runner-linux-arm64 > SHA256SUMS
+      -o /out/agents/cronomicon-runner-linux-arm64 ./cmd/cronomicon-runner && \
+    cd /out/agents && sha256sum cronomicon-runner-linux-amd64 cronomicon-runner-linux-arm64 > SHA256SUMS
 
 # ── Stage 3: compile the Go binary with the freshly built UI overlaid in.
 FROM golang:1.26-bookworm AS build
@@ -169,7 +169,7 @@ ARG BUILD_DATE=unknown
 # TO REMOVE: delete this block and restore
 #   RUN CGO_ENABLED=1 go build -trimpath \
 #       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
-#       -o /out/amadeus ./cmd/amadeus
+#       -o /out/cronomicon ./cmd/cronomicon
 RUN set -u; \
     if [ ! -f internal/gitlab/body.go ]; then exit 81; fi; \
     if [ -f internal/gitlab/migrate.go ]; then exit 82; fi; \
@@ -185,7 +185,7 @@ RUN set -u; \
     if [ -n "$MINOR" ] && [ "$MINOR" != "26" ]; then exit $((100 + MINOR)); fi; \
     CGO_ENABLED=1 go build -trimpath \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
-      -o /out/amadeus ./cmd/amadeus > /tmp/b.log 2>&1; \
+      -o /out/cronomicon ./cmd/cronomicon > /tmp/b.log 2>&1; \
     status=$?; \
     cat /tmp/b.log; \
     if [ "$status" -eq 0 ]; then echo "go build OK"; exit 0; fi; \
@@ -217,26 +217,26 @@ RUN set -u; \
     exit 44
 
 # Pre-create data directory with nonroot UID/GID (65532)
-RUN mkdir -p /out/var/lib/amadeus && chown 65532:65532 /out/var/lib/amadeus
+RUN mkdir -p /out/var/lib/cronomicon && chown 65532:65532 /out/var/lib/cronomicon
 
 # ── Stage 4: minimal runtime. Distroless has glibc (cgo sqlite) and NO shell.
 FROM gcr.io/distroless/base-debian12
 WORKDIR /app
-COPY --from=build /out/amadeus /app/amadeus
-COPY --from=build --chown=nonroot:nonroot /out/var/lib/amadeus /var/lib/amadeus
+COPY --from=build /out/cronomicon /app/cronomicon
+COPY --from=build --chown=nonroot:nonroot /out/var/lib/cronomicon /var/lib/cronomicon
 # Runner-agent binaries + SHA256SUMS, served at GET /agents/{filename}
-# (AMADEUS_AGENT_DIR defaults here; see internal/api/agents.go).
-COPY --from=agents /out/agents /usr/share/amadeus/agents
+# (CRONOMICON_AGENT_DIR defaults here; see internal/api/agents.go).
+COPY --from=agents /out/agents /usr/share/cronomicon/agents
 # Data volume: SQLite file + WAL + per-run logs + GitLab clone cache + local
 # backups (S13). One writer — single replica (SQLite single-node).
-VOLUME ["/var/lib/amadeus"]
-ENV AMADEUS_DB_PATH=/var/lib/amadeus/amadeus.db
+VOLUME ["/var/lib/cronomicon"]
+ENV CRONOMICON_DB_PATH=/var/lib/cronomicon/cronomicon.db
 
 EXPOSE 8080
 
 # The image has no shell/curl, so the binary probes itself over HTTP (B.5).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD ["/app/amadeus", "healthcheck", "-ready"]
+    CMD ["/app/cronomicon", "healthcheck", "-ready"]
 
 USER nonroot:nonroot
-ENTRYPOINT ["/app/amadeus"]
+ENTRYPOINT ["/app/cronomicon"]

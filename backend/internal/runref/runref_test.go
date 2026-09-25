@@ -71,7 +71,7 @@ func seedKey(t *testing.T, pool *sql.DB, cfg *config.Config, label, material str
 func TestReplaceAndListBindings(t *testing.T) {
 	pool := openDB(t)
 	ctx := context.Background()
-	owner := Owner{Kind: "job", Source: "amadeus", Name: "deploy"}
+	owner := Owner{Kind: "job", Source: "cronomicon", Name: "deploy"}
 
 	// Duplicate entries dedupe; result is sorted (kind, name).
 	err := ReplaceBindings(ctx, pool, owner, []Binding{
@@ -94,7 +94,7 @@ func TestReplaceAndListBindings(t *testing.T) {
 	if got[0].Kind != KindKey || got[1].Kind != KindSecret || got[2].Kind != KindVar {
 		t.Fatalf("unexpected order: %+v", got)
 	}
-	if got[1].Reference != "AMADEUS_SECRET_DB_PASS" {
+	if got[1].Reference != "CRONOMICON_SECRET_DB_PASS" {
 		t.Fatalf("derived reference wrong: %q", got[1].Reference)
 	}
 
@@ -125,14 +125,14 @@ func TestBindingsClearedOnOwnerDelete(t *testing.T) {
 	// cascade-clear its bindings (migration 590 triggers) so a later same-named
 	// owner cannot silently inherit the grant.
 	if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
-		VALUES('uid-deploy','deploy','amadeus','bash','echo','sha256:x',?)`, now); err != nil {
+		VALUES('uid-deploy','deploy','cronomicon','bash','echo','sha256:x',?)`, now); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO scripts(name, run_type, command, content_hash, synced_at)
 		VALUES('build','bash','echo','sha256:y',?)`, now); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
-	jobOwner := Owner{Kind: "job", Source: "amadeus", Name: "deploy"}
+	jobOwner := Owner{Kind: "job", Source: "cronomicon", Name: "deploy"}
 	scriptOwner := Owner{Kind: "script", Name: "build"}
 	if err := ReplaceBindings(ctx, pool, jobOwner, []Binding{{Kind: KindSecret, Name: "DB_PASS"}}, "a"); err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestBindingsClearedOnOwnerDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := pool.Exec(`DELETE FROM jobs WHERE source='amadeus' AND name='deploy'`); err != nil {
+	if _, err := pool.Exec(`DELETE FROM jobs WHERE source='cronomicon' AND name='deploy'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`DELETE FROM scripts WHERE name='build'`); err != nil {
@@ -166,7 +166,7 @@ func TestReplaceBindingsValidation(t *testing.T) {
 		b    Binding
 	}{
 		{"invalid kind", Binding{Kind: "bogus", Name: "X"}},
-		{"amadeus-prefixed name", Binding{Kind: KindVar, Name: "AMADEUS_FOO"}},
+		{"cronomicon-prefixed name", Binding{Kind: KindVar, Name: "CRONOMICON_FOO"}},
 		{"non-posix name", Binding{Kind: KindVar, Name: "has-dash"}},
 		{"reserved KEK secret", Binding{Kind: KindSecret, Name: "KEK"}},
 	}
@@ -189,19 +189,19 @@ func TestReplaceBindingsValidation(t *testing.T) {
 
 func TestScanBodyAndNames(t *testing.T) {
 	body := `#!/bin/bash
-echo "$AMADEUS_SECRET_DB_PASS"
-curl -H "token: ${AMADEUS_VAR_REGION}" https://x
-ssh -i "$AMADEUS_KEY_deploy_key" host
+echo "$CRONOMICON_SECRET_DB_PASS"
+curl -H "token: ${CRONOMICON_VAR_REGION}" https://x
+ssh -i "$CRONOMICON_KEY_deploy_key" host
 # a run-context token is not a binding:
-echo "$AMADEUS_RUN_TRACE_ID"
+echo "$CRONOMICON_RUN_TRACE_ID"
 # duplicate secret ref:
-echo "$AMADEUS_SECRET_DB_PASS"
+echo "$CRONOMICON_SECRET_DB_PASS"
 `
 	got := ScanBody(body)
 	want := []Binding{
-		{Kind: KindKey, Name: "deploy_key", Reference: "AMADEUS_KEY_deploy_key"},
-		{Kind: KindSecret, Name: "DB_PASS", Reference: "AMADEUS_SECRET_DB_PASS"},
-		{Kind: KindVar, Name: "REGION", Reference: "AMADEUS_VAR_REGION"},
+		{Kind: KindKey, Name: "deploy_key", Reference: "CRONOMICON_KEY_deploy_key"},
+		{Kind: KindSecret, Name: "DB_PASS", Reference: "CRONOMICON_SECRET_DB_PASS"},
+		{Kind: KindVar, Name: "REGION", Reference: "CRONOMICON_VAR_REGION"},
 	}
 	if !slices.EqualFunc(got, want, func(a, b Binding) bool { return a == b }) {
 		t.Fatalf("ScanBody mismatch:\n got %+v\nwant %+v", got, want)
@@ -210,9 +210,9 @@ echo "$AMADEUS_SECRET_DB_PASS"
 
 func TestLintBareNames(t *testing.T) {
 	known := map[string]Kind{"DB_PASS": KindSecret, "REGION": KindVar}
-	body := `echo $DB_PASS; echo $REGION; echo $AMADEUS_SECRET_DB_PASS; echo $UNKNOWN`
+	body := `echo $DB_PASS; echo $REGION; echo $CRONOMICON_SECRET_DB_PASS; echo $UNKNOWN`
 	got := LintBareNames(body, known)
-	// AMADEUS_SECRET_DB_PASS is already migrated (namespaced) → not flagged; UNKNOWN
+	// CRONOMICON_SECRET_DB_PASS is already migrated (namespaced) → not flagged; UNKNOWN
 	// is not a known row → not flagged. DB_PASS + REGION bare sites are flagged.
 	if len(got) != 2 {
 		t.Fatalf("expected 2 bare-name hits, got %+v", got)
@@ -251,13 +251,13 @@ func TestResolveHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if out.Env["AMADEUS_SECRET_DB_PASS"] != "prod-pw" {
-		t.Fatalf("scope preference failed: got %q, want prod-pw", out.Env["AMADEUS_SECRET_DB_PASS"])
+	if out.Env["CRONOMICON_SECRET_DB_PASS"] != "prod-pw" {
+		t.Fatalf("scope preference failed: got %q, want prod-pw", out.Env["CRONOMICON_SECRET_DB_PASS"])
 	}
-	if out.Env["AMADEUS_VAR_REGION"] != "us-east" {
-		t.Fatalf("var resolve failed: %q", out.Env["AMADEUS_VAR_REGION"])
+	if out.Env["CRONOMICON_VAR_REGION"] != "us-east" {
+		t.Fatalf("var resolve failed: %q", out.Env["CRONOMICON_VAR_REGION"])
 	}
-	if len(out.Keys) != 1 || out.Keys[0].Material != "PEM-KEY-MATERIAL" || out.Keys[0].Reference != "AMADEUS_KEY_deploy_key" {
+	if len(out.Keys) != 1 || out.Keys[0].Material != "PEM-KEY-MATERIAL" || out.Keys[0].Reference != "CRONOMICON_KEY_deploy_key" {
 		t.Fatalf("key resolve failed: %+v", out.Keys)
 	}
 	// Redaction: secret value + key material present; log-safe var value absent.
@@ -302,8 +302,8 @@ func TestResolveGlobalFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if out.Env["AMADEUS_SECRET_TOKEN"] != "g" {
-		t.Fatalf("global fallback failed: %q", out.Env["AMADEUS_SECRET_TOKEN"])
+	if out.Env["CRONOMICON_SECRET_TOKEN"] != "g" {
+		t.Fatalf("global fallback failed: %q", out.Env["CRONOMICON_SECRET_TOKEN"])
 	}
 }
 
@@ -466,7 +466,7 @@ func TestResolveMixedStoredAndVault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if out.Env["AMADEUS_SECRET_DB_PASS"] != "stored-pw" || out.Env["AMADEUS_SECRET_API_TOKEN"] != "vault-tok" {
+	if out.Env["CRONOMICON_SECRET_DB_PASS"] != "stored-pw" || out.Env["CRONOMICON_SECRET_API_TOKEN"] != "vault-tok" {
 		t.Fatalf("mixed resolve failed: %+v", out.Env)
 	}
 	// Redaction must cover the vault value (it is NOT in the stored global dictionary).

@@ -6,7 +6,7 @@ import (
 )
 
 func jobManifest(name string) string {
-	return "apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: " + name + "\nspec:\n  run_type: bash\n  command: echo hi\n"
+	return "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: " + name + "\nspec:\n  run_type: bash\n  command: echo hi\n"
 }
 
 // TestParseJobs_RecursiveFolders proves jobs in sub-folders are discovered (folder

@@ -2,18 +2,18 @@
 
 Each control, how it's enforced, and how it's verified. "Automated" = a Go test
 that fails CI if the control regresses. "Operator" = run against the live stack
-(`verify-deployment.sh` or manual).
+(the spoofed-header probe in the administrator manual, section 8.4, or manual).
 
 | # | Control | Enforced by | Verification |
 |---|---|---|---|
-| D.1.1 | **Trusted-proxy enforcement** — Remote-* honored only from an allowlisted peer; spoofed headers from elsewhere are stripped ⇒ unauthenticated | `auth.StripUntrustedHeaders` (global middleware) + `AMADEUS_TRUSTED_PROXIES`; default-deny boot if unset | **Automated:** `TestSpoofedHeaderRejectedAtServer`, `auth.TestTrustedProxyStripsSpoofedHeaders`. **Operator:** `verify-deployment.sh` with `APP_DIRECT_URL`. |
+| D.1.1 | **Trusted-proxy enforcement** — Remote-* honored only from an allowlisted peer; spoofed headers from elsewhere are stripped ⇒ unauthenticated | `auth.StripUntrustedHeaders` (global middleware) + `CRONOMICON_TRUSTED_PROXIES`; default-deny boot if unset | **Automated:** `TestSpoofedHeaderRejectedAtServer`, `auth.TestTrustedProxyStripsSpoofedHeaders`. **Operator:** `verify-deployment.sh` with `APP_DIRECT_URL`. |
 | D.1.2 | **CSRF** double-submit on state-changing operator routes; runner bearer routes excluded | `auth.RequireCSRF` on POST/PUT/PATCH/DELETE; runner routes use `RequireRunner` (no CSRF) | **Automated:** `auth.TestRequireCSRF`, `auth.TestRequireRunner`. |
-| D.1.3 | **Cookies** — CSRF cookie attrs; `AMADEUS_COOKIE_SECURE=true` behind TLS; (OIDC mode) session cookie HttpOnly/Secure/SameSite | `auth.issueCSRF`, `session.go` codec; `AMADEUS_COOKIE_SECURE` | **Automated:** session round-trip tests. **Operator:** inspect `Set-Cookie` on a live response. |
-| D.1.4 | **Secrets at rest** — stored-secret values + SMTP password envelope-encrypted (AES-256-GCM) under a KEK; KEK mounted, backed up separately from the DB | `secrets` envelope scheme (S14); `AMADEUS_KEK_FILE` | **Automated:** `secrets` round-trip + `TestEncryptDecryptStringRoundTrip`. **Operator:** confirm KEK not in image/repo/S3 backup bucket. |
-| D.1.5 | **Dev bypass off** — `/api/v1/auth/dev-login` not mounted unless `AMADEUS_DEV_AUTH` | route mounted conditionally in `auth_mount.go` | **Automated:** `TestDevLoginMountedOnlyWhenEnabled`. **Operator:** `verify-deployment.sh` (expects 404). |
+| D.1.3 | **Cookies** — CSRF cookie attrs; `CRONOMICON_COOKIE_SECURE=true` behind TLS; (OIDC mode) session cookie HttpOnly/Secure/SameSite | `auth.issueCSRF`, `session.go` codec; `CRONOMICON_COOKIE_SECURE` | **Automated:** session round-trip tests. **Operator:** inspect `Set-Cookie` on a live response. |
+| D.1.4 | **Secrets at rest** — stored-secret values + SMTP password envelope-encrypted (AES-256-GCM) under a KEK; KEK mounted, backed up separately from the DB | `secrets` envelope scheme (S14); `CRONOMICON_KEK_FILE` | **Automated:** `secrets` round-trip + `TestEncryptDecryptStringRoundTrip`. **Operator:** confirm KEK not in image/repo/S3 backup bucket. |
+| D.1.5 | **Dev bypass off** — `/api/v1/auth/dev-login` not mounted unless `CRONOMICON_DEV_AUTH` | route mounted conditionally in `auth_mount.go` | **Automated:** `TestDevLoginMountedOnlyWhenEnabled`. **Operator:** `verify-deployment.sh` (expects 404). |
 | D.1.6 | **Surface check** — only `/healthz`, `/readyz`, `/version`, `/metrics`, `/auth/providers` (+ OIDC `/login`,`/callback` in oidc mode; token-gated `/webhooks/gitlab`) are unauthenticated | per-route middleware in the mount files | **Automated:** `TestUnauthenticatedSurface`. |
 | D.1.7 | **`/metrics` not public** | no Traefik label routes `/metrics`; served on the internal network only | **Operator:** `verify-deployment.sh` warns if `/metrics` answers via the public URL. |
-| D.1.8 | **Bootstrap admin removed** — `AMADEUS_BOOTSTRAP_ADMIN_GROUP` unset after seeding mappings | env; loud warning logged while active | **Operator:** confirm the var is unset and the warning no longer logs (see runbook for the re-enable procedure). |
+| D.1.8 | **Bootstrap admin removed** — `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` unset after seeding mappings | env; loud warning logged while active | **Operator:** confirm the var is unset and the warning no longer logs (see runbook for the re-enable procedure). |
 
 ## Running the automated security suite
 
@@ -27,7 +27,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
 
 - **Trusted-proxy IP must be exact.** The compose stack pins Traefik to a static
   internal IP and trusts only that `/32`. If the proxy IP changes, update
-  `AMADEUS_TRUSTED_PROXIES` — a too-wide CIDR weakens D.1.1.
+  `CRONOMICON_TRUSTED_PROXIES` — a too-wide CIDR weakens D.1.1.
 - **Header stripping happens in-app too.** Even though Traefik strips client
   `Remote-*` at the edge (defense in depth), the app independently strips from any
   untrusted peer — both layers must hold.
@@ -39,7 +39,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   read the DB, so it is not a token-validity oracle — a used/expired token still
   gets a script, which then fails cleanly at registration (the sole enforcement
   point: single-use, atomic, audited). Only the token SYNTAX is checked
-  (`amt_reg_` + 64 hex), which also makes shell-meta injection into the baked
+  (`crn_reg_` + 64 hex), which also makes shell-meta injection into the baked
   assignment impossible; the reconstructed server URL is constrained to
   URL-safe chars for the same reason. The one new exposure is that tokens now
   appear in request **URLs → access logs**: treat reverse-proxy logs
@@ -54,8 +54,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   must be on the proxy's auth-bypass allowlist, or a runner (no SSO session)
   gets a 302-to-login HTML page instead of the script. The app still enforces
   the runner bearer on the `/api` paths, so the bypass skips only the SSO.
-  Reference allowlist in `deploy/authelia/configuration.yml` +
-  `deploy/deployment-guide.md`.
+  The path list is in the administrator manual, section 8.3.
 - **Host-key trust is human-approved TOFU, never automatic** (provisioning
   plan 2 Phase 5, v0.47.13, D4). A runner still refuses an unknown/changed
   target key (no fall-open). The new scan → approve → trust flow lets an
@@ -98,14 +97,14 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   (`--checkout-token-file` / `--vault-pass-file`) or a hidden stdin prompt
   (`--checkout-token -` / `--vault-pass -`, echo off) — passing the secret as a
   flag value is explicitly refused, because it would leak via `ps(1)` and shell
-  history. The installed files get `0640 root:amadeus-runner` (same custody as
+  history. The installed files get `0640 root:cronomicon-runner` (same custody as
   `runner.env`); the bytes never transit the Cronomicon server (credential model
   b is unchanged). A stdin prompt requires a TTY, so a piped
   `curl … | sudo bash` install (script on stdin) is rejected with a pointer to
   the file flag rather than silently reading the wrong stream.
 - **Unauthenticated agent/installer serving is by design** (runner provisioning
   D1/D3, v0.47.x). `GET /agents/{filename}` (allowlisted: the two linux
-  `amadeus-runner` binaries + `SHA256SUMS`, from `AMADEUS_AGENT_DIR`) and
+  `cronomicon-runner` binaries + `SHA256SUMS`, from `CRONOMICON_AGENT_DIR`) and
   `/runner-install.sh` are served without auth: neither artifact is a secret
   (both are buildable from source), the install flow runs before any credential
   exists on the host, and registration itself still requires a token — serving
@@ -123,7 +122,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   flap-guarded so a disagreeing agent cannot be driven into a re-register
   loop). The `re-register` poll control op carries no
   configuration: the agent re-reads its OWN local config and re-declares it via
-  `POST /runners/{id}/redeclare`, authenticated with its existing `amt_run_*`
+  `POST /runners/{id}/redeclare`, authenticated with its existing `crn_run_*`
   key. A compromised server (or operator session) therefore cannot use resync
   to grant itself capabilities on a runner — the declared set is always derived
   from the runner host's local files. Redeclare is ownership-guarded (a runner
@@ -135,14 +134,14 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   consumed it, an audit trail the shared token could not give; a leaked unused
   token is revocable and expires in 24h, and a leaked used token is worthless).
   The runner→server direction is the accepted
-  tradeoff (D6): a compromised `amt_run_*` key can now re-declare its OWN row
+  tradeoff (D6): a compromised `crn_run_*` key can now re-declare its OWN row
   (widen advertised capabilities, rename, flip inventory mode) without operator
   action — pre-v4 that required a valid registration token. It still cannot
   change agency membership (operator-assigned) or touch other rows, and claim
   eligibility stays bounded by its agencies; the remedy for a compromised key
   is unchanged — Deregister revokes it immediately.
 - **Capability auto-detection broadens by default** (plan 2 Phase 1, v0.47.9 —
-  D1: 1B). With `AMADEUS_RUNNER_CAPABILITIES` unset, the agent probes the
+  D1: 1B). With `CRONOMICON_RUNNER_CAPABILITIES` unset, the agent probes the
   host's PATH at startup (`bash`, `perl`, `pwsh`, `python3`/`python`,
   `ansible-playbook`, `terraform`) and claims every run-type it finds — so
   installing a toolchain on a runner host silently widens what that runner will
@@ -151,11 +150,11 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   still derived exclusively from the runner host's local state (never from the
   server), and job routing remains bounded by agencies and scopes. The
   narrowing lever is the explicit override: set `-capabilities` /
-  `AMADEUS_RUNNER_CAPABILITIES` on hosts that carry toolchains they must not
+  `CRONOMICON_RUNNER_CAPABILITIES` on hosts that carry toolchains they must not
   execute for Cronomicon. A server-side subtract-only capability mask (plan 2
   Phase 4) will add an operator-controlled narrowing lever that survives host
   changes.
-- **Of the two durable log artifacts, `amadeus.log` is NOT redacted and
+- **Of the two durable log artifacts, `cronomicon.log` is NOT redacted and
   `audit.log` IS** (logging update LU-4 / LU-10; audit-stream masking AM,
   v1.5.34). They were one risk when both shipped unredacted, and are assessed
   together here because what changed with the logging update is the same for
@@ -191,15 +190,15 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   Mitigations that apply to both: each file is created `0640` in a `0750`
   directory — the same custody as the run logs beside them, so no new reader gains
   access — and each has an off switch that costs nothing else.
-  `AMADEUS_LOG_FILE_ENABLED=false` leaves stdout exactly as it was;
-  `AMADEUS_AUDIT_LOG_ENABLED=false` costs the shipper-friendly export, not the
+  `CRONOMICON_LOG_FILE_ENABLED=false` leaves stdout exactly as it was;
+  `CRONOMICON_AUDIT_LOG_ENABLED=false` costs the shipper-friendly export, not the
   audit trail, because **the database is authoritative and the file is an export of
   it**. Deployments that treat the data volume as a lower-trust artifact than their
   log collector should set both to `false`.
 
   Growth is bounded, but only one of the two bounds is short. The process log
   cannot become an unbounded credential archive: it is capped at
-  `(AMADEUS_LOG_FILE_KEEP + 1) × AMADEUS_LOG_FILE_MAX_MB`, 384 MiB at the defaults.
+  `(CRONOMICON_LOG_FILE_KEEP + 1) × CRONOMICON_LOG_FILE_MAX_MB`, 384 MiB at the defaults.
   The audit stream bounds each *record* rather than the tail — `details` is
   length-bounded on all three paths (`auditlog.TrimForAudit`, 4096 bytes), the
   activity `summary` alongside it, and the caller-controlled `User-Agent` is capped
@@ -212,21 +211,21 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   to rediscover it.* Auth events record two addresses: `remote_addr` (the
   immediate peer verbatim) and `client_ip`. The derivation of `client_ip`
   (`httpx.ClientIP`) walks `X-Forwarded-For` **right-to-left**, discarding hops
-  that fall inside `AMADEUS_TRUSTED_PROXIES` and stopping at the first address
+  that fall inside `CRONOMICON_TRUSTED_PROXIES` and stopping at the first address
   that is not ours — and the walk **only begins when the immediate peer is itself
   a trusted proxy**. Taking `XFF[0]`, which is the common implementation, would
   record an entirely attacker-chosen value into the audit trail, which is strictly
   worse than recording nothing: it invites an investigator to trust an address the
   attacker wrote. A malformed entry ends the walk rather than being skipped, so an
   attacker cannot hide a hop behind garbage and shift which entry is believed.
-  `AMADEUS_TRUSTED_PROXIES` therefore now carries a second job beyond the
+  `CRONOMICON_TRUSTED_PROXIES` therefore now carries a second job beyond the
   `Remote-*` identity headers, and a too-wide CIDR weakens both.
   **Residual:** with **no** trusted proxies configured (or a peer outside the
   list), there is nothing to strip and the peer address is used **verbatim** — so
   a deployment fronted by an untrusted or unlisted proxy records the proxy on
   every auth event, and the real client address is not recovered from the
   forwarding header. That is the intended fail-safe (record what we can prove, not
-  what we were told), but it means an unset `AMADEUS_TRUSTED_PROXIES` yields an
+  what we were told), but it means an unset `CRONOMICON_TRUSTED_PROXIES` yields an
   auth trail with no client attribution rather than a wrong one.
 - **Git-sourced job/workflow names are entirely unvalidated** (logging update
   LU-6/LU-7). The GitLab sync inserts the YAML's `metadata.name` **verbatim** —
@@ -253,10 +252,10 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 
 | # | Control | Enforced by | Verification |
 |---|---|---|---|
-| SU-1 | **SSH executor fails closed on an `::amadeus-output::` value that leaks an injected secret** — parity with the runner ingest path, so a `echo "::amadeus-output name=X::$AMADEUS_SECRET_*"` idiom drops the outputs and fails the run (`output_secret_leak`) rather than persisting the secret into `outputs_json` / a child step's `env_json` / the runs API | shared `execspec.FirstOutputLeakingSecret`; `sshexec.execute` guard + `finalizeReason` | **Automated:** `sshexec.TestSSHExecutorRefusesOutputLeakingSecret`, `execspec.TestFirstOutputLeakingSecret`, `runner.TestIngestRefusesOutputLeakingSecret`. |
+| SU-1 | **SSH executor fails closed on an `::cronomicon-output::` value that leaks an injected secret** — parity with the runner ingest path, so a `echo "::cronomicon-output name=X::$CRONOMICON_SECRET_*"` idiom drops the outputs and fails the run (`output_secret_leak`) rather than persisting the secret into `outputs_json` / a child step's `env_json` / the runs API | shared `execspec.FirstOutputLeakingSecret`; `sshexec.execute` guard + `finalizeReason` | **Automated:** `sshexec.TestSSHExecutorRefusesOutputLeakingSecret`, `execspec.TestFirstOutputLeakingSecret`, `runner.TestIngestRefusesOutputLeakingSecret`. |
 | SU-2 | **Job/schedule read endpoints are scope-filtered** — a restricted actor cannot read an out-of-scope job's detail (script body + plaintext env) or list out-of-scope jobs / workflow-runs / schedules. Out-of-scope DETAIL returns **404** (no existence oracle); lists filter rows | `getJob` + `pauseJob`/`resumeJob` gate (they return the same detail) + `scopeWhereFragment` (listJobs, listWorkflowRuns); `drainScheduleRows` owner→`jobs.scope` resolution + `scheduleOwnerReadable` (listSchedules, listUpcomingSchedules) | **Automated:** `api.TestIDORScopeGates` (getJob/pause-resume/listJobs/listWorkflowRuns/listSchedules subtests). |
-| SU-9 | **Per-run log-ingest byte cap** — the log-ingest endpoint (exempt from the 2 MiB body cap) is bounded by `AMADEUS_MAX_RUN_LOG_BYTES` (default 512 MiB); a rogue runner streaming past the cap gets `413` and nothing further is persisted | `runner.HandleIngestLog` ceiling check + `MaxRunLogBytes` config | **Automated:** `runner.TestIngestCapsRunLogSize`. |
-| SU-6 | **Session hash-key length validated; raw-key fallback disabled in prod** — a `<32`-byte `AMADEUS_SESSION_HASH_KEY` is substituted with a random key (ephemeral, warned) instead of weakening HMAC; a non-base64 value is rejected in a production auth mode rather than used as raw bytes | `auth.newSessionCodec` (`len<32`); `auth.decodeKey(allowRaw=cfg.DevAuth)` | **Automated:** `auth.TestNewSessionCodecSubstitutesWeakKeys`, `auth.TestDecodeKeyRejectsRawInProd`. |
+| SU-9 | **Per-run log-ingest byte cap** — the log-ingest endpoint (exempt from the 2 MiB body cap) is bounded by `CRONOMICON_MAX_RUN_LOG_BYTES` (default 512 MiB); a rogue runner streaming past the cap gets `413` and nothing further is persisted | `runner.HandleIngestLog` ceiling check + `MaxRunLogBytes` config | **Automated:** `runner.TestIngestCapsRunLogSize`. |
+| SU-6 | **Session hash-key length validated; raw-key fallback disabled in prod** — a `<32`-byte `CRONOMICON_SESSION_HASH_KEY` is substituted with a random key (ephemeral, warned) instead of weakening HMAC; a non-base64 value is rejected in a production auth mode rather than used as raw bytes | `auth.newSessionCodec` (`len<32`); `auth.decodeKey(allowRaw=cfg.DevAuth)` | **Automated:** `auth.TestNewSessionCodecSubstitutesWeakKeys`, `auth.TestDecodeKeyRejectsRawInProd`. |
 | SU-8 | **Credentialed outbound clients refuse redirects** — the Vault (`X-Vault-Token`) and GitLab REST (`Private-Token`) clients set `CheckRedirect = ErrUseLastResponse`, since Go's stdlib does NOT strip custom headers on a cross-host redirect | `secrets/vault_http.go`, `settings/gitlab.go` | **Automated:** `secrets.TestVaultClientDoesNotFollowRedirectWithToken`, `settings.TestRotateWebhookDoesNotFollowRedirectWithPAT`. |
 
 ### Phase-A residual / accepted notes
@@ -289,12 +288,12 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 
 ### Phase-B residual / accepted notes
 
-- **RFC-1918 is allowed by default** (`AMADEUS_OUTBOUND_ALLOW_PRIVATE=true`, SU-Q4(a)) —
+- **RFC-1918 is allowed by default** (`CRONOMICON_OUTBOUND_ALLOW_PRIVATE=true`, SU-Q4(a)) —
   required because Vault/GitLab are internal hosts. The residual SSRF surface is therefore
   reach to other internal RFC-1918 services from an admin-controlled target URL; the
   admin-config write is already the trust boundary. `false` blocks private ranges.
 - **Loopback is blocked by default**; a Vault-agent loopback sidecar needs
-  `AMADEUS_OUTBOUND_ALLOW_LOOPBACK=true`, which weakens the guard for every client.
+  `CRONOMICON_OUTBOUND_ALLOW_LOOPBACK=true`, which weakens the guard for every client.
 - **go-git's guarded client also refuses redirects** (SU-8 for go-git) — a legitimate
   http→https redirect would fail; configure GitLab as `https://` directly.
 - **The `GIT_CONFIG_*` env-var alternative was NOT used** for SU-3 (it needs git ≥ 2.31);
@@ -309,7 +308,7 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 | SU-4 | **Bastion SSH host key pinned & verified** — the jump hop strict-compares a pinned `bastions.host_key` (mismatch → abort), else TOFU-captures the first-seen key (mirrors the target hop). A secret-injecting run over a bastion to an *unpinned target* is refused | `sshexec.bastionHostKeyCallback` (conn.go, probe.go); interim guard in `sshexec.execute`; migration `640` | **Automated:** `sshexec.TestBastionHostKeyCallback`, `TestSSHExecutorRefusesSecretsOverUnpinnedBastion`, `db.TestMigrate640RoundTrip`. |
 | SU-5 | **Server-side session revocation** — OIDC sessions carry an epoch stamped at login; an RBAC change bumps a global counter, rejecting pre-change sessions on next request. The acting admin keeps their session via a same-request cookie re-issue. TTL 12h→8h | `auth.Service` epoch (`readSession`/`RevokeOtherSessions`); bump in the 4 `access_mount.go` RBAC handlers; migration `641` | **Automated:** `auth.TestSessionEpochRevocation`, `db.TestMigrate641RoundTrip`, the `access_mount` integration flow. |
 | SU-10 | **Best-effort key zeroization** — the unwrapped DEK and loaded KEK are wiped on return from each envelope op | `secrets.zero`; `defer zero(...)` in `kek.go`/`seal.go`/`blob.go` | **Automated:** existing `secrets` round-trip suite (unaffected). |
-| SU-11 | **Legacy mock token neutralized** — `amt_reg_EXAMPLE` replaces the realistic literal in the frozen `amadeus-data.jsx` prototype (not a live secret) | in-place edit | — |
+| SU-11 | **Legacy mock token neutralized** — `crn_reg_EXAMPLE` replaces the realistic literal in the frozen `cronomicon-data.jsx` prototype (not a live secret) | in-place edit | — |
 
 ### Phase-C residual / accepted notes
 
@@ -346,7 +345,7 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 | AM-2 | **Every caller-supplied text column is masked** — `target` on all three writers and `reason` on auth events, not only `details`/`summary`; before the INSERT, so row, stream line and CSV export agree | same writers | **Automated:** `auditlog.TestRedactorMasksTheDatabaseRowAndNotOnlyTheStream` (eight columns). |
 | AM-3 | **One writer per audit table** — no raw `INSERT INTO activity/change_log/auth_events` outside `internal/auditlog` (the break-glass `grant-admin` CLI was the one offender) | source scan | **Automated:** `auditlog.TestAuditWriterConformance_OnlyThisPackageInserts`. |
 | AM-4 | **Process-wide redaction dictionary** — stored secrets + SSH credentials + the seven encrypted settings columns (ONE table, `secrets.EncryptedSettingsColumns`, shared with `rewrap-secrets`; the redaction side had listed three) + multi-line env_vars, every scope; rebuilt lazily after each source write, 5-minute TTL backstop, last-good kept on a failed rebuild, partial-with-error on undecryptable rows | `internal/redactdict`; `secrets.RedactionReport`; `secrets.RedactionSourceChanged` at 16 write sites | **Automated:** `redactdict.TestBuildUnionsEverySourceAndKeepsVariablesVisible`, `TestBuildReportsUndecryptableAsPartial`, `TestStoreLifecycle`, `TestStoreConcurrentReadersNeverBlockOnRebuild` (`-race`), `TestEveryRedactionSourceWriterNotifies`, `secrets.TestRedactionReportCoversEverySettingsColumn`. |
-| AM-5 | **Installed at boot, degraded builds audited** — `redactdict.Install` after migrate and before the first audit write; the healthy→degraded transition writes one `system / Audit / redactor-unavailable` row (+ WARN), recovery one `redactor-restored` row; unconditional, no knob | `cmd/amadeus/main.go`; `redactdict.Install` | **Automated:** `redactdict.TestInstallMasksAuditRowsEndToEnd`, `TestInstallReportsAnOutageOnceAndItsRecoveryOnce`. |
+| AM-5 | **Installed at boot, degraded builds audited** — `redactdict.Install` after migrate and before the first audit write; the healthy→degraded transition writes one `system / Audit / redactor-unavailable` row (+ WARN), recovery one `redactor-restored` row; unconditional, no knob | `cmd/cronomicon/main.go`; `redactdict.Install` | **Automated:** `redactdict.TestInstallMasksAuditRowsEndToEnd`, `TestInstallReportsAnOutageOnceAndItsRecoveryOnce`. |
 
 ### AM residual / accepted notes
 

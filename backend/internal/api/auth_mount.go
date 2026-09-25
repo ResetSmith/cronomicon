@@ -31,7 +31,7 @@ func (s *Server) mountAuth(mux *http.ServeMux) {
 	// and/or the dev bypass) before any session exists.
 	mux.HandleFunc("GET /api/v1/auth/providers", a.Providers)
 
-	// Dev login bypass (AMADEUS_DEV_AUTH) — local preview only. Only mounted when
+	// Dev login bypass (CRONOMICON_DEV_AUTH) — local preview only. Only mounted when
 	// enabled so production never exposes the route at all.
 	if a.DevEnabled() {
 		mux.HandleFunc("GET /api/v1/auth/dev-login", a.DevLogin)

@@ -17,7 +17,7 @@ import (
 
 // headerService builds a trusted-header-mode Service backed by a fresh migrated
 // DB. trustedCIDR is the single allowlisted proxy network; bootstrapGroup is the
-// optional AMADEUS_BOOTSTRAP_ADMIN_GROUP.
+// optional CRONOMICON_BOOTSTRAP_ADMIN_GROUP.
 func headerService(t *testing.T, trustedCIDR, bootstrapGroup string) *Service {
 	t.Helper()
 	pool, err := db.Open(filepath.Join(t.TempDir(), "hdr.db"))
@@ -83,7 +83,7 @@ func seedScopedGroupRole(t *testing.T, s *Service, group, role, scope string) {
 		agencyID, "agency-"+scope, now); err != nil {
 		t.Fatalf("seed agency: %v", err)
 	}
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO scopes(id, name, source, created_at) VALUES(?,?,'amadeus',?)`,
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO scopes(id, name, source, created_at) VALUES(?,?,'cronomicon',?)`,
 		scopeID, scope, now); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
@@ -209,11 +209,11 @@ func TestIdentityFromHeadersConfigurableNames(t *testing.T) {
 // TestBootstrapAdmin verifies that on a fresh DB with no access grants at all, a
 // user in the bootstrap admin group is granted admin (A.6).
 func TestBootstrapAdmin(t *testing.T) {
-	s := headerService(t, "10.0.0.0/8", "amadeus-admins")
+	s := headerService(t, "10.0.0.0/8", "cronomicon-admins")
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("Remote-User", "founder@example.com")
-	r.Header.Set("Remote-Groups", "amadeus-admins")
+	r.Header.Set("Remote-Groups", "cronomicon-admins")
 
 	id, ok := s.identityFromHeaders(context.Background(), r)
 	if !ok {

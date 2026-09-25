@@ -23,8 +23,8 @@
 // # Keyed on (kind, source, name)
 //
 // All three are required. `PRIMARY KEY (source, name)` on both tables means the
-// git and amadeus namespaces are deliberately disjoint, and a job and a workflow
-// may freely share a name. So job/git/deploy, job/amadeus/deploy and
+// git and cronomicon namespaces are deliberately disjoint, and a job and a workflow
+// may freely share a name. So job/git/deploy, job/cronomicon/deploy and
 // workflow/git/deploy are three distinct entities that coexist with three
 // distinct codes.
 //

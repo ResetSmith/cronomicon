@@ -16,7 +16,7 @@ import (
 //   - keyMap:  bare credential NAME → file path, for the agent's key resolver
 //     (resolveKeyPath / loadSigner) so a delivered key takes precedence over the
 //     runner's own key-map / key-dir (which remains the fallback).
-//   - keyEnv:  AMADEUS_KEY_<name> reference → file path, injected into the run env
+//   - keyEnv:  CRONOMICON_KEY_<name> reference → file path, injected into the run env
 //     so a job body / inventory that references the derived form resolves to the
 //     delivered path directly.
 //   - cleanup: best-effort zeroes each file then removes the directory. ALWAYS safe
@@ -33,7 +33,7 @@ func materializeKeys(keys []runnerproto.ManifestKey) (keyMap, keyEnv map[string]
 		return nil, nil, cleanup, nil
 	}
 
-	dir, err := os.MkdirTemp(keyBaseDir(), "amadeus-keys-")
+	dir, err := os.MkdirTemp(keyBaseDir(), "cronomicon-keys-")
 	if err != nil {
 		return nil, nil, cleanup, fmt.Errorf("create key dir: %w", err)
 	}
@@ -105,7 +105,7 @@ func keyBaseDir() string {
 	const shm = "/dev/shm"
 	if fi, err := os.Stat(shm); err == nil && fi.IsDir() {
 		// Confirm writability rather than trusting the mode bits.
-		if probe, err := os.MkdirTemp(shm, ".amadeus-probe-"); err == nil {
+		if probe, err := os.MkdirTemp(shm, ".cronomicon-probe-"); err == nil {
 			_ = os.Remove(probe)
 			return shm
 		}

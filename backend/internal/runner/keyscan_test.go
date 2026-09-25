@@ -52,7 +52,7 @@ func TestKeyscanAccepted(t *testing.T) {
 func TestKeyscanDeliveredOnceOnPoll(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-kd", "amt_run_kd"
+	id, tok := "runner-kd", "crn_run_kd"
 	insertRunner(t, svc, id, "kd", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 
@@ -99,7 +99,7 @@ func uploadKeys(t *testing.T, svc *Service, as *auth.Service, id, tok, body stri
 func TestHostKeyScanApproveTrustRoundTrip(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-rt", "amt_run_rt"
+	id, tok := "runner-rt", "crn_run_rt"
 	insertRunner(t, svc, id, "rt", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 
@@ -158,7 +158,7 @@ func TestHostKeyScanApproveTrustRoundTrip(t *testing.T) {
 func TestHostKeyRejectNeverTrusts(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-rj", "amt_run_rj"
+	id, tok := "runner-rj", "crn_run_rj"
 	insertRunner(t, svc, id, "rj", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 
@@ -193,7 +193,7 @@ func TestHostKeyRejectNeverTrusts(t *testing.T) {
 func TestUploadRejectsNewlineInjection(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-inj", "amt_run_inj"
+	id, tok := "runner-inj", "crn_run_inj"
 	insertRunner(t, svc, id, "inj", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 

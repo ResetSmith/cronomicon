@@ -13,18 +13,18 @@ import { MemoryRouter } from "react-router-dom";
 let composeOn = true;
 // Per-job binding fixtures, keyed by the id the detail fetch asks for.
 const JOB_BINDINGS: Record<number, { kind: string; name: string; reference?: string }[]> = {
-  1: [{ kind: "secret", name: "DB_PASSWORD", reference: "AMADEUS_SECRET_DB_PASSWORD" }],
+  1: [{ kind: "secret", name: "DB_PASSWORD", reference: "CRONOMICON_SECRET_DB_PASSWORD" }],
   2: [],
   3: [],
 };
 const SCRIPT_BINDINGS: Record<string, { kind: string; name: string; reference?: string }[]> = {
-  "tools/deploy.sh": [{ kind: "var", name: "REGION", reference: "AMADEUS_VAR_REGION" }],
+  "tools/deploy.sh": [{ kind: "var", name: "REGION", reference: "CRONOMICON_VAR_REGION" }],
 };
 
 const JOBS = {
   items: [
-    { id: 1, name: "job-with-refs", type: "bash", scope: "Prod", source: "amadeus", status: "success" },
-    { id: 2, name: "job-no-refs", type: "bash", scope: "Prod", source: "amadeus", status: "success" },
+    { id: 1, name: "job-with-refs", type: "bash", scope: "Prod", source: "cronomicon", status: "success" },
+    { id: 2, name: "job-no-refs", type: "bash", scope: "Prod", source: "cronomicon", status: "success" },
     { id: 3, name: "job-script-refs", type: "bash", scope: "Prod", source: "git", status: "success" },
   ],
   totalItems: 3,
@@ -106,7 +106,7 @@ describe("Jobs — effective references (JP-4b)", () => {
   it("shows the job's declared references read-only, with no add or remove controls", async () => {
     const q = await renderJobs("job-with-refs");
     expandRow(q, "job-with-refs");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
     // The editor's controls are gone: no Add button, no name field, no remove ×.
     expect(q.queryByRole("button", { name: "Add" })).toBeNull();
     expect(q.queryByPlaceholderText("reference name…")).toBeNull();
@@ -127,21 +127,21 @@ describe("Jobs — effective references (JP-4b)", () => {
   it("surfaces a script-declared reference and labels its provenance", async () => {
     const q = await renderJobs("job-script-refs");
     expandRow(q, "job-script-refs");
-    await waitFor(() => expect(q.getByText("AMADEUS_VAR_REGION")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_VAR_REGION")).toBeTruthy());
     expect(q.getByText("from script")).toBeTruthy();
   });
 
-  it("offers Edit in Composer only for an amadeus row the caller may compose", async () => {
+  it("offers Edit in Composer only for an cronomicon row the caller may compose", async () => {
     const q = await renderJobs("job-with-refs");
     expandRow(q, "job-with-refs");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
     expect(q.getByRole("button", { name: "Edit in Composer" })).toBeTruthy();
   });
 
   it("withholds Edit in Composer on a git-source row", async () => {
     const q = await renderJobs("job-script-refs");
     expandRow(q, "job-script-refs");
-    await waitFor(() => expect(q.getByText("AMADEUS_VAR_REGION")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_VAR_REGION")).toBeTruthy());
     expect(q.queryByRole("button", { name: "Edit in Composer" })).toBeNull();
   });
 
@@ -149,7 +149,7 @@ describe("Jobs — effective references (JP-4b)", () => {
     composeOn = false;
     const q = await renderJobs("job-with-refs");
     expandRow(q, "job-with-refs");
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASSWORD")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());
     expect(q.queryByRole("button", { name: "Edit in Composer" })).toBeNull();
   });
 });

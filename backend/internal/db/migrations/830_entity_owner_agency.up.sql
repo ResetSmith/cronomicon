@@ -4,7 +4,7 @@
 -- WHAT THIS BUYS. Today `UNIQUE (key, scope)` means one department's BECOME_PASSWORD
 -- in `prod` is the ONLY BECOME_PASSWORD in `prod`. Two departments sharing a scope
 -- cannot each hold their own; the second create collides. Phase A worked around that
--- with aliasing (TEAMA_SUDO → AMADEUS_SECRET_BECOME_PASSWORD), which is the right
+-- with aliasing (TEAMA_SUDO → CRONOMICON_SECRET_BECOME_PASSWORD), which is the right
 -- answer when rows genuinely cannot share a name. This is the other half: let them
 -- share the name outright, and let a run resolve its OWN department's row.
 --

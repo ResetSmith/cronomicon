@@ -2,8 +2,8 @@
 
 -- Update gitlab_config table to align with OpenAPI spec
 ALTER TABLE gitlab_config ADD COLUMN pat_enc TEXT;
-ALTER TABLE gitlab_config ADD COLUMN bot_name TEXT NOT NULL DEFAULT 'amadeus-bot';
-ALTER TABLE gitlab_config ADD COLUMN bot_email TEXT NOT NULL DEFAULT 'amadeus-bot@amadeus.io';
+ALTER TABLE gitlab_config ADD COLUMN bot_name TEXT NOT NULL DEFAULT 'cronomicon-bot';
+ALTER TABLE gitlab_config ADD COLUMN bot_email TEXT NOT NULL DEFAULT 'cronomicon-bot@cronomicon.io';
 ALTER TABLE gitlab_config ADD COLUMN write_branch TEXT NOT NULL DEFAULT 'main';
 ALTER TABLE gitlab_config ADD COLUMN repo_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE gitlab_config ADD COLUMN token_expiry_notify_days INTEGER NOT NULL DEFAULT 7;
@@ -31,7 +31,7 @@ CREATE TABLE vault_config (
 CREATE TABLE log_storage_config (
     id               INTEGER PRIMARY KEY CHECK (id = 1),
     backend          TEXT NOT NULL DEFAULT 'local' CHECK (backend IN ('local', 's3')),
-    local_path       TEXT NOT NULL DEFAULT '/var/lib/amadeus/logs',
+    local_path       TEXT NOT NULL DEFAULT '/var/lib/cronomicon/logs',
     s3_endpoint      TEXT,
     s3_bucket        TEXT,
     s3_region        TEXT,

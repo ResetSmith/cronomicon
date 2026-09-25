@@ -71,7 +71,7 @@ type Service struct {
 	log           *slog.Logger
 	cloneDir      string // path to the local git clone
 	repoURL       string // full GitLab HTTPS URL
-	token         string // AMADEUS_GITLAB_TOKEN (may be empty — unauthenticated)
+	token         string // CRONOMICON_GITLAB_TOKEN (may be empty — unauthenticated)
 	webhookSecret string
 	Cfg           *config.Config // added for KEK-based webhook secret decryption
 
@@ -93,7 +93,7 @@ func (s *Service) SetOnSyncComplete(f func(ctx context.Context, sha string)) {
 
 // NewService builds the GitLab Service.
 //
-// cloneDir should be a persistent path (e.g. /var/lib/amadeus/git-cache/job-definitions).
+// cloneDir should be a persistent path (e.g. /var/lib/cronomicon/git-cache/job-definitions).
 // repoURL/token are resolved by the caller (settings.ResolveGitlabRuntime:
 // env first, DB-backed config second). If token is empty, clones are attempted
 // unauthenticated — this works for public repos; private repos will fail (the
@@ -110,7 +110,7 @@ func NewService(db *sql.DB, log *slog.Logger, repoURL, token, cloneDir, webhookS
 }
 
 // ValidateWebhookToken validates the GitLab webhook token.
-// If AMADEUS_GITLAB_WEBHOOK_SECRET is set, only that secret is accepted.
+// If CRONOMICON_GITLAB_WEBHOOK_SECRET is set, only that secret is accepted.
 // Otherwise, it checks the active secret and, if the overlap window has not expired,
 // the previous secret stored in the database (encrypted using KEK).
 func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
@@ -121,7 +121,7 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	}
 
 	// 1. Env var override check
-	if envSecret := os.Getenv("AMADEUS_GITLAB_WEBHOOK_SECRET"); envSecret != "" {
+	if envSecret := os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET"); envSecret != "" {
 		return ctEq(token, envSecret)
 	}
 
@@ -323,7 +323,7 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 
 	// Phase 3 (RX.5/§6.2, P2): pinning-lint + tree secret-scan each checkout
 	// project. At sync these are WARNINGS — never blocking (the same
-	// never-blocking posture as the advisory columns). `amadeus validate` / CI
+	// never-blocking posture as the advisory columns). `cronomicon validate` / CI
 	// turns the identical findings into hard errors.
 	for _, sc := range scripts {
 		if strings.TrimSpace(sc.Spec.ProjectRoot) == "" {
@@ -411,7 +411,7 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// RX-13 — reaction shape + cross-reference validation, mirroring the calendar
 	// binding guard above. Two layers, for the same reason CAL split them:
 	// NormalizeReactions catches everything checkable offline (name slug,
-	// onOutcome enum, non-negative delays) and is ALSO run by `amadeus validate`
+	// onOutcome enum, non-negative delays) and is ALSO run by `cronomicon validate`
 	// at MR time; the upstream-exists check needs the DB and can only run here.
 	//
 	// A dangling upstream is an ERROR at authoring time even though it is a
@@ -431,7 +431,7 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// a git upstream would reject a repo that authors two definitions where one
 	// reacts to the other — on the FIRST sync only, then accept it on the second.
 	// A repo whose validity depends on how many times it has been synced is not a
-	// validation rule, it is a race. Only an `amadeus`-source upstream (an in-app
+	// validation rule, it is a race. Only an `cronomicon`-source upstream (an in-app
 	// definition the repo cannot see) is looked up in the DB.
 	incomingJobs := make(map[string]bool, len(jobs))
 	for _, j := range jobs {
@@ -689,7 +689,7 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 		skipped = append(skipped, "scripts")
 	}
 
-	// git-source schedules only (source='amadeus' rows are operator-authored and
+	// git-source schedules only (source='cronomicon' rows are operator-authored and
 	// untouched — same guard as scopes; A9/§5.6).
 	if schedsOK {
 		prune("schedules", `
@@ -706,7 +706,7 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 				SELECT id FROM scopes WHERE synced_at < ? AND source = 'git'
 			)`)
 		// M4 — reap imported (git) ssh_hosts rows dropped from inventory this sync.
-		// Only source='git' rows; operator (amadeus) overlays are never touched.
+		// Only source='git' rows; operator (cronomicon) overlays are never touched.
 		prune("imported ssh hosts", `
 			DELETE FROM ssh_hosts
 			WHERE source = 'git' AND (synced_at IS NULL OR synced_at < ?)`)
@@ -802,7 +802,7 @@ func (s *Service) writeBranch(ctx context.Context) string {
 // scripts/playbooks — are present in the working tree for script discovery.
 func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 	if s.repoURL == "" {
-		return nil, fmt.Errorf("AMADEUS_GITLAB_BASE_URL not configured")
+		return nil, fmt.Errorf("CRONOMICON_GITLAB_BASE_URL not configured")
 	}
 	s.installGuardedGitTransport() // SU-7/SU-8: guard go-git http(s) egress (once)
 
@@ -1126,7 +1126,7 @@ func (s *Service) parseWorkflows() ([]WorkflowYAML, []error) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Parse inventory/*.ini (+ optional *.amadeus.yaml sidecars)
+// Parse inventory/*.ini (+ optional *.cronomicon.yaml sidecars)
 // ──────────────────────────────────────────────────────────────────────────────
 
 // inventoryScope is the parsed representation of a single inventory file.
@@ -1168,7 +1168,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 	sidecars := map[string]*sidecarYAML{}
 	sidecarPaths := map[string]string{}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".amadeus.yaml") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".cronomicon.yaml") {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -1180,7 +1180,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 		if err := yaml.Unmarshal(data, &sc); err != nil {
 			continue
 		}
-		base := strings.TrimSuffix(e.Name(), ".amadeus.yaml")
+		base := strings.TrimSuffix(e.Name(), ".cronomicon.yaml")
 		sidecars[base] = &sc
 		sidecarPaths[base] = "inventory/" + e.Name()
 	}
@@ -1224,7 +1224,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 		if sidecar != nil && sidecar.Spec.Description != "" {
 			desc = sidecar.Spec.Description
 		} else {
-			directives, _ := parseAmadeusPragma(content)
+			directives, _ := parseCronomiconPragma(content)
 			desc = directives.Description
 		}
 
@@ -1394,7 +1394,7 @@ type resolvedSchedule struct {
 }
 
 // ScheduleContentHash exposes scheduleContentHash to the API write path so an
-// operator-authored (source='amadeus') schedule computes the identical digest a
+// operator-authored (source='cronomicon') schedule computes the identical digest a
 // git-synced one does — single-sourcing the hash algorithm (D8 — schedule-builder.md).
 func ScheduleContentHash(cron string, env map[string]string, startAt, endAt, interval string, skipCals, onlyCals []string) string {
 	return scheduleContentHash(cron, env, startAt, endAt, interval, skipCals, onlyCals)
@@ -1494,7 +1494,7 @@ func (s *Service) resolveSchedules(scheds []ScheduleYAML) (map[string]resolvedSc
 }
 
 // upsertSchedules writes the resolved first-class schedules into the schedules
-// cache table as source='git' rows (operator 'amadeus' rows are left untouched).
+// cache table as source='git' rows (operator 'cronomicon' rows are left untouched).
 //
 // NOTE: schedules.tags (migration 290) is deliberately ABSENT here. Like
 // scripts.tags (280) / jobs.tags (D6), tags are user-authored (PUT /schedule-tags),
@@ -1591,7 +1591,7 @@ func defPath(sourcePath, fallback string) string {
 // — authored via PUT /api/v1/job-tags/{jobId}, stored only in SQLite, and must
 // survive syncs exactly like scripts.tags (280). The column DEFAULT '[]' covers a
 // freshly-inserted git job and omission from DO UPDATE preserves an existing row's
-// tags. YAML `spec.tags` is parsed-but-unused (kept on the spec struct). The amadeus
+// tags. YAML `spec.tags` is parsed-but-unused (kept on the spec struct). The cronomicon
 // JobComposer compose upsert is separate and still authors tags. Do NOT add tags
 // here — TestJobTagsSurviveSync guards this.
 func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, resolved map[string]resolvedScript, resolvedScheds map[string]resolvedSchedule, now string, sha string) error {
@@ -1918,7 +1918,7 @@ func writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerSource, owne
 
 func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, ownerKind, ownerName string, entries []ScheduleEntry) error {
 	// Source-scoped replace (A9): only this owner's (source-qualified) rows are
-	// cleared, so a git sync can never wipe an operator's amadeus bindings.
+	// cleared, so a git sync can never wipe an operator's cronomicon bindings.
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM definition_schedules WHERE owner_source = ? AND owner_kind = ? AND owner_name = ?`,
 		ownerSource, ownerKind, ownerName); err != nil {
@@ -2051,15 +2051,15 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 	}
 
 	for _, sc := range scopes {
-		// OD-1: a git inventory must NEVER clobber an operator-authored (amadeus)
+		// OD-1: a git inventory must NEVER clobber an operator-authored (cronomicon)
 		// scope of the same name. The ON CONFLICT(name) upsert below would otherwise
 		// flip its source to 'git' and overwrite its authored raw/projection/hosts —
 		// a silent hijack. Skip the colliding git scope loudly; the operator renames
-		// one. (Names are unique, so an amadeus row owning the name blocks the git one.)
+		// one. (Names are unique, so an cronomicon row owning the name blocks the git one.)
 		var existingSource string
 		_ = tx.QueryRowContext(ctx, `SELECT source FROM scopes WHERE name=?`, sc.Name).Scan(&existingSource)
-		if existingSource == "amadeus" {
-			s.logWarn("git inventory name collides with an amadeus-authored scope — skipping (rename one)", "name", sc.Name)
+		if existingSource == "cronomicon" {
+			s.logWarn("git inventory name collides with an cronomicon-authored scope — skipping (rename one)", "name", sc.Name)
 			continue
 		}
 		typesJSON, _ := json.Marshal(sc.Capability.Types)
@@ -2121,7 +2121,7 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 			}
 		}
 
-		// M1: persist the byte-exact raw inventory + format so an amadeus-mode
+		// M1: persist the byte-exact raw inventory + format so an cronomicon-mode
 		// ansible run can ship it to the runner for `-i`. Separate write (not in
 		// the scopes upsert above) so a pre-350 schema in isolated tests just logs
 		// and continues instead of dropping the whole scope. raw_inventory is

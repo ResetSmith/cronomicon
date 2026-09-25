@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 
 // "Delete Scope" in an expanded scope row is gated on TWO things, and both carry
-// meaning: the scope must be amadeus-authored (a git-source scope is owned by its
+// meaning: the scope must be cronomicon-authored (a git-source scope is owned by its
 // repository, deleting it here would be a lie), and the caller must hold
 // ConfigureApp. Before the second half of the gate a read-only viewer was offered
 // a button whose only possible outcome was a 403 — the regression pinned below.
@@ -34,7 +34,7 @@ import { ScopesTab, type ScopeRow } from "./ScopesTab";
 const LOCAL: ScopeRow = {
   id: "019fa189-0001-7000-8000-000000000001",
   scope: "edge-lab",
-  source: "amadeus",
+  source: "cronomicon",
   description: "operator-authored",
   hosts: ["host1.internal"],
   capability: { types: ["bash"], origin: "local" },

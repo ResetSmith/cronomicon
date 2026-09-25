@@ -83,7 +83,7 @@ function PreflightHost({
 const binding = (kind: string, name: string) => ({
   kind,
   name,
-  reference: `AMADEUS_${kind === "secret" ? "SECRET" : kind === "key" ? "KEY" : "VAR"}_${name}`,
+  reference: `CRONOMICON_${kind === "secret" ? "SECRET" : kind === "key" ? "KEY" : "VAR"}_${name}`,
 });
 
 const verdict = (kind: string, name: string, over: Record<string, unknown>) => ({
@@ -116,7 +116,7 @@ describe("reference rows", () => {
 
     const { container } = render(<ReferenceBindingsEditor owner={{ job: 1 }} scope="prod" />);
     const q = within(container);
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASS")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASS")).toBeTruthy());
     // The row states WHICH row won, not merely that one did. The scope pill lived
     // only on the chip before VU-20 and had to survive the merge.
     await waitFor(() => expect(q.getByText("prod")).toBeTruthy());
@@ -174,7 +174,7 @@ describe("reference rows", () => {
   it("does not validate when no scope is supplied", async () => {
     getResponses["/job-reference-bindings/{jobId}"] = { bindings: [binding("secret", "DB_PASS")] };
     const { container } = render(<ReferenceBindingsEditor owner={{ job: 1 }} />);
-    await waitFor(() => expect(within(container).getByText("AMADEUS_SECRET_DB_PASS")).toBeTruthy());
+    await waitFor(() => expect(within(container).getByText("CRONOMICON_SECRET_DB_PASS")).toBeTruthy());
     expect(postedBodies).toHaveLength(0);
   });
 
@@ -215,7 +215,7 @@ describe("reference rows", () => {
     const q = within(container);
     await waitFor(() => expect(q.getAllByText("✓")).toHaveLength(3));
     expect(q.getAllByRole("listitem")).toHaveLength(3);
-    for (const name of ["AMADEUS_SECRET_DB_PASS", "AMADEUS_VAR_REGION", "AMADEUS_KEY_ANSIBLE_RH8"]) {
+    for (const name of ["CRONOMICON_SECRET_DB_PASS", "CRONOMICON_VAR_REGION", "CRONOMICON_KEY_ANSIBLE_RH8"]) {
       expect(q.getByText(name)).toBeTruthy();
     }
     // Nothing says "No references declared." while three are declared.
@@ -259,8 +259,8 @@ describe("reference rows", () => {
     await waitFor(() => expect(q.getAllByRole("button", { name: /^Remove reference/ })).toHaveLength(2));
 
     q.getByRole("button", { name: "Remove reference DB_PASS" }).click();
-    await waitFor(() => expect(q.queryByText("AMADEUS_SECRET_DB_PASS")).toBeNull());
-    expect(q.getByText("AMADEUS_VAR_REGION")).toBeTruthy();
+    await waitFor(() => expect(q.queryByText("CRONOMICON_SECRET_DB_PASS")).toBeNull());
+    expect(q.getByText("CRONOMICON_VAR_REGION")).toBeTruthy();
   });
 });
 
@@ -286,11 +286,11 @@ describe("promoted SSH key field", () => {
 
     const { container } = render(<JobKeyField jobId={1} scope="prod" executor="runner" />);
     const q = within(container);
-    await waitFor(() => expect(q.getByText("AMADEUS_KEY_ANSIBLE_RH8")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_KEY_ANSIBLE_RH8")).toBeTruthy());
     expect(q.getByText("✓")).toBeTruthy();
     expect(q.getByText("SSH key")).toBeTruthy();
     // The secret belongs to the other surface and must not appear in this one.
-    expect(q.queryByText("AMADEUS_SECRET_DB_PASS")).toBeNull();
+    expect(q.queryByText("CRONOMICON_SECRET_DB_PASS")).toBeNull();
   });
 
   it("states the SSH-executor refusal, and only where it applies", async () => {
@@ -305,7 +305,7 @@ describe("promoted SSH key field", () => {
     cleanup();
 
     const runner = render(<JobKeyField jobId={1} scope="" executor="runner" />);
-    await waitFor(() => expect(within(runner.container).getByText("AMADEUS_KEY_PROD_DEPLOY")).toBeTruthy());
+    await waitFor(() => expect(within(runner.container).getByText("CRONOMICON_KEY_PROD_DEPLOY")).toBeTruthy());
     expect(within(runner.container).queryByText(/Refused/)).toBeNull();
   });
 
@@ -342,7 +342,7 @@ describe("promoted SSH key field", () => {
 
     const { container } = render(<JobKeyField jobId={1} scope="" executor="runner" />);
     const q = within(container);
-    await waitFor(() => expect(q.getByText("AMADEUS_KEY_BOUND")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("CRONOMICON_KEY_BOUND")).toBeTruthy());
     expect(q.queryByRole("combobox")).toBeNull();
   });
 
@@ -377,8 +377,8 @@ describe("promoted SSH key field", () => {
     );
     const q = within(container);
     // The key is not this editor's business any more…
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_DB_PASS")).toBeTruthy());
-    expect(q.queryByText("AMADEUS_KEY_PROD_DEPLOY")).toBeNull();
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASS")).toBeTruthy());
+    expect(q.queryByText("CRONOMICON_KEY_PROD_DEPLOY")).toBeNull();
     expect(q.queryByRole("option", { name: "SSH Key" })).toBeNull();
 
     q.getByRole("button", { name: "Remove reference DB_PASS" }).click();
@@ -487,8 +487,8 @@ describe("alias (RA-1)", () => {
     // Both names, because each answers a different question: the row says WHOSE
     // credential this is, the destination says what the playbook reads. A chip
     // showing only one of them cannot answer both.
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_TEAMA_SUDO")).toBeTruthy());
-    expect(q.getByText("AMADEUS_SECRET_BECOME_PASSWORD")).toBeTruthy();
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_TEAMA_SUDO")).toBeTruthy());
+    expect(q.getByText("CRONOMICON_SECRET_BECOME_PASSWORD")).toBeTruthy();
   });
 
   it("persists the alias on save", async () => {
@@ -560,9 +560,9 @@ describe("alias (RA-1)", () => {
     fireEvent.change(q.getByPlaceholderText("inject as… (optional)"), { target: { value: "SUDO_PASS" } });
     fireEvent.click(q.getByText("Add"));
 
-    await waitFor(() => expect(q.getByText("AMADEUS_SECRET_SUDO_PASS")).toBeTruthy());
-    expect(q.getByText("AMADEUS_SECRET_BECOME_PASSWORD")).toBeTruthy();
-    expect(q.getAllByText("AMADEUS_SECRET_TEAMA_SUDO")).toHaveLength(2);
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_SUDO_PASS")).toBeTruthy());
+    expect(q.getByText("CRONOMICON_SECRET_BECOME_PASSWORD")).toBeTruthy();
+    expect(q.getAllByText("CRONOMICON_SECRET_TEAMA_SUDO")).toHaveLength(2);
   });
 
   it("previews the destination key while the alias is being typed", async () => {
@@ -575,6 +575,6 @@ describe("alias (RA-1)", () => {
     fireEvent.change(q.getByPlaceholderText("inject as… (optional)"), { target: { value: "BECOME_PASSWORD" } });
     // The alias is a bare name but the injected key is prefixed; showing the derived
     // form removes the one guess an author would otherwise have to make.
-    await waitFor(() => expect(q.getByText(/AMADEUS_SECRET_BECOME_PASSWORD/)).toBeTruthy());
+    await waitFor(() => expect(q.getByText(/CRONOMICON_SECRET_BECOME_PASSWORD/)).toBeTruthy());
   });
 });

@@ -12,7 +12,7 @@
 -- run lifecycle — it only drives the Run dialog UI and a warn-only check (UDV4).
 --
 -- Dual-source (A9): read-only for git jobs (populated by sync from spec.prompts),
--- writable for amadeus jobs (populated by the composer) — exactly like env_json
+-- writable for cronomicon jobs (populated by the composer) — exactly like env_json
 -- (migration 221). Advisory: a malformed/empty list never blocks a sync. Mirrors
 -- the scripts.variables precedent (migration 230): a JSON-array TEXT column
 -- defaulting to '[]', so pre-migration rows read as "no prompts". Additive

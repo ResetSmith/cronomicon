@@ -66,7 +66,7 @@ func (s *Service) VaultConfigured() bool {
 type Secret struct {
 	ID             string  `json:"id"`
 	Key            string  `json:"key"`
-	Reference      string  `json:"reference"` // derived AMADEUS_SECRET_<key> (read-only; namespace contract)
+	Reference      string  `json:"reference"` // derived CRONOMICON_SECRET_<key> (read-only; namespace contract)
 	Source         string  `json:"source"`
 	Scope          *string `json:"scope"`
 	Description    *string `json:"description"`

@@ -62,50 +62,50 @@ check "help lists --vault-pass-file" bash -c "bash '$SCRIPT' --help | grep -q --
 
 # --- Required args ---
 check_rejects "missing --server rejected" "Server URL" \
-  bash "$SCRIPT" -t amt_reg_x
+  bash "$SCRIPT" -t crn_reg_x
 check_rejects "missing --token rejected" "Registration token" \
-  bash "$SCRIPT" -s https://amadeus.example.com
+  bash "$SCRIPT" -s https://cronomicon.example.com
 
 # --- Flag combinations (validated before the root gate) ---
 check_rejects "--key-dir + --key-map rejected" "mutually exclusive" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --key-dir /tmp --key-map K=/tmp/k
-check_rejects "bad --inventory value rejected" "must be 'amadeus' or 'local'" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --inventory bogus
+  bash "$SCRIPT" -s https://x -t crn_reg_x --key-dir /tmp --key-map K=/tmp/k
+check_rejects "bad --inventory value rejected" "must be 'cronomicon' or 'local'" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --inventory bogus
 check_rejects "--inventory local without --local-inventory rejected" "requires --local-inventory" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --inventory local
+  bash "$SCRIPT" -s https://x -t crn_reg_x --inventory local
 check_rejects "--local-inventory without --inventory local rejected" "only applies with" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --local-inventory /tmp/inv.json
+  bash "$SCRIPT" -s https://x -t crn_reg_x --local-inventory /tmp/inv.json
 check_rejects "malformed --key-map rejected" "NAME=path" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --key-map not-a-map
+  bash "$SCRIPT" -s https://x -t crn_reg_x --key-map not-a-map
 check_rejects "duplicate --key-map NAME rejected" "duplicate NAME" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --key-map prod=/k1,prod=/k2
+  bash "$SCRIPT" -s https://x -t crn_reg_x --key-map prod=/k1,prod=/k2
 check_rejects "path-like --key-map NAME rejected" "plain name" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --key-map ../evil=/k1
+  bash "$SCRIPT" -s https://x -t crn_reg_x --key-map ../evil=/k1
 check_rejects "path-like --generate-key NAME rejected" "plain name" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --generate-key ../evil
+  bash "$SCRIPT" -s https://x -t crn_reg_x --generate-key ../evil
 check_rejects "--generate-key with missing value rejected" "requires a value" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --generate-key
+  bash "$SCRIPT" -s https://x -t crn_reg_x --generate-key
 check_rejects "flag with missing value rejected" "requires a value" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --known-hosts
+  bash "$SCRIPT" -s https://x -t crn_reg_x --known-hosts
 check_rejects "-c with missing value rejected" "requires a value" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x -c
+  bash "$SCRIPT" -s https://x -t crn_reg_x -c
 check_rejects "unknown flag rejected" "Unknown parameter" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --bogus
+  bash "$SCRIPT" -s https://x -t crn_reg_x --bogus
 
 # --- Secrets are never accepted as a flag VALUE (ps/history exposure) ---
 check_rejects "--checkout-token with a value rejected" "refusing to read a secret" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --checkout-token ghp_secretvalue
+  bash "$SCRIPT" -s https://x -t crn_reg_x --checkout-token ghp_secretvalue
 check_rejects "--vault-pass with a value rejected" "refusing to read a secret" \
-  bash "$SCRIPT" -s https://x -t amt_reg_x --vault-pass hunter2
+  bash "$SCRIPT" -s https://x -t crn_reg_x --vault-pass hunter2
 # A stdin prompt needs a terminal; piped (no TTY) must reject and point at the file flag.
 check_rejects "--checkout-token - without a TTY rejected" "not a terminal" \
-  bash -c "printf '' | bash '$SCRIPT' -s https://x -t amt_reg_x --checkout-token -"
+  bash -c "printf '' | bash '$SCRIPT' -s https://x -t crn_reg_x --checkout-token -"
 check_rejects "--vault-pass - without a TTY rejected" "not a terminal" \
-  bash -c "printf '' | bash '$SCRIPT' -s https://x -t amt_reg_x --vault-pass -"
+  bash -c "printf '' | bash '$SCRIPT' -s https://x -t crn_reg_x --vault-pass -"
 check_rejects "--checkout-token-file + --checkout-token - conflict rejected" "not both" \
-  bash -c "printf '' | bash '$SCRIPT' -s https://x -t amt_reg_x --checkout-token-file /tmp/tok --checkout-token -"
+  bash -c "printf '' | bash '$SCRIPT' -s https://x -t crn_reg_x --checkout-token-file /tmp/tok --checkout-token -"
 # A mistaken --checkout-token=SECRET (=-form) must be rejected WITHOUT echoing the secret.
-_ct_out=$(bash "$SCRIPT" -s https://x -t amt_reg_x --checkout-token=SUPERSECRET 2>&1 || true)
+_ct_out=$(bash "$SCRIPT" -s https://x -t crn_reg_x --checkout-token=SUPERSECRET 2>&1 || true)
 if grep -q "SUPERSECRET" <<< "$_ct_out"; then
   echo "FAIL --checkout-token=value must not echo the secret" >&2
   FAILURES=$((FAILURES + 1))
@@ -116,7 +116,7 @@ fi
 # --- Root gate still holds after valid args (when run unprivileged) ---
 if [ "$EUID" -ne 0 ]; then
   check_rejects "valid args still hit the root gate" "must be run as root" \
-    bash "$SCRIPT" -s https://x -t amt_reg_x
+    bash "$SCRIPT" -s https://x -t crn_reg_x
 fi
 
 echo ""

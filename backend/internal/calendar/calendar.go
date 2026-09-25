@@ -58,7 +58,7 @@ type Calendar struct {
 }
 
 // Set is the loaded calendars by name. Names are unambiguous by construction:
-// calendars are amadeus-source only (CAL-Q2/CAL-Q7), so there is no shadowing
+// calendars are cronomicon-source only (CAL-Q2/CAL-Q7), so there is no shadowing
 // rule to decide.
 type Set map[string]Calendar
 

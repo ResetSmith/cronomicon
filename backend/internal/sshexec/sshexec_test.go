@@ -320,7 +320,7 @@ func TestSSHExecutorTimeoutInterruptsRun(t *testing.T) {
 		t.Errorf("status = %q, want failure after timeout", status)
 	}
 	logBytes, _ := os.ReadFile(filepath.Join(svc.LogDir(), "run-1.log"))
-	if !strings.Contains(string(logBytes), "amadeus: job timed out") {
+	if !strings.Contains(string(logBytes), "cronomicon: job timed out") {
 		t.Errorf("log missing timeout marker:\n%s", logBytes)
 	}
 }

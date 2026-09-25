@@ -50,12 +50,12 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 
 	// D8: materialize any delivered SSH-key material to 0600 files off the run tree.
 	// deliveredKeys (bare NAME → path) feeds the key resolver (delivered wins,
-	// key-dir is the fallback); keyEnv (AMADEUS_KEY_<name> → path) is exposed in the
+	// key-dir is the fallback); keyEnv (CRONOMICON_KEY_<name> → path) is exposed in the
 	// run env. cleanup wipes the files when run returns — including on early error.
 	deliveredKeys, keyEnv, cleanupKeys, kerr := materializeKeys(m.Keys)
 	defer cleanupKeys()
 	if kerr != nil {
-		emit("amadeus: " + kerr.Error())
+		emit("cronomicon: " + kerr.Error())
 		buf.seal(makeEnvelope(-1, start, time.Now(), ""))
 		return -1
 	}
@@ -73,7 +73,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 	fileEnv, cleanupFiles, ferr := materializeSecretFiles(m.SecretFiles)
 	defer cleanupFiles()
 	if ferr != nil {
-		emit("amadeus: " + ferr.Error())
+		emit("cronomicon: " + ferr.Error())
 		buf.seal(makeEnvelope(-1, start, time.Now(), ""))
 		return -1
 	}
@@ -99,7 +99,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 		// SSH run-types (bash/perl/powershell/python) fan out to targets.
 		targets, err := e.resolveTargets(m)
 		if err != nil {
-			emit("amadeus: " + err.Error())
+			emit("cronomicon: " + err.Error())
 			exitCode = 1
 		} else {
 			cmd := buildRemoteCommand(m)
@@ -117,7 +117,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 	}
 
 	if runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-		emit(fmt.Sprintf("amadeus: run timed out after %ds; process killed", m.TimeoutSeconds))
+		emit(fmt.Sprintf("cronomicon: run timed out after %ds; process killed", m.TimeoutSeconds))
 		if exitCode == 0 {
 			exitCode = -1
 		}
@@ -127,7 +127,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 	return exitCode
 }
 
-// resolveTargets picks the host list for an SSH run. In "amadeus" mode the
+// resolveTargets picks the host list for an SSH run. In "cronomicon" mode the
 // manifest already carries fully-resolved targets; in "local" mode the agent
 // resolves the scope against its OWN inventory (T-b network-isolated segments).
 func (e *executor) resolveTargets(m *runnerproto.ManifestResponse) ([]runnerproto.ManifestTarget, error) {

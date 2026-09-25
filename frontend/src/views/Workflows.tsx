@@ -197,7 +197,7 @@ export function Workflows() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [toast, fireToast] = useToast();
   const [deleting, setDeleting] = useState<Workflow | null>(null);
-  // RH: which amadeus-source workflow's revision history is open, by name.
+  // RH: which cronomicon-source workflow's revision history is open, by name.
   const [historyFor, setHistoryFor] = useState<string | null>(null);
   const [delBusy, setDelBusy] = useState(false);
   // RX-24 — the server's refusal text when reactions watch this workflow. See
@@ -215,7 +215,7 @@ export function Workflows() {
       return next;
     });
   const location = useLocation();
-  // Compose capability gates the amadeus-only Edit affordance (mirrors Jobs.tsx);
+  // Compose capability gates the cronomicon-only Edit affordance (mirrors Jobs.tsx);
   // triggerJobs gates the Run/Pause controls (RB-3, mirrors Jobs.tsx — see the
   // longer note there on why this replaced the client-side role list and why it
   // remains a UX affordance rather than a boundary).
@@ -363,7 +363,7 @@ export function Workflows() {
     setRefresh((n) => n + 1);
   };
 
-  // Delete an amadeus-authored workflow from the expanded row. Same endpoint the
+  // Delete an cronomicon-authored workflow from the expanded row. Same endpoint the
   // editor uses; the server rejects git-source rows with a 409, which is the real
   // guard — the button gate below is only UX. Collapses the row on success so the
   // list doesn't re-expand onto a deleted id.
@@ -388,7 +388,7 @@ export function Workflows() {
       setDelBlock(null);
       const msg =
         response.status === 409
-          ? "Only amadeus-source workflows can be deleted in-app."
+          ? "Only cronomicon-source workflows can be deleted in-app."
           : (err as { message?: string } | undefined)?.message ?? `Delete failed (${response.status}).`;
       setActionError(`Delete failed for ${wf.name}: ${msg}`);
       return;
@@ -572,9 +572,9 @@ export function Workflows() {
               ⏱ Run later
             </Btn>
           )}
-          {/* Edit only for amadeus rows the caller may compose (hidden for git
+          {/* Edit only for cronomicon rows the caller may compose (hidden for git
               rows + non-admins). Delete lives in the editor behind a confirm. */}
-          {canCompose && w.source === "amadeus" && (
+          {canCompose && w.source === "cronomicon" && (
             <Link to={`/workflow-editor?id=${w.id}`} style={{ textDecoration: "none" }}>
               <Btn small>Edit</Btn>
             </Link>
@@ -638,15 +638,15 @@ export function Workflows() {
                     </Btn>
                   )}
                   {/* Delete was previously editor-only; it is now also a row action
-                      here, behind the same confirm and the same amadeus-only gate
+                      here, behind the same confirm and the same cronomicon-only gate
                       as Edit. Destructive last, dangerQuiet — Runners' order. */}
                   {/* RH: in-app definitions get history here; git rows get it from Git. */}
-                  {canCompose && w.source === "amadeus" && (
+                  {canCompose && w.source === "cronomicon" && (
                     <Btn small onClick={() => setHistoryFor(w.name ?? "")}>
                       History
                     </Btn>
                   )}
-                  {canCompose && w.source === "amadeus" && (
+                  {canCompose && w.source === "cronomicon" && (
                     <Btn small dangerQuiet disabled={busyId === w.id || delBusy} onClick={() => setDeleting(w)}>
                       Delete
                     </Btn>

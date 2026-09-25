@@ -331,7 +331,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
 
       <NamespaceHelp>
         Reference a secret in a script or inventory as{" "}
-        <code style={{ fontFamily: c.mono }}>AMADEUS_SECRET_&lt;key&gt;</code> — it resolves to the secret value at run
+        <code style={{ fontFamily: c.mono }}>CRONOMICON_SECRET_&lt;key&gt;</code> — it resolves to the secret value at run
         time and is always redacted in logs. This works whether the secret is stored in Cronomicon or Vault-backed; rows keep
         their bare key.
       </NamespaceHelp>
@@ -344,7 +344,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <div style={{ color: c.textSec }}>
           {items.length === 0 ? (
             <>
-              <div>No secrets yet. A secret is injected as AMADEUS_SECRET_&lt;key&gt; and always redacted in logs.</div>
+              <div>No secrets yet. A secret is injected as CRONOMICON_SECRET_&lt;key&gt; and always redacted in logs.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
@@ -773,7 +773,7 @@ function MigrateModal({
   onClose: () => void;
   onDone: (msg: string, kind: "info" | "error") => void;
 }) {
-  const [vaultPath, setVaultPath] = useState(`secret/data/amadeus#${row.key}`);
+  const [vaultPath, setVaultPath] = useState(`secret/data/cronomicon#${row.key}`);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
 

@@ -103,17 +103,17 @@ func TestPausedJobsCascadeDelete(t *testing.T) {
 		return n
 	}
 
-	// The same NAME under both sources: the git and amadeus namespaces are
+	// The same NAME under both sources: the git and cronomicon namespaces are
 	// deliberately disjoint (PRIMARY KEY (source, name)), so deleting one must not
 	// disturb the other's pause.
 	mustExec(`INSERT INTO jobs (uid, name, source, run_type, synced_at) VALUES ('uid-dep-git','deploy','git','bash','t')`)
-	mustExec(`INSERT INTO jobs (uid, name, source, run_type, synced_at) VALUES ('uid-dep-ama','deploy','amadeus','bash','t')`)
+	mustExec(`INSERT INTO jobs (uid, name, source, run_type, synced_at) VALUES ('uid-dep-ama','deploy','cronomicon','bash','t')`)
 	mustExec(`INSERT INTO workflows (uid, name, source, synced_at) VALUES ('uid-ngt','nightly','git','t')`)
 	mustExec(`INSERT INTO paused_jobs (owner_kind, source, name, paused_at, paused_by, owner_uid) VALUES ('job','git','deploy','t','tester','uid-dep-git')`)
-	mustExec(`INSERT INTO paused_jobs (owner_kind, source, name, paused_at, paused_by, owner_uid) VALUES ('job','amadeus','deploy','t','tester','uid-dep-ama')`)
+	mustExec(`INSERT INTO paused_jobs (owner_kind, source, name, paused_at, paused_by, owner_uid) VALUES ('job','cronomicon','deploy','t','tester','uid-dep-ama')`)
 	mustExec(`INSERT INTO paused_jobs (owner_kind, source, name, paused_at, paused_by, owner_uid) VALUES ('workflow','git','nightly','t','tester','uid-ngt')`)
 
-	if paused("job", "git", "deploy") != 1 || paused("job", "amadeus", "deploy") != 1 || paused("workflow", "git", "nightly") != 1 {
+	if paused("job", "git", "deploy") != 1 || paused("job", "cronomicon", "deploy") != 1 || paused("workflow", "git", "nightly") != 1 {
 		t.Fatal("setup: expected three seeded pause rows")
 	}
 
@@ -121,8 +121,8 @@ func TestPausedJobsCascadeDelete(t *testing.T) {
 	if got := paused("job", "git", "deploy"); got != 0 {
 		t.Errorf("job pause survived the delete (%d rows): a same-named job returning later would be silently never fired", got)
 	}
-	if got := paused("job", "amadeus", "deploy"); got != 1 {
-		t.Errorf("the amadeus-source pause was collateral (%d rows, want 1): the trigger is not source-qualified", got)
+	if got := paused("job", "cronomicon", "deploy"); got != 1 {
+		t.Errorf("the cronomicon-source pause was collateral (%d rows, want 1): the trigger is not source-qualified", got)
 	}
 
 	mustExec(`DELETE FROM workflows WHERE source='git' AND name='nightly'`)
@@ -132,7 +132,7 @@ func TestPausedJobsCascadeDelete(t *testing.T) {
 	// The job pause for a DIFFERENT owner_kind must be untouched by the workflow
 	// delete — the two triggers differ only in owner_kind, so a copy-paste slip
 	// between them shows up here.
-	if got := paused("job", "amadeus", "deploy"); got != 1 {
+	if got := paused("job", "cronomicon", "deploy"); got != 1 {
 		t.Errorf("the workflow delete removed a JOB pause (%d rows, want 1): owner_kind is not being matched", got)
 	}
 }

@@ -52,7 +52,7 @@ type annotation struct {
 // loadAnnotation reads the full annotation for one definition, by identity.
 //
 // Keyed on (kind, uid) and nothing else. There is no by-name fallback here or
-// anywhere else that touches this table: under R2-5 two amadeus definitions may
+// anywhere else that touches this table: under R2-5 two cronomicon definitions may
 // share a name, so a name lookup would hand one twin the other's notes — the
 // defect R2F-1 fixed for reference_bindings, which is not worth re-introducing
 // for the convenience of one query.

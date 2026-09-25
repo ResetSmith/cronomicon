@@ -1219,11 +1219,11 @@ describe("RunDialog — reference preflight (T1.7)", () => {
   // reference opening the fold is the entire point. Caught only by driving the
   // real app; every unit test passed with the check dead.
   it("springs the fold open and names the count while still collapsed", async () => {
-    jobBindings = [{ kind: "secret", name: "RH8_BECOME_PASS", reference: "AMADEUS_SECRET_RH8_BECOME_PASS" }];
+    jobBindings = [{ kind: "secret", name: "RH8_BECOME_PASS", reference: "CRONOMICON_SECRET_RH8_BECOME_PASS" }];
     refVerdicts["secret RH8_BECOME_PASS"] = {
       kind: "secret",
       name: "RH8_BECOME_PASS",
-      reference: "AMADEUS_SECRET_RH8_BECOME_PASS",
+      reference: "CRONOMICON_SECRET_RH8_BECOME_PASS",
       ok: false,
       outcome: "out_of_scope",
       reason: 'exists, but only in scope "Prod" — not visible from scope "Staging"',
@@ -1242,11 +1242,11 @@ describe("RunDialog — reference preflight (T1.7)", () => {
   });
 
   it("stays quiet when every reference resolves", async () => {
-    jobBindings = [{ kind: "var", name: "REGION", reference: "AMADEUS_VAR_REGION" }];
+    jobBindings = [{ kind: "var", name: "REGION", reference: "CRONOMICON_VAR_REGION" }];
     refVerdicts["var REGION"] = {
       kind: "var",
       name: "REGION",
-      reference: "AMADEUS_VAR_REGION",
+      reference: "CRONOMICON_VAR_REGION",
       ok: true,
       outcome: "resolved",
       reason: "resolves to the global variable",
@@ -1271,7 +1271,7 @@ describe("RunDialog — per-run reference additions", () => {
     const nameSelect = await q.findByLabelText(/Add a stored variable to this run/);
     fireEvent.change(nameSelect, { target: { value: "REGION" } });
     // The addition renders as a removable row under "Added for this run".
-    await q.findByText("AMADEUS_VAR_REGION");
+    await q.findByText("CRONOMICON_VAR_REGION");
     expect(q.getByText("Added for this run")).toBeTruthy();
     // ...and reaches the collapsed summary's wording via the added count.
     expect(q.getByRole("button", { name: /1 reference added/ })).toBeTruthy();
@@ -1291,9 +1291,9 @@ describe("RunDialog — per-run reference additions", () => {
 
     const nameSelect = await q.findByLabelText(/Add a stored variable to this run/);
     fireEvent.change(nameSelect, { target: { value: "REGION" } });
-    await q.findByText("AMADEUS_VAR_REGION");
+    await q.findByText("CRONOMICON_VAR_REGION");
     fireEvent.click(q.getByRole("button", { name: "Remove reference REGION" }));
-    await waitFor(() => expect(q.queryByText("AMADEUS_VAR_REGION")).toBeNull());
+    await waitFor(() => expect(q.queryByText("CRONOMICON_VAR_REGION")).toBeNull());
 
     fireEvent.click(runBtn());
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
@@ -1303,13 +1303,13 @@ describe("RunDialog — per-run reference additions", () => {
 
   it("hides the add controls without ManageEnvVars", async () => {
     knownVars = ["REGION"]; // caps stay manageEnvVars: false
-    jobBindings = [{ kind: "var", name: "BASE", reference: "AMADEUS_VAR_BASE" }];
+    jobBindings = [{ kind: "var", name: "BASE", reference: "CRONOMICON_VAR_BASE" }];
     const { q, openInputs, openOptions } = renderDialog(makeJob([]));
     openInputs();
     openOptions();
 
     // The read-only preflight still renders the declared binding...
-    await q.findByText("AMADEUS_VAR_BASE");
+    await q.findByText("CRONOMICON_VAR_BASE");
     // ...but neither dropdown exists for a caller who may not grant references.
     expect(q.queryByLabelText("Reference kind to add")).toBeNull();
     expect(q.queryByLabelText(/Add a stored/)).toBeNull();
@@ -1327,7 +1327,7 @@ describe("RunDialog — per-run reference additions", () => {
     const nameSelect = await q.findByLabelText(/Add a stored ssh key to this run/i);
     fireEvent.change(nameSelect, { target: { value: "deploy" } });
 
-    await q.findByText("AMADEUS_KEY_deploy");
+    await q.findByText("CRONOMICON_KEY_deploy");
     expect(q.getByText(/This run will be refused.*cannot deliver SSH keys/)).toBeTruthy();
   });
 
@@ -1340,7 +1340,7 @@ describe("RunDialog — per-run reference additions", () => {
     const onRun = vi.fn<OnRun>(async () => ({
       ok: false,
       code: "key_binding_requires_runner",
-      message: "this job binds SSH key AMADEUS_KEY_deploy, which only a runner can deliver; this run resolved to the ssh executor — run it on a runner, or bind the key as a Secret and write the file in the job body",
+      message: "this job binds SSH key CRONOMICON_KEY_deploy, which only a runner can deliver; this run resolved to the ssh executor — run it on a runner, or bind the key as a Secret and write the file in the job body",
     }));
     const { container } = render(
       <RunDialog job={makeJob([])} scopes={[]} busy={false} onCancel={vi.fn()} onRun={onRun} onDone={onDone} />,

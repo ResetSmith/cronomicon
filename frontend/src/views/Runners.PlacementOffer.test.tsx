@@ -9,7 +9,7 @@ const MATCHED = {
   id: "019f0000-1111-2222-3333-aaaaaaaaaaaa",
   name: "ansible-rh8",
   status: "online",
-  protocolVersion: 12,
+  protocolVersion: 13,
   capabilities: ["ansible", "bash"],
   agencies: [],
   placementSuggestion: {

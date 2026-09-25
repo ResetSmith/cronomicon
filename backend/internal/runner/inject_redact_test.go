@@ -22,7 +22,7 @@ func TestRunInjectionRedactionTokens(t *testing.T) {
 	insertRunner(t, svc, runnerID, "red", "online", []string{"bash"})
 	_, secretVal, varVal := seedInjectionRun(t, svc, runnerID, 6, true)
 
-	redact, injectsSecret, err := svc.runInjectionRedaction(context.Background(), "", "j1", "amadeus", "", "prod")
+	redact, injectsSecret, err := svc.runInjectionRedaction(context.Background(), "", "j1", "cronomicon", "", "prod")
 	if err != nil {
 		t.Fatalf("runInjectionRedaction: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestRunInjectionRedactionVarOnly(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j2','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('j2','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO env_vars(id, key, value, scope, created_by, created_at, last_modified_by, last_modified_at)
@@ -52,11 +52,11 @@ func TestRunInjectionRedactionVarOnly(t *testing.T) {
 		t.Fatalf("seed var: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j2','var','REGION',?)`, now()); err != nil {
+		VALUES('job','cronomicon','j2','var','REGION',?)`, now()); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
 
-	redact, injectsSecret, err := svc.runInjectionRedaction(context.Background(), "", "j2", "amadeus", "", "prod")
+	redact, injectsSecret, err := svc.runInjectionRedaction(context.Background(), "", "j2", "cronomicon", "", "prod")
 	if err != nil {
 		t.Fatalf("runInjectionRedaction: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestRunInjectionRedactionKillSwitch(t *testing.T) {
 	// Flip the kill-switch off: the helper must short-circuit before reading bindings.
 	svc.cfg.SecretsInjectionEnabled = false
 
-	redact, injectsSecret, err := svc.runInjectionRedaction(context.Background(), "", "j1", "amadeus", "", "prod")
+	redact, injectsSecret, err := svc.runInjectionRedaction(context.Background(), "", "j1", "cronomicon", "", "prod")
 	if err != nil || injectsSecret || len(redact) != 0 {
 		t.Errorf("kill-switch off must be inert: redact=%v injectsSecret=%v err=%v", redact, injectsSecret, err)
 	}
@@ -91,7 +91,7 @@ func TestIngestMasksInjectedSecret(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-mask", "amt_run_mask"
+	runnerID, tok := "runner-mask", "crn_run_mask"
 	insertRunner(t, svc, runnerID, "mask", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true)
@@ -127,7 +127,7 @@ func TestIngestFailsClosedOnUnresolvableSecret(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-fc", "amt_run_fc"
+	runnerID, tok := "runner-fc", "crn_run_fc"
 	insertRunner(t, svc, runnerID, "fc", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true)
@@ -176,7 +176,7 @@ func TestIngestFailsClosedAfterBindingDeletedMidRun(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-del", "amt_run_del"
+	runnerID, tok := "runner-del", "crn_run_del"
 	insertRunner(t, svc, runnerID, "del", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true) // sets injects_secret=1
@@ -221,7 +221,7 @@ func TestIngestFailsClosedWhenBindingsUnenumerable(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-enum", "amt_run_enum"
+	runnerID, tok := "runner-enum", "crn_run_enum"
 	insertRunner(t, svc, runnerID, "enum", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID := db.NewTraceID()

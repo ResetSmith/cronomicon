@@ -60,14 +60,14 @@ var secretKeyRe = func() *regexp.Regexp {
 var envLookupRe = regexp.MustCompile(
 	`^\{\{\s*lookup\(\s*['"](?:ansible\.builtin\.)?env['"]\s*,\s*['"][A-Za-z_][A-Za-z0-9_]*['"]\s*\)\s*\}\}$`)
 
-// reservedAssignRe matches a LITERAL assignment (`=`) to an AMADEUS_-namespaced
+// reservedAssignRe matches a LITERAL assignment (`=`) to an CRONOMICON_-namespaced
 // var anywhere on a line — standalone or an inline host-var. It deliberately
-// matches the KEY position (a name followed by `=`), so an AMADEUS_ name that
-// appears only INSIDE a lookup value (e.g. lookup('env','AMADEUS_SECRET_X'), the
+// matches the KEY position (a name followed by `=`), so an CRONOMICON_ name that
+// appears only INSIDE a lookup value (e.g. lookup('env','CRONOMICON_SECRET_X'), the
 // intended reference form) is NOT matched — there is no `=` after the name there.
 // The run-env reserved guard (W4 / namespace plan N-D1) is absolute: operator
-// content may never DEFINE an AMADEUS_* key, only reference one.
-var reservedAssignRe = regexp.MustCompile(`\bAMADEUS_[A-Za-z0-9_]*\s*=`)
+// content may never DEFINE an CRONOMICON_* key, only reference one.
+var reservedAssignRe = regexp.MustCompile(`\bCRONOMICON_[A-Za-z0-9_]*\s*=`)
 
 // SecretError is one secret-rejection finding (one offending line). It implements
 // error so callers can append it to an []error error list directly; Error()
@@ -131,13 +131,13 @@ func ValidateSecrets(content, file string) []SecretError {
 					"runner path. Use env-var-NAME indirection resolved by the runner, e.g. %s=\"{{ lookup('env','NAME') }}\"", key, key)})
 		}
 		// Reserved-namespace guard (W4 / N-D1): reject a literal assignment of an
-		// AMADEUS_* var. The prefix is injector-owned — an inventory may REFERENCE a
-		// runner env var by name (lookup('env','AMADEUS_SECRET_X')) but may never
-		// DEFINE an AMADEUS_* key, which would shadow/spoof an injected reference.
+		// CRONOMICON_* var. The prefix is injector-owned — an inventory may REFERENCE a
+		// runner env var by name (lookup('env','CRONOMICON_SECRET_X')) but may never
+		// DEFINE an CRONOMICON_* key, which would shadow/spoof an injected reference.
 		if loc := reservedAssignRe.FindString(line); loc != "" {
 			name := strings.TrimRight(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(loc), "=")), " ")
 			errs = append(errs, SecretError{File: file, Line: lineNo, Var: name,
-				Message: fmt.Sprintf("reserved var %q may not be defined in an inventory; AMADEUS_* names are references Cronomicon injects, not variables you set. Reference a runner-provisioned value instead, e.g. lookup('env','%s')", name, name)})
+				Message: fmt.Sprintf("reserved var %q may not be defined in an inventory; CRONOMICON_* names are references Cronomicon injects, not variables you set. Reference a runner-provisioned value instead, e.g. lookup('env','%s')", name, name)})
 		}
 	}
 	// Fail CLOSED if the scan could not complete — e.g. a line exceeds the 1 MiB

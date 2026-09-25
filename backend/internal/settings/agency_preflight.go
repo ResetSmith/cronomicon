@@ -38,7 +38,7 @@ import (
 type PreflightFinding struct {
 	Kind      string `json:"kind"`      // secret | var | key
 	Name      string `json:"name"`      // the bare row name
-	Reference string `json:"reference"` // the derived AMADEUS_<SECTION>_<name>
+	Reference string `json:"reference"` // the derived CRONOMICON_<SECTION>_<name>
 	JobSource string `json:"jobSource"`
 	JobName   string `json:"jobName"`
 	JobScope  string `json:"jobScope"` // "" = global

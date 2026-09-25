@@ -43,5 +43,5 @@ status = failure
 suppressed_by_calendar = <NULL>
 target_host = goldenhost
 trigger_kind = manual
-triggered_by = developer@amadeus.local
+triggered_by = developer@cronomicon.local
 workflow_run_id = <NULL>

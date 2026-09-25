@@ -28,12 +28,12 @@ const maxOpenConns = 16
 // Open opens (and creates if missing) the SQLite database with production pragmas.
 func Open(path string) (*sql.DB, error) {
 	// SQLite creates the database file but not its parent directory. Create it so
-	// a fresh path "just works" (the prod default /var/lib/amadeus is a mounted
-	// volume; a dev box may point AMADEUS_DB_PATH anywhere). A clear error here
+	// a fresh path "just works" (the prod default /var/lib/cronomicon is a mounted
+	// volume; a dev box may point CRONOMICON_DB_PATH anywhere). A clear error here
 	// beats the opaque "unable to open database file" SQLite returns otherwise.
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("create db directory %q (set AMADEUS_DB_PATH to a writable path): %w", dir, err)
+			return nil, fmt.Errorf("create db directory %q (set CRONOMICON_DB_PATH to a writable path): %w", dir, err)
 		}
 	}
 

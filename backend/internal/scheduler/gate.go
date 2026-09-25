@@ -169,7 +169,7 @@ func PolicyFor(o RunOrigin) originPolicy {
 // GateRequest is what the gates are asked about.
 type GateRequest struct {
 	Origin    RunOrigin
-	Source    string // git | amadeus
+	Source    string // git | cronomicon
 	OwnerKind string // job | workflow
 	Name      string
 }

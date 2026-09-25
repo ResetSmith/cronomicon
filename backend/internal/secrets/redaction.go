@@ -20,7 +20,7 @@ type SettingsColumn struct {
 	Where  string
 }
 
-// EncryptedSettingsColumns is the complete set, shared by `amadeus
+// EncryptedSettingsColumns is the complete set, shared by `cronomicon
 // rewrap-secrets` (which re-wraps each under the active KEK) and the redaction
 // dictionary (which decrypts each so the value is masked wherever it is echoed).
 // Adding an encrypted settings field means adding a row here, or rotation will

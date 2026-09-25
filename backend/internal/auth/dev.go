@@ -15,9 +15,9 @@ import (
 // read "*", so the dev bypass must carry it. See the scoping-fix plan §5.)
 func devIdentity() Identity {
 	return Identity{
-		Email:         "developer@amadeus.local",
+		Email:         "developer@cronomicon.local",
 		DisplayName:   "Developer (bypass)",
-		Groups:        []string{"amadeus-admins"},
+		Groups:        []string{"cronomicon-admins"},
 		Roles:         []string{"admin"},
 		AllowedScopes: []string{AllScopes}, // "*" ⇒ explicitly unrestricted (sees all)
 		// RB-14: synthesize the equivalent unrestricted grant. The dev identity is
@@ -31,11 +31,11 @@ func devIdentity() Identity {
 	}
 }
 
-// DevEnabled reports whether the local dev-login bypass is active (AMADEUS_DEV_AUTH).
+// DevEnabled reports whether the local dev-login bypass is active (CRONOMICON_DEV_AUTH).
 func (s *Service) DevEnabled() bool { return s.devAuth }
 
 // DevLogin establishes an operator session for the synthetic Developer identity
-// WITHOUT going through the identity provider. It only works when AMADEUS_DEV_AUTH=true; the
+// WITHOUT going through the identity provider. It only works when CRONOMICON_DEV_AUTH=true; the
 // route is not even mounted otherwise, but we re-check here as defence in depth.
 func (s *Service) DevLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.devAuth {

@@ -129,7 +129,7 @@ function JobInspector({ node, tree, set }: { node: CanvasNode; tree: CanvasNode[
         <select value={node.jobSource ?? ""} onChange={(e) => set({ jobSource: e.target.value || undefined })} style={inp()}>
           <option value="">auto</option>
           <option value="git">git</option>
-          <option value="amadeus">amadeus</option>
+          <option value="cronomicon">cronomicon</option>
         </select>
       </Row>
       <Row label="Retries">

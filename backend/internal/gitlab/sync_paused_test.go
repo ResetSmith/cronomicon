@@ -75,7 +75,7 @@ func TestSyncPruneSkippedKeepsPausedJobRow(t *testing.T) {
 
 	// Corrupt keep.yaml → parseJobs validation error → jobsOK=false.
 	gitCommitFile(t, repo, remote, "jobs/keep.yaml",
-		"apiVersion: amadeus.io/v2\nkind: Job\nmetadata:\n  name: keep\n", "corrupt keep")
+		"apiVersion: cronomicon.io/v2\nkind: Job\nmetadata:\n  name: keep\n", "corrupt keep")
 
 	r := svc.SyncBlocking(ctx, "t")
 	if r.Status != "partial" {
@@ -97,25 +97,25 @@ func TestPausedCascadeTriggerOnBareDelete(t *testing.T) {
 	svc, _, _ := newSyncFixture(t) // we need only its migrated DB
 	pool := svc.db
 
-	if _, err := pool.Exec(`INSERT INTO jobs(uid,name,source,run_type,command,synced_at) VALUES('uid-aj','aj','amadeus','bash','echo',datetime('now'))`); err != nil {
+	if _, err := pool.Exec(`INSERT INTO jobs(uid,name,source,run_type,command,synced_at) VALUES('uid-aj','aj','cronomicon','bash','echo',datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(`INSERT INTO workflows(uid,name,source,steps,synced_at) VALUES('uid-awf','awf','amadeus','[]',datetime('now'))`); err != nil {
+	if _, err := pool.Exec(`INSERT INTO workflows(uid,name,source,steps,synced_at) VALUES('uid-awf','awf','cronomicon','[]',datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	insertPause(t, pool, "amadeus", "job", "aj")
-	insertPause(t, pool, "amadeus", "workflow", "awf")
+	insertPause(t, pool, "cronomicon", "job", "aj")
+	insertPause(t, pool, "cronomicon", "workflow", "awf")
 
-	if _, err := pool.Exec(`DELETE FROM jobs WHERE source='amadeus' AND name='aj'`); err != nil {
+	if _, err := pool.Exec(`DELETE FROM jobs WHERE source='cronomicon' AND name='aj'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(`DELETE FROM workflows WHERE source='amadeus' AND name='awf'`); err != nil {
+	if _, err := pool.Exec(`DELETE FROM workflows WHERE source='cronomicon' AND name='awf'`); err != nil {
 		t.Fatal(err)
 	}
-	if c := pausedCount(t, pool, "amadeus", "job", "aj"); c != 0 {
+	if c := pausedCount(t, pool, "cronomicon", "job", "aj"); c != 0 {
 		t.Errorf("job pause not cascaded by trigger: count=%d, want 0", c)
 	}
-	if c := pausedCount(t, pool, "amadeus", "workflow", "awf"); c != 0 {
+	if c := pausedCount(t, pool, "cronomicon", "workflow", "awf"); c != 0 {
 		t.Errorf("workflow pause not cascaded by trigger: count=%d, want 0", c)
 	}
 }

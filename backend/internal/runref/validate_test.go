@@ -363,7 +363,7 @@ func TestKeyTighteningAG_Q5(t *testing.T) {
 	}
 	// M2 — the operator-facing message must stay generic, so a run cannot be used to
 	// probe which key labels exist or which agencies they belong to.
-	if msg := OperatorMessage(err); msg != "reference AMADEUS_KEY_a_key is unavailable for this run" {
+	if msg := OperatorMessage(err); msg != "reference CRONOMICON_KEY_a_key is unavailable for this run" {
 		t.Errorf("operator message = %q; the run surface must not name the cause", msg)
 	}
 	// A general-pool run intersects nothing, so an agency-bound key is out of reach.

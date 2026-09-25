@@ -18,7 +18,7 @@ func TestIdentityRoundTrip(t *testing.T) {
 		t.Fatalf("expected nil identity for missing file, got %+v", got)
 	}
 
-	want := Identity{ID: "run-123", APIKey: "amt_run_secret"}
+	want := Identity{ID: "run-123", APIKey: "crn_run_secret"}
 	if err := saveIdentity(path, want); err != nil {
 		t.Fatalf("save: %v", err)
 	}

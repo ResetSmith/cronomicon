@@ -19,7 +19,7 @@ const deletes: { path: string; jobId: unknown }[] = [];
 
 const JOBS = {
   items: [
-    { id: 1, name: "amadeus-job", type: "bash", scope: "Prod", source: "amadeus", status: "success" },
+    { id: 1, name: "cronomicon-job", type: "bash", scope: "Prod", source: "cronomicon", status: "success" },
     { id: 2, name: "git-job", type: "bash", scope: "Prod", source: "git", status: "success" },
   ],
   totalItems: 2,
@@ -91,7 +91,7 @@ const renderJobs = async () => {
   // Type into the search box to leave browse mode: the flat results table is the
   // same renderJobRow, minus the folder tree that has nothing to do with delete.
   fireEvent.change(q.getByPlaceholderText("Search jobs…"), { target: { value: "job" } });
-  await waitFor(() => expect(q.getByText("amadeus-job")).toBeTruthy());
+  await waitFor(() => expect(q.getByText("cronomicon-job")).toBeTruthy());
   return q;
 };
 
@@ -103,9 +103,9 @@ const expandRow = (q: ReturnType<typeof within>, name: string) => {
 const deleteBtn = (q: ReturnType<typeof within>) => q.queryByRole("button", { name: "Delete" });
 
 describe("Jobs — expanded-row Delete", () => {
-  it("offers Delete on an amadeus row when the caller may compose", async () => {
+  it("offers Delete on an cronomicon row when the caller may compose", async () => {
     const q = await renderJobs();
-    expandRow(q, "amadeus-job");
+    expandRow(q, "cronomicon-job");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
   });
 
@@ -127,7 +127,7 @@ describe("Jobs — expanded-row Delete", () => {
     // Positive control: publishSchedule rides the same capability .then(), so its
     // button proves the fetch landed and compose was genuinely off.
     await waitFor(() => expect(q.getByRole("link", { name: /Publish to GitLab/ })).toBeTruthy());
-    expandRow(q, "amadeus-job");
+    expandRow(q, "cronomicon-job");
     await waitFor(() => expect(q.getByText("Executor")).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
   });
@@ -151,7 +151,7 @@ describe("Jobs — expanded-row Delete", () => {
 
   it("confirms before deleting, then DELETEs the expanded job's id", async () => {
     const q = await renderJobs();
-    expandRow(q, "amadeus-job");
+    expandRow(q, "cronomicon-job");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
 
     fireEvent.click(deleteBtn(q)!);
@@ -162,12 +162,12 @@ describe("Jobs — expanded-row Delete", () => {
     fireEvent.click(q.getByRole("button", { name: "Delete Job" }));
 
     await waitFor(() => expect(deletes).toEqual([{ path: "/jobs/{jobId}", jobId: 1 }]));
-    await waitFor(() => expect(q.getByText('Job "amadeus-job" deleted.')).toBeTruthy());
+    await waitFor(() => expect(q.getByText('Job "cronomicon-job" deleted.')).toBeTruthy());
   });
 
   it("cancelling the confirm sends nothing", async () => {
     const q = await renderJobs();
-    expandRow(q, "amadeus-job");
+    expandRow(q, "cronomicon-job");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
 
     fireEvent.click(deleteBtn(q)!);
@@ -179,21 +179,21 @@ describe("Jobs — expanded-row Delete", () => {
 
   // The 409 is the one failure an operator can act on, so it must read as a
   // sentence about sources — not "Delete failed (409)".
-  it("turns a 409 into the amadeus-only explanation", async () => {
+  it("turns a 409 into the cronomicon-only explanation", async () => {
     deleteStatus = 409;
     const q = await renderJobs();
-    expandRow(q, "amadeus-job");
+    expandRow(q, "cronomicon-job");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
 
     fireEvent.click(deleteBtn(q)!);
     fireEvent.click(q.getByRole("button", { name: "Delete Job" }));
 
     await waitFor(() =>
-      expect(q.getByText(/Only amadeus-source jobs can be deleted in-app\./)).toBeTruthy(),
+      expect(q.getByText(/Only cronomicon-source jobs can be deleted in-app\./)).toBeTruthy(),
     );
     // The server's raw message must not be what the operator reads instead.
     expect(q.queryByText(/job is git-managed/)).toBeNull();
     // A failed delete is not announced as a success.
-    expect(q.queryByText('Job "amadeus-job" deleted.')).toBeNull();
+    expect(q.queryByText('Job "cronomicon-job" deleted.')).toBeNull();
   });
 });

@@ -32,10 +32,10 @@ func TestMetricsEndpoint(t *testing.T) {
 	// with zero samples is not printed until first incremented, so we assert on
 	// families guaranteed to have a value here.
 	for _, want := range []string{
-		"go_goroutines",               // Go runtime collector
-		"process_",                    // process collector (prefix)
-		"amadeus_http_requests_total", // HTTP counter (sampled by /healthz above)
-		"amadeus_active_runners",      // gauge func (always emitted)
+		"go_goroutines",                  // Go runtime collector
+		"process_",                       // process collector (prefix)
+		"cronomicon_http_requests_total", // HTTP counter (sampled by /healthz above)
+		"cronomicon_active_runners",      // gauge func (always emitted)
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("/metrics output missing %q", want)

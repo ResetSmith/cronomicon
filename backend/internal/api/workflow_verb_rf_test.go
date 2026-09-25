@@ -65,9 +65,9 @@ func TestWorkflowPauseTakesKillJobs(t *testing.T) {
 	seedVerbRole(t, pool, exec, "trigger-only", "wf-triggerers", 1, 0)
 	seedVerbRole(t, pool, exec, "kill-only", "wf-killers", 0, 1)
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('wf-step','amadeus','bash','prod',1)`)
+	      VALUES ('wf-step','cronomicon','bash','prod',1)`)
 	exec(`INSERT INTO workflows (name, source, steps, enabled, synced_at)
-	      VALUES ('wf-pause','amadeus','[{"type":"job","name":"wf-step"}]',1,'2026-01-01T00:00:00Z')`)
+	      VALUES ('wf-pause','cronomicon','[{"type":"job","name":"wf-step"}]',1,'2026-01-01T00:00:00Z')`)
 
 	path := workflowPath(t, pool, "wf-pause")
 	body := `{"disabled":true}`
@@ -97,9 +97,9 @@ func TestUnscopedWorkflowIsNotAFreePass(t *testing.T) {
 	}
 	// Every constituent job is unscoped — the shape that produced an empty list.
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('free-step','amadeus','bash',NULL,1)`)
+	      VALUES ('free-step','cronomicon','bash',NULL,1)`)
 	exec(`INSERT INTO workflows (name, source, steps, enabled, synced_at)
-	      VALUES ('wf-free','amadeus','[{"type":"job","name":"free-step"}]',1,'2026-01-01T00:00:00Z')`)
+	      VALUES ('wf-free','cronomicon','[{"type":"job","name":"free-step"}]',1,'2026-01-01T00:00:00Z')`)
 
 	path := workflowPath(t, pool, "wf-free")
 	// A viewer holds no execution verb anywhere: denied by the baseline.
@@ -134,7 +134,7 @@ func TestWorkflowRunCancelTakesKillJobs(t *testing.T) {
 	seedVerbRole(t, pool, exec, "trigger-only", "wf-triggerers", 1, 0)
 	seedVerbRole(t, pool, exec, "kill-only", "wf-killers", 0, 1)
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('wf-step','amadeus','bash','prod',1)`)
+	      VALUES ('wf-step','cronomicon','bash','prod',1)`)
 	exec(`INSERT INTO workflow_runs (id, workflow_id, workflow_name, status, triggered_by,
 	                                 trigger_kind, created_at, steps_snapshot)
 	      VALUES ('wfr-1',1,'wf-cancel','running','t','manual','2026-01-01T00:00:00Z',
@@ -171,7 +171,7 @@ func TestWorkflowRunCancelChecksEachChildScope(t *testing.T) {
 		}
 	}
 	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at)
-	      VALUES ('s-fin','finance','amadeus','2026-01-01T00:00:00Z')`)
+	      VALUES ('s-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
 	// No steps snapshot: authorization rests entirely on the child runs.
 	exec(`INSERT INTO workflow_runs (id, workflow_id, workflow_name, status, triggered_by,
 	                                 trigger_kind, created_at, steps_snapshot)

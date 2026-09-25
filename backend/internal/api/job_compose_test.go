@@ -10,7 +10,7 @@ import (
 )
 
 // TestJobComposeCRUD exercises the in-app Job composition write API (A11, Phase 3):
-// create an amadeus-source job binding a Git script + a first-class schedule, the
+// create an cronomicon-source job binding a Git script + a first-class schedule, the
 // disjoint-namespace 409, the dangling-scriptRef 422, the CSRF guard, that git jobs
 // are read-only (409), and that delete cascades the schedule bindings.
 func TestJobComposeCRUD(t *testing.T) {
@@ -23,7 +23,7 @@ func TestJobComposeCRUD(t *testing.T) {
 		}
 	}
 	// A Git script (the reusable body) + a first-class schedule + a git job named
-	// 'reports' (to prove the git/amadeus namespaces are disjoint).
+	// 'reports' (to prove the git/cronomicon namespaces are disjoint).
 	seed(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
 	seed(`INSERT INTO schedules(name, source, cron, content_hash, source_path, synced_at)
@@ -61,7 +61,7 @@ func TestJobComposeCRUD(t *testing.T) {
 		t.Fatalf("POST without CSRF = %d, want 403", resp.StatusCode)
 	}
 
-	// ── Create an amadeus job ───────────────────────────────────────────────────
+	// ── Create an cronomicon job ───────────────────────────────────────────────────
 	body := map[string]any{
 		"name":         "nightly-backup",
 		"scriptRef":    "backup-db",
@@ -82,34 +82,34 @@ func TestJobComposeCRUD(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
-	if created.Source != "amadeus" {
-		t.Errorf("created source = %q, want amadeus", created.Source)
+	if created.Source != "cronomicon" {
+		t.Errorf("created source = %q, want cronomicon", created.Source)
 	}
 	if created.Type != "bash" || created.Command == nil || *created.Command != "pg_dump mydb" {
 		t.Errorf("denormalization failed: type=%q command=%v", created.Type, created.Command)
 	}
 
-	// definition_schedules carries both the ref + inline entry under owner_source='amadeus'.
+	// definition_schedules carries both the ref + inline entry under owner_source='cronomicon'.
 	var schedN int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source='amadeus' AND owner_kind='job' AND owner_name='nightly-backup'`).Scan(&schedN)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source='cronomicon' AND owner_kind='job' AND owner_name='nightly-backup'`).Scan(&schedN)
 	if schedN != 2 {
-		t.Errorf("amadeus job schedule entries = %d, want 2 (ref + inline)", schedN)
+		t.Errorf("cronomicon job schedule entries = %d, want 2 (ref + inline)", schedN)
 	}
 
-	// ── Disjoint namespace: an amadeus 'reports' can coexist with the git one ────
+	// ── Disjoint namespace: an cronomicon 'reports' can coexist with the git one ────
 	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "reports", "scriptRef": "backup-db", "scope": ""}, true)
 	code := resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusCreated {
-		t.Errorf("create amadeus 'reports' (git 'reports' exists) = %d, want 201 (disjoint namespaces)", code)
+		t.Errorf("create cronomicon 'reports' (git 'reports' exists) = %d, want 201 (disjoint namespaces)", code)
 	}
 
-	// ── Duplicate amadeus name → 409 ────────────────────────────────────────────
+	// ── Duplicate cronomicon name → 409 ────────────────────────────────────────────
 	resp = post(http.MethodPost, ts.URL+"/api/v1/jobs", map[string]any{"name": "nightly-backup", "scriptRef": "backup-db", "scope": ""}, true)
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusConflict {
-		t.Errorf("duplicate amadeus name = %d, want 409", code)
+		t.Errorf("duplicate cronomicon name = %d, want 409", code)
 	}
 
 	// ── Dangling scriptRef → 422 ────────────────────────────────────────────────
@@ -130,7 +130,7 @@ func TestJobComposeCRUD(t *testing.T) {
 		t.Errorf("PUT git job = %d, want 409 (git is read-only in-app)", code)
 	}
 
-	// ── Delete the amadeus job → 204 + soft delete ─────────────────────────────
+	// ── Delete the cronomicon job → 204 + soft delete ─────────────────────────────
 	//
 	// RH changed what delete MEANS. The row is stamped rather than removed and
 	// its schedule bindings are deliberately left intact, because restoring from
@@ -144,9 +144,9 @@ func TestJobComposeCRUD(t *testing.T) {
 		t.Fatalf("delete = %d, want 204", code)
 	}
 	var live, binned, afterSched int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='amadeus' AND name='nightly-backup' AND deleted_at IS NULL`).Scan(&live)
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='amadeus' AND name='nightly-backup' AND deleted_at IS NOT NULL`).Scan(&binned)
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source='amadeus' AND owner_name='nightly-backup'`).Scan(&afterSched)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='cronomicon' AND name='nightly-backup' AND deleted_at IS NULL`).Scan(&live)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='cronomicon' AND name='nightly-backup' AND deleted_at IS NOT NULL`).Scan(&binned)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source='cronomicon' AND owner_name='nightly-backup'`).Scan(&afterSched)
 	if live != 0 {
 		t.Errorf("job is still live after delete: %d", live)
 	}
@@ -216,7 +216,7 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 		t.Errorf("metachar targetHost = %d, want 422", code)
 	}
 	var n int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='amadeus' AND name='bad-pin'`).Scan(&n)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='cronomicon' AND name='bad-pin'`).Scan(&n)
 	if n != 0 {
 		t.Errorf("metachar targetHost job should not have been written, found %d rows", n)
 	}
@@ -235,7 +235,7 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
 	var th sql.NullString
-	_ = pool.QueryRow(`SELECT target_host FROM jobs WHERE source='amadeus' AND name='good-pin'`).Scan(&th)
+	_ = pool.QueryRow(`SELECT target_host FROM jobs WHERE source='cronomicon' AND name='good-pin'`).Scan(&th)
 	if !th.Valid || th.String != "web1" {
 		t.Errorf("target_host = %v, want web1", th)
 	}
@@ -250,7 +250,7 @@ func TestJobComposeAnsibleTargetHostValidation(t *testing.T) {
 	if code != http.StatusUnprocessableEntity {
 		t.Errorf("PUT metachar targetHost = %d, want 422", code)
 	}
-	_ = pool.QueryRow(`SELECT target_host FROM jobs WHERE source='amadeus' AND name='good-pin'`).Scan(&th)
+	_ = pool.QueryRow(`SELECT target_host FROM jobs WHERE source='cronomicon' AND name='good-pin'`).Scan(&th)
 	if th.String != "web1" {
 		t.Errorf("target_host should be unchanged after rejected PUT, got %v", th)
 	}

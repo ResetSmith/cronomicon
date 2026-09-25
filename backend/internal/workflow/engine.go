@@ -43,7 +43,7 @@ type Step struct {
 	Type   string `json:"type"` // job | parallel | branch | sequence | workflow
 	Name   string `json:"name,omitempty"`
 	Label  string `json:"label,omitempty"`
-	Source string `json:"jobSource,omitempty"` // A11 per-step override (git|amadeus); empty ⇒ workflow source then fallback
+	Source string `json:"jobSource,omitempty"` // A11 per-step override (git|cronomicon); empty ⇒ workflow source then fallback
 	// JobUID pins the step to ONE job by its permanent identity (R2F-2). Since
 	// R2-5 a name may belong to two departments' jobs, and a name-only step whose
 	// name is ambiguous REFUSES at run time — correct, but it makes a legal
@@ -143,7 +143,7 @@ func New(database *sql.DB, log *slog.Logger) *Engine {
 // TriggerParams holds the inputs for starting a workflow run.
 type TriggerParams struct {
 	WorkflowName   string
-	WorkflowSource string // git | amadeus (A9); empty ⇒ 'git'. Default source for step job resolution (A11).
+	WorkflowSource string // git | cronomicon (A9); empty ⇒ 'git'. Default source for step job resolution (A11).
 	WorkflowID     int64
 	Steps          []Step
 	Scope          string
@@ -1006,7 +1006,7 @@ func (e *Engine) finishWorkflow(
 type jobDef struct {
 	runType string
 	scope   string
-	source  string // git | amadeus — resolved via the A11 step-source precedence
+	source  string // git | cronomicon — resolved via the A11 step-source precedence
 	// targetHost is the definition's single-host pin (TG-2). Empty ⇒ scope fan-out.
 	// Carried here because this engine builds its own child-run INSERT rather than
 	// going through scheduler.EnqueueParams, so a field the params struct delivers
@@ -1692,10 +1692,10 @@ func validateBranch(step Step, upstream map[string]bool, errs *[]ValidationError
 func validateInputs(step Step, upstream map[string]bool, errs *[]ValidationError) {
 	for key, ref := range step.Inputs {
 		// Reserved-namespace guard (W4, N-D1): a step input's KEY is the env var it
-		// injects into the child run, so it may not be an AMADEUS_* name — those are
+		// injects into the child run, so it may not be an CRONOMICON_* name — those are
 		// injector-owned references, not operator-set values.
-		if envref.HasAmadeusPrefix(key) {
-			addStepErr(errs, step, "inputs."+key, "input key is reserved: a workflow step may not define an AMADEUS_* env key (these are references Cronomicon injects into runs, not values you set)")
+		if envref.HasCronomiconPrefix(key) {
+			addStepErr(errs, step, "inputs."+key, "input key is reserved: a workflow step may not define an CRONOMICON_* env key (these are references Cronomicon injects into runs, not values you set)")
 		}
 		if ref.FromStep == "" {
 			addStepErr(errs, step, "inputs."+key, "input must name an upstream step (fromStep)")
@@ -1979,7 +1979,7 @@ func DepthExceeded(childDepth int) bool { return childDepth > MaxWorkflowDepth }
 //
 // Exported and shared (R2-3) because AUTHORIZATION MUST ASK THE SAME QUESTION
 // EXECUTION WILL ANSWER. The compose-time scope checks used to resolve a step
-// with `ORDER BY source LIMIT 1` — alphabetical, so 'amadeus' always won —
+// with `ORDER BY source LIMIT 1` — alphabetical, so 'cronomicon' always won —
 // while the engine resolves by this precedence. For a git-source workflow the
 // two disagree, and the disagreement is a live authorization gap rather than a
 // cosmetic one: the actor is checked against one job's scope and a different,
@@ -1989,8 +1989,8 @@ func StepSourceOrder(override, wfSource string) []string {
 	if override != "" {
 		return []string{override}
 	}
-	other := "amadeus"
-	if wfSource == "amadeus" {
+	other := "cronomicon"
+	if wfSource == "cronomicon" {
 		other = "git"
 	}
 	return []string{wfSource, other}
@@ -1999,7 +1999,7 @@ func StepSourceOrder(override, wfSource string) []string {
 // CollectStepRefs exposes the graph's distinct job references to the
 // compose-time authorization checks (R2-3, widened by R2F-2), so they resolve
 // each step exactly as the engine will. Without the source override a step
-// carrying `jobSource: git` would be authorized against the amadeus job of the
+// carrying `jobSource: git` would be authorized against the cronomicon job of the
 // same name and then execute the git one; without the uid, a pinned step would
 // be authorized against whichever twin the name-precedence walk reached — the
 // same failure with the ambiguity moved one level down.

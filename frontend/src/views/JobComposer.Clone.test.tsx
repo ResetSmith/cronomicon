@@ -13,7 +13,7 @@ import { MemoryRouter } from "react-router-dom";
 const SOURCE_JOB = {
   id: 7,
   name: "nightly-backup",
-  source: "amadeus",
+  source: "cronomicon",
   scriptRef: "tools/backup.sh",
   scope: "Prod",
   host: "db-01",
@@ -129,7 +129,7 @@ describe("JobComposer — ?cloneFrom= (clone into create mode)", () => {
     });
     // The original row must be untouched.
     expect(puts.filter((p) => p.path === "/jobs/{jobId}")).toHaveLength(0);
-    await waitFor(() => expect(q.getByText(/created \(amadeus-source\)/)).toBeTruthy());
+    await waitFor(() => expect(q.getByText(/created \(cronomicon-source\)/)).toBeTruthy());
   });
 
   it("carries the source job's SSH-key bindings onto the NEW job's id", async () => {

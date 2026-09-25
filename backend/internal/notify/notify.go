@@ -408,7 +408,7 @@ func (d *Dispatcher) loadConfig(ctx context.Context) (notifConfig, error) {
 //
 // Upsert rather than update: a install that has never opened Settings has no
 // notification_config row, and the transport can still have sent (an Apprise
-// gateway configured by AMADEUS_APPRISE_URL needs no row at all).
+// gateway configured by CRONOMICON_APPRISE_URL needs no row at all).
 func (d *Dispatcher) markTransport(ctx context.Context, transport, status string) {
 	var atCol, statusCol string
 	switch transport {

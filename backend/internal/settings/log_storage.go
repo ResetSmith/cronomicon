@@ -19,10 +19,10 @@ import (
 
 // defaultLogDir mirrors runner.DefaultLogDir (and the migration default).
 // Duplicated as a literal so settings does not import the runner package.
-const defaultLogDir = "/var/lib/amadeus/logs"
+const defaultLogDir = "/var/lib/cronomicon/logs"
 
 // File names this package must recognise but does not own. Duplicated as
-// literals for the same reason defaultLogDir is: importing cmd/amadeus (which
+// literals for the same reason defaultLogDir is: importing cmd/cronomicon (which
 // owns the process log) or internal/runner (which owns the sidecar) from here
 // would invert the dependency direction. Kept in sync by comment, like
 // defaultLogDir and runner.DefaultLogDir already are.
@@ -31,7 +31,7 @@ const defaultLogDir = "/var/lib/amadeus/logs"
 // phase: the classifier is correct either way, and an unrecognised file would
 // otherwise be miscounted as a run log the moment that lands.
 const (
-	processLogName = "amadeus.log" // cmd/amadeus.processLogName
+	processLogName = "cronomicon.log" // cmd/cronomicon.processLogName
 	auditLogName   = "audit.log"
 	metaFileName   = "_meta.json" // runner.MetaFileName
 )
@@ -77,7 +77,7 @@ type S3LogConfig struct {
 }
 
 // LogSyncConfig is the archive timetable (SL-Q3): an interval with a 60s floor,
-// or once a day at a UTC wall-clock time — the AMADEUS_BACKUP_AT shape.
+// or once a day at a UTC wall-clock time — the CRONOMICON_BACKUP_AT shape.
 type LogSyncConfig struct {
 	Mode            string `json:"mode"` // interval | daily
 	IntervalSeconds int    `json:"intervalSeconds"`

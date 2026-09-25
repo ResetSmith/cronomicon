@@ -73,7 +73,7 @@ func TestSyncAllocatesEntityCodesForImportedDefinitions(t *testing.T) {
 	ctx := context.Background()
 
 	gitCommitFile(t, repo, remote, "workflows/nightly.yaml",
-		"apiVersion: amadeus.io/v1\nkind: Workflow\nmetadata:\n  name: nightly\nspec:\n  steps:\n    - name: s1\n      job: keep\n",
+		"apiVersion: cronomicon.io/v1\nkind: Workflow\nmetadata:\n  name: nightly\nspec:\n  steps:\n    - name: s1\n      job: keep\n",
 		"add workflow")
 
 	if r := svc.SyncBlocking(ctx, "t"); r.Status == "failed" {
@@ -164,7 +164,7 @@ func TestSyncPruneDoesNotStampWorkflowEntityCodes(t *testing.T) {
 	svc, repo, remote := newSyncFixture(t)
 	ctx := context.Background()
 
-	const wfYAML = "apiVersion: amadeus.io/v1\nkind: Workflow\nmetadata:\n  name: rollup\nspec:\n  steps:\n    - name: s1\n      job: keep\n"
+	const wfYAML = "apiVersion: cronomicon.io/v1\nkind: Workflow\nmetadata:\n  name: rollup\nspec:\n  steps:\n    - name: s1\n      job: keep\n"
 	gitCommitFile(t, repo, remote, "workflows/rollup.yaml", wfYAML, "add rollup")
 	if r := svc.SyncBlocking(ctx, "t"); r.Status == "failed" {
 		t.Fatalf("sync 1 failed: %s", r.ErrorMessage)

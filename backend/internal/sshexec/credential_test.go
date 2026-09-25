@@ -126,30 +126,30 @@ func TestLoadSigner_DualRead(t *testing.T) {
 		t.Error("undecryptable credential should be fatal (no fallthrough)")
 	}
 
-	// 5. Derived reference (W3): AMADEUS_KEY_<label> routes to ssh_credentials by
+	// 5. Derived reference (W3): CRONOMICON_KEY_<label> routes to ssh_credentials by
 	//    label — here to the same key the credID path resolves.
-	got5, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "AMADEUS_KEY_cred")
+	got5, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_KEY_cred")
 	if err != nil {
-		t.Fatalf("AMADEUS_KEY_cred resolve: %v", err)
+		t.Fatalf("CRONOMICON_KEY_cred resolve: %v", err)
 	}
 	if string(got5.PublicKey().Marshal()) != string(credSigner.PublicKey().Marshal()) {
-		t.Error("AMADEUS_KEY_cred did not resolve to the labelled credential's key")
+		t.Error("CRONOMICON_KEY_cred did not resolve to the labelled credential's key")
 	}
 
-	// 6. AMADEUS_VAR_<name> routes to the env_vars (Variables) table.
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "AMADEUS_VAR_NAME_KEY"); err != nil {
-		t.Errorf("AMADEUS_VAR_NAME_KEY should resolve via env_vars: %v", err)
+	// 6. CRONOMICON_VAR_<name> routes to the env_vars (Variables) table.
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_VAR_NAME_KEY"); err != nil {
+		t.Errorf("CRONOMICON_VAR_NAME_KEY should resolve via env_vars: %v", err)
 	}
 
 	// 7. A prefixed reference that resolves to nothing is a HARD error — no fallback
 	//    to the bare chain (deterministic routing).
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "AMADEUS_KEY_nonexistent"); err == nil {
-		t.Error("AMADEUS_KEY_nonexistent should be fatal (no fallback)")
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_KEY_nonexistent"); err == nil {
+		t.Error("CRONOMICON_KEY_nonexistent should be fatal (no fallback)")
 	}
 
-	// 8. Section routing is exact: AMADEUS_SECRET_NAME_KEY looks ONLY at the secrets
+	// 8. Section routing is exact: CRONOMICON_SECRET_NAME_KEY looks ONLY at the secrets
 	//    table, so a name that lives in env_vars does not resolve.
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "AMADEUS_SECRET_NAME_KEY"); err == nil {
-		t.Error("AMADEUS_SECRET_NAME_KEY must not fall back to env_vars (deterministic routing)")
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_SECRET_NAME_KEY"); err == nil {
+		t.Error("CRONOMICON_SECRET_NAME_KEY must not fall back to env_vars (deterministic routing)")
 	}
 }

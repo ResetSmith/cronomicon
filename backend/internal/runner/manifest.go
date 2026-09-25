@@ -97,7 +97,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up the owning runner's inventory mode (D8) and injection flag.
-	inventoryMode := "amadeus"
+	inventoryMode := "cronomicon"
 	var allowSecretInjection bool
 	if err := s.db.QueryRowContext(r.Context(),
 		`SELECT inventory, allow_secret_injection FROM runners WHERE id = ?`, runnerID.String).
@@ -143,9 +143,9 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// hosts (user + key) from its own inventory, so the override would be silently
 	// ignored — running as the wrong identity. Refuse in the tone of the
 	// no_inventory refusal: not running beats running wrong.
-	if inventoryMode != "amadeus" && (sshUser.String != "" || sshCred.String != "") {
+	if inventoryMode != "cronomicon" && (sshUser.String != "" || sshCred.String != "") {
 		httpx.Fail(w, http.StatusConflict, "conflict",
-			"this run carries a per-run SSH identity override, which a local-inventory runner cannot honor (the agent resolves users/keys from its own inventory); re-run without the override or route to an amadeus-inventory runner")
+			"this run carries a per-run SSH identity override, which a local-inventory runner cannot honor (the agent resolves users/keys from its own inventory); re-run without the override or route to an cronomicon-inventory runner")
 		return
 	}
 
@@ -169,14 +169,14 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve targets only in 'amadeus' mode. In 'local' mode the agent resolves
+	// Resolve targets only in 'cronomicon' mode. In 'local' mode the agent resolves
 	// hosts against its own inventory (T-b), so we ship only the scope name.
 	var targets []runnerproto.ManifestTarget
 	// RP-8 — the ansible identity carriage (set below, shipped on the response).
 	var manifestSSHUser, manifestSSHKeyRef string
-	if inventoryMode == "amadeus" {
+	if inventoryMode == "cronomicon" {
 		// F2 host subset + M3 group expansion (override_json.hosts/groups): enforced
-		// here for amadeus-inventory runners since the server resolves their targets.
+		// here for cronomicon-inventory runners since the server resolves their targets.
 		// Local-inventory runners resolve hosts agent-side and honor --limit instead.
 		resolved, _, err := execspec.ResolveRun(r.Context(), s.db, scope.String, targetHost.String,
 			execspec.OverrideHosts(overrideJSON.String), execspec.OverrideGroups(overrideJSON.String))
@@ -186,7 +186,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// CA-3b/RP-8 — apply the run's frozen identity. The credential rides as the
-		// derived AMADEUS_KEY_<label> reference (names only, D1): the same label's
+		// derived CRONOMICON_KEY_<label> reference (names only, D1): the same label's
 		// material is delivered through the D8 key channel (the implicit KindKey
 		// binding in collectReferenceBindings), and the agent's resolveKeyPath
 		// prefers a delivered key file for exactly this name.
@@ -236,14 +236,14 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Ansible inventory attach (§7.3, M1). Only for amadeus-mode ANSIBLE runs:
+	// Ansible inventory attach (§7.3, M1). Only for cronomicon-mode ANSIBLE runs:
 	// terraform runner runs never carry inventory, and local-mode runners hold
 	// their own inventory (we must never ship them the host list — the no-leak
 	// property). The Raw shipped here is secret-free because secret-bearing
 	// inventory is rejected at ingest (internal/inventory.ValidateSecrets); the
 	// manifest path never calls secrets.Reveal (D1).
 	var inv *runnerproto.ManifestInventory
-	if inventoryMode == "amadeus" && runType == "ansible" && scope.String != "" {
+	if inventoryMode == "cronomicon" && runType == "ansible" && scope.String != "" {
 		var raw, format sql.NullString
 		// Sequential query (not nested inside an open rows cursor) — safe under the
 		// SQLite pool rule.
@@ -266,7 +266,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Job-level execution knobs (jobs.timeout_seconds, jobs.env_passthrough),
-	// source-qualified (A9) so an amadeus job's knobs aren't read off a
+	// source-qualified (A9) so an cronomicon job's knobs aren't read off a
 	// same-named git job.
 	js := jobSource.String
 	if js == "" {
@@ -362,7 +362,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// Dispatch-time reference injection (P1.4, D1 = 1C). Resolve the run's declared
 	// Secrets + Variables bindings and ship their VALUES in the sensitive Secrets
 	// block — the runner path deliberately relaxes the "never ship secret bytes"
-	// invariant, gated below. AMADEUS_RUN_* run context (log-safe) merges into the
+	// invariant, gated below. CRONOMICON_RUN_* run context (log-safe) merges into the
 	// plaintext Env. Gated by the injection kill-switch.
 	resolved := &runref.Resolved{Env: map[string]string{}}
 	if s.cfg.SecretsInjectionEnabled {
@@ -432,7 +432,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Env = the plaintext env_json snapshot overlaid with the log-safe AMADEUS_RUN_*
+	// Env = the plaintext env_json snapshot overlaid with the log-safe CRONOMICON_RUN_*
 	// run context (never redacted). Reference VALUES go in Secrets, not here.
 	runEnv := parseEnvSnapshot(envJSON.String)
 	if runEnv == nil {
@@ -476,7 +476,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		TimeoutSeconds:    int(timeoutSeconds.Int64),
 		Inventory:         inv,
 		SSHUser:           manifestSSHUser,                 // RP-8 — ansible identity override (names only)
-		SSHKeyRef:         manifestSSHKeyRef,               // RP-8 — derived AMADEUS_KEY_<label>, resolved agent-side
+		SSHKeyRef:         manifestSSHKeyRef,               // RP-8 — derived CRONOMICON_KEY_<label>, resolved agent-side
 		AnsibleOptions:    manifestAnsibleOptions(ansOpts), // RP-17 — advanced ansible flags (nil when none)
 		Limit:             limit,
 		EnvPassthrough:    envPassthrough,
@@ -487,7 +487,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 
 // resolveManifestReferences resolves the run's declared reference bindings (from
 // its job and, when it references one, its script) into injectable values for the
-// runner manifest (P1.4). It injects Secrets + Variables; an AMADEUS_KEY_
+// runner manifest (P1.4). It injects Secrets + Variables; an CRONOMICON_KEY_
 // reference is warned and skipped here — runner key-MATERIAL delivery (D8) is a
 // follow-up, mirroring the SSH executor's remote-key deferral. Fails closed on the
 // first out-of-scope / missing / un-revealable binding.
@@ -525,7 +525,7 @@ func manifestKeys(keys []runref.KeyMaterial) []runnerproto.ManifestKey {
 
 // resolveInjectableReferences is the shared resolve pass behind both manifest
 // injection (P1.4/D8) and ingest-log redaction (P1.5). It collects the run's
-// declared bindings and resolves them. D8: AMADEUS_KEY_ references are NO LONGER
+// declared bindings and resolves them. D8: CRONOMICON_KEY_ references are NO LONGER
 // dropped — their material is resolved into resolved.Keys (delivered to the runner)
 // and resolved.Redact (masked in logs), in lockstep so delivered key bytes cannot
 // land in logs un-masked. It reports whether the run injects any SENSITIVE value

@@ -58,10 +58,10 @@ export interface paths {
         };
         /**
          * Download a runner-agent binary or its checksums
-         * @description Serves the cross-compiled `amadeus-runner` binaries and their
+         * @description Serves the cross-compiled `cronomicon-runner` binaries and their
          *     `SHA256SUMS` baked into the server image (runner provisioning D1;
-         *     directory overridable via `AMADEUS_AGENT_DIR`). Allowlisted filenames
-         *     only: `amadeus-runner-linux-amd64`, `amadeus-runner-linux-arm64`,
+         *     directory overridable via `CRONOMICON_AGENT_DIR`). Allowlisted filenames
+         *     only: `cronomicon-runner-linux-amd64`, `cronomicon-runner-linux-arm64`,
          *     `SHA256SUMS`. Consumed by `runner-install.sh --download`, which
          *     verifies the checksum before installing. Served at the server root,
          *     outside /api/v1. Unauthenticated by design — the binary is not a
@@ -90,13 +90,13 @@ export interface paths {
          *     token, and binary-download-on baked in, so a whole install is one
          *     flagless pipe (runner provisioning plan 2 Phase 2, D2):
          *
-         *         curl -fsSL https://amadeus.example.com/install/amt_reg_… | sudo bash
+         *         curl -fsSL https://cronomicon.example.com/install/crn_reg_… | sudo bash
          *
          *     A dumb substitution endpoint: it does NOT read the DB or validate the
          *     token against it (no token-validity oracle). Registration remains the
          *     sole enforcement point — single-use, atomic, audited — so serving a
          *     script for a dead token just yields a clean registration failure on the
-         *     host. Only the token SYNTAX is checked (`amt_reg_` + 64 hex); anything
+         *     host. Only the token SYNTAX is checked (`crn_reg_` + 64 hex); anything
          *     else is a generic 404. Capabilities are not baked — the agent
          *     auto-detects the host's toolchains at startup (Phase 1). Served at the
          *     server root, outside /api/v1. Unauthenticated by design: the token in
@@ -127,8 +127,8 @@ export interface paths {
         get: operations["listJobs"];
         put?: never;
         /**
-         * Compose an amadeus-source job (A11)
-         * @description Creates an in-app (source='amadeus') job binding a Git Script (scriptRef) ×
+         * Compose an cronomicon-source job (A11)
+         * @description Creates an in-app (source='cronomicon') job binding a Git Script (scriptRef) ×
          *     Schedule(s) × Scope × execution options — no Git round-trip. Requires the
          *     Compose capability (Admin-only in v20). The referenced script's run_type +
          *     body + executor are denormalized onto the job so it runs through the same
@@ -151,13 +151,13 @@ export interface paths {
         /** Get a job */
         get: operations["getJob"];
         /**
-         * Edit an amadeus-source job (A11)
+         * Edit an cronomicon-source job (A11)
          * @description Edits an in-app job. Git-source jobs are read-only here (409). Requires Compose.
          */
         put: operations["updateJob"];
         post?: never;
         /**
-         * Delete an amadeus-source job (A11)
+         * Delete an cronomicon-source job (A11)
          * @description Deletes an in-app job (cascades its schedule bindings). Git-source jobs
          *     are read-only here (409). Requires Compose.
          *
@@ -501,7 +501,7 @@ export interface paths {
          *     declares it consumes (vault-integration.md P1.1, D2 = 2B explicit
          *     binding). At dispatch the resolver injects ONLY these references, so two
          *     jobs sharing a scope do not see each other's secrets. Each binding carries
-         *     the BARE row name plus the derived AMADEUS_<SECTION>_<name> reference.
+         *     the BARE row name plus the derived CRONOMICON_<SECTION>_<name> reference.
          */
         get: operations["getJobReferenceBindings"];
         /**
@@ -559,7 +559,7 @@ export interface paths {
          * @description Scans a script's body and returns the reference bindings it declares in
          *     derived form (`suggested`), plus a bare-name lint (`bareReferences`):
          *     reference sites still using a bare name that matches a known Env Vars row,
-         *     which an operator should migrate to the derived AMADEUS_<SECTION>_<name>
+         *     which an operator should migrate to the derived CRONOMICON_<SECTION>_<name>
          *     form. The reserved prefix is what makes discovery precise (namespace plan
          *     W5 → this plan's D2). Suggestions prefill a script's binding set.
          */
@@ -749,7 +749,7 @@ export interface paths {
          * Set a schedule's tags (SQLite-only, operator-authored)
          * @description Replaces a first-class schedule's user-authored tag set (tags-support.md).
          *     Tags live ONLY in Cronomicon's DB — never parsed from Git — and survive syncs.
-         *     Keyed by (source, name): a git and an amadeus schedule may share a name, so
+         *     Keyed by (source, name): a git and an cronomicon schedule may share a name, so
          *     ?source (default git) disambiguates. The gate is session + CSRF only (any
          *     authenticated user); no role permission is required. Tags are normalized
          *     server-side: trimmed, blanks dropped, de-duplicated case-insensitively, and
@@ -776,14 +776,14 @@ export interface paths {
          *     parsed from schedules/*.yaml and cached read-only; jobs/workflows reference
          *     one via scheduleRefs, expanded into the runtime schedule cache at sync. This
          *     is a DISTINCT resource from GET /schedules (the per-binding owner
-         *     projection). source ∈ {git, amadeus}; git rows are Git-authored, amadeus
+         *     projection). source ∈ {git, cronomicon}; git rows are Git-authored, cronomicon
          *     rows are operator-authored (Phase 3+). Each row carries usedByCount.
          */
         get: operations["listScheduleDefs"];
         put?: never;
         /**
-         * Author an amadeus-source schedule (schedule-builder)
-         * @description Creates an in-app (source='amadeus') first-class Schedule — a named cron (+
+         * Author an cronomicon-source schedule (schedule-builder)
+         * @description Creates an in-app (source='cronomicon') first-class Schedule — a named cron (+
          *     optional plaintext env) authored without a Git round-trip. Requires the
          *     Compose capability (Admin-only in v20). Git-source schedules are read-only
          *     here; they are authored through the Git publish flow.
@@ -809,7 +809,7 @@ export interface paths {
          */
         get: operations["getScheduleDef"];
         /**
-         * Edit an amadeus-source schedule (schedule-builder)
+         * Edit an cronomicon-source schedule (schedule-builder)
          * @description Edits an in-app schedule and PROPAGATES the new cron/env to every job and
          *     workflow that referenced it — so the change actually takes effect, not just in
          *     the catalog (the scheduleRefs snapshot is updated by source_ref). Git-source
@@ -818,7 +818,7 @@ export interface paths {
         put: operations["updateScheduleDef"];
         post?: never;
         /**
-         * Delete an amadeus-source schedule (schedule-builder)
+         * Delete an cronomicon-source schedule (schedule-builder)
          * @description Deletes an in-app schedule. Blocked with 409 when still referenced unless
          *     ?force=true, which also detaches the expanded entries from referencing
          *     definitions (resyncing their legacy schedule mirror). Git-source schedules are
@@ -841,8 +841,8 @@ export interface paths {
         get: operations["listWorkflows"];
         put?: never;
         /**
-         * Compose an amadeus-source workflow (A11)
-         * @description Creates an in-app (source='amadeus') workflow — a DB-authored step graph
+         * Compose an cronomicon-source workflow (A11)
+         * @description Creates an in-app (source='cronomicon') workflow — a DB-authored step graph
          *     over jobs — with no Git round-trip. Requires the Compose capability
          *     (Admin-only in v20). Steps resolve their jobs via the A11 source precedence
          *     (per-step jobSource > the workflow's source > fallback).
@@ -887,13 +887,13 @@ export interface paths {
         /** Get a workflow */
         get: operations["getWorkflow"];
         /**
-         * Edit an amadeus-source workflow (A11)
+         * Edit an cronomicon-source workflow (A11)
          * @description Edits an in-app workflow's step graph + schedules. Git-source workflows are read-only here (409). Requires Compose.
          */
         put: operations["updateWorkflow"];
         post?: never;
         /**
-         * Delete an amadeus-source workflow (A11)
+         * Delete an cronomicon-source workflow (A11)
          * @description Deletes an in-app workflow (cascades its schedule bindings). Git-source
          *     workflows are read-only here (409). Requires Compose.
          *
@@ -1074,7 +1074,7 @@ export interface paths {
          *     path only: Git sync has no author identity to check, which is a stated
          *     trust boundary (repo write access already dominates the channel).
          *
-         *     Reactions authored here are `amadeus`-source and are never touched by a
+         *     Reactions authored here are `cronomicon`-source and are never touched by a
          *     Git sync, which replaces only its own source's rows.
          */
         put: operations["replaceDefinitionReactions"];
@@ -1296,7 +1296,7 @@ export interface paths {
          *     own credentials.
          *
          *     Inventory canonicality (D8): when the owning runner registered with
-         *     inventory=amadeus, targets is fully resolved (scope_hosts→ssh_hosts);
+         *     inventory=cronomicon, targets is fully resolved (scope_hosts→ssh_hosts);
          *     when inventory=local, targets is empty and the agent resolves hosts in
          *     scope against its own inventory (network-isolated segments).
          *
@@ -1563,14 +1563,14 @@ export interface paths {
          *     the inventory contains a construct outside the supported INI subset,
          *     parseStatus is `unavailable`, projection is omitted, and parseReason/parseLine
          *     explain why (the raw inventory still ships unchanged). raw is returned only
-         *     for amadeus-source scopes. Requires the ConfigureApp permission — inventory
+         *     for cronomicon-source scopes. Requires the ConfigureApp permission — inventory
          *     detail can include sensitive non-connection vars under arbitrary keys, so
          *     the read surface is kept no broader than the privilege that guards mutation.
          */
         get: operations["getScopeInventory"];
         /**
-         * Author/replace an amadeus-source scope's inventory (M5)
-         * @description Writes a raw inventory to an AMADEUS-source scope (in-app authoring), then
+         * Author/replace an cronomicon-source scope's inventory (M5)
+         * @description Writes a raw inventory to an CRONOMICON-source scope (in-app authoring), then
          *     validates + parses it exactly as git sync does: secret-bearing vars are
          *     rejected (422 inventory_secret_rejected, line-numbered; the scope is left
          *     unchanged), the advisory projection + scope_hosts membership are replaced,
@@ -1596,9 +1596,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Import an amadeus scope's inventory hosts into ssh_hosts (M5, cap C)
-         * @description Materializes an AMADEUS-source scope's parsed inventory hosts into ssh_hosts
-         *     (source=amadeus, scope_id) so the in-app SSH executor can dial them. Keyed by
+         * Import an cronomicon scope's inventory hosts into ssh_hosts (M5, cap C)
+         * @description Materializes an CRONOMICON-source scope's parsed inventory hosts into ssh_hosts
+         *     (source=cronomicon, scope_id) so the in-app SSH executor can dial them. Keyed by
          *     (scope_id, hostname): an existing row is updated when overwrite is set, else
          *     skipped. Git scopes auto-import via sync (409 here). Requires a usable
          *     (non-degraded) projection. CSRF required.
@@ -1666,7 +1666,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * One amadeus-source definition's revision history
+         * One cronomicon-source definition's revision history
          * @description An append-only log of compose-input snapshots, newest first. Written
          *     inside the same transaction as the write it describes, so a definition
          *     cannot exist without a record of what it replaced.
@@ -1717,7 +1717,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Soft-deleted amadeus-source definitions
+         * Soft-deleted cronomicon-source definitions
          * @description Deleting an in-app definition stamps it rather than removing it. It
          *     leaves the catalog, stops firing and refuses runs and edits, but its
          *     schedules, pauses, tags, reactions and log folder all survive — which is
@@ -1992,7 +1992,7 @@ export interface paths {
         get?: never;
         /**
          * Bind (or clear) a scope's agency
-         * @description Operator overlay valid for both git- and amadeus-source scopes (agency is a
+         * @description Operator overlay valid for both git- and cronomicon-source scopes (agency is a
          *     deployment fact the GitOps repo does not own); survives re-sync. A null
          *     agencyId clears the binding. 422 (code=unknown_agency) if the id is not in
          *     the catalog. CSRF required.
@@ -2078,7 +2078,7 @@ export interface paths {
         put?: never;
         /**
          * Create a secret
-         * @description stored-source values are encrypted at rest (AES-256-GCM, HKDF from AMADEUS_SECRET_KEY per S14 recommendation). vault-source entries store the reference only.
+         * @description stored-source values are encrypted at rest (AES-256-GCM, HKDF from CRONOMICON_SECRET_KEY per S14 recommendation). vault-source entries store the reference only.
          */
         post: operations["createEnvSecret"];
         delete?: never;
@@ -2200,7 +2200,7 @@ export interface paths {
         put?: never;
         /**
          * Register a runner (single-use registration token, A6.1/Phase 7)
-         * @description Called by the runner binary with a registration token (amt_reg_*,
+         * @description Called by the runner binary with a registration token (crn_reg_*,
          *     24h expiry, single-use per install — or the multi-use env bootstrap
          *     token) as the bearer credential. Returns the runner record + a
          *     long-lived API key used for all subsequent runner calls. The token
@@ -2580,7 +2580,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a single-use registration token (§6.6, Phase 7)
-         * @description Mints one amt_reg_* token (24h expiry) for one install. Plaintext is
+         * @description Mints one crn_reg_* token (24h expiry) for one install. Plaintext is
          *     returned once and never re-served. Unlike the retired shared-token
          *     rotate, minting does NOT revoke other tokens — several installs can
          *     be in flight, each with its own token; each dies on its first
@@ -2647,7 +2647,7 @@ export interface paths {
         get: operations["getGitlabConfig"];
         /**
          * Update GitLab connection config
-         * @description Omit pat to keep the stored value. AMADEUS_GITLAB_PAT env var overrides the DB value at startup (§11.2).
+         * @description Omit pat to keep the stored value. CRONOMICON_GITLAB_PAT env var overrides the DB value at startup (§11.2).
          */
         put: operations["updateGitlabConfig"];
         post?: never;
@@ -2773,7 +2773,7 @@ export interface paths {
          * Update per-run log storage config
          * @description A new local log directory applies **immediately** — no restart (LU-5).
          *     The save re-points the runner log writers, the SSH executor, the SSH
-         *     connection-test writer, and (unless pinned via `AMADEUS_LOG_FILE`) the
+         *     connection-test writer, and (unless pinned via `CRONOMICON_LOG_FILE`) the
          *     process log. In-flight runs keep writing to the file handle they already
          *     opened, and existing log files are **not** moved — the read path resolves
          *     against the current directory, so move the tree yourself if historical
@@ -3870,9 +3870,9 @@ export interface components {
             notes?: string;
         };
         /**
-         * @description A job definition + DB runtime state. source ∈ {git, amadeus} (A9): git
+         * @description A job definition + DB runtime state. source ∈ {git, cronomicon} (A9): git
          *     jobs are Git-authored (definition fields read-only over the API; edits go
-         *     through the publish flow); amadeus jobs are operator-composed in-app via
+         *     through the publish flow); cronomicon jobs are operator-composed in-app via
          *     POST/PUT /jobs (A11).
          */
         Job: {
@@ -3881,10 +3881,10 @@ export interface components {
             readonly uid?: string;
             readonly name?: string;
             /**
-             * @description Origin — git (Git-authored) or amadeus (operator-composed in-app).
+             * @description Origin — git (Git-authored) or cronomicon (operator-composed in-app).
              * @enum {string}
              */
-            readonly source?: "git" | "amadeus";
+            readonly source?: "git" | "cronomicon";
             /** @description Repo-relative file path (e.g. jobs/db/backup.yaml), for folder browsing. Null for Compose-authored jobs. */
             readonly sourcePath?: string | null;
             type?: components["schemas"]["RunType"];
@@ -4018,7 +4018,7 @@ export interface components {
             /** @description Warn once a run has been going this long (SL). Distinct from `timeoutSeconds`, which KILLS: a job running long is often healthy and merely slow, so this only raises an `sla-breach` alert and never touches the run. */
             warnAfterSeconds?: number | null;
             /**
-             * @description ET-D — file-arrival triggers. Each entry is an absolute path glob a capable runner polls; when a matching file's size has been unchanged for `stableSeconds`, the job runs with the path injected as `AMADEUS_WATCH_PATH` / `AMADEUS_WATCH_FILE` / `AMADEUS_WATCH_SIZE`.
+             * @description ET-D — file-arrival triggers. Each entry is an absolute path glob a capable runner polls; when a matching file's size has been unchanged for `stableSeconds`, the job runs with the path injected as `CRONOMICON_WATCH_PATH` / `CRONOMICON_WATCH_FILE` / `CRONOMICON_WATCH_SIZE`.
              *
              *     Declaring a watch IS this job's opt-in for being started by a file — `requestable` gates the service-account API, a different surface. The file itself is never delivered (PF-Q2): the job's script already runs where the file is.
              *
@@ -4117,11 +4117,11 @@ export interface components {
             /**
              * @description Requirement tokens (§5/RX.13) that claim-gate this job to capable
              *     runners (e.g. `vault`). Read-only for git jobs (sourced from
-             *     spec.requires); writable for amadeus jobs via JobComposeInput. [] when none.
+             *     spec.requires); writable for cronomicon jobs via JobComposeInput. [] when none.
              */
             readonly requires?: string[];
         };
-        /** @description Request body for composing (POST) or editing (PUT) an amadeus-source job (A11). */
+        /** @description Request body for composing (POST) or editing (PUT) an cronomicon-source job (A11). */
         JobComposeInput: {
             /** @description Job name (slug, [a-z0-9][a-z0-9_-]*). Immutable on edit. */
             name?: string;
@@ -4146,7 +4146,7 @@ export interface components {
              *     value the agent host holds and Cronomicon does not. An unset name fails the
              *     run loudly rather than resolving empty. Local-toolchain run types only
              *     (ansible/terraform) — 422 on an ssh-family job, whose remote environment
-             *     is built entirely from its manifest. AMADEUS_* names are refused (422):
+             *     is built entirely from its manifest. CRONOMICON_* names are refused (422):
              *     those are references Cronomicon injects, not the runner's environment.
              */
             envPassthrough?: string[];
@@ -4263,14 +4263,14 @@ export interface components {
             tags?: string[];
             /**
              * @description Declared prompt variables (UDV1) surfaced in the ad-hoc Run dialog. Writable
-             *     for amadeus jobs; git jobs declare these via spec.prompts instead. Always
+             *     for cronomicon jobs; git jobs declare these via spec.prompts instead. Always
              *     send the full list on edit (full-replace PUT, JC1) to avoid stripping it.
              */
             prompts?: components["schemas"]["JobPrompt"][];
             /**
              * @description Requirement tokens (ansible-update.md §5/RX.13) that claim-gate this
              *     job to runners advertising them — e.g. `vault`, or
-             *     `collection:<fqcn>`. Writable for amadeus jobs; git jobs declare
+             *     `collection:<fqcn>`. Writable for cronomicon jobs; git jobs declare
              *     these via spec.requires. Full-replace on edit (JC1).
              */
             requires?: string[];
@@ -4281,7 +4281,7 @@ export interface components {
          *     as a per-run env override (env[name]=value, UDV2) and merged into runs.env_json.
          *     Declared by the author (NOT inferred from script source — the inferred highlighter
          *     is demoted to an authoring aid, UDV5). Read-only for git jobs (sourced from
-         *     spec.prompts), writable for amadeus jobs (JobComposeInput.prompts).
+         *     spec.prompts), writable for cronomicon jobs (JobComposeInput.prompts).
          */
         JobPrompt: {
             /** @description Env var key the answer binds to (unique within a job). */
@@ -4355,7 +4355,7 @@ export interface components {
                 name?: string;
                 uid?: string;
                 /** @enum {string} */
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
                 agencies?: string[];
             }[];
             /**
@@ -4453,7 +4453,7 @@ export interface components {
             id?: string;
             jobName?: string | null;
             /** @enum {string|null} */
-            jobSource?: "git" | "amadeus" | null;
+            jobSource?: "git" | "cronomicon" | null;
             workflowName?: string | null;
             /** Format: date-time */
             runAt?: string;
@@ -4461,8 +4461,8 @@ export interface components {
         };
         /**
          * @description A first-class Schedule (A10a): a standalone named cron (+ optional env)
-         *     referenceable by N jobs/workflows via scheduleRefs. source ∈ {git, amadeus}.
-         *     git rows are Git-authored (read-only over the API); amadeus rows are
+         *     referenceable by N jobs/workflows via scheduleRefs. source ∈ {git, cronomicon}.
+         *     git rows are Git-authored (read-only over the API); cronomicon rows are
          *     operator-authored (Phase 3+).
          */
         Schedule: {
@@ -4479,10 +4479,10 @@ export interface components {
             onlyCalendars?: string[];
             readonly name?: string;
             /**
-             * @description Origin — git (Git-authored) or amadeus (operator-authored in-app).
+             * @description Origin — git (Git-authored) or cronomicon (operator-authored in-app).
              * @enum {string}
              */
-            readonly source?: "git" | "amadeus";
+            readonly source?: "git" | "cronomicon";
             readonly description?: string | null;
             /** @description Cron expression (6-field with seconds */
             cron?: string;
@@ -4522,7 +4522,7 @@ export interface components {
             readonly mode?: "cron" | "interval" | "once";
             /** @description sha256:-prefixed digest of cron+env; snapshotted on runs for reproducibility (§5.5). */
             readonly contentHash?: string;
-            /** @description schedules/<name>.yaml in Git (null for amadeus rows). */
+            /** @description schedules/<name>.yaml in Git (null for cronomicon rows). */
             readonly sourcePath?: string | null;
             /** Format: date-time */
             readonly syncedAt?: string | null;
@@ -4560,7 +4560,7 @@ export interface components {
              * @description A11 per-step source override; empty ⇒ the workflow's source, then fallback.
              * @enum {string}
              */
-            jobSource?: "git" | "amadeus";
+            jobSource?: "git" | "cronomicon";
             /**
              * @description R2F-2 — pins this step to ONE job by its permanent identity. Since two
              *     departments may own a job of the same name (1.2.0), a name-only step
@@ -4614,10 +4614,10 @@ export interface components {
             readonly uid?: string;
             readonly name?: string;
             /**
-             * @description Origin — git (Git-authored) or amadeus (operator-composed in-app, A11).
+             * @description Origin — git (Git-authored) or cronomicon (operator-composed in-app, A11).
              * @enum {string}
              */
-            readonly source?: "git" | "amadeus";
+            readonly source?: "git" | "cronomicon";
             /** @description Repo-relative file path (e.g. workflows/team/deploy.yaml), for folder browsing. Null for Compose-authored workflows. */
             readonly sourcePath?: string | null;
             readonly description?: string;
@@ -4699,7 +4699,7 @@ export interface components {
             /** @description Multi-entry schedule list (detail responses only); mirrors spec.schedules in the workflow YAML. */
             readonly schedules?: components["schemas"]["ScheduleEntry"][];
         };
-        /** @description Request body for composing (POST) or editing (PUT) an amadeus-source workflow (A11). */
+        /** @description Request body for composing (POST) or editing (PUT) an cronomicon-source workflow (A11). */
         WorkflowComposeInput: {
             /** @description Workflow name (slug). Immutable on edit. */
             name?: string;
@@ -4760,7 +4760,7 @@ export interface components {
             message: string;
         };
         /**
-         * @description Request body for authoring (POST) or editing (PUT) an amadeus-source
+         * @description Request body for authoring (POST) or editing (PUT) an cronomicon-source
          *     first-class Schedule (schedule-builder). On edit, name is taken from the path
          *     and is immutable; cron/env propagate to every referencing job/workflow.
          */
@@ -4820,14 +4820,14 @@ export interface components {
             ownerKind?: "job" | "workflow";
             ownerName?: string;
             /** @enum {string} */
-            ownerSource?: "git" | "amadeus";
+            ownerSource?: "git" | "cronomicon";
             /** @description The reaction's entry name, unique within its owner. */
             name?: string;
             /** @enum {string} */
             onKind?: "job" | "workflow";
             onName?: string;
             /** @enum {string} */
-            onSource?: "git" | "amadeus";
+            onSource?: "git" | "cronomicon";
             onOutcome?: components["schemas"]["ReactionOutcome"];
             delaySeconds?: number;
             minIntervalSeconds?: number;
@@ -4856,7 +4856,7 @@ export interface components {
              * @default git
              * @enum {string}
              */
-            onSource: "git" | "amadeus";
+            onSource: "git" | "cronomicon";
             onOutcome: components["schemas"]["ReactionOutcome"];
             /**
              * @description Defer the resulting run by this many seconds after the upstream finishes.
@@ -4914,7 +4914,7 @@ export interface components {
          */
         Calendar: {
             name?: string;
-            /** @description Always 'amadeus' — calendars are operator-authored, never Git-authored. */
+            /** @description Always 'cronomicon' — calendars are operator-authored, never Git-authored. */
             source?: string;
             description?: string;
             /**
@@ -4959,7 +4959,7 @@ export interface components {
             ownerKind?: "job" | "workflow";
             ownerName?: string;
             /** @enum {string} */
-            ownerSource?: "git" | "amadeus";
+            ownerSource?: "git" | "cronomicon";
             /** @description R2F-3 — the owner definition's permanent identity; absent for first-class-schedule bindings, which have no job/workflow owner. */
             ownerUid?: string;
             /** @description R2F-3 — the derived agency set behind this row's disambiguation badge. A name is suffixed with its agency ONLY when it is ambiguous within the set the viewer received, so the common single-agency install shows plain names. */
@@ -5055,11 +5055,11 @@ export interface components {
             ownerAgencies?: string[];
             /**
              * @description Origin of the owning definition. Part of a row's identity — a name can
-             *     recur across the git and amadeus sources — and the third segment of the
+             *     recur across the git and cronomicon sources — and the third segment of the
              *     "kind:source:name" key the calendarRollup map (CAL-12) is keyed by.
              * @enum {string}
              */
-            ownerSource?: "git" | "amadeus";
+            ownerSource?: "git" | "cronomicon";
             scheduleName?: string;
             cron?: string;
             env?: {
@@ -5198,7 +5198,7 @@ export interface components {
              * @description Origin of the job this run executed (A9; NULL legacy runs report git).
              * @enum {string}
              */
-            readonly jobSource?: "git" | "amadeus";
+            readonly jobSource?: "git" | "cronomicon";
             /** @description Captured inter-job outputs (A12) — KEY=value pairs a downstream workflow step can consume. */
             readonly outputs?: {
                 [key: string]: string;
@@ -5571,7 +5571,7 @@ export interface components {
              * @example jobs/backup-prod-db.yaml
              */
             filePath: string;
-            /** @description Full YAML file content. Must carry apiVersion amadeus.io/v1 (T10). */
+            /** @description Full YAML file content. Must carry apiVersion cronomicon.io/v1 (T10). */
             content: string;
             /** @description Optional override; defaults to a generated message. Committed as the bot identity (§3.2). */
             commitMessage?: string;
@@ -5588,7 +5588,7 @@ export interface components {
              */
             readonly id?: string;
             /** @enum {string} */
-            readonly source?: "git" | "amadeus";
+            readonly source?: "git" | "cronomicon";
             /** @description Scope name (unique */
             scope?: string;
             /** @description Inventory file name for git-source scopes. */
@@ -5599,7 +5599,7 @@ export interface components {
             readonly sidecarPath?: string | null;
             /**
              * @description Host names belonging to this scope, populated for BOTH git- and
-             *     amadeus-source scopes (git scopes are materialized into scope_hosts
+             *     cronomicon-source scopes (git scopes are materialized into scope_hosts
              *     during sync). Drives the per-run host-subset picker (F2).
              */
             hosts?: string[];
@@ -5646,13 +5646,13 @@ export interface components {
          */
         InventoryDocument: {
             /** @enum {string} */
-            source: "git" | "amadeus";
+            source: "git" | "cronomicon";
             /** @description Inventory format (ini | yaml). */
             format?: string;
-            /** @description True for amadeus-source scopes (in-app authoring lands in M5). */
+            /** @description True for cronomicon-source scopes (in-app authoring lands in M5). */
             editable: boolean;
             hasInventory: boolean;
-            /** @description Byte-exact inventory content; returned for amadeus-source scopes only. */
+            /** @description Byte-exact inventory content; returned for cronomicon-source scopes only. */
             raw?: string;
             /**
              * @description ok — fully parsed (projection present); unavailable — an unsupported
@@ -5688,7 +5688,7 @@ export interface components {
                 [key: string]: string;
             };
         };
-        /** @description In-app inventory authoring payload (M5). amadeus-source scopes only. */
+        /** @description In-app inventory authoring payload (M5). cronomicon-source scopes only. */
         InventoryInput: {
             /** @description Byte-exact inventory content. */
             raw: string;
@@ -5702,7 +5702,7 @@ export interface components {
         InventoryImportInput: {
             /** @description Restrict the import to these inventory hosts; empty/omitted ⇒ all. */
             hosts?: string[];
-            /** @description Update an existing imported (amadeus, same scope) host row instead of skipping it. */
+            /** @description Update an existing imported (cronomicon, same scope) host row instead of skipping it. */
             overwrite?: boolean;
         };
         InventoryImportResult: {
@@ -5739,7 +5739,7 @@ export interface components {
         };
         ReferenceBinding: {
             /**
-             * @description Which Env Vars section the reference targets (secret → AMADEUS_SECRET_, var → AMADEUS_VAR_, key → AMADEUS_KEY_).
+             * @description Which Env Vars section the reference targets (secret → CRONOMICON_SECRET_, var → CRONOMICON_VAR_, key → CRONOMICON_KEY_).
              * @enum {string}
              */
             kind: "secret" | "var" | "key";
@@ -5749,7 +5749,7 @@ export interface components {
              * @description RA-1 — the optional ALIAS: the bare DESTINATION name this binding's
              *     value is injected under, so one shared job body can consume any
              *     department's row (bind `TEAMA_SUDO as BECOME_PASSWORD` and the run
-             *     receives AMADEUS_SECRET_BECOME_PASSWORD). Omitted/empty ⇒ injected
+             *     receives CRONOMICON_SECRET_BECOME_PASSWORD). Omitted/empty ⇒ injected
              *     under the row's own name, the pre-Phase-A behaviour verbatim.
              *
              *     It is a DESTINATION, never a selector: `name` still identifies the row
@@ -5759,7 +5759,7 @@ export interface components {
              *     the reserved-KEK bar too) — a violation is 422.
              */
             as?: string;
-            /** @description Derived AMADEUS_<SECTION>_<name> reference for the ROW — the binding's identity. Read-only; server-derived from kind + name. When `as` is set the value actually lands on AMADEUS_<SECTION>_<as> instead. */
+            /** @description Derived CRONOMICON_<SECTION>_<name> reference for the ROW — the binding's identity. Read-only; server-derived from kind + name. When `as` is set the value actually lands on CRONOMICON_<SECTION>_<as> instead. */
             readonly reference: string;
         };
         ReferenceBindingList: {
@@ -5813,9 +5813,9 @@ export interface components {
             name: string;
             /** @description The alias the caller asked about, echoed back so a set of chips can be matched to verdicts when one row is bound twice under two destinations. */
             as?: string;
-            /** @description Derived AMADEUS_<SECTION>_<name> reference for the ROW, echoed back so a chip can label itself. */
+            /** @description Derived CRONOMICON_<SECTION>_<name> reference for the ROW, echoed back so a chip can label itself. */
             reference: string;
-            /** @description The key the value would actually land on: AMADEUS_<SECTION>_<as> when aliased, otherwise the same as `reference`. */
+            /** @description The key the value would actually land on: CRONOMICON_<SECTION>_<as> when aliased, otherwise the same as `reference`. */
             injectReference: string;
             /** @description True when dispatch would resolve this reference for a run in the requested scope. */
             ok: boolean;
@@ -5862,7 +5862,7 @@ export interface components {
              */
             readonly id?: string;
             key?: string;
-            /** @description Derived AMADEUS_VAR_<key> reference (namespace contract) — copy this to reference the value in a run. Read-only; the row keeps its bare key. */
+            /** @description Derived CRONOMICON_VAR_<key> reference (namespace contract) — copy this to reference the value in a run. Read-only; the row keeps its bare key. */
             readonly reference?: string;
             value?: string;
             scope?: string;
@@ -5896,7 +5896,7 @@ export interface components {
             vault: boolean;
             /** @description An Apprise URL is configured. */
             apprise: boolean;
-            /** @description Union: the caller may author amadeus-source jobs/workflows SOMEWHERE (AF-2). Never a route gate — per-object authority is checked server-side against the definition's scope. */
+            /** @description Union: the caller may author cronomicon-source jobs/workflows SOMEWHERE (AF-2). Never a route gate — per-object authority is checked server-side against the definition's scope. */
             compose: boolean;
             manageRoles: boolean;
             configureApp: boolean;
@@ -5960,7 +5960,7 @@ export interface components {
                 count?: number;
             }[];
         };
-        /** @description One append-only snapshot of an amadeus-source definition. */
+        /** @description One append-only snapshot of an cronomicon-source definition. */
         DefinitionRevision: {
             /** @description 1-based */
             revisionNo?: number;
@@ -6052,7 +6052,7 @@ export interface components {
         };
         MintedServiceAccount: components["schemas"]["ServiceAccount"] & {
             /**
-             * @description The plaintext credential, prefixed `amasvc_`. Present ONLY in
+             * @description The plaintext credential, prefixed `crnsvc_`. Present ONLY in
              *     the 201 response that created the account; only its SHA-256 is
              *     stored, so it cannot be recovered afterwards.
              */
@@ -6077,7 +6077,7 @@ export interface components {
              */
             readonly id?: string;
             key?: string;
-            /** @description Derived AMADEUS_SECRET_<key> reference (namespace contract) — copy this to reference the secret in a run. Read-only; the row keeps its bare key. */
+            /** @description Derived CRONOMICON_SECRET_<key> reference (namespace contract) — copy this to reference the secret in a run. Read-only; the row keeps its bare key. */
             readonly reference?: string;
             /** @enum {string} */
             source?: "stored" | "vault";
@@ -6155,7 +6155,7 @@ export interface components {
             deregisteredAt?: string;
             /**
              * @description How the previous row was removed. `reaper` means the runner simply
-             *     stayed offline past AMADEUS_RUNNER_DEREGISTER_AFTER — during an
+             *     stayed offline past CRONOMICON_RUNNER_DEREGISTER_AFTER — during an
              *     outage that is most of them.
              * @enum {string}
              */
@@ -6219,13 +6219,13 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /**
-             * @description Per-runner inventory canonicality (D8). amadeus — Cronomicon
+             * @description Per-runner inventory canonicality (D8). cronomicon — Cronomicon
              *     resolves targets into the manifest. local — the agent resolves
              *     hosts against its own inventory (network-isolated segments).
-             * @default amadeus
+             * @default cronomicon
              * @enum {string}
              */
-            inventory: "amadeus" | "local";
+            inventory: "cronomicon" | "local";
             readonly load?: number;
             maxConcurrent?: number;
             readonly version?: string;
@@ -6370,7 +6370,7 @@ export interface components {
             kind: "secret" | "var" | "key";
             /** @description The bare row name the binding declares. */
             name: string;
-            /** @description The derived AMADEUS_<SECTION>_<name>. */
+            /** @description The derived CRONOMICON_<SECTION>_<name>. */
             reference: string;
             jobSource?: string;
             jobName: string;
@@ -6397,7 +6397,7 @@ export interface components {
             kind: "secret" | "var";
             /** @description The bare row name both rows share. */
             name: string;
-            /** @description The derived AMADEUS_<SECTION>_<name>. */
+            /** @description The derived CRONOMICON_<SECTION>_<name>. */
             reference: string;
             /** @description The SHADOWING row's scope. Never "" — a global row shadows nothing. */
             scope: string;
@@ -6434,7 +6434,7 @@ export interface components {
             kind: "secret" | "var" | "key";
             /** @description The key (or SSH label) the departments share. */
             name: string;
-            /** @description The derived AMADEUS_<SECTION>_<name>. */
+            /** @description The derived CRONOMICON_<SECTION>_<name>. */
             reference: string;
             /** @description The scope the collision is in. Always "" for keys — ssh_credentials has no scope column, which is why the key case is the easiest of the three to hit. */
             scope: string;
@@ -6645,11 +6645,11 @@ export interface components {
                 [key: string]: string;
             };
             /**
-             * @description Owning runner's inventory canonicality (D8). amadeus — targets is
+             * @description Owning runner's inventory canonicality (D8). cronomicon — targets is
              *     fully resolved. local — targets is empty; resolve scope locally.
              * @enum {string}
              */
-            inventoryMode: "amadeus" | "local";
+            inventoryMode: "cronomicon" | "local";
             /** @description The run's scope name; the canonical input in local mode. */
             scope?: string;
             /** @description Resolved host references (empty in local mode). */
@@ -6672,7 +6672,7 @@ export interface components {
              */
             sshUser?: string;
             /**
-             * @description RP-8 (protocol v7) — the derived AMADEUS_KEY_<label> REFERENCE for the
+             * @description RP-8 (protocol v7) — the derived CRONOMICON_KEY_<label> REFERENCE for the
              *     run's overridden SSH key (names only, D1). The agent resolves it to the
              *     delivered 0600 key file and emits
              *     `-e ansible_ssh_private_key_file=<path>`. The material itself travels
@@ -6692,7 +6692,7 @@ export interface components {
             checkout?: components["schemas"]["ManifestCheckout"];
             /**
              * @description P1.4 (protocol v6) — dispatch-time resolved reference VALUES
-             *     (AMADEUS_SECRET_* / AMADEUS_VAR_*, plus AMADEUS_KEY_* mapped to their
+             *     (CRONOMICON_SECRET_* / CRONOMICON_VAR_*, plus CRONOMICON_KEY_* mapped to their
              *     delivered key-file PATHS) for a runner flagged allow_secret_injection.
              */
             secrets?: {
@@ -6770,7 +6770,7 @@ export interface components {
         ManifestKey: {
             /** @description The credential's bare LABEL; the agent keys its resolver on this. */
             name: string;
-            /** @description The derived AMADEUS_KEY_<label> form, as it appears in env and in sshKeyRef. */
+            /** @description The derived CRONOMICON_KEY_<label> form, as it appears in env and in sshKeyRef. */
             reference: string;
             /**
              * @description PEM private-key bytes. Written 0600 off the run tree, wiped on cleanup,
@@ -6779,7 +6779,7 @@ export interface components {
             material: string;
         };
         /**
-         * @description Ansible inventory file shipped to an amadeus-mode runner for
+         * @description Ansible inventory file shipped to an cronomicon-mode runner for
          *     `ansible-playbook -i` (protocol v2, D3). Byte-exact and SECRET-FREE —
          *     secret-bearing inventory vars are rejected at ingest (Path A, D1); the
          *     manifest path never carries decrypted secret values. Absent for
@@ -6860,7 +6860,7 @@ export interface components {
             repoUrl?: string;
             tokenExpiryNotifyDays?: number;
             webhookEnabled?: boolean;
-            /** @description Read-only. True when the webhook secret is pinned by the AMADEUS_GITLAB_WEBHOOK_SECRET env var; rotation via the API is rejected (409) while pinned. */
+            /** @description Read-only. True when the webhook secret is pinned by the CRONOMICON_GITLAB_WEBHOOK_SECRET env var; rotation via the API is rejected (409) while pinned. */
             readonly webhookSecretEnvPinned?: boolean;
             webhookEvents?: {
                 push?: boolean;
@@ -6922,7 +6922,7 @@ export interface components {
              *     `definitionRevisions`), the DR-7 window
              *     (`runnerPlacementHistory`), and the S3 archive window
              *     (`archivedLogFiles`, SL-4). `0` on any of them means keep forever. This blob
-             *     is authoritative — the `AMADEUS_RETENTION_*` env vars only seed it
+             *     is authoritative — the `CRONOMICON_RETENTION_*` env vars only seed it
              *     on the first boot that finds it unset (LU-2), and a change here
              *     applies on the next nightly sweep rather than at the next restart.
              */
@@ -6940,7 +6940,7 @@ export interface components {
                 /** @default 90 */
                 logFiles: number;
                 /**
-                 * @description How long a soft-deleted amadeus-source definition stays
+                 * @description How long a soft-deleted cronomicon-source definition stays
                  *     restorable before it is permanently purged (RH). `0` keeps
                  *     forever — note this is the one window whose "forever" costs a
                  *     NAME rather than disk, since a binned definition still
@@ -6961,7 +6961,7 @@ export interface components {
                  *     Deliberately shorter than the 90-day row windows: it covers a
                  *     multi-week outage with less standing exposure. The window
                  *     starts when the runner is REAPED, not when it went offline —
-                 *     so it adds to `AMADEUS_RUNNER_DEREGISTER_AFTER` (default 14d)
+                 *     so it adds to `CRONOMICON_RUNNER_DEREGISTER_AFTER` (default 14d)
                  *     rather than competing with it.
                  * @default 30
                  */
@@ -6981,7 +6981,7 @@ export interface components {
                 archivedLogFiles: number;
                 /**
                  * @description On-disk **audit stream** window — `audit.log` and its dated
-                 *     `audit.log.YYYYMMDD` generations (`AMADEUS_AUDIT_LOG`), not the
+                 *     `audit.log.YYYYMMDD` generations (`CRONOMICON_AUDIT_LOG`), not the
                  *     per-run logs (`logFiles`) and not the process log (a keep count,
                  *     not a day window). Two years by design: deliberately longer than
                  *     `changeLog`'s 365 and `activity`'s 90, because the file is an
@@ -7000,7 +7000,7 @@ export interface components {
             /** @enum {string} */
             backend?: "local" | "s3";
             local?: {
-                /** @default /var/lib/amadeus/logs */
+                /** @default /var/lib/cronomicon/logs */
                 path: string;
             };
             /** @description The archive tier's connection (SL-1, the s3-logging plan). `backend: s3` means local AND archive: local disk stays the only write target during a run, and the scheduled sync copies sealed logs to this bucket afterwards. A save with `backend: s3` probes the bucket with the credentials it would store and answers 422 `validation_failed` (the S3 error code in the message) without writing the row when the probe fails. */
@@ -7143,10 +7143,10 @@ export interface components {
              */
             readonly id?: string;
             /**
-             * @description Provenance (M4). git = imported from an inventory by sync (read-only; operator edits/deletes are rejected — author an amadeus host to override). amadeus = operator-authored. When a hostname has both, the amadeus row wins at resolution.
+             * @description Provenance (M4). git = imported from an inventory by sync (read-only; operator edits/deletes are rejected — author an cronomicon host to override). cronomicon = operator-authored. When a hostname has both, the cronomicon row wins at resolution.
              * @enum {string}
              */
-            readonly source?: "git" | "amadeus";
+            readonly source?: "git" | "cronomicon";
             /**
              * @description Connection-test outcome. unverified = never tested; verified = last test logged in successfully; reachable = keyless tier — the SSH endpoint answered and its host key verified/pinned, but no auth key is configured so authentication was not tested; cred_error/conn_error = last test failed at auth / network. Only a test changes this.
              * @enum {string}
@@ -7245,7 +7245,7 @@ export interface components {
         SshCredential: {
             readonly id: string;
             label: string;
-            /** @description Derived AMADEUS_KEY_<label> reference (namespace contract); resolves to a key-file PATH on the executing host. Read-only; the credential keeps its bare label. */
+            /** @description Derived CRONOMICON_KEY_<label> reference (namespace contract); resolves to a key-file PATH on the executing host. Read-only; the credential keeps its bare label. */
             readonly reference?: string;
             description?: string | null;
             /** @enum {string} */
@@ -7310,7 +7310,7 @@ export interface components {
             publishSchedule?: boolean;
             configureApp?: boolean;
             manageRoles?: boolean;
-            /** @description AF-2 — authoring amadeus-source JOBS and WORKFLOWS. Agency-bound: the holder may author within the scopes their grant reaches, never everywhere. An All-scoped (unscoped) job stays admin-only, which is what keeps a scheduled fire of an unbound job unreachable to a departmental composer (RB-30). The other surfaces the old admin gate covered — schedule-defs, calendars, reactions, the recycle bin — act on objects with no scope and remain admin-only. */
+            /** @description AF-2 — authoring cronomicon-source JOBS and WORKFLOWS. Agency-bound: the holder may author within the scopes their grant reaches, never everywhere. An All-scoped (unscoped) job stays admin-only, which is what keeps a scheduled fire of an unbound job unreachable to a departmental composer (RB-30). The other surfaces the old admin gate covered — schedule-defs, calendars, reactions, the recycle bin — act on objects with no scope and remain admin-only. */
             compose?: boolean;
         };
         Role: components["schemas"]["RoleInput"] & {
@@ -7473,7 +7473,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description Conflict — e.g. a duplicate amadeus-source name, or a write to a read-only git-source definition (A9). */
+        /** @description Conflict — e.g. a duplicate cronomicon-source name, or a write to a read-only git-source definition (A9). */
         Conflict: {
             headers: {
                 [name: string]: unknown;
@@ -7493,7 +7493,7 @@ export interface components {
         };
     };
     parameters: {
-        /** @description Which kind of amadeus-source definition. */
+        /** @description Which kind of cronomicon-source definition. */
         definitionKind: "job" | "workflow" | "schedule";
         /** @description The definition's name. */
         definitionName: string;
@@ -7616,7 +7616,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                filename: "amadeus-runner-linux-amd64" | "amadeus-runner-linux-arm64" | "SHA256SUMS";
+                filename: "cronomicon-runner-linux-amd64" | "cronomicon-runner-linux-arm64" | "SHA256SUMS";
             };
             cookie?: never;
         };
@@ -7652,7 +7652,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A registration token (`amt_reg_` + 64 lowercase hex). */
+                /** @description A registration token (`crn_reg_` + 64 lowercase hex). */
                 token: string;
             };
             cookie?: never;
@@ -8020,7 +8020,7 @@ export interface operations {
                      *     key bytes never ride the request or the run's audit envelope). The
                      *     selected key replaces each resolved target's configured key for
                      *     THIS run: in-process signer resolution on the SSH executor;
-                     *     delivered-key-file resolution (D8, AMADEUS_KEY_<label>) on runner
+                     *     delivered-key-file resolution (D8, CRONOMICON_KEY_<label>) on runner
                      *     ssh-family runs — such runs are claimable only by
                      *     allow_secret_injection runners and refuse local-inventory runners
                      *     (409). On an ansible run the delivered key file is passed as the
@@ -8094,13 +8094,13 @@ export interface operations {
                          * @enum {string}
                          */
                         kind: "secret" | "var" | "key";
-                        /** @description The row's BARE name (never the derived AMADEUS_* form). */
+                        /** @description The row's BARE name (never the derived CRONOMICON_* form). */
                         name: string;
                         /**
                          * @description RA-4 — the optional ALIAS: the bare DESTINATION name this
                          *     row's value is injected under, so a caller can supply
                          *     THEIR department's credential to a shared job body that
-                         *     reads a fixed AMADEUS_SECRET_<name>. Omitted ⇒ injected
+                         *     reads a fixed CRONOMICON_SECRET_<name>. Omitted ⇒ injected
                          *     under the row's own name.
                          *
                          *     A destination, never a selector: `name` still selects the
@@ -8163,7 +8163,7 @@ export interface operations {
              *     bare name, or an invalid `as` alias (same rules as a stored binding
              *     write); or two entries naming DIFFERENT rows alias to the same
              *     destination (RA-Q2), which is refused rather than resolved by a silent
-             *     last-wins. The message names the contested AMADEUS_* key.
+             *     last-wins. The message names the contested CRONOMICON_* key.
              *     `key_binding_requires_runner` (KB) — the run RESOLVED to the ssh
              *     executor and the job, its script, or a per-run addition binds an SSH
              *     key; the in-app executor connects from Cronomicon and cannot place a key
@@ -8891,7 +8891,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Schedule origin (default git). */
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
             };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
@@ -8930,7 +8930,7 @@ export interface operations {
         parameters: {
             query?: {
                 /** @description Filter by origin. */
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
                 /** @description Free-text search on name. */
                 q?: string;
                 /**
@@ -8996,7 +8996,7 @@ export interface operations {
     getScheduleDef: {
         parameters: {
             query?: {
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
             };
             header?: never;
             path: {
@@ -9376,7 +9376,7 @@ export interface operations {
                 /** @description WB-D2 — filter by the stable workflow name (survives rename/recreate); pair with workflowSource to disambiguate. */
                 workflowName?: string;
                 /** @description WB-D2 — narrows workflowName to one source. */
-                workflowSource?: "git" | "amadeus";
+                workflowSource?: "git" | "cronomicon";
                 /** @description Filters on the DISPLAY status each item carries, not the raw column: 'cancelled' selects soft-cancelled runs (the flag from migration 260) and every other value excludes them; 'danger' covers failure/killed; 'running' also returns queued, matching the console's one-word fold. */
                 status?: components["schemas"]["RunStatus"];
                 /**
@@ -10388,7 +10388,7 @@ export interface operations {
     listScopes: {
         parameters: {
             query?: {
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
             };
             header?: never;
             path?: never;
@@ -10692,7 +10692,7 @@ export interface operations {
         parameters: {
             query?: {
                 job?: string;
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
                 /** @description Window as a day count ("7d", "30"). Default 30, capped at 365. */
                 window?: string;
             };
@@ -10719,7 +10719,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Which kind of amadeus-source definition. */
+                /** @description Which kind of cronomicon-source definition. */
                 kind: components["parameters"]["definitionKind"];
                 /** @description The definition's name. */
                 name: components["parameters"]["definitionName"];
@@ -10752,7 +10752,7 @@ export interface operations {
                 "X-CSRF-Token": components["parameters"]["csrf"];
             };
             path: {
-                /** @description Which kind of amadeus-source definition. */
+                /** @description Which kind of cronomicon-source definition. */
                 kind: components["parameters"]["definitionKind"];
                 /** @description The definition's name. */
                 name: components["parameters"]["definitionName"];
@@ -10822,7 +10822,7 @@ export interface operations {
                 "X-CSRF-Token": components["parameters"]["csrf"];
             };
             path: {
-                /** @description Which kind of amadeus-source definition. */
+                /** @description Which kind of cronomicon-source definition. */
                 kind: components["parameters"]["definitionKind"];
                 /** @description The definition's name. */
                 name: components["parameters"]["definitionName"];
@@ -10857,7 +10857,7 @@ export interface operations {
                 "X-CSRF-Token": components["parameters"]["csrf"];
             };
             path: {
-                /** @description Which kind of amadeus-source definition. */
+                /** @description Which kind of cronomicon-source definition. */
                 kind: components["parameters"]["definitionKind"];
                 /** @description The definition's name. */
                 name: components["parameters"]["definitionName"];
@@ -10892,7 +10892,7 @@ export interface operations {
                 "application/json": {
                     sightings?: {
                         /** @enum {string} */
-                        jobSource: "git" | "amadeus";
+                        jobSource: "git" | "cronomicon";
                         jobName: string;
                         /** @description Protocol v11 — echoed back exactly as the server sent it in the watch spec. The server matches it against what it actually distributed and fires from its own copy, so this identifies which watch the report belongs to; it never selects a job on its own. */
                         jobUid?: string;
@@ -11035,7 +11035,7 @@ export interface operations {
                  * @description Disambiguates a name present in both sources. Omit when the name is
                  *     unique; a name in two sources without this is 409 `ambiguous_name`.
                  */
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
             };
             header?: never;
             path: {
@@ -11118,7 +11118,7 @@ export interface operations {
     triggerWorkflowByName: {
         parameters: {
             query?: {
-                source?: "git" | "amadeus";
+                source?: "git" | "cronomicon";
             };
             header?: never;
             path: {
@@ -11712,7 +11712,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @example secret/data/amadeus#DB_PASSWORD */
+                    /** @example secret/data/cronomicon#DB_PASSWORD */
                     vaultPath: string;
                 };
             };
@@ -11844,14 +11844,14 @@ export interface operations {
                      */
                     protocolVersion: number;
                     /**
-                     * @description Per-runner inventory canonicality (D8). amadeus — the
+                     * @description Per-runner inventory canonicality (D8). cronomicon — the
                      *     manifest carries fully-resolved targets. local — the agent
                      *     resolves hosts against its own inventory (network-isolated
                      *     segments); the manifest ships only the scope name.
-                     * @default amadeus
+                     * @default cronomicon
                      * @enum {string}
                      */
-                    inventory?: "amadeus" | "local";
+                    inventory?: "cronomicon" | "local";
                 };
             };
         };
@@ -12488,10 +12488,10 @@ export interface operations {
                     /** @default 5 */
                     maxConcurrent?: number;
                     /**
-                     * @default amadeus
+                     * @default cronomicon
                      * @enum {string}
                      */
-                    inventory?: "amadeus" | "local";
+                    inventory?: "cronomicon" | "local";
                     /**
                      * @description Must equal the server's current wire protocol — the floor
                      *     tracks it (426 below).
@@ -12576,7 +12576,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RegistrationTokenInfo"] & {
-                        /** @description The amt_reg_* plaintext. Shown once; store securely. */
+                        /** @description The crn_reg_* plaintext. Shown once; store securely. */
                         token: string;
                     };
                 };
