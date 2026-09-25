@@ -1,8 +1,8 @@
 # Cronomicon frontend
 
-Operator UI — **React + TypeScript + Vite** (T2). Builds into `../backend/web/dist`,
-which the Go binary embeds and serves (T3). The API client is **generated from
-the canonical `backend/openapi.yaml`** (T5) — never hand-write request/response types.
+Operator UI — **React + TypeScript + Vite**. Builds into `../backend/web/dist`,
+which the Go binary embeds and serves. The API client is **generated from
+the canonical `backend/openapi.yaml`** — never hand-write request/response types.
 
 > Typed client + auth shell (OIDC session + CSRF) + theme, with sixteen view
 > components under `src/views/` — the routed list and each view's purpose are
@@ -24,14 +24,15 @@ server proxies API + auth routes to it.
 
 - `src/api/schema.d.ts` — generated types (do not edit).
 - `src/api/client.ts` — `openapi-fetch` typed client; sends the session cookie
-  (`credentials: include`) and the CSRF token header on writes (T8).
+  (`credentials: include`) and the CSRF token header on writes.
 - `src/auth.tsx` — fetches `/me`; unauthenticated → Login → `/api/v1/auth/login`.
 - `src/components/Shell.tsx` — sidebar nav + routed outlet.
 - `src/views/*` — per-view components calling the typed client.
-- `src/theme.ts` — design tokens ported from the prototype.
+- `src/theme.ts` — design tokens (palette, type scale, radii, faces).
 
 ## Adding a view
 
 1. `src/views/Foo.tsx` — call `api.GET("/foo")`, render with `useGet`/`rows`.
 2. Add a `<Route>` in `src/App.tsx` and a nav entry in `Shell.tsx`.
-3. Fold in the relevant V1.1 polish from the backlog as you build.
+3. Read theme tokens (`c.*`) during render and build from the shared atoms in
+   `src/components/ui.tsx` rather than hand-rolling copies.

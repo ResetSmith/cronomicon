@@ -14,7 +14,7 @@ use GitHub's private vulnerability reporting on this repository instead.
 
 The repository has two production surfaces, described in `AGENTS.md`:
 
-- `backend/` — Go 1.21+, SQLite, single static binary
+- `backend/` — Go 1.26, SQLite, single static binary
 - `frontend/` — React + TypeScript + Vite, embedded into the binary
 
 ```bash
@@ -38,7 +38,9 @@ CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false
 
 ## Making changes
 
-1. Fork the repository and create a branch from `main`.
+1. Fork the repository and create a branch from `develop`. Open the pull
+   request against `develop` as well: GitHub pre-fills `release`, which is the
+   production branch and only receives merges from `develop`.
 2. Keep each pull request focused on one change.
 3. Follow the conventions in `AGENTS.md`. In particular:
    - The API contract is `openapi.yaml`; `backend/openapi.yaml` must stay

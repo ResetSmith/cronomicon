@@ -11,7 +11,7 @@
         /* Fonts are SELF-HOSTED (VU-1). This manual is served by the Cronomicon binary to
  operators on networks that may have no egress to fonts.googleapis.com, and a
  blocked stylesheet silently drops the whole document to system-ui with no
- error — the same defect frontend/index.html was fixed for in Phase A. Faces
+ error — the same defect frontend/index.html guards against. Faces
  copied from index.html unchanged (Google's own latin / latin-ext subsets);
  only the origin differs. Absolute /fonts/* resolves for a document served at
  /administrator-manual.html: Vite copies public/ into backend/web/dist and
@@ -19,8 +19,8 @@
 
  Families track theme.ts so the manuals and the product read as one thing: IBM
  Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
- Mono for code. Outfit and JetBrains Mono are retired. Fraunces is NOT declared
- here: this manual has never had a display face, and adding one would be a new
+ Mono for code. No other families are declared. Fraunces is NOT declared
+ here: this manual has no display face, and adding one would be a new
  use of a face theme.ts reserves for brand surfaces.
 
  Plex Sans is a single variable file spanning 400-700; Condensed and Mono are
@@ -121,17 +121,16 @@
 
  VU-18: these are hand-copied hex literals, so they silently rot
  the next time theme.ts moves. frontend/src/documentation-palette.test.ts
- now fails if any hex in this file is absent from theme.ts. When the
+ fails if any hex in this file is absent from theme.ts. When the
  product palette changes, re-map by ROLE — page background takes the
  new `bg`, cards `panel`, links `primary`, warning callouts
  `warning` — never by eyeballing which new hex looks closest to the
  old one.
 
- Two role moves landed in Phase C and are easy to get backwards:
- `warning` is now a distinct ORANGE (it used to be the same gold as
- `accent`, which made a warn badge and an in-flight badge
- indistinguishable), and `accent` gold is now the BRAND — the hero
- spine, the h2 rule, the active TOC item.
+ Two roles are easy to get backwards:
+ `warning` is a distinct ORANGE (not the same gold as `accent`, so a
+ warn badge and an in-flight badge stay distinguishable), and `accent`
+ gold is the BRAND — the hero spine, the h2 rule, the active TOC item.
  ============================================================ */
         :root {
             /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono`) so a fallback
@@ -255,10 +254,9 @@
         }
 
         /* ---------- Sidebar ----------
- Every colour in this block reads a token. It used to be hardcoded dark
- literals, which was survivable only because the rail was dark in BOTH
- themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
- pale-slate link would now be near-invisible on white. Tokens also keep the
+ Every colour in this block reads a token, never a hardcoded dark
+ literal: light mode has a true light rail (VU-9), so a hardcoded
+ pale-slate link would be near-invisible on white. Tokens also keep the
  VU-18 drift guard honest — nothing here to re-map by hand next time. */
         #sidebar {
             width: var(--nav-w);
@@ -1800,12 +1798,10 @@
                 </div>
 
                 <p>This manual describes the service as it stands: the current database schema is
-                    <strong>1090</strong>, and the runner wire protocol is <strong>v12</strong>. Cronomicon follows
-                    Semantic Versioning from release 1.0.0 on. For the release-by-release history behind any
-                    behavior in this book &mdash; features, fixes, migrations, and the reasoning &mdash; see the
-                    project's <a
+                    <strong>1150</strong>, and the runner wire protocol is <strong>v13</strong>. Cronomicon follows
+                    Semantic Versioning. The project's <a
                         href="https://gitlab.example.com/ops/cronomicon/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
-                    in the Cronomicon repository.</p>
+                    in the Cronomicon repository records the reasoning behind each behavior in this book.</p>
 
                 <h3>How to read this manual</h3>
                 <ul>
@@ -1919,8 +1915,8 @@
                 <p><strong>Roles say what you can do. Grants say where.</strong> <strong>Access grants</strong> decide
                     authorization. One grant row says: <em>this AD group has this role here</em>. &ldquo;Here&rdquo; is
                     one agency, or <em>All scopes (unrestricted)</em>. A permission and a scope must come from the
-                    <strong>same</strong> grant. The server no longer resolves the two independently and then makes a
-                    union. That union let a user's strongest verb apply to their widest reach.</p>
+                    <strong>same</strong> grant. The server never resolves the two independently and then makes a
+                    union, because such a union would let a user's strongest verb apply to their widest reach.</p>
                 <p>Visibility stays a union, and this is intentional. A restricted operator sees the GLOBAL (scope-less)
                     rows plus its granted scopes, and nothing more. <code>listJobs</code>, <code>listSchedules</code>,
                     <code>listUpcomingSchedules</code>, <code>listWorkflowRuns</code>, and the Env&nbsp;Vars and Secrets
@@ -1963,17 +1959,15 @@
                     &mdash; the anti-amplification rule. The rules apply to the incoming grant <em>and</em> to the
                     existing row on an edit or delete, so a delegate cannot free-ride on a wider row by modifying
                     it.</p>
-                <p>The card is a list, not the old role&nbsp;&times;&nbsp;scope grid, and this is intentional. The grid
-                    grew one column for each scope and became too wide at two dozen departments. The list has search,
+                <p>The card is a list, not a role&nbsp;&times;&nbsp;scope grid, and this is intentional. A grid
+                    grows one column for each scope and becomes too wide at two dozen departments. The list has search,
                     filters, and sort functions. One filter entry finds the grants that go to <em>everything</em>. Do a
                     check of those rows first.</p>
                 <p>A grant that names an agency expands through that agency's scopes at login. If you add a scope to the
                     agency next month, the grant includes it with no edit. <strong>Each grant edit signs out all other
                         operators.</strong> The session epoch (the counter that makes open sessions invalid) increases,
                     so the change gets to signed-in sessions immediately, not at cookie expiry. The
-                    <strong>Roles</strong> card is next to the grants. Roles are data (see below). The legacy
-                    AD&nbsp;Group&nbsp;&rarr;&nbsp;Role Mappings list and the old Scope Restrictions matrix are both
-                    gone. The UI dropped them, and migration 850 dropped their tables. They had decided nothing. Access
+                    <strong>Roles</strong> card is next to the grants. Roles are data (see below). Access
                     Grants is the only access surface on the page.</p>
 
                 <p><strong>Roles are data, not code.</strong> In the <strong>Roles</strong> card, an
@@ -1984,34 +1978,31 @@
                     <code>operator</code>, <code>viewer</code>) are included by default. You can edit them, but you can
                     <strong>not</strong> delete them. A role is a pure permission template over <strong>seven</strong>
                     permissions: trigger jobs, kill jobs, manage env vars, publish schedule, configure app, manage
-                    roles, and <strong>Create jobs &amp; workflows</strong> (migration 990) &mdash; the authoring
+                    roles, and <strong>Create jobs &amp; workflows</strong> &mdash; the authoring
                     permission, which lets a role author jobs and workflows within the agencies it is granted while
-                    global (All) definitions, reusable schedules, calendars and the recycle bin stay admin-only. The old <code>viewDashboard</code> and <code>editSchedules</code> permissions were deleted,
-                    because no enforcement point for them was possible. Thus <code>viewer</code> has no permissions at
+                    global (All) definitions, reusable schedules, calendars and the recycle bin stay admin-only. There is
+                    no &ldquo;view&rdquo; permission, because no enforcement point for one is possible. Thus <code>viewer</code> has no permissions at
                     all. This is correct, not an error: a viewer's access is visibility, which comes from its granted
                     scopes, and visibility is not a verb.</p>
                 <p>Two floors keep the recovery path safe: <code>admin</code> can never lose <code>manageRoles</code>,
-                    and no edit can cause zero roles to have it. The server refuses to delete a role while a grant or a
-                    legacy mapping refers to it. Each role write signs out all other sessions.</p>
+                    and no edit can cause zero roles to have it. The server refuses to delete a role while a grant
+                    refers to it. Each role write signs out all other sessions.</p>
 
                 <div class="callout warn">
-                    <div class="ct"><span class="em">🔑</span> An RBAC change now revokes other sessions</div>
+                    <div class="ct"><span class="em">🔑</span> An RBAC change revokes other sessions</div>
                     <p>In OIDC (session-cookie) mode, an edit of an access grant, a role, or agency membership
-                        <strong>increases a server-side session epoch</strong> (migration 641). The server then rejects
+                        <strong>increases a server-side session epoch</strong>. The server then rejects
                         each <em>other</em> logged-in session on its next request, and that operator must log in again.
                         An access change thus has an immediate effect. It does not stay until a token expires. The admin
                         who makes the change keeps their own session (the same request supplies a new cookie). The
-                        session TTL (time to live) also decreased from 12h to 8h as a backstop. Trusted-Header SSO is
+                        session TTL (time to live) is 8h as a backstop. Trusted-Header SSO is
                         not affected, because there is no app session to revoke. See <a href="#secrets">&sect;6</a>.</p>
                 </div>
 
                 <div class="callout gotcha">
-                    <div class="ct"><span class="em">🐛</span> Two known quirks</div>
-                    <p><strong>Approver showed a blank &ldquo;Resolved Role&rdquo;. Corrected — and a later rework made
-                            the correction unnecessary.</strong> The old hardcoded precedence map did not include
-                        Approver, so a user holding only Approver saw a blank cell. Seeded role ranks fixed it. The
-                        single-name column is itself gone now: Recent Logins lists every grant, so no role can be hidden
-                        by another role out-ranking it.</p>
+                    <div class="ct"><span class="em">🐛</span> Two things to know</div>
+                    <p><strong>Recent Logins has no single &ldquo;Resolved Role&rdquo; column.</strong> It lists every
+                        grant a user holds, so no role can be hidden by another role out-ranking it.</p>
                     <p><strong><code>requestable</code> is live &mdash; but it gates only the machine door.</strong>
                         The flag is a per-job opt-in for the service-account trigger API (<a
                             href="#secrets">&sect;6</a>): a token trigger on a job whose box is not ticked is refused
@@ -2045,7 +2036,7 @@
                     <p>The executor runs only when an operator sets <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code>. The
                         pool concurrency default is <strong>4</strong>, from
                         <code>CRONOMICON_SSH_EXECUTOR_CONCURRENCY</code>. When the executor is on, the server writes a
-                        clear warning to the log: the server now holds SSH private keys and has outbound SSH to the job
+                        clear warning to the log: the server holds SSH private keys and has outbound SSH to the job
                         targets. <strong>If the executor is off, <code>ssh</code>-tagged runs stay in the queue
                             forever.</strong></p>
                 </div>
@@ -2105,7 +2096,7 @@
                 </div>
 
                 <div class="callout note">
-                    <div class="ct"><span class="em">💉</span> Reference injection into the run (v0.49.x; kill-switch
+                    <div class="ct"><span class="em">💉</span> Reference injection into the run (kill-switch
                         <code>CRONOMICON_SECRETS_INJECTION_ENABLED</code>, default on)</div>
                     <p>After the command resolution and before the fan-out, the executor resolves the <strong>reference
                             bindings</strong> that the job and its referenced script <em>declared</em>. It resolves only
@@ -2131,60 +2122,52 @@
                             href="#secrets">&sect;6</a> gives the depth.</p>
                 </div>
 
-                <p><strong>Every terminal run-status write is now status-guarded</strong>. The stop route, the runner's
+                <p><strong>Every terminal run-status write is status-guarded</strong>. The stop route, the runner's
                     normal finalize, the drain-timeout path and the orphan reaper each write only while the run is still
                     running, and each checks that it won the write before emitting a run-end. Two consequences to
-                    expect. Stopping a run that finished a moment earlier now returns a <strong>409</strong> instead of
+                    expect. Stopping a run that finished a moment earlier returns a <strong>409</strong> instead of
                     silently overwriting a real outcome with an asserted one. And a late log arriving after an operator
-                    stopped a run no longer overwrites the disposition &mdash; it declines and logs. Runner load
+                    stopped a run does not overwrite the disposition &mdash; it declines and logs. Runner load
                     accounting is deliberately <em>not</em> gated on winning the write: the runner released its slot
                     either way, and gating it would leak load until restart.</p>
 
                 <h3>4.3 Targets, hosts &amp; bastions</h3>
                 <div class="callout danger">
                     <div class="ct"><span class="em">🎯</span> All run paths obey a job's pinned target host</div>
-                    <p><strong>This decreases the set of hosts on which your scheduled and workflow runs occur.</strong>
-                        A job definition can pin a single <code>target_host</code>. Only <strong>one</strong> of the
-                        four run paths obeyed that pin: a manual <em>Run</em> by a person. On the other three paths,
-                        the run row got a <code>NULL</code> target host. Both executors read that as <em>&ldquo;no
-                            target&rdquo;</em>, and target resolution reads that as <strong>fan out on the full
-                            scope</strong>.</p>
+                    <p><strong>A pin narrows the set of hosts on which your scheduled and workflow runs occur.</strong>
+                        A job definition can pin a single <code>target_host</code>. Every run path obeys that pin: a
+                        manual <em>Run</em> by a person, a cron fire, a workflow step and an Ansible run. A run row
+                        with a <code>NULL</code> target host is the unpinned case: both executors read that as
+                        <em>&ldquo;no target&rdquo;</em>, and target resolution reads that as <strong>fan out on the
+                            full scope</strong>.</p>
                 </div>
-                <p>The three paths, and their corrections:</p>
+                <p>How each path carries the pin:</p>
                 <ul>
-                    <li><strong>Cron fires did not obey the pin at all.</strong> The scheduler made its enqueue
-                        params from the job's name, scope, env, executor, and agencies, but not from its target
-                        host. The struct had the field, but the manual trigger handler was the only caller that set
-                        it. Thus a job pinned to one host ran on <em>each</em> host in its scope, on each fire of
-                        its schedule. The correction uses the per-fire job read that already supplied job-level env.
-                        An edit of a pin thus applies on the next fire, with no scheduler reload, the same as env.
+                    <li><strong>Cron fires.</strong> The scheduler makes its enqueue params from the job's name,
+                        scope, env, executor, agencies and target host, read per fire from the job row that also
+                        supplies job-level env. An edit of a pin thus applies on the next fire, with no scheduler
+                        reload, the same as env.
                     </li>
-                    <li><strong>Workflow steps had the same hole by a different route.</strong> The workflow engine
-                        makes its own run insert and does not go through the scheduler's params. Its column list did
-                        not include the target host. It now carries the pin on the first try, on each retry, and on
-                        skipped-step rows. Thus History shows the target that the step <em>would</em> have used.
+                    <li><strong>Workflow steps.</strong> The workflow engine makes its own run insert and does not go
+                        through the scheduler's params. Its column list carries the pin on the first try, on each
+                        retry, and on skipped-step rows. Thus History shows the target that the step <em>would</em>
+                        have used.
                     </li>
-                    <li><strong>Ansible runs did not obey the pin, also on a manual trigger.</strong> For an ansible
-                        run, the blast radius is the inventory plus <code>--limit</code>. The manifest computed
-                        <code>--limit</code> from the per-trigger override envelope only, and the pin never got to
-                        it. This made the worst possible split: the in-app SSH executor dialed exactly the pinned
-                        host, but a runner got the <em>full inventory with no limit</em>. Both routes now compute
-                        the limit through one shared helper, so they cannot disagree.</li>
+                    <li><strong>Ansible runs.</strong> For an ansible run, the blast radius is the inventory plus
+                        <code>--limit</code>. The in-app SSH executor and the runner manifest both compute the limit
+                        through one shared helper, so the SSH executor dialing exactly the pinned host and a runner
+                        receiving the full inventory with no limit cannot disagree.</li>
                 </ul>
-                <p><strong>What to do.</strong> Usually, nothing. The change goes in the safe direction and only
-                    decreases the blast radius. But possibly a pinned job's cron fire or workflow step ran on a full
-                    scope, and you want that to continue. Then remove that job's target host: one edit, and the
-                    fan-out becomes intentional. <strong>Unpinned jobs see no change on all paths.</strong> No
-                    migration, no wire-protocol change, and no frontend change were necessary. Each column already
-                    existed, and the manifest's limit field is old, so old agents need no lockstep upgrade.</p>
+                <p><strong>If you want a job to fan out on its full scope</strong>, leave its target host empty: the
+                    fan-out is then intentional. A pin only ever decreases the blast radius.</p>
                 <p><strong>A pin that cannot go into a limit pattern fails with a clear message. It does not widen
                         the run.</strong> Ansible limit patterns have metacharacters, and the limit builder refuses
-                    each name that has one, without a message. That was correct for its first inputs, because the
-                    trigger boundary rejects those first. A job's target host had no such boundary: the Composer
-                    accepts free text, and Git YAML is arbitrary. If the builder put a pin such as
+                    each name that has one. The trigger boundary rejects those first for per-run overrides, but a
+                    job's target host has no such boundary on its own: the Composer accepts free text, and Git YAML
+                    is arbitrary. If the builder put a pin such as
                     <code>web[01:50]</code> into <code>--limit</code> without a guard, the pin would drop, no limit
-                    would stay, and a full-inventory run would occur. That is exactly the silent widening that this
-                    correction removes. Thus each boundary that can make one has a guard: the Compose endpoint
+                    would stay, and a full-inventory run would occur. That is exactly the silent widening the
+                    guards exist to prevent. Thus each boundary that can make one has a guard: the Compose endpoint
                     returns <code>422</code> for such a job at authoring time (create <em>and</em> update); a manual
                     trigger returns <code>422</code> for such a target before a run enters the queue; and the
                     manifest fails the run with <code>409</code> for Git-synced and pre-existing rows that get
@@ -2193,13 +2176,13 @@
                     safe. All three guards stand down when a raw <code>ansibleLimit</code> passthrough is given: the
                     passthrough wins, the pin is never folded in, and there is nothing to widen.</p>
                 <p class="muted">The pin <strong>wins fully</strong> over a per-run host
-                    subset. It does not make a union with it. This is what SSH-side target resolution always did. A
+                    subset. It does not make a union with it, on either executor. A
                     union would make <code>--limit</code> <em>wider</em> than the set that SSH dials, because a
-                    comma in an ansible pattern is a union, not an intersection. That is the same drift in the same
-                    dangerous direction. In practice the two are never both set, because the trigger boundary clears
-                    the pin when a subset is given, but the limit no longer depends on that. A pin that names a host
+                    comma in an ansible pattern is a union, not an intersection. In practice the two are never both
+                    set, because the trigger boundary clears the pin when a subset is given, but the limit does not
+                    depend on that. A pin that names a host
                     that left the scope shows as a per-host resolve error: a clear failure, not a quiet widening.
-                    This was already the behavior. Definition-level <em>multi</em>-host and group pinning stays
+                    Definition-level <em>multi</em>-host and group pinning stays
                     intentionally out of scope.</p>
                 <p>An SSH <strong>host record</strong> (Settings &rarr; SSH Targets) contains: hostname, address (the
                     dial host or IP; the hostname if blank), port (22), OS, <strong>user</strong> (root if blank),
@@ -2226,11 +2209,11 @@
                         first-seen key. The server writes a clear log entry: <em>make sure that the key is correct,
                             through an out-of-band channel</em>. After that, verification is strict. Targets have no
                         &ldquo;ignore host key&rdquo; option.</p>
-                    <p><strong>The bastion hop now also gets verification.</strong> The bastion's host key is pinned in
-                        <code>bastions.host_key</code> (migration 640). If the column is empty, TOFU records the key on
+                    <p><strong>The bastion hop also gets verification.</strong> The bastion's host key is pinned in
+                        <code>bastions.host_key</code>. If the column is empty, TOFU records the key on
                         the first connection, or on a Settings &rarr; SSH bastion <strong>Test connection</strong>. If
                         the column has a value, the compare is strict, and a changed key stops the hop as a possible
-                        MITM. This replaces the old callback, which accepted all keys. If a bastion legitimately gets a
+                        MITM. No bastion hop ever accepts an arbitrary key. If a bastion legitimately gets a
                         new key, clear its stored host key to record the new one.</p>
                     <p><strong>Interim MITM guard:</strong> the server <strong>refuses</strong> a secret-injecting run
                         that goes over a bastion to a target whose host key is not yet pinned (reason
@@ -2270,7 +2253,7 @@
                 </ol>
                 <p>Suppression rows de-duplicate per <em>episode</em>, keyed on the definition, the schedule entry and
                     the <em>reason</em> &mdash; a job held for an hour writes one row per cause, not one per tick, and
-                    a change of cause (the cap clears but a calendar now covers the day) writes a fresh row rather than
+                    a change of cause (the cap clears but a calendar then covers the day) writes a fresh row rather than
                     hiding behind the old one.</p>
                 <p><strong>The scheduler is only one of several run producers, and not every producer applies every
                         gate.</strong> A run can start from a cron fire, a click, a service-account token, a reaction,
@@ -2316,13 +2299,11 @@
                     on a Queue park (with the queue depth in the body) &mdash; an integration that retries on 409 must
                     not retry a 202. Queued rows appear on Schedules &rarr; Upcoming with a <em>queued</em> chip and
                     &ldquo;waiting for the gate&rdquo; in place of a timestamp, each cancellable. Workflows have no
-                    concurrency policy and cannot queue. A fourth value, <code>Replace</code>, was offered historically
-                    but no code branch ever read it &mdash; jobs so configured overlapped freely, and migration
-                    <strong>940</strong> coerces them to <code>Allow</code>.</p>
+                    concurrency policy and cannot queue. There is no <code>Replace</code> policy: a fire that must
+                    displace a running instance is an operator's stop followed by a run, never an implicit kill.</p>
                 <p><strong>The concurrency key resolves in three steps:</strong> an operator-set custom key if the job
-                    declares one, else the job's <strong>uid</strong>, else the legacy <code>source/name</code> pair
-                    for rows predating identity. Migration <strong>1030</strong> rewrote the key on active and parked
-                    rows only where it still equalled the old default; finished runs keep their historical keys, so an
+                    declares one, else the job's <strong>uid</strong>, else the <code>source/name</code> pair
+                    as a last resort. Finished runs keep the key they were enqueued with, so an
                     audit over old History rows still groups as it did.</p>
 
                 <p><strong>Activation windows.</strong> A schedule entry can have <code>startAt</code> and
@@ -2341,16 +2322,15 @@
                     never deletes the entry, because git-source rows must round-trip; and the window gates
                     <em>scheduled</em> fires only. Manual runs, run-now, and webhook triggers do not use the scheduler,
                     so the window has no effect on them. The window goes into the schedule's <code>content_hash</code>
-                    only when set. Thus each unbounded row keeps its stored digest, and the upgrade needs no recompute
-                    pass. You can also author windows in Git YAML (<code>startAt</code>/<code>endAt</code> on a schedule
+                    only when set, so an unbounded row's digest does not depend on it. You can also author windows in Git YAML (<code>startAt</code>/<code>endAt</code> on a schedule
                     entry or a <code>schedules/*.yaml</code> spec). A malformed window there is an advisory validation
                     error, and the entry syncs <em>unbounded</em>. It does not stop the repo's sync.</p>
 
-                <p><strong>Schedule modes.</strong> A schedule entry now fires by one of three rules.
+                <p><strong>Schedule modes.</strong> A schedule entry fires by one of three rules.
                     <code>cronutil.ParseSpec</code> resolves the mode centrally, and registration goes through the same
                     <code>cron.Schedule</code> mechanism, so the engine does not know that there is more than cron.
                     <strong>cron</strong> is a cron expression, with an optional window. <strong>interval</strong> (the
-                    <code>interval</code> column, migration <strong>780</strong>) fires every N from
+                    <code>interval</code> column) fires every N from
                     <code>startAt</code>. N is a Go duration (<code>36h</code>, <code>90m</code>) or a day count
                     (<code>7d</code>), with a minimum of one minute. Interval <em>needs</em> <code>startAt</code>,
                     because a repeating interval needs a phase anchor and cron has none. <strong>once</strong> is a
@@ -2359,19 +2339,18 @@
                     the composer all enforce this in the same way.</p>
 
                 <p>Two storage notes. <code>cron</code> is <code>NOT NULL</code> on both <code>schedules</code> and
-                    <code>definition_schedules</code>. Thus an interval or one-shot entry stores <code>cron = ''</code>,
-                    and no two-table rebuild was necessary. Empty cron was always this system's &ldquo;no cron&rdquo;
+                    <code>definition_schedules</code>. Thus an interval or one-shot entry stores <code>cron = ''</code>.
+                    Empty cron is this system's &ldquo;no cron&rdquo;
                     convention, and each read path resolves the mode through <code>ParseSpec</code>, not from one column
                     alone. Interval arithmetic is on <strong>absolute instants</strong>: pure duration addition, with no
                     calendar walk. Thus DST (daylight saving time) has no effect on an interval, but an interval does
                     <em>not</em> keep a wall-clock time of day across a DST change. That is the correct meaning of
                     &ldquo;every 36 hours&rdquo;. An operator who means &ldquo;every day at 5&nbsp;p.m.&rdquo; wants
                     cron, and the UI text points them there. The <code>interval</code> segment joins
-                    <code>content_hash</code> only when set, so plain-cron rows keep their stored digest across this
-                    upgrade.</p>
+                    <code>content_hash</code> only when set, so a plain-cron row's digest does not depend on it.</p>
 
                 <p><strong>Deferred ad-hoc runs.</strong> The Run dialog's <em>When to run</em> section puts a
-                    fully-validated manual trigger in <code>pending_runs</code> (migration <strong>790</strong>). It
+                    fully-validated manual trigger in <code>pending_runs</code>. It
                     does not put the run in the queue. The frozen <code>EnqueueParams</code> (the env snapshot, the
                     override envelope, the targeting, and the connect-as identity) go on the row. A promotion loop in
                     the scheduler (15s cadence) replays them through the ordinary enqueue path at <code>run_at</code>.
@@ -2450,8 +2429,8 @@
                     only-mode, halt production automation. Reads are session-only, because the Inventory and Upcoming
                     views need them.</p>
                 <p><strong>Storage and hash notes.</strong> The two calendar segments join a schedule's
-                    <code>content_hash</code> only when non-empty and are polarity-tagged, so an unbound row keeps its
-                    stored digest across this upgrade (no recompute pass), while flipping an entry from &ldquo;never on
+                    <code>content_hash</code> only when non-empty and are polarity-tagged, so an unbound row's digest
+                    does not depend on them, while flipping an entry from &ldquo;never on
                     holidays&rdquo; to &ldquo;only on holidays&rdquo; does change the digest. There is no referential
                     integrity between the JSON columns and <code>calendars</code>; that is priced in and guarded at
                     authoring time on every write path, including reference expansion. Deleting a bound calendar returns
@@ -2478,8 +2457,8 @@
                         them</div>
                     <p>The cron engine keeps no persistent fire state. If Cronomicon is down (a restart, a redeploy, a
                         crash) at the moment that a schedule was due, <strong>that fire is lost</strong>. It is not
-                        queued, it is not replayed at startup, and it leaves no skip record. This was always true, and
-                        activation windows do not change it (their no-backfill rule agrees with it intentionally). Plan
+                        queued, it is not replayed at startup, and it leaves no skip record.
+                        Activation windows do not change it (their no-backfill rule agrees with it intentionally). Plan
                         maintenance windows around business-critical schedules, or trigger the job manually after a
                         restart that covered a fire. A misfire and catch-up policy for cron fires is a future item, not
                         current behavior. <strong>Deferred ad-hoc runs are the exception</strong>: a run scheduled for a
@@ -2502,8 +2481,8 @@
                         appeared&rdquo;.</strong> Every five minutes it walks each enabled schedule's expected fires
                     &mdash; resolved through the same parser the engine fires by, activation windows included, in the
                     application time zone &mdash; from a persisted cursor, five minutes of grace behind now and
-                    bounded at 24 hours of catch-up. Its first pass after deploy anchors the cursor and scans nothing,
-                    so an upgrade does not alert on every fire since the epoch. It reports a miss only when
+                    bounded at 24 hours of catch-up. Its first pass after a deploy anchors the cursor and scans nothing,
+                    so a fresh deploy does not alert on every fire since the epoch. It reports a miss only when
                     <em>nothing</em> explains the gap: no run row near the instant, no recorded suppression for that
                     definition and entry anywhere that day, the definition not paused, disabled, or binned, and no
                     parked Queue row waiting on the gate. The day-wide suppression clause has a known cost &mdash; a
@@ -2647,9 +2626,9 @@
                 <p><strong>The refusal carries its own error code, <code>reactions_watching</code></strong>, rather than
                     the generic <code>conflict</code> the git-source refusal uses. Both delete routes can
                     <code>409</code> for those two unrelated reasons, and only one of them is clearable &mdash; so a
-                    client that keys on the status alone has to guess. The console guessed wrong for a release,
-                    reporting an in-app job as Git-authored whenever reactions blocked its delete. Every delete surface
-                    now branches on the code, keeps the confirm open and offers <strong>Delete anyway</strong>, which is
+                    client that keys on the status alone has to guess (and would report an in-app job as Git-authored
+                    whenever reactions blocked its delete). Every delete surface
+                    branches on the code, keeps the confirm open and offers <strong>Delete anyway</strong>, which is
                     the same request with <code>?force=true</code>.</p>
 
                 <div class="callout warn">
@@ -2857,13 +2836,12 @@
                     <li>Record the HEAD SHA, reload the scheduler, and write a <code>gitsync</code> event.</li>
                 </ol>
                 <div class="callout warn">
-                    <div class="ct"><span class="em">🎚️</span> The webhook flags now decide if the server acts on a
+                    <div class="ct"><span class="em">🎚️</span> The webhook flags decide if the server acts on a
                         delivery</div>
                     <p><strong>Webhook Enabled</strong> and <strong>Webhook Events</strong> (<code>push</code> /
                         <code>mr</code>, for a merge request / <code>tag</code>) in <a
-                            href="user-manual.html#settings">Settings &rarr; Integrations</a> were parsed, kept, and
-                        shown, but nothing read them. The handler validated the token and synced in each case.
-                        <strong>The flags now control delivery.</strong></p>
+                            href="user-manual.html#settings">Settings &rarr; Integrations</a> control delivery: the
+                        handler validates the token, then acts only on what the flags allow.</p>
                 </div>
                 <p>The rules, in order:</p>
                 <ul>
@@ -2880,13 +2858,10 @@
                         that points at us). A delivery with <em>no</em> <code>X-Gitlab-Event</code> header (our own
                         tools, or a <code>curl</code> smoke test) counts as a push.</li>
                 </ul>
-                <p><strong>Upgrade behavior:</strong> all four columns had the default <code>0</code>, and no
-                    operator had a cause to set a control that did nothing. A literal read of the stored value would
-                    thus stop each webhook that operated before the upgrade. Migration <strong>730</strong> sets
-                    each existing row to the policy that the install really used: enabled, with all three events.
-                    The policy read <strong>fails open</strong>: no row, no table, or a read error gives
+                <p><strong>Default policy:</strong> a fresh install is enabled, with all three events on. The
+                    policy read <strong>fails open</strong>: no row, no table, or a read error gives
                     &ldquo;enabled, with all events on&rdquo;. Thus a short database error cannot quietly stop a
-                    repo's sync. The release changes only what you can now turn <em>off</em>.</p>
+                    repo's sync. The flags only ever let you turn delivery <em>off</em>.</p>
                 <div class="callout note">
                     <div class="ct"><span class="em">🔗</span> Git submodules</div>
                     <p>On a fresh clone and on an existing-clone fetch, the sync engine initializes and <strong>updates
@@ -2949,7 +2924,7 @@
 
                 <h3 id="revisions">5.5 The other source's history: revisions &amp; the recycle bin</h3>
                 <p>Git definitions carry their own history in Git. <strong>Cronomicon-source</strong> jobs, workflows and
-                    schedules now get the equivalent in the database (migration <strong>920</strong>): every in-app
+                    schedules get the equivalent in the database: every in-app
                     save appends a snapshot to an append-only <code>definition_revisions</code> log, written inside
                     the same transaction as the write, and a no-op save writes nothing. The snapshot is the
                     <em>compose input</em>, not the database row, and a <strong>restore re-submits it through the
@@ -3042,9 +3017,8 @@
                 <ul>
                     <li><strong>Stored secrets</strong> get AES-256-GCM <strong>envelope encryption</strong>: a random
                         per-secret DEK (data encryption key) encrypts the value, and the master <strong>KEK</strong>
-                        (32-byte base64, from <code>CRONOMICON_KEK_FILE</code>) wraps the DEK. The variable moved out of
-                        the reserved <code>CRONOMICON_SECRET_</code> prefix (the old
-                        <code>CRONOMICON_SECRET_KEK_FILE</code> spelling stopped reading in v1.5.41). The DB never holds plaintext or a bare DEK. On return from each envelope encrypt or
+                        (32-byte base64, from <code>CRONOMICON_KEK_FILE</code>) wraps the DEK. The variable sits
+                        outside the reserved <code>CRONOMICON_SECRET_</code> reference prefix on purpose. The DB never holds plaintext or a bare DEK. On return from each envelope encrypt or
                         decrypt, the server zeroizes the unwrapped DEK and the loaded KEK, best-effort. This decreases
                         the time that key material stays recoverable in memory. It is best-effort only, because Go has
                         no guaranteed secure erase. Without a KEK, stored-secret operations fail with <em>&ldquo;set
@@ -3071,7 +3045,7 @@
                         <strong>KEK</strong>. Thus a KEK rotation covers credentials too. The DB holds only
                         <code>ciphertext</code> + <code>nonce</code> + the wrapped DEK, never the key.</p>
                 </div>
-                <p>It replaces the old model, in which an SSH key was an opaque secret referenced by name. A
+                <p>An SSH key is a first-class credential, not an opaque secret referenced by name. A
                     credential created <em>directly</em> has no backing secret row, so its decrypted material also
                     goes into the <strong>log-redaction dictionary</strong>. A key that shows in a run log is masked
                     <em>line by line</em>, exactly the same as a stored PEM secret (a key in the standard PEM text
@@ -3080,7 +3054,7 @@
                         href="user-manual.html#settings">&sect;14</a>. The one exception: a job or script that
                     <em>binds</em> an <code>CRONOMICON_KEY_</code> reference sends resolved private-key material to a
                     flagged protocol-v6 runner (see <a href="#runner-ops">&sect;7</a>).</p>
-                <p><strong>Who can point a run at a stored key.</strong> Operators can now select a stored
+                <p><strong>Who can point a run at a stored key.</strong> Operators can select a stored
                     credential as a run's <strong>connect-as identity</strong>: for each run in the Run dialog, or
                     as a job's standing default in the Composer or Git YAML (<code>spec.ssh_credential</code>, by
                     <em>label</em>). <strong>Manage Env Vars</strong> gates both selections. The rule is the same as
@@ -3090,10 +3064,10 @@
                     key-delivery channel as an implicit key binding: agency membership is enforced, delivery is
                     audited, material is redacted in logs, and only an <code>allow_secret_injection</code> runner
                     can claim the run. A local-inventory runner refuses such a run (<code>409</code>) and does not
-                    run as the wrong identity. This changes <em>who selects the pair</em> (the operator at trigger
-                    time, or the job author), not <em>what the server can deliver</em>. The same material was
-                    already available through a declared key binding, under the same gates.</p>
-                <p><strong>Ansible runs.</strong> The same connect-as pair now applies to <strong>ansible</strong>
+                    run as the wrong identity. The connect-as selection decides <em>who selects the pair</em> (the
+                    operator at trigger time, or the job author), not <em>what the server can deliver</em>: the same
+                    material is available through a declared key binding, under the same gates.</p>
+                <p><strong>Ansible runs.</strong> The same connect-as pair applies to <strong>ansible</strong>
                     run types. The delivery channel is different, because the consumer is different. Cronomicon's own
                     SSH client dials an ssh-family run, so the override rewrites the resolved target list.
                     <code>ansible-playbook</code> dials for itself, so the override travels as two explicit manifest
@@ -3105,22 +3079,19 @@
                     lose to the inventory exactly on the hosts that an admin had configured, and would apply
                     silently and only sometimes. Key material still moves only over the reviewed v6 delivery
                     channel. If the referenced key did not arrive, the agent <strong>fails the run closed</strong>
-                    and does not fall back to the inventory's key. This moved the runner wire protocol to
-                    <strong>v7</strong>. (The <code>409 agent_too_old</code> refusal that once guarded an
-                    identity-carrying run on an older agent was retired in v1.5.40: the server's protocol floor now
-                    tracks the current version, so an older agent cannot register at all.) <strong>Terraform</strong> stays excluded at every layer (422 at both authoring
+                    and does not fall back to the inventory's key. The server's protocol floor tracks the current
+                    wire protocol, so an agent that could not carry an identity cannot register at all.
+                    <strong>Terraform</strong> stays excluded at every layer (422 at both authoring
                     boundaries; dropped at each enqueue fold). It authenticates through its providers, so the fields
                     could do nothing.</p>
-                <p><strong>Advanced Ansible run options.</strong> Operators can now set <code>--check</code>,
+                <p><strong>Advanced Ansible run options.</strong> Operators can set <code>--check</code>,
                     <code>--diff</code>, <code>--tags</code> and <code>--skip-tags</code>, verbosity,
                     <code>--become</code> and <code>--become-user</code>, and <code>-e</code> extra-vars for each
                     run. They are <strong>per-run only</strong> and live only in the run's override envelope: no job
                     columns, and no scheduler or workflow fold. They are the flags that an operator wants
-                    <em>at</em> trigger time, not standing job properties. Two results are operational. (A third — the strictest of the
-                    per-feature back-compat gates, refusing an option-carrying run on a protocol&nbsp;&lt;&nbsp;8
-                    agent so that a requested <em>dry-run</em> could never apply for real — was retired in v1.5.40
-                    along with every other <code>agent_too_old</code> gate: the server's protocol floor now tracks
-                    the current version, so an older agent cannot register.) First, <strong><code>-e</code> values are
+                    <em>at</em> trigger time, not standing job properties. Two results are operational. (The
+                    server's protocol floor guarantees that every registered agent understands these options, so a
+                    requested <em>dry-run</em> can never apply for real.) First, <strong><code>-e</code> values are
                         argv-visible</strong>: they land in the runner's process table, where each local user on
                     that host can read them. Thus they are documented as a non-channel for secret material
                     (references stay the way to inject a secret), and the un-redacted audit envelope records them
@@ -3129,16 +3100,15 @@
                     the tier that the connect-as identity uses, and ansible takes the last occurrence of a repeated
                     variable. If the server accepted them, a run could connect as a different identity than the one
                     in its own audit record. The agent also sends the identity pair <em>after</em> the operator
-                    extra-vars, so the sequence enforces the same rule independently. <code>--become</code> had no
-                    extra permission gate at this release: a playbook can already declare <code>become</code>, so
-                    the control gave nothing that the caller could not already run. A become <em>password</em> was
-                    intentionally not a field, because it is secret material. <strong>Both parts of that have
-                        changed. See the next paragraph.</strong></p>
-                <p><strong>Become passwords.</strong> A job can now name a Secrets row that supplies its Ansible
+                    extra-vars, so the sequence enforces the same rule independently. The <code>--become</code>
+                    toggle has no extra permission gate: a playbook can already declare <code>become</code>, so
+                    the control gives nothing that the caller could not already run. A become <em>password</em> is
+                    never a free-text field, because it is secret material. <strong>See the next paragraph for how
+                        a password-bearing run is gated.</strong></p>
+                <p><strong>Become passwords.</strong> A job can name a Secrets row that supplies its Ansible
                     <strong>become password</strong>: <code>spec.become_password_secret</code> in Git YAML, or the
-                    Composer field, by <em>bare key</em>. The earlier position (&ldquo;a become password is
-                    intentionally not a field, because it is secret material&rdquo;) is <em>kept, not reversed</em>:
-                    the field holds a <strong>name</strong>, never a value. The password lives in the Secrets
+                    Composer field, by <em>bare key</em>. The field holds a <strong>name</strong>, never a value.
+                    The password lives in the Secrets
                     catalogue, with each control that this gives: KEK or Vault at rest, scope and department
                     resolution, reveal auditing, and log redaction. The server resolves it at dispatch through the
                     same reference path as each other secret. Run <em>inputs</em> stay the wrong channel, and this
@@ -3153,12 +3123,12 @@
                     pipes one into <code>sudo -S</code> puts it in the <em>target's</em> process table, where
                     redaction cannot go. A wiped file is a much smaller window. The mechanism is general: each
                     secret binding can ask for file delivery. The become password is only its first consumer.</p>
-                <p><strong>Thus the permission rationale above no longer applies to a password-bearing run.</strong>
+                <p><strong>The permission rationale above does not apply to a password-bearing run.</strong>
                     &ldquo;A playbook can already declare <code>become</code>&rdquo; is true of the <em>toggle</em>.
-                    It is not true of a run that carries a credential that the caller supplied. The gate is now
+                    It is not true of a run that carries a credential that the caller supplied. The gate is
                     <strong>secret-read entitlement</strong> (the named row must resolve for the run's scope
                     <em>and</em> department, and it fails closed if it does not), plus an <strong>injection-flagged
-                        runner</strong> at protocol&nbsp;v9 or later. To set the field is itself a grant over stored
+                        runner</strong>. To set the field is itself a grant over stored
                     secret material, so it carries <strong>Manage Env Vars</strong>, the same rule as
                     <code>spec.ssh_credential</code>.</p>
                 <p>Two operational notes. A job with a become password automatically declares the
@@ -3173,9 +3143,8 @@
                     recommendation.</p>
                 <p><strong>Composer env passthrough.</strong> <code>spec.env_passthrough</code> is the RX.9
                     allowlist of env-var NAMES that a runner resolves from its own environment into a
-                    local-toolchain child process. It was Git-YAML-only, so an in-app-composed ansible job could
-                    never read a runner-local variable. The Composer now authors it (Advanced &rarr; <em>Runner
-                        environment passthrough</em>) and writes the same serialization as the sync path. Validation
+                    local-toolchain child process. Git YAML and the Composer (Advanced &rarr; <em>Runner
+                        environment passthrough</em>) both author it, with the same serialization. Validation
                     uses the same env namespace rules: the POSIX character set for environment-variable names;
                     <code>CRONOMICON_*</code> refused (those are injected references, not the runner's environment);
                     and local-toolchain run types only.</p>
@@ -3232,53 +3201,37 @@
                     which job.</p>
 
                 <h3>6.1c Agency membership tables &amp; the pre-flight report</h3>
-                <p>Isolation currently uses <strong>four different mechanisms on two unrelated axes</strong>: runners
-                    are M:N with agencies; scopes are 1:1; secrets and variables are keyed by <em>scope</em> and are not
-                    on the agency axis at all; and SSH keys have no isolation. Migration <strong>670</strong> puts all
-                    of them on one axis: <code>scope_agencies</code>, <code>secret_agencies</code>,
-                    <code>env_var_agencies</code>, and <code>ssh_credential_agencies</code>. Each has the same shape as
-                    the existing <code>runner_agencies</code> (a composite primary key, with
-                    <code>ON DELETE CASCADE</code> on both sides). Migration <strong>680</strong> adds
-                    <code>runs.agencies_json</code>, the set form of the per-run agency snapshot.</p>
-                <div class="callout note">
-                    <div class="ct"><span class="em">🧊</span> This release changes NO behavior. That is intentional
-                    </div>
-                    <p>The tables exist and are backfilled, but <strong>nothing dispatches or resolves against
-                            them</strong>. <code>claimRun</code> still matches the scalar <code>runs.agency</code>, and
-                        reference resolution still runs on scope. For one release, the server writes
-                        <code>runs.agency</code> and <code>scopes.agency_id</code> <strong>two times</strong>: to the
-                        old columns and to the new structures. Thus a rolled-back server is fully correct. This makes
-                        the phase reversible, and it lets you read the report below against <em>real</em> data before a
-                        switch occurs.</p>
-                </div>
-                <p>The backfill keeps behavior by construction. A <strong>scoped</strong> secret or variable gets the
-                    agency of the scope that it names. An <strong>unscoped (global)</strong> one gets <em>no rows at
-                        all</em>, because an empty membership set means &ldquo;no agency restriction&rdquo;. That is
+                <p>Isolation runs on <strong>one axis</strong>: agency membership. Five tables carry it, all of the
+                    same shape (a composite primary key, with <code>ON DELETE CASCADE</code> on both sides):
+                    <code>runner_agencies</code>, <code>scope_agencies</code>, <code>secret_agencies</code>,
+                    <code>env_var_agencies</code>, and <code>ssh_credential_agencies</code>. Every run snapshots its
+                    agency set at enqueue into <code>runs.agencies_json</code>.</p>
+                <p>An <strong>empty membership set means &ldquo;no agency restriction&rdquo;</strong>. That is
                     exactly what keeps a global secret global <em>at run time</em>. The rule for a change goes the other
                     way: an unmembered secret is shared infrastructure, which each department's jobs consume. Thus its
                     <strong>writes and its reveal are unrestricted-only</strong> (RB-Q14). No single department's admin
-                    can change or read what all departments depend on, while each department's runs still consume it as
-                    before. SSH keys got no rows in this backfill: <code>ssh_credentials</code> has no scope to copy
-                    from. The key restriction, deferred at the time, has since <strong>shipped</strong>: SSH key
+                    can change or read what all departments depend on, while each department's runs still consume it.
+                    SSH keys follow the same rule: key
                     material writes are gated on the agency that owns the key; unmembered keys are unrestricted-only;
                     and a restricted operator who creates a secret, variable, or SSH key must assign it to a minimum of
                     one agency that they hold (the dialogs show the picker). Without that, the row would start shared
                     and lock its creator out immediately after creation.</p>
-                <h4>Run the pre-flight report before you upgrade past this release</h4>
+                <h4>The pre-flight report</h4>
                 <p><code>GET /api/v1/agency-preflight</code> (ConfigureApp) lists each reference binding that
-                    <strong>operates today and would stop</strong> if the agency predicates became active now. The
-                    report has two halves, and you can review each independently:</p>
+                    <strong>would not resolve</strong> under the agency predicates as membership stands. Run it before
+                    you narrow membership, and after. The report has two halves, and you can review each
+                    independently:</p>
                 <ul>
                     <li><strong><code>referenceFindings</code></strong>: secret and variable bindings, under this rule:
                         a reference resolves only if the row's agency set intersects the run's set, <em>and</em> the
-                        existing scope rule still holds.</li>
-                    <li><strong><code>keyFindings</code></strong>: SSH-key bindings. <strong>This is a
-                            restriction:</strong> today <em>each</em> job can bind <em>each</em> key, so a binding that
-                        operates now can stop. Review this half with special care.</li>
+                        scope rule also holds.</li>
+                    <li><strong><code>keyFindings</code></strong>: SSH-key bindings, under the same intersection rule.
+                        A key assigned to an agency can only be bound by jobs in that agency, so review this half
+                        with special care before you assign key membership.</li>
                 </ul>
-                <p>An <strong>empty report is normal immediately after the upgrade</strong>, and it does <em>not</em>
-                    mean that the next phase is safe. It means that the restriction has nothing to catch yet, because
-                    the backfill assigned no membership that narrows anything. Read <code>membershipAssigned</code> next
+                <p>An <strong>empty report on a fresh install is normal</strong>, and it does <em>not</em>
+                    mean that narrowing is safe. It means that the restriction has nothing to catch yet, because
+                    no membership narrows anything. Read <code>membershipAssigned</code> next
                     to the findings. The report gets teeth only when you assign membership through
                     <code>PUT /api/v1/{scope,secret,env-var,ssh-credential}-agencies</code> (ConfigureApp + CSRF,
                     replace-per-row; the change log records each change). Script-owned bindings have no static answer,
@@ -3293,33 +3246,32 @@
                         intentionally no reconciliation code, and a test pins its absence.</p>
                 </div>
                 <p>The server refuses to delete an agency, with <code>409</code>, while <em>anything</em> still belongs
-                    to it. The guard now counts all four membership tables, not only scopes and runners. Without that,
+                    to it. The guard counts all four membership tables, not only scopes and runners. Without that,
                     an agency whose only members were a secret and a key would delete with no error, and the cascade
                     would drop those access-control facts with no signal.</p>
 
-                <h3>6.1d The agency predicates are live</h3>
+                <h3>6.1d The agency predicates</h3>
                 <div class="callout danger">
-                    <div class="ct"><span class="em">⚠️</span> Run the pre-flight report BEFORE you upgrade past v0.52.2
+                    <div class="ct"><span class="em">⚠️</span> Run the pre-flight report BEFORE you assign key
+                        membership
                     </div>
-                    <p><code>GET /api/v1/agency-preflight</code> lists each reference binding that operates today and
-                        stops under this release. Its <code>keyFindings</code> half is the one that catches: until now,
-                        <strong>each job could bind each SSH key</strong>. Now a key binding resolves only if the key's
-                        agencies intersect the run's agencies (AG-Q5). The deploy alone breaks nothing, because an empty
-                        membership set means &ldquo;no agency restriction&rdquo;, and migration 670 intentionally
-                        assigned no key membership. But each key that you since assigned to an agency is now enforced.
+                    <p>A key binding resolves only if the key's agencies intersect the run's agencies (AG-Q5). An
+                        unmembered key is bindable by every job, because an empty membership set means &ldquo;no
+                        agency restriction&rdquo;; each key that you assign to an agency is enforced from that
+                        moment. <code>GET /api/v1/agency-preflight</code> shows, in its <code>keyFindings</code>
+                        half, which bindings a planned assignment would break.
                     </p>
                 </div>
-                <p>Three predicates changed:</p>
+                <p>Three predicates read membership:</p>
                 <ul>
                     <li><strong>Dispatch.</strong> <code>claimRun</code> matches the run's agency <em>set</em> (frozen
                         at enqueue in <code>runs.agencies_json</code>, materialized into <code>run_agencies</code>)
-                        against runner membership. The <strong>disjoint general-pool rule did not change</strong>: only
+                        against runner membership. The <strong>general-pool rule is disjoint</strong>: only
                         a runner that belongs to no agency can claim an untagged run.</li>
                     <li><strong>Reference resolution.</strong> A secret or variable resolves when <em>(it has no agency
                             membership, <strong>or</strong> its agencies intersect the run's)</em> <strong>and</strong>
-                        the existing scope rule still holds. The scope half did not change, so no person loses a control
-                        that they had.</li>
-                    <li><strong>SSH keys</strong> join the same axis: agency-filtered, and still not scope-filtered.
+                        the scope rule also holds.</li>
+                    <li><strong>SSH keys</strong> sit on the same axis: agency-filtered, and not scope-filtered.
                         <code>ssh_credentials</code> has no scope column; the foreign key to the host or the bastion is
                         the narrowing signal.</li>
                 </ul>
@@ -3330,22 +3282,12 @@
                     become an existence oracle. The precise cause is on the authoring surface (<a
                         href="user-manual.html#refbindings">&sect;11.6</a>).</p>
                 <div class="callout note">
-                    <div class="ct"><span class="em">⚡</span> The claim query became about 13&times; faster, and not on
-                        purpose</div>
-                    <p>A benchmark of the predicate change (the plan permitted a maximum regression of 15%) found an
-                        unrelated fault: <code>claimRun</code> had <strong>no usable index</strong>.
-                        <code>EXPLAIN QUERY PLAN</code> showed a full <code>SCAN runs</code>, plus a temporary B-tree
-                        for the <code>ORDER BY</code>, on each poll from each runner. Migration 690 adds
-                        <code>idx_runs_claimable (status, executor, created_at)</code>. The hot path decreases from
-                        about 4.5 ms to about 0.34 ms on a queue with 10k entries, and the new set predicate is as fast
-                        as the scalar that it replaces. The benchmark and a query-plan assertion are checked in, so a
-                        later regression is visible, not discovered.</p>
+                    <div class="ct"><span class="em">⚡</span> The claim query is indexed</div>
+                    <p><code>claimRun</code> runs on each poll from each runner, so it is served by
+                        <code>idx_runs_claimable (status, executor, created_at)</code> rather than a table scan: the
+                        hot path is about 0.34 ms on a queue with 10k entries. A benchmark and a query-plan assertion
+                        are checked in, so a regression is visible, not discovered.</p>
                 </div>
-                <p><strong>Migration 700 drops <code>runs.agency</code> and <code>scopes.agency_id</code></strong>. The
-                    server wrote both of them, and the new tables, through v0.52.2 (a dual write) exactly so that this
-                    release could remove them. A rollback past v0.52.2 after this is not supported: the down migration
-                    restores the columns and derives them again, but a scalar cannot hold a set. A scope in two agencies
-                    collapses to one.</p>
 
                 <h3>6.1e Agency membership: the per-agency editor</h3>
                 <p>Two read-only endpoints supply the operator surface that closes the last gap in this program:</p>
@@ -3371,11 +3313,11 @@
                         cannot disagree. Watch for this: <code>queuedRuns</code> above zero, with
                         <code>onlineRunners</code> at zero, is a stuck tenant, not a busy one.</p>
                 </div>
-                <p><strong>The matrix screen is gone.</strong> It was rows &times; agency-columns over every isolated
-                    entity, and its row-name cell did not stay pinned: past about a dozen departments you scrolled right
-                    and ticked anonymous checkboxes. Both of its jobs moved to where the question is asked.
+                <p><strong>There is no single matrix screen.</strong> A rows &times; agency-columns grid over every
+                    isolated entity does not scale past about a dozen departments, so each question is answered where
+                    it is asked.
                     <em>&ldquo;What is in Tax?&rdquo;</em> is the per-agency view (Scopes &rarr; Agencies, expand a
-                    row), which is now an <strong>editor</strong>. <em>&ldquo;Which agencies hold this
+                    row), which is an <strong>editor</strong>. <em>&ldquo;Which agencies hold this
                         secret?&rdquo;</em> is an <strong>Agencies</strong> column on the entity's own catalogue row
                     (Env Vars &rarr; Variables / Secrets / SSH Keys, Scopes, Runners).</p>
                 <p>The per-agency editor writes through <code>PUT /api/v1/agencies/{agencyId}/members</code>
@@ -3385,8 +3327,8 @@
                     entity's whole agency list, modify it and write it back, so two admins editing two
                     <em>different</em> departments would race and the later save would silently undo the earlier one.
                     The per-entity setters (<code>PUT /api/v1/{scope,secret,env-var,ssh-credential}-agencies</code>,
-                    replace-per-row) remain for that axis, as does the older <code>PUT /runner-agencies</code>, which
-                    takes <code>runnerId</code>, not <code>id</code>. <code>GET /agency-matrix</code> also remains,
+                    replace-per-row) serve that axis, as does <code>PUT /runner-agencies</code>, which
+                    takes <code>runnerId</code>, not <code>id</code>. <code>GET /agency-matrix</code> exists
                     because the editor's add-picker reads it.</p>
 
                 <div class="callout note">
@@ -3404,40 +3346,38 @@
                         is the Composer's mandatory <strong>Scope</strong> field (&sect;3).</p>
                 </div>
 
-                <h3>6.1f Membership is no longer paperwork</h3>
-                <p>Migration 670 backfilled <strong>no</strong> membership, and an empty membership set means &ldquo;no
-                    agency restriction&rdquo;. Thus, for each catalogue older than the agencies program, the field
-                    default is <strong>global</strong>. That kept behavior and was correct at the time. It becomes
-                    load-bearing when departments start to create their own credentials, because of the case below.</p>
+                <h3>6.1f Membership is not paperwork</h3>
+                <p>An empty membership set means &ldquo;no agency restriction&rdquo;, so a row created by an
+                    unrestricted admin defaults to <strong>global</strong>. That default becomes
+                    load-bearing when departments create their own credentials, because of the case below.</p>
                 <div class="callout gotcha">
                     <div class="ct"><span class="em">🫥</span> The silent shadow</div>
                     <p>A row named <code>X</code> exists globally, and each department can get to it. A department
                         creates a <em>scoped</em> row, also named <code>X</code>, and forgets its agency membership.
-                        Scoped wins over global. Thus <strong>each other department's runs in that scope now resolve the
+                        Scoped wins over global. Thus <strong>each other department's runs in that scope would resolve the
                             new row</strong>: no error, no warning, and nothing in the run log that shows which row was
-                        injected. The run operates; it just operates with an other team's value.</p>
-                    <p style="margin-top:.5em">Two changes close it. A row created by a
-                        <strong>department-scoped</strong> actor now <em>gets</em> that actor's agency, and does not
-                        start global. An unrestricted admin's rows still default to shared: that is an intentional
+                        injected. The run would operate; it would just operate with an other team's value.</p>
+                    <p style="margin-top:.5em">Two rules close it. A row created by a
+                        <strong>department-scoped</strong> actor <em>gets</em> that actor's agency, and does not
+                        start global. An unrestricted admin's rows default to shared: that is an intentional
                         statement about shared infrastructure, made by a person with reach over everything. And where a
                         scoped row shadows a global one with the same key, the <strong>Env Vars view and the agency
-                            pre-flight report say so</strong>. Detection was always cheap. What was missing was a
-                        message to anyone.</p>
+                            pre-flight report say so</strong>.</p>
                 </div>
                 <p>If an actor holds the permission on <em>more than one</em> department, the server refuses the
                     creation with a 422 that names the candidates. It does not guess: &ldquo;their department&rdquo; has
                     no single answer, and a guess would invent an ownership claim that nobody made.</p>
 
                 <h3>6.1g Per-agency ownership, and the ambiguity refusal</h3>
-                <p>Two departments can now hold a Secret, Variable, or SSH credential under the <strong>same key in the
-                        same scope</strong>. Uniqueness widened from <code>(key, scope)</code> to
-                    <code>(key, scope, owner_agency)</code> (migration 830, a table rebuild). <code>owner_agency</code>
+                <p>Two departments can hold a Secret, Variable, or SSH credential under the <strong>same key in the
+                        same scope</strong>. Uniqueness is
+                    <code>(key, scope, owner_agency)</code>. <code>owner_agency</code>
                     stores the agency <strong>id</strong>, so a renamed department cannot orphan its rows. Resolution
                     gets exactly one preference tier:</p>
                 <ol>
                     <li>Rows whose owner is one of the <strong>run's</strong> departments: &ldquo;your department's
                         row&rdquo;.</li>
-                    <li>Rows with no owner: today's shared and global rows.</li>
+                    <li>Rows with no owner: shared and global rows.</li>
                 </ol>
                 <p>In a tier, the pre-existing rule holds (scope-exact wins over global). This lets <strong>one shared
                         playbook</strong> ask for <code>BECOME_PASSWORD</code>, and each department's run gets its own
@@ -3461,19 +3401,18 @@
                         multi-department snapshots. <strong>If your scopes map one-to-one onto agencies, it can never
                             fire.</strong> <code>GET /api/v1/agency-preflight</code> answers that in one call.</p>
                 </div>
-                <p>Two smaller results. The cross-kind conflict (a Secret and a Variable cannot share a key) narrowed to
-                    the same triple. It now applies to <em>one owner</em>: different departments no longer collide, and
-                    the message leaks less. And ownership is currently <strong>fixed at creation</strong>: there is no
+                <p>Two smaller results. The cross-kind conflict (a Secret and a Variable cannot share a key) is keyed on
+                    the same triple. It applies to <em>one owner</em>: different departments do not collide, and
+                    the message leaks less. And ownership is <strong>fixed at creation</strong>: there is no
                     transfer action. Thus you cannot delete an agency that owns rows until they are deleted (the refusal
                     names them).</p>
 
                 <h3 id="agency-names">6.1h Per-agency names, and permanent identity</h3>
-                <p>The same widening now applies to <strong>definitions</strong>: two departments may hold
+                <p>The same widening applies to <strong>definitions</strong>: two departments may hold
                     <strong>same-named jobs and workflows</strong>. Each definition carries a <strong>uid</strong>
-                    (migration <strong>1000</strong>) &mdash; assigned once, never reused, unchanged across sync, edit
-                    and recycle-bin restore &mdash; and the uid is now the <strong>primary key</strong> of
-                    <code>jobs</code>, <code>workflows</code>, and <code>schedules</code> (migration
-                    <strong>1050</strong>). Name uniqueness comes in three deliberate shapes:</p>
+                    &mdash; assigned once, never reused, unchanged across sync, edit
+                    and recycle-bin restore &mdash; and the uid is the <strong>primary key</strong> of
+                    <code>jobs</code>, <code>workflows</code>, and <code>schedules</code>. Name uniqueness comes in three deliberate shapes:</p>
                 <ul>
                     <li><strong>Cronomicon-source jobs and workflows:</strong> unique within <em>each agency their scope
                             maps to</em>; the All pool overlaps everything. A set-overlap rule no SQLite UNIQUE can
@@ -3492,11 +3431,8 @@
                     Where a bare name is genuinely ambiguous, Cronomicon <strong>refuses rather than guesses</strong>:
                     a workflow step matching two jobs answers <em>&ldquo;qualify the step by identity&rdquo;</em>, a
                     recycle-bin restore or purge answers <code>409</code>, and a bare-name definition lookup answers
-                    <code>409 ambiguous_name</code> until you pass <code>?source=</code>. Rolling back migration 1050
-                    <strong>refuses loudly if duplicate names exist</strong> rather than discarding a department's job
-                    (&sect;8.6). On screen, a collision inside your own visibility renders the name
-                    agency-qualified (<code>deploy &middot; FIN</code>); pre-identity History rows show plain
-                    names.</p>
+                    <code>409 ambiguous_name</code> until you pass <code>?source=</code>. On screen, a collision inside
+                    your own visibility renders the name agency-qualified (<code>deploy &middot; FIN</code>).</p>
 
                 <h3>6.2 Log redaction &amp; its gaps</h3>
                 <p>The server redacts run output <strong>at ingest, server-side</strong>, before it touches the disk.
@@ -3508,21 +3444,21 @@
                     a longer one. A <strong>multi-line</strong> secret, such as a PEM key, is split, and each line goes
                     into the dictionary. Redaction runs on each single log line, and a multi-line blob would never
                     match.</p>
-                <p>Since the <strong>reference-injection</strong> subsystem, the redactor also gets, for each run, the
+                <p>Through the <strong>reference-injection</strong> subsystem, the redactor also gets, for each run, the
                     values that the run really injects through its declared bindings. This includes
                     <strong>Vault-source</strong> values, which the per-scope stored-secret dictionary cannot hold.
                     Runner ingest of a run that injects a secret is <strong>fail-closed</strong>
                     (<code>503 redactor_unavailable</code>; nothing persists, and the agent tries again when the fault
-                    clears). The run's authoritative <code>injects_secret</code> flag (migration 620) drives this
+                    clears). The run's authoritative <code>injects_secret</code> flag drives this
                     decision. Thus a deleted binding, or the <code>CRONOMICON_SECRETS_INJECTION_ENABLED</code> kill-switch
-                    turned mid-run, no longer moves a secret-bearing run to the lenient path.</p>
+                    turned mid-run, cannot move a secret-bearing run to the lenient path.</p>
                 <p>Separately, A12 captured inter-job <strong>outputs</strong> are stored raw, because the engine
                     injects them into later steps. The run-detail response masks them against the same dictionary
                     <strong>at display time</strong>, fail-closed: each value is masked if the redactor cannot be built.
                     An output that captures an <em>injected</em> secret value is refused at the capture site: the run
                     fails with reason <code>output_secret_leak</code>, <em>before</em> <code>outputs_json</code> is
-                    written. Thus it never goes to a later step. The in-app SSH executor now does the same as the runner
-                    ingest path here.</p>
+                    written. Thus it never goes to a later step. The in-app SSH executor and the runner
+                    ingest path behave identically here.</p>
                 <p>What is intentionally <strong>not</strong> redacted:</p>
                 <ul>
                     <li><strong>Short values</strong> (less than 5 characters) and <strong>common literals</strong>
@@ -3536,7 +3472,7 @@
                     <li><strong>Schedule env values.</strong> They are plaintext in Git, and never redacted.</li>
                     <li><strong>The server's own process log</strong> (<code>cronomicon.log</code>). Redaction applies
                         to <em>run</em> logs at ingest. The process log has no redactor. Thus a credential that gets
-                        into a server log line (usually inside an error string) is written as-is. That was always
+                        into a server log line (usually inside an error string) is written as-is. The same is
                         true of stdout, but the file is a <em>durable</em> artifact on the data volume. It is
                         <code>0640</code> in a <code>0750</code> directory, and size-bounded. Set
                         <code>CRONOMICON_LOG_FILE_ENABLED=false</code> to keep server logs on stdout only. See <a
@@ -3544,7 +3480,7 @@
                             href="#appendix">Appendix C</a> for its controls.</li>
                 </ul>
                 <p>What <strong>is</strong> redacted, beyond run logs: <strong>the compliance audit stream</strong>
-                    (<code>audit.log</code>, <a href="#deployment">&sect;8.8</a>). Since v1.5.34 its free-text
+                    (<code>audit.log</code>, <a href="#deployment">&sect;8.8</a>). Its free-text
                     fields (<code>target</code>, <code>summary</code>, <code>details</code>, and <code>reason</code>
                     on auth events) pass through a <strong>process-wide dictionary</strong>: every stored secret,
                     stored SSH credential, encrypted integration setting and multi-line variable the server can
@@ -3574,7 +3510,7 @@
                     (<code>X-Vault-Token</code>) and GitLab (<code>Private-Token</code>) clients refuse HTTP
                     redirects, because Go's stdlib does not remove custom headers across a cross-host redirect. Each
                     outbound client that the server starts (Vault KV/status, GitLab REST, go-git clone/fetch/push,
-                    S3/MinIO backup, OIDC, Apprise) now goes through a shared <strong>SSRF egress guard</strong>.
+                    S3/MinIO backup, OIDC, Apprise) goes through a shared <strong>SSRF egress guard</strong>.
                     The guard blocks cloud-metadata (<code>169.254.169.254</code>, <code>fd00:ec2::254</code>),
                     loopback, and link-local targets, and it closes DNS-rebind: it dials the checked IP.
                     <code>CRONOMICON_OUTBOUND_ALLOW_PRIVATE</code> (default <code>true</code>) keeps an internal Vault
@@ -3614,24 +3550,15 @@
                     </table>
                 </div>
                 <div class="callout warn">
-                    <div class="ct"><span class="em">🪪</span> Token auth did not operate at all before v0.52.29, and
-                        static tokens are not renewed</div>
+                    <div class="ct"><span class="em">🪪</span> Static tokens are not renewed</div>
                     <p><strong>Operational result of token auth:</strong> Cronomicon does <strong>not</strong> renew a
                         static Vault token. When one lapses, Vault answers <code>403</code>, and each reveal and each
                         injected Vault reference fails until an operator stores a new token. For unattended long-running
                         credentials, use <strong>AppRole</strong>.</p>
                 </div>
-                <p>The two pre-v0.52.29 faults were separate ones. Know them if you tried this and stopped. <strong>The save
-                        failed</strong> with <code>NOT NULL constraint failed: vault_config.role_id</code>. The
-                    column is <code>NOT NULL DEFAULT &#39;&#39;</code>, token auth supplies no Role ID, and a column
-                    default does not apply when a value is given explicitly (<code>NULL</code> is a value). Thus the
-                    first save under token auth always returned <code>500</code>. <strong>Behind that, token auth
-                        was enum-only.</strong> The API accepted it, the database stored it, and the spec advertised
-                    it, but nothing read it. The client logged in with AppRole in each case, and runtime resolution
-                    refused to wire anything without a Role ID. A token-auth deployment that got past the
-                    <code>500</code> would show <em>Not configured</em>, with each reveal failing. Both are
-                    corrected. The status badge and the client wiring now use one shared completeness check, so the
-                    badge cannot show <em>ok</em> while the client is still a stub.</p>
+                <p>Token auth supplies no Role ID, and the save accepts that. The status badge and the client
+                    wiring use one shared completeness check, so the badge cannot show <em>ok</em> while the client
+                    is still a stub: <em>Not configured</em> means exactly that the client has not been wired.</p>
                 <p><strong>A switch of the auth method clears the stored credential</strong>, intentionally. An
                     AppRole Secret ID is not a Vault token, and a credential carried across a switch made a client
                     that failed each read. The switch needs the new credential. The write-only field has the label
@@ -3683,9 +3610,8 @@
                 <p><strong>The file's permissions are entirely yours to set.</strong> Cronomicon reads the file and
                     validates only that it decodes to 32 bytes &mdash; it does not check the mode or the owner, so a
                     world-readable KEK loads without a word of complaint. Mount it read-only, owned by the account the
-                    server runs as, mode <code>0400</code>. If your deployment still uses the older
-                    <code>CRONOMICON_SECRET_KEK*</code> names, rename them to the <code>CRONOMICON_KEK*</code> forms before
-                    upgrading to v1.5.41 or later: the old names no longer read, and the first stored-secret
+                    server runs as, mode <code>0400</code>. The only names the server reads are the
+                    <code>CRONOMICON_KEK*</code> forms; without one, the first stored-secret
                     operation fails with "no KEK configured".</p>
 
                 <div class="callout danger">
@@ -3818,12 +3744,11 @@ docker exec &lt;cronomicon&gt; cronomicon rewrap-secrets             # move it a
                     <div class="ct"><span class="em">🧯</span> Put a bootstrap token in the runner's config file, not
                         its environment</div>
                     <p>A job can declare <strong>environment passthrough</strong> by name, and a passthrough name is
-                        resolved from the runner agent's own environment. The agent now <strong>refuses</strong> any
+                        resolved from the runner agent's own environment. The agent <strong>refuses</strong> any
                         passthrough under <code>CRONOMICON_RUNNER_*</code> &mdash; its own configuration namespace &mdash;
                         and fails the run rather than resolving it, so a job cannot read the token this way. Keeping the
                         token out of the environment entirely is the belt to that braces: a value the process never
-                        holds cannot be reached by any future lookup, and the refusal protects deployments that have not
-                        yet moved it.</p>
+                        holds cannot be reached by any future lookup.</p>
                     <p>This is harmless for a per-install token, which is spent and expired. It is not harmless for a
                         bootstrap token, which is permanent. The agent accepts a JSON config file as its first
                         configuration layer, and a value supplied there never enters the process environment:</p>
@@ -3838,8 +3763,8 @@ ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config
 
                 <p><strong>Do not pass a token on the installer command line.</strong>
                     <code>runner-install.sh</code> accepts the registration token as an inline argument, which places it
-                    in shell history and in the process list. That was a reasonable trade when the token was single-use
-                    and expired within a day; it is not one for a bootstrap token. Write the config file by hand
+                    in shell history and in the process list. That is a reasonable trade for a single-use token that
+                    expires within a day; it is not one for a bootstrap token. Write the config file by hand
                     instead. The installer's <em>checkout</em> token already demonstrates the safe pattern
                     (<code>--checkout-token-file</code>, or <code>--checkout-token -</code> to be prompted with the
                     input hidden) &mdash; prefer that shape wherever a secret has to reach a runner host.</p>
@@ -3994,7 +3919,7 @@ ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config
                     Thus a key added later operates with no <code>runner.env</code> edit.
                     <code>--generate-key &lt;NAME&gt;</code> makes a passphrase-less ed25519 key that the runner owns,
                     and it prints the public half for the targets' <code>authorized_keys</code>.
-                    <code>--known-hosts</code> is now <strong>optional</strong>: a fresh runner starts with an empty
+                    <code>--known-hosts</code> is <strong>optional</strong>: a fresh runner starts with an empty
                     <code>known_hosts</code> and trusts target hosts through the operator-approved <strong>Scan &amp;
                         approve</strong> flow (&sect;7.5). It does not refuse SSH runs. <code>--ca-cert</code> installs
                     a private CA (certificate authority) bundle. <code>--inventory local</code> plus
@@ -4064,7 +3989,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         the real key locally from its key-dir or key-map. A protocol-version handshake rejects too-old
                         agents (<code>426 protocol_too_old</code>). <strong>Host-key verification is operator-approved
                             TOFU:</strong> a target that the runner has never seen gives a <em>soft</em>
-                        <code>host_key_unverified</code> failure, not a full refusal (protocol v5). The operator runs
+                        <code>host_key_unverified</code> failure, not a full refusal. The operator runs
                         <strong>Scan keys</strong> (<code>POST /runners/{id}/keyscan</code>), compares the full SHA-256
                         fingerprint through an out-of-band channel, then <strong>Approves</strong> it into the runner's
                         <code>known_hosts</code>. After that, the compare is strict and never falls open. The scan, the
@@ -4072,31 +3997,29 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         keys and targets are exposed. A per-run log-ingest byte cap
                         (<code>CRONOMICON_MAX_RUN_LOG_BYTES</code>, default 512&nbsp;MiB) limits a rogue runner that
                         streams logs past the ceiling (<code>413</code>; nothing more persists).</p>
-                    <p><strong>The current wire protocol is v12, and the server's floor tracks it.</strong> It is
+                    <p><strong>The current wire protocol is v13, and the server's floor tracks it.</strong> It is
                         enforced in three places &mdash; registration, redeclare, and every poll &mdash; each answering
-                        <code>426 protocol_too_old</code>. The poll check is the load-bearing one for an upgrade: an
-                        agent registers once and resumes a saved identity on every later start, so a runner registered
-                        before a server upgrade would otherwise never be re-checked. The
-                        protocol versions named in this chapter (v4 managed settings, v5 TOFU, v6 secret injection,
-                        v10 file watches) are the versions at which each capability was <em>introduced</em>, kept as
-                        history &mdash; not thresholds the server still checks. Server and agent ship from the same
-                        repository, so an agent below the current version is refused at registration (426) rather
-                        than gated feature by feature.</p>
-                    <p><strong>Mid-run log streaming (v12).</strong> The poll assignment carries
+                        <code>426 protocol_too_old</code>. The poll check matters because an
+                        agent registers once and resumes a saved identity on every later start, so a runner would
+                        otherwise never be re-checked after the server binary changes. Server and agent ship from the
+                        same repository, so an agent below the current version is refused at registration (426)
+                        rather than gated feature by feature. Always deploy the agent binary from the same release
+                        as the server.</p>
+                    <p><strong>Mid-run log streaming.</strong> The poll assignment carries
                         <code>liveLog: true</code>, and the agent flushes pending whole lines every two seconds,
                         marked <code>X-Log-Partial: 1</code>. The server persists each partial chunk and advances the
-                        resume offset <em>without</em> the envelope-parse/finalize step; the pre-v12 contract is
-                        untouched in both directions &mdash; an <em>unmarked</em> chunk arriving without its trailing
-                        envelope still finalizes the run <code>log_stream_lost</code>, and the output-secret-leak
-                        fail-closed check still finalizes even on a partial chunk. The UI's live tail reads the same
+                        resume offset <em>without</em> the envelope-parse/finalize step; the end-of-run contract holds
+                        in both directions &mdash; an <em>unmarked</em> chunk arriving without its trailing
+                        envelope finalizes the run <code>log_stream_lost</code>, and the output-secret-leak
+                        fail-closed check finalizes even on a partial chunk. The UI's live tail reads the same
                         append-only file through <code>GET /runs/{traceId}/log?offset=</code>.</p>
                 </div>
                 <div class="callout warn">
-                    <div class="ct"><span class="em">🗝️</span> Secret &amp; key injection to a runner (v0.49.x): gated,
+                    <div class="ct"><span class="em">🗝️</span> Secret &amp; key injection to a runner: gated,
                         off by default</div>
-                    <p>The old rule &ldquo;the manifest never carries secret bytes&rdquo; is intentionally relaxed for
-                        the runner path, behind a per-runner OPERATOR flag, <code>allowSecretInjection</code> (migration
-                        600, <strong>default OFF</strong>). The flag survives a redeclare, and an agent can never
+                    <p>The rule &ldquo;the manifest never carries secret bytes&rdquo; is intentionally relaxed for
+                        the runner path, behind a per-runner OPERATOR flag, <code>allowSecretInjection</code>
+                        (<strong>default OFF</strong>). The flag survives a redeclare, and an agent can never
                         self-declare it. Set it with the warning-toned <strong>Secret injection</strong> control &rarr;
                         <code>PUT /api/v1/runners/{id}/secret-injection</code> (ConfigureApp). Only when a runner has
                         the flag does a binding-bearing run send resolved
@@ -4127,7 +4050,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                     <li><strong>Resync</strong>: declares the runner's current local config again, <em>in place</em>
                         (same id, same API key; agencies kept; active runs not affected). This occurs
                         <strong>automatically</strong>: the agent polls with a config digest, and the server requests
-                        the re-declare on a mismatch. Thus a declared-config change or a binary upgrade propagates on
+                        the re-declare on a mismatch. Thus a declared-config change or a new agent binary propagates on
                         the next poll after the restart (with a guard against rapid repeats). The button stays as the
                         force-lever.
                     </li>
@@ -4147,60 +4070,53 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         runner: Drain &rarr; stop the service &rarr; Deregister &rarr; delete the identity file. If the
                         runner was compromised, also rotate the keys that it held.</li>
                 </ul>
-                <p>The OpenAPI enum always promised <code>degraded</code>, and the UI always drew a Degraded tile,
-                    but <strong>nothing could produce it</strong>. Each write is <code>online</code>,
-                    <code>offline</code>, or <code>draining</code>, and the table's CHECK constraint permits no
-                    more. Thus the tile read <strong>0</strong> forever.</p>
+                <p>The OpenAPI enum lists <code>degraded</code>, and the UI draws a Degraded tile, but each stored
+                    write is <code>online</code>, <code>offline</code>, or <code>draining</code>, and the table's
+                    CHECK constraint permits no more.</p>
                 <div class="callout note">
                     <div class="ct"><span class="em">🟠</span> Why <code>degraded</code> exists, and why it is not a
                         stored status</div>
-                    <p><strong>The gap that it names is real, and it was invisible.</strong> Each long-poll writes
+                    <p><strong>The gap that it names is real.</strong> Each long-poll writes
                         <code>last_seen_at</code>, but the reaper waits <code>CRONOMICON_RUNNER_OFFLINE_AFTER</code>
                         (default 5 min) before it calls a runner offline. Thus, for a maximum of five minutes, a runner
-                        that had already died read <span class="pill ok"><span class="dot"></span>Online</span>: in its
+                        that has already died would otherwise read <span class="pill ok"><span class="dot"></span>Online</span>: in its
                         row, in the tile counts, and to each person who decides where to send work.
                         <code>degraded</code> is that window.</p>
                 </div>
                 <p><strong>Derived, not stored, and this is intentional.</strong> The stored status is the runner's
                     <em>lifecycle</em>; this is a freshness reading on top of it. To store it would need a wider
-                    CHECK constraint (a SQLite table rebuild), <em>and</em> the reaper's
+                    CHECK constraint, <em>and</em> the reaper's
                     <code>WHERE status IN ('online','draining')</code> sweep would need the new value. Without that,
-                    a degraded runner would never be offlined or deregistered again. As built, it is one function in
-                    the shared response mapper, revertible in one commit, with no migration. <strong>Only
+                    a degraded runner would never be offlined or deregistered. As built, it is one function in
+                    the shared response mapper. <strong>Only
                         <code>online</code> degrades</strong>: <code>draining</code> is already on its way out, and
-                    <code>offline</code> is already reaped. The derived value is never written back, so nothing
-                    changes about the reaper, drain deadlines, or deregistration.</p>
-                <p><strong>What it changes for an operator:</strong> the Degraded tile now counts something, and the
+                    <code>offline</code> is already reaped. The derived value is never written back, so it has no
+                    effect on the reaper, drain deadlines, or deregistration.</p>
+                <p><strong>What it means for an operator:</strong> the Degraded tile counts this window, and the
                     UI treats a degraded runner as <strong>reachable</strong>. <em>Resync</em>, <em>Scan keys</em>,
                     and <em>Drain</em> stay available, because a degraded runner still heartbeats and still holds
                     work, and that is the state where you most need them. Dispatch and claiming are not affected:
                     they use the runner's stored status, not this reading.</p>
 
-                <p><strong>Offline used to be a one-way trap.</strong> The poll handler answered each poll from an
-                    <code>offline</code> runner with a drain op. The agent had nothing to finish, logged <em>drain
-                        complete &mdash; exiting</em>, and exited <code>0</code>. systemd saw a clean exit and left
-                    the unit stopped, so a <code>systemctl restart</code> only replayed the loop. No path wrote the
-                    row back to <code>online</code>: registration only INSERTs, redeclare leaves status alone by
-                    design, and a Resync op could not be delivered because the offline branch returned before the
-                    delivery block. The only escapes were a manual database edit or a full deregister with a new
-                    registration token.</p>
-                <p><strong>An authenticated poll is now treated as proof of life.</strong> The bearer token is bound
-                    to the runner id, and after a drain completes no agent process remains &mdash; so a poll can
-                    only mean a deliberate restart. The row flips to <code>online</code> (guarded, so a concurrent
+                <p><strong>Offline is not a one-way trap.</strong> Registration only INSERTs and redeclare leaves
+                    status alone by design, so the poll handler is the path that brings an <code>offline</code>
+                    runner back. <strong>An authenticated poll is treated as proof of life.</strong> The bearer token
+                    is bound to the runner id, and after a drain completes no agent process remains &mdash; so a poll
+                    can only mean a deliberate restart. The row flips to <code>online</code> (guarded, so a concurrent
                     deregister loses harmlessly), the stale drain deadline is cleared, an activity row records the
                     re-admission, and the same response falls through to deliver pending resync, managed settings,
                     and work. Recovery is one round-trip. The mid-long-poll status re-check behaves the same way: a
                     runner inside a long-poll is alive by definition, so an offline flip landing there re-admits
                     instead of shutting down a healthy agent. That case is not hypothetical &mdash; it is what
-                    happened when Cronomicon itself was down past the 5-minute threshold and came back.</p>
+                    happens when Cronomicon itself is down past the 5-minute threshold and comes back.</p>
                 <div class="callout note">
                     <div class="ct"><span class="em">&#128268;</span> An offline runner is re-admitted on its next poll
                     </div>
-                    <p><strong>What it changes for an operator:</strong> to bring a reaped runner back, start its
+                    <p><strong>What it means for an operator:</strong> to bring a reaped runner back, start its
                         service again. <code>draining</code> keeps the drain op, because that is in-flight operator
-                        intent. <strong>Deregister</strong> stays the lock-out: a drained runner that must stay out of
-                        rotation is a service you leave stopped. Nothing changes about reaping windows, drain deadlines,
-                        or auto-deregistration.</p>
+                        intent. <strong>Deregister</strong> is the lock-out: a drained runner that must stay out of
+                        rotation is a service you leave stopped. Re-admission has no effect on reaping windows, drain
+                        deadlines, or auto-deregistration.</p>
                 </div>
 
                 <h3>7.7 Agency-based isolation</h3>
@@ -4210,8 +4126,8 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         href="user-manual.html#envvars">&sect;11</a>; a scope is bound to the one agency that its hosts
                     are in). Each runner is assigned to zero or more agencies, edited <strong>inline per runner</strong>
                     in its expanded row: removable chips, plus an add-picker. Each change commits through
-                    <code>PUT /api/v1/runner-agencies</code> for that one runner. The old whole-fleet <strong>Agency
-                        Membership</strong> grid is gone (<a href="user-manual.html#runners">&sect;13.1</a>).</p>
+                    <code>PUT /api/v1/runner-agencies</code> for that one runner. There is no whole-fleet
+                    membership grid (<a href="user-manual.html#runners">&sect;13.1</a>).</p>
                 <p>At <strong>enqueue</strong>, the effective scope's agency <em>name</em> is snapshotted onto the run:
                     frozen and immutable, the same as <code>scope</code>. At <strong>claim</strong>, it is matched
                     against runner membership under a disjoint rule:</p>
@@ -4258,7 +4174,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
 
                 <h3>7.8 Ansible checkout projects (opt-in)</h3>
                 <p>By default, an ansible runner gets one self-contained playbook body per run. <strong>Checkout
-                        mode</strong> (v0.46.x) lets a runner do a full playbook <strong>project</strong>: roles,
+                        mode</strong> lets a runner do a full playbook <strong>project</strong>: roles,
                     <code>vars_files</code>, <code>include_vars</code>, and <code>.j2</code> templates. The runner gets
                     the playbooks repo at a <strong>server-pinned commit SHA</strong> and runs its entry playbook from a
                     materialized tree. It is opt-in per job (a <code>kind: Script</code> wrapper that declares
@@ -4305,7 +4221,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                     <li><strong>One key, both engines.</strong> One provisioned SSH key serves bash/Go-SSH runs and
                         ansible runs. For a single-key run, the agent adds <code>--private-key &lt;path&gt;</code> to
                         <code>ansible-playbook</code> automatically and injects the <code>authKeyEnvVar</code> name into
-                        the ansible child env (the <em>auth bridge</em>). Ansible now also makes sure of target host
+                        the ansible child env (the <em>auth bridge</em>). Ansible also verifies target host
                         keys against the <em>same</em> <code>known_hosts</code> that <strong>Scan &amp; approve</strong>
                         seeds. Thus there is no double-provisioning and no <code>~/.ssh/known_hosts</code> symlink. An
                         explicit env var, or an inventory <code>ansible_ssh_private_key_file</code>, still wins.
@@ -4348,7 +4264,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                 <p><strong>Tags</strong> are operator-authored, SQLite-only labels, edited inline from the expanded row
                     (<code>PUT /api/v1/runner-tags/{runnerId}</code>, ConfigureApp; trimmed and deduplicated; a maximum
                     of 30 tags, each a maximum of 64 characters). They have no sync-preservation concern, because
-                    runners self-register and do not come from a Git catalog. <strong>They are no longer merely
+                    runners self-register and do not come from a Git catalog. <strong>They are not merely
                     descriptive:</strong> a job or a single run can be <em>pinned</em> to a tag, and only runners
                     carrying it may claim that work &mdash; see &sect;7.10. Editing a runner's tags therefore changes
                     what it is eligible to run, from its next poll. For install-time and startup triage,
@@ -4383,24 +4299,19 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         same field from the composer.</li>
                 </ul>
                 <div class="callout note">
-                    <div class="ct"><span class="em">&#128465;</span> The operator override is gone (v1.3.5)</div>
-                    <p>v1.3.1&ndash;.2 added a second, Cronomicon-owned layer &mdash;
-                        <code>jobs.runner_tag_override</code>, written from the job detail panel and preserved across
-                        syncs &mdash; so that a Git-sourced job could be repointed without a merge request. It was
-                        retired two days later in <strong>migration 1090</strong>, along with its endpoint and its rung
-                        in the precedence chain: placement is authored in the definition and, for one run, in the Run
-                        dialog. Nowhere else.</p>
-                    <p>The consequence is worth stating plainly, because it is the argument the override existed to
-                        answer: <strong>a Git-sourced job's durable pin is editable only in its repository.</strong>
+                    <div class="ct"><span class="em">&#128465;</span> There is no operator override layer</div>
+                    <p>Placement is authored in the definition and, for one run, in the Run
+                        dialog. Nowhere else. There is no Cronomicon-owned override on a Git-sourced job.</p>
+                    <p>The consequence is worth stating plainly:
+                        <strong>a Git-sourced job's durable pin is editable only in its repository.</strong>
                         When the pinned runners are gone and the work has to move now, the escape is the Run dialog's
                         per-run pin &mdash; which can send a single run to another tag or to no tag at all, without
                         touching the definition.</p>
-                    <p>Two residues of that band are deliberate. The case-insensitive (NOCASE) matching of tags was
-                        <em>not</em> reverted with the override &mdash; it is a correctness fix for the declared pin,
-                        which survives. And clients reading the Job payload should read
+                    <p>Two details are deliberate. Tag matching is case-insensitive (NOCASE). And clients reading
+                        the Job payload should read
                         <code>runnerTagEffective</code>, the resolved job-level pin, rather than re-deriving it
                         &mdash; today it equals <code>runnerTag</code>, and it will keep meaning &ldquo;the pin that
-                        applies&rdquo; if another rung ever returns.</p>
+                        applies&rdquo; if another rung is ever added.</p>
                 </div>
                 <div class="callout note">
                     <div class="ct"><span class="em">&#128269;</span> The tag projection table is an index, not a
@@ -4432,7 +4343,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                     a deliberate decision to ignore the pin the job declares, for this run. Sending no field and sending
                     <code>&quot;&quot;</code> are different acts with different outcomes, and the API keeps them distinct
                     (absent versus <code>&quot;&quot;</code>). That distinction is how a single run escapes a pinned job
-                    without the job being edited &mdash; and since v1.3.5 it is the only way to do so from inside
+                    without the job being edited &mdash; and it is the only way to do so from inside
                     Cronomicon.</p>
 
                 <h4>Rules worth knowing before you rely on it</h4>
@@ -4488,9 +4399,9 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                     must re-acquire the full set); a server whose watch list for an agent has been retracted to empty
                     answers a bare 204, and the agent applies the empty set &mdash; so deleting a watched job stops
                     the scanning without a restart. Sightings are reported over
-                    <code>POST /runners/{id}/file-sightings</code> (runner token), and the v10 protocol gate exists
-                    because an older agent would drop the watch field silently &mdash; an operator would see a job
-                    that simply never runs. Upgrade v10 agents before relying on per-agency job names: a v11+ agent
+                    <code>POST /runners/{id}/file-sightings</code> (runner token). The protocol floor guarantees
+                    that every registered agent understands the watch field, so no agent can drop it silently and
+                    leave a job that simply never runs. The agent
                     echoes the watched job's <code>jobUid</code>, and the server refuses a sighting whose uid does not
                     match its own copy of the watch instruction.</p>
             </section>
@@ -4578,8 +4489,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                             <tr>
                                 <td><code>CRONOMICON_KEK_FILE</code></td>
                                 <td>The mounted base64 KEK for stored secrets. <strong>Back it up separately from the
-                                        DB.</strong> Renamed from <code>CRONOMICON_SECRET_KEK_FILE</code> in v0.48.0; the old
-                                    name dual-read until v1.5.40 and no longer reads.</td>
+                                        DB.</strong></td>
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_AUTH_MODE</code></td>
@@ -4607,8 +4517,8 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                             <tr>
                                 <td><code>CRONOMICON_BACKUP_S3_*</code></td>
                                 <td>The nightly S3 backup upload; off when unset. Backups are configured
-                                    <strong>only</strong> here. There is no DB-backed backup setting to override (the
-                                    inert one was removed in FU-3). See &sect;8.6.</td>
+                                    <strong>only</strong> here. There is no DB-backed backup setting to override.
+                                    See &sect;8.6.</td>
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_BACKUP_S3_CA_FILE</code></td>
@@ -4658,17 +4568,14 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                     <strong>vite build</strong>, not <code>npm run build</code> (which is
                     <code>tsc -b &amp;&amp; vite build</code>). <strong>Type checks are a source gate:</strong> they
                     belong where a type error must fail, locally and in CI, not in an image build.
-                    <code>npm run build</code> did not change for those. The removal also saves about 700&nbsp;MB of
+                    Leaving <code>tsc</code> out also saves about 700&nbsp;MB of
                     peak RSS (the memory that the build holds) and 14&nbsp;s in the image build.</p>
-                <p><strong>Why this changed: know this failure mode.</strong> A past deploy failed at stage 1 with
-                    only <code>exit code: 1</code>. The cause was a file on the <em>deploy host's checkout</em> that
-                    git had deleted eleven minor versions earlier
-                    (<code>frontend/src/views/envvars/ScopesTab.tsx</code>, long since removed). The file is in no
-                    clean checkout. Thus the build passed from a fresh clone, in a replica of the stage's exact
-                    filesystem, and locally. <code>vite build</code> bundles only what the entry reaches, so it does
-                    not see a file that nothing imports. But <code>tsc -b</code> type-checks <strong>each</strong>
-                    file under <code>src/</code>, imported or not. An unrelated correction to a route parameter's
-                    type made that orphan file fail with seven errors.</p>
+                <p><strong>Know this failure mode.</strong> A stale file left behind on a <em>deploy host's
+                        checkout</em> (one that git has since deleted, and which no clean checkout contains) is
+                    invisible to <code>vite build</code>, which bundles only what the entry reaches. But
+                    <code>tsc -b</code> type-checks <strong>each</strong> file under <code>src/</code>, imported or
+                    not, so an unrelated type change can make such an orphan fail the build with nothing but
+                    <code>exit code: 1</code>, while the same build passes from a fresh clone.</p>
                 <div class="callout note">
                     <div class="ct"><span class="em">🏗️</span> The dirty-checkout hazard</div>
                     <p><strong>This does not make a dirty deploy checkout safe.</strong> A stale file that something
@@ -4676,11 +4583,8 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         worse than this one, because nothing breaks visibly. <strong>Deploy from a clean
                             checkout.</strong></p>
                 </div>
-                <p>The temporary diagnostic scaffolding from the incident (a fallback to the committed
-                    <code>dist</code>, plus a build log served at <code>/build-error.txt</code>) was later removed,
-                    after a deploy came up clean. <code>backend/web/dist</code> is again excluded from the build
-                    context. If you need that trick, it is in git at commit <code>a8c594e</code>, and the Dockerfile
-                    says so at the site.</p>
+                <p><code>backend/web/dist</code> is excluded from the build context, so the image never falls back
+                    to a committed bundle: what it serves is always what stage 1 built.</p>
 
                 <div class="callout warn">
                     <div class="ct"><span class="em">🔑</span> Allowlist the runner surface past forward-auth</div>
@@ -4736,7 +4640,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     only way to tell, from the log tree alone, what a folder is, or if its entity still exists. This is
                     what makes the tree readable after it is archived, or mounted where the database is not.</p>
                 <div class="codeblock">
-                    <div class="cap">/var/lib/cronomicon/logs: the foldered layout, with pre-upgrade logs adjacent</div>
+                    <div class="cap">/var/lib/cronomicon/logs: the foldered layout</div>
                     <pre>logs/
  0000001f/ &lt;- a job's folder
  _meta.json {"code":"0000001f","kind":"job","source":"git","name":"nightly-backup",...}
@@ -4746,7 +4650,6 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
  _meta.json
  _system/ &lt;- runs owned by no definition (SSH "Test connection")
  b81e5f77-....log
- 5c6a9d02-....log &lt;- enqueued before the upgrade: still at the flat path
  cronomicon.log &lt;- the process log (knobs in Appendix C)
  cronomicon.log.1 &lt;- rotated by size; does not end in .log, so the reaper skips it
  audit.log &lt;- the compliance audit stream (§8.8)
@@ -4756,9 +4659,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     the run-log retention window. The live <code>cronomicon.log</code> and <code>audit.log</code> are
                     excluded by name, and their rotated generations do not match <code>*.log</code> at all. The
                     <code>_meta.json</code> sidecars are also never reaped.</p>
-                <p>Know two things before you look on disk. <strong>Nothing was migrated:</strong> runs enqueued before
-                    this release keep the flat <code>{log dir}/{traceId}.log</code> path and stay there permanently. The
-                    two layouts exist together by design, and there is nothing to move. <strong>A delete of a job or
+                <p>Know this before you look on disk. <strong>A delete of a job or
                         workflow keeps its folder in place</strong>, so the audit trail outlives the definition. The
                     sidecar gets a <code>deletedAt</code> stamp; the folder does not go away. A definition created again
                     under the same name gets a <em>new</em> code and a <em>new</em> folder, so it can never receive the
@@ -4774,7 +4675,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <p>It must be the IP that Cronomicon <em>really sees as the connecting peer</em>: the proxy's container
                         IP on a shared Docker network, or often the docker bridge gateway (<code>172.x.0.1</code>) when
                         a host proxy uses a published port. Confirm it from the request log. If you set it wrong, or too
-                        wide, then either legitimate logins get 403, or a spoofed admin header could be trusted. It now
+                        wide, then either legitimate logins get 403, or a spoofed admin header could be trusted. It
                         has a <strong>second</strong> function as well: it gates client-IP attribution in the auth audit
                         trail (<a href="#deployment">&sect;8.9</a>). Thus a too-wide CIDR weakens two things.</p>
                 </div>
@@ -4787,7 +4688,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <code>CRONOMICON_RETENTION_*</code> env vars only seed those windows on first boot. It then takes a
                     consistent <code>VACUUM INTO</code> snapshot and uploads it to S3, if a bucket is configured.
                     Backups are configured <strong>only</strong> through <code>CRONOMICON_BACKUP_S3_*</code> env. There is
-                    no DB-backed backup setting (the inert one was removed in FU-3). On boot, the worker runs an
+                    no DB-backed backup setting. On boot, the worker runs an
                     immediate catch-up sweep <em>only if</em> the last successful backup is overdue (24h or more). Thus
                     frequent restarts cannot push the only durable backup past 24h. Success and failure export as
                     Prometheus metrics (<code>cronomicon_backup_last_success_timestamp_seconds</code>,
@@ -4834,8 +4735,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         now</strong> runs one tick on demand; the status line beneath the fields shows the last sync,
                     the pending count (growing tick over tick means the interval is too long for the volume or the
                     link is too slow), and the last error.</p>
-                <p><strong>Retention has two knobs now.</strong> <em>Run Log Files</em> keeps governing local disk,
-                    with one new rule: while the archive backend is on, a log the sync has not yet copied is
+                <p><strong>Retention has two knobs.</strong> <em>Run Log Files</em> governs local disk,
+                    with one rule: while the archive backend is on, a log the sync has not yet copied is
                     <em>never</em> reaped locally, however old &mdash; the tier that exists for recovery must not lose
                     the very logs it was meant to keep. The eleventh window, <strong>Archived Run Logs (S3)</strong>,
                     governs the bucket and defaults to <strong>0 = keep forever</strong>: Cronomicon deletes from the
@@ -4857,7 +4758,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <code>cronomicon_log_archive_failures_total</code> and <code>cronomicon_log_archive_pending</code>
                     join the backup metrics; a third consecutive failed tick logs at <code>ERROR</code>. Each tick that
                     did something writes one Activity row (<code>log-archive</code>); idle ticks write nothing.
-                    Two further gauges arrived with v1.5.34: <code>cronomicon_redaction_dictionary_size</code> and
+                    Two gauges cover the redaction dictionary: <code>cronomicon_redaction_dictionary_size</code> and
                     <code>cronomicon_redaction_dictionary_rebuilds_total{outcome}</code> (<code>complete</code> |
                     <code>partial</code> | <code>failed</code>) for the process-wide redaction dictionary (&sect;8.8).</p>
 
@@ -4886,8 +4787,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td>Total admin lockout (AD group renamed, last admin grant deleted)<br><span
                                         class="muted">Startup logs <code>⚠️ NO ADMIN CONFIGURED</code></span></td>
                                 <td>That startup warning counts <strong><code>access_grants</code></strong> with the
-                                    admin role, not the retired AD-group mappings. Thus it stopped firing falsely on
-                                    instances that had only grants, and it now fires on instances that are genuinely
+                                    admin role, so it fires only on instances that are genuinely
                                     locked out. Treat it as the signal to run this recovery. <strong>All
                                         deployments:</strong> stop the server and run
                                     <code>cronomicon grant-admin &lt;ad-group&gt;</code>. It writes an unrestricted admin
@@ -4902,111 +4802,34 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <tr>
                                 <td>Upgrade</td>
                                 <td>Pull or build the new image and run <code>up -d</code>. Pending up-migrations apply
-                                    at boot, and <code>/readyz</code> turns ready when clean. <strong>v0.50.3:</strong>
-                                    migration 630 backfills an <em>All scopes</em> (<code>*</code>) grant for each
-                                    built-in role that is unrestricted today. Nothing tightens automatically. Thus,
-                                    after the deploy, <strong>review the scope matrix and turn off &ldquo;All
-                                        scopes&rdquo; for each role that must be limited</strong> (that matrix was later
-                                    replaced by Access Grants; see the v0.56 note below). The session cookie is also
-                                    renamed <code>cronomicon_session</code>&rarr;<code>cronomicon_session_v2</code>, which
-                                    forces a one-time re-login in OIDC mode (trusted-header resolves per request;
-                                    nothing to do). <strong>v0.52.8&ndash;0.52.11 (logging update):</strong> the first
-                                    nightly sweep after the upgrade <strong>deletes on-disk run logs older than the
-                                        <em>Run Log Files</em> window</strong> (default <strong>90 days</strong>).
-                                    Nothing had deleted a log file before. Thus check that window in <strong>Settings
-                                        &rarr; Audit &amp; Compliance</strong> <em>before</em> the first 02:00 UTC
-                                    sweep, and set it to <code>0</code> to keep the files forever. Migrations 710 and
-                                    720 are additive. 710 backfills an entity code for each job and workflow, and new
-                                    runs start to write into per-entity folders (&sect;8.4). Existing logs stay where
-                                    they are. <strong>v0.56.2&ndash;v0.56.5 (departmental RBAC):</strong> migration 810
-                                    introduces <code>access_grants</code> and backfills them from the old mappings plus
-                                    scope restrictions. Before you upgrade past v0.56.2, read
-                                    <code>GET /rbac-preflight</code> against real data. <strong>A scope that belongs to
-                                        no agency produces no grant, and its access goes away silently.</strong> After
-                                    the switch, review Settings &rarr; Users &amp; Access &rarr; Access Grants. The
-                                    legacy mappings list stopped controlling access at that switch, left the UI in
-                                    v0.57.7, and its table plus <code>scope_restrictions</code> were dropped in
-                                    <strong>v0.57.8</strong> by migration <strong>850</strong>. Run that upgrade only
-                                    after v0.56.4/v0.56.5 are deployed and settled: the drop is one-way. The down
-                                    migration restores the two tables <em>empty</em>, because a grant set cannot be
-                                    converted back without a re-open of the cross-product leak that it closed. Use a
-                                    backup to roll back. <code>GET /rbac-preflight</code> keeps working, but <strong>if
-                                        you script it, read this</strong>. In v0.57.8 it lost its five conversion
-                                    sections &mdash; <code>losesExecute</code>, <code>multiRoleUsers</code>,
-                                    <code>grantlessMappings</code>, <code>wideningRestrictions</code> and
-                                    <code>orphanScopes</code> &mdash; which described a migration that is by then
-                                    finished. It is now a current-state hygiene report. Two fields were also renamed in
-                                    the same release: <code>unmappedGroups</code> is now
-                                    <strong><code>ungrantedGroups</code></strong>, and <code>mappingsEvaluated</code>
-                                    plus <code>restrictionsEvaluated</code> collapsed into one
-                                    <strong><code>grantsEvaluated</code></strong>. What remains is
-                                    <code>ungrantedGroups</code>, <code>emptyMembershipEntities</code>,
-                                    <code>unscopedJobs</code>, <code>unscopedJobShare</code>, <code>totalJobs</code>,
-                                    <code>unscopedSchedules</code>, <code>pendingUnbound</code>,
-                                    <code>pendingRevoked</code>, <code>usersEvaluated</code> and
-                                    <code>grantsEvaluated</code>. A check that greps for a removed section name silently
-                                    passes on every instance from v0.57.8 onward.
-                                    <strong>0.57.25&ndash;1.0.0 (feature bands):</strong> migrations
-                                    <strong>910&ndash;960</strong> are additive &mdash; 910 service accounts; 920
-                                    revisions + recycle bin (its down migration is <em>deliberately partial</em>: it
-                                    drops the revisions table but leaves the soft-delete columns); 930 the SLA columns
-                                    plus two indexes, one of which the SSH orphan reaper had been running without every
-                                    minute; 940 rebuilds <code>jobs</code> to widen the concurrency-policy CHECK and
-                                    <strong>coerces the never-implemented <code>Replace</code> to
-                                        <code>Allow</code></strong> (jobs so configured had been overlapping freely);
-                                    950 rebuilds <code>workflow_runs</code> for sub-workflows; 960 adds
-                                    <code>watch_json</code> and the sightings table.
-                                    <strong>The identity band:</strong> 990 adds the seventh role permission
-                                    (<code>compose</code>); 1000&ndash;1040 stage <strong>uids</strong> onto
-                                    definitions, run history, satellite tables, concurrency keys and alert targets;
-                                    <strong>1050</strong> swaps the primary key to the uid and admits per-agency names
-                                    &mdash; <strong>its rollback refuses if duplicate names exist</strong>, loudly,
-                                    rather than discarding a department's job; <strong>1060</strong> adds annotations
-                                    &mdash; <strong>rolling back destroys them</strong>, since no Git copy exists and a
-                                    resync cannot restore them; 1070 runner targeting; 1080/1090 add and then drop the
-                                    transient runner-tag override.
-                                    <strong>v2.0.0 (the Cronomicon edition):</strong> every identifier changed name
-                                    &mdash; environment prefix, injected run variables, apiVersion, output marker,
-                                    token prefixes, the <code>source</code> value, binaries, paths, units, cookies
-                                    and metrics &mdash; with <strong>no compatibility readers</strong>, and the
-                                    migrations were rewritten in place (schema version unchanged). It is the first
-                                    release under this name; a database from before it is not supported. The
-                                    wire protocol is <strong>13</strong>. The changelog's 2.0.0 entry is the
-                                    complete old&nbsp;&rarr;&nbsp;new list.
-                                    <strong>v1.5.40&ndash;v1.5.45 (protocol floor, cleanup and its fixes):</strong>
-                                    <strong>this is the one upgrade in this list that can stop a runner working.</strong>
-                                    The server's protocol floor now tracks its own current wire protocol, and it is
-                                    checked at registration, at redeclare and &mdash; since v1.5.43 &mdash; on
-                                    <em>every poll</em>. An agent registers only once and resumes a stored identity
-                                    afterwards, so without the poll check an agent that was already registered would
-                                    keep polling at its old protocol indefinitely and be handed fields its binary
-                                    silently drops (a requested dry run applying for real is the worst of them).
-                                    Therefore <strong>upgrade the agent binaries in the same window as the server</strong>.
+                                    at boot, and <code>/readyz</code> turns ready when clean. Migrations run forward
+                                    only, and there is no <code>migrate down</code> subcommand: the only true undo is
+                                    restoring the database file (<code>cronomicon restore</code>, which needs a stopped
+                                    server and a shell), so take a snapshot you can actually put back <em>before</em>
+                                    upgrading. <strong>Deploy the agent binaries in the same window as the
+                                        server.</strong> The server's protocol floor tracks its own current wire
+                                    protocol, and it is checked at registration, at redeclare and on <em>every
+                                        poll</em>: an agent registers only once and resumes a stored identity
+                                    afterwards, so the poll check is what catches an agent that is already registered.
                                     A runner left behind answers <code>426 protocol_too_old</code> on its next poll,
                                     stops receiving work, and logs the upgrade instruction every poll; it keeps its
-                                    identity and its agency membership, so the recovery is to upgrade the binary and
-                                    restart &mdash; no deregistration, no new id. Also in this band: migration
-                                    <strong>1140</strong> drops six unread <code>alert_config</code> columns; migration
-                                    <strong>1150</strong> rewrites any pre-rich Apprise target to the object form, which
-                                    closes a case where the Notifications card showed <em>no</em> Apprise targets while
-                                    alerts were still being delivered to them, and where the next Save silenced them
-                                    permanently. Finally, a bug worth one check: on installs first seeded after
-                                    <strong>v0.57.25</strong> the retention bootstrap wrote <code>0</code> for
-                                    <strong>Recycle Bin</strong> and <strong>Definition History</strong>, and
-                                    <code>0</code> means <em>keep forever</em>, so neither was ever reaped. Open
-                                    <strong>Settings &rarr; Audit &amp; Compliance</strong> once and confirm those two
-                                    read 30 and 365 rather than 0. Deployments seeded before those knobs existed are
-                                    unaffected &mdash; their stored blob omits the keys, and an absent key keeps its
-                                    default. <strong>Rolling back past this band is not a matter of redeploying the
-                                        previous image.</strong> Migrations run forward only, and there is no
-                                    <code>migrate down</code> subcommand, so 1140's reverse migration exists but
-                                    nothing can invoke it; an image built before <strong>v1.5.39</strong> still selects
-                                    the six <code>alert_config</code> columns 1140 dropped, so it starts cleanly and
-                                    then fails every alert-rule read and write with &ldquo;no such column&rdquo; while
-                                    the rest of the app carries on &mdash; a partial failure, not an obvious one. The
-                                    only true undo is restoring the database file (<code>cronomicon restore</code>, which
-                                    needs a stopped server and a shell). Take a snapshot you can actually put back
-                                    <em>before</em> upgrading, or accept that the upgrade is one-way at 1140.</td>
+                                    identity and its agency membership, so the recovery is to deploy the matching
+                                    binary and restart &mdash; no deregistration, no new id. After any deploy, open
+                                    <strong>Settings &rarr; Audit &amp; Compliance</strong> once and confirm the
+                                    retention windows read as you expect (<code>0</code> means <em>keep
+                                        forever</em>): the <code>CRONOMICON_RETENTION_*</code> env vars seed the stored
+                                    blob on first boot only, and an absent key keeps its default. The first nightly
+                                    sweep (02:00 UTC) <strong>deletes on-disk run logs older than the <em>Run Log
+                                            Files</em> window</strong> (default <strong>90 days</strong>); set it to
+                                    <code>0</code> to keep the files forever. <code>GET /rbac-preflight</code> is a
+                                    current-state hygiene report whose sections are <code>ungrantedGroups</code>,
+                                    <code>emptyMembershipEntities</code>, <code>unscopedJobs</code>,
+                                    <code>unscopedJobShare</code>, <code>totalJobs</code>,
+                                    <code>unscopedSchedules</code>, <code>pendingUnbound</code>,
+                                    <code>pendingRevoked</code>, <code>usersEvaluated</code> and
+                                    <code>grantsEvaluated</code>; a scope that belongs to no agency produces no grant,
+                                    so review Settings &rarr; Users &amp; Access &rarr; Access Grants whenever it
+                                    reports one.</td>
                             </tr>
                             <tr>
                                 <td>Shutdown</td>
@@ -5067,7 +4890,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     longer than <code>changeLog</code>'s 365 and <code>activity</code>'s 90. That gap is the point: the file is an <em>export</em> of those tables,
                     and it must outlive the rows that it exported. A value below <code>changeLog</code> throws the
                     exported tail away while the source rows are still there. It has no environment variable. New
-                    deployments and upgrades start at the default.</p>
+                    deployments start at the default.</p>
                 <div class="callout note">
                     <div class="ct"><span class="em">📚</span> The database is authoritative; the file is an export of
                         it</div>
@@ -5109,13 +4932,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
 
                 <h3>8.9 The authentication &amp; authorization trail</h3>
                 <div class="callout note">
-                    <div class="ct"><span class="em">🎉</span> New: before this release, <em>no</em> auth events were
-                        recorded anywhere</div>
-                    <p>No login success, no login failure, no logout, no RBAC denial, no CSRF rejection, in either audit
-                        table. The <em>Recent logins</em> panel is not a substitute and never was: it is an upsert keyed
-                        on the user, so login #2 destroys the record of login #1. If a person asked you for an
-                        authentication audit trail before now, the honest answer was that there was none. There is one
-                        now.</p>
+                    <div class="ct"><span class="em">🪪</span> Every auth event is recorded</div>
+                    <p>Login success, login failure, logout, RBAC denial and CSRF rejection each write an audit row.
+                        The <em>Recent logins</em> panel is not a substitute: it is an upsert keyed
+                        on the user, so login #2 destroys the record of login #1. When a person asks you for an
+                        authentication audit trail, this table is the answer.</p>
                 </div>
                 <p>Auth events go into their own table (<code>auth_events</code>). The <strong>Auth Events</strong>
                     filter under <strong>Settings &rarr; Audit &amp; Compliance</strong> exports them, and
@@ -5163,7 +4984,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <tr>
                                 <td><code>bootstrap-admin</code></td>
                                 <td>Admin came from <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code>, not from a real mapping:
-                                    the emergency lever, now visible.</td>
+                                    the emergency lever, made visible.</td>
                             </tr>
                             <tr>
                                 <td><code>session-revoked</code></td>
@@ -5190,9 +5011,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <strong>If the two always match, your proxy does not set <code>X-Forwarded-For</code></strong>, and
                     the correction is a proxy-side change, not an Cronomicon change.</p>
                 <div class="callout danger">
-                    <div class="ct"><span class="em">🎯</span> <code>CRONOMICON_TRUSTED_PROXIES</code> now has a second
+                    <div class="ct"><span class="em">🎯</span> <code>CRONOMICON_TRUSTED_PROXIES</code> has a second
                         function</div>
-                    <p>It always gated the <code>Remote-*</code> identity headers (&sect;8.5). It now <strong>also gates
+                    <p>It gates the <code>Remote-*</code> identity headers (&sect;8.5). It <strong>also gates
                             client-IP attribution.</strong> The server derives <code>client_ip</code> with a walk of
                         <code>X-Forwarded-For</code> from <strong>right to left</strong>. It discards hops inside this
                         allowlist and stops at the first address that is not one of yours. The walk starts only if
@@ -5204,7 +5025,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             peer outside the list, the peer address is recorded verbatim</strong>, and each forwarding
                         header that it sent is ignored. That is the intended fail-safe: record what can be proven, not
                         what was claimed. But it means that an unset or wrong <code>CRONOMICON_TRUSTED_PROXIES</code> gives
-                        you an auth trail with <em>no</em> client attribution, not a wrong one. A too-wide CIDR now
+                        you an auth trail with <em>no</em> client attribution, not a wrong one. A too-wide CIDR
                         weakens two things, not one.</p>
                 </div>
                 <div class="callout gotcha">
@@ -5258,7 +5079,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <summary>A non-admin triggered or killed a job, but their role does not give that permission
                     </summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> this must not occur now. The run lifecycle
+                        <p class="faq-cause"><strong>Cause:</strong> this must not occur. The run lifecycle
                             (trigger, kill, pause, and resume of a job, and workflow trigger, pause, and cancel) is
                             enforced <strong>per role and per scope</strong> on each execution route. The caller must
                             hold <code>triggerJobs</code> (or <code>killJobs</code>, to stop) <em>on the run's
@@ -5269,8 +5090,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             a bound unscoped job.</p>
                         <p><strong>Correction:</strong> if a person can trigger or kill where they must not, review the
                             <strong>Access Grants</strong> card. Some grant of theirs carries the verb on that scope, or
-                            an <em>All scopes</em> grant carries it everywhere. The old advice to use proxy access policy in
-                            place of roles is obsolete. The allowed-scopes gate also covers a <em>read</em> of a run's
+                            an <em>All scopes</em> grant carries it everywhere. Do not rely on proxy access policy in
+                            place of roles. The allowed-scopes gate also covers a <em>read</em> of a run's
                             details or log, a read of a workflow run, and a cancel of a workflow run (out of scope
                             &rarr; <code>403</code>). (See <a
                                 href="user-manual.html#rbac">&sect;4.2</a>&ndash;&sect;4.3.)</p>
@@ -5293,7 +5114,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <p class="faq-cause"><strong>Cause:</strong> the session keys are unset, too short, or invalid.
                             Thus Cronomicon runs on random ephemeral keys, and a boot warning says so: <em>&ldquo;session
                                 keys unset, too short, or invalid &mdash; using ephemeral keys; sessions won't survive
-                                restart.&rdquo;</em> (SU-6 hardened this. A hash key under 32 bytes is now replaced with
+                                restart.&rdquo;</em> (A hash key under 32 bytes is replaced with
                             a random ephemeral key, so HMAC does not become weaker. A non-base64 value is rejected
                             outside dev-auth, not used as raw bytes.)</p>
                         <p><strong>Correction:</strong> set <code>CRONOMICON_SESSION_HASH_KEY</code> and
@@ -5354,7 +5175,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             env (never redacted).</p>
                         <p><strong>Correction:</strong> use longer secret values that are not trivial. Keep credentials
                             in the secrets system, not in schedule env. Be careful when a script shows a Vault value.
-                            <em>(The display path has been tightened: run-detail output masking now also masks against
+                            <em>(Run-detail output masking also masks against
                                 the run's per-run injected dictionary, which covers Vault-sourced values that the
                                 stored-secret redactor misses. An <code>::cronomicon-output name=X::</code> whose value
                                 carries an injected secret fails the run closed at capture, with reason
@@ -5416,7 +5237,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <li><em>no online runner can run &lt;type&gt; jobs</em>: a capability or toolchain problem,
                                 or a narrowed <code>capabilityMask</code>.</li>
                             <li><em>no online runner belongs to &lt;agency&gt;</em>: the department has no runner up.
-                                This is <code>onlineRunners: 0</code> from <a href="#secrets">&sect;6.1e</a>, now stated
+                                This is <code>onlineRunners: 0</code> from <a href="#secrets">&sect;6.1e</a>, stated
                                 on the run.</li>
                             <li><em>only a runner with no agencies can claim it</em>: the run is
                                 <strong>unbound</strong>, and each runner is departmental. The general pool is
@@ -5436,10 +5257,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <summary>An agency does not delete: &ldquo;still referenced&rdquo;</summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> the guard counts four independent reference
-                            classes: scopes, runners, membership rows, and <strong>owned</strong> entities. It
-                            previously reported all four as &ldquo;referenced by one or more scopes&rdquo;, which sent
-                            operators to do a check of the one class that was already clean.</p>
-                        <p><strong>Correction:</strong> the refusal now names each blocker with its remedy. Three of the
+                            classes: scopes, runners, membership rows, and <strong>owned</strong> entities.</p>
+                        <p><strong>Correction:</strong> the refusal names each blocker with its remedy. Three of the
                             four are ordinary edits: bind the scope to a different agency, enrol the runner again, or
                             clear the membership cell. <strong>Ownership is the one with no clearing path.</strong>
                             Ownership is fixed at creation, and there is no transfer action, so an owned row must be
@@ -5454,10 +5273,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <p class="faq-cause"><strong>Cause:</strong> no master KEK is set, so envelope encryption cannot
                             run.</p>
                         <p><strong>Correction:</strong> configure <code>CRONOMICON_KEK_FILE</code> (or inline
-                            <code>CRONOMICON_KEK</code>, 32-byte base64) and restart. <em>(These moved out of the
-                                <code>CRONOMICON_SECRET_</code> prefix, which read like a store secret. The old
-                                <code>CRONOMICON_SECRET_KEK_FILE</code>/<code>CRONOMICON_SECRET_KEK</code> names dual-read
-                                until v1.5.41 and no longer resolve.)</em></p>
+                            <code>CRONOMICON_KEK</code>, 32-byte base64) and restart. <em>(These sit outside the
+                                <code>CRONOMICON_SECRET_</code> prefix on purpose, because that prefix names a stored
+                                secret reference.)</em></p>
                     </div>
                 </details>
                 <details class="faq">
@@ -5480,24 +5298,22 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             HTTPS (<code>journalctl -u cronomicon-runner</code>). The runner is re-admitted on its next
                             authenticated poll: the row goes back to <code>online</code>, and the same response delivers
                             pending resync, managed settings, and work. If the unit is stopped,
-                            <code>systemctl start cronomicon-runner</code> is the whole recovery. Before v0.57.19 that
-                            restart did not work &mdash; the agent was told to drain and exited immediately (&sect;7.6).
+                            <code>systemctl start cronomicon-runner</code> is the whole recovery (&sect;7.6).
                             Run the lost jobs again.</p>
                     </div>
                 </details>
                 <details class="faq">
-                    <summary>A runner shows <strong>Degraded</strong>. Is that new, and does it change dispatch?
+                    <summary>A runner shows <strong>Degraded</strong>. Does it change dispatch?
                     </summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> an <code>online</code> runner whose heartbeat is
                             more than 2 minutes old (or which registered and never polled) reports
-                            <code>degraded</code>. This is <strong>derived when the row is read</strong>, not stored.
-                            Previously, the status existed in the API enum and the UI, but nothing could produce it.
-                            Thus the Degraded tile read 0 forever, while a dead runner read <em>Online</em> for a
+                            <code>degraded</code>. This is <strong>derived when the row is read</strong>, not stored:
+                            without it, a dead runner would read <em>Online</em> for a
                             maximum of five minutes. See <a href="#runner-ops">&sect;7.6</a>.</p>
                         <p><strong>Correction:</strong> read it as &ldquo;this runner has missed two polls&rdquo; and do
                             a check of the host and the agent service. <strong>Dispatch and claiming are not
-                                affected</strong>: they use the runner's stored status, which did not change. The UI
+                                affected</strong>: they use the runner's stored status. The UI
                             treats a degraded runner as reachable, so <em>Resync</em>, <em>Scan keys</em>, and
                             <em>Drain</em> stay available. If the runner does not recover, the reaper sets it offline at
                             the usual 5-minute threshold, and its in-flight runs become <code>runner_lost</code>.</p>
@@ -5540,23 +5356,24 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             SSH stack. It classifies the result: auth OK, host-key-unknown (&rarr; Scan &amp; approve),
                             permission-denied, or connect-failed. The installer wires <code>doctor --quick</code> as a
                             non-fatal systemd <code>ExecStartPre</code>, so the last journal line before a hang names
-                            the phase that failed. (A schemeless server URL now self-corrects to <code>https://</code>
-                            at register, and does not die with <code>unsupported protocol scheme ""</code>. A poll that
-                            returns <code>401</code> now discards identity and registers again, the same as a
+                            the phase that failed. (A schemeless server URL self-corrects to <code>https://</code>
+                            at register. A poll that
+                            returns <code>401</code> discards identity and registers again, the same as a
                             <code>404</code>, and does not retry a dead token.)</p>
                     </div>
                 </details>
                 <details class="faq">
                     <summary>Vault health shows &ldquo;degraded&rdquo; in Settings although Vault is reachable</summary>
                     <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> a private-CA Vault. The Settings health probe once
-                            ignored <code>CRONOMICON_VAULT_CA_FILE</code> and fell back to the system roots (different from
-                            the KV client). Thus it never validated the cert and always read &ldquo;degraded.&rdquo;</p>
-                        <p><strong>Correction:</strong> upgrade. The probe now builds the same CA-pinned, egress-guarded
-                            transport as the KV client and checks <code>/v1/sys/health</code> correctly. If Vault is
-                            also behind an outbound proxy, note that the CA transport was corrected: it clones
-                            <code>http.DefaultTransport</code> and keeps <code>HTTP(S)_PROXY</code>, keep-alives, and
-                            HTTP/2. A bare transport went around the proxy fully, before. (See <a
+                        <p class="faq-cause"><strong>Cause:</strong> a private-CA Vault whose CA bundle the server
+                            cannot load. The Settings health probe builds the same CA-pinned, egress-guarded
+                            transport as the KV client and checks <code>/v1/sys/health</code>; if
+                            <code>CRONOMICON_VAULT_CA_FILE</code> is unset, unreadable, or does not contain the issuing
+                            CA, the certificate fails validation and the probe reads &ldquo;degraded.&rdquo;</p>
+                        <p><strong>Correction:</strong> point <code>CRONOMICON_VAULT_CA_FILE</code> at the bundle that
+                            issued Vault's certificate and restart. If Vault is also behind an outbound proxy, the CA
+                            transport clones <code>http.DefaultTransport</code> and keeps <code>HTTP(S)_PROXY</code>,
+                            keep-alives, and HTTP/2, so the proxy is honoured. (See <a
                                 href="#secrets">&sect;6</a>.)</p>
                     </div>
                 </details>
@@ -5582,12 +5399,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             identifier (<code>^[A-Za-z_][A-Za-z0-9_]*$</code>). It cannot start with
                             <code>CRONOMICON_</code>, and (Secrets only) it cannot be a reserved KEK name
                             (<code>KEK</code>/<code>KEK_FILE</code>/<code>KEK_VERSION</code>/<code>KEK_&lt;N&gt;</code>).
-                            SSH-credential labels can no longer contain <code>-</code> or <code>.</code>: those broke
+                            SSH-credential labels cannot contain <code>-</code> or <code>.</code>: those would break
                             the derived <code>CRONOMICON_KEY_&lt;label&gt;</code> env-var name.</p>
                         <p><strong>Correction:</strong> change the name to snake_case and try again. Validation applies
-                            to <em>writes only</em>. Existing rows are never validated again, so an upgrade does not
-                            break a configuration that runs. (The demo seed SSH key got the new name
-                            <code>prod_deploy_ed25519</code>.)</p>
+                            to <em>writes only</em>; existing rows are never validated again. (The demo seed SSH key is
+                            named <code>prod_deploy_ed25519</code>.)</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -5619,7 +5435,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         <code>ambiguous_name</code></summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> per-agency names (&sect;6.1h) &mdash; two
-                            departments hold same-named definitions, and a bare-name reference can no longer pick one.
+                            departments hold same-named definitions, and a bare-name reference cannot pick one.
                             Cronomicon refuses rather than guesses, at four sites: a workflow step matching two jobs
                             (&ldquo;qualify the step by identity&rdquo;), a recycle-bin restore or purge, a bare-name
                             definition lookup (<code>409 ambiguous_name</code>), and a service-account trigger on a
@@ -5689,16 +5505,6 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     </div>
                 </details>
                 <details class="faq">
-                    <summary>Where is the &ldquo;Schedule&rdquo; page that the older docs tell about?</summary>
-                    <div class="body">
-                        <p class="faq-cause"><strong>Cause:</strong> the standalone Schedule hub was dissolved.</p>
-                        <p><strong>Correction:</strong> use the <a href="user-manual.html#schedules">Schedules</a> page
-                            tabs (Catalog &middot; Inventory &middot; Upcoming), and <a
-                                href="user-manual.html#jobs">Jobs &rarr; + Publish to GitLab</a> for the publish
-                            builder. <code>/schedule</code> redirects to <code>/schedules</code>.</p>
-                    </div>
-                </details>
-                <details class="faq">
                     <summary>A job fails only at run time with a scope or target error, although it saved with no error
                     </summary>
                     <div class="body">
@@ -5710,20 +5516,18 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     </div>
                 </details>
                 <details class="faq">
-                    <summary>After the upgrade to v0.53.0, a scheduled job runs on one host, not on the full scope
+                    <summary>A scheduled job runs on one host, not on the full scope
                     </summary>
                     <div class="body">
                         <p class="faq-cause"><strong>Cause:</strong> that job has a pinned <code>target_host</code>, and
-                            each run path now obeys the pin. Before, the pin applied only to a manual trigger. Cron
-                            fires and workflow steps dropped it, and target resolution read the resulting
-                            <code>NULL</code> as <em>fan out on the full scope</em>. Thus the job possibly ran
-                            everywhere for its full life. See <a href="#execution">&sect;4.3</a>.</p>
-                        <p><strong>Correction:</strong> nothing, if the pin is what you meant. The change only decreases
+                            each run path obeys the pin: a manual trigger, a cron fire and a workflow step alike. Only
+                            an empty target host means <em>fan out on the full scope</em>. See <a href="#execution">&sect;4.3</a>.</p>
+                        <p><strong>Correction:</strong> nothing, if the pin is what you meant. A pin only decreases
                             the blast radius. If you intended the fan-out, remove that job's target host (in the
-                            Composer, or in its Git YAML), and it fans out again. <strong>Unpinned jobs were never
-                                affected, on all paths.</strong> A quick audit: each job with a non-empty
+                            Composer, or in its Git YAML), and it fans out again. <strong>Unpinned jobs fan out on
+                                all paths.</strong> A quick audit: each job with a non-empty
                             <code>target_host</code> and a schedule or workflow membership is one whose runtime targets
-                            just changed.</p>
+                            are narrowed by the pin.</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -5795,7 +5599,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <dt>Access grant</dt>
                     <dd>One row that says <em>this AD group has this role here</em>. &ldquo;Here&rdquo; is an agency, or
                         <em>All scopes (unrestricted)</em>. A grant is the <strong>only</strong> thing that gives
-                        access. The permission and the scope come from the same grant, so the strongest verb no longer
+                        access. The permission and the scope come from the same grant, so the strongest verb never
                         applies to the widest reach. You edit grants in Settings &rarr; Users &amp; Access &rarr; Access
                         Grants. Each edit signs out all other operators. An identity that matches no grant has no
                         authority.</dd>
@@ -5803,9 +5607,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     <dd>The event stream (<code>/activity</code>), newest first, of run starts and ends, config changes,
                         pushes, Git syncs, and SSH tests. Color shows the outcome.</dd>
                     <dt>Agency</dt>
-                    <dd>Since v0.56.x, also the <strong>department axis for access</strong>: grants are authored against
+                    <dd>An operator-managed <strong>network-isolation zone</strong>, and also the <strong>department
+                            axis for access</strong>: grants are authored against
                         agencies, and secrets, variables, SSH keys, and runners are departmentally owned through agency
-                        membership. First, and still, an operator-managed <strong>network-isolation zone</strong>. A
+                        membership. A
                         scope binds to the one agency that its hosts are in. Each runner is assigned to one or more
                         agencies (operator-assigned; the agent <em>never</em> self-declares). Dispatch is
                         <strong>hard-isolated</strong>: a job dispatches only to a runner in its agency, and an untagged
@@ -5856,7 +5661,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         injection instead gets resolved key <em>material</em> for bound <code>CRONOMICON_KEY_*</code>
                         references, in the manifest Keys block. See Manifest. It is <strong>coequal</strong> with
                         <code>authCredentialId</code> (the first-class <a href="user-manual.html#envvars">SSH key
-                            credential</a>) and <em>not</em> deprecated. The name path is <strong>permanent</strong> for
+                            credential</a>). The name path is <strong>permanent</strong> for
                         runner-executed and inventory-imported hosts, which resolve keys by name <em>locally</em> and
                         never get credential material.</dd>
                     <dt>Bastion (jump host / ProxyJump)</dt>
@@ -5914,7 +5719,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         colliding with a <em>Forbid</em> policy is rejected with <code>409</code>; on a <em>Queue</em>
                         policy it is accepted <code>202</code> and parked (&sect;4.4).</dd>
                     <dt>concurrency_key / concurrency_policy</dt>
-                    <dd>A grouping key (an operator-set custom key, else the job's uid, else legacy
+                    <dd>A grouping key (an operator-set custom key, else the job's uid, else
                         <code>source/name</code>) and a policy (<strong>Allow</strong>, the default;
                         <strong>Forbid</strong>; or <strong>Queue</strong>) that gate concurrent runs. A fire that
                         Forbid suppresses is recorded one time per episode, as a <span class="pill mut"><span
@@ -5949,7 +5754,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         Systemd's <code>TimeoutStopSec=300</code> is the separate SIGTERM grace window.</dd>
                     <dt>Definition uid (permanent identity)</dt>
                     <dd>The identity a job, workflow, or schedule keeps for life &mdash; assigned once, never reused,
-                        unchanged across sync, edit and restore, and now the primary key. Names may repeat across
+                        unchanged across sync, edit and restore, and the primary key. Names may repeat across
                         agencies (&sect;6.1h); the uid is what cascades, bindings, concurrency keys and history filters
                         (<code>?jobUid=</code>) key on.</dd>
                     <dt>Dual-source model</dt>
@@ -6007,8 +5812,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         in the secrets system.</dd>
                     <dt>KEK (Key Encryption Key)</dt>
                     <dd>A 32-byte base64 master key that envelope-encrypts stored secrets and the SMTP password.
-                        Supplied with <code>CRONOMICON_KEK_FILE</code> or <code>CRONOMICON_KEK</code> (the old
-                        <code>CRONOMICON_SECRET_KEK*</code> spellings stopped reading in v1.5.41). <strong>Back it up separately from the DB backup.</strong>
+                        Supplied with <code>CRONOMICON_KEK_FILE</code> or <code>CRONOMICON_KEK</code>.
+                        <strong>Back it up separately from the DB backup.</strong>
                         If you lose it, stored secrets are unrecoverable.</dd>
                     <dt>Manifest</dt>
                     <dd>The execution payload that a runner gets after it claims a run: the trace id, the job, the run
@@ -6122,9 +5927,9 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         fillable field (text, or a <code>&lt;select&gt;</code> on options) in the ad-hoc Run dialog.
                         Answers go on the per-run env-override path. It is <strong>warn-only</strong>: a blank required
                         prompt never blocks the run, and the unfilled name is recorded under <code>promptWarnings</code>
-                        in the run's override envelope, for History. It is not the same as the old inferred <em>Script
-                            variables</em> heuristic, which was demoted out of the run path to a Composer seed and a
-                        drift lint. See <a href="user-manual.html#jobs">&sect;6</a>.</dd>
+                        in the run's override envelope, for History. It is not the same as the inferred <em>Script
+                            variables</em> heuristic, which is only a Composer seed and a
+                        drift lint, never part of the run path. See <a href="user-manual.html#jobs">&sect;6</a>.</dd>
                     <dt>Runner / runner agent</dt>
                     <dd>The external <code>cronomicon-runner</code> binary on a separate host. It registers, long-polls for
                         <code>executor='runner'</code> runs, does them, and streams logs back while they execute (a 2-second
@@ -6177,11 +5982,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         advisory. A scope rename does <em>not</em> cascade. A job's scope is validated only at run time.
                     </dd>
                     <dt>Scope grant (allowed scopes)</dt>
-                    <dd>In the past, the per-role scope set from the Scope Restrictions matrix (tri-state and
-                        fail-closed: <code>*</code> = unrestricted; a named set = exactly those; empty = zero scope
-                        access). <strong>Access grants replaced it</strong>: reach now comes from the agency (or <em>All
-                            scopes</em>) named on each grant, expanded through the agency's scopes at login. The
-                        fail-closed posture did not change: no grant means no access, and a scope-restricted admin stays
+                    <dd>The set of scopes an identity can reach, tri-state and fail-closed: <code>*</code> =
+                        unrestricted; a named set = exactly those; empty = zero scope access. Reach comes from the
+                        agency (or <em>All scopes</em>) named on each access grant, expanded through the agency's
+                        scopes at login. No grant means no access, and a scope-restricted admin stays
                         restricted.</dd>
                     <dt>Source-of-truth rule</dt>
                     <dd>Git is truth for definitions. The database is truth for state and operator config. Where they
@@ -6386,8 +6190,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td><code>GET/POST /agencies</code>, <code>PUT/DELETE /agencies/{id}</code> (rename and
                                     delete; <code>agency_in_use</code> 409); membership =
                                     <code>PUT /{scope,secret,env-var,ssh-credential}-agencies/{id}</code> and
-                                    <code>PUT /agencies/{agencyId}/members</code> (&sect;6.1e; the old per-scope bind
-                                    column is gone), <code>PUT /runner-agencies</code> (per-runner membership; edited
+                                    <code>PUT /agencies/{agencyId}/members</code> (&sect;6.1e),
+                                    <code>PUT /runner-agencies</code> (per-runner membership; edited
                                     as inline chips per runner)</td>
                                 <td>ConfigureApp = Admin</td>
                             </tr>
@@ -6522,8 +6326,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td>The mounted base64 KEK (a file path, or an inline value). Back it up separately from
                                     the DB. Rotation forms: <code>CRONOMICON_KEK_VERSION</code>,
                                     <code>CRONOMICON_KEK_&lt;N&gt;</code> / <code>CRONOMICON_KEK_&lt;N&gt;_FILE</code>.
-                                    Renamed out of the <code>CRONOMICON_SECRET_</code> reference prefix; the legacy
-                                    <code>CRONOMICON_SECRET_KEK*</code> names no longer read (v1.5.41)</td>
+                                    Deliberately outside the <code>CRONOMICON_SECRET_</code> reference prefix</td>
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_SSH_EXECUTOR_ENABLED</code></td>
@@ -6697,8 +6500,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                             <tr>
                                 <td><span class="pill ok"><span class="dot"></span>Success</span></td>
                                 <td><code>success</code>, <code>ok</code></td>
-                                <td>Runs; the Jobs and Workflows <em>Success</em> tabs (formerly named <em>Healthy</em>
-                                    / <em>Passing</em>)</td>
+                                <td>Runs; the Jobs and Workflows <em>Success</em> tabs</td>
                             </tr>
                             <tr>
                                 <td><span class="pill warn"><span class="dot"></span>Warn</span></td>
@@ -6737,7 +6539,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                 <td><span class="pill mut"><span class="dot"></span>Cancelled</span></td>
                                 <td><code>cancelled</code> (display only)</td>
                                 <td>Workflow runs only. A cancellation is stored as the CHECK-legal terminal
-                                    <code>failure</code> plus a flag (migration 260), so no <code>runs</code> row can
+                                    <code>failure</code> plus a flag, so no <code>runs</code> row can
                                     carry it</td>
                             </tr>
                             <tr>
@@ -6762,8 +6564,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     </table>
                 </div>
                 <p class="muted" style="font-size:13.5px">One function produces these labels, and a build-time guard
-                    fails if a status word is written by hand anywhere else. The same word had already drifted four
-                    times across screens. Wire values did not change; only the printed text moved.</p>
+                    fails if a status word is written by hand anywhere else, so the printed text cannot drift
+                    between screens. Wire values are the API enum; only the printed text is mapped.</p>
                 <p><strong>Status reasons</strong> that can show next to a failed run: <code>killed</code> (an operator
                     stop, left unclassified), <code>runner_lost</code> (a runner reaped mid-run; the amber
                     &ldquo;Lost&rdquo; badge), <code>executor_lost</code> (an in-app SSH run that a crash or restart

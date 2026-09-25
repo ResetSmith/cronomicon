@@ -1,4 +1,4 @@
-<h1>Administrator course (v1.5.6)</h1>
+<h1>Administrator course (v2.0.0)</h1>
 
 <!--
   Administrator training course — body-only fragment (TR-4,
@@ -932,9 +932,9 @@
     </div>
 </div>
 
-<p>That third one used to be the other way round in much older versions, and it was a trap: an empty scope
-    list meant unrestricted. It now fails closed. If you read old notes suggesting otherwise, they are
-    describing behaviour that no longer exists.</p>
+<p>That third one is the trap: an empty scope list does not mean unrestricted. It fails closed. Some
+    schedulers treat an empty restriction list as "no restriction"; Cronomicon does not, and nothing you
+    have carried over from such a tool should assume it.</p>
 
 <p>One more thing that catches people: <strong>AD group names are case-sensitive.</strong>
     <code>Finance-Ops</code> and <code>finance-ops</code> are different groups, and a grant against the

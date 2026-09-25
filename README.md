@@ -6,8 +6,12 @@
 
 <p align="center"><em>Ancient rites of scheduling, made easy.</em></p>
 
-[![Version](https://img.shields.io/badge/version-1.5.45-blue)](CHANGELOG.md)
-[![Status](https://img.shields.io/badge/status-stable-brightgreen)](CHANGELOG.md#100---2026-08-11)
+<p align="center">
+  <img src="assets/cronomicon-demo.gif" alt="Cronomicon in action: the Dashboard, the Jobs catalog, kicking off a run from the Run dialog, the run landing in History, and a workflow's step graph" width="900">
+</p>
+
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-stable-brightgreen)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 Cronomicon is a **centralized script orchestrator** for scheduling and executing Bash, Ansible, Terraform, PowerShell, Perl, and Python jobs with a modern web UI, departmental access control, and distributed execution via autonomous runner agents.
@@ -50,14 +54,14 @@ This repository holds the application only. Running it behind a reverse proxy an
 
 ## Architecture
 
-Cronomicon is deployed as **a single static Go binary** (`T1/T3`) — one container, one process, one SQLite database (`/var/lib/cronomicon/cronomicon.db`). The frontend is embedded in the binary and served as static assets from `web/dist/`.
+Cronomicon is deployed as **a single static Go binary** — one container, one process, one SQLite database (`/var/lib/cronomicon/cronomicon.db`). The frontend is embedded in the binary and served as static assets from `web/dist/`.
 
 ### Core Surfaces
 
 | Path | Component | Status |
 |------|-----------|--------|
-| [`backend/`](backend/) | Go API server + embedded frontend | v2.0.0 — Stable (schema v1150, runner protocol v13) |
-| [`frontend/`](frontend/) | React + TypeScript + Vite | v2.0.0 — 15 routed views |
+| [`backend/`](backend/) | Go API server + embedded frontend | Stable (schema v1150, runner protocol v13) |
+| [`frontend/`](frontend/) | React + TypeScript + Vite | Stable (15 routed views) |
 
 ### Key Features
 
@@ -65,78 +69,78 @@ Cronomicon is deployed as **a single static Go binary** (`T1/T3`) — one contai
 
 - **Multi-executor support**: SSH (direct + bastion), Ansible, Terraform, Bash, PowerShell, Perl, Python
 - **Distributed runners**: Autonomous `cronomicon-runner` agents with capability-based job routing
-- **Self-service runner provisioning (v0.47.x)**: The server hosts the installer and distributes the agent binary; a one-click **Add Runner** flow issues **single-use registration tokens**, and runners self-register. Server-managed runner settings with **config-drift detection** and a one-click **Resync**, host-key scan-and-approve, runner **tags** + inline group membership, and a unified auth model (**one key + one trust store** for both Bash and Ansible, with an optional **Vault Agent sidecar** for runner-local secrets)
-- **Ansible checkout projects (v0.46.0–v0.46.6)**: Runners execute full Ansible playbook **projects** (roles, `vars_files`, `.j2` templates) by checking out the playbooks repo at a **server-pinned commit SHA** — opt-in per job and per runner (`-allow-checkout` + a repo allowlist). Per-run `requirements.yml`/galaxy installs, Ansible Vault, requirement-token **claim gating** (`vault`, `collection:<fqcn>` route a run only to runners that satisfy it), and a per-run `systemd-run` **sandbox** with scoped child env. Body-only playbook runs are unchanged.
-- **Scope-aware execution**: Jobs bound to named scopes (prod/staging/dev); since v0.56.4 both the **scope and the verb** are enforced on every execution route — a viewer cannot trigger or kill, and an operator holds the verbs only where their grant says
-- **Target-host pinning honored everywhere (v0.53.0)**: A job pinned to a single `target_host` runs on that host on **every** path — manual trigger, cron fire, workflow step, and ansible (`--limit`) — where previously only manual triggers applied the pin. A pin that cannot be expressed as an ansible limit is refused loudly rather than silently widened
-- **Declared run inputs (v0.38, reworked v0.51.4–.7)**: A Job or Script declares the values an operator supplies at run time; the Run dialog leads with them (readiness meter, provenance chips), and a job can enforce **Warn or Block** on a missing required input
-- **Agency-based runner isolation**: Runners group into **agencies** (network-isolation zones) — since v0.52.1–.4 the **single membership axis** for scopes, secrets, variables, SSH keys, and runners; a job dispatches only to a runner that can reach its network (hard, disjoint, operator-governed)
-- **Runner targeting (v1.3.0–v1.3.5)**: Within an agency, a job — or a single ad-hoc run — can be **pinned to runners carrying a given tag**, so work that must reach a particular network segment goes to a runner that sits on it instead of to whichever runner is free. Set in Git YAML (`spec.runner_tag`), in the Composer's **Run on** field, or per run in the Run dialog
-- **Run-as agency credentials (v0.57.0–v0.57.6)**: One job body runs under **each department's own credential**. A binding declares the **name a reference arrives under**, so two agencies can each hold `BECOME_PASSWORD` in `prod` and a run resolves its own; the Ansible **become password** is supplied from a named Secret and is never an environment variable
-- **Concurrency control**: Custom `concurrency_key` grouping of unrelated jobs under a shared concurrency gate (defaulting to a source-aware `source/name` key), with three policies — `Allow` (overlap), `Forbid` (lose the fire, recorded as skipped), and `Queue` (park and promote when the gate clears, capped at 3 per key). A per-trigger **priority** reorders the claim. `Replace` was removed in v0.57.29 because no code ever honoured it
-- **Service-level expectations (v0.57.28)**: A job can declare `warn_after_seconds` ("this normally finishes in 20 minutes") and `must_finish_by` ("done before the 06:00 batch"), and Cronomicon notices a run that is **late** or that **never ran at all** — distinct from `timeout_seconds`, which kills it
-- **Live log tailing (v1.4.16–v1.5.0)**: A running job's log follows itself in History — the SSH executor writes line-by-line, and runner agents flush pending lines every two seconds (wire protocol **v12**) instead of delivering the whole log at the end
-- **Key-bound runs refuse the SSH executor (v1.5.35)**: A job that binds an SSH key credential only runs on a runner agent; if the run resolves to the in-app SSH executor it is refused with a stated reason rather than silently run without the key
+- **Self-service runner provisioning**: The server hosts the installer and distributes the agent binary; a one-click **Add Runner** flow issues **single-use registration tokens**, and runners self-register. Server-managed runner settings with **config-drift detection** and a one-click **Resync**, host-key scan-and-approve, runner **tags** + inline group membership, and a unified auth model (**one key + one trust store** for both Bash and Ansible, with an optional **Vault Agent sidecar** for runner-local secrets)
+- **Ansible checkout projects**: Runners execute full Ansible playbook **projects** (roles, `vars_files`, `.j2` templates) by checking out the playbooks repo at a **server-pinned commit SHA** — opt-in per job and per runner (`-allow-checkout` + a repo allowlist). Per-run `requirements.yml`/galaxy installs, Ansible Vault, requirement-token **claim gating** (`vault`, `collection:<fqcn>` route a run only to runners that satisfy it), and a per-run `systemd-run` **sandbox** with scoped child env. Body-only playbook runs need none of this.
+- **Scope-aware execution**: Jobs bound to named scopes (prod/staging/dev); both the **scope and the verb** are enforced on every execution route — a viewer cannot trigger or kill, and an operator holds the verbs only where their grant says
+- **Target-host pinning honored everywhere**: A job pinned to a single `target_host` runs on that host on **every** path — manual trigger, cron fire, workflow step, and ansible (`--limit`). A pin that cannot be expressed as an ansible limit is refused loudly rather than silently widened
+- **Declared run inputs**: A Job or Script declares the values an operator supplies at run time; the Run dialog leads with them (readiness meter, provenance chips), and a job can enforce **Warn or Block** on a missing required input
+- **Agency-based runner isolation**: Runners group into **agencies** (network-isolation zones), the **single membership axis** for scopes, secrets, variables, SSH keys, and runners; a job dispatches only to a runner that can reach its network (hard, disjoint, operator-governed)
+- **Runner targeting**: Within an agency, a job — or a single ad-hoc run — can be **pinned to runners carrying a given tag**, so work that must reach a particular network segment goes to a runner that sits on it instead of to whichever runner is free. Set in Git YAML (`spec.runner_tag`), in the Composer's **Run on** field, or per run in the Run dialog
+- **Run-as agency credentials**: One job body runs under **each department's own credential**. A binding declares the **name a reference arrives under**, so two agencies can each hold `BECOME_PASSWORD` in `prod` and a run resolves its own; the Ansible **become password** is supplied from a named Secret and is never an environment variable
+- **Concurrency control**: Custom `concurrency_key` grouping of unrelated jobs under a shared concurrency gate (defaulting to a source-aware `source/name` key), with three policies — `Allow` (overlap), `Forbid` (lose the fire, recorded as skipped), and `Queue` (park and promote when the gate clears, capped at 3 per key). A per-trigger **priority** reorders the claim
+- **Service-level expectations**: A job can declare `warn_after_seconds` ("this normally finishes in 20 minutes") and `must_finish_by` ("done before the 06:00 batch"), and Cronomicon notices a run that is **late** or that **never ran at all** — distinct from `timeout_seconds`, which kills it
+- **Live log tailing**: A running job's log follows itself in History — the SSH executor writes line-by-line, and runner agents flush pending lines every two seconds instead of delivering the whole log at the end
+- **Key-bound runs refuse the SSH executor**: A job that binds an SSH key credential only runs on a runner agent; if the run resolves to the in-app SSH executor it is refused with a stated reason rather than silently run without the key
 - **Run history & tracing**: Full audit trail with trace IDs, timing, and outcome logging
 
 #### Ways a run starts
 
 Six producers can start a run, and each one records what it was:
 
-| Trigger | What starts the run | Since |
-|---|---|---|
-| **Schedule** | A cron schedule fires — subject to activation windows, interval/once modes, and **working calendars** | core |
-| **Manual** | An operator clicks **Run**, optionally deferring it to a chosen time | core |
-| **Git push** | A GitLab webhook syncs definitions (it publishes changes, it does not run jobs) | core |
-| **API token** | A machine principal (**service account**) calls the API with `Authorization: Bearer <token>` — no browser session required | v0.57.26 |
-| **Reaction** | Another job or workflow **finished**, and something is watching for that | v0.57.13–.18 |
-| **File arrival** | A file matching a watch pattern **appeared** on a target host | v0.57.31 |
+| Trigger | What starts the run |
+|---|---|
+| **Schedule** | A cron schedule fires — subject to activation windows, interval/once modes, and **working calendars** |
+| **Manual** | An operator clicks **Run**, optionally deferring it to a chosen time |
+| **Git push** | A GitLab webhook syncs definitions (it publishes changes, it does not run jobs) |
+| **API token** | A machine principal (**service account**) calls the API with `Authorization: Bearer <token>` — no browser session required |
+| **Reaction** | Another job or workflow **finished**, and something is watching for that |
+| **File arrival** | A file matching a watch pattern **appeared** on a target host |
 
-- **Working calendars (v0.57.10–.12)**: A calendar (holidays, maintenance freezes, business days) **vetoes** a scheduled fire — it can only suppress a run, never cause one — and the suppression is recorded, so you can prove a job did not run on Christmas Day and say why
-- **Reactions (v0.57.13–.18)**: Jobs and workflows react to each other's completions in all four pairings, without a workflow wrapping them. Stopping a run records a **disposition** (what you meant by stopping it) that reactors consume; chains carry a depth ceiling that holds across workflow step graphs, and every fire decision — including "decided to fire, could not" — lands in a delivery log
-- **Service accounts (v0.57.26)**: Machine principals with their own tokens, permissions and audit identity. The plaintext token is shown once at creation and only its hash is stored — a lost token is reissued, never recovered
-- **File-arrival triggers (v0.57.31)**: A job declares the paths it watches; a runner reports sightings, and a durable sighting record answers "the file landed — why did nothing happen?" when a gate refused the trigger
-- **Deferred ad-hoc runs (v0.55.20)**: "Run this at 22:00 tonight" parks the run and promotes it when due, re-judging the concurrency gate and caps at promotion time
+- **Working calendars**: A calendar (holidays, maintenance freezes, business days) **vetoes** a scheduled fire — it can only suppress a run, never cause one — and the suppression is recorded, so you can prove a job did not run on Christmas Day and say why
+- **Reactions**: Jobs and workflows react to each other's completions in all four pairings, without a workflow wrapping them. Stopping a run records a **disposition** (what you meant by stopping it) that reactors consume; chains carry a depth ceiling that holds across workflow step graphs, and every fire decision — including "decided to fire, could not" — lands in a delivery log
+- **Service accounts**: Machine principals with their own tokens, permissions and audit identity. The plaintext token is shown once at creation and only its hash is stored — a lost token is reissued, never recovered
+- **File-arrival triggers**: A job declares the paths it watches; a runner reports sightings, and a durable sighting record answers "the file landed — why did nothing happen?" when a gate refused the trigger
+- **Deferred ad-hoc runs**: "Run this at 22:00 tonight" parks the run and promotes it when due, re-judging the concurrency gate and caps at promotion time
 
 #### Workflow Orchestration
 
-- **Step graphs**: Chain jobs serially, run groups in parallel, branch on a prior step's status/output (`type: branch`), nest a serial chain inside a parallel arm (`type: sequence`), or call another workflow as a step (`type: workflow`, v0.57.30) — all authorable directly in-app
-- **Error resilience & retries (v0.35.0)**: Configure step-level retry limits, backoff periods, and continue-on-error behavior overrides
-- **Soft-cancel (v0.35.0)**: Graceful cancellation of running workflow runs, skipping unstarted steps while allowing active jobs to finish cleanly
-- **Stable run linkage (v0.35.0)**: Runs are indexed to workflow definitions by stable name + source rather than DB row ID, preserving links across workflow re-creations
-- **Inter-job env passing (A12)**: a job emits `::cronomicon-output name=KEY::value` on stdout; a downstream step consumes it as injected env via an explicit `{fromStep, fromOutput}` reference
-- **Sub-workflows (v0.57.30)**: a common sequence ("quiesce, snapshot, verify") is authored once and referenced as a step by every workflow that needs it, instead of copied into each
-- **Unambiguous step targets (v1.2.2)**: since two departments may own a job of the same name, a step can name **which** one it means (by agency) rather than refusing to guess
+- **Step graphs**: Chain jobs serially, run groups in parallel, branch on a prior step's status/output (`type: branch`), nest a serial chain inside a parallel arm (`type: sequence`), or call another workflow as a step (`type: workflow`) — all authorable directly in-app
+- **Error resilience & retries**: Configure step-level retry limits, backoff periods, and continue-on-error behavior overrides
+- **Soft-cancel**: Graceful cancellation of running workflow runs, skipping unstarted steps while allowing active jobs to finish cleanly
+- **Stable run linkage**: Runs are indexed to workflow definitions by their permanent id rather than DB row ID, preserving links across workflow re-creations
+- **Inter-job env passing**: a job emits `::cronomicon-output name=KEY::value` on stdout; a downstream step consumes it as injected env via an explicit `{fromStep, fromOutput}` reference
+- **Sub-workflows**: a common sequence ("quiesce, snapshot, verify") is authored once and referenced as a step by every workflow that needs it, instead of copied into each
+- **Unambiguous step targets**: since two departments may own a job of the same name, a step can name **which** one it means (by agency) rather than refusing to guess
 
-#### Composable primitives & dual-source (v20)
+#### Composable primitives & dual-source
 
 - **First-class Scripts & Schedules**: reusable executable units (`scripts/`) and reusable named crons (`schedules/`) that many Jobs/Workflows reference (`script_ref` / `scheduleRefs`); each carries a blast-radius "used by" index
 - **Git OR Cronomicon**: Jobs, Workflows, Schedules, and Scopes may live in Git **or** be authored in the DB in-app; Scripts stay Git-only; Env Vars live in Cronomicon or Vault. The runtime keys every definition by `(source, name)`, so a Git `backup` and an in-app `backup` never collide
-- **In-app composition (A11)**: build a Job from a Script × Schedule(s) × Scope × env, or assemble a Workflow from job steps, entirely in the UI — no Git round-trip
-- **Compose RBAC**: in-app authoring is gated by the `compose` permission — since v1.0.14 a **grantable, agency-bound** permission ("FIN composer — authors FIN's jobs and nothing else") rather than admin-only, checked **per job** against the scope it is leaving and the one it is arriving at. Global (no-agency) definitions and shared surfaces — reusable schedules, calendars, reactions, revision history and the recycle bin — remain admin-only by design. Git authoring is unaffected
-- **Job-level env (v0.29.0)**: a Job declares an env map merged into **every** run, with precedence job-env → schedule env → per-run override
-- **Operator-owned tags (v0.36.1–v0.36.5)**: User-authored tags on Scripts, Jobs, Workflows, and Schedules are SQLite-only, preserved during Git resyncs, and inline-editable by any logged-in user
-- **Operator annotations (v1.2.4–v1.2.7)**: A job or workflow carries free-text **notes**, a **critical** flag, and a **contact** — who to call when it breaks. Like tags they live only in Cronomicon, survive Git syncs, and never overwrite the Git-owned `description`. **Critical** is a sortable column of its own (v1.4.0), and a failure notification names the contact and says whether the definition is critical
-- **Revision history & recycle bin (v0.57.27)**: A Git-source definition has history, blame and undelete through Git; cronomicon-source Jobs, Workflows and Schedules now have the same — every edit records a revision you can view and **restore**, and a delete is recoverable from a recycle bin instead of gone
+- **In-app composition**: build a Job from a Script × Schedule(s) × Scope × env, or assemble a Workflow from job steps, entirely in the UI — no Git round-trip
+- **Compose RBAC**: in-app authoring is gated by the `compose` permission, a **grantable, agency-bound** permission ("FIN composer — authors FIN's jobs and nothing else") checked **per job** against the scope it is leaving and the one it is arriving at. Global (no-agency) definitions and shared surfaces — reusable schedules, calendars, reactions, revision history and the recycle bin — are admin-only by design. Git authoring is unaffected
+- **Job-level env**: a Job declares an env map merged into **every** run, with precedence job-env → schedule env → per-run override
+- **Operator-owned tags**: User-authored tags on Scripts, Jobs, Workflows, and Schedules are SQLite-only, preserved during Git resyncs, and inline-editable by any logged-in user
+- **Operator annotations**: A job or workflow carries free-text **notes**, a **critical** flag, and a **contact** — who to call when it breaks. Like tags they live only in Cronomicon, survive Git syncs, and never overwrite the Git-owned `description`. **Critical** is a sortable column of its own, and a failure notification names the contact and says whether the definition is critical
+- **Revision history & recycle bin**: A Git-source definition has history, blame and undelete through Git; cronomicon-source Jobs, Workflows and Schedules have the same — every edit records a revision you can view and **restore**, and a delete is recoverable from a recycle bin instead of gone
 
 #### Catalog & script intelligence
 
-- **Folder browsing (v0.30.0)**: Scripts, Jobs, Schedules, and Workflows nest into sub-folders of any depth and render as a navigable file tree; searching flattens to path-labelled results
-- **Script lint + variable detection (v0.26.0 / v0.31.0)**: each synced script is scanned for body-lint warnings (CRLF, missing shebang, …) and the **environment variables it references** — surfaced as required/optional/already-provided chips in the Scripts catalog, the Run dialog, and the Job Composer so operators know what to define
+- **Folder browsing**: Scripts, Jobs, Schedules, and Workflows nest into sub-folders of any depth and render as a navigable file tree; searching flattens to path-labelled results
+- **Script lint + variable detection**: each synced script is scanned for body-lint warnings (CRLF, missing shebang, …) and the **environment variables it references** — surfaced as required/optional/already-provided chips in the Scripts catalog, the Run dialog, and the Job Composer so operators know what to define
 - **On-demand body**: a script's resolved body is read from the synced clone on expand (path-traversal-guarded, 1 MiB display cap), never stored
-- **Unified tables & tag filtering (v0.36.0–v0.36.4)**: Client-side Tag filter dropdown on all catalogs, resizable columns, and uniform row heights with "+N" tag overflow
+- **Unified tables & tag filtering**: Client-side Tag filter dropdown on all catalogs, resizable columns, and uniform row heights with "+N" tag overflow
 
 #### Secrets & Access Control
 
-- **Reference-based secret injection (v0.49.x)**: A job binds **reference names** — an env var, a stored secret, or a Vault path — instead of embedding plaintext. At dispatch time the resolver injects only the declared references into the run's environment (on both the SSH and runner paths), redacts them from logs, and records a one-time audit entry of exactly what was injected
-- **HashiCorp Vault as a secret source (v0.49.x)**: Env vars and SSH credentials can resolve from Vault instead of the local encrypted store, configured under **Settings → Integrations → Vault** — authenticating via **AppRole or a static token** (token auth wired end-to-end in v0.52.29; switching methods requires re-entering the credential)
-- **Security remediation (v0.51.x)**: Scope-scoped reads (out-of-scope rows 404/drop from listings), 8-hour sessions with **revocation on RBAC edits**, bastion host-key pinning, an SSRF egress guard on credentialed outbound calls, git-token argv-leak fix, and secret zeroization
-- **KEK rotation you can finish (v1.5.30)**: `cronomicon rewrap-secrets` re-encrypts all three encrypted stores (secrets, SSH credentials, encrypted settings) under the current key; `--dry-run` counts rows per key version without decrypting. A world-readable `CRONOMICON_KEK_FILE` **refuses to boot**
-- **The audit stream is masked (v1.5.34)**: One process-wide redaction dictionary — stored secrets, SSH credentials, encrypted settings, multi-line variables — is applied to every compliance audit row before it is written, and the same dictionary feeds the per-run log redactor so the two cannot drift
-- **Env-var namespace references (v0.48.x)**: One env var or secret can derive its value from another through reserved reference prefixes, resolved when a run's environment is built
-- **Departmental access control (v0.56.x, superseding the A5 matrix of v0.50.x)**: Access is decided by **Access Grants** — each grant pairs an AD group with a role and the **agency** (department) it applies to, or "All scopes" for unrestricted reach — so "Operator, but only for Tax" is one row. Roles are **editable data** (seven permissions; custom roles are rows, not code), a permission and a scope must come from the **same grant** (holding Operator in Finance grants nothing in Tax), and secrets, variables, SSH keys and runners are **departmentally owned**: writes and secret reveal require the verb on the owning agency, and entities in no agency are shared infrastructure only unrestricted operators may change. **No grants means no access**; recovery from a lockout is the offline `cronomicon grant-admin` subcommand. The legacy two-axis tables were dropped in v0.57.8 (schema 850)
-- **Agency-first ownership (v1.0.13–v1.0.15)**: Every job now **states** its agency, and "All agencies (global)" is a deliberate, visible choice rather than what an unfilled field silently meant. Authoring became a grantable departmental permission (above), and a department can **administer its own access** — deciding who does its work — without a global admin
-- **Two departments, one name (v1.1.0–v1.2.3)**: Jobs, workflows and schedules carry a **permanent id** independent of their name, so name uniqueness relaxes to per-agency: Finance and Tax may each own a `monthly-close`. Everything that used to identify a definition by name — run history, schedule entries, pauses, parked runs, reactions, credential bindings, concurrency gates, log-folder codes and alert targets — follows the id instead, and any screen where a name is ambiguous says which department it means. Runner protocol reached **v11**
+- **Reference-based secret injection**: A job binds **reference names** — an env var, a stored secret, or a Vault path — instead of embedding plaintext. At dispatch time the resolver injects only the declared references into the run's environment (on both the SSH and runner paths), redacts them from logs, and records a one-time audit entry of exactly what was injected
+- **HashiCorp Vault as a secret source**: Env vars and SSH credentials can resolve from Vault instead of the local encrypted store, configured under **Settings → Integrations → Vault** — authenticating via **AppRole or a static token** (switching methods requires re-entering the credential)
+- **Hardened by default**: Scope-scoped reads (out-of-scope rows 404/drop from listings), 8-hour sessions with **revocation on RBAC edits**, bastion host-key pinning, an SSRF egress guard on credentialed outbound calls, no git token on any argv, and secret zeroization
+- **KEK rotation you can finish**: `cronomicon rewrap-secrets` re-encrypts all three encrypted stores (secrets, SSH credentials, encrypted settings) under the current key; `--dry-run` counts rows per key version without decrypting. A world-readable `CRONOMICON_KEK_FILE` **refuses to boot**
+- **The audit stream is masked**: One process-wide redaction dictionary — stored secrets, SSH credentials, encrypted settings, multi-line variables — is applied to every compliance audit row before it is written, and the same dictionary feeds the per-run log redactor so the two cannot drift
+- **Env-var namespace references**: One env var or secret can derive its value from another through reserved reference prefixes, resolved when a run's environment is built
+- **Departmental access control**: Access is decided by **Access Grants** — each grant pairs an AD group with a role and the **agency** (department) it applies to, or "All scopes" for unrestricted reach — so "Operator, but only for Tax" is one row. Roles are **editable data** (seven permissions; custom roles are rows, not code), a permission and a scope must come from the **same grant** (holding Operator in Finance grants nothing in Tax), and secrets, variables, SSH keys and runners are **departmentally owned**: writes and secret reveal require the verb on the owning agency, and entities in no agency are shared infrastructure only unrestricted operators may change. **No grants means no access**; recovery from a lockout is the offline `cronomicon grant-admin` subcommand
+- **Agency-first ownership**: Every job **states** its agency, and "All agencies (global)" is a deliberate, visible choice rather than an unfilled field. Authoring is a grantable departmental permission (above), and a department can **administer its own access** — deciding who does its work — without a global admin
+- **Two departments, one name**: Jobs, workflows and schedules carry a **permanent id** independent of their name, so name uniqueness is per-agency: Finance and Tax may each own a `monthly-close`. Everything that identifies a definition — run history, schedule entries, pauses, parked runs, reactions, credential bindings, concurrency gates, log-folder codes and alert targets — follows the id, and any screen where a name is ambiguous says which department it means
 
 #### Configuration & GitOps
 
@@ -151,22 +155,22 @@ Six producers can start a run, and each one records what it was:
 - **Schedule → Git**: Publish cron jobs back to GitLab as commits
 - **Concurrent-edit detection**: `baseShaRef` ensures safe collaborative edits
 - **Scheduler integration**: Built-in daemon fires scheduled jobs on time, with fingerprint-aware DB checks for instant reloads on Cronomicon-managed changes
-- **Activation windows & modes (v0.55.18–.19)**: A schedule can carry a start and end date, and run on a fixed **interval** or exactly **once** instead of a cron expression
-- **Working calendars (v0.57.10–.12)**: Authored under **Schedules → Calendars**; a calendar vetoes fires on the days it names, and the veto is recorded on the job's timeline rather than passing silently
+- **Activation windows & modes**: A schedule can carry a start and end date, and run on a fixed **interval** or exactly **once** instead of a cron expression
+- **Working calendars**: Authored under **Schedules → Calendars**; a calendar vetoes fires on the days it names, and the veto is recorded on the job's timeline rather than passing silently
 - **Upcoming**: a forward projection of what will fire and when, including **queued** runs waiting on a concurrency gate (shown as "waiting for the gate" — nobody knows when it will fire) and deferred ad-hoc runs, each cancellable from the list
 
 #### Observability & Compliance
 
-- **The Dashboard leads with its answer (v1.5.3–v1.5.5)**: A **verdict strip** at the top says whether anything needs attention (dismissible per attention set — it returns the moment a new failure appears), then the **Score** timeline — 24h back / 12h ahead, filled marks for runs, hollow for scheduled, coincident runs stacked as **chords**, every stat tile a link — then **Up next** (the next three fires) and **Recent errors** (folded per job, deep-linking into that job's History)
-- **Activity feed (server-searched since v1.5.24)**: Real-time stream of runs, config changes, pushes, and syncs — searched and paged on the server, with a Kind filter, an **Actor** picker (users / runners / system), a **Range** select with custom From/To, and a runner name on every card that has one (v1.5.24–v1.5.29)
-- **Audit trail**: Config change log **plus a compliance audit stream with real auth events** (login/logout/denial/CSRF, v0.52.11), exportable, with per-window retention that genuinely reaps files (v0.52.8)
-- **Structured logging (v0.52.8–.12)**: A process log on disk (`cronomicon.log`) with a live re-pointable log directory, and run logs grouped into **per-entity folders** keyed by a stable entity code
-- **S3 log archive (v1.5.33)**: Local disk stays the only write target during a run; a scheduled sweep copies sealed logs to any S3-compatible bucket (verify-by-size, budgeted, with an optional expiry window), History reads an archived log through the server when the local file is gone, and the local reaper never removes an unarchived log while the tier is on
-- **Runner placement survives re-registration (v1.5.30)**: A runner that loses its identity re-registers into the general pool; its previous agency placement is snapshotted before the old row is deleted and the Runners view offers **Restore placement** — never automatic, because the name is self-declared
+- **The Dashboard leads with its answer**: A **verdict strip** at the top says whether anything needs attention (dismissible per attention set — it returns the moment a new failure appears), then the **Score** timeline — 24h back / 12h ahead, filled marks for runs, hollow for scheduled, coincident runs stacked as **chords**, every stat tile a link — then **Up next** (the next three fires) and **Recent errors** (folded per job, deep-linking into that job's History)
+- **Activity feed**: Real-time stream of runs, config changes, pushes, and syncs — searched and paged on the server, with a Kind filter, an **Actor** picker (users / runners / system), a **Range** select with custom From/To, and a runner name on every card that has one
+- **Audit trail**: Config change log **plus a compliance audit stream with real auth events** (login/logout/denial/CSRF), exportable, with per-window retention that genuinely reaps files
+- **Structured logging**: A process log on disk (`cronomicon.log`) with a live re-pointable log directory, and run logs grouped into **per-entity folders** keyed by a stable entity code
+- **S3 log archive**: Local disk stays the only write target during a run; a scheduled sweep copies sealed logs to any S3-compatible bucket (verify-by-size, budgeted, with an optional expiry window), History reads an archived log through the server when the local file is gone, and the local reaper never removes an unarchived log while the tier is on
+- **Runner placement survives re-registration**: A runner that loses its identity re-registers into the general pool; its previous agency placement is snapshotted before the old row is deleted and the Runners view offers **Restore placement** — never automatic, because the name is self-declared
 - **Sensitive data redaction**: **Unconditional** — injected references, stored secrets, and per-run overrides are masked in logs; there is no toggle
 - **Metrics & alerting**: Prometheus scrape endpoint plus notification routing over **Email (SMTP) and Apprise** (which reaches Slack, Discord, webhooks, and more), with per-transport delivery status and a **Send test** button — configured under **Settings → Notifications**
-- **Alerts that say who to call (v1.2.7)**: A failure notification for an annotated job or workflow names its **contact** and says so when the definition is **critical**, so the message reaching a pager carries the ownership the catalog already knows
-- **Late and missed runs (v0.57.28)**: Separate from a kill — a run past its `warn_after_seconds`, a run that will miss `must_finish_by`, and a scheduled run that never happened are each noticed and reported
+- **Alerts that say who to call**: A failure notification for an annotated job or workflow names its **contact** and says so when the definition is **critical**, so the message reaching a pager carries the ownership the catalog already knows
+- **Late and missed runs**: Separate from a kill — a run past its `warn_after_seconds`, a run that will miss `must_finish_by`, and a scheduled run that never happened are each noticed and reported
 
 ## How It Works — Composable Primitives & Dual-Source
 
@@ -219,17 +223,17 @@ The sidebar groups the primitives by what you're doing:
 | **Workflow Editor** | `/workflow-editor` | Assemble an **cronomicon-source Workflow** on a graph canvas |
 | **Jobs** / **Workflows** | `/jobs` · `/workflows` | List, run, pause/resume, and trigger (both Git- and Cronomicon-source), with the **Run dialog**, operator annotations, revision history and the recycle bin |
 | **Scopes** | `/scopes` | Manage execution scopes (hosts/inventory, run-type capabilities, git-vs-cronomicon source) + the **Agencies** catalog (network-isolation zones) |
-| **Publish to GitLab** | `Jobs → Publish` | The publish builder that commits a job's schedule back to GitLab (the old standalone `/schedule` hub is dissolved; the route redirects to `/schedules`) |
+| **Publish to GitLab** | `Jobs → Publish` | The publish builder that commits a job's schedule back to GitLab (`/schedule` redirects to `/schedules`) |
 | Dashboard · Activity · History · Env Vars · Runners · Settings | — | The **Score** timeline + Current status, audit, run history, variables/secrets/SSH keys, runner fleet, config (incl. **Service Accounts** and **Users & Access**) |
 
 Two conveniences apply across the catalogs:
 
-- **Columns menu (v1.4.0–v1.4.5)**: every catalog table lets you reorder and hide columns, remembered per table — including **Critical**, the annotation column added in v1.4.0. The two History tables stay server-sorted; only order and visibility are client-side.
-- **The Run dialog (v0.55.5, reworked through v1.5.32)**: five top-level sections (Inputs, Targets, Method, Timing, Advanced), a one-line recap of what the run will do, and — at 1200px and wider — a fixed **"This run"** rail that states *every* answer and setting the run will use, highlighting the ones you changed and naming the default each replaced. Every ad-hoc run passes through a confirmation window that restates the declared inputs and your deviations.
-- **Refresh on every expanded panel (v1.4.12–v1.4.14)**: each expanded row on Jobs, Workflows, Runners, Scopes, Git Sync and the Env Vars tabs carries a Refresh button that re-fetches everything the panel shows without collapsing it; the top-bar control is now "Reload page".
+- **Columns menu**: every catalog table lets you reorder and hide columns, remembered per table — including **Critical**, the annotation column. The two History tables stay server-sorted; only order and visibility are client-side.
+- **The Run dialog**: five top-level sections (Inputs, Targets, Method, Timing, Advanced), a one-line recap of what the run will do, and — at 1200px and wider — a fixed **"This run"** rail that states *every* answer and setting the run will use, highlighting the ones you changed and naming the default each replaced. Every ad-hoc run passes through a confirmation window that restates the declared inputs and your deviations.
+- **Refresh on every expanded panel**: each expanded row on Jobs, Workflows, Runners, Scopes, Git Sync and the Env Vars tabs carries a Refresh button that re-fetches everything the panel shows without collapsing it; the top-bar control is "Reload page".
 
 > [!NOTE]
-> **Compose** and the **Workflow Editor** are gated by the `compose` permission, which since v1.0.14 can be granted to a
+> **Compose** and the **Workflow Editor** are gated by the `compose` permission, which can be granted to a
 > department rather than only to a global admin — the holder authors within the agencies their grant covers. The
 > **Schedule Builder**, **Calendars**, **Reactions**, revision history and the recycle bin act on objects belonging to no
 > single agency and remain admin-only. Users without the permission see a notice instead of the form.
@@ -261,7 +265,7 @@ each step.
 > **What you need:** a clone of the Cronomicon **config repo** (the GitLab repo Cronomicon syncs — the one
 > with the `scripts/`, `jobs/`, `workflows/`, `schedules/`, `inventory/` folders); the `cronomicon`
 > binary on your `PATH` for local validation; and a login. The **in-app** shortcuts additionally
-> need the **compose** permission (grantable per department since v1.0.14, or held globally by an admin).
+> need the **compose** permission (grantable per department, or held globally by an admin).
 
 ### Step 1 — Drop your script into `scripts/`
 
@@ -463,7 +467,7 @@ Your configuration repository should organize files into the following folders:
 .
 ├── scripts/       # Reusable script and command definitions (kind: Script)
 │   └── *.yaml
-├── schedules/     # Reusable named cron schedules (kind: Schedule, A10a)
+├── schedules/     # Reusable named cron schedules (kind: Schedule)
 │   └── *.yaml
 ├── jobs/          # Job targets (scope, script_ref, schedules / scheduleRefs)
 │   └── *.yaml
@@ -520,7 +524,7 @@ Other ways to define execution bodies in scripts:
 
 ### 2. Schedules (`schedules/`)
 
-Schedules are first-class, reusable named crons (A10a). A job or workflow references one or more by
+Schedules are first-class, reusable named crons. A job or workflow references one or more by
 name via `scheduleRefs`, so a single schedule (e.g. `nightly`) can drive many definitions — the
 schedule analog of a Script. Inline `schedules:` on a job/workflow still work; `scheduleRefs` is the
 reusable alternative.
@@ -569,8 +573,7 @@ spec:
   scope: Production
   
   # (Optional) Pin execution to a single host in the scope.
-  # Honored on EVERY run path since v0.53.0 — manual, scheduled, workflow, ansible.
-  # (Before v0.53.0 only manual triggers applied it; the rest fanned out.)
+  # Honored on EVERY run path — manual, scheduled, workflow, ansible.
   target_host: db-01
   
   # Configure multiple independent schedules
@@ -584,7 +587,7 @@ spec:
         VERIFY: "true"
         STAGE: "prod"
         
-  # (Optional) Send this job only to runners carrying this tag (RT, v1.3.1).
+  # (Optional) Send this job only to runners carrying this tag.
   # A per-run pin in the Run dialog overrides it for that run.
   runner_tag: dmz
 
@@ -592,13 +595,13 @@ spec:
   timeout_seconds: 3600
   retries: 2
 
-  # (Optional) Service-level expectations (v0.57.28). These NOTICE, they do not kill —
+  # (Optional) Service-level expectations. These NOTICE, they do not kill —
   # timeout_seconds is what kills. warn_after_seconds flags a run still going after
   # 20 minutes; must_finish_by is wall-clock 'HH:MM' in the application timezone.
   warn_after_seconds: 1200
   must_finish_by: "06:00"
 
-  # (Optional) Start this job when a file arrives (v0.57.31). stable_seconds waits
+  # (Optional) Start this job when a file arrives. stable_seconds waits
   # for the file to stop growing before firing, so a partial upload does not trigger.
   watch:
     - path: /incoming/ledger-*.csv
@@ -614,19 +617,17 @@ spec:
 ```
 
 > [!NOTE]
-> Backward compatibility is maintained for single schedule strings using: `schedule: "0 2 * * *"`. However, using the `schedules:` list allows you to specify named schedules and environment variables that are injected only during that schedule's run.
+> A single schedule string is also accepted: `schedule: "0 2 * * *"`. The `schedules:` list form additionally lets you name each schedule and attach environment variables that are injected only during that schedule's run.
 
 > [!IMPORTANT]
-> `Replace` is no longer a valid `concurrency_policy` — it was parsed and stored but never honoured by any code path, so a
-> job set to the strictest-sounding value overlapped freely. It was removed in v0.57.29 and existing rows were coerced to
-> `Allow` (which is how they had always actually behaved). An unrecognised policy is now a hard error (422) rather than a
-> silent downgrade.
+> `Allow`, `Forbid` and `Queue` are the only valid values for `concurrency_policy`. An unrecognised policy is a hard
+> error (422), never a silent downgrade.
 
 ---
 
 ### 4. Workflows (`workflows/`)
 
-Workflows string together multiple jobs into serial, parallel, and/or branching pipelines, and can pass data between steps (A12).
+Workflows string together multiple jobs into serial, parallel, and/or branching pipelines, and can pass data between steps.
 
 There are five step types:
 
@@ -635,8 +636,8 @@ There are five step types:
 | `job` | Run one job |
 | `parallel` | Run a group of steps at once |
 | `branch` | Take a different path based on a prior step's status or output |
-| `sequence` | A serial chain **inside** a parallel arm (v0.55.17) |
-| `workflow` | Call another workflow as a step (v0.57.30) — author a common sequence once and reuse it |
+| `sequence` | A serial chain **inside** a parallel arm |
+| `workflow` | Call another workflow as a step — author a common sequence once and reuse it |
 
 Example workflow definition (`workflows/prod-release.yaml`):
 
@@ -672,7 +673,7 @@ spec:
           label: "Renew Certs"
 ```
 
-**Passing data between steps (A12).** A job emits an output on stdout with a marker line, and a
+**Passing data between steps.** A job emits an output on stdout with a marker line, and a
 later step consumes it as an injected env var via an explicit `{fromStep, fromOutput}` reference:
 
 ```bash
@@ -725,8 +726,7 @@ scheduler/executor seam as Git-defined ones; only the origin differs.
   The referenced script's run-type/body/executor are denormalized onto the job at write time.
 - **Workflow Editor** (`/workflow-editor` / `WorkflowEditor.tsx`) → assembles an cronomicon-source **Workflow** on an
   interactive **graph canvas** (React Flow): ordered job steps, parallel groups, and **nested** branch arms, with
-  A12 inter-job data passing drawn as edges (steps may target Git- or Cronomicon-source jobs via the A11 source
-  precedence). A **Simple ｜ Advanced** toggle keeps the linear list editor for flat chains; hand-arranged node
+  inter-job data passing drawn as edges (steps may target Git- or Cronomicon-source jobs). A **Simple ｜ Advanced** toggle keeps the linear list editor for flat chains; hand-arranged node
   positions persist per workflow.
 - **Schedule Builder** (`/schedule-builder` / `ScheduleBuilder.tsx`) → authors an cronomicon-source **Schedule**
   (reusable named cron + optional env variables) directly in the UI. When an cronomicon-source schedule is edited, the changes automatically propagate to all referencing Jobs/Workflows, reloading the scheduler immediately.
@@ -742,23 +742,17 @@ Mechanics:
   scheduler so a composed schedule fires without waiting for the next sync.
 - The SPA shows/hides the composer via `GET /api/v1/capabilities` (`compose` flag).
 
-> [!NOTE]
-> v20 shipped the core in-app authoring loop. The **visual workflow canvas** (v0.44.0) closes the largest follow-on:
-> branch/parallel/**nested** authoring and drawn A12 data edges now ship in the Workflow Editor (it is
-> no longer a linear-only list). Remaining conveniences: History rendering of captured step outputs
-> and a unified Env Var picker.
-
 ## Documentation
 
 ### For Operators & Developers
 
 - **[User Manual](documentation/user-manual.html)** — the full per-view reference and task recipes for operators and authors, served in-app from the header **Help** button
-- **[Administrator Manual](documentation/administrator-manual.html)** — service operations: bootstrap, execution model, GitOps, secrets, runner fleet, deployment & day-2 (reconciled to v1.5.45)
-- **Training courses (v1.5.7–v1.5.11)** — an operator course (`/training-operator.html`, ten modules, framed for teams migrating from a legacy job scheduler) and an administrator course (`/training-admin.html`, seven modules); both ship in the binary, open in a slide **deck mode** by default, and degrade to a scrolling page without JavaScript
-- **Usage guides** — per-run-type guides for Bash, Ansible, PowerShell and Python, plus the runner **Install**, **Manage** and **Security** guides; the header **Help** menu and contextual links in each screen open the relevant page (v1.5.13–v1.5.15)
+- **[Administrator Manual](documentation/administrator-manual.html)** — service operations: bootstrap, execution model, GitOps, secrets, runner fleet, deployment & day-2
+- **Training courses** — an operator course (`/training-operator.html`, ten modules, framed for teams migrating from a legacy job scheduler) and an administrator course (`/training-admin.html`, seven modules); both ship in the binary, open in a slide **deck mode** by default, and degrade to a scrolling page without JavaScript
+- **Usage guides** — per-run-type guides for Bash, Ansible, PowerShell and Python, plus the runner **Install**, **Manage** and **Security** guides; the header **Help** menu and contextual links in each screen open the relevant page
 - **Deployment** — the administrator manual's Deployment chapter covers the reverse-proxy + identity-provider topology, health checks, storage layout and day-2 essentials; [`backend/deploy/backup-restore.md`](backend/deploy/backup-restore.md) covers the app's own backup and restore commands
 - **[Security Review](backend/deploy/security-review.md)** — OIDC / trusted-header SSO, CSRF, runner auth, secret management: the controls and where each is enforced
-- **[Changelog](CHANGELOG.md)** — Full version history and feature release notes
+- **[Changelog](CHANGELOG.md)** — Release notes
 
 ### For Contributors
 
@@ -786,9 +780,9 @@ cd frontend && npm run gen
 
 ### Key Endpoints
 
-All under the `/api/v1` base prefix. 🆕 = added in v20.
+All under the `/api/v1` base prefix.
 
-Requests authenticate either with a **browser session + CSRF token**, or — since v0.57.26 — with a
+Requests authenticate either with a **browser session + CSRF token**, or with a
 **service-account token** (`Authorization: Bearer <token>`), which carries its own permissions and
 audit identity and needs no CSRF header.
 
@@ -798,16 +792,16 @@ audit identity and needs no CSRF header.
 | `POST /jobs/{jobId}/run` | Trigger a manual run | session + CSRF |
 | `POST /jobs/{jobId}/pause` · `/resume` · `/kill` | Pause / resume schedule, kill a run | session + CSRF |
 | `PUT /job-tags/{jobId}` | Full-replace a job's tags | session + CSRF |
-| 🆕 `POST /jobs` · `PUT /jobs/{jobId}` · `DELETE /jobs/{jobId}` | Compose / edit / delete an **cronomicon-source** job | `compose`, checked against the job's scope; `409` on git rows |
+| `POST /jobs` · `PUT /jobs/{jobId}` · `DELETE /jobs/{jobId}` | Compose / edit / delete an **cronomicon-source** job | `compose`, checked against the job's scope; `409` on git rows |
 | `GET /workflows` · `POST /workflows/{workflowId}/trigger` | List / trigger workflows | session (+CSRF on trigger) |
 | `PUT /workflow-tags/{workflowId}` | Full-replace a workflow's tags | session + CSRF |
 | `POST /workflows/runs/{traceId}/cancel` | Cancel a running workflow | session + CSRF |
 | `POST /workflows/validate` | Dry-run validation of workflow steps | session + CSRF |
-| `PATCH /workflows/{workflowId}` | Pause / resume a workflow | session + CSRF + scope guard (v0.52.37) |
-| 🆕 `POST /workflows` · `PUT /workflows/{workflowId}` · `DELETE /workflows/{workflowId}` | Compose / edit / delete an **cronomicon-source** workflow | `compose` on every job in the graph; `409` on git rows |
+| `PATCH /workflows/{workflowId}` | Pause / resume a workflow | session + CSRF + scope guard |
+| `POST /workflows` · `PUT /workflows/{workflowId}` · `DELETE /workflows/{workflowId}` | Compose / edit / delete an **cronomicon-source** workflow | `compose` on every job in the graph; `409` on git rows |
 | `GET /scripts` · `GET /scripts/{name}` | Read-only Git script catalog + `usedBy` | session |
 | `PUT /schedule-tags/{name}` | Full-replace a schedule's tags | session + CSRF; has `?source` parameter |
-| 🆕 `GET /schedule-defs` · `GET /schedule-defs/{name}` | First-class schedule catalog + `usedBy` | session |
+| `GET /schedule-defs` · `GET /schedule-defs/{name}` | First-class schedule catalog + `usedBy` | session |
 | `GET /schedules` · `GET /schedules/upcoming` | Per-binding schedule inventory + upcoming fires | session |
 | `GET /env-vars` · `GET /env-secrets` (+ write ops) | Env vars / secrets (values never returned) | writes session + CSRF |
 | `PUT /job-annotation/{jobId}` · `PUT /workflow-annotation/{workflowId}` | Set notes / criticality / contact | session + CSRF (any authenticated user) |
@@ -830,13 +824,13 @@ code (not in the spec); contract changes must update both `openapi.yaml` copies 
 
 ## Design System
 
-Rebuilt in the eleven-phase visual update (v0.52.13–v0.52.25). All tokens live in [`frontend/src/theme.ts`](frontend/src/theme.ts) — components read the mutable `c.*` object at render time (never freeze tokens in module-level consts, or the Light/Dark toggle silently breaks).
+All tokens live in [`frontend/src/theme.ts`](frontend/src/theme.ts) — components read the mutable `c.*` object at render time (never freeze tokens in module-level consts, or the Light/Dark toggle silently breaks).
 
 ### Colors
 
 - **Dark theme**: `#0a1119` (bg), `#e8eff7` (text), `#4da3d9` (primary), `#c9a227` (accent — **gold is the brand**)
 - **Light theme**: `#f4f6fa` (bg), white panels, with darker counterpart tokens
-- **Status**: `#45b26b` (success), `#e05a5a` (danger), `#d98a2b` (**warning is orange** — gold no longer means warn)
+- **Status**: `#45b26b` (success), `#e05a5a` (danger), `#d98a2b` (**warning is orange**; gold is reserved for the brand)
 - **Contrast is a gate**: every text/background and control-boundary pair is held to WCAG AA (4.5:1 body, 3:1 controls); `c.onSolid` exists because white-on-solid fails in dark mode
 
 ### Typography
@@ -858,7 +852,7 @@ The production frontend uses **no global store or external state library** (no R
 
 | Context | Provider · hook | Holds |
 |---|---|---|
-| `auth.tsx` | `AuthProvider` · `useAuth()` | Current user (`Me`), loading state. Capability gating reads the server's `/capabilities` flags plus per-row `canRun`/`canKill` (RB-24); the old client-side `canTriggerJobs(me)` helper is deprecated — a hardcoded role list is wrong the moment custom roles exist |
+| `auth.tsx` | `AuthProvider` · `useAuth()` | Current user (`Me`), loading state. Capability gating reads the server's `/capabilities` flags plus per-row `canRun`/`canKill`; a hardcoded client-side role list would be wrong the moment custom roles exist |
 | `theme-context.tsx` | `ThemeProvider` | Light/dark mode |
 | `timezone-context.tsx` | `TimezoneProvider` | Application timezone for rendering timestamps |
 
@@ -911,7 +905,7 @@ docker run -d \
 
 The full variable matrix is in [`backend/deploy/env-matrix.md`](backend/deploy/env-matrix.md) and the
 annotated template in [`backend/deploy/cronomicon.env.example`](backend/deploy/cronomicon.env.example).
-The KEK file must not be world-readable — the server refuses to start if it is (v1.5.30).
+The KEK file must not be world-readable — the server refuses to start if it is.
 
 ### Runner Agents (Distributed Execution)
 
@@ -926,7 +920,7 @@ sudo ./runner-install.sh -s https://cronomicon.example.com -t <token> -n runner-
 
 The installer writes a systemd unit and `/etc/cronomicon/cronomicon-runner.env` (template:
 [`backend/deploy/cronomicon-runner.env.example`](backend/deploy/cronomicon-runner.env.example)). Every deployed
-runner must speak wire protocol **v13** — registration is refused below the floor (v1.5.40). See
+runner must speak wire protocol **v13** — registration is refused below the floor. See
 [backend/deploy/](backend/deploy/) for hardened units and security guides.
 
 The **Runners** view also links to **Install Guide**, **Config Guide**, and **Security
@@ -943,8 +937,8 @@ single-source fragments in `documentation/` (editing those updates the pages).
 - **Queue depth is fixed at 3 per key**: The `Queue` concurrency policy is a safety backstop, not a tuning knob; beyond the cap a fire falls back to `Forbid` behaviour and says so in the run's reason
 - **Workflows cannot queue**: Only jobs carry a concurrency policy
 - **Shared surfaces stay admin-only**: Reusable schedules, working calendars, reactions, revision history and the recycle bin act on objects belonging to no single agency, so they are not delegable to a department
-- **SSH key credentials are runner-only**: A key-bound job runs on a runner agent; the in-app SSH executor refuses it rather than running without the key (v1.5.35)
-- **One wire protocol**: Runner agents older than protocol v12 are refused at registration; upgrade agents with the server
+- **SSH key credentials are runner-only**: A key-bound job runs on a runner agent; the in-app SSH executor refuses it rather than running without the key
+- **One wire protocol**: Runner agents must speak protocol v13; an older agent is refused at registration, so upgrade agents with the server
 
 ## Contributing
 
@@ -963,7 +957,7 @@ Third-party components and trademarks are listed in [NOTICE](NOTICE).
 
 ## Support & Troubleshooting
 
-- **Logs**: `docker logs <container>`, the process log at `<log dir>/cronomicon.log`, and run logs grouped in per-entity folders under the configured log directory (Settings → Execution → Log Storage; local path changes apply live, v0.52.9–.10)
+- **Logs**: `docker logs <container>`, the process log at `<log dir>/cronomicon.log`, and run logs grouped in per-entity folders under the configured log directory (Settings → Execution → Log Storage; local path changes apply live)
 - **Database health**: `GET /readyz` (checks DB migrations, OIDC identity)
 - **Runner offline**: Check `CRONOMICON_RUNNER_OFFLINE_AFTER` (default 5m); a runner with no heartbeat for over 2 minutes shows **degraded**, stale runners are marked offline, and rows silent for `CRONOMICON_RUNNER_DEREGISTER_AFTER` (default 14d) are removed with their placement snapshotted for restore
 - **SSH execution fails**: Verify bastion ProxyJump config and host keys in `~/.ssh/known_hosts`
@@ -972,26 +966,6 @@ See the [Administrator Manual](documentation/administrator-manual.html) (deploym
 
 ---
 
-**Last updated**: Sep 23, 2026  
-**Current version**: v1.5.45 (schema v1150, runner protocol v12) — see [CHANGELOG.md](CHANGELOG.md)  
-**Status**: Stable. v1.0.0 (Aug 11, 2026) was the first stable release; the 1.x line since then has added
-production features (event triggers, SLA monitoring, revision history and the recycle bin, the Queue
-concurrency policy, sub-workflows, file-arrival triggers), **agency-first RBAC** (every job states its
-agency, authoring is a grantable departmental permission, a department administers its own access),
-**per-agency identity** (two departments may own the same job name, on permanent ids), **operator
-annotations** (notes, critical, contact — and failure alerts that name the contact), **runner
-targeting**, the **Columns** menu, and the Run dialog's **"This run"** summary rail. The 1.5 series
-added **live log tailing** (protocol v12), the Dashboard **verdict strip**, per-panel **Refresh**, the
-in-app **training courses** and usage guides, a server-searched **Activity** feed, the **DR band**
-(finishable KEK rotation, runner placement restore, a KEK-permission boot check), the **S3 log archive**,
-a **masked audit stream**, Go 1.26 modernisation with a gating linter, and a dead-code sweep that
-retired every compatibility shim the private history had needed.
-
-<details>
-<summary>Programme history before v1.0.0</summary>
-
-Composable-primitives + Git-OR-Cronomicon dual-source + Schedule Builder + ad-hoc run controls + job-level env + catalog folder browsing + script variable scanning + visual workflow canvas + Python run-type + operator-owned tags + declared run inputs (Warn/Block enforcement) + Ansible inventory support (M1–M5) + agency-based runner isolation & single membership axis + first-class SSH key credentials + Ansible runner-checkout hardening (RX Phases 1–6) + self-service runner provisioning & auth unification (v0.47.x) + env-var namespace references (v0.48.x) + reference-based secret injection & Vault, AppRole or token (v0.49.x, v0.52.29) + A5 scope model (v0.50.x) + security update (v0.51.x) + logging update: process log, per-entity run logs, audit stream (v0.52.8–.12) + the visual update: IBM Plex, gold brand, true light mode, the Score (v0.52.13–.25) + fixes pass incl. workflow-pause authz + derived `degraded` runner status (v0.52.30–.38) + target-host pin on every run path + Dashboard Current status (v0.53.x) + per-run/per-job SSH identity (v0.54–0.55.0) + SSH↔Ansible run parity (v0.55.1–.3) + table sorting + schedule windows/modes + deferred ad-hoc runs (v0.55.x) + **departmental RBAC: grants, roles-as-data, enforced execution verbs, departmental secrets/keys/runners, break-glass `grant-admin`** (v0.56.0–0.56.10), then run-as agency credentials, working calendars,
-reactions and the Run-dialog runtime update (v0.57.x) — shipped as the A5→RB/RF, A9–A13, F1–F4 and
-JC/RX/FX/TG/EV/LG/CS/CA/RP/AW/AR/RA/CAL/RU series.
-
-</details>
+**Last updated**: Sep 25, 2026  
+**Current version**: v2.0.0 (schema v1150, runner protocol v13) — see [CHANGELOG.md](CHANGELOG.md)  
+**Status**: Stable.

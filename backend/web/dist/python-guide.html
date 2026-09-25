@@ -13,7 +13,7 @@
  Why self-hosted: these documents are served by the Cronomicon binary to operators
  on networks that may have no egress to fonts.googleapis.com, and a blocked
  stylesheet silently drops the whole manual to system-ui with no error — the
- same defect frontend/index.html was fixed for in Phase A. Faces copied from
+ same defect frontend/index.html guards against. Faces copied from
  index.html unchanged (Google's own latin / latin-ext subsets); only the origin
  differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
  a wrapped guide at /runner-install.html alike: Vite copies public/ into
@@ -21,7 +21,7 @@
 
  Families track theme.ts so the manuals and the product read as one thing: IBM
  Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
- Mono for code. Outfit and JetBrains Mono are retired. Fraunces stays on the
+ Mono for code. No other families are loaded. Fraunces stays on the
  hero and headings only — the manuals are a brand surface; do not spread it.
 
  Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
@@ -140,17 +140,17 @@
 
  VU-18: these are hand-copied hex literals, so they silently rot
  the next time theme.ts moves. frontend/src/documentation-palette.test.ts
- now fails if any hex in this file (or the wrapped runner-guide
+ fails if any hex in this file (or the wrapped runner-guide
  fragments, which reuse this <style> verbatim) is absent from
  theme.ts. When the product palette changes, re-map by ROLE — a
  doc's page background takes the new `bg`, its cards `panel`, its
  links `primary`, its warning callouts `warning` — never by
  eyeballing which new hex looks closest to the old one.
 
- Two role moves landed in Phase C and are easy to get backwards:
- `warning` is now a distinct ORANGE (it used to be the same gold as
- `accent`, which made a warn badge and an in-flight badge
- indistinguishable), and `accent` gold is now the BRAND — the hero
+ Two role assignments are easy to get backwards:
+ `warning` is a distinct ORANGE, not the brand gold (sharing the gold
+ with `accent` would make a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is the BRAND — the hero
  spine, the h2 rule, the active TOC item.
  ============================================================ */
         :root {
@@ -277,10 +277,9 @@
         }
 
         /* ---------- Sidebar ----------
- Every colour in this block reads a token. It used to be hardcoded dark
- literals, which was survivable only because the rail was dark in BOTH
- themes; Phase C gave light mode a true light rail (VU-9), so a hardcoded
- pale-slate link would now be near-invisible on white. Tokens also keep the
+ Every colour in this block reads a token, never a hardcoded dark
+ literal: light mode has a true light rail (VU-9), so a hardcoded
+ pale-slate link would be near-invisible on white. Tokens also keep the
  VU-18 drift guard honest — nothing here to re-map by hand next time. */
         #sidebar {
             width: var(--nav-w);
