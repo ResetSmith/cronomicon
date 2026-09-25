@@ -1867,11 +1867,11 @@
 
 <p>The toolchains are <strong>only</strong> in the fat image — deliberately. The app's own image is distroless and ships no ansible/terraform (a conscious minimal-control-plane posture), and the slim runner stays slim for the SSH-onward case. Capability routing makes this safe: the server's claim filter (<code>run_type IN caps</code>) guarantees only an ansible-capable runner ever claims an ansible run, so you can run a fleet of slim shell runners and a few fat ansible/terraform runners side by side.</p>
 
-<p>Build either image from <code>backend/</code> (the Go module root is the build context):</p>
+<p>The two Dockerfiles live in the <code>cron-ops</code> deployment repository under <code>runner/</code>. Build either image from the application checkout's <code>backend/</code> (the Go module root is the build context):</p>
 
 <div class="codeblock"><pre><code>cd backend
-docker build -f deploy/Dockerfile.runner     -t cronomicon-runner:slim .
-docker build -f deploy/Dockerfile.runner.fat -t cronomicon-runner:fat  .</code></pre></div>
+docker build -f /path/to/cron-ops/runner/Dockerfile.runner     -t cronomicon-runner:slim .
+docker build -f /path/to/cron-ops/runner/Dockerfile.runner.fat -t cronomicon-runner:fat  .</code></pre></div>
 
 <p>Or get just the binary for a systemd install — <strong>download it from the server, or build it</strong>:</p>
 

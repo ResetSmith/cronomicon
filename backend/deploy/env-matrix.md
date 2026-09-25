@@ -335,7 +335,7 @@ The Vault client (AppRole, KV v2) stays a no-op stub unless `CRONOMICON_VAULT_AD
 vault-source **secrets** and vault-source **SSH credentials** resolve live through
 one shared client, and the SPA shows the vault path option. No Vault configured ⇒
 behaves exactly as before (local-KEK only). Operator runbook:
-`deploy/vault-runbook.md`.
+the cron-ops repo's `vault-runbook.md`.
 
 | Var | Default | Notes |
 |---|---|---|

@@ -85,7 +85,7 @@ vet:
 # that had gone unnoticed because nothing ever ran this. Deliberately NOT part
 # of `verify`: it fetches the vulnerability DB from vuln.go.dev, and `verify`
 # must work on an air-gapped build box. CI runs it as its own job, and it is a
-# pre-release step in deploy/go-no-go.md.
+# pre-release step in the cron-ops repo's go-no-go checklist.
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 

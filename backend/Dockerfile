@@ -10,7 +10,7 @@
 #     --build-arg COMMIT=$(git rev-parse --short HEAD) \
 #     --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) .
 #
-# (docker-compose.yml at the repo root sets context: . and passes these args.)
+# (the cron-ops compose stack sets context: . and passes these args.)
 
 # ── Stage 1: build the frontend so the embed is fresh, not a stale committed dist.
 # Pin by digest in a hardened pipeline; tag-pinned here for readability.
@@ -64,7 +64,7 @@ RUN mkdir -p /repo/backend/web && npx vite build
 
 # ── Stage 2: cross-compile the runner-agent binaries the server distributes
 # at GET /agents/{filename} (runner provisioning D1). CGO off → static binaries
-# (same recipe as deploy/Dockerfile.runner); D5: linux amd64 + arm64 only.
+# (same recipe as the cron-ops runner/Dockerfile.runner); D5: linux amd64 + arm64 only.
 # SHA256SUMS is generated alongside so runner-install.sh --download can verify.
 FROM golang:1.26-bookworm AS agents
 WORKDIR /src

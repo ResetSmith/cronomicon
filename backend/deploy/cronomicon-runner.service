@@ -36,7 +36,7 @@ Group=cronomicon-runner
 # fast in the agent's own validation until the required vars are set.
 EnvironmentFile=-/etc/cronomicon-runner/runner.env
 
-# Optional Vault Agent sidecar (deploy/vault-agent/): if the sidecar is
+# Optional Vault Agent sidecar (cron-ops repo, vault-agent/): if the sidecar is
 # installed it renders NAME-referenced secrets (e.g. an Ansible become password)
 # here from Vault; the "-" makes this a no-op when the sidecar is absent, so this
 # line is non-breaking for runners that provision secrets by hand. systemd reads

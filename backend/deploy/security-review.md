@@ -2,7 +2,7 @@
 
 Each control, how it's enforced, and how it's verified. "Automated" = a Go test
 that fails CI if the control regresses. "Operator" = run against the live stack
-(`verify-deployment.sh` or manual).
+(`scripts/verify-deployment.sh` in the cron-ops repo, or manual).
 
 | # | Control | Enforced by | Verification |
 |---|---|---|---|
@@ -54,8 +54,8 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   must be on the proxy's auth-bypass allowlist, or a runner (no SSO session)
   gets a 302-to-login HTML page instead of the script. The app still enforces
   the runner bearer on the `/api` paths, so the bypass skips only the SSO.
-  Reference allowlist in `deploy/authelia/configuration.yml` +
-  `deploy/deployment-guide.md`.
+  Reference allowlist in the cron-ops repo (`authelia/configuration.yml` +
+  `docs/deployment-guide.md`).
 - **Host-key trust is human-approved TOFU, never automatic** (provisioning
   plan 2 Phase 5, v0.47.13, D4). A runner still refuses an unknown/changed
   target key (no fall-open). The new scan → approve → trust flow lets an

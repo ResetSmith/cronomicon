@@ -289,7 +289,7 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	looksHTML := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "html") ||
 		strings.Contains(strings.ToLower(snippet), "<!doctype") || strings.Contains(strings.ToLower(snippet), "<html")
 	if looksHTML {
-		return fmt.Errorf("got HTTP %d with an HTML body — a reverse proxy is intercepting runner endpoints (expected a plain health response). Add the runner paths to the proxy auth-bypass; see deployment-guide.md", resp.StatusCode)
+		return fmt.Errorf("got HTTP %d with an HTML body — a reverse proxy is intercepting runner endpoints (expected a plain health response). Add the runner paths to the proxy auth-bypass; see the runner install guide", resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned HTTP %d: %s", resp.StatusCode, snippet)

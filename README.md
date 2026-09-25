@@ -46,7 +46,7 @@ docker run -d -p 8080:8080 -v /var/lib/cronomicon:/var/lib/cronomicon \
   --env-file cronomicon.env cronomicon:latest
 ```
 
-`docker-compose.yml` at the repo root is the reference stack (Cronomicon behind a reverse proxy with an OIDC provider). See [backend/README.md](backend/README.md) for every configuration option and [backend/deploy/](backend/deploy/) for the deployment guide.
+The reference stack (Cronomicon behind a reverse proxy with an OIDC provider), the deployment guide and the day-2 runbooks live in the `cron-ops` deployment repo; this repository holds the application only. See [backend/README.md](backend/README.md) for every configuration option and [backend/deploy/](backend/deploy/) for the deployment guide.
 
 ## Architecture
 
@@ -756,8 +756,8 @@ Mechanics:
 - **[Administrator Manual](documentation/administrator-manual.html)** — service operations: bootstrap, execution model, GitOps, secrets, runner fleet, deployment & day-2 (reconciled to v1.5.45)
 - **Training courses (v1.5.7–v1.5.11)** — an operator course (`/training-operator.html`, ten modules, framed for teams migrating from a legacy job scheduler) and an administrator course (`/training-admin.html`, seven modules); both ship in the binary, open in a slide **deck mode** by default, and degrade to a scrolling page without JavaScript
 - **Usage guides** — per-run-type guides for Bash, Ansible, PowerShell and Python, plus the runner **Install**, **Manage** and **Security** guides; the header **Help** menu and contextual links in each screen open the relevant page (v1.5.13–v1.5.15)
-- **[Deployment Guide](backend/deploy/deployment-guide.md)** — Reverse proxy + OIDC stack, environment configuration, health checks, storage layout, backup & restore
-- **[Security Hardening](backend/deploy/)** — OIDC / trusted-header SSO, CSRF, runner auth, secret management
+- **Deployment Guide** — reverse proxy + OIDC stack, health checks, storage layout and the day-2 runbooks live in the `cron-ops` deployment repo; [`backend/deploy/backup-restore.md`](backend/deploy/backup-restore.md) covers the app's own backup and restore commands
+- **[Security Review](backend/deploy/security-review.md)** — OIDC / trusted-header SSO, CSRF, runner auth, secret management: the controls and where each is enforced
 - **[Changelog](CHANGELOG.md)** — Full version history and feature release notes
 
 ### For Contributors
@@ -926,7 +926,7 @@ sudo ./runner-install.sh -s https://cronomicon.example.com -t <token> -n runner-
 
 The installer writes a systemd unit and `/etc/cronomicon/cronomicon-runner.env` (template:
 [`backend/deploy/cronomicon-runner.env.example`](backend/deploy/cronomicon-runner.env.example)). Every deployed
-runner must speak wire protocol **v12** — registration is refused below the floor (v1.5.40). See
+runner must speak wire protocol **v13** — registration is refused below the floor (v1.5.40). See
 [backend/deploy/](backend/deploy/) for hardened units and security guides.
 
 The **Runners** view also links to **Install Guide**, **Config Guide**, and **Security
