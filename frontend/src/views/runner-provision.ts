@@ -212,10 +212,23 @@ export function provisionOneLiner(o: ProvisionOptions): string {
   return parts.join(" ");
 }
 
+// The published runner images (.github/workflows/publish-images.yml): the slim
+// agent, and a separate -fat package that adds the ansible/terraform toolchains.
+export const RUNNER_IMAGE = "ghcr.io/resetsmith/cronomicon-runner";
+
+// runnerImage pins the image to the server's release when /version reports one:
+// the agent must speak the server's protocol (the floor tracks it), and the
+// server and its runner images publish from the same tag. A dev build has no
+// release to match, so it falls back to latest.
+export function runnerImage(fat: boolean, serverVersion?: string): string {
+  const tag = serverVersion && /^\d+\.\d+\.\d+$/.test(serverVersion) ? serverVersion : "latest";
+  return `${RUNNER_IMAGE}${fat ? "-fat" : ""}:${tag}`;
+}
+
 // provisionDockerRun emits the container variant (runner-install.html §10):
 // identity + keys persist on a named volume; slim vs fat is derived from the
 // selected capabilities (ansible/terraform need the fat image's toolchains).
-export function provisionDockerRun(o: ProvisionOptions): string {
+export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string): string {
   const fat = o.capabilities.some((c) => FAT_RUN_TYPES.has(c));
   const name = o.name || "runner-01";
   const env: string[] = [
@@ -252,7 +265,7 @@ export function provisionDockerRun(o: ProvisionOptions): string {
     ...(o.capabilities.length === 0
       ? [
           `# Capabilities auto-detect from the image's toolchains at startup`,
-          `# (slim ⇒ SSH-onward run-types; use :fat for ansible/terraform).`,
+          `# (slim ⇒ SSH-onward run-types; use the -fat image for ansible/terraform).`,
         ]
       : []),
     `docker volume create cronomicon-runner-data`,
@@ -260,7 +273,7 @@ export function provisionDockerRun(o: ProvisionOptions): string {
     `docker run -d --name ${shellArg(name)} --restart unless-stopped \\`,
     ...env.map((e) => `  -e ${shellArg(e)} \\`),
     `  -v cronomicon-runner-data:${STATE_DIR} \\`,
-    `  cronomicon-runner:${fat ? "fat" : "slim"}`,
+    `  ${runnerImage(fat, serverVersion)}`,
   ];
   return lines.join("\n");
 }

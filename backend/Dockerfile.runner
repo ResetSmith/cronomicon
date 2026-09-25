@@ -1,0 +1,65 @@
+# Slim runner image (R7.1 / R4.1): the cronomicon-runner agent for the SSH-ONWARD
+# use case (bash/perl/powershell/python against reachable or bastion-jumped
+# targets). Published as ghcr.io/resetsmith/cronomicon-runner.
+#
+# Unlike the app image (backend/Dockerfile), the agent imports NO cgo packages —
+# it does not touch SQLite. So this builds with CGO_ENABLED=0 into a fully static
+# binary and ships on distroless/static (no glibc, no shell) — the smallest,
+# hardest final image we can produce.
+#
+# This image deliberately carries ONLY the agent. The ansible/terraform
+# toolchains live in the FAT image (Dockerfile.runner.fat) because they are bulky
+# and only the T-a (ansible/terraform) driver needs them; an SSH-onward runner
+# (T-b network-isolated shells) does not. Keep the slim image slim.
+#
+# Build context is the REPOSITORY ROOT, like the app image, so the root
+# .dockerignore applies. Build with:
+#
+#   docker build -f backend/Dockerfile.runner \
+#     --build-arg VERSION=$(git describe --tags --always --dirty) \
+#     --build-arg COMMIT=$(git rev-parse --short HEAD) \
+#     -t cronomicon-runner:slim .
+#
+# .github/workflows/publish-images.yml builds this on every vX.Y.Z tag.
+
+# ── Stage 1: compile the static agent binary.
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+# Cache modules first.
+COPY backend/go.mod backend/go.sum* ./
+RUN go mod download
+COPY backend/ ./
+
+# Build metadata, stamped into `cronomicon-runner version`.
+ARG VERSION=dev
+ARG COMMIT=none
+# CGO off → a static binary that runs on distroless/static.
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -o /out/cronomicon-runner ./cmd/cronomicon-runner
+
+# Pre-create the state directory owned by distroless's nonroot (65532), so a
+# fresh named volume inherits a writable owner.
+RUN mkdir -p /out/var/lib/cronomicon-runner && chown 65532:65532 /out/var/lib/cronomicon-runner
+
+# ── Stage 2: minimal static runtime. No glibc, no shell, no package manager.
+# distroless/static ships CA certificates (for the agent's HTTPS to the server)
+# and the nonroot user; nothing else.
+FROM gcr.io/distroless/static-debian12
+
+WORKDIR /app
+COPY --from=build /out/cronomicon-runner /app/cronomicon-runner
+COPY --from=build --chown=nonroot:nonroot /out/var/lib/cronomicon-runner /var/lib/cronomicon-runner
+
+# Identity file + any mounted keys/known_hosts live under /var/lib/cronomicon-runner.
+# Persist it (runner-install.html §10) so a restart resumes the same runners row
+# instead of orphaning it (R2.4 / D4).
+VOLUME ["/var/lib/cronomicon-runner"]
+ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
+
+# Config comes from CRONOMICON_RUNNER_* env (and/or -config file). Required at run:
+#   CRONOMICON_RUNNER_SERVER, CRONOMICON_RUNNER_REGISTRATION_TOKEN,
+#   CRONOMICON_RUNNER_NAME. Capabilities are auto-detected when unset.
+
+USER nonroot:nonroot
+ENTRYPOINT ["/app/cronomicon-runner"]

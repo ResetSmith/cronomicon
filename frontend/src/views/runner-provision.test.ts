@@ -171,6 +171,17 @@ describe("provisionOneLiner", () => {
 });
 
 describe("provisionDockerRun", () => {
+  it("pins the published image to the server's release, latest for a dev build", () => {
+    const o = defaultProvisionOptions(ORIGIN);
+    expect(provisionDockerRun(o, "2.0.2").trim().endsWith("ghcr.io/resetsmith/cronomicon-runner:2.0.2")).toBe(true);
+    expect(
+      provisionDockerRun({ ...o, capabilities: ["ansible"] }, "2.0.2")
+        .trim()
+        .endsWith("ghcr.io/resetsmith/cronomicon-runner-fat:2.0.2"),
+    ).toBe(true);
+    expect(provisionDockerRun(o, "dev").trim().endsWith("ghcr.io/resetsmith/cronomicon-runner:latest")).toBe(true);
+  });
+
   it("default (auto-detect): slim image, no capabilities env, detection note", () => {
     const cmd = provisionDockerRun(defaultProvisionOptions(ORIGIN));
     expect(cmd).toContain("docker volume create cronomicon-runner-data");
@@ -179,18 +190,18 @@ describe("provisionDockerRun", () => {
     expect(cmd).not.toContain("CRONOMICON_RUNNER_CAPABILITIES"); // agent detects in-container
     expect(cmd).toContain("auto-detect");
     expect(cmd).toContain("-v cronomicon-runner-data:/var/lib/cronomicon-runner");
-    expect(cmd.trim().endsWith("cronomicon-runner:slim")).toBe(true);
+    expect(cmd.trim().endsWith("ghcr.io/resetsmith/cronomicon-runner:latest")).toBe(true);
   });
 
   it("an explicit capability override rides the env", () => {
     const cmd = provisionDockerRun({ ...defaultProvisionOptions(ORIGIN), capabilities: ["bash", "perl"] });
     expect(cmd).toContain("-e CRONOMICON_RUNNER_CAPABILITIES=bash,perl");
-    expect(cmd.trim().endsWith("cronomicon-runner:slim")).toBe(true);
+    expect(cmd.trim().endsWith("ghcr.io/resetsmith/cronomicon-runner:latest")).toBe(true);
   });
 
   it("switches to the fat image when a local-toolchain capability is picked", () => {
     const cmd = provisionDockerRun(fullOpts());
-    expect(cmd.trim().endsWith("cronomicon-runner:fat")).toBe(true);
+    expect(cmd.trim().endsWith("ghcr.io/resetsmith/cronomicon-runner-fat:latest")).toBe(true);
     expect(cmd).toContain("-e CRONOMICON_RUNNER_INVENTORY=local");
     // Container file paths live on the volume.
     expect(cmd).toContain("-e CRONOMICON_RUNNER_LOCAL_INVENTORY=/var/lib/cronomicon-runner/inventory.json");
