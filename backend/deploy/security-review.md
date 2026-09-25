@@ -1,19 +1,20 @@
 # Security review
 
 Each control, how it's enforced, and how it's verified. "Automated" = a Go test
-that fails CI if the control regresses. "Operator" = run against the live stack
-(the spoofed-header probe in the administrator manual, section 8.4, or manual).
+that fails `make test` if the control regresses. "Operator" = a check you run
+against your live deployment from outside the trust boundary; the probes are in
+the administrator manual, section 8.4 ("Health, persistence & verification").
 
 | # | Control | Enforced by | Verification |
 |---|---|---|---|
-| D.1.1 | **Trusted-proxy enforcement** — Remote-* honored only from an allowlisted peer; spoofed headers from elsewhere are stripped ⇒ unauthenticated | `auth.StripUntrustedHeaders` (global middleware) + `CRONOMICON_TRUSTED_PROXIES`; default-deny boot if unset | **Automated:** `TestSpoofedHeaderRejectedAtServer`, `auth.TestTrustedProxyStripsSpoofedHeaders`. **Operator:** `verify-deployment.sh` with `APP_DIRECT_URL`. |
+| D.1.1 | **Trusted-proxy enforcement** — Remote-* honored only from an allowlisted peer; spoofed headers from elsewhere are stripped ⇒ unauthenticated | `auth.StripUntrustedHeaders` (global middleware) + `CRONOMICON_TRUSTED_PROXIES`; default-deny boot if unset | **Automated:** `TestSpoofedHeaderRejectedAtServer`, `auth.TestTrustedProxyStripsSpoofedHeaders`. **Operator:** manual §8.4 check 2 — send spoofed `Remote-User`/`Remote-Groups` headers straight to the app port; expect 401/403, never 200. |
 | D.1.2 | **CSRF** double-submit on state-changing operator routes; runner bearer routes excluded | `auth.RequireCSRF` on POST/PUT/PATCH/DELETE; runner routes use `RequireRunner` (no CSRF) | **Automated:** `auth.TestRequireCSRF`, `auth.TestRequireRunner`. |
 | D.1.3 | **Cookies** — CSRF cookie attrs; `CRONOMICON_COOKIE_SECURE=true` behind TLS; (OIDC mode) session cookie HttpOnly/Secure/SameSite | `auth.issueCSRF`, `session.go` codec; `CRONOMICON_COOKIE_SECURE` | **Automated:** session round-trip tests. **Operator:** inspect `Set-Cookie` on a live response. |
 | D.1.4 | **Secrets at rest** — stored-secret values + SMTP password envelope-encrypted (AES-256-GCM) under a KEK; KEK mounted, backed up separately from the DB | `secrets` envelope scheme; `CRONOMICON_KEK_FILE` | **Automated:** `secrets` round-trip + `TestEncryptDecryptStringRoundTrip`. **Operator:** confirm KEK not in image/repo/S3 backup bucket. |
-| D.1.5 | **Dev bypass off** — `/api/v1/auth/dev-login` not mounted unless `CRONOMICON_DEV_AUTH` | route mounted conditionally in `auth_mount.go` | **Automated:** `TestDevLoginMountedOnlyWhenEnabled`. **Operator:** `verify-deployment.sh` (expects 404). |
+| D.1.5 | **Dev bypass off** — `/api/v1/auth/dev-login` not mounted unless `CRONOMICON_DEV_AUTH` | route mounted conditionally in `auth_mount.go` | **Automated:** `TestDevLoginMountedOnlyWhenEnabled`. **Operator:** `curl -s -o /dev/null -w '%{http_code}' https://<public-host>/api/v1/auth/dev-login` returns 404. |
 | D.1.6 | **Surface check** — only `/healthz`, `/readyz`, `/version`, `/metrics`, `/auth/providers` (+ OIDC `/login`,`/callback` in oidc mode; token-gated `/webhooks/gitlab`) are unauthenticated | per-route middleware in the mount files | **Automated:** `TestUnauthenticatedSurface`. |
-| D.1.7 | **`/metrics` not public** | no Traefik label routes `/metrics`; served on the internal network only | **Operator:** `verify-deployment.sh` warns if `/metrics` answers via the public URL. |
-| D.1.8 | **Bootstrap admin removed** — `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` unset after seeding access grants | env; loud warning logged while active | **Operator:** confirm the var is unset and the warning no longer logs (see runbook for the re-enable procedure). |
+| D.1.7 | **`/metrics` not public** | your reverse proxy does not route `/metrics`; scrape it on the internal network only | **Operator:** manual §8.4 check 3 — `/metrics` through the public hostname returns 404. |
+| D.1.8 | **Bootstrap admin removed** — `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` unset after seeding access grants | env; loud warning logged while active | **Operator:** confirm the var is unset and the warning no longer logs (the lockout recovery, `cronomicon grant-admin` or a temporary re-enable, is in the administrator manual, §8.7). |
 
 ## Running the automated security suite
 
@@ -25,12 +26,13 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
 
 ## Residual risks / notes
 
-- **Trusted-proxy IP must be exact.** The compose stack pins Traefik to a static
-  internal IP and trusts only that `/32`. If the proxy IP changes, update
-  `CRONOMICON_TRUSTED_PROXIES` — a too-wide CIDR weakens D.1.1.
-- **Header stripping happens in-app too.** Even though Traefik strips client
-  `Remote-*` at the edge (defense in depth), the app independently strips from any
-  untrusted peer — both layers must hold.
+- **Trusted-proxy IP must be exact.** Give your reverse proxy a stable address
+  and trust only that address (a `/32`). If the proxy IP changes, update
+  `CRONOMICON_TRUSTED_PROXIES` — a too-wide CIDR weakens D.1.1. The administrator
+  manual, §8.5, covers finding the address the app actually sees.
+- **Header stripping happens in-app too.** Configure your proxy to strip client
+  `Remote-*` headers at the edge (defense in depth); the app independently strips
+  them from any untrusted peer — both layers must hold.
 - **KEK loss = unrecoverable stored secrets.** Back it up separately from the S3
   DB backup; a single bucket compromise must not yield both.
 - **Token-in-URL install endpoint** (`GET /install/{token}`). Serves `runner-install.sh` with the server URL + token
@@ -47,7 +49,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   which the single-use design already contains). Response is `Cache-Control:
   no-store`. Same unauthenticated-at-root posture as `/agents/*` and
   `/runner-install.sh` below. **Proxy note:** behind a browser-SSO forward-auth
-  (Authelia/Traefik), this path — like the runner bearer-authed API
+  (for example Authelia behind Traefik), this path — like the runner bearer-authed API
   (`/api/v1/runners/register|{id}/poll|{id}/redeclare|{id}/hostkeys`,
   `/api/v1/runs/{id}/manifest|log`), `/agents/*`, and `/runner-install.sh` —
   must be on the proxy's auth-bypass allowlist, or a runner (no SSO session)
