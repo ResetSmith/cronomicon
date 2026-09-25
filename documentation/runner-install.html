@@ -67,6 +67,8 @@ ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
 USER nonroot:nonroot
 ENTRYPOINT ["/app/cronomicon-runner"]</code></pre>
 
+<p>Save that as <code>Dockerfile.runner</code>, then build it with <code>backend/</code> as the context:</p>
+
 <pre><code>cd backend
 docker build -f /path/to/Dockerfile.runner -t cronomicon-runner:slim .</code></pre>
 

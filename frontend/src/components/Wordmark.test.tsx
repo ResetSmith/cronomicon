@@ -22,17 +22,25 @@ describe("Wordmark", () => {
     expect(imgs[0].getAttribute("src") ?? "").not.toMatch(/logo\.png/);
   });
 
-  it("renders the wordmark as real, selectable DOM text with ONE canonical tagline", () => {
+  it("renders the wordmark as real, selectable DOM text, with the tagline opt-in only", () => {
     render(<Wordmark />);
     expect(screen.getByText("CRONOMICON")).toBeTruthy();
-    expect(screen.getByText(WORDMARK_TAGLINE)).toBeTruthy();
+    // The sidebar lockup is emblem + name. The tagline is a separate line that
+    // a call site must ask for; the default rail never shows it.
+    expect(screen.queryByText(WORDMARK_TAGLINE)).toBeNull();
     // LG-3: the two retired assets said "CONDUCTING AUTOMATION" and "CONDUCTING
     // YOUR AUTOMATION" respectively. One string now, so they cannot disagree.
     expect(WORDMARK_TAGLINE).toBe("ANCIENT RITES OF SCHEDULING, MADE EASY");
   });
 
+  it("renders the canonical tagline when a call site opts in (Login)", () => {
+    render(<Wordmark tone="page" tagline />);
+    expect(screen.getByText("CRONOMICON")).toBeTruthy();
+    expect(screen.getByText(WORDMARK_TAGLINE)).toBeTruthy();
+  });
+
   it("collapses by HIDING the text, not by cropping the bitmap (LG-2)", () => {
-    render(<Wordmark collapsed />);
+    render(<Wordmark collapsed tagline />);
     // The emblem survives collapse — the rail still shows the brand.
     expect(screen.getAllByAltText("Cronomicon")).toHaveLength(1);
     // ...and the lettering is simply gone, so there is no hand-tuned crop window
@@ -45,6 +53,5 @@ describe("Wordmark", () => {
     render(<Wordmark tone="page" />);
     expect(screen.getAllByAltText("Cronomicon")).toHaveLength(1);
     expect(screen.getByText("CRONOMICON")).toBeTruthy();
-    expect(screen.getByText(WORDMARK_TAGLINE)).toBeTruthy();
   });
 });

@@ -13,6 +13,59 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.0.1] - 2026-09-25
+
+The repository now holds the application only. The deployment stack that
+surrounded it, including the CI-fronted image pipeline introduced in 1.5.45, is
+no longer shipped: how you build the image, host the container and put a
+reverse proxy and identity provider in front of it is your deployment's
+concern. The application, its API, its schema (v1150) and the runner protocol
+(13) are unchanged.
+
+### Removed
+
+- **Breaking:** Remove the reference deployment stack. The root
+  `docker-compose.yml` (Traefik, Authelia, Cronomicon and Apprise, with the
+  registry image default and the external data volume from 1.5.45) and its
+  `traefik/` and `authelia/` configuration are gone. If you deploy from that
+  file, keep your own copy before upgrading your checkout.
+- Remove the CI-fronted deployment procedure: `deployment-guide.md`, including
+  its "CI-fronted deployment" section (the kaniko build, the registry push, the
+  DockHand webhook and the release/rollback steps), the `go-no-go.md` release
+  checklist and `verify-deployment.sh`. The GitLab CI pipeline that 1.5.45
+  describes is not carried in this repository; build and publish the image
+  from your own pipeline.
+- Remove the runner container images `Dockerfile.runner` and
+  `Dockerfile.runner.fat`. The server image still bundles the runner binaries
+  at `GET /agents/{filename}`, and the systemd install path through
+  `runner-install.sh` is unchanged.
+- Remove the Vault Agent sidecar kit (`deploy/vault-agent/`) and
+  `vault-runbook.md`. The in-app Vault source is unaffected; the administrator
+  manual's Vault section covers a host-side agent.
+- Remove the day-2 runbooks (`runbook.md`, `migrations-runbook.md`) and the k6
+  load tests (`deploy/loadtest/`).
+
+### Changed
+
+- Rewrite `backend/deploy/README.md` as an index of what the application still
+  ships there, with the consumer of each file. `ci-validate-template.yml`, the
+  drop-in `cronomicon validate` job for a job-definitions repository, stays.
+- Rewrite the administrator manual's Deployment chapter to describe a
+  reference topology (Compose, systemd or Kubernetes) instead of the bundled
+  files. The runner guides, the env examples, the Dockerfile comments and the
+  runner agent's reverse-proxy error now point at the manuals, not at removed
+  files.
+- Drop internal version and decision codes ("since v0.57.26", "A12") from the
+  README, both manuals, the runner and language guides and the training
+  courses, so each page reads as a description of the current product.
+- Show only the emblem and the name in the sidebar. The tagline, now "Ancient
+  rites of scheduling, made easy", appears on the login card only. The README
+  demo is re-recorded to match and switches from light to dark mode halfway.
+- Document the `develop`/`release` branch flow in `CONTRIBUTING.md`: branch
+  from `develop` and open pull requests against it.
+
+---
+
 ## [2.0.0] - 2026-09-25
 
 **BREAKING — the Cronomicon edition.** Every identifier a process reads, an
