@@ -10,7 +10,7 @@
   <img src="assets/cronomicon-demo.gif" alt="Cronomicon in action: the Dashboard, the Jobs catalog, kicking off a run from the Run dialog, switching from light to dark mode, the run landing in History, and a workflow's step graph" width="900">
 </p>
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
