@@ -709,7 +709,7 @@ Group=cronomicon-runner
 
 # Load runner config variables
 EnvironmentFile=-/etc/cronomicon-runner/runner.env
-# Optional Vault Agent sidecar (cron-ops repo, vault-agent/): rendered secrets, if any.
+# Optional Vault Agent sidecar, if you run one on the host: rendered secrets, if any.
 # The "-" makes this a no-op when the sidecar is not installed.
 EnvironmentFile=-/etc/cronomicon-runner/secrets.env
 Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json

@@ -1827,7 +1827,7 @@
 <p>That means you need at least one runner whose host carries the Ansible toolchain:</p>
 
 <ul>
-<li><strong>Capabilities auto-detect.</strong> An agent probes for <code>ansible-playbook</code> at startup and claims the <code>ansible</code> run type if present — install Ansible later and a service restart propagates it via the config-drift resync. In containers, use the <strong>fat</strong> image (<code>runner/Dockerfile.runner.fat</code> in the cron-ops repository); the slim image has no Ansible to detect.</li>
+<li><strong>Capabilities auto-detect.</strong> An agent probes for <code>ansible-playbook</code> at startup and claims the <code>ansible</code> run type if present — install Ansible later and a service restart propagates it via the config-drift resync. In containers, build the runner image with Ansible installed (the &ldquo;fat&rdquo; variant in the runner install guide); a minimal image has no Ansible to detect.</li>
 <li><strong>Capability routing is safe by default.</strong> A run for a type no online runner advertises stays <strong>queued</strong> (<em>“waiting for an ansible-capable runner”</em>) rather than failing. The same claim-gating covers <code>requires:</code> tokens (<code>checkout</code>, <code>vault</code>, <code>collection:&lt;fqcn&gt;</code>) and <a href="administrator-manual.html#runner-ops">agency isolation</a> — an unsatisfiable run waits and names what it is waiting for; it is never silently dropped.</li>
 <li><strong>What a runner advertises is visible.</strong> The Runners view shows each runner's capability chips — including its <code>ansible-core</code> version and detected collections — so “which runner will take this play” is a glance, not a guess.</li>
 </ul>

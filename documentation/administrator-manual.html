@@ -3949,12 +3949,12 @@ ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config
                             <tr>
                                 <td>Shells over SSH (incl. bastion), or to reach a network-isolated segment</td>
                                 <td><code>bash,perl,powershell,python</code></td>
-                                <td><strong>slim</strong> (<code>runner/Dockerfile.runner</code> in the <code>cron-ops</code> repository): SSH client only, small</td>
+                                <td><strong>slim</strong>: the static binary on a distroless base; SSH client only, small</td>
                             </tr>
                             <tr>
                                 <td>Ansible / Terraform locally</td>
                                 <td><code>ansible,terraform</code></td>
-                                <td><strong>fat</strong> (<code>runner/Dockerfile.runner.fat</code> in the <code>cron-ops</code> repository): contains Ansible+Python
+                                <td><strong>fat</strong>: the binary plus Ansible+Python
                                     &amp; Terraform</td>
                             </tr>
                         </tbody>
@@ -4286,7 +4286,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         playbook <em>decrypts at run time</em> get around redaction, so they need
                         <code>no_log: true</code>. Or make HashiCorp Vault the source of truth for that secret, and for
                         each <code>{{ lookup('env','NAME') }}</code> runner-local secret, with the opt-in <strong>Vault
-                            Agent sidecar</strong> (<code>vault-agent/</code> in the <code>cron-ops</code> deployment repository). The AppRole-authed
+                            Agent sidecar</strong> on the runner host. The AppRole-authed
                         sidecar renders <code>/etc/cronomicon-runner/secrets.env</code>
                         (<code>0640 root:cronomicon-runner</code>), and the unit sources it <em>optionally</em>. The runner
                         never holds a Vault token, and the value never crosses the control-plane&rarr;runner channel.
@@ -4551,7 +4551,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                             </marker>
                         </defs>
                     </svg>
-                    <figcaption>The reference Docker Compose stack, kept in the separate <code>cron-ops</code> deployment repository. Only the identity provider (Authelia in the reference stack; any forward-auth or OIDC provider works) is a hard requirement. GitLab, Vault,
+                    <figcaption>A reference topology. Only the identity provider (Authelia in this example; any forward-auth or OIDC provider works) is a hard requirement. GitLab, Vault,
                         S3, Apprise, and runners are optional; the service operates without them. The app port is never
                         published to the host.</figcaption>
                 </figure>
@@ -4631,19 +4631,20 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                 </div>
 
                 <h3>8.3 First production deploy</h3>
-                <p>The reference stack (Compose file, reverse-proxy and identity-provider config, Vault Agent
-                    sidecar, runbooks and the verification probe) lives in the separate <code>cron-ops</code>
-                    deployment repository; this application repository ships only the app, its env templates
-                    and the runner installer. The steps below assume a checkout of <code>cron-ops</code>.</p>
+                <p>Cronomicon ships as one container image; how you run it (Compose, systemd, Kubernetes) is
+                    your choice. The steps below describe a Compose layout that matches the topology above: a
+                    reverse proxy that terminates TLS and does forward-auth against an identity provider, with
+                    the app on an internal network and its port never published.</p>
                 <ol class="steps">
-                    <li>Put the certs in <code>traefik/certs/</code>, or configure ACME (the protocol that gets
-                        certificates automatically). Replace the example hostnames in <code>docker-compose.yml</code>
-                        and in the identity-provider config (<code>authelia/</code> in the reference stack).</li>
+                    <li>Give the proxy its certificates, or configure ACME (the protocol that gets certificates
+                        automatically). Set the real hostnames in the Compose file and in the identity-provider
+                        config.</li>
                     <li>Point your identity provider at your LDAP or Active Directory server. Make sure that group membership shows in
                         <code>Remote-Groups</code>.</li>
                     <li><code>cp cronomicon.env.example cronomicon.env</code>. Set <code>CRONOMICON_TRUSTED_PROXIES</code> to the
-                        proxy's static internal IP (<code>172.28.0.2/32</code> in the reference stack).</li>
-                    <li>Write the base64 KEK to <code>secrets/cronomicon_kek</code>, and back it up separately.</li>
+                        proxy's static internal IP or network (a <code>/32</code> is the tightest setting).</li>
+                    <li>Write the base64 KEK to a file mounted read-only into the container
+                        (<code>CRONOMICON_KEK_FILE</code>), and back it up separately.</li>
                     <li>Set <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> for this first deploy. Then run
                         <code>docker compose up -d --build</code>.</li>
                     <li>Log in as a member of that group (you get admin). Create the real access grants in Settings
@@ -4688,9 +4689,10 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         runner-provisioning surface must be <strong>SSO-bypassed</strong>. If it is not,
                         <code>curl &hellip;/install/&lt;token&gt;</code> and the runner's own poll and register calls
                         get a 302 to the login page and fail with
-                        <code>bash: syntax error near unexpected token '&lt;!doctype html&gt;'</code>. The reference
-                        <code>authelia/configuration.yml</code> in <code>cron-ops</code> carries a <code>policy: bypass</code> rule,
-                        placed <em>before</em> the <code>one_factor</code> rule (the first match wins). It covers
+                        <code>bash: syntax error near unexpected token '&lt;!doctype html&gt;'</code>.
+                        Your identity provider's access-control policy needs a bypass rule, placed <em>before</em>
+                        the rule that demands a login (in Authelia, <code>policy: bypass</code> ahead of
+                        <code>one_factor</code>; the first match wins). It must cover
                         <code>^/runner-install\.sh$</code>, <code>^/agents/[^/]+$</code>, <code>^/install/[^/]+$</code>,
                         and the runner and run <code>/api/v1/&hellip;</code> register &middot; poll &middot; redeclare
                         &middot; hostkeys &middot; manifest &middot; log endpoints (plus <code>/healthz</code> &middot;
@@ -4704,13 +4706,20 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                     in WAL (write-ahead logging) mode, the git-cache, the logs, and the backups. The container is
                     disposable; the volume is not. Health endpoints (all unauthenticated): <code>/healthz</code>
                     (liveness + version), <code>/readyz</code> (503 until the DB is reachable and the migrations are
-                    clean), <code>/version</code>, and the internal-only <code>/metrics</code>. Run the probe from
-                    <code>cron-ops</code> against a live stack:</p>
+                    clean), <code>/version</code>, and the internal-only <code>/metrics</code>. Probe a live stack from outside
+                    the trust boundary:</p>
                 <div class="codeblock">
-                    <div class="cap">scripts/verify-deployment.sh (cron-ops): proves enforcement from outside the trust boundary</div>
-                    <pre>APP_DIRECT_URL=http://cronomicon-host:8080 \
-APP_URL=https://cronomicon.example.com \
-./scripts/verify-deployment.sh</pre>
+                    <div class="cap">Three checks that prove enforcement from outside the trust boundary</div>
+                    <pre># 1. Reachability through the proxy
+curl -fsS https://cronomicon.example.com/healthz
+
+# 2. Spoofed identity straight at the app port must NOT yield a session (expect 401/403, never 200)
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H 'Remote-User: attacker' -H 'Remote-Groups: admins' \
+  http://cronomicon-host:8080/api/v1/me
+
+# 3. /metrics must not be reachable through the public hostname (expect 404)
+curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics</pre>
                 </div>
                 <p>The critical check calls the app port directly with <strong>spoofed</strong>
                     <code>Remote-User</code>/<code>Remote-Groups</code> headers. The app must remove them and return a
@@ -5508,8 +5517,8 @@ APP_URL=https://cronomicon.example.com \
                             before the deny/one-factor rule (the first match wins): <code>^/runner-install\.sh$</code>,
                             <code>^/install/[^/]+$</code>, <code>^/agents/[^/]+$</code>, the
                             <code>^/api/v1/runners/&hellip;</code> register/poll/redeclare/hostkeys paths, and
-                            <code>^/api/v1/runs/[^/]+/(manifest|log)$</code> (see the reference
-                            <code>authelia/configuration.yml</code> in <code>cron-ops</code>). The bypass skips <em>only</em> the SSO. The
+                            <code>^/api/v1/runs/[^/]+/(manifest|log)$</code> (see section 8.3 for the
+                            full list). The bypass skips <em>only</em> the SSO. The
                             app still enforces the runner bearer token on the <code>/api</code> paths.</p>
                     </div>
                 </details>
@@ -6621,8 +6630,7 @@ APP_URL=https://cronomicon.example.com \
                                     <code>vault_config.namespace</code>). A transport pinned to a private-CA PEM bundle
                                     (a missing or invalid bundle <em>fails with a clear message</em>, and the client
                                     stays off). Treat the secret_id as a single-use response-wrapping token, unwrapped
-                                    one time through <code>sys/wrapping/unwrap</code>. See
-                                    <code>docs/vault-runbook.md</code> in the <code>cron-ops</code> repository</td>
+                                    one time through <code>sys/wrapping/unwrap</code>.</td>
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_RUNNER_OFFLINE_AFTER</code> / <code>_DEREGISTER_AFTER</code></td>
@@ -6787,7 +6795,7 @@ APP_URL=https://cronomicon.example.com \
                     Cronomicon binary itself serves its typefaces; they do not come from a font CDN. Thus the manual shows
                     identically on a network with no outbound egress. For configuration and operational data not in this
                     manual, see <code>backend/deploy/</code> in the application repository (env matrix, security
-                    review, backup &amp; restore) and the runbooks in the <code>cron-ops</code> deployment repository.</p>
+                    review, backup &amp; restore).</p>
             </footer>
 
         </main>

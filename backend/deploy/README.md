@@ -3,11 +3,12 @@
 What lives here is what the application itself builds against, serves or
 documents. The deployment stack (Docker Compose, reverse proxy, SSO provider,
 Vault Agent sidecar, runner container images, load tests, the deployment guide
-and the day-2 runbooks) lives in the separate `cron-ops` repository.
+and the day-2 runbooks) is the operator's own concern and is not shipped here; the
+administrator manual's Deployment chapter describes a reference topology.
 
 | File | Purpose | Consumed by |
 |---|---|---|
-| `cronomicon.env.example` | Annotated server runtime env template | operators; copied by cron-ops |
+| `cronomicon.env.example` | Annotated server runtime env template | operators; copy into your deployment |
 | `env-matrix.md` | Every `CRONOMICON_*` variable, default and requirement | `internal/config/envdoc_test.go` (both directions) |
 | `runner-install.sh` | Runner agent installer, served in-app at `/runner-install.sh` | `frontend/vite-manuals-plugin.js`, Runners view |
 | `runner-install-check.sh` | Post-install self-check for a runner host | runner install guide |
