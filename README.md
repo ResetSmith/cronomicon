@@ -4,7 +4,7 @@
   <img src="assets/cronomicon-logo.png" alt="Cronomicon" width="480">
 </p>
 
-<p align="center"><em>Ancient rites of scheduling, made safe.</em></p>
+<p align="center"><em>Ancient rites of scheduling, made easy.</em></p>
 
 [![Version](https://img.shields.io/badge/version-1.5.45-blue)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen)](CHANGELOG.md#100---2026-08-11)

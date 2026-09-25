@@ -16,7 +16,7 @@ import logoEmblem from "../assets/logo-emblem.png";
 // The emblem itself is theme-independent on purpose — a colour badge with dark
 // outlines inside a gold ring, verified legible on both the #0c1420 dark rail and
 // the #ffffff light one — so there is deliberately no per-theme `src` here.
-export const WORDMARK_TAGLINE = "ANCIENT RITES OF SCHEDULING, MADE SAFE";
+export const WORDMARK_TAGLINE = "ANCIENT RITES OF SCHEDULING, MADE EASY";
 
 // `tone` picks the text tokens for the surface the lockup sits on: the sidebar
 // rail (its own token pair — in dark mode `sidebarTextActive` is the brand gold,

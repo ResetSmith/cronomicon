@@ -4,7 +4,7 @@
 -- an audit trail: multiple rows may be active at once (mint no longer revokes
 -- prior tokens), each row dies on its first successful registration, recording
 -- which runner consumed it. Resync (Phase 4) authenticates with the runner's
--- own amt_run_* key, so a dead install token never blocks a resync; only a
+-- own crn_run_* key, so a dead install token never blocks a resync; only a
 -- reaped/deregistered runner needs a fresh token.
 --
 -- Existing rows (the old shared token) grandfather as unlabeled single-use

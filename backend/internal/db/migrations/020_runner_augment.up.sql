@@ -22,7 +22,7 @@ ALTER TABLE runs ADD COLUMN runner_id TEXT REFERENCES runners(id) ON DELETE SET 
 -- We store the hash only; plaintext shown once (A6.1).
 CREATE TABLE IF NOT EXISTS registration_tokens (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    token_hash TEXT NOT NULL,                   -- sha-256 hex of the amt_reg_* token
+    token_hash TEXT NOT NULL,                   -- sha-256 hex of the crn_reg_* token
     created_by TEXT NOT NULL,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,

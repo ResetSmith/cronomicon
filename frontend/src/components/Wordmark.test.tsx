@@ -28,7 +28,7 @@ describe("Wordmark", () => {
     expect(screen.getByText(WORDMARK_TAGLINE)).toBeTruthy();
     // LG-3: the two retired assets said "CONDUCTING AUTOMATION" and "CONDUCTING
     // YOUR AUTOMATION" respectively. One string now, so they cannot disagree.
-    expect(WORDMARK_TAGLINE).toBe("ANCIENT RITES OF SCHEDULING, MADE SAFE");
+    expect(WORDMARK_TAGLINE).toBe("ANCIENT RITES OF SCHEDULING, MADE EASY");
   });
 
   it("collapses by HIDING the text, not by cropping the bitmap (LG-2)", () => {

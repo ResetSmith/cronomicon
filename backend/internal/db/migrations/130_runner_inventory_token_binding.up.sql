@@ -9,7 +9,7 @@ ALTER TABLE runners ADD COLUMN inventory TEXT NOT NULL DEFAULT 'cronomicon'
 
 -- R1.4 — bind a runner API key to its owning runner so the manifest + log
 -- endpoints can authorize by run ownership (run.runner_id == caller.runnerId).
--- Set at registration when the per-runner amt_run_* key row is inserted.
+-- Set at registration when the per-runner crn_run_* key row is inserted.
 -- Nullable: registration-token rows (registration_tokens table) are separate and
 -- legacy runner_tokens rows predate the binding.
 ALTER TABLE runner_tokens ADD COLUMN runner_id TEXT;

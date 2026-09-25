@@ -1,8 +1,9 @@
 """Generate the Cronomicon brand asset set from the text-free emblem.
 
 Input:  assets/cronomicon-emblem.png (1024px, transparent, no lettering).
-Fonts:  IBM Plex TTFs (Sans Medium + SemiBold, Sans Condensed Bold + SemiBold) in
-        assets/fonts/ or $PLEX_TTF_DIR. Not committed; download from https://github.com/IBM/plex.
+Fonts:  IBM Plex TTFs (Sans Medium + SemiBold, Sans Condensed Bold) committed under
+        assets/fonts/ (OFL, licence alongside; upstream https://github.com/IBM/plex).
+        $PLEX_TTF_DIR overrides the directory.
 Output: the lockups and social preview in assets/, the in-app emblem, the favicon set, and
         manual-logo-b64.txt to paste into the manuals' <div class="logo"> data URI.
 Re-run after changing the emblem; every output is derived. Requires Pillow."""
@@ -12,7 +13,7 @@ S = os.path.dirname(os.path.abspath(__file__))  # assets/
 ROOT = os.path.dirname(S)
 FONTS = os.environ.get("PLEX_TTF_DIR", S + "/fonts")
 EMBLEM = S + "/cronomicon-emblem.png"
-NAME, TAGLINE = "CRONOMICON", "ANCIENT RITES OF SCHEDULING, MADE SAFE"
+NAME, TAGLINE = "CRONOMICON", "ANCIENT RITES OF SCHEDULING, MADE EASY"
 NAVY, LIGHT_TEXT, GOLD, DARK_BG, MUTED_DARK, MUTED_LIGHT = "#131e2b", "#e8eff7", "#c9a227", "#0a1119", "#9db2c8", "#46596e"
 
 def font(name, px): return ImageFont.truetype(f"{FONTS}/{name}.ttf", px)
