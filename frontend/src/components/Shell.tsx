@@ -18,7 +18,8 @@ import { useSidebarCollapsed } from "../hooks";
 // which is identical in both themes, a colour badge with dark outlines and a
 // gold ring that reads on white and on navy alike — is the only bitmap left.
 // That also retires the collapsed rail's hand-tuned crop window: collapsing now
-// just hides the text.
+// just hides the text. The rail shows emblem + name only; the tagline is an
+// opt-in line that Login renders and the sidebar deliberately does not.
 import { Wordmark } from "./Wordmark";
 // EP-3 — one refresh glyph for the whole app; the copy that lived here is gone.
 import { IcRefresh } from "./ui";

@@ -7,7 +7,7 @@
 <p align="center"><em>Ancient rites of scheduling, made easy.</em></p>
 
 <p align="center">
-  <img src="assets/cronomicon-demo.gif" alt="Cronomicon in action: the Dashboard, the Jobs catalog, kicking off a run from the Run dialog, the run landing in History, and a workflow's step graph" width="900">
+  <img src="assets/cronomicon-demo.gif" alt="Cronomicon in action: the Dashboard, the Jobs catalog, kicking off a run from the Run dialog, switching from light to dark mode, the run landing in History, and a workflow's step graph" width="900">
 </p>
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)

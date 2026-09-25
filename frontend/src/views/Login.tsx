@@ -32,7 +32,7 @@ export function Login() {
       <Card style={{ width: "100%", maxWidth: 400, padding: 32 }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ margin: "0 auto 22px" }}>
-            <Wordmark tone="page" emblemWidth={110} />
+            <Wordmark tone="page" emblemWidth={110} tagline />
           </div>
           {headerMode ? (
             <div style={{ color: c.textSec, marginBottom: providers.dev ? 4 : 0 }}>

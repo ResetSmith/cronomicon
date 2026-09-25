@@ -13,6 +13,11 @@ import logoEmblem from "../assets/logo-emblem.png";
 // in both themes, one tagline string, and a collapsed rail that simply hides the
 // text instead of cropping the bitmap through a hand-tuned window.
 //
+// The tagline is a separate, opt-in line (`tagline`). It belongs on the Login
+// card, where the lockup is the page's subject; the sidebar rail shows only the
+// emblem and the name, because at 195px the tagline wrapped into a third line of
+// condensed caps competing with the nav for the eye.
+//
 // The emblem itself is theme-independent on purpose — a colour badge with dark
 // outlines inside a gold ring, verified legible on both the #0c1420 dark rail and
 // the #ffffff light one — so there is deliberately no per-theme `src` here.
@@ -26,10 +31,13 @@ export function Wordmark({
   collapsed,
   emblemWidth = 84,
   tone = "sidebar",
+  tagline = false,
 }: {
   collapsed?: boolean;
   emblemWidth?: number;
   tone?: "sidebar" | "page";
+  /** Render the tagline line under the name. Off by default; Login opts in. */
+  tagline?: boolean;
 }) {
   const nameColor = tone === "sidebar" ? c.sidebarTextActive : c.text;
   const taglineColor = tone === "sidebar" ? c.sidebarText : c.textSec;
@@ -55,18 +63,20 @@ export function Wordmark({
           >
             CRONOMICON
           </div>
-          <div
-            style={{
-              fontSize: c.fontXs,
-              fontFamily: c.sansCond,
-              fontWeight: 600,
-              letterSpacing: 0.9,
-              color: taglineColor,
-              marginTop: 2,
-            }}
-          >
-            {WORDMARK_TAGLINE}
-          </div>
+          {tagline && (
+            <div
+              style={{
+                fontSize: c.fontXs,
+                fontFamily: c.sansCond,
+                fontWeight: 600,
+                letterSpacing: 0.9,
+                color: taglineColor,
+                marginTop: 2,
+              }}
+            >
+              {WORDMARK_TAGLINE}
+            </div>
+          )}
         </div>
       )}
     </div>
