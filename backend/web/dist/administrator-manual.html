@@ -3941,7 +3941,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
  -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/cronomicon-runner/keys \
  -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/cronomicon-runner/known_hosts \
  -v cronomicon-runner-data:/var/lib/cronomicon-runner \
- cronomicon-runner:slim # use :fat for ansible/terraform</pre>
+ ghcr.io/resetsmith/cronomicon-runner:2.0.2 # -fat for ansible/terraform</pre>
                 </div>
                 <div class="callout note">
                     <div class="ct"><span class="em">ℹ️</span> The panel's Install Command is the real installer</div>
@@ -4541,8 +4541,11 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                 </div>
 
                 <h3>8.3 First production deploy</h3>
-                <p>Cronomicon ships as one container image; how you run it (Compose, systemd, Kubernetes) is
-                    your choice. The steps below describe a Compose layout that matches the topology above: a
+                <p>Cronomicon ships as one container image, published for <code>linux/amd64</code> from every
+                    release tag as <code>ghcr.io/resetsmith/cronomicon:&lt;version&gt;</code> (also tagged
+                    <code>&lt;major&gt;.&lt;minor&gt;</code> and <code>latest</code>; pin the full version). You can
+                    also build it yourself from <code>backend/Dockerfile</code>, as described below. How you run it
+                    (Compose, systemd, Kubernetes) is your choice. The steps below describe a Compose layout that matches the topology above: a
                     reverse proxy that terminates TLS and does forward-auth against an identity provider, with
                     the app on an internal network and its port never published.</p>
                 <ol class="steps">
@@ -4556,14 +4559,14 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                     <li>Write the base64 KEK to a file mounted read-only into the container
                         (<code>CRONOMICON_KEK_FILE</code>), and back it up separately.</li>
                     <li>Set <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> for this first deploy. Then run
-                        <code>docker compose up -d --build</code>.</li>
+                        <code>docker compose up -d</code>.</li>
                     <li>Log in as a member of that group (you get admin). Create the real access grants in Settings
                         &rarr; Users &amp; Access.</li>
                     <li><strong>Remove <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></strong> and run
                         <code>docker compose up -d</code> again. Make sure that the warning stops.</li>
                 </ol>
 
-                <p>Stage 1 of <code>backend/Dockerfile</code> builds the SPA from source, and the Go binary embeds
+                <p>If you build the image yourself: stage 1 of <code>backend/Dockerfile</code> builds the SPA from source, and the Go binary embeds
                     the result. Thus the image can only serve a bundle built from source HEAD. That stage runs
                     <strong>vite build</strong>, not <code>npm run build</code> (which is
                     <code>tsc -b &amp;&amp; vite build</code>). <strong>Type checks are a source gate:</strong> they

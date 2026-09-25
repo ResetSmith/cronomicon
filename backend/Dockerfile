@@ -10,7 +10,9 @@
 #     --build-arg COMMIT=$(git rev-parse --short HEAD) \
 #     --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) .
 #
-# (your build pipeline or compose stack sets context: . and passes these args.)
+# .github/workflows/publish-images.yml builds exactly this on a vX.Y.Z tag and
+# pushes ghcr.io/resetsmith/cronomicon; your own pipeline sets context: . and
+# passes the same args.
 
 # ── Stage 1: build the frontend so the embed is fresh, not a stale committed dist.
 # Pin by digest in a hardened pipeline; tag-pinned here for readability.
@@ -91,26 +93,6 @@ RUN go mod download
 # //go:embed all:dist picks up a UI matching source HEAD (B.1 exit criterion).
 COPY backend/ ./
 
-# STALE-CHECKOUT REPAIR (2026-09-18). The deploy host does not build a clean
-# checkout: it keeps a working copy across deploys and RETAINS files that have
-# been deleted from git. Confirmed here by exit 82 — internal/gitlab/migrate.go,
-# deleted in v1.5.41, was still in the context — and previously in v0.52.26
-# (a8c594e), where a file deleted eleven minor versions earlier broke the
-# frontend build the same way.
-#
-# A retained .go file is not inert: migrate.go re-declares readBodyAt and
-# hashBodyAt, which body.go now owns, so the package stops compiling. Deleting
-# the known-dead paths here is a no-op on a clean checkout and repairs a dirty
-# one, so the image is built from the tree this commit actually describes.
-#
-# This is a WORKAROUND, not a fix. It cannot repair a file that is merely OUT OF
-# DATE (only ones that should not exist), and the next deletion anywhere in the
-# tree will fail the same way until the deploy host clones clean. The assertions
-# in the build step below are what catch the half this cannot repair.
-RUN rm -f internal/gitlab/migrate.go internal/gitlab/migrate_test.go \
-          internal/sshkeys/backfill.go internal/sshkeys/backfill_test.go \
-          SEAMS.md
-
 RUN rm -rf web/dist
 COPY --from=frontend /repo/backend/web/dist ./web/dist
 
@@ -118,103 +100,9 @@ COPY --from=frontend /repo/backend/web/dist ./web/dist
 ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
-# TEMPORARY DIAGNOSTIC SCAFFOLDING (2026-09-18), round 4. Not a feature.
-#
-# Round 3 answered 82: the deploy host retained internal/gitlab/migrate.go,
-# deleted in v1.5.41. The repair step after the COPY above now removes the
-# known-dead paths; these assertions stay to catch the staleness it cannot fix.
-#
-# WHAT THE FIRST TWO ROUNDS ESTABLISHED. Round 1 answered 44: not disk, not
-# memory, not an empty web/dist. Round 2 answered 55 — "undefined:" — on a
-# builder confirmed amd64 and Go 1.26. That combination is diagnostic: the same
-# commit compiles from a clean `git archive` export with a cold GOCACHE, so a
-# symbol can only be undefined here if THE CHECKOUT THIS IMAGE IS BUILT FROM IS
-# NOT THAT COMMIT. Both partial-checkout shapes were reproduced deliberately and
-# both give exactly this error:
-#
-#   • new internal/notify/notify.go beside a pre-band internal/settings/global.go
-#     → undefined: settings.ParseAppriseTargets
-#   • new internal/gitlab/sync.go with internal/gitlab/body.go absent
-#     → undefined: readBodyAt / hashBodyAt
-#
-# This is the same failure class as v0.52.26 (a8c594e), where the deploy host's
-# clone still held a file deleted from git eleven minor versions earlier. The
-# repo is not the cause: there is no .gitattributes, no sparse-checkout, and no
-# backend source file is gitignored.
-#
-# So this round stops guessing from error text and ASSERTS THE CHECKOUT, naming
-# the stale path in the exit code before the compiler is ever invoked.
-#
-#   81  internal/gitlab/body.go MISSING          (a new file never landed)
-#   82  internal/gitlab/migrate.go PRESENT       (the repair rm above failed)
-#   83  internal/sshkeys/backfill.go PRESENT     (the repair rm above failed)
-#   84  internal/settings/global.go is PRE-BAND  (no func ParseAppriseTargets)
-#   85  migrations/1150_*.up.sql MISSING         (a new file never landed)
-#   86  internal/runner/poll.go is PRE-BAND      (no protocol_too_old)
-#   87  internal/notify/notify.go is PRE-BAND    (still parses bare-string targets)
-#
-#   90  GOARCH is not amd64      1xx  Go toolchain is go1.<xx>, not 1.26
-#
-#   71  undefined: settings.ParseAppriseTargets  72  undefined: readBodyAt/hashBodyAt
-#   74  some other undefined symbol              73  a redeclared symbol
-#   50-70 as round 2 (module/type/cgo/etc.)      44  nothing matched
-#
-# ANY REMAINING 8x CODE MEANS A FILE IS OUT OF DATE RATHER THAN MERELY EXTRA,
-# which the repair step above cannot fix — only a clean checkout can. Look for a
-# "clear cache" / "force rebuild" / "recreate" option in the deploy tool, or
-# delete and re-create the deployment so it clones fresh. Worth doing either
-# way: a workspace that silently keeps old source will keep producing failures
-# that read like code bugs.
-#
-# TO REMOVE: delete this block and restore
-#   RUN CGO_ENABLED=1 go build -trimpath \
-#       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
-#       -o /out/cronomicon ./cmd/cronomicon
-RUN set -u; \
-    if [ ! -f internal/gitlab/body.go ]; then exit 81; fi; \
-    if [ -f internal/gitlab/migrate.go ]; then exit 82; fi; \
-    if [ -f internal/sshkeys/backfill.go ]; then exit 83; fi; \
-    if ! grep -q "func ParseAppriseTargets" internal/settings/global.go; then exit 84; fi; \
-    if [ ! -f internal/db/migrations/1150_apprise_targets_object_form.up.sql ]; then exit 85; fi; \
-    if ! grep -q "protocol_too_old" internal/runner/poll.go; then exit 86; fi; \
-    if grep -q "legacy bare-URL string" internal/notify/notify.go; then exit 87; fi; \
-    ARCH=$(go env GOARCH 2>/dev/null || echo unknown); \
-    if [ "$ARCH" != "amd64" ]; then exit 90; fi; \
-    GOV=$(go env GOVERSION 2>/dev/null || echo unknown); \
-    MINOR=$(echo "$GOV" | sed -n "s/^go1\.\([0-9][0-9]*\).*/\1/p"); \
-    if [ -n "$MINOR" ] && [ "$MINOR" != "26" ]; then exit $((100 + MINOR)); fi; \
-    CGO_ENABLED=1 go build -trimpath \
+RUN CGO_ENABLED=1 go build -trimpath \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
-      -o /out/cronomicon ./cmd/cronomicon > /tmp/b.log 2>&1; \
-    status=$?; \
-    cat /tmp/b.log; \
-    if [ "$status" -eq 0 ]; then echo "go build OK"; exit 0; fi; \
-    echo "=== GO BUILD FAILED (exit $status) ==="; \
-    m() { grep -qiE "$1" /tmp/b.log; }; \
-    if m "undefined: settings\.ParseAppriseTargets"; then exit 71; fi; \
-    if m "undefined: (readBodyAt|hashBodyAt)"; then exit 72; fi; \
-    if m "redeclared in this block"; then exit 73; fi; \
-    if m "undefined:"; then exit 74; fi; \
-    if m "missing go\.sum entry"; then exit 50; fi; \
-    if m "no required module provides"; then exit 51; fi; \
-    if m "updates to go\.mod needed"; then exit 52; fi; \
-    if m "cannot find module providing"; then exit 53; fi; \
-    if m "proxy\.golang\.org|dial tcp|module lookup disabled|i/o timeout|certificate"; then exit 54; fi; \
-    if m "imported and not used"; then exit 56; fi; \
-    if m "declared and not used"; then exit 57; fi; \
-    if m "cannot use .* as .* value|incompatible type"; then exit 58; fi; \
-    if m "unknown field"; then exit 59; fi; \
-    if m "not enough arguments|too many arguments"; then exit 60; fi; \
-    if m "build constraints exclude all Go files"; then exit 61; fi; \
-    if m "cgo:|C compiler|gcc.*not found"; then exit 62; fi; \
-    if m "is not in std|is not in GOROOT"; then exit 63; fi; \
-    if m "no Go files"; then exit 64; fi; \
-    if m "go\.mod requires|requires go >=|invalid go version"; then exit 65; fi; \
-    if m "internal compiler error"; then exit 66; fi; \
-    if m "cannot load"; then exit 67; fi; \
-    if m "permission denied"; then exit 68; fi; \
-    if m "\.go:[0-9]+"; then exit 70; fi; \
-    exit 44
+      -o /out/cronomicon ./cmd/cronomicon
 
 # Pre-create data directory with nonroot UID/GID (65532)
 RUN mkdir -p /out/var/lib/cronomicon && chown 65532:65532 /out/var/lib/cronomicon

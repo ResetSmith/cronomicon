@@ -2,9 +2,12 @@
 
 What lives here is what the application itself builds against, serves or
 documents. The deployment stack (Docker Compose, reverse proxy, SSO provider,
-Vault Agent sidecar, runner container images, load tests, the deployment guide
-and the day-2 runbooks) is the operator's own concern and is not shipped here; the
-administrator manual's Deployment chapter describes a reference topology.
+Vault Agent sidecar, load tests, the deployment guide and the day-2 runbooks) is
+the operator's own concern and is not shipped here; the administrator manual's
+Deployment chapter describes a reference topology. The container images are
+built from `backend/Dockerfile`, `backend/Dockerfile.runner` and
+`backend/Dockerfile.runner.fat`, and published to `ghcr.io/resetsmith/` by
+`.github/workflows/publish-images.yml` on every release tag.
 
 | File | Purpose | Consumed by |
 |---|---|---|

@@ -13,6 +13,47 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.0.2] - 2026-09-25
+
+Release images are published to the GitHub Container Registry. Pushing a
+`vX.Y.Z` tag builds the server and both runner images from that commit and
+pushes them to `ghcr.io/resetsmith/`. The application, its API, its schema
+(v1150) and the runner protocol (13) are unchanged.
+
+### Added
+
+- Add `.github/workflows/publish-images.yml`. On a `vX.Y.Z` tag it builds three
+  `linux/amd64` images and pushes each as `X.Y.Z`, `X.Y` and `latest`:
+  `ghcr.io/resetsmith/cronomicon` (the server), `cronomicon-runner` (slim) and
+  `cronomicon-runner-fat`. A tag that does not match the version const and the
+  top CHANGELOG entry is refused before anything is built. It is a publish
+  step, not a gate: `make verify` and the frontend build and tests still run
+  locally before the release merge.
+- Restore the runner container images as `backend/Dockerfile.runner` (the
+  static agent on `distroless/static`) and `backend/Dockerfile.runner.fat` (the
+  agent plus `ansible` 14.4.0, `terraform` 1.16.4, `git` and an OpenSSH client).
+  Both build from the repository root, like the server image. The fat image
+  moves to Debian trixie because the ansible 14 line needs Python 3.12 or
+  later, verifies the Terraform download against HashiCorp's `SHA256SUMS`, and
+  now carries the `git` that runner project checkouts need.
+
+### Changed
+
+- The Runners view's **docker run** helper names the published image, pinned
+  to the server's version from `/version` (`latest` on a dev build), in place
+  of the local `cronomicon-runner:slim` / `:fat` tags.
+- The README, the runner install and manage guides and the administrator
+  manual's Deployment chapter describe pulling the published images, with
+  building your own as the alternative.
+
+### Removed
+
+- Remove the temporary diagnostic scaffolding from `backend/Dockerfile`: the
+  stale-checkout repair step and the exit-code assertions around `go build`.
+  They were written for a deploy host that built from a dirty working copy; a
+  clean checkout never needed them, and the `GOARCH` assertion refused any
+  build that was not amd64.
+
 ## [2.0.1] - 2026-09-25
 
 The repository now holds the application only. The deployment stack that
