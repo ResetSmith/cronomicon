@@ -36,7 +36,7 @@ func TestManifestDeliversKeyMaterial(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-key", "amt_run_key"
+	runnerID, tok := "runner-key", "crn_run_key"
 	insertRunner(t, svc, runnerID, "key", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -110,7 +110,7 @@ func TestIngestMasksDeliveredKeyMaterial(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-keymask", "amt_run_keymask"
+	runnerID, tok := "runner-keymask", "crn_run_keymask"
 	insertRunner(t, svc, runnerID, "keymask", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 

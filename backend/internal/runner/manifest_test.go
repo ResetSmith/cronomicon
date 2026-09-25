@@ -106,7 +106,7 @@ func insertClaimedRunTargetHostOverride(t *testing.T, svc *Service, traceID, job
 func TestManifestPinnedLimitMetacharWithAnsibleLimitPassthrough(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-badpin-passthrough", "amt_run_badpin_pass"
+	runnerID, tok := "runner-badpin-passthrough", "crn_run_badpin_pass"
 	insertRunner(t, svc, runnerID, "badpinpass", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -132,7 +132,7 @@ func TestManifestPinnedLimitMetacharWithAnsibleLimitPassthrough(t *testing.T) {
 func TestManifestPinnedLimit(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-pin", "amt_run_pin"
+	runnerID, tok := "runner-pin", "crn_run_pin"
 	insertRunner(t, svc, runnerID, "pin", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -173,7 +173,7 @@ func TestManifestPinnedLimit(t *testing.T) {
 func TestManifestPinnedLimitMetacharRejected(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-badpin", "amt_run_badpin"
+	runnerID, tok := "runner-badpin", "crn_run_badpin"
 	insertRunner(t, svc, runnerID, "badpin", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -205,7 +205,7 @@ func TestManifestPinnedLimitMetacharRejected(t *testing.T) {
 func TestManifestLimit(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-lim", "amt_run_lim"
+	runnerID, tok := "runner-lim", "crn_run_lim"
 	insertRunner(t, svc, runnerID, "lim", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -299,8 +299,8 @@ func TestManifestOwnership(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	ownerID, ownerTok := "runner-owner", "amt_run_owner"
-	otherID, otherTok := "runner-other", "amt_run_other"
+	ownerID, ownerTok := "runner-owner", "crn_run_owner"
+	otherID, otherTok := "runner-other", "crn_run_other"
 	insertRunner(t, svc, ownerID, "owner", "online", []string{"bash"})
 	insertRunner(t, svc, otherID, "other", "online", []string{"bash"})
 	bindRunnerToken(t, svc, ownerTok, ownerID)
@@ -347,7 +347,7 @@ func TestManifestAmadeusMode(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-am", "amt_run_am"
+	runnerID, tok := "runner-am", "crn_run_am"
 	insertRunner(t, svc, runnerID, "am", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -398,7 +398,7 @@ func TestManifestEnvPassthrough(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-envp", "amt_run_envp"
+	runnerID, tok := "runner-envp", "crn_run_envp"
 	insertRunner(t, svc, runnerID, "envp", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -435,7 +435,7 @@ func TestManifestEnvPassthroughEmptyButPresent(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-envp0", "amt_run_envp0"
+	runnerID, tok := "runner-envp0", "crn_run_envp0"
 	insertRunner(t, svc, runnerID, "envp0", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -473,7 +473,7 @@ func TestManifestLocalMode(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-local", "amt_run_local"
+	runnerID, tok := "runner-local", "crn_run_local"
 	insertRunner(t, svc, runnerID, "local", "online", []string{"bash"})
 	// Flip this runner to local inventory.
 	if _, err := svc.db.Exec(`UPDATE runners SET inventory='local' WHERE id=?`, runnerID); err != nil {
@@ -505,7 +505,7 @@ func TestManifestConflictStates(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-x", "amt_run_x"
+	runnerID, tok := "runner-x", "crn_run_x"
 	insertRunner(t, svc, runnerID, "x", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	insertJobDef(t, svc, "j", "bash", "echo j", 0)
@@ -549,7 +549,7 @@ func TestManifestAnsibleInventory(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-ans", "amt_run_ans"
+	runnerID, tok := "runner-ans", "crn_run_ans"
 	insertRunner(t, svc, runnerID, "ans", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -581,7 +581,7 @@ func TestManifestLocalModeAnsibleNoInventory(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-liso", "amt_run_liso"
+	runnerID, tok := "runner-liso", "crn_run_liso"
 	insertRunner(t, svc, runnerID, "liso", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET inventory='local', protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set local: %v", err)
@@ -609,7 +609,7 @@ func TestManifestAnsibleNoInventoryRejected(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-noi", "amt_run_noi"
+	runnerID, tok := "runner-noi", "crn_run_noi"
 	insertRunner(t, svc, runnerID, "noi", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -645,7 +645,7 @@ func TestManifestTerraform(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-tf", "amt_run_tf"
+	runnerID, tok := "runner-tf", "crn_run_tf"
 	insertRunner(t, svc, runnerID, "tf", "online", []string{"terraform"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -714,7 +714,7 @@ func TestManifestCheckout(t *testing.T) {
 	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/job-defs.git"
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-co", "amt_run_co"
+	runnerID, tok := "runner-co", "crn_run_co"
 	insertRunner(t, svc, runnerID, "co", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)
@@ -751,7 +751,7 @@ func TestManifestCheckoutVaultAndReqPath(t *testing.T) {
 	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/job-defs.git"
 	as := authSvc(t, svc)
 
-	runnerID, tok := "runner-cv", "amt_run_cv"
+	runnerID, tok := "runner-cv", "crn_run_cv"
 	insertRunner(t, svc, runnerID, "cv", "online", []string{"ansible"})
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
 		t.Fatalf("set protocol_version: %v", err)

@@ -44,7 +44,7 @@ vi.mock("../../api/client", () => ({
       return { data: undefined };
     }),
     POST: vi.fn(async () => ({
-      data: { id: "sa-9", name: "fresh", role: "operator", allScopes: true, status: "active", token: "amasvc_SECRETVALUE" },
+      data: { id: "sa-9", name: "fresh", role: "operator", allScopes: true, status: "active", token: "crnsvc_SECRETVALUE" },
     })),
     DELETE: vi.fn(async () => ({})),
   },
@@ -65,7 +65,7 @@ describe("ServiceAccounts (ET-C)", () => {
     expect(screen.getByText("retired-bot")).toBeTruthy();
     // A revoked account keeps its row (it is an audit actor) but loses Revoke.
     expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(1);
-    expect(document.body.textContent).not.toContain("amasvc_");
+    expect(document.body.textContent).not.toContain("crnsvc_");
   });
 
   it("shows the minted token once and hides it again when dismissed", async () => {
@@ -75,7 +75,7 @@ describe("ServiceAccounts (ET-C)", () => {
     fireEvent.change(screen.getByPlaceholderText("nagios"), { target: { value: "fresh" } });
     fireEvent.click(screen.getByRole("button", { name: /Create service account/ }));
 
-    await waitFor(() => expect(screen.getByTestId("minted-token").textContent).toBe("amasvc_SECRETVALUE"));
+    await waitFor(() => expect(screen.getByTestId("minted-token").textContent).toBe("crnsvc_SECRETVALUE"));
     expect(screen.getByText(/shown once/i)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }));

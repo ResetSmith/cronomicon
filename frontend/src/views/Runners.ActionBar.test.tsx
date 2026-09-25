@@ -7,7 +7,7 @@ const RUNNER = {
   id: "019f0000-1111-2222-3333-aaaaaaaaaaaa",
   name: "runner-a",
   status: "online",
-  protocolVersion: 12,
+  protocolVersion: 13,
   version: "0.52.28",
   capabilities: ["bash"],
 };
@@ -16,7 +16,7 @@ const DEGRADED = {
   id: "019f0000-1111-2222-3333-bbbbbbbbbbbb",
   name: "runner-b",
   status: "degraded",
-  protocolVersion: 12,
+  protocolVersion: 13,
   version: "0.52.28",
   capabilities: ["bash"],
 };
@@ -24,7 +24,7 @@ const OFFLINE = {
   id: "019f0000-1111-2222-3333-cccccccccccc",
   name: "runner-c",
   status: "offline",
-  protocolVersion: 12,
+  protocolVersion: 13,
   version: "0.52.28",
   capabilities: ["bash"],
 };

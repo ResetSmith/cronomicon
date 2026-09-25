@@ -189,7 +189,7 @@ export function provisionOneLiner(o: ProvisionOptions): string {
   const parts = [
     `curl -fsSL ${o.origin}${RUNNER_INSTALL_SCRIPT_PATH} | sudo bash -s --`,
     `-s ${o.origin}`,
-    `-t ${shellArg(o.token)}`, // quotes the <TOKEN> placeholder; a real amt_reg_* passes verbatim
+    `-t ${shellArg(o.token)}`, // quotes the <TOKEN> placeholder; a real crn_reg_* passes verbatim
     `-n ${o.name ? shellArg(o.name) : "$(hostname)"}`,
   ];
   // No -c in detect mode: the agent probes the host's toolchains at startup.

@@ -84,7 +84,7 @@ func TestManifestInjectsReferences(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-inj", "amt_run_inj"
+	runnerID, tok := "runner-inj", "crn_run_inj"
 	insertRunner(t, svc, runnerID, "inj", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -116,7 +116,7 @@ func TestManifestInjectsOverrideReferences(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-ovr", "amt_run_ovr"
+	runnerID, tok := "runner-ovr", "crn_run_ovr"
 	insertRunner(t, svc, runnerID, "ovr", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 
@@ -149,7 +149,7 @@ func TestManifestSecretInjectionRunnerNotFlagged(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-noinj", "amt_run_noinj"
+	runnerID, tok := "runner-noinj", "crn_run_noinj"
 	insertRunner(t, svc, runnerID, "noinj", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 

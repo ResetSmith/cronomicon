@@ -49,14 +49,14 @@ usage() {
   echo "Usage: $0 [options]"
   echo "Options:"
   echo "  -s, --server <url>         Cronomicon server URL (e.g., https://amadeus.example.com) [REQUIRED]"
-  echo "  -t, --token <token>        Registration token (amt_reg_*). DISCOURAGED: a flag"
+  echo "  -t, --token <token>        Registration token (crn_reg_*). DISCOURAGED: a flag"
   echo "                             value is visible in ps(1) and shell history. Prefer"
   echo "                             --token-file, or '--token -' to be prompted."
   echo "      --token-file <path>    Read the registration token from a file [PREFERRED]"
   echo "      --token -              Prompt for the registration token on stdin (input"
   echo "                             hidden). Required when the token is a long-lived"
   echo "                             CRONOMICON_RUNNER_BOOTSTRAP_TOKEN rather than a spent"
-  echo "                             single-use amt_reg_* value."
+  echo "                             single-use crn_reg_* value."
   echo "  -n, --name <name>          Runner display name (default: hostname)"
   echo "  -c, --capabilities <list>  Comma-separated run-type capabilities. Default: omitted —"
   echo "                             the agent auto-detects the host's toolchains at startup."
@@ -114,7 +114,7 @@ require_value() {
 while [[ "$#" -gt 0 ]]; do
   case $1 in
     -s|--server) require_value "$1" "${2:-}"; SERVER_URL="$2"; shift ;;
-    # A per-install amt_reg_* is single-use and expires in 24h, so an inline value
+    # A per-install crn_reg_* is single-use and expires in 24h, so an inline value
     # was historically harmless. A bootstrap token is multi-use and never expires,
     # so the same flag now carries a permanent credential: inline is accepted for
     # compatibility but warned, and the file/stdin forms are the documented path.

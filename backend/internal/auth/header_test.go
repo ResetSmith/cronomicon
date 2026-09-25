@@ -209,11 +209,11 @@ func TestIdentityFromHeadersConfigurableNames(t *testing.T) {
 // TestBootstrapAdmin verifies that on a fresh DB with no access grants at all, a
 // user in the bootstrap admin group is granted admin (A.6).
 func TestBootstrapAdmin(t *testing.T) {
-	s := headerService(t, "10.0.0.0/8", "amadeus-admins")
+	s := headerService(t, "10.0.0.0/8", "cronomicon-admins")
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("Remote-User", "founder@example.com")
-	r.Header.Set("Remote-Groups", "amadeus-admins")
+	r.Header.Set("Remote-Groups", "cronomicon-admins")
 
 	id, ok := s.identityFromHeaders(context.Background(), r)
 	if !ok {

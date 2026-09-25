@@ -191,7 +191,7 @@ type reachCapture struct{ key ssh.PublicKey }
 func reachConfig(inner ssh.HostKeyCallback, cap *reachCapture) *ssh.ClientConfig {
 	return &ssh.ClientConfig{
 		// Never authenticates — a recognizable name keeps the remote side's
-		// auth log explicable (mirrors keyscan's "amadeus-keyscan").
+		// auth log explicable (mirrors keyscan's "cronomicon-keyscan").
 		User: "amadeus-probe",
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			if err := inner(hostname, remote, key); err != nil {

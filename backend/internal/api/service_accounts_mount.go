@@ -169,7 +169,7 @@ func newServiceToken() (string, error) {
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return "amasvc_" + base64.RawURLEncoding.EncodeToString(buf), nil
+	return "crnsvc_" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {

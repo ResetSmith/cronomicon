@@ -26,7 +26,7 @@ const ORIGIN = "https://amadeus.example.com";
 function fullOpts(): ProvisionOptions {
   return {
     origin: ORIGIN,
-    token: "amt_reg_test123",
+    token: "crn_reg_test123",
     name: "runner-dc2-07",
     capabilities: ["ansible", "bash"],
     inventory: "local",

@@ -50,7 +50,7 @@ func TestDoctorQuickPassesAgainstLiveServer(t *testing.T) {
 	dir := t.TempDir()
 
 	cfg, err := Resolve([]string{"-server", srv.URL, "-name", "d", "-capabilities", "bash",
-		"-registration-token", "amt_reg_x", "-identity-file", dir + "/id.json"}, noEnv)
+		"-registration-token", "crn_reg_x", "-identity-file", dir + "/id.json"}, noEnv)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

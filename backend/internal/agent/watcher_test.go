@@ -40,7 +40,7 @@ func pollingAgent(t *testing.T, h http.HandlerFunc) *Agent {
 		cfg:    Config{AllowWatch: true, WatchPaths: []string{"/data/in"}},
 		client: c,
 		log:    discardLogger(),
-		id:     Identity{ID: "r1", APIKey: "amt_run_x"},
+		id:     Identity{ID: "r1", APIKey: "crn_run_x"},
 		active: map[string]context.CancelFunc{},
 	}
 	a.watcher = newWatcher(a)

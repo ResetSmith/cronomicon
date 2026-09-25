@@ -9,7 +9,7 @@
 //
 // Usage (against a seeded ops/staging instance — never production):
 //   BASE=https://amadeus.staging.example.com \
-//   RUNNER_ID=ldtest-1 RUNNER_TOKEN=amt_run_xxx \
+//   RUNNER_ID=ldtest-1 RUNNER_TOKEN=crn_run_xxx \
 //   k6 run --vus 200 --duration 10m backend/deploy/loadtest/poll.js
 //
 // Pre-seed: register the runner(s) and capture their bearer tokens first. Vary

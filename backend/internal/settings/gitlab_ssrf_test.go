@@ -27,7 +27,7 @@ func TestRotateWebhookRefusesMetadataTarget(t *testing.T) {
 
 	if _, err := UpdateGitlabConfig(ctx, pool, cfg, GitlabConfig{
 		Pat:         "super-secret-pat",
-		BotName:     "amadeus-bot",
+		BotName:     "cronomicon-bot",
 		BotEmail:    "bot@example.com",
 		WriteBranch: "main",
 		RepoUrl:     "https://169.254.169.254/org/repo.git",

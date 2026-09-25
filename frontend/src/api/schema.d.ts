@@ -90,13 +90,13 @@ export interface paths {
          *     token, and binary-download-on baked in, so a whole install is one
          *     flagless pipe (runner provisioning plan 2 Phase 2, D2):
          *
-         *         curl -fsSL https://amadeus.example.com/install/amt_reg_… | sudo bash
+         *         curl -fsSL https://amadeus.example.com/install/crn_reg_… | sudo bash
          *
          *     A dumb substitution endpoint: it does NOT read the DB or validate the
          *     token against it (no token-validity oracle). Registration remains the
          *     sole enforcement point — single-use, atomic, audited — so serving a
          *     script for a dead token just yields a clean registration failure on the
-         *     host. Only the token SYNTAX is checked (`amt_reg_` + 64 hex); anything
+         *     host. Only the token SYNTAX is checked (`crn_reg_` + 64 hex); anything
          *     else is a generic 404. Capabilities are not baked — the agent
          *     auto-detects the host's toolchains at startup (Phase 1). Served at the
          *     server root, outside /api/v1. Unauthenticated by design: the token in
@@ -2200,7 +2200,7 @@ export interface paths {
         put?: never;
         /**
          * Register a runner (single-use registration token, A6.1/Phase 7)
-         * @description Called by the runner binary with a registration token (amt_reg_*,
+         * @description Called by the runner binary with a registration token (crn_reg_*,
          *     24h expiry, single-use per install — or the multi-use env bootstrap
          *     token) as the bearer credential. Returns the runner record + a
          *     long-lived API key used for all subsequent runner calls. The token
@@ -2580,7 +2580,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a single-use registration token (§6.6, Phase 7)
-         * @description Mints one amt_reg_* token (24h expiry) for one install. Plaintext is
+         * @description Mints one crn_reg_* token (24h expiry) for one install. Plaintext is
          *     returned once and never re-served. Unlike the retired shared-token
          *     rotate, minting does NOT revoke other tokens — several installs can
          *     be in flight, each with its own token; each dies on its first
@@ -5571,7 +5571,7 @@ export interface components {
              * @example jobs/backup-prod-db.yaml
              */
             filePath: string;
-            /** @description Full YAML file content. Must carry apiVersion amadeus.io/v1 (T10). */
+            /** @description Full YAML file content. Must carry apiVersion cronomicon.io/v1 (T10). */
             content: string;
             /** @description Optional override; defaults to a generated message. Committed as the bot identity (§3.2). */
             commitMessage?: string;
@@ -6052,7 +6052,7 @@ export interface components {
         };
         MintedServiceAccount: components["schemas"]["ServiceAccount"] & {
             /**
-             * @description The plaintext credential, prefixed `amasvc_`. Present ONLY in
+             * @description The plaintext credential, prefixed `crnsvc_`. Present ONLY in
              *     the 201 response that created the account; only its SHA-256 is
              *     stored, so it cannot be recovered afterwards.
              */
@@ -7652,7 +7652,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description A registration token (`amt_reg_` + 64 lowercase hex). */
+                /** @description A registration token (`crn_reg_` + 64 lowercase hex). */
                 token: string;
             };
             cookie?: never;
@@ -11712,7 +11712,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @example secret/data/amadeus#DB_PASSWORD */
+                    /** @example secret/data/cronomicon#DB_PASSWORD */
                     vaultPath: string;
                 };
             };
@@ -12576,7 +12576,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RegistrationTokenInfo"] & {
-                        /** @description The amt_reg_* plaintext. Shown once; store securely. */
+                        /** @description The crn_reg_* plaintext. Shown once; store securely. */
                         token: string;
                     };
                 };

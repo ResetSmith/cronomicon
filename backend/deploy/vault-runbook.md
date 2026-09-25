@@ -56,16 +56,16 @@ grant blanket `secret/*`.
 
 ```hcl
 # amadeus-injection.hcl
-path "secret/data/amadeus/*"      { capabilities = ["read"] }
-path "secret/data/amadeus/ssh/*"  { capabilities = ["read"] }
+path "secret/data/cronomicon/*"      { capabilities = ["read"] }
+path "secret/data/cronomicon/ssh/*"  { capabilities = ["read"] }
 # If you use migrate-to-vault (writes a stored secret into Vault): add "create","update"
 # on the specific destination path only.
 ```
 
 A `vault_ref` is `"<kvv2-path>#<field>"`, e.g.
-`secret/data/amadeus/app#DB_PASSWORD`; the field after `#` selects one key from the
+`secret/data/cronomicon/app#DB_PASSWORD`; the field after `#` selects one key from the
 secret's data map (defaults to `value`). SSH credentials store the private-key PEM
-as one field, e.g. `secret/data/amadeus/ssh/deploy#private_key`.
+as one field, e.g. `secret/data/cronomicon/ssh/deploy#private_key`.
 
 ## 3. Namespace & private CA (D4 — dormant until set)
 

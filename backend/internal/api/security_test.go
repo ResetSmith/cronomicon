@@ -34,7 +34,7 @@ func TestSpoofedHeaderRejectedAtServer(t *testing.T) {
 	spoofed := map[string]string{
 		"Remote-User":   "attacker",
 		"Remote-Email":  "attacker@evil.test",
-		"Remote-Groups": "amadeus-admins,admins",
+		"Remote-Groups": "cronomicon-admins,admins",
 	}
 
 	t.Run("untrusted peer: spoofed headers stripped → 401", func(t *testing.T) {

@@ -244,7 +244,7 @@ func TestSyncValidatesAndPersistsReactions(t *testing.T) {
 
 	// `keep` already exists in the fixture; `reactor` watches it — valid.
 	gitCommitFile(t, repo, remote, "jobs/reactor.yaml",
-		"apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: reactor\n"+
+		"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: reactor\n"+
 			"spec:\n  run_type: bash\n  command: echo hi\n  reactions:\n"+
 			"    - name: after-keep\n      onKind: job\n      onName: keep\n      onOutcome: success\n",
 		"add reactor")
@@ -259,7 +259,7 @@ func TestSyncValidatesAndPersistsReactions(t *testing.T) {
 
 	// Now point it at a definition that does not exist.
 	gitCommitFile(t, repo, remote, "jobs/reactor.yaml",
-		"apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: reactor\n"+
+		"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: reactor\n"+
 			"spec:\n  run_type: bash\n  command: echo hi\n  reactions:\n"+
 			"    - name: after-ghost\n      onKind: job\n      onName: ghost\n      onOutcome: success\n",
 		"break reactor")
@@ -300,7 +300,7 @@ func TestReactionToASiblingInTheSameRepoValidatesOnFirstSync(t *testing.T) {
 	// Two brand-new jobs, neither in the DB, one watching the other.
 	gitCommitFile(t, repo, remote, "jobs/producer.yaml", jobYAML("producer"), "add producer")
 	gitCommitFile(t, repo, remote, "jobs/consumer.yaml",
-		"apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: consumer\n"+
+		"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: consumer\n"+
 			"spec:\n  run_type: bash\n  command: echo hi\n  reactions:\n"+
 			"    - name: after-producer\n      onKind: job\n      onName: producer\n      onOutcome: success\n",
 		"add consumer")

@@ -22,9 +22,9 @@ import (
 
 // outputMarkerSSHServer is a minimal sshd that, on exec, drains stdin (the env
 // prelude the executor delivers on stdin) and then emits a single
-// ::amadeus-output:: marker line carrying markerValue on stdout before exiting 0.
+// ::cronomicon-output:: marker line carrying markerValue on stdout before exiting 0.
 // It lets a test drive the exact SU-1 leak idiom
-// (`echo "::amadeus-output name=TOKEN::$CRONOMICON_SECRET_DB_PASS"`) without a real
+// (`echo "::cronomicon-output name=TOKEN::$CRONOMICON_SECRET_DB_PASS"`) without a real
 // remote shell: pass the injected secret value as markerValue.
 func outputMarkerSSHServer(t *testing.T, clientPub ssh.PublicKey, markerValue string) (addr string, hostKey ssh.PublicKey) {
 	t.Helper()
@@ -79,7 +79,7 @@ func serveOutputMarker(nConn net.Conn, cfg *ssh.ServerConfig, markerValue string
 					// Drain the stdin env prelude to EOF (client closes its write side),
 					// then emit the leaking output marker on stdout.
 					_, _ = io.ReadAll(ch)
-					io.WriteString(ch, "::amadeus-output name=TOKEN::"+markerValue+"\n")
+					_, _ = io.WriteString(ch, "::cronomicon-output name=TOKEN::"+markerValue+"\n")
 					ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
 					ch.Close()
 					return
@@ -92,7 +92,7 @@ func serveOutputMarker(nConn net.Conn, cfg *ssh.ServerConfig, markerValue string
 
 // TestSSHExecutorRefusesOutputLeakingSecret is the SU-1 fix: the in-app SSH
 // executor, like the runner log-ingest path, must fail a run CLOSED when a
-// captured ::amadeus-output:: value carries an injected secret — the value is
+// captured ::cronomicon-output:: value carries an injected secret — the value is
 // never persisted to outputs_json (so nothing can propagate into a child step's
 // env_json or the run-detail API), the run is failed with reason
 // output_secret_leak, and the secret stays masked in the log.

@@ -23,11 +23,11 @@
 <h2>1 · Add a runner (one click) — or mint a token by hand</h2>
 
 <blockquote><p><strong>Fast path — the <code>+ Add Runner</code> button.</strong> On the <strong>Runners</strong> view, click <strong>+ Add Runner</strong>, optionally label it, and press <strong>Mint &amp; build command</strong>. You get a single <strong>flagless</strong> one-liner:</p>
-<pre><code>curl -fsSL https://amadeus.example.com/install/amt_reg_… | sudo bash</code></pre>
+<pre><code>curl -fsSL https://amadeus.example.com/install/crn_reg_… | sudo bash</code></pre>
 <p>Paste it on the host as root — done. The server URL, the token, and the agent-binary download are <strong>baked into the script</strong> by the <code>/install/&lt;token&gt;</code> endpoint, so nothing rides the command line; capabilities auto-detect on the host (§8). A <em>download-inspect-run</em> variant is offered for shops that don't pipe curl into sudo (the saved file is already personalized, so it too runs with no arguments). This is the recommended path; the manual token/flag flow below still exists for pre-authored installs and config management.</p>
 <p><strong>Behind an SSO / forward-auth proxy?</strong> If <code>curl …/install/&lt;token&gt;</code> fails with <code>bash: syntax error near unexpected token `&lt;'</code> / <code>`&lt;!doctype html&gt;'</code>, the reverse proxy redirected the request to its login page and returned HTML instead of the script. The runner endpoints are unauthenticated by design (the token IS the credential; the runner authenticates the server with its own bearer) and <strong>must be bypassed at the proxy</strong> — the same bypass the runner's <code>poll</code>/<code>register</code> calls need. Add <code>/install/*</code> (and <code>/agents/*</code>, <code>/runner-install.sh</code>) to the proxy's auth-bypass allowlist; see <code>deploy/deployment-guide.md</code> for the exact Authelia rule.</p></blockquote>
 
-<p>In the UI, open the <strong>Runners</strong> view (top-level nav) and find the <strong>Register New Runner</strong> card: click <strong>Mint token</strong> (optionally giving it a <strong>label</strong>, e.g. the intended runner name) to get a fresh <code>amt_reg_*</code> bearer (24h expiry). Tokens are <strong>single-use</strong>: each one registers exactly <strong>one</strong> runner and dies on that first successful registration — the card's token list shows which runner consumed which token. The plaintext is shown <strong>only once at mint</strong> — <strong>Reveal</strong>/<strong>Copy</strong> it immediately; it is stored only as a hash and can never be re-revealed. Installing several runners? Mint one token per host — minting does <strong>not</strong> invalidate other tokens. Registration mints a long-lived per-runner key (<code>amt_run_*</code>, 365d), persisted to the runner's identity file; the registration token is dead from then on and is never needed again (config changes propagate via <strong>Resync</strong>, which uses the runner's own key). An unused token can be revoked from the list at any time.</p>
+<p>In the UI, open the <strong>Runners</strong> view (top-level nav) and find the <strong>Register New Runner</strong> card: click <strong>Mint token</strong> (optionally giving it a <strong>label</strong>, e.g. the intended runner name) to get a fresh <code>crn_reg_*</code> bearer (24h expiry). Tokens are <strong>single-use</strong>: each one registers exactly <strong>one</strong> runner and dies on that first successful registration — the card's token list shows which runner consumed which token. The plaintext is shown <strong>only once at mint</strong> — <strong>Reveal</strong>/<strong>Copy</strong> it immediately; it is stored only as a hash and can never be re-revealed. Installing several runners? Mint one token per host — minting does <strong>not</strong> invalidate other tokens. Registration mints a long-lived per-runner key (<code>crn_run_*</code>, 365d), persisted to the runner's identity file; the registration token is dead from then on and is never needed again (config changes propagate via <strong>Resync</strong>, which uses the runner's own key). An unused token can be revoked from the list at any time.</p>
 
 <p>The card's <strong>Install Command</strong> is a real, copy-pasteable §3 invocation: it <code>curl</code>s <code>/runner-install.sh</code> <strong>from the Cronomicon server itself</strong> and pipes it into <code>sudo bash</code> with this server's URL and the token filled in (the freshly minted token is substituted while its plaintext is revealed — otherwise a <code>&lt;TOKEN&gt;</code> placeholder). A <em>download-inspect-run</em> variant is available under the command for orgs that don't pipe curl into sudo. Run it on the target host next to a pre-built <code>amadeus-runner</code> binary (§2); capabilities are auto-detected from the host's toolchains at startup — add <code>-c</code> only to narrow them.</p>
 
@@ -71,7 +71,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 
 <pre><code>sudo ./runner-install.sh \
   --server   https://amadeus.example.com \
-  --token    amt_reg_xxxxxxxxxxxx \
+  --token    crn_reg_xxxxxxxxxxxx \
   --name     runner-dc1-01 \
   --download \
   --known-hosts ./known_hosts \
@@ -84,7 +84,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 <thead><tr><th>Flag</th><th>Required</th><th>Default</th><th>Meaning</th></tr></thead>
 <tbody>
 <tr><td><code>-s, --server</code></td><td><strong>yes</strong></td><td>—</td><td>Cronomicon server URL (prepends <code>https://</code> if no scheme).</td></tr>
-<tr><td><code>-t, --token</code></td><td><strong>yes</strong></td><td>—</td><td>Registration token (<code>amt_reg_*</code>).</td></tr>
+<tr><td><code>-t, --token</code></td><td><strong>yes</strong></td><td>—</td><td>Registration token (<code>crn_reg_*</code>).</td></tr>
 <tr><td><code>-n, --name</code></td><td>no</td><td><code>$(hostname)</code></td><td>Runner display name (keep it <strong>stable</strong>).</td></tr>
 <tr><td><code>-c, --capabilities</code></td><td>no</td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Omit ⇒ the agent auto-detects the host's toolchains at startup; set only to narrow.</td></tr>
 <tr><td><code>-b, --binary</code></td><td>no</td><td><code>./amadeus-runner</code>, <code>./bin/…</code>, <code>backend/bin/…</code></td><td>Path to the pre-built binary.</td></tr>
@@ -126,7 +126,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 <tbody>
 <tr><td><code>-server</code></td><td><code>CRONOMICON_RUNNER_SERVER</code></td><td><code>serverUrl</code></td><td>— (required)</td><td>Cronomicon server base URL.</td></tr>
 <tr><td><code>-ca-cert</code></td><td><code>CRONOMICON_RUNNER_CA_CERT</code></td><td><code>caCertPath</code></td><td>system store</td><td>PEM CA bundle to trust for TLS.</td></tr>
-<tr><td><code>-registration-token</code></td><td><code>CRONOMICON_RUNNER_REGISTRATION_TOKEN</code></td><td><code>registrationToken</code></td><td>—</td><td>Shared <code>amt_reg_*</code> token (first run only).</td></tr>
+<tr><td><code>-registration-token</code></td><td><code>CRONOMICON_RUNNER_REGISTRATION_TOKEN</code></td><td><code>registrationToken</code></td><td>—</td><td>Shared <code>crn_reg_*</code> token (first run only).</td></tr>
 <tr><td><code>-name</code></td><td><code>CRONOMICON_RUNNER_NAME</code></td><td><code>name</code></td><td>— (required)</td><td>Display name; <strong>stable across restarts</strong>.</td></tr>
 <tr><td><code>-os</code></td><td><code>CRONOMICON_RUNNER_OS</code></td><td><code>os</code></td><td><code>Linux</code></td><td><code>Linux</code> or <code>Windows</code>.</td></tr>
 <tr><td><code>-capabilities</code></td><td><code>CRONOMICON_RUNNER_CAPABILITIES</code></td><td><code>capabilities</code></td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Unset ⇒ probed from the host's toolchains at startup; set to narrow.</td></tr>
@@ -166,7 +166,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 
 <pre><code>amadeus-runner \
   -server https://amadeus.example.com \
-  -registration-token amt_reg_xxxxxxxxxxxx \
+  -registration-token crn_reg_xxxxxxxxxxxx \
   -name runner-dc1-01 \
   -capabilities bash,perl,powershell,python \
   -inventory amadeus \
@@ -182,7 +182,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 
 <pre><code>amadeus-runner \
   -server https://amadeus.example.com \
-  -registration-token amt_reg_xxxxxxxxxxxx \
+  -registration-token crn_reg_xxxxxxxxxxxx \
   -name runner-isolated-seg-a \
   -capabilities bash,ansible \
   -inventory local \
@@ -280,7 +280,7 @@ docker volume create amadeus-runner-data
 
 docker run -d --name amadeus-runner-01 --restart unless-stopped \
   -e CRONOMICON_RUNNER_SERVER=https://amadeus.example.com \
-  -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxxxxxxxxxx \
+  -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_xxxxxxxxxxxx \
   -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
   -e CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python \
   -e CRONOMICON_RUNNER_INVENTORY=amadeus \

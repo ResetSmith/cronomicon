@@ -2124,7 +2124,7 @@
                         <code>_ID</code>, <code>_JOB</code>, <code>_JOB_SOURCE</code>, <code>_SCOPE</code>,
                         <code>_TYPE</code>, <code>_TRIGGERED_BY</code>, <code>_EXECUTOR</code>. These are log-safe and
                         not bindable. Operator-authored env can never define an <code>CRONOMICON_*</code> key (422).</p>
-                    <p><strong>Output fail-close:</strong> if a captured <code>::amadeus-output::</code> value contains
+                    <p><strong>Output fail-close:</strong> if a captured <code>::cronomicon-output::</code> value contains
                         an injected secret, the executor drops <em>all</em> captured outputs and fails the run with
                         reason <code>output_secret_leak</code>. Thus the secret cannot go into
                         <code>outputs_json</code>, a workflow child's env, or the runs API. <a
@@ -2769,9 +2769,9 @@
                                     ignored, and the repository validator says so.</td>
                             </tr>
                             <tr>
-                                <td><code>inventory/*.ini</code> (+ <code>.amadeus.yaml</code> sidecar)</td>
+                                <td><code>inventory/*.ini</code> (+ <code>.cronomicon.yaml</code> sidecar)</td>
                                 <td>Scope</td>
-                                <td>A scope. A <code># amadeus:v1 types=&hellip;</code> pragma declares its run types. A
+                                <td>A scope. A <code># cronomicon:v1 types=&hellip;</code> pragma declares its run types. A
                                     synced INI is also <strong>parsed</strong> into an advisory group and host-vars
                                     projection, and its hosts are <strong>imported into <code>ssh_hosts</code></strong>
                                     (<code>source='git'</code>). See below.</td>
@@ -2779,7 +2779,7 @@
                         </tbody>
                     </table>
                 </div>
-                <p>Each YAML file needs <code>apiVersion: amadeus.io/v1</code> and a <code>kind:</code>. An unknown
+                <p>Each YAML file needs <code>apiVersion: cronomicon.io/v1</code> and a <code>kind:</code>. An unknown
                     value is a validation error with a line number. The sync walks each of <code>jobs/</code>,
                     <code>scripts/</code>, <code>schedules/</code>, and <code>workflows/</code>
                     <strong>recursively</strong>. Thus definitions can be in sub-folders (for example,
@@ -2813,7 +2813,7 @@
                         <code>source='git'</code> rows. Thus the in-app SSH executor dials inventory hosts with
                         <strong>zero operator action</strong>. <code>ansible_host</code>, <code>ansible_port</code>, and
                         <code>ansible_user</code> map to address, port, and user. The auth-key <em>name</em> comes from
-                        a per-host <code>amadeus_auth_key_env_var</code> or from the per-scope sidecar
+                        a per-host <code>cronomicon_auth_key_env_var</code> or from the per-scope sidecar
                         <code>authKeyEnvVar</code>: <strong>names only, never key material</strong>.</li>
                 </ul>
                 <p>On a hostname clash, an operator-authored <strong>amadeus overlay row wins</strong>. Imported rows
@@ -2942,7 +2942,7 @@
                 <div class="codeblock">
                     <div class="cap">Locally, or in .gitlab-ci.yml (same image tag as your deployment)</div>
                     <pre>amadeus validate .
-# jobs/backup.yaml:2: unsupported apiVersion "amadeus.io/v2"</pre>
+# jobs/backup.yaml:2: unsupported apiVersion "cronomicon.io/v2"</pre>
                 </div>
                 <p><a href="user-manual.html#compose">&sect;10.3</a> in the User Manual tells you about the Publish
                     (write) path and its <code>412</code>/<code>422</code> handling.</p>
@@ -3649,8 +3649,8 @@
                         scopes</em>), and a bearer token. Manage them in <strong>Settings &rarr; Service
                         Accounts</strong> &mdash; gated by <code>manageRoles</code>, deliberately, because minting one
                     is granting access, which is the same act as writing an access grant (migration
-                    <strong>910</strong>). The token has the <code>amasvc_</code> prefix, is shown once at mint, and
-                    authenticates as <code>Authorization: Bearer amasvc_&hellip;</code> &mdash; no cookie, no CSRF.
+                    <strong>910</strong>). The token has the <code>crnsvc_</code> prefix, is shown once at mint, and
+                    authenticates as <code>Authorization: Bearer crnsvc_&hellip;</code> &mdash; no cookie, no CSRF.
                     An expiry is optional; <code>last_used_at</code> is stamped best-effort on each authentication so
                     you can find dead tokens. Deleting an account is a <strong>revoke, not a delete</strong>: the row
                     is retained as an audit actor, so History never shows a run with an actor that does not
@@ -3828,7 +3828,7 @@ docker exec &lt;amadeus&gt; amadeus rewrap-secrets             # move it all to 
                         bootstrap token, which is permanent. The agent accepts a JSON config file as its first
                         configuration layer, and a value supplied there never enters the process environment:</p>
                     <pre><code>// /etc/amadeus-runner/config.json   (0640 root:amadeus-runner)
-{ "registrationToken": "amt_reg_..." }
+{ "registrationToken": "crn_reg_..." }
 
 // in the unit:
 ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json</code></pre>
@@ -3982,7 +3982,7 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                     <div class="cap">Linux systemd (run as root): capabilities auto-detect; add -c only to narrow</div>
                     <pre>sudo ./runner-install.sh \
  -s https://amadeus.example.com \
- -t amt_reg_xxxxxxxx \
+ -t crn_reg_xxxxxxxx \
  -n runner-dc1-01 \
  --known-hosts ./known_hosts \
  --key-dir ./keys</pre>
@@ -4011,7 +4011,7 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                     <pre>docker volume create amadeus-runner-data
 docker run -d --name amadeus-runner-01 --restart unless-stopped \
  -e CRONOMICON_RUNNER_SERVER=https://amadeus.example.com \
- -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_xxxx \
+ -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_xxxx \
  -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
  -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
  -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
@@ -4035,12 +4035,12 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 
                 <h3>7.3 The two-token model &amp; identity</h3>
                 <ul>
-                    <li><strong>Registration token</strong> (<code>amt_reg_*</code>): <strong>single-use, one per
+                    <li><strong>Registration token</strong> (<code>crn_reg_*</code>): <strong>single-use, one per
                             install</strong>. You mint it from the Runners view, with an optional label. It expires in
                         24h, dies on its first successful registration, and records <em>which runner consumed it</em>.
                         The server stores only a SHA-256 hash; the plaintext shows one time at mint. You can revoke
                         unused tokens from the list.</li>
-                    <li><strong>Per-runner API key</strong> (<code>amt_run_*</code>): minted at registration, valid 365
+                    <li><strong>Per-runner API key</strong> (<code>crn_run_*</code>): minted at registration, valid 365
                         days, kept in the agent's <strong>identity file</strong> (<code>0600</code> JSON, default
                         <code>/var/lib/amadeus-runner/identity.json</code>). The agent uses it for all later polls,
                         manifests, and logs. You can blank the registration token after this.</li>
@@ -5338,7 +5338,7 @@ APP_URL=https://amadeus.example.com \
                             in the secrets system, not in schedule env. Be careful when a script shows a Vault value.
                             <em>(The display path has been tightened: run-detail output masking now also masks against
                                 the run's per-run injected dictionary, which covers Vault-sourced values that the
-                                stored-secret redactor misses. An <code>::amadeus-output name=X::</code> whose value
+                                stored-secret redactor misses. An <code>::cronomicon-output name=X::</code> whose value
                                 carries an injected secret fails the run closed at capture, with reason
                                 <code>output_secret_leak</code>, so it never persists to a later step.)</em> (See <a
                                 href="#secrets">&sect;6.2</a>.)</p>
@@ -5767,7 +5767,7 @@ APP_URL=https://amadeus.example.com \
                         two are readable separately.</dd>
                     <dt>A12 inter-job data passing</dt>
                     <dd>The mechanism with which a workflow step consumes an upstream step's output. The producer prints
-                        <code>::amadeus-output name=KEY::VALUE</code> on stdout. The consumer declares
+                        <code>::cronomicon-output name=KEY::VALUE</code> on stdout. The consumer declares
                         <code>inputs: { VAR: { fromStep, fromOutput } }</code> (authored in Git YAML today). KEY must
                         have env-var style. A missing output resolves to empty, deterministically.</dd>
                     <dt>A13 unification rule</dt>
@@ -5816,7 +5816,7 @@ APP_URL=https://amadeus.example.com \
                             href="user-manual.html#scopes">&sect;11</a>.</dd>
                     <dt>apiVersion / kind</dt>
                     <dd>Necessary top-level fields on each Cronomicon YAML. <code>apiVersion</code> must be
-                        <code>amadeus.io/v1</code>. <code>kind</code> is one of Job, Script, Schedule, Playbook,
+                        <code>cronomicon.io/v1</code>. <code>kind</code> is one of Job, Script, Schedule, Playbook,
                         Terraform, Workflow, InventorySidecar. An unknown value is an error with a line number.</dd>
                     <dt>Application timezone / effective zone</dt>
                     <dd>The one zone that governs <strong>both</strong> cron schedules and UI display: the stored
@@ -6031,7 +6031,7 @@ APP_URL=https://amadeus.example.com \
                         recovery actions stay available. See &sect;7.6.</dd>
                     <dt>Service account</dt>
                     <dd>A machine principal: a name, a role, an agency (or All scopes), and an
-                        <code>amasvc_</code> bearer token. Managed in Settings &rarr; Service Accounts
+                        <code>crnsvc_</code> bearer token. Managed in Settings &rarr; Service Accounts
                         (<code>manageRoles</code>). Triggers jobs and workflows by name over
                         <code>/trigger/&hellip;</code>; a job must opt in with <code>requestable</code>. Deleting one
                         revokes the token but keeps the row as an audit actor (&sect;6.5).</dd>
@@ -6046,7 +6046,7 @@ APP_URL=https://amadeus.example.com \
                         <code>[REDACTED]</code> at server-side ingest (multi-line PEM keys are masked line by line). No
                         UI control reveals the raw log. Values under 5 characters, common literals, Vault values, and
                         schedule env are <em>not</em> masked.</dd>
-                    <dt>Registration token (amt_reg_*)</dt>
+                    <dt>Registration token (crn_reg_*)</dt>
                     <dd>A single-use bearer token (24h expiry), minted per install from the Runners view. It dies on its
                         first successful registration and records which runner consumed it. The server stores only a
                         SHA-256 hash; the plaintext shows one time at mint. It is for first contact only: resync and all
@@ -6112,7 +6112,7 @@ APP_URL=https://amadeus.example.com \
                         <code>executor='runner'</code> runs, does them, and streams logs back while they execute (a 2-second
                         flush, sealed by a trailing envelope). Ansible, terraform, and
                         isolated targets need it. Outbound HTTP only.</dd>
-                    <dt>Runner API key (amt_run_*)</dt>
+                    <dt>Runner API key (crn_run_*)</dt>
                     <dd>The long-lived (365-day) per-runner key, minted at registration and kept in the identity file.
                         The runner uses it for all later polls, manifests, and logs.</dd>
                     <dt>orchestrator_lost</dt>
@@ -6439,7 +6439,7 @@ APP_URL=https://amadeus.example.com \
                                     name, else <code>409 ambiguous_name</code>; a job without <code>requestable</code>
                                     = <code>403 not_requestable</code>)</td>
                                 <td>account management = <code>manageRoles</code> (+CSRF); triggers =
-                                    <code>Authorization: Bearer amasvc_&hellip;</code>, no cookie, no CSRF</td>
+                                    <code>Authorization: Bearer crnsvc_&hellip;</code>, no cookie, no CSRF</td>
                             </tr>
                             <tr>
                                 <td>Revisions &amp; recycle bin</td>

@@ -148,7 +148,7 @@ func TestTriggerRefusesMissingAndBadTokens(t *testing.T) {
 
 	for _, tc := range []struct{ name, token string }{
 		{"no token", ""},
-		{"garbage token", "amasvc_not-a-real-token"},
+		{"garbage token", "crnsvc_not-a-real-token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := triggerAs(t, ts, tc.token, "/api/v1/trigger/jobs/open-job")

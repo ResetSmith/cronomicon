@@ -645,7 +645,7 @@ func TestGitlabConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.BotName != "amadeus-bot" || initial.WriteBranch != "main" {
+	if initial.BotName != "cronomicon-bot" || initial.WriteBranch != "main" {
 		t.Fatalf("unexpected defaults: %+v", initial)
 	}
 
@@ -849,7 +849,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 
 	// 3. Insert a git-source scope (simulating gitlab sync).
 	gitScopeID := db.NewID()
-	capJSON := `{"types":["bash","ansible"],"origin":"git","owner":"plat-eng","sidecarPath":"inventory/dev.amadeus.yaml","errors":[{"file":"inventory/dev.amadeus.yaml","line":5,"field":"owner","message":"owner not found"}]}`
+	capJSON := `{"types":["bash","ansible"],"origin":"git","owner":"plat-eng","sidecarPath":"inventory/dev.cronomicon.yaml","errors":[{"file":"inventory/dev.cronomicon.yaml","line":5,"field":"owner","message":"owner not found"}]}`
 	_, err = pool.ExecContext(ctx, `
 		INSERT INTO scopes (id, name, source, description, supported_types, created_by, created_at, last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -905,7 +905,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 	if gitScope.GitLabURL == nil || *gitScope.GitLabURL != "https://gitlab.example.com/org/repo/-/blob/main/inventory/dev-env.ini" {
 		t.Errorf("git scope GitLabURL mismatch: %+v", gitScope.GitLabURL)
 	}
-	if gitScope.SidecarPath == nil || *gitScope.SidecarPath != "inventory/dev.amadeus.yaml" {
+	if gitScope.SidecarPath == nil || *gitScope.SidecarPath != "inventory/dev.cronomicon.yaml" {
 		t.Errorf("git scope SidecarPath mismatch: %+v", gitScope.SidecarPath)
 	}
 	if len(gitScope.Hosts) != 1 || gitScope.Hosts[0] != "dev-host.example.com" {
@@ -921,7 +921,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 		t.Errorf("git scope capability errors count mismatch: %d", len(gitScope.Capability.Errors))
 	} else {
 		le := gitScope.Capability.Errors[0]
-		if le.File != "inventory/dev.amadeus.yaml" || le.Line != 5 || le.Field != "owner" || le.Message != "owner not found" {
+		if le.File != "inventory/dev.cronomicon.yaml" || le.Line != 5 || le.Field != "owner" || le.Message != "owner not found" {
 			t.Errorf("git scope capability line error mismatch: %+v", le)
 		}
 	}

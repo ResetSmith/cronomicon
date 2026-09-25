@@ -13,7 +13,7 @@ func TestManifestAuditsInjection(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-audit", "amt_run_audit"
+	runnerID, tok := "runner-audit", "crn_run_audit"
 	insertRunner(t, svc, runnerID, "audit", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true)
@@ -66,7 +66,7 @@ func TestManifestFailsClosedOnAuditError(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-audit-fc", "amt_run_audit_fc"
+	runnerID, tok := "runner-audit-fc", "crn_run_audit_fc"
 	insertRunner(t, svc, runnerID, "auditfc", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, _, _ := seedInjectionRun(t, svc, runnerID, 6, true)

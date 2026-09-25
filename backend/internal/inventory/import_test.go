@@ -9,7 +9,7 @@ import "testing"
 func TestHostConns_TransitiveGroupVars(t *testing.T) {
 	content := "[web]\nweb1 ansible_host=10.0.0.1\n" +
 		"[prod:children]\nweb\n" +
-		"[prod:vars]\nansible_user=deploy\namadeus_auth_key_env_var=PROD_KEY\n" +
+		"[prod:vars]\nansible_user=deploy\ncronomicon_auth_key_env_var=PROD_KEY\n" +
 		"[all:vars]\nansible_port=2200\n"
 	p := ParseProjection(content)
 	if p.PreviewUnavailable {
@@ -36,7 +36,7 @@ func TestHostConns_TransitiveGroupVars(t *testing.T) {
 
 // TestHostConns_HostVarWins: host_vars override inherited group_vars.
 func TestHostConns_HostVarWins(t *testing.T) {
-	content := "[web]\nweb1 ansible_user=root\n[web:vars]\nansible_user=svc\namadeus_auth_key_env_var=WEB_KEY\n"
+	content := "[web]\nweb1 ansible_user=root\n[web:vars]\nansible_user=svc\ncronomicon_auth_key_env_var=WEB_KEY\n"
 	conns := HostConns(ParseProjection(content), "")
 	if len(conns) != 1 || conns[0].User != "root" {
 		t.Errorf("conns = %+v, want web1 user=root (host_var beats group_var)", conns)

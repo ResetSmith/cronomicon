@@ -73,7 +73,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	iso := func(t time.Time) string { return t.Format(time.RFC3339) }
 	ago := func(d time.Duration) string { return iso(now.Add(-d)) }
 	const (
-		dev    = "developer@amadeus.local"
+		dev    = "developer@cronomicon.local"
 		hour   = time.Hour
 		minute = time.Minute
 		day    = 24 * time.Hour
@@ -174,13 +174,13 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		group, role, agency string
 		all                 bool
 	}{
-		{"amadeus-admins", "admin", "", true},
+		{"cronomicon-admins", "admin", "", true},
 		// operator reaches Cluster-A (alpha) and Staging/Reporting (beta).
-		{"amadeus-operators", "operator", agencies[0].id, false},
-		{"amadeus-operators", "operator", agencies[1].id, false},
+		{"cronomicon-operators", "operator", agencies[0].id, false},
+		{"cronomicon-operators", "operator", agencies[1].id, false},
 		{"infra-oncall", "operator", agencies[1].id, false},
 		// viewer sees Reporting, which lives in beta.
-		{"amadeus-viewers", "viewer", agencies[1].id, false},
+		{"cronomicon-viewers", "viewer", agencies[1].id, false},
 	}
 	for _, g := range grants {
 		var agency any
@@ -201,10 +201,10 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		email, name, groups string
 		first, last         time.Duration
 	}{
-		{"alice@corp.example", "Alice Chen", `["amadeus-admins"]`, 60 * day, 2 * hour},
-		{"bob@corp.example", "Bob Diaz", `["amadeus-operators","infra-oncall"]`, 45 * day, 6 * hour},
-		{"carol@corp.example", "Carol Singh", `["amadeus-viewers"]`, 30 * day, 28 * hour},
-		{dev, "Developer (bypass)", `["amadeus-admins"]`, 10 * day, 0},
+		{"alice@corp.example", "Alice Chen", `["cronomicon-admins"]`, 60 * day, 2 * hour},
+		{"bob@corp.example", "Bob Diaz", `["cronomicon-operators","infra-oncall"]`, 45 * day, 6 * hour},
+		{"carol@corp.example", "Carol Singh", `["cronomicon-viewers"]`, 30 * day, 28 * hour},
+		{dev, "Developer (bypass)", `["cronomicon-admins"]`, 10 * day, 0},
 	}
 	for _, l := range logins {
 		exec(`INSERT INTO recent_logins (email, display_name, groups, first_seen_at, last_login_at)
@@ -345,7 +345,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			st := runStatuses[runIdx%len(runStatuses)]
 			created := now.Add(-time.Duration(runIdx)*4*hour - time.Duration(pass)*7*minute)
 			triggerKind := "scheduled"
-			triggeredBy := "scheduler@amadeus"
+			triggeredBy := "scheduler@cronomicon"
 			if ji%2 == 1 {
 				triggerKind, triggeredBy = "manual", []string{"alice@corp.example", "bob@corp.example", dev}[runIdx%3]
 			}
@@ -430,11 +430,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		age                                                                                time.Duration
 	}
 	acts := []actRow{
-		{"run-end", "success", "scheduler@amadeus", "nightly-db-backup", "", "Production", "", "", "Backup completed (2.3 GB)", "", "", "", 1 * hour},
-		{"run-end", "failure", "scheduler@amadeus", "cert-renewal", "", "Production", "", "", "ACME challenge failed for lb-01", "", "", "", 8 * hour},
+		{"run-end", "success", "scheduler@cronomicon", "nightly-db-backup", "", "Production", "", "", "Backup completed (2.3 GB)", "", "", "", 1 * hour},
+		{"run-end", "failure", "scheduler@cronomicon", "cert-renewal", "", "Production", "", "", "ACME challenge failed for lb-01", "", "", "", 8 * hour},
 		{"run-start", "", "alice@corp.example", "terraform-plan-prod", "", "Production", "", "", "Plan started", "", "", "", 2 * hour},
 		{"workflow-end", "warning", "alice@corp.example", "", "patch-and-report", "Production", "", "", "1 host reported a warning", "", "", "", 50 * hour},
-		{"workflow-start", "", "scheduler@amadeus", "", "nightly-maintenance", "Production", "", "", "Nightly maintenance triggered", "", "", "", 8 * hour},
+		{"workflow-start", "", "scheduler@cronomicon", "", "nightly-maintenance", "Production", "", "", "Nightly maintenance triggered", "", "", "", 8 * hour},
 		{"config", "", "bob@corp.example", "vault-token-rotate", "", "Production", "Jobs", "Paused", "Paused scheduled runs", "", "", "", 5 * hour},
 		{"config", "", "alice@corp.example", "", "", "", "Settings", "updated", "Updated max concurrency to 8", "", "", "", 30 * hour},
 		{"config", "", "alice@corp.example", "", "", "", "Secrets", "revealed", "Revealed GITLAB_PAT", "", "", "", 4 * hour},
@@ -442,8 +442,8 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"gitsync", "failure", "poll", "", "", "", "Git", "sync", "Clone failed: auth error", "infra/job-defs", "main", "", 10 * hour},
 		{"push", "success", "alice@corp.example", "", "", "Production", "Schedule", "publish", "Published nightly-db-backup schedule", "infra/job-defs", "main", "f00ba12", 3 * hour},
 		{"run-end", "failure", "bob@corp.example", "k8s-node-drain", "", "Cluster-A", "", "", "Run killed by operator", "", "", "", 6 * hour},
-		{"run-end", "success", "scheduler@amadeus", "disk-usage-audit", "", "", "", "", "All hosts under threshold", "", "", "", 30 * minute},
-		{"run-end", "warning", "scheduler@amadeus", "win-update-check", "", "Windows-Fleet", "", "", "Reboot pending on win-app-01", "", "", "", 12 * hour},
+		{"run-end", "success", "scheduler@cronomicon", "disk-usage-audit", "", "", "", "", "All hosts under threshold", "", "", "", 30 * minute},
+		{"run-end", "warning", "scheduler@cronomicon", "win-update-check", "", "Windows-Fleet", "", "", "Reboot pending on win-app-01", "", "", "", 12 * hour},
 	}
 	for _, a := range acts {
 		// Backdated via At: the spread of ages is the point — it is what the
@@ -588,11 +588,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 
 	// ── Secrets (vault-backed refs only — no KEK needed for demo) ──────────────
 	secs := []struct{ key, scope, ref, desc string }{
-		{"GITLAB_PAT", "", "secret/data/amadeus/gitlab#pat", "Personal access token for cloning Git-source definitions"},
-		{"VAULT_TOKEN", "Production", "secret/data/amadeus/vault#token", "Vault token used by Production jobs"},
-		{"SMTP_PASSWORD", "", "secret/data/amadeus/smtp#password", "SMTP relay password for alert email delivery"},
-		{"DB_BACKUP_KEY", "Production", "secret/data/amadeus/backup#key", "Encryption key for nightly database backups"},
-		{"WIN_ADMIN_PASS", "Windows-Fleet", "secret/data/amadeus/windows#admin", "Local administrator password for the Windows fleet"},
+		{"GITLAB_PAT", "", "secret/data/cronomicon/gitlab#pat", "Personal access token for cloning Git-source definitions"},
+		{"VAULT_TOKEN", "Production", "secret/data/cronomicon/vault#token", "Vault token used by Production jobs"},
+		{"SMTP_PASSWORD", "", "secret/data/cronomicon/smtp#password", "SMTP relay password for alert email delivery"},
+		{"DB_BACKUP_KEY", "Production", "secret/data/cronomicon/backup#key", "Encryption key for nightly database backups"},
+		{"WIN_ADMIN_PASS", "Windows-Fleet", "secret/data/cronomicon/windows#admin", "Local administrator password for the Windows fleet"},
 	}
 	for _, s := range secs {
 		var scope any
@@ -625,7 +625,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
 		sshCredID, "prod_deploy_ed25519", "Primary deploy key for the Production fleet (demo).",
 		"SHA256:Jm6h0vQ2nC8x7yQk9rTfLwApZ3Bd1sEoUvHnMxRkY4w",
-		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrQ2vJk8hPzXmC5dLwoYbApZ3Bd1sEoUvHnMxRkY4w amadeus-deploy",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrQ2vJk8hPzXmC5dLwoYbApZ3Bd1sEoUvHnMxRkY4w cronomicon-deploy",
 		dev, ago(18*day), dev, ago(5*day))
 
 	// T2.10 — a SECOND key so the membership matrix has one per agency. Note that
@@ -639,7 +639,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
 		stagingCredID, "staging_deploy_ed25519", "Deploy key for the Staging fleet (demo).",
 		"SHA256:Qw3rTy7uIoP2aSdFgHjKlZxCvBnM4eRt6YuIoP8aSdF",
-		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKp7QwErTyUiOpAsDfGhJkLzXcVbNm4eRt6YuIoP8aSd amadeus-staging",
+		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKp7QwErTyUiOpAsDfGhJkLzXcVbNm4eRt6YuIoP8aSd cronomicon-staging",
 		dev, ago(16*day), dev, ago(4*day))
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, sshCredID, agencies[0].id)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, stagingCredID, agencies[1].id)
@@ -733,7 +733,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 
 	// ── Singleton configs + global settings ────────────────────────────────────
 	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, apprise_targets, last_modified_by, last_modified_at)
-	      VALUES (1, 'smtp.corp.example', 587, 'amadeus@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
+	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
 	exec(`INSERT INTO gitlab_config (id, base_url, project_path, webhook_secret, branch, last_modified_by, last_modified_at)
 	      VALUES (1, 'https://gitlab.corp.example', 'infra/job-defs', 'demo-webhook-secret', 'main', ?, ?)`, dev, ago(9*day))
 

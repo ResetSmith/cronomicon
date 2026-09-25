@@ -23,36 +23,36 @@ func TestValidateYAMLBytes_Script(t *testing.T) {
 	}{
 		{
 			name:    "valid inline command",
-			content: "apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: backup-db\nspec:\n  run_type: bash\n  command: echo hi\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: backup-db\nspec:\n  run_type: bash\n  command: echo hi\n",
 			wantErr: false,
 		},
 		{
 			name:    "missing body",
-			content: "apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: bash\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: bash\n",
 			wantErr: true,
 			field:   "spec",
 		},
 		{
 			name:    "two bodies",
-			content: "apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: bash\n  command: a\n  script: b\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: bash\n  command: a\n  script: b\n",
 			wantErr: true,
 			field:   "spec",
 		},
 		{
 			name:    "missing run_type",
-			content: "apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  command: echo hi\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  command: echo hi\n",
 			wantErr: true,
 			field:   "spec.run_type",
 		},
 		{
 			name:    "unknown run_type",
-			content: "apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: cobol\n  command: echo hi\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: cobol\n  command: echo hi\n",
 			wantErr: true,
 			field:   "spec.run_type",
 		},
 		{
 			name:    "scriptPath escape",
-			content: "apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: bash\n  scriptPath: ../etc/passwd\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: s\nspec:\n  run_type: bash\n  scriptPath: ../etc/passwd\n",
 			wantErr: true,
 			field:   "spec.scriptPath",
 		},
@@ -96,22 +96,22 @@ func TestValidateYAMLBytes_JobScriptRef(t *testing.T) {
 	}{
 		{
 			name:    "script_ref only",
-			content: "apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  script_ref: backup-db\n  scope: Prod\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  script_ref: backup-db\n  scope: Prod\n",
 			wantErr: false,
 		},
 		{
 			name:    "script_ref and inline body → error",
-			content: "apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  script_ref: backup-db\n  command: echo hi\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  script_ref: backup-db\n  command: echo hi\n",
 			wantErr: true,
 		},
 		{
 			name:    "neither → error",
-			content: "apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  scope: Prod\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  scope: Prod\n",
 			wantErr: true,
 		},
 		{
 			name:    "inline body only (legacy) still valid",
-			content: "apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  run_type: bash\n  command: echo hi\n",
+			content: "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: j\nspec:\n  run_type: bash\n  command: echo hi\n",
 			wantErr: false,
 		},
 	}
@@ -159,14 +159,14 @@ func TestContentHash(t *testing.T) {
 func TestValidateRepo_CrossRef(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "scripts", "backup-db.yaml"),
-		"apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: backup-db\nspec:\n  run_type: bash\n  command: pg_dump\n")
+		"apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: backup-db\nspec:\n  run_type: bash\n  command: pg_dump\n")
 	mustWrite(t, filepath.Join(dir, "scripts", "orphan.yaml"),
-		"apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: orphan\nspec:\n  run_type: bash\n  command: echo unused\n")
+		"apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: orphan\nspec:\n  run_type: bash\n  command: echo unused\n")
 	// good job references backup-db; bad job references a missing script.
 	mustWrite(t, filepath.Join(dir, "jobs", "nightly.yaml"),
-		"apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: nightly\nspec:\n  script_ref: backup-db\n  scope: Prod\n")
+		"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: nightly\nspec:\n  script_ref: backup-db\n  scope: Prod\n")
 	mustWrite(t, filepath.Join(dir, "jobs", "broken.yaml"),
-		"apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: broken\nspec:\n  script_ref: does-not-exist\n  scope: Prod\n")
+		"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: broken\nspec:\n  script_ref: does-not-exist\n  scope: Prod\n")
 
 	errs, warnings, err := ValidateRepo(dir)
 	if err != nil {
@@ -647,7 +647,7 @@ func TestDiscoverScripts(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// Create a standard wrapper
-	wrapperYAML := `apiVersion: amadeus.io/v1
+	wrapperYAML := `apiVersion: cronomicon.io/v1
 kind: Script
 metadata:
   name: standard-wrapper
@@ -764,7 +764,7 @@ func TestDiscoverScriptsProjectGrouping(t *testing.T) {
 	mustWrite("a-project/templates/nginx.conf.j2", "server { listen {{ port }}; }\n")
 
 	// The wrapper claiming the project — lexically AFTER its member files.
-	mustWrite("z-wrapper.yaml", `apiVersion: amadeus.io/v1
+	mustWrite("z-wrapper.yaml", `apiVersion: cronomicon.io/v1
 kind: Script
 metadata:
   name: vmware-patch
@@ -819,17 +819,17 @@ func TestDiscoverScriptsProjectErrors(t *testing.T) {
 		wrapper string
 		wantMsg string
 	}{
-		{"root escapes repo", `apiVersion: amadeus.io/v1
+		{"root escapes repo", `apiVersion: cronomicon.io/v1
 kind: Script
 metadata: {name: bad}
 spec: {run_type: ansible, project_root: ../evil, entry: scripts/x/site.yml}
 `, "escape"},
-		{"missing entry", `apiVersion: amadeus.io/v1
+		{"missing entry", `apiVersion: cronomicon.io/v1
 kind: Script
 metadata: {name: bad}
 spec: {run_type: ansible, project_root: scripts/proj}
 `, "must declare spec.entry"},
-		{"entry outside root", `apiVersion: amadeus.io/v1
+		{"entry outside root", `apiVersion: cronomicon.io/v1
 kind: Script
 metadata: {name: bad}
 spec: {run_type: ansible, project_root: scripts/proj, entry: scripts/other/site.yml}

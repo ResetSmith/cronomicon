@@ -290,7 +290,7 @@ func TestRunLogAfterRepointLandsInTheNewDirectory(t *testing.T) {
 	}
 
 	// A runner with a bound token, and a run it owns and is executing.
-	runnerID, token := "runner-repoint", "amt_run_repoint"
+	runnerID, token := "runner-repoint", "crn_run_repoint"
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := pool.Exec(`
 		INSERT INTO runners(id, name, status, os, capabilities, load, max_concurrent, version, registered_at, created_at)

@@ -104,7 +104,7 @@ Six producers can start a run, and each one records what it was:
 - **Error resilience & retries (v0.35.0)**: Configure step-level retry limits, backoff periods, and continue-on-error behavior overrides
 - **Soft-cancel (v0.35.0)**: Graceful cancellation of running workflow runs, skipping unstarted steps while allowing active jobs to finish cleanly
 - **Stable run linkage (v0.35.0)**: Runs are indexed to workflow definitions by stable name + source rather than DB row ID, preserving links across workflow re-creations
-- **Inter-job env passing (A12)**: a job emits `::amadeus-output name=KEY::value` on stdout; a downstream step consumes it as injected env via an explicit `{fromStep, fromOutput}` reference
+- **Inter-job env passing (A12)**: a job emits `::cronomicon-output name=KEY::value` on stdout; a downstream step consumes it as injected env via an explicit `{fromStep, fromOutput}` reference
 - **Sub-workflows (v0.57.30)**: a common sequence ("quiesce, snapshot, verify") is authored once and referenced as a step by every workflow that needs it, instead of copied into each
 - **Unambiguous step targets (v1.2.2)**: since two departments may own a job of the same name, a step can name **which** one it means (by agency) rather than refusing to guess
 
@@ -290,7 +290,7 @@ use an inline multi-line body, or point at a file elsewhere in the repo. A wrapp
 
 ```yaml
 # scripts/backup-db.yaml  → registers as "backup-db"
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Script
 metadata:
   name: backup-db
@@ -337,7 +337,7 @@ and **when** (one or more Schedules), plus options like timeout, retries, and co
 
 ```yaml
 # jobs/nightly-db-backup.yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Job
 metadata:
   name: nightly-db-backup
@@ -385,7 +385,7 @@ output.
 
 ```yaml
 # workflows/prod-release.yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Workflow
 metadata:
   name: prod-release
@@ -409,7 +409,7 @@ it as an injected env var:
 
 ```bash
 # inside the upstream job's script:
-echo "::amadeus-output name=ARTIFACT::app-1.2.3"
+echo "::cronomicon-output name=ARTIFACT::app-1.2.3"
 ```
 
 ```yaml
@@ -469,7 +469,7 @@ Your configuration repository should organize files into the following folders:
 │   └── *.yaml
 ├── workflows/     # Ordered/parallel/branching job pipelines
 │   └── *.yaml
-└── inventory/     # Scope inventories (*.ini + optional .amadeus.yaml sidecars)
+└── inventory/     # Scope inventories (*.ini + optional .cronomicon.yaml sidecars)
 ```
 
 ---
@@ -481,7 +481,7 @@ Scripts are first-class reusable code primitives. They define *what* code to exe
 Example script definition (`scripts/backup-db.yaml`):
 
 ```yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Script
 metadata:
   name: backup-db
@@ -528,7 +528,7 @@ reusable alternative.
 Example schedule definition (`schedules/nightly.yaml`):
 
 ```yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Schedule
 metadata:
   name: nightly
@@ -557,7 +557,7 @@ Jobs bind a specific script reference (`script_ref`) to a runtime target environ
 Example job definition (`jobs/nightly-db-backup.yaml`):
 
 ```yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Job
 metadata:
   name: nightly-db-backup
@@ -641,7 +641,7 @@ There are five step types:
 Example workflow definition (`workflows/prod-release.yaml`):
 
 ```yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Workflow
 metadata:
   name: prod-release
@@ -677,7 +677,7 @@ later step consumes it as an injected env var via an explicit `{fromStep, fromOu
 
 ```bash
 # inside the 'build' job's script:
-echo "::amadeus-output name=ARTIFACT::app-1.2.3"
+echo "::cronomicon-output name=ARTIFACT::app-1.2.3"
 ```
 
 ```yaml

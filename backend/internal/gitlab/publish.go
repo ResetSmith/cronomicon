@@ -123,7 +123,7 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 	commit, err := wt.Commit(msg, &gogit.CommitOptions{
 		Author: &object.Signature{
 			Name:  "Cronomicon Scheduler",
-			Email: "amadeus-bot@amadeus.internal",
+			Email: "cronomicon-bot@cronomicon.internal",
 			When:  time.Now().UTC(),
 		},
 	})

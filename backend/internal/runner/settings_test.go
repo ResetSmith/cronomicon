@@ -62,7 +62,7 @@ func TestEffectiveClaimCaps(t *testing.T) {
 func TestPollDeliversSettingsThenStopsOnAck(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-s", "amt_run_s"
+	id, tok := "runner-s", "crn_run_s"
 	insertRunner(t, svc, id, "s", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 	setManagedSettings(t, svc, id, `{"maxConcurrent":8}`) // version → 1
@@ -104,7 +104,7 @@ func TestPollDeliversSettingsThenStopsOnAck(t *testing.T) {
 func TestPollClampsBogusAck(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-c", "amt_run_c"
+	id, tok := "runner-c", "crn_run_c"
 	insertRunner(t, svc, id, "c", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 	setManagedSettings(t, svc, id, `{"maxConcurrent":8}`) // version → 1
@@ -132,7 +132,7 @@ func TestPollClampsBogusAck(t *testing.T) {
 func TestPollWithholdsSettingsFromOldAgent(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-old", "amt_run_old"
+	id, tok := "runner-old", "crn_run_old"
 	insertRunner(t, svc, id, "old", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 	setManagedSettings(t, svc, id, `{"maxConcurrent":8}`)
@@ -161,7 +161,7 @@ func TestPollWithholdsSettingsFromOldAgent(t *testing.T) {
 func TestCapabilityMaskSubtractsAtClaim(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-m", "amt_run_m"
+	id, tok := "runner-m", "crn_run_m"
 	insertRunner(t, svc, id, "m", "online", []string{"bash", "python"})
 	bindRunnerToken(t, svc, tok, id)
 	setManagedSettings(t, svc, id, `{"capabilityMask":["python"]}`) // version → 1
@@ -243,7 +243,7 @@ func TestUpdateRunnerSettingsEndpoint(t *testing.T) {
 func TestManagedSettingsDoNotFlapDrift(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	id, tok := "runner-d", "amt_run_d"
+	id, tok := "runner-d", "crn_run_d"
 	insertRunner(t, svc, id, "d", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 

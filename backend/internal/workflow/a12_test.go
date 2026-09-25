@@ -20,12 +20,12 @@ func TestParseOutputMarker(t *testing.T) {
 		wantK, wantV string
 		wantOK       bool
 	}{
-		{"::amadeus-output name=DB_HOST::pg-prod-01", "DB_HOST", "pg-prod-01", true},
-		{"::amadeus-output name=TOKEN::a b c", "TOKEN", "a b c", true},
-		{"::amadeus-output name=EMPTY::", "EMPTY", "", true},
+		{"::cronomicon-output name=DB_HOST::pg-prod-01", "DB_HOST", "pg-prod-01", true},
+		{"::cronomicon-output name=TOKEN::a b c", "TOKEN", "a b c", true},
+		{"::cronomicon-output name=EMPTY::", "EMPTY", "", true},
 		{"regular log line", "", "", false},
-		{"::amadeus-output name=bad-key::x", "", "", false}, // hyphen not allowed in key
-		{"  ::amadeus-output name=X::y", "", "", false},     // must start at column 0
+		{"::cronomicon-output name=bad-key::x", "", "", false}, // hyphen not allowed in key
+		{"  ::cronomicon-output name=X::y", "", "", false},     // must start at column 0
 	}
 	for _, c := range cases {
 		k, v, ok := execspec.ParseOutputMarker(c.line)

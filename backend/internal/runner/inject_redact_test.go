@@ -91,7 +91,7 @@ func TestIngestMasksInjectedSecret(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-mask", "amt_run_mask"
+	runnerID, tok := "runner-mask", "crn_run_mask"
 	insertRunner(t, svc, runnerID, "mask", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true)
@@ -127,7 +127,7 @@ func TestIngestFailsClosedOnUnresolvableSecret(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-fc", "amt_run_fc"
+	runnerID, tok := "runner-fc", "crn_run_fc"
 	insertRunner(t, svc, runnerID, "fc", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true)
@@ -176,7 +176,7 @@ func TestIngestFailsClosedAfterBindingDeletedMidRun(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-del", "amt_run_del"
+	runnerID, tok := "runner-del", "crn_run_del"
 	insertRunner(t, svc, runnerID, "del", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID, secretVal, _ := seedInjectionRun(t, svc, runnerID, 6, true) // sets injects_secret=1
@@ -221,7 +221,7 @@ func TestIngestFailsClosedWhenBindingsUnenumerable(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-enum", "amt_run_enum"
+	runnerID, tok := "runner-enum", "crn_run_enum"
 	insertRunner(t, svc, runnerID, "enum", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	traceID := db.NewTraceID()

@@ -146,7 +146,13 @@ import (
 //	      rides the assignment (not a capability handshake) because that is the
 //	      one message where the server can say, per run, "I understand partial
 //	      chunks for this trace id".
-const ProtocolVersion = 12
+//	v13 — the rebrand (RN). The injected run namespace is CRONOMICON_* (was
+//	      AMADEUS_*), the output marker is ::cronomicon-output, tokens carry
+//	      crn_/crnsvc_ prefixes and the agent binary is cronomicon-runner. No
+//	      wire SHAPE changed; the bump exists so an agent built before the
+//	      rename is refused at registration (426) instead of assembling a run
+//	      env and scanning for a marker that no script emits any more.
+const ProtocolVersion = 13
 
 // MinProtocolVersion is the oldest agent protocol this server accepts, checked
 // at registration and redeclare (426 protocol_too_old). It TRACKS

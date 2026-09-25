@@ -277,12 +277,12 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 			"run log has reached the maximum size; further output is discarded")
 		return
 	}
-	// H2/DEC-2 — refuse: an ::amadeus-output:: value that carries an injected
+	// H2/DEC-2 — refuse: an ::cronomicon-output:: value that carries an injected
 	// secret would propagate that secret VERBATIM into outputs_json, into a child
 	// step's plaintext env_json (workflow engine), and into the run-detail API —
 	// around allow_secret_injection and the §8 "never persist an injected value to
 	// env_json" invariant, via the natural idiom
-	// `echo "::amadeus-output name=TOKEN::$CRONOMICON_SECRET_API"`. Fail the run closed
+	// `echo "::cronomicon-output name=TOKEN::$CRONOMICON_SECRET_API"`. Fail the run closed
 	// at this earliest choke point (before outputs_json is written): drop the
 	// captured outputs and mark the run failed so nothing propagates. The offending
 	// value is already masked in the persisted log (the redactor is seeded with the

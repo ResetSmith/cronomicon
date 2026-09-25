@@ -39,7 +39,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   read the DB, so it is not a token-validity oracle — a used/expired token still
   gets a script, which then fails cleanly at registration (the sole enforcement
   point: single-use, atomic, audited). Only the token SYNTAX is checked
-  (`amt_reg_` + 64 hex), which also makes shell-meta injection into the baked
+  (`crn_reg_` + 64 hex), which also makes shell-meta injection into the baked
   assignment impossible; the reconstructed server URL is constrained to
   URL-safe chars for the same reason. The one new exposure is that tokens now
   appear in request **URLs → access logs**: treat reverse-proxy logs
@@ -123,7 +123,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   flap-guarded so a disagreeing agent cannot be driven into a re-register
   loop). The `re-register` poll control op carries no
   configuration: the agent re-reads its OWN local config and re-declares it via
-  `POST /runners/{id}/redeclare`, authenticated with its existing `amt_run_*`
+  `POST /runners/{id}/redeclare`, authenticated with its existing `crn_run_*`
   key. A compromised server (or operator session) therefore cannot use resync
   to grant itself capabilities on a runner — the declared set is always derived
   from the runner host's local files. Redeclare is ownership-guarded (a runner
@@ -135,7 +135,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   consumed it, an audit trail the shared token could not give; a leaked unused
   token is revocable and expires in 24h, and a leaked used token is worthless).
   The runner→server direction is the accepted
-  tradeoff (D6): a compromised `amt_run_*` key can now re-declare its OWN row
+  tradeoff (D6): a compromised `crn_run_*` key can now re-declare its OWN row
   (widen advertised capabilities, rename, flip inventory mode) without operator
   action — pre-v4 that required a valid registration token. It still cannot
   change agency membership (operator-assigned) or touch other rows, and claim
@@ -253,7 +253,7 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 
 | # | Control | Enforced by | Verification |
 |---|---|---|---|
-| SU-1 | **SSH executor fails closed on an `::amadeus-output::` value that leaks an injected secret** — parity with the runner ingest path, so a `echo "::amadeus-output name=X::$CRONOMICON_SECRET_*"` idiom drops the outputs and fails the run (`output_secret_leak`) rather than persisting the secret into `outputs_json` / a child step's `env_json` / the runs API | shared `execspec.FirstOutputLeakingSecret`; `sshexec.execute` guard + `finalizeReason` | **Automated:** `sshexec.TestSSHExecutorRefusesOutputLeakingSecret`, `execspec.TestFirstOutputLeakingSecret`, `runner.TestIngestRefusesOutputLeakingSecret`. |
+| SU-1 | **SSH executor fails closed on an `::cronomicon-output::` value that leaks an injected secret** — parity with the runner ingest path, so a `echo "::cronomicon-output name=X::$CRONOMICON_SECRET_*"` idiom drops the outputs and fails the run (`output_secret_leak`) rather than persisting the secret into `outputs_json` / a child step's `env_json` / the runs API | shared `execspec.FirstOutputLeakingSecret`; `sshexec.execute` guard + `finalizeReason` | **Automated:** `sshexec.TestSSHExecutorRefusesOutputLeakingSecret`, `execspec.TestFirstOutputLeakingSecret`, `runner.TestIngestRefusesOutputLeakingSecret`. |
 | SU-2 | **Job/schedule read endpoints are scope-filtered** — a restricted actor cannot read an out-of-scope job's detail (script body + plaintext env) or list out-of-scope jobs / workflow-runs / schedules. Out-of-scope DETAIL returns **404** (no existence oracle); lists filter rows | `getJob` + `pauseJob`/`resumeJob` gate (they return the same detail) + `scopeWhereFragment` (listJobs, listWorkflowRuns); `drainScheduleRows` owner→`jobs.scope` resolution + `scheduleOwnerReadable` (listSchedules, listUpcomingSchedules) | **Automated:** `api.TestIDORScopeGates` (getJob/pause-resume/listJobs/listWorkflowRuns/listSchedules subtests). |
 | SU-9 | **Per-run log-ingest byte cap** — the log-ingest endpoint (exempt from the 2 MiB body cap) is bounded by `CRONOMICON_MAX_RUN_LOG_BYTES` (default 512 MiB); a rogue runner streaming past the cap gets `413` and nothing further is persisted | `runner.HandleIngestLog` ceiling check + `MaxRunLogBytes` config | **Automated:** `runner.TestIngestCapsRunLogSize`. |
 | SU-6 | **Session hash-key length validated; raw-key fallback disabled in prod** — a `<32`-byte `CRONOMICON_SESSION_HASH_KEY` is substituted with a random key (ephemeral, warned) instead of weakening HMAC; a non-base64 value is rejected in a production auth mode rather than used as raw bytes | `auth.newSessionCodec` (`len<32`); `auth.decodeKey(allowRaw=cfg.DevAuth)` | **Automated:** `auth.TestNewSessionCodecSubstitutesWeakKeys`, `auth.TestDecodeKeyRejectsRawInProd`. |
@@ -309,7 +309,7 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 | SU-4 | **Bastion SSH host key pinned & verified** — the jump hop strict-compares a pinned `bastions.host_key` (mismatch → abort), else TOFU-captures the first-seen key (mirrors the target hop). A secret-injecting run over a bastion to an *unpinned target* is refused | `sshexec.bastionHostKeyCallback` (conn.go, probe.go); interim guard in `sshexec.execute`; migration `640` | **Automated:** `sshexec.TestBastionHostKeyCallback`, `TestSSHExecutorRefusesSecretsOverUnpinnedBastion`, `db.TestMigrate640RoundTrip`. |
 | SU-5 | **Server-side session revocation** — OIDC sessions carry an epoch stamped at login; an RBAC change bumps a global counter, rejecting pre-change sessions on next request. The acting admin keeps their session via a same-request cookie re-issue. TTL 12h→8h | `auth.Service` epoch (`readSession`/`RevokeOtherSessions`); bump in the 4 `access_mount.go` RBAC handlers; migration `641` | **Automated:** `auth.TestSessionEpochRevocation`, `db.TestMigrate641RoundTrip`, the `access_mount` integration flow. |
 | SU-10 | **Best-effort key zeroization** — the unwrapped DEK and loaded KEK are wiped on return from each envelope op | `secrets.zero`; `defer zero(...)` in `kek.go`/`seal.go`/`blob.go` | **Automated:** existing `secrets` round-trip suite (unaffected). |
-| SU-11 | **Legacy mock token neutralized** — `amt_reg_EXAMPLE` replaces the realistic literal in the frozen `amadeus-data.jsx` prototype (not a live secret) | in-place edit | — |
+| SU-11 | **Legacy mock token neutralized** — `crn_reg_EXAMPLE` replaces the realistic literal in the frozen `amadeus-data.jsx` prototype (not a live secret) | in-place edit | — |
 
 ### Phase-C residual / accepted notes
 

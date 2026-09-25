@@ -136,7 +136,7 @@ happens next depends on which token they hold:
 | The runner presents | Outcome |
 |---|---|
 | The server's `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | Re-registration completes unattended. Nothing to do. |
-| A single-use `amt_reg_*` from its original install | Re-registration **fails** `token_used`. The runner is offline until an operator mints a fresh token, places it on the host, and restarts the unit. |
+| A single-use `crn_reg_*` from its original install | Re-registration **fails** `token_used`. The runner is offline until an operator mints a fresh token, places it on the host, and restarts the unit. |
 
 Note that the agent discards its identity *before* it attempts to register, so a
 runner in the second case cannot fall back to its old key — it stays down until

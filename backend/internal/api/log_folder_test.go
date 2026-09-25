@@ -110,7 +110,7 @@ func TestFolderedRunLogLandsInItsEntityFolderAndNotFlat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	const token = "amt_run_folder"
+	const token = "crn_run_folder"
 	seedIngestRunner(t, pool, "runner-folder", token)
 	traceID := seedRunningRun(t, pool, "runner-folder", "deploy", code)
 
@@ -153,7 +153,7 @@ func TestFlatRunLogStillWritesAndReadsEndToEnd(t *testing.T) {
 	logDir := t.TempDir()
 	ts, pool := newTestServerWithLogDir(t, logDir)
 
-	const token = "amt_run_flat"
+	const token = "crn_run_flat"
 	seedIngestRunner(t, pool, "runner-flat", token)
 	traceID := seedRunningRun(t, pool, "runner-flat", "legacy-job", "")
 
@@ -215,7 +215,7 @@ func TestFolderedAndFlatRunsCoexistInOneLogDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	const token = "amt_run_mixed"
+	const token = "crn_run_mixed"
 	seedIngestRunner(t, pool, "runner-mixed", token)
 	newRun := seedRunningRun(t, pool, "runner-mixed", "mixed", code)
 	oldRun := seedRunningRun(t, pool, "runner-mixed", "mixed", "")
@@ -263,7 +263,7 @@ func TestFirstLogInAFolderWritesTheMetaSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	const token = "amt_run_sidecar"
+	const token = "crn_run_sidecar"
 	seedIngestRunner(t, pool, "runner-sidecar", token)
 	traceID := seedRunningRun(t, pool, "runner-sidecar", "sidecar-job", code)
 

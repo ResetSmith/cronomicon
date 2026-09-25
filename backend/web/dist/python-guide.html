@@ -1851,7 +1851,7 @@
 <p>Targeting follows the shared shell-family rules — a scope fans out to its member hosts, a pinned <code>target_host</code> wins outright on every run path, a per-run host subset is SSH-executor-only (<code>422 scope_membership</code> otherwise), host keys fail closed on both executors. One thing is Python-specific:</p>
 
 <ul>
-<li><strong>Declare <code>python</code> on the scope.</strong> The “bash floor” means every scope supports <code>bash</code>; any other run type is a declared chip on the scope, so add <span class="tag">python</span> to the scopes whose hosts carry an interpreter. A pragma does the same for a Git-synced inventory: <code># amadeus:v1 types=bash,python</code>.</li>
+<li><strong>Declare <code>python</code> on the scope.</strong> The “bash floor” means every scope supports <code>bash</code>; any other run type is a declared chip on the scope, so add <span class="tag">python</span> to the scopes whose hosts carry an interpreter. A pragma does the same for a Git-synced inventory: <code># cronomicon:v1 types=bash,python</code>.</li>
 </ul>
 
 <hr />
@@ -1883,7 +1883,7 @@ print(f"run {os.environ['CRONOMICON_RUN_ID']} on scope {os.environ['CRONOMICON_R
 
 <p>Print the marker on stdout, exactly as in Bash:</p>
 
-<div class="codeblock"><pre><code>print(f"::amadeus-output name=VERSION::{version}")</code></pre></div>
+<div class="codeblock"><pre><code>print(f"::cronomicon-output name=VERSION::{version}")</code></pre></div>
 
 <p>A downstream step declares an input bound to that output and receives it as an env var. If a captured value carries an injected secret, the executor drops <em>all</em> captured outputs and fails the run (<code>output_secret_leak</code>) rather than let the secret propagate — emit something derived, never the secret itself. If your script prints volumes of output, remember the marker must be its own line on <strong>stdout</strong> (not stderr, not inside JSON you dump).</p>
 
@@ -1908,7 +1908,7 @@ print(f"run {os.environ['CRONOMICON_RUN_ID']} on scope {os.environ['CRONOMICON_R
 <li><strong>Write for the fleet's oldest <code>python3</code>.</strong> The target's interpreter runs your code; f-strings need 3.6, <code>:=</code> needs 3.8 — one ancient host in the scope decides.</li>
 <li><strong>Standard library first.</strong> Your script runs under the <em>target's</em> interpreter — a <code>pip install</code> dependency must exist on every host in the scope, and Cronomicon does not install packages for you. If you need real dependencies, manage them on the targets (or reach for Ansible, which exists for exactly that shape of work).</li>
 <li><strong>Be idempotent</strong> — retries, schedule re-fires and operator re-runs all mean “again.”</li>
-<li><strong>Run inputs instead of <code>input()</code></strong>, <code>::amadeus-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
+<li><strong>Run inputs instead of <code>input()</code></strong>, <code>::cronomicon-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
 <li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code>, <code>concurrency_policy: Forbid</code> (or <code>Queue</code>) for non-reentrant scripts.</li>
 <li><strong>Keep scripts in Git behind <code>script_ref</code></strong>; lint with <code>ruff</code> + <code>amadeus validate</code> in CI.</li>
 </ul>
@@ -1927,7 +1927,7 @@ print(f"run {os.environ['CRONOMICON_RUN_ID']} on scope {os.environ['CRONOMICON_R
 <tr><td><code>ModuleNotFoundError</code></td><td>The import isn't installed on that target. Standard library first; real dependencies are managed on the targets, not by Cronomicon.</td></tr>
 <tr><td>Runs sit <strong>queued</strong> forever (executor <code>ssh</code>)</td><td>The SSH executor pool is disabled — <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code>, or route the job to a runner.</td></tr>
 <tr><td>Queued, “waiting for a python-capable runner”</td><td>No online runner claims <code>python</code> — the probe found no local interpreter on the runner host. Declare it: <code>-capabilities bash,python</code>.</td></tr>
-<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::amadeus-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead.</td></tr>
+<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::cronomicon-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead.</td></tr>
 <tr><td>A secret appears in a target's process listing</td><td>It was passed on a child's argv (§5). Move it to the child's environment or a stdin pipe — redaction cannot reach a remote process table.</td></tr>
 </tbody>
 </table></div>

@@ -51,7 +51,7 @@ func TestManifestPerRunCredential(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-id1", "amt_run_id1"
+	runnerID, tok := "runner-id1", "crn_run_id1"
 	insertRunner(t, svc, runnerID, "id1", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -98,7 +98,7 @@ func TestManifestIdentityLocalInventoryRefused(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-id2", "amt_run_id2"
+	runnerID, tok := "runner-id2", "crn_run_id2"
 	insertRunner(t, svc, runnerID, "id2", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET inventory='local', protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -202,7 +202,7 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-rp8", "amt_run_rp8"
+	runnerID, tok := "runner-rp8", "crn_run_rp8"
 	insertRunner(t, svc, runnerID, "rp8", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -244,7 +244,7 @@ func TestManifestAnsibleIdentityFields(t *testing.T) {
 func TestManifestAnsibleNoIdentityOldAgentStillRuns(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-rp8plain", "amt_run_rp8plain"
+	runnerID, tok := "runner-rp8plain", "crn_run_rp8plain"
 	insertRunner(t, svc, runnerID, "rp8plain", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -265,7 +265,7 @@ func TestManifestSSHFamilyIdentityUnchanged(t *testing.T) {
 	svc := newTestService(t)
 	enableInjection(svc)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-rp8ssh", "amt_run_rp8ssh"
+	runnerID, tok := "runner-rp8ssh", "crn_run_rp8ssh"
 	insertRunner(t, svc, runnerID, "rp8ssh", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=?, allow_secret_injection=1 WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -312,7 +312,7 @@ func seedAnsibleOptsRun(t *testing.T, svc *Service, runnerID, overrideJSON strin
 func TestManifestAnsibleOptionsCarried(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-p3", "amt_run_p3"
+	runnerID, tok := "runner-p3", "crn_run_p3"
 	insertRunner(t, svc, runnerID, "p3", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {
@@ -341,7 +341,7 @@ func TestManifestAnsibleOptionsCarried(t *testing.T) {
 func TestManifestNoAnsibleOptionsOldAgentStillRuns(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-p3plain", "amt_run_p3plain"
+	runnerID, tok := "runner-p3plain", "crn_run_p3plain"
 	insertRunner(t, svc, runnerID, "p3plain", "online", []string{"ansible"})
 	bindRunnerToken(t, svc, tok, runnerID)
 	if _, err := svc.db.Exec(`UPDATE runners SET protocol_version=? WHERE id=?`, runnerproto.ProtocolVersion, runnerID); err != nil {

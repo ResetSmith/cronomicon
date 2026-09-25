@@ -155,7 +155,7 @@ access_control:
     - domain: auth.YOUR-DOMAIN
       policy: bypass
     # Runner endpoints bypass the browser SSO — a runner host has no Authelia
-    # session (it uses its own amt_run_*/amt_reg_* bearer, still enforced by the
+    # session (it uses its own crn_run_*/crn_reg_* bearer, still enforced by the
     # app on the /api paths). WITHOUT this, `curl .../install/<token>` and the
     # runner's poll/register are redirected to the login page and return HTML,
     # not the script — the "syntax error near `<!doctype html>'" install failure.
@@ -291,7 +291,7 @@ in production).
 
 ```bash
 CRONOMICON_LOGOUT_REDIRECT_URL=https://auth.example.com/logout
-CRONOMICON_BOOTSTRAP_ADMIN_GROUP=amadeus-admins   # FIRST DEPLOY ONLY — remove after step 10
+CRONOMICON_BOOTSTRAP_ADMIN_GROUP=cronomicon-admins   # FIRST DEPLOY ONLY — remove after step 10
 CRONOMICON_COOKIE_SECURE=true
 ```
 
@@ -492,11 +492,11 @@ curl https://amadeus.YOUR-DOMAIN  # must redirect to Authelia login
 1. Navigate to `https://amadeus.YOUR-DOMAIN` in a browser.
 2. Authelia redirects you to its login page.
 3. Log in as a user who is a member of the AD group set in
-   `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` (`amadeus-admins` in the example env).
+   `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` (`cronomicon-admins` in the example env).
 4. You land in Cronomicon as an admin.
 5. Go to **Settings → Group Mappings** and create permanent `ad_group → role`
-   mappings for your real groups (e.g. `amadeus-admins → admin`,
-   `amadeus-operators → operator`).
+   mappings for your real groups (e.g. `cronomicon-admins → admin`,
+   `cronomicon-operators → operator`).
 
 ---
 
@@ -671,7 +671,7 @@ startup and cannot be rolled back — take a snapshot first, `backup-restore.md`
 
 ### Rolling back
 
-Set `CRONOMICON_IMAGE=registry.example.com/amadeus:v<previous>` in the
+Set `CRONOMICON_IMAGE=registry.example.com/cronomicon:v<previous>` in the
 DockHand stack's environment and Save and deploy; restore the DB snapshot if
 the upgrade ran migrations. Remove the variable again after the next good
 release so `:latest` resumes.

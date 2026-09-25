@@ -58,7 +58,7 @@ func TestImportGitHosts(t *testing.T) {
 
 	// First sync: web1 (host_var ansible_host/user), web2 (group_var user + group auth-key).
 	writeInvFile(t, filepath.Join(invDir, "prod.ini"),
-		"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\nweb2\n[web:vars]\nansible_user=svc\namadeus_auth_key_env_var=WEB_KEY\n")
+		"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\nweb2\n[web:vars]\nansible_user=svc\ncronomicon_auth_key_env_var=WEB_KEY\n")
 	sync(t, "2026-01-01T00:00:00Z")
 
 	addr, user, key, source, _, _ := get("web1")
@@ -82,7 +82,7 @@ func TestImportGitHosts(t *testing.T) {
 
 	// Second sync at a LATER timestamp, with web2 REMOVED from inventory.
 	writeInvFile(t, filepath.Join(invDir, "prod.ini"),
-		"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\n[web:vars]\namadeus_auth_key_env_var=WEB_KEY\n")
+		"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\n[web:vars]\ncronomicon_auth_key_env_var=WEB_KEY\n")
 	sync(t, "2026-01-02T00:00:00Z")
 
 	// web1 git row: host_key preserved across re-sync, synced_at re-stamped.

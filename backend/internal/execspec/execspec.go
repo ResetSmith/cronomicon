@@ -28,12 +28,12 @@ import (
 
 // outputMarkerRe matches an A12 inter-job output marker emitted on a job's stdout:
 //
-//	::amadeus-output name=KEY::VALUE
+//	::cronomicon-output name=KEY::VALUE
 //
 // KEY is an env-var-style identifier; VALUE is the rest of the line. Both the
 // in-app SSH executor and the runner log-ingest seam parse these from the RAW
 // line (before redaction) and accumulate them into runs.outputs_json (Phase 5).
-var outputMarkerRe = regexp.MustCompile(`^::amadeus-output\s+name=([A-Za-z_][A-Za-z0-9_]*)::(.*)$`)
+var outputMarkerRe = regexp.MustCompile(`^::cronomicon-output\s+name=([A-Za-z_][A-Za-z0-9_]*)::(.*)$`)
 
 // ParseOutputMarker returns (key, value, true) if line is an A12 output marker.
 func ParseOutputMarker(line string) (key, value string, ok bool) {
@@ -53,7 +53,7 @@ func ParseOutputMarker(line string) (key, value string, ok bool) {
 // Both execution paths call this at the choke point BEFORE outputs are persisted:
 // the runner log-ingest seam (internal/runner) and the in-app SSH executor
 // (internal/sshexec). It lives here so the two paths cannot drift — an
-// ::amadeus-output:: value carrying an injected secret must fail the run closed
+// ::cronomicon-output:: value carrying an injected secret must fail the run closed
 // on either path, or the value would propagate verbatim into outputs_json, a
 // child step's plaintext env_json, and the run-detail API.
 func FirstOutputLeakingSecret(outputs map[string]string, injected []string) string {

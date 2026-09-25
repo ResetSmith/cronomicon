@@ -40,7 +40,7 @@ type Config struct {
 	// CACertPath is an optional path to a PEM CA bundle to trust for TLS. Empty
 	// uses the system trust store.
 	CACertPath string
-	// RegistrationToken is the shared registration bearer token (amt_reg_*).
+	// RegistrationToken is the shared registration bearer token (crn_reg_*).
 	RegistrationToken string
 
 	// Name is this runner's display name (must be stable across restarts so the

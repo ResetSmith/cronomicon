@@ -55,7 +55,7 @@ func TestUIDRuleFiresForTheRightJobEndToEnd(t *testing.T) {
 		VALUES ('r-uid','job','backup','uid-git','failure','["email"]','ops@example.com',1,'now')`)
 	exec(`INSERT INTO notification_config
 		(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_targets, last_modified_at)
-		VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','[]',0,'[]','now')`)
+		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',0,'[]','now')`)
 	// A failing run of the AMADEUS job — same name, different identity.
 	exec(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at)
 	      VALUES('trace-ama','backup','amadeus','uid-ama','bash','failure','t','manual','t')`)
@@ -103,7 +103,7 @@ func TestUIDRuleStillFiresForAnAlertWithNoRun(t *testing.T) {
 		VALUES ('r-missed','job','nightly','uid-nightly','missed-run','["email"]','ops@example.com',1,'now')`)
 	exec(`INSERT INTO notification_config
 		(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_targets, last_modified_at)
-		VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','[]',0,'[]','now')`)
+		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',0,'[]','now')`)
 
 	sent := 0
 	d.sendEmail = func(SMTP, []string, string, string) error { sent++; return nil }

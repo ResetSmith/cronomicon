@@ -17,8 +17,8 @@ func TestPollOwnership(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
-	aID, aTok := "runner-a", "amt_run_a"
-	bID, bTok := "runner-b", "amt_run_b"
+	aID, aTok := "runner-a", "crn_run_a"
+	bID, bTok := "runner-b", "crn_run_b"
 	insertRunner(t, svc, aID, "a", "online", []string{"bash"})
 	insertRunner(t, svc, bID, "b", "online", []string{"bash"})
 	bindRunnerToken(t, svc, aTok, aID)

@@ -1126,7 +1126,7 @@ func (s *Service) parseWorkflows() ([]WorkflowYAML, []error) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Parse inventory/*.ini (+ optional *.amadeus.yaml sidecars)
+// Parse inventory/*.ini (+ optional *.cronomicon.yaml sidecars)
 // ──────────────────────────────────────────────────────────────────────────────
 
 // inventoryScope is the parsed representation of a single inventory file.
@@ -1168,7 +1168,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 	sidecars := map[string]*sidecarYAML{}
 	sidecarPaths := map[string]string{}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".amadeus.yaml") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".cronomicon.yaml") {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
@@ -1180,7 +1180,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 		if err := yaml.Unmarshal(data, &sc); err != nil {
 			continue
 		}
-		base := strings.TrimSuffix(e.Name(), ".amadeus.yaml")
+		base := strings.TrimSuffix(e.Name(), ".cronomicon.yaml")
 		sidecars[base] = &sc
 		sidecarPaths[base] = "inventory/" + e.Name()
 	}
@@ -1224,7 +1224,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 		if sidecar != nil && sidecar.Spec.Description != "" {
 			desc = sidecar.Spec.Description
 		} else {
-			directives, _ := parseAmadeusPragma(content)
+			directives, _ := parseCronomiconPragma(content)
 			desc = directives.Description
 		}
 

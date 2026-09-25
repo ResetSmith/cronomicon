@@ -9,18 +9,18 @@ import {
 } from "./runner-install-cmd";
 
 const ORIGIN = "https://amadeus.example.com";
-const TOKEN = "amt_reg_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const TOKEN = "crn_reg_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 describe("installOneLiner", () => {
   it("fetches the app-served install script from the given origin", () => {
-    const cmd = installOneLiner(ORIGIN, "amt_reg_abc123");
+    const cmd = installOneLiner(ORIGIN, "crn_reg_abc123");
     expect(cmd).toContain(`curl -fsSL ${ORIGIN}${RUNNER_INSTALL_SCRIPT_PATH}`);
     expect(RUNNER_INSTALL_SCRIPT_PATH).toBe("/runner-install.sh");
   });
 
   it("passes server, token, hostname, and --download — no -c: capabilities auto-detect on the host", () => {
-    const cmd = installOneLiner(ORIGIN, "amt_reg_abc123");
-    expect(cmd).toContain(`sudo bash -s -- -s ${ORIGIN} -t amt_reg_abc123 -n $(hostname) --download`);
+    const cmd = installOneLiner(ORIGIN, "crn_reg_abc123");
+    expect(cmd).toContain(`sudo bash -s -- -s ${ORIGIN} -t crn_reg_abc123 -n $(hostname) --download`);
     expect(cmd).not.toContain("-c ");
   });
 
@@ -35,11 +35,11 @@ describe("installOneLiner", () => {
 
 describe("installTwoStep", () => {
   it("downloads, inspects, then runs the same installer with the same args", () => {
-    const cmd = installTwoStep(ORIGIN, "amt_reg_abc123");
+    const cmd = installTwoStep(ORIGIN, "crn_reg_abc123");
     const lines = cmd.split("\n");
     expect(lines[0]).toBe(`curl -fsSLO ${ORIGIN}${RUNNER_INSTALL_SCRIPT_PATH}`);
     expect(lines[1]).toContain("inspect before running");
-    expect(lines[2]).toBe(`sudo bash runner-install.sh -s ${ORIGIN} -t amt_reg_abc123 -n $(hostname) --download`);
+    expect(lines[2]).toBe(`sudo bash runner-install.sh -s ${ORIGIN} -t crn_reg_abc123 -n $(hostname) --download`);
   });
 
   it("honors an explicit capability override", () => {

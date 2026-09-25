@@ -164,13 +164,13 @@ paths:
         token, and binary-download-on baked in, so a whole install is one
         flagless pipe (runner provisioning plan 2 Phase 2, D2):
 
-            curl -fsSL https://amadeus.example.com/install/amt_reg_… | sudo bash
+            curl -fsSL https://amadeus.example.com/install/crn_reg_… | sudo bash
 
         A dumb substitution endpoint: it does NOT read the DB or validate the
         token against it (no token-validity oracle). Registration remains the
         sole enforcement point — single-use, atomic, audited — so serving a
         script for a dead token just yields a clean registration failure on the
-        host. Only the token SYNTAX is checked (`amt_reg_` + 64 hex); anything
+        host. Only the token SYNTAX is checked (`crn_reg_` + 64 hex); anything
         else is a generic 404. Capabilities are not baked — the agent
         auto-detects the host's toolchains at startup (Phase 1). Served at the
         server root, outside /api/v1. Unauthenticated by design: the token in
@@ -181,10 +181,10 @@ paths:
         - name: token
           in: path
           required: true
-          description: A registration token (`amt_reg_` + 64 lowercase hex).
+          description: A registration token (`crn_reg_` + 64 lowercase hex).
           schema:
             type: string
-            pattern: '^amt_reg_[0-9a-f]{64}$'
+            pattern: '^crn_reg_[0-9a-f]{64}$'
       responses:
         '200':
           description: The personalized install script.
@@ -3772,7 +3772,7 @@ paths:
               properties:
                 vaultPath:
                   type: string
-                  examples: ['secret/data/amadeus#DB_PASSWORD']
+                  examples: ['secret/data/cronomicon#DB_PASSWORD']
       responses:
         '200':
           description: Migrated; secret is now vault-source.
@@ -3855,7 +3855,7 @@ paths:
       operationId: registerRunner
       summary: Register a runner (single-use registration token, A6.1/Phase 7)
       description: |
-        Called by the runner binary with a registration token (amt_reg_*,
+        Called by the runner binary with a registration token (crn_reg_*,
         24h expiry, single-use per install — or the multi-use env bootstrap
         token) as the bearer credential. Returns the runner record + a
         long-lived API key used for all subsequent runner calls. The token
@@ -4470,7 +4470,7 @@ paths:
       operationId: mintRegistrationToken
       summary: Mint a single-use registration token (§6.6, Phase 7)
       description: |
-        Mints one amt_reg_* token (24h expiry) for one install. Plaintext is
+        Mints one crn_reg_* token (24h expiry) for one install. Plaintext is
         returned once and never re-served. Unlike the retired shared-token
         rotate, minting does NOT revoke other tokens — several installs can
         be in flight, each with its own token; each dies on its first
@@ -4500,7 +4500,7 @@ paths:
                     properties:
                       token:
                         type: string
-                        description: The amt_reg_* plaintext. Shown once; store securely.
+                        description: The crn_reg_* plaintext. Shown once; store securely.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Validation' }
@@ -6198,13 +6198,13 @@ components:
       scheme: bearer
       description: |
         Runner surface (T9). Authorization: Bearer <api-key> — the long-lived
-        key issued at registration (or a single-use amt_reg_* registration
+        key issued at registration (or a single-use crn_reg_* registration
         token for POST /runners/register only). No cookies, no CSRF.
     serviceToken:
       type: http
       scheme: bearer
       description: |
-        Machine surface (ET-A). Authorization: Bearer amasvc_<token> — a
+        Machine surface (ET-A). Authorization: Bearer crnsvc_<token> — a
         service-account credential minted under Settings → Service Accounts and
         shown exactly once. No cookies, no CSRF (there is no session to ride).
 
@@ -8580,7 +8580,7 @@ components:
           examples: ['jobs/backup-prod-db.yaml']
         content:
           type: string
-          description: Full YAML file content. Must carry apiVersion amadeus.io/v1 (T10).
+          description: Full YAML file content. Must carry apiVersion cronomicon.io/v1 (T10).
         commitMessage:
           type: string
           description: Optional override; defaults to a generated message. Committed as the bot identity (§3.2).
@@ -9208,7 +9208,7 @@ components:
               type: string
               readOnly: true
               description: |
-                The plaintext credential, prefixed `amasvc_`. Present ONLY in
+                The plaintext credential, prefixed `crnsvc_`. Present ONLY in
                 the 201 response that created the account; only its SHA-256 is
                 stored, so it cannot be recovered afterwards.
 

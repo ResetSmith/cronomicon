@@ -17,7 +17,7 @@ func TestPutScopeInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw := "[all:vars]\nansible_user=deploy\n[web]\nweb1 ansible_host=10.0.0.1\n[web:vars]\namadeus_auth_key_env_var=EDGE_KEY\n"
+	raw := "[all:vars]\nansible_user=deploy\n[web]\nweb1 ansible_host=10.0.0.1\n[web:vars]\ncronomicon_auth_key_env_var=EDGE_KEY\n"
 	doc, lineErrs, err := PutScopeInventory(ctx, pool, id, raw, "ini", "op")
 	if err != nil || len(lineErrs) != 0 {
 		t.Fatalf("put: err=%v lineErrs=%v", err, lineErrs)
@@ -76,7 +76,7 @@ func TestImportScopeHosts(t *testing.T) {
 	ctx := context.Background()
 	id := db.NewID()
 	pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','amadeus','t','["bash"]')`, id)
-	raw := "[all:vars]\nansible_user=deploy\n[web]\nweb1 ansible_host=10.0.0.1\nweb2 ansible_host=10.0.0.2\n[web:vars]\namadeus_auth_key_env_var=EDGE_KEY\n"
+	raw := "[all:vars]\nansible_user=deploy\n[web]\nweb1 ansible_host=10.0.0.1\nweb2 ansible_host=10.0.0.2\n[web:vars]\ncronomicon_auth_key_env_var=EDGE_KEY\n"
 	if _, le, err := PutScopeInventory(ctx, pool, id, raw, "ini", "op"); err != nil || len(le) != 0 {
 		t.Fatalf("put: %v %v", err, le)
 	}

@@ -1,7 +1,7 @@
 // Package gitlab implements the GitLab integration slice (B3):
 //   - Clone + cache the job-definitions repo (go-git).
 //   - Parse jobs/*.yaml, workflows/*.yaml, inventory/*.ini (pragma + sidecar).
-//   - Validate apiVersion (T10) and the amadeus:v1 inventory pragma (S10).
+//   - Validate apiVersion (T10) and the cronomicon:v1 inventory pragma (S10).
 //   - Upsert jobs/workflows/scopes into the shared DB tables on sync.
 //   - Implement the schedule write-path (POST /schedules/publish) with A2 If-Match OCC.
 //   - Expose ValidateFile for the `amadeus validate` CLI.
@@ -31,7 +31,7 @@ import (
 // API-version validation (T10)
 // ──────────────────────────────────────────────────────────────────────────────
 
-const requiredAPIVersion = "amadeus.io/v1"
+const requiredAPIVersion = "cronomicon.io/v1"
 
 // validKinds is the set of YAML kinds Cronomicon understands.
 var validKinds = map[string]bool{
@@ -532,7 +532,7 @@ func ValidateFile(path string) ([]ValidationError, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".ini" {
 		// Inventory file — validate pragma only.
-		_, errs := parseAmadeusPragma(string(data))
+		_, errs := parseCronomiconPragma(string(data))
 		var out []ValidationError
 		for _, e := range errs {
 			out = append(out, ValidationError{File: path, Line: e.Line, Message: e.Message})
@@ -1066,7 +1066,7 @@ var validRunTypes = map[string]bool{
 	"python":     true,
 }
 
-// PragmaDirectives holds the decoded amadeus:v1 pragma values from an inventory file.
+// PragmaDirectives holds the decoded cronomicon:v1 pragma values from an inventory file.
 type PragmaDirectives struct {
 	Types       []string // declared run types (validated)
 	Owner       string
@@ -1079,15 +1079,15 @@ type pragmaError struct {
 	Message string
 }
 
-// pragmaRe matches `# amadeus:v<N> key=value` comment lines.
-var pragmaRe = regexp.MustCompile(`^[#;]\s*amadeus:v(\d+)\s+(.+)$`)
+// pragmaRe matches `# cronomicon:v<N> key=value` comment lines.
+var pragmaRe = regexp.MustCompile(`^[#;]\s*cronomicon:v(\d+)\s+(.+)$`)
 var kvRe = regexp.MustCompile(`^(\w+)=(.+)$`)
 
-// parseAmadeusPragma parses `# amadeus:v1 key=value` directives from the top
+// parseCronomiconPragma parses `# cronomicon:v1 key=value` directives from the top
 // of an inventory file. Parsing is strict per S10: unknown directives, unsupported
 // versions, malformed lines, and unknown run-type values all produce line-numbered
 // errors. Errors do not stop parsing of subsequent lines.
-func parseAmadeusPragma(content string) (PragmaDirectives, []pragmaError) {
+func parseCronomiconPragma(content string) (PragmaDirectives, []pragmaError) {
 	var out PragmaDirectives
 	var errs []pragmaError
 
@@ -1150,7 +1150,7 @@ func parseAmadeusPragma(content string) (PragmaDirectives, []pragmaError) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Sidecar YAML shape (inventory/<name>.amadeus.yaml)
+// Sidecar YAML shape (inventory/<name>.cronomicon.yaml)
 // ──────────────────────────────────────────────────────────────────────────────
 
 type sidecarYAML struct {
@@ -1166,7 +1166,7 @@ type sidecarYAML struct {
 		// AuthKeyEnvVar (M4 / §9.2) is the per-scope default env-var NAME the in-app
 		// SSH executor resolves to a key when importing this inventory's hosts into
 		// ssh_hosts. A NAME only (never a secret value, D1); per-host
-		// `amadeus_auth_key_env_var` overrides it.
+		// `cronomicon_auth_key_env_var` overrides it.
 		AuthKeyEnvVar string `yaml:"authKeyEnvVar"`
 	} `yaml:"spec"`
 }
@@ -1198,7 +1198,7 @@ type ScopeCapability struct {
 // content is the raw .ini text; sidecar is the parsed sidecar (nil if absent); sidecarPath
 // is used in error attribution.
 func resolveInventoryCapability(content string, sidecar *sidecarYAML, sidecarPath string) ScopeCapability {
-	directives, pragmaErrs := parseAmadeusPragma(content)
+	directives, pragmaErrs := parseCronomiconPragma(content)
 
 	var valErrs []ValidationError
 	for _, e := range pragmaErrs {

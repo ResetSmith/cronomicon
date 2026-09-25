@@ -45,7 +45,7 @@ access_control:
       policy: bypass
     # Runner endpoints must NOT go through the browser SSO. A runner host has no
     # Authelia session; it authenticates the server with its OWN bearer
-    # (amt_run_* / amt_reg_*), and the provisioning artifacts are non-secret (the
+    # (crn_run_* / crn_reg_*), and the provisioning artifacts are non-secret (the
     # token in /install/<token> is itself the credential). Without this bypass,
     # `curl .../install/<token>` and the runner's poll/register get 302'd to the
     # login page — returning HTML, not the script (the classic

@@ -52,7 +52,7 @@ echo "== Trusted-proxy enforcement (THE critical control) =="
 if [[ -n "$APP_DIRECT_URL" ]]; then
   # Hit the app port directly with spoofed identity headers. The app must strip
   # them (peer not in CRONOMICON_TRUSTED_PROXIES) → unauthenticated, NOT 200.
-  spoof_code="$(code -H 'Remote-User: attacker' -H 'Remote-Groups: amadeus-admins,admins' \
+  spoof_code="$(code -H 'Remote-User: attacker' -H 'Remote-Groups: cronomicon-admins,admins' \
                     -H 'Remote-Email: attacker@evil.test' "$APP_DIRECT_URL/api/v1/me")"
   if [[ "$spoof_code" == "200" ]]; then
     echo "  FAIL: spoofed Remote-* accepted on direct app port (got 200) — TRUST BOUNDARY BROKEN"; fail=$((fail+1))

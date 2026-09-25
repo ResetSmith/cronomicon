@@ -402,7 +402,7 @@ func TestBuildChildEnvRefusesAgentConfigPassthrough(t *testing.T) {
 	// not quietly resolved: under a multi-use bootstrap token this value is a
 	// permanent enrollment credential, and a passthrough value is not a declared
 	// secret binding, so nothing would redact it out of the run log.
-	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
+	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_supersecret"}
 	m := &runnerproto.ManifestResponse{EnvPassthrough: []string{"CRONOMICON_RUNNER_REGISTRATION_TOKEN"}}
 
 	env, _, err := buildChildEnv(m, Config{}, environ, nil)
@@ -423,7 +423,7 @@ func TestBuildChildEnvRefusesAgentConfigPassthrough(t *testing.T) {
 	if strings.Contains(err.Error(), "not resolvable") {
 		t.Errorf("refusal must not reuse the missing-var message: %v", err)
 	}
-	if strings.Contains(err.Error(), "amt_reg_supersecret") {
+	if strings.Contains(err.Error(), "crn_reg_supersecret") {
 		t.Errorf("the error must never echo the secret value: %v", err)
 	}
 }
@@ -448,7 +448,7 @@ func TestBuildChildEnvAgentConfigNotReachableViaBareFallback(t *testing.T) {
 	// passthrough name alone is not enough. A reference whose bare name is the
 	// agent's own config would otherwise be resolved and handed to the child under
 	// the prefixed name.
-	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
+	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_supersecret"}
 	m := &runnerproto.ManifestResponse{
 		EnvPassthrough: []string{"CRONOMICON_SECRET_CRONOMICON_RUNNER_REGISTRATION_TOKEN"},
 	}
@@ -458,7 +458,7 @@ func TestBuildChildEnvAgentConfigNotReachableViaBareFallback(t *testing.T) {
 		t.Fatal("a reference whose bare name is agent config must be refused")
 	}
 	for _, e := range env {
-		if strings.Contains(e, "amt_reg_supersecret") {
+		if strings.Contains(e, "crn_reg_supersecret") {
 			t.Fatalf("agent config leaked through the bare-name fallback: %q", e)
 		}
 	}
@@ -498,7 +498,7 @@ func TestBuildChildEnvBaseExtraCannotReadmitAgentConfig(t *testing.T) {
 	// only runs declaring a passthrough — so it must not become a second door to
 	// the same namespace. The refusal is reported through provenance rather than
 	// dropped silently.
-	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=amt_reg_supersecret"}
+	environ := []string{"PATH=/usr/bin", "CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_supersecret"}
 	cfg := Config{EnvBaseExtra: []string{"CRONOMICON_RUNNER_REGISTRATION_TOKEN"}}
 	m := &runnerproto.ManifestResponse{}
 
@@ -513,7 +513,7 @@ func TestBuildChildEnvBaseExtraCannotReadmitAgentConfig(t *testing.T) {
 	if !strings.Contains(joined, "CRONOMICON_RUNNER_REGISTRATION_TOKEN") {
 		t.Errorf("the refusal should be visible in provenance, got %q", joined)
 	}
-	if strings.Contains(joined, "amt_reg_supersecret") {
+	if strings.Contains(joined, "crn_reg_supersecret") {
 		t.Errorf("provenance must never echo the secret value: %q", joined)
 	}
 }

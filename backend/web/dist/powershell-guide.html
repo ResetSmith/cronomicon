@@ -1847,7 +1847,7 @@
 <p>Targeting follows the shared shell-family rules — a scope fans out to its member hosts, a pinned <code>target_host</code> wins outright on every run path, a per-run host subset is SSH-executor-only (<code>422 scope_membership</code> otherwise) — with these Windows-fleet specifics:</p>
 
 <ul>
-<li><strong>Declare <code>powershell</code> on the scope.</strong> Supported run types are chips on the scope (the “bash floor” means <code>bash</code> is always present; add <code>powershell</code> for your Windows scopes — e.g. a <code>Windows-Fleet</code> scope declaring <span class="tag">powershell</span> <span class="tag">ansible</span>). A pragma does the same for a Git-synced inventory: <code># amadeus:v1 types=bash,powershell</code>.</li>
+<li><strong>Declare <code>powershell</code> on the scope.</strong> Supported run types are chips on the scope (the “bash floor” means <code>bash</code> is always present; add <code>powershell</code> for your Windows scopes — e.g. a <code>Windows-Fleet</code> scope declaring <span class="tag">powershell</span> <span class="tag">ansible</span>). A pragma does the same for a Git-synced inventory: <code># cronomicon:v1 types=bash,powershell</code>.</li>
 <li><strong>Host records are OS-agnostic.</strong> Address, port (22 for Windows OpenSSH too), user, optional bastion <code>via</code>, and the auth key. The <strong>OS</strong> field on a host record is descriptive; execution behavior comes from the run type.</li>
 <li><strong>Key-based auth on Windows OpenSSH</strong> works like anywhere else, with one server-side gotcha worth knowing when <em>Test connection</em> says <span class="pill fail"><span class="dot"></span>cred_error</span> but the key is right: for members of the Administrators group, Windows OpenSSH reads authorized keys from <code>C:\ProgramData\ssh\administrators_authorized_keys</code> (with restrictive ACLs), not the user profile's <code>authorized_keys</code>.</li>
 <li><strong>Host keys fail closed</strong> on both executors — stored-key strict match or loud TOFU on the in-app executor; the runner's <code>known_hosts</code> + <strong>Scan &amp; approve</strong> on the agent path. Bastion hops are pinned too. Same rules, same fixes as <a href="./bash-guide.html">Bash Guide</a> §3.</li>
@@ -1886,7 +1886,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }</code></pre></div>
 
 <p>Hand values to downstream workflow steps with the standard marker on stdout:</p>
 
-<div class="codeblock"><pre><code>Write-Output "::amadeus-output name=HOTFIX_KB::KB5031364"</code></pre></div>
+<div class="codeblock"><pre><code>Write-Output "::cronomicon-output name=HOTFIX_KB::KB5031364"</code></pre></div>
 
 <p>A downstream step binds an input to it and receives it as env. The <code>output_secret_leak</code> fail-close applies here too — never emit a bound secret as an output. See <a href="user-manual.html#workflows">User Manual §7.5</a>.</p>
 
@@ -1914,7 +1914,7 @@ $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec
 <li><strong>No prompts, ever:</strong> run inputs instead of <code>Read-Host</code>; <code>-Confirm:$false</code>/<code>-Force</code> on cmdlets that ask; <code>-NonInteractive</code> turns forgotten prompts into immediate errors, which is the good outcome.</li>
 <li><strong>Be idempotent</strong> — retries, schedule re-fires and re-runs all mean “again”; test with <code>-WhatIf</code> during authoring, then remove it.</li>
 <li><strong>Pin single-host jobs with <code>target_host</code></strong>; size <code>timeout_seconds</code> to reality (a hung Windows Update call is the classic overrun); <code>concurrency_policy: Forbid</code> for non-reentrant maintenance.</li>
-<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>, lint with PSScriptAnalyzer + <code>amadeus validate</code> in CI, and use <code>::amadeus-output</code> markers — not temp files — to pass data between workflow steps.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>, lint with PSScriptAnalyzer + <code>amadeus validate</code> in CI, and use <code>::cronomicon-output</code> markers — not temp files — to pass data between workflow steps.</li>
 </ul>
 
 <hr />

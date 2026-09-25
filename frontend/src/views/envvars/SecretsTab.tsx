@@ -773,7 +773,7 @@ function MigrateModal({
   onClose: () => void;
   onDone: (msg: string, kind: "info" | "error") => void;
 }) {
-  const [vaultPath, setVaultPath] = useState(`secret/data/amadeus#${row.key}`);
+  const [vaultPath, setVaultPath] = useState(`secret/data/cronomicon#${row.key}`);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
 

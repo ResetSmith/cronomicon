@@ -36,7 +36,7 @@ func pollAs(t *testing.T, svc *Service, runnerID, token string) (int, runnerprot
 // offline was a one-way trap: poll → drain → agent exits 0 → forever offline.
 func TestPollReadmitsOfflineRunner(t *testing.T) {
 	svc := newTestService(t)
-	id, tok := "runner-readmit", "amt_run_readmit"
+	id, tok := "runner-readmit", "crn_run_readmit"
 	insertRunner(t, svc, id, "readmit", "offline", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 	// Stale drain deadline left over from a completed drain — must be cleared.
@@ -89,7 +89,7 @@ func TestPollReadmitsOfflineRunner(t *testing.T) {
 // the re-register op. The fall-through must deliver it on the re-admit poll.
 func TestPollReadmitDeliversPendingResync(t *testing.T) {
 	svc := newTestService(t)
-	id, tok := "runner-resync-readmit", "amt_run_rr"
+	id, tok := "runner-resync-readmit", "crn_run_rr"
 	insertRunner(t, svc, id, "resync-readmit", "offline", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 	if _, err := svc.db.Exec(`
@@ -115,7 +115,7 @@ func TestPollReadmitDeliversPendingResync(t *testing.T) {
 // `offline` re-admits.
 func TestPollDrainingStillDrains(t *testing.T) {
 	svc := newTestService(t)
-	id, tok := "runner-draining", "amt_run_draining"
+	id, tok := "runner-draining", "crn_run_draining"
 	insertRunner(t, svc, id, "draining", "draining", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 
@@ -171,7 +171,7 @@ func TestReaperOfflineThenPollResurrects(t *testing.T) {
 	svc.cfg.RunnerOfflineAfter = 5 * time.Minute
 	svc.cfg.RunnerDeregisterAfter = 24 * time.Hour // keep the deregister sweep out of this test
 
-	id, tok := "runner-reaped", "amt_run_reaped"
+	id, tok := "runner-reaped", "crn_run_reaped"
 	stale := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
 	insertRunnerWithHeartbeat(t, svc, id, "reaped", "online", stale, stale)
 	bindRunnerToken(t, svc, tok, id)

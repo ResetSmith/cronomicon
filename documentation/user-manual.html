@@ -4012,7 +4012,7 @@
                     injected environment variable.</p>
                 <div class="codeblock">
                     <div class="cap">In the producing job's script (any run type)</div>
-                    <pre>echo "::amadeus-output name=VERSION::1.4.2"</pre>
+                    <pre>echo "::cronomicon-output name=VERSION::1.4.2"</pre>
                 </div>
                 <div class="codeblock">
                     <div class="cap">In the workflow's Git YAML (downstream step)</div>
@@ -5265,7 +5265,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         line-numbered: <em>“Secret-bearing inventory rejected. Reference secrets by env-var NAME.”</em>
                         The supported pattern is env-var-name indirection, e.g.
                         <code>ansible_become_pass="{{ lookup('env','NAME') }}"</code> (or a group var like
-                        <code>amadeus_auth_key_env_var=DEPLOY_KEY</code>).
+                        <code>cronomicon_auth_key_env_var=DEPLOY_KEY</code>).
                     </p>
                 </div>
                 <div class="callout note">
@@ -6136,11 +6136,11 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             log POST</text>
                         <!-- token flow -->
                         <rect class="svg-box" x="585" y="90" width="120" height="36" rx="8" />
-                        <text class="svg-sub" x="645" y="106" text-anchor="middle" font-size="10">amt_reg_* (24h)</text>
+                        <text class="svg-sub" x="645" y="106" text-anchor="middle" font-size="10">crn_reg_* (24h)</text>
                         <text class="svg-sub" x="645" y="120" text-anchor="middle" font-size="9">single-use per
                             install</text>
                         <rect class="svg-box" x="585" y="136" width="120" height="36" rx="8" />
-                        <text class="svg-sub" x="645" y="152" text-anchor="middle" font-size="10">amt_run_*
+                        <text class="svg-sub" x="645" y="152" text-anchor="middle" font-size="10">crn_run_*
                             (365d)</text>
                         <text class="svg-sub" x="645" y="166" text-anchor="middle" font-size="9">per-runner key</text>
                         <path class="svg-line" d="M645 126 V136" marker-end="url(#ar4b)" />
@@ -6171,7 +6171,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     same dialog.
                 </p>
                 <p>The <strong>Register New Runner</strong> panel below is the token audit trail and the manual command
-                    builder. <strong>Mint token</strong> creates a <strong>single-use</strong> <code>amt_reg_*</code>
+                    builder. <strong>Mint token</strong> creates a <strong>single-use</strong> <code>crn_reg_*</code>
                     token (24-hour expiry) for <em>one</em> install, with an optional label (e.g. the intended runner
                     name). The plaintext is shown <strong>only once at mint</strong> — use
                     <strong>Reveal</strong>/<strong>Copy</strong> immediately, or copy the install command with the
@@ -6183,7 +6183,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <div class="callout danger">
                     <div class="ct"><span class="em">⛔</span> Token hygiene is NOT a kill-switch</div>
                     <p>Revoking an unused token only stops a <em>future</em> install. Already-registered runners hold
-                        their own long-lived <code>amt_run_*</code> keys and keep running. <strong>To revoke a runner,
+                        their own long-lived <code>crn_run_*</code> keys and keep running. <strong>To revoke a runner,
                             <em>Deregister</em> it</strong> (and delete its identity file). See <a
                             href="administrator-manual.html#runner-ops">Runner Fleet Management</a> (Administrator
                         Manual).</p>
@@ -6511,7 +6511,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <p class="muted">Views: Jobs/Scripts → Workflow Editor → Workflows → History</p>
                 <ol class="steps">
                     <li>In the producing job's script, print the value exactly:
-                        <code>::amadeus-output name=VERSION::1.4.2</code> (KEY must be env-var-style).
+                        <code>::cronomicon-output name=VERSION::1.4.2</code> (KEY must be env-var-style).
                     </li>
                     <li>Ensure both producing and consuming jobs exist (confirm in <a href="#jobs">Jobs</a>).</li>
                     <li>Author the chain: <a href="#workflows">Workflows → + Create</a> (Admin), add the producing step,
@@ -6559,7 +6559,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <ol class="steps">
                     <li>Create the job-definitions repo with
                         <code>jobs/ scripts/ schedules/ workflows/ inventory/</code> directories. Add
-                        <code>apiVersion: amadeus.io/v1</code> and a <code>kind:</code> to every YAML.
+                        <code>apiVersion: cronomicon.io/v1</code> and a <code>kind:</code> to every YAML.
                     </li>
                     <li>Create a bot PAT (repo read/write). In <a href="#settings">Settings → GitLab Connection</a>
                         enter Repository URL, Bot PAT, Bot name/email, Working branch, then <strong>Save</strong>.</li>
@@ -7094,7 +7094,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             href="#stop-disposition">&sect;6.6</a>).</dd>
                     <dt>A12 inter-job data passing</dt>
                     <dd>The mechanism for a workflow step to consume an upstream step's output. The producer prints
-                        <code>::amadeus-output name=KEY::VALUE</code> on stdout; the consumer declares
+                        <code>::cronomicon-output name=KEY::VALUE</code> on stdout; the consumer declares
                         <code>inputs: { VAR: { fromStep, fromOutput } }</code> (authored per-step in the Workflow Editor
                         — an Inputs row or an on-canvas handle drag — or in Git YAML). KEY must be env-var-style; a
                         missing output resolves to empty, deterministically.
@@ -7129,7 +7129,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     </dd>
                     <dt>apiVersion / kind</dt>
                     <dd>Required top-level fields on every Cronomicon YAML. <code>apiVersion</code> must be
-                        <code>amadeus.io/v1</code>; <code>kind</code> is one of Job, Script, Schedule, Playbook,
+                        <code>cronomicon.io/v1</code>; <code>kind</code> is one of Job, Script, Schedule, Playbook,
                         Terraform, Workflow, InventorySidecar. Unknown values are line-numbered errors.
                     </dd>
                     <dt>Application timezone / effective zone</dt>
@@ -7335,7 +7335,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         run that binds a key and resolves to the in-app SSH executor is <strong>refused</strong>
                         (<code>422 key_binding_requires_runner</code>). See <a href="#refbindings">§11.6</a>.
                     </dd>
-                    <dt>Registration token (amt_reg_*)</dt>
+                    <dt>Registration token (crn_reg_*)</dt>
                     <dd>A single-use bearer token (24h expiry), minted per install from the Runners view; it dies on its
                         first successful registration and records which runner consumed it. Stored only as a SHA-256
                         hash; plaintext shown once at mint. Revoking an unused token never affects registered runners.
@@ -7376,7 +7376,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dd>The external <code>amadeus-runner</code> binary on a separate host that registers, long-polls
                         for <code>executor='runner'</code> runs, executes them and streams logs back. Required for
                         ansible/terraform and isolated targets; outbound HTTP only.</dd>
-                    <dt>Runner API key (amt_run_*)</dt>
+                    <dt>Runner API key (crn_run_*)</dt>
                     <dd>The long-lived (365-day) per-runner key minted at registration and persisted to the identity
                         file. Used for all later polls/manifests/logs.</dd>
                     <dt>runner_lost</dt>

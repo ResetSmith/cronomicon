@@ -39,7 +39,7 @@ func TestValidatePaths(t *testing.T) {
 	// A well-formed file → exit 0, "ok" on stdout, nothing on stderr.
 	t.Run("valid file", func(t *testing.T) {
 		good := filepath.Join(t.TempDir(), "good.yaml")
-		writeFixture(t, good, "apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: ok-script\nspec:\n  run_type: bash\n  command: echo hi\n")
+		writeFixture(t, good, "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: ok-script\nspec:\n  run_type: bash\n  command: echo hi\n")
 		var out, errOut bytes.Buffer
 		if code := validatePaths([]string{good}, &out, &errOut); code != 0 {
 			t.Fatalf("want exit 0, got %d (stderr=%q)", code, errOut.String())
@@ -53,7 +53,7 @@ func TestValidatePaths(t *testing.T) {
 	// "<file>:<line>: …" error — the exact shape the CI template surfaces.
 	t.Run("invalid file is line-numbered", func(t *testing.T) {
 		bad := filepath.Join(t.TempDir(), "bad.yaml")
-		writeFixture(t, bad, "apiVersion: amadeus.io/v999\nkind: Script\nmetadata:\n  name: bad-script\nspec:\n  run_type: bash\n  command: echo hi\n")
+		writeFixture(t, bad, "apiVersion: cronomicon.io/v999\nkind: Script\nmetadata:\n  name: bad-script\nspec:\n  run_type: bash\n  command: echo hi\n")
 		var out, errOut bytes.Buffer
 		if code := validatePaths([]string{bad}, &out, &errOut); code != 1 {
 			t.Fatalf("want exit 1, got %d", code)
@@ -69,11 +69,11 @@ func TestValidatePaths(t *testing.T) {
 	t.Run("repo dir cross-ref", func(t *testing.T) {
 		repo := t.TempDir()
 		writeFixture(t, filepath.Join(repo, "scripts", "backup.yaml"),
-			"apiVersion: amadeus.io/v1\nkind: Script\nmetadata:\n  name: backup\nspec:\n  run_type: bash\n  command: pg_dump\n")
+			"apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: backup\nspec:\n  run_type: bash\n  command: pg_dump\n")
 		writeFixture(t, filepath.Join(repo, "jobs", "ok.yaml"),
-			"apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: ok\nspec:\n  script_ref: backup\n  scope: Prod\n")
+			"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: ok\nspec:\n  script_ref: backup\n  scope: Prod\n")
 		writeFixture(t, filepath.Join(repo, "jobs", "broken.yaml"),
-			"apiVersion: amadeus.io/v1\nkind: Job\nmetadata:\n  name: broken\nspec:\n  script_ref: does-not-exist\n  scope: Prod\n")
+			"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: broken\nspec:\n  script_ref: does-not-exist\n  scope: Prod\n")
 		var out, errOut bytes.Buffer
 		if code := validatePaths([]string{repo}, &out, &errOut); code != 1 {
 			t.Fatalf("want exit 1, got %d (stderr=%q)", code, errOut.String())

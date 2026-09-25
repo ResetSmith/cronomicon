@@ -79,7 +79,7 @@
 
 <p>A script hands values to later workflow steps by printing a marker line on stdout:</p>
 
-<pre><code>echo "::amadeus-output name=VERSION::1.4.2"</code></pre>
+<pre><code>echo "::cronomicon-output name=VERSION::1.4.2"</code></pre>
 
 <p>A downstream step declares an input bound to that output (in the Workflow Editor or Git YAML) and receives it as an env var. Markers are captured from the raw output before redaction — and if a captured value carries an injected secret, the executor drops <em>all</em> captured outputs and fails the run (<code>output_secret_leak</code>) rather than let the secret propagate. Details: <a href="user-manual.html#workflows">User Manual §7.5</a>.</p>
 
@@ -126,7 +126,7 @@ printf '%s\n' "$CRONOMICON_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl res
 <li><strong>Exit codes are the contract.</strong> <code>0</code> only when the work truly succeeded; per-host failures aggregate into the partial-warning state for free.</li>
 <li><strong>Pin single-host jobs with <code>target_host</code></strong> rather than a one-host scope — and remember the pin now holds on scheduled and workflow paths too.</li>
 <li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code> (the overrun kill logs <code>amadeus: job timed out</code>), <code>concurrency_policy: Forbid</code> for non-reentrant scripts.</li>
-<li><strong>Run inputs instead of prompts</strong>, <code>::amadeus-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
+<li><strong>Run inputs instead of prompts</strong>, <code>::cronomicon-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
 <li><strong>Keep scripts in Git behind <code>script_ref</code></strong> so they are reviewed, versioned and reused; save inline <code>command:</code> for true one-liners. Lint with <code>shellcheck</code> + <code>amadeus validate</code> in CI.</li>
 </ul>
 
@@ -150,7 +150,7 @@ printf '%s\n' "$CRONOMICON_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl res
 <tr><td><code>unpinned_bastion_target</code></td><td>A secret-injecting run over a bastion to a target with no pinned host key. Probe the target (Test connection) or run once without secrets to capture it.</td></tr>
 <tr><td>Run killed with <code>amadeus: job timed out</code></td><td><code>timeout_seconds</code> is smaller than reality — or the script hung (interactive prompt, dead remote). Fix the hang first, then size the timeout.</td></tr>
 <tr><td>Run failed, reason <code>executor_lost</code></td><td>The server restarted mid-run and reconciled it at startup (plain Failed badge — distinct from a runner's amber <strong>Lost</strong>). Re-run.</td></tr>
-<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::amadeus-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead of the secret itself.</td></tr>
+<tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::cronomicon-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead of the secret itself.</td></tr>
 <tr><td>Manual run rejected <code>409</code> / cron fire skipped</td><td>The global <code>maxConcurrent</code> cap is reached, or a <code>Forbid</code> policy suppressed the overlap (recorded once as a <span class="pill mut"><span class="dot"></span>skipped</span> run).</td></tr>
 </tbody>
 </table></div>

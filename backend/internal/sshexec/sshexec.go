@@ -436,10 +436,10 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	results := s.fanOut(execCtx, targets, cmd, sink)
 
 	// H2/DEC-2 parity with the runner log-ingest path (runner/log.go): an
-	// ::amadeus-output:: value that carries an injected secret would propagate that
+	// ::cronomicon-output:: value that carries an injected secret would propagate that
 	// secret VERBATIM into outputs_json, into a child step's plaintext env_json
 	// (workflow engine), and into the run-detail API — via the natural idiom
-	// `echo "::amadeus-output name=TOKEN::$CRONOMICON_SECRET_FOO"`. Fail the run closed
+	// `echo "::cronomicon-output name=TOKEN::$CRONOMICON_SECRET_FOO"`. Fail the run closed
 	// at this earliest choke point (before outputs_json is written): drop the
 	// captured outputs and finalize the run failed so nothing propagates. The
 	// offending value is already masked in the persisted log (the sink redactor is

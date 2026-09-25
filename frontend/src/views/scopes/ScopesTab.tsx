@@ -771,7 +771,7 @@ function InventoryPanel({ scopeId }: { scopeId: string }) {
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             rows={12}
-            placeholder={"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\n\n[web:vars]\namadeus_auth_key_env_var=DEPLOY_KEY"}
+            placeholder={"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\n\n[web:vars]\ncronomicon_auth_key_env_var=DEPLOY_KEY"}
             style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm, resize: "vertical" }}
           />
           {lineErrs.length > 0 && (

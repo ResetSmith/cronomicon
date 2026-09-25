@@ -118,7 +118,7 @@ func TestLogEndpointsRejectMalformedTraceIDWith400(t *testing.T) {
 	svc.SetLogDir(logDir)
 	escaped := filepath.Join(root, "escaped.log")
 
-	runnerID, tok := "runner-traceid", "amt_run_traceid"
+	runnerID, tok := "runner-traceid", "crn_run_traceid"
 	insertRunner(t, svc, runnerID, "traceid", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 

@@ -51,7 +51,7 @@ func newAnnEnv(t *testing.T) annEnv {
 		VALUES ('r-missed','all',NULL,'missed-run','["email"]','ops@example.com',1,'now')`)
 	exec(`INSERT INTO notification_config
 		(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_targets, last_modified_at)
-		VALUES (1,'mail.example.com',587,'amadeus@example.com','starttls','[]',0,'[]','now')`)
+		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',0,'[]','now')`)
 
 	var subject, body string
 	sends := 0

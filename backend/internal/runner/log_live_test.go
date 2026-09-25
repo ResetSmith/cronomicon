@@ -16,7 +16,7 @@ import (
 func TestIngestPartialChunkLiveTail(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-live", "amt_run_live"
+	runnerID, tok := "runner-live", "crn_run_live"
 	insertRunner(t, svc, runnerID, "live", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 

@@ -75,7 +75,7 @@ func TestSyncPruneSkippedKeepsPausedJobRow(t *testing.T) {
 
 	// Corrupt keep.yaml → parseJobs validation error → jobsOK=false.
 	gitCommitFile(t, repo, remote, "jobs/keep.yaml",
-		"apiVersion: amadeus.io/v2\nkind: Job\nmetadata:\n  name: keep\n", "corrupt keep")
+		"apiVersion: cronomicon.io/v2\nkind: Job\nmetadata:\n  name: keep\n", "corrupt keep")
 
 	r := svc.SyncBlocking(ctx, "t")
 	if r.Status != "partial" {

@@ -224,7 +224,7 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 		s.auth.RequireRunner(http.HandlerFunc(svc.HandleUploadHostKeys)))
 
 	// ── Runner: id-preserving re-declare (protocol v4) ────────────────────
-	// Authenticated by the runner's own amt_run_* key (never a registration
+	// Authenticated by the runner's own crn_run_* key (never a registration
 	// token — D6); ownership guard inside the handler, like poll.
 	mux.Handle("POST /api/v1/runners/{id}/redeclare",
 		s.auth.RequireRunner(http.HandlerFunc(svc.HandleRedeclare)))

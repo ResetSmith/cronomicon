@@ -72,7 +72,7 @@ checkout embeds a UI matching source HEAD — B.1). Compose sets `context: ../..
 5. **Secret KEK** → write the base64 KEK to `secrets/amadeus_kek` (mounted at
    `/run/secrets/amadeus_kek`). **Back this up separately from the S3 DB backup**
    (S14) — losing it makes stored secrets unrecoverable.
-6. **Bootstrap admin** → leave `CRONOMICON_BOOTSTRAP_ADMIN_GROUP=amadeus-admins` set
+6. **Bootstrap admin** → leave `CRONOMICON_BOOTSTRAP_ADMIN_GROUP=cronomicon-admins` set
    for the first deploy. Bring the stack up:
    ```
    docker compose up -d --build
@@ -135,7 +135,7 @@ caught on the merge request instead of at the next sync.
    drop-in `.gitlab-ci.yml` for the job-definitions repo. Copy its contents into
    that repo's `.gitlab-ci.yml` (or `include:` it).
 2. **Pin the image.** Set `CRONOMICON_IMAGE` to the same Cronomicon image tag your
-   deployment runs (e.g. `registry.example.com/amadeus:v0.19.0`) — pinning keeps
+   deployment runs (e.g. `registry.example.com/cronomicon:v0.19.0`) — pinning keeps
    the validator and the runtime parser in lock-step. Verify the tag at
    `GET /version`.
 3. **(Optional) MR comments.** The base job already fails the pipeline — blocking
@@ -149,7 +149,7 @@ e.g.:
 
 ```
 validating jobs/backup.yaml
-jobs/backup.yaml:2: unsupported apiVersion "amadeus.io/v2"
+jobs/backup.yaml:2: unsupported apiVersion "cronomicon.io/v2"
 ```
 
 Fix the file at the reported line and push; the pipeline re-runs on the MR.

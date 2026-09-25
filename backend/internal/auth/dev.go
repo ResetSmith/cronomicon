@@ -15,9 +15,9 @@ import (
 // read "*", so the dev bypass must carry it. See the scoping-fix plan §5.)
 func devIdentity() Identity {
 	return Identity{
-		Email:         "developer@amadeus.local",
+		Email:         "developer@cronomicon.local",
 		DisplayName:   "Developer (bypass)",
-		Groups:        []string{"amadeus-admins"},
+		Groups:        []string{"cronomicon-admins"},
 		Roles:         []string{"admin"},
 		AllowedScopes: []string{AllScopes}, // "*" ⇒ explicitly unrestricted (sees all)
 		// RB-14: synthesize the equivalent unrestricted grant. The dev identity is

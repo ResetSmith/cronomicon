@@ -10,7 +10,7 @@ import (
 	"github.com/ResetSmith/cronomicon/web"
 )
 
-const validInstallToken = "amt_reg_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+const validInstallToken = "crn_reg_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func TestPersonalizeInstallScript(t *testing.T) {
 	// The DOWNLOAD=1 in the arg-parse arm must NOT be touched — only the
@@ -93,10 +93,10 @@ func TestInstallEndpointAcceptsIPv6AndContainerHosts(t *testing.T) {
 func TestInstallEndpointRejectsNonToken(t *testing.T) {
 	for _, bad := range []string{
 		"not-a-token",
-		"amt_run_" + strings.Repeat("a", 64),                // wrong prefix (runner key, not reg token)
-		"amt_reg_" + strings.Repeat("a", 63),                // too short
-		"amt_reg_" + strings.Repeat("Z", 64),                // non-hex
-		"amt_reg_" + strings.Repeat("a", 64) + "; rm -rf /", // shell-meta
+		"crn_run_" + strings.Repeat("a", 64),                // wrong prefix (runner key, not reg token)
+		"crn_reg_" + strings.Repeat("a", 63),                // too short
+		"crn_reg_" + strings.Repeat("Z", 64),                // non-hex
+		"crn_reg_" + strings.Repeat("a", 64) + "; rm -rf /", // shell-meta
 	} {
 		rec := serveInstall(t, bad, nil)
 		if rec.Code != http.StatusNotFound {

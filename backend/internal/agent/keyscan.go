@@ -68,7 +68,7 @@ func scanHostKey(ctx context.Context, target string) (scannedHostKey, error) {
 	var captured ssh.PublicKey
 	captureDone := errors.New("host key captured") // sentinel to abort after the key arrives
 	cfg := &ssh.ClientConfig{
-		User: "amadeus-keyscan", // never authenticates; we only want the host key
+		User: "cronomicon-keyscan", // never authenticates; we only want the host key
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			captured = key
 			return captureDone

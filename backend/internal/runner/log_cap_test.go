@@ -17,7 +17,7 @@ func TestIngestCapsRunLogSize(t *testing.T) {
 	svc := newTestService(t)
 	svc.cfg.MaxRunLogBytes = 200 // tiny ceiling for the test
 	as := authSvc(t, svc)
-	runnerID, tok := "runner-cap", "amt_run_cap"
+	runnerID, tok := "runner-cap", "crn_run_cap"
 	insertRunner(t, svc, runnerID, "cap", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, runnerID)
 

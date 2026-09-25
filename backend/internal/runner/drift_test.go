@@ -33,8 +33,8 @@ func registerV4(t *testing.T, svc *Service, name string) (runnerID, apiKey strin
 		t.Fatalf("decode register response: %v", err)
 	}
 	mustExec(t, svc, `UPDATE runners SET capabilities='[]' WHERE id=?`, resp.Runner.ID)
-	bindRunnerToken(t, svc, "amt_run_"+name, resp.Runner.ID)
-	return resp.Runner.ID, "amt_run_" + name
+	bindRunnerToken(t, svc, "crn_run_"+name, resp.Runner.ID)
+	return resp.Runner.ID, "crn_run_" + name
 }
 
 // driftPoll drives HandlePoll with an optional configDigest query param.

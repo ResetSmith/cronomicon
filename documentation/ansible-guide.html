@@ -43,7 +43,7 @@
 <p>Any raw <code>*.yml</code> under <code>scripts/</code> in the definitions repo is auto-discovered on sync as a Script with run type <code>ansible</code> (a sub-folder like <code>scripts/ansible/patch.yml</code> just becomes part of the catalog's folder tree). A job references it by name:</p>
 
 <pre><code># jobs/patch-tuesday.yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Job
 metadata:
   name: patch-tuesday
@@ -60,7 +60,7 @@ spec:
 <p>A composite project — roles, group vars, templates, a vaulted secrets file — is declared as <em>one</em> Script whose members are not synthesized into standalone catalog entries:</p>
 
 <pre><code># scripts/deploy-app.yaml
-apiVersion: amadeus.io/v1
+apiVersion: cronomicon.io/v1
 kind: Script
 metadata:
   name: deploy-app
@@ -80,7 +80,7 @@ spec:
 <p>An Ansible run must target a <strong>scope that declares the <code>ansible</code> run type and carries an inventory</strong> — the server refuses to build a runner manifest without one (<code>409 no_inventory</code>). Two ways to get there:</p>
 
 <ul>
-<li><strong>Git-synced</strong>: files in <code>inventory/*.ini</code> (read <strong>flat</strong>, not recursively — flatten and namespace nested department trees). A <code># amadeus:v1 types=bash,ansible</code> pragma at the top of the file (or a <code>.amadeus.yaml</code> sidecar) declares the scope's run types.</li>
+<li><strong>Git-synced</strong>: files in <code>inventory/*.ini</code> (read <strong>flat</strong>, not recursively — flatten and namespace nested department trees). A <code># cronomicon:v1 types=bash,ansible</code> pragma at the top of the file (or a <code>.cronomicon.yaml</code> sidecar) declares the scope's run types.</li>
 <li><strong>In-app</strong>: <strong>Scopes → + Add Scope</strong> and paste the full INI into the <em>Ansible INI Inventory</em> input — validated inline, projected atomically on save. See <a href="user-manual.html#scopes">User Manual §11.1</a>.</li>
 </ul>
 
@@ -138,7 +138,7 @@ vars:
 <li>An explicit <code>ansible_ssh_private_key_file</code> in the inventory always wins. The supported secret-free form is the lookup pattern:
 <pre><code>web-01 ansible_host=10.1.2.11 ansible_ssh_private_key_file="{{ lookup('env','prod_web_key') }}"</code></pre>
 The runner scans the inventory for <code>lookup('env',NAME)</code> names, and bridges each one to the matching key-dir file in the child environment. The name must be a <strong>bare literal</strong> — a nested template inside the lookup fails with <em>“env passthrough var(s) not set”</em>.</li>
-<li>Otherwise the <strong>auth bridge</strong>: when every target of the run resolves to exactly <strong>one</strong> distinct key name (per-host <code>amadeus_auth_key_env_var</code>, the scope sidecar's <code>authKeyEnvVar</code>, or the host record in <a href="user-manual.html#settings">Settings → SSH Targets</a>), the agent auto-appends <code>--private-key &lt;path&gt;</code> and verifies target host keys against the <em>same</em> <code>known_hosts</code> that <strong>Scan &amp; approve</strong> seeds. One provisioned key serves bash and ansible runs alike; no double provisioning.</li>
+<li>Otherwise the <strong>auth bridge</strong>: when every target of the run resolves to exactly <strong>one</strong> distinct key name (per-host <code>cronomicon_auth_key_env_var</code>, the scope sidecar's <code>authKeyEnvVar</code>, or the host record in <a href="user-manual.html#settings">Settings → SSH Targets</a>), the agent auto-appends <code>--private-key &lt;path&gt;</code> and verifies target host keys against the <em>same</em> <code>known_hosts</code> that <strong>Scan &amp; approve</strong> seeds. One provisioned key serves bash and ansible runs alike; no double provisioning.</li>
 </ul>
 
 <h3>Become passwords</h3>

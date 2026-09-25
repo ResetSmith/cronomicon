@@ -148,15 +148,15 @@ func GetGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Confi
 	}
 
 	cfg := &GitlabConfig{
-		BotName:               "amadeus-bot",
-		BotEmail:              "amadeus-bot@amadeus.io",
+		BotName:               "cronomicon-bot",
+		BotEmail:              "cronomicon-bot@cronomicon.io",
 		WriteBranch:           "main",
 		TokenExpiryNotifyDays: 7,
 	}
 
 	if dbExists {
-		cfg.BotName = kvStrOr(botName.String, "amadeus-bot")
-		cfg.BotEmail = kvStrOr(botEmail.String, "amadeus-bot@amadeus.io")
+		cfg.BotName = kvStrOr(botName.String, "cronomicon-bot")
+		cfg.BotEmail = kvStrOr(botEmail.String, "cronomicon-bot@cronomicon.io")
 		cfg.WriteBranch = kvStrOr(writeBranch.String, "main")
 		cfg.RepoUrl = repoUrl.String
 		cfg.TokenExpiryNotifyDays = int(tokenExpiryNotifyDays.Int64)

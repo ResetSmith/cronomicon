@@ -133,12 +133,12 @@ func (s *fakeServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"runner": map[string]any{"id": "runner-1"},
-		"apiKey": "amt_run_fake",
+		"apiKey": "crn_run_fake",
 	})
 }
 
 func (s *fakeServer) handlePoll(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer amt_run_fake" {
+	if r.Header.Get("Authorization") != "Bearer crn_run_fake" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -161,7 +161,7 @@ func (s *fakeServer) handlePoll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *fakeServer) handleManifest(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer amt_run_fake" {
+	if r.Header.Get("Authorization") != "Bearer crn_run_fake" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -170,7 +170,7 @@ func (s *fakeServer) handleManifest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *fakeServer) handleLog(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Authorization") != "Bearer amt_run_fake" {
+	if r.Header.Get("Authorization") != "Bearer crn_run_fake" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -221,7 +221,7 @@ func TestAgentReRegisterOp(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"runner": map[string]any{"id": "runner-rr"},
-			"apiKey": "amt_run_rr",
+			"apiKey": "crn_run_rr",
 		})
 	})
 	mux.HandleFunc("GET /api/v1/runners/{id}/poll", func(w http.ResponseWriter, r *http.Request) {
@@ -300,8 +300,8 @@ func TestAgentReRegisterOp(t *testing.T) {
 	if registers != 1 {
 		t.Errorf("registers = %d, want 1 — the op must NOT trigger a fresh token-based registration", registers)
 	}
-	if redeclareAuth != "Bearer amt_run_rr" {
-		t.Errorf("redeclare auth = %q, want the existing runner key (Bearer amt_run_rr)", redeclareAuth)
+	if redeclareAuth != "Bearer crn_run_rr" {
+		t.Errorf("redeclare auth = %q, want the existing runner key (Bearer crn_run_rr)", redeclareAuth)
 	}
 	if v, ok := redeclareBody["protocolVersion"].(float64); !ok || int(v) != runnerproto.ProtocolVersion {
 		t.Errorf("redeclare protocolVersion = %v, want %d", redeclareBody["protocolVersion"], runnerproto.ProtocolVersion)
