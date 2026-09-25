@@ -1903,14 +1903,14 @@ sudo install -m 0755 cronomicon-runner /usr/local/bin/cronomicon-runner
 sudo systemctl start cronomicon-runner
 cronomicon-runner version    # confirm the new build</code></pre></div>
 
-<p><strong>Container:</strong> pull/rebuild the new image, then recreate the container against the <strong>same named volume</strong> so identity persists:</p>
+<p><strong>Container:</strong> pull the image tagged with the server's new version (or rebuild your own), then recreate the container against the <strong>same named volume</strong> so identity persists:</p>
 
-<div class="codeblock"><pre><code>docker pull cronomicon-runner:slim       # or rebuild the image
+<div class="codeblock"><pre><code>docker pull ghcr.io/resetsmith/cronomicon-runner:2.0.2   # -fat for ansible/terraform
 docker stop cronomicon-runner-01 &amp;&amp; docker rm cronomicon-runner-01
 docker run -d --name cronomicon-runner-01 --restart unless-stopped \
   -v cronomicon-runner-data:/var/lib/cronomicon-runner \
   ...same -e flags as install... \
-  cronomicon-runner:slim</code></pre></div>
+  ghcr.io/resetsmith/cronomicon-runner:2.0.2</code></pre></div>
 
 <blockquote><p><strong>The server keeps showing the OLD version/protocol until you re-register.</strong> A restart <strong>resumes the stored identity</strong> and never re-declares — so after an upgrade the <code>runners</code> row still reflects the version, capabilities, and <code>protocolVersion</code> from the <strong>last registration</strong>. This matters after an upgrade that changes the protocol version. The server's protocol floor tracks the current wire protocol, so every agent that can talk to this server speaks it: one below the floor is refused at registration, at redeclare and on every poll with <code>426 protocol_too_old</code>, never silently degraded. So an agent whose binary you upgraded across a protocol bump keeps working, while one you did <em>not</em> upgrade stops receiving work at its next poll and says so in its own log — rather than running on with fields it silently drops. The server picks up a new build <strong>automatically on the first poll after the restart</strong> (drift detection); the <strong>Resync</strong> button forces it.</p></blockquote>
 

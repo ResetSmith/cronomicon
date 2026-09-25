@@ -1866,29 +1866,24 @@
 
 <p>The toolchains are <strong>only</strong> in the fat image — deliberately. The app's own image is distroless and ships no ansible/terraform (a conscious minimal-control-plane posture), and the slim runner stays slim for the SSH-onward case. Capability routing makes this safe: the server's claim filter (<code>run_type IN caps</code>) guarantees only an ansible-capable runner ever claims an ansible run, so you can run a fleet of slim shell runners and a few fat ansible/terraform runners side by side.</p>
 
-<p>No runner image is published; build your own. The build context is the application checkout's <code>backend/</code> (the Go module root). A slim image is a static binary on a distroless base:</p>
+<p>Both images are published to the GitHub Container Registry from every release tag, built for <code>linux/amd64</code>. Pull the tag that matches your server's version (the sidebar footer, or <code>GET /version</code>): the server refuses an agent older than its protocol, and the server and runner images of one release always match.</p>
 
-<div class="codeblock"><pre><code>FROM golang:1.26-bookworm AS build
-WORKDIR /src
-COPY go.mod go.sum* ./
-RUN go mod download
-COPY . ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
-    -o /out/cronomicon-runner ./cmd/cronomicon-runner
+<div class="tbl"><table>
+<thead><tr><th>Image</th><th>Carries</th><th>Built from</th></tr></thead>
+<tbody>
+<tr><td><code>ghcr.io/resetsmith/cronomicon-runner:&lt;version&gt;</code></td><td><strong>slim</strong>: the static agent on <code>distroless/static</code>. No shell, no toolchains.</td><td><code>backend/Dockerfile.runner</code></td></tr>
+<tr><td><code>ghcr.io/resetsmith/cronomicon-runner-fat:&lt;version&gt;</code></td><td><strong>fat</strong>: the same agent on Debian with <code>ansible</code> (Python), <code>terraform</code>, <code>git</code> and an OpenSSH client.</td><td><code>backend/Dockerfile.runner.fat</code></td></tr>
+</tbody>
+</table></div>
 
-FROM gcr.io/distroless/static-debian12
-COPY --from=build /out/cronomicon-runner /app/cronomicon-runner
-VOLUME ["/var/lib/cronomicon-runner"]
-ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
-USER nonroot:nonroot
-ENTRYPOINT ["/app/cronomicon-runner"]</code></pre></div>
+<p>Each is also tagged <code>&lt;major&gt;.&lt;minor&gt;</code> and <code>latest</code>; pin the full version in production. The Runners view's <strong>docker run</strong> helper names the image for your server's version.</p>
 
-<p>Save that as <code>Dockerfile.runner</code>, then build it with <code>backend/</code> as the context:</p>
+<p>To build your own instead (a different base, extra collections, another architecture), use the same Dockerfiles with the <strong>repository root</strong> as the build context:</p>
 
-<div class="codeblock"><pre><code>cd backend
-docker build -f /path/to/Dockerfile.runner -t cronomicon-runner:slim .</code></pre></div>
+<div class="codeblock"><pre><code>docker build -f backend/Dockerfile.runner     -t cronomicon-runner:slim .
+docker build -f backend/Dockerfile.runner.fat -t cronomicon-runner:fat .</code></pre></div>
 
-<p>For a fat image, swap the final stage for a base that carries the toolchains you will declare (for example a Debian or Python base with <code>ansible-core</code>, the collections you need, and <code>terraform</code> installed), keep the same <code>COPY --from=build</code>, volume, env and entrypoint, and run as a non-root user.</p>
+<p>The fat image pins its <code>ansible</code> and <code>terraform</code> versions as build args (<code>ANSIBLE_VERSION</code>, <code>TERRAFORM_VERSION</code>); override them with <code>--build-arg</code>, and add the collections your playbooks need in a derived image.</p>
 
 <p>Or get just the binary for a systemd install — <strong>download it from the server, or build it</strong>:</p>
 
@@ -2121,9 +2116,9 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
   -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/cronomicon-runner/keys \
   -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/cronomicon-runner/known_hosts \
   -v cronomicon-runner-data:/var/lib/cronomicon-runner \
-  cronomicon-runner:slim</code></pre></div>
+  ghcr.io/resetsmith/cronomicon-runner:2.0.2</code></pre></div>
 
-<p>The explicit <code>CRONOMICON_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). For an ansible/terraform runner, swap <code>cronomicon-runner:fat</code> and either omit the var (detect) or set <code>CRONOMICON_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
+<p>The explicit <code>CRONOMICON_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). Use the tag that matches your server's version (§2). For an ansible/terraform runner, swap in <code>ghcr.io/resetsmith/cronomicon-runner-fat</code> and either omit the var (detect) or set <code>CRONOMICON_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
 
 <hr />
 

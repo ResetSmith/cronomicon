@@ -1786,7 +1786,7 @@ export function Runners() {
       </div>
 
       {/* Provision a Runner (Phase 6): choices → runner.env + one-liner + docker run */}
-      <ProvisionPanel origin={origin} token={minted?.token ?? "<TOKEN>"} />
+      <ProvisionPanel origin={origin} token={minted?.token ?? "<TOKEN>"} serverVersion={serverBuild?.version} />
 
       {/* Add Runner — the one-click headline path (Phase 2, D2). Mint a token,
           then paste one baked-in line on the host. */}
@@ -2329,7 +2329,15 @@ function RunnerSettingsDrawer({
 // frontend; the generators live in runner-provision.ts with unit tests.
 type ProvisionProfile = "ssh" | "ansible" | "custom";
 
-function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
+function ProvisionPanel({
+  origin,
+  token,
+  serverVersion,
+}: {
+  origin: string;
+  token: string;
+  serverVersion?: string;
+}) {
   const [open, setOpen] = useState(false);
   // Phase 6: a profile is a visibility preset over the same fields. "SSH task
   // runner" surfaces key/known_hosts custody; "Ansible control node" surfaces
@@ -2402,7 +2410,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
     }
   }
   const oneLiner = capsValid ? provisionOneLiner(opts) : "";
-  const dockerCmd = capsValid ? provisionDockerRun(opts) : "";
+  const dockerCmd = capsValid ? provisionDockerRun(opts, serverVersion) : "";
 
   const inputStyle: React.CSSProperties = {
     padding: "6px 9px",
@@ -2774,11 +2782,11 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
                 dockerCmd,
                 <>
                   {capsOverride ? (
-                    <>Image is derived from the capability pick ({dockerCmd.includes(":fat") ? "fat" : "slim"});</>
+                    <>Image is derived from the capability pick ({dockerCmd.includes("-fat:") ? "fat" : "slim"});</>
                   ) : (
                     <>
                       With auto-detect the agent claims the image's toolchains (slim shown; switch to{" "}
-                      <code>:fat</code> for ansible/terraform);
+                      <code>cronomicon-runner-fat</code> for ansible/terraform);
                     </>
                   )}{" "}
                   identity and keys persist on the named volume. Place any referenced files (known_hosts, keys,

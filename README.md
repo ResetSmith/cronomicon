@@ -43,14 +43,25 @@ CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false
 
 ### Production Deployment
 
+Every release tag publishes three `linux/amd64` images to the GitHub Container Registry:
+
+| Image | What |
+|-------|------|
+| `ghcr.io/resetsmith/cronomicon` | The server (API + embedded UI) |
+| `ghcr.io/resetsmith/cronomicon-runner` | Slim runner agent (SSH-onward run types) |
+| `ghcr.io/resetsmith/cronomicon-runner-fat` | Runner agent with Ansible, Terraform and Git |
+
+Each is tagged `X.Y.Z`, `X.Y` and `latest`; pin the full version, and run runners from the same version as the server.
+
 ```bash
-# From the repo root — the Dockerfile copies frontend/ and backend/
-docker build -f backend/Dockerfile -t cronomicon:latest .
 docker run -d -p 8080:8080 -v /var/lib/cronomicon:/var/lib/cronomicon \
-  --env-file cronomicon.env cronomicon:latest
+  --env-file cronomicon.env ghcr.io/resetsmith/cronomicon:2.0.2
+
+# Or build it yourself from the repo root (the Dockerfile copies frontend/ and backend/)
+docker build -f backend/Dockerfile -t cronomicon:local .
 ```
 
-This repository holds the application only. Running it behind a reverse proxy and an identity provider (Compose, systemd, Kubernetes) is your deployment's concern; the administrator manual's Deployment chapter describes a reference topology and the day-2 essentials. See [backend/README.md](backend/README.md) for every configuration option and [backend/deploy/](backend/deploy/) for the deployment guide.
+This repository holds the application only. Running it behind a reverse proxy and an identity provider (Compose, systemd, Kubernetes) is your deployment's concern; the administrator manual's Deployment chapter describes a reference topology and the day-2 essentials. See [backend/README.md](backend/README.md) for every configuration option and [backend/deploy/](backend/deploy/) for the operator reference files.
 
 ## Architecture
 

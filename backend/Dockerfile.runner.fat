@@ -1,0 +1,96 @@
+# Fat runner image (R4.1 — the confirmed T-a driver): the SAME cronomicon-runner
+# agent PLUS the local toolchains it shells out to — ansible (+ Python), git and
+# terraform. Published as ghcr.io/resetsmith/cronomicon-runner-fat.
+#
+# ansible/terraform run ON the executor, not on the remote host, so a runner
+# that claims `ansible`/`terraform` runs must carry the toolchain locally.
+#
+# WHY THIS IS SEPARATE from the app image and from the slim runner:
+#   • The app image (backend/Dockerfile) is distroless and DELIBERATELY ships no
+#     ansible/terraform — keeping the control plane minimal and toolchain-free is
+#     a conscious posture. Putting the toolchains in the app would bloat it and
+#     broaden its attack surface for a capability only out-of-process workers need.
+#   • The slim runner (Dockerfile.runner) covers SSH-onward shells and is a tiny
+#     static/distroless image. ansible+Python+terraform add hundreds of MB and a
+#     full userland; forcing every runner to carry them would defeat the point.
+#   • So the toolchain lives ONLY here, on runners that declare
+#     capabilities:["ansible","terraform"]. Capability routing (claimRun filters
+#     run_type IN caps, R4.2) guarantees only this image claims those runs.
+#
+# git is here for opt-in project checkouts (-allow-checkout, runner-install.html
+# §12): the agent fetches the playbooks repo at a server-pinned commit with it.
+#
+# Build context is the REPOSITORY ROOT. Build with:
+#
+#   docker build -f backend/Dockerfile.runner.fat \
+#     --build-arg VERSION=$(git describe --tags --always --dirty) \
+#     --build-arg COMMIT=$(git rev-parse --short HEAD) \
+#     -t cronomicon-runner:fat .
+#
+# .github/workflows/publish-images.yml builds this on every vX.Y.Z tag.
+
+# ── Stage 1: compile the agent. A static (CGO off) binary drops cleanly onto the
+# Debian-slim final stage and has no glibc-version coupling.
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+COPY backend/go.mod backend/go.sum* ./
+RUN go mod download
+COPY backend/ ./
+ARG VERSION=dev
+ARG COMMIT=none
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -o /out/cronomicon-runner ./cmd/cronomicon-runner
+
+# ── Stage 2: a real userland — the toolchains need Python, an OpenSSH client
+# (ansible dials targets over ssh), git and the terraform binary. trixie, not
+# bookworm: the ansible 14 line requires Python >= 3.12 and bookworm ships 3.11.
+# Versions are pinned so the image is reproducible; bump them deliberately.
+FROM debian:trixie-slim
+
+ARG ANSIBLE_VERSION=14.4.0
+ARG TERRAFORM_VERSION=1.16.4
+# Set by BuildKit from --platform; the published image is linux/amd64 only.
+ARG TARGETARCH=amd64
+
+# ca-certificates: agent HTTPS to the server. openssh-client: ansible/onward SSH.
+# git: project checkouts. python3 + pip: ansible. curl/unzip: fetch terraform.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates openssh-client git python3 python3-pip \
+        curl unzip; \
+    # ansible via pip into the system interpreter (the image is single-purpose).
+    # The `ansible` meta-package pulls in the matching ansible-core + collections.
+    pip3 install --no-cache-dir --break-system-packages "ansible==${ANSIBLE_VERSION}"; \
+    # terraform — fetch the pinned release for the build arch, verify it against
+    # HashiCorp's published SHA256SUMS, and install it.
+    cd /tmp; \
+    TF_ZIP="terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip"; \
+    curl -fsSLO "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/${TF_ZIP}"; \
+    curl -fsSLO "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS"; \
+    grep " ${TF_ZIP}\$" "terraform_${TERRAFORM_VERSION}_SHA256SUMS" | sha256sum -c -; \
+    unzip -d /usr/local/bin "${TF_ZIP}" terraform; \
+    rm -f /tmp/terraform_*; \
+    # drop the fetch tools we no longer need; keep openssh-client, git + python.
+    apt-get purge -y --auto-remove curl unzip; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*; \
+    # sanity: the toolchains the agent shells out to must be on PATH.
+    ansible-playbook --version; \
+    terraform version; \
+    git --version
+
+# Non-root service account (the agent never needs root).
+RUN useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin cronomicon
+
+WORKDIR /app
+COPY --from=build /out/cronomicon-runner /app/cronomicon-runner
+
+# Identity + keys/inventory persist here (runner-install.html §10).
+RUN mkdir -p /var/lib/cronomicon-runner && chown cronomicon:cronomicon /var/lib/cronomicon-runner
+VOLUME ["/var/lib/cronomicon-runner"]
+ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
+
+USER cronomicon
+ENTRYPOINT ["/app/cronomicon-runner"]
