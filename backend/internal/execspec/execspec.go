@@ -5,7 +5,7 @@
 // endpoint must resolve identically, from one place, so the two execution paths
 // can't drift (runners-update.md §3; the EX.4 warning that a parallel resolution
 // path is how drift and leaks happen). This package is importable by both the
-// server and cmd/amadeus-runner because they share the Go module.
+// server and cmd/cronomicon-runner because they share the Go module.
 //
 // These pieces are resolution only. The sshexec-specific shell-building helpers
 // (remoteCommand, env injection, quoting) stay in sshexec because they build the

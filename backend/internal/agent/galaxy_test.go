@@ -241,12 +241,12 @@ func TestLocalCommandVaultFlag(t *testing.T) {
 		RunType:  "ansible",
 		Checkout: &runnerproto.ManifestCheckout{Entry: "site.yml", UsesVault: true},
 	}
-	argv, _, _, err := localCommand(m, Config{VaultPasswordFile: "/etc/amadeus/vault.pw"}, t.TempDir())
+	argv, _, _, err := localCommand(m, Config{VaultPasswordFile: "/etc/cronomicon/vault.pw"}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(argv, " ")
-	if !strings.Contains(joined, "--vault-password-file /etc/amadeus/vault.pw") {
+	if !strings.Contains(joined, "--vault-password-file /etc/cronomicon/vault.pw") {
 		t.Errorf("expected --vault-password-file in argv, got %v", argv)
 	}
 	if argv[len(argv)-1] != "site.yml" {

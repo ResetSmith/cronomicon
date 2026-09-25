@@ -82,9 +82,9 @@ Full contract: `20260720-namespace-update.md`.
 | `CRONOMICON_LOG_LEVEL` | `info` | `debug\|info\|warn\|error`. |
 | `CRONOMICON_LOG_FORMAT` | `json` | `json\|text`. **rec** `json` in prod. |
 | `CRONOMICON_LOG_FILE_ENABLED` | `true` | Also write the **process log** to a file on disk. **stdout is always written** — the file is strictly additive, never a replacement, so journald/docker log collection is unaffected. `false` turns the file off entirely (stdout only). |
-| `CRONOMICON_LOG_FILE` | _(empty)_ | Absolute path of the process log. Empty ⇒ `amadeus.log` in the **run-log directory** (Settings → Log Storage), and it follows that directory when the setting changes. A **relative path is rejected at boot**. Setting it explicitly also pins the file *and* attaches it **earlier in boot** (before the DB opens), so the build banner and config warnings land in the file too; the derived default attaches just after migrations. Worth pinning if the run-log tree lives on slow/shared storage — a continuously appended file maps badly onto object storage. |
+| `CRONOMICON_LOG_FILE` | _(empty)_ | Absolute path of the process log. Empty ⇒ `cronomicon.log` in the **run-log directory** (Settings → Log Storage), and it follows that directory when the setting changes. A **relative path is rejected at boot**. Setting it explicitly also pins the file *and* attaches it **earlier in boot** (before the DB opens), so the build banner and config warnings land in the file too; the derived default attaches just after migrations. Worth pinning if the run-log tree lives on slow/shared storage — a continuously appended file maps badly onto object storage. |
 | `CRONOMICON_LOG_FILE_MAX_MB` | `64` | Size at which the live file rotates. Must be **≥ 1**. |
-| `CRONOMICON_LOG_FILE_KEEP` | `5` | Rotated generations retained, named `amadeus.log.1` … `amadeus.log.N` (`.1` = newest). Must be **≥ 0**; `0` truncates in place with no generations kept. |
+| `CRONOMICON_LOG_FILE_KEEP` | `5` | Rotated generations retained, named `cronomicon.log.1` … `cronomicon.log.N` (`.1` = newest). Must be **≥ 0**; `0` truncates in place with no generations kept. |
 | `CRONOMICON_AUDIT_LOG_ENABLED` | `true` | Write the **compliance audit stream** (`audit.log`) to disk. This is a *different* file from the process log: one JSON-Lines record per audited event, keys fixed by a versioned schema. `false` turns the file off entirely — audit rows are still written to the database, which is authoritative either way. |
 | `CRONOMICON_AUDIT_LOG` | _(empty)_ | Absolute path of the audit stream. Empty ⇒ `audit.log` in the **run-log directory** (Settings → Log Storage), and it follows that directory when the setting changes. A **relative path is rejected at boot**. |
 | `CRONOMICON_MAX_RUN_LOG_BYTES` | `536870912` | Cap on a single run's ingested log (512 MiB). The log-ingest endpoint is exempt from the 2 MiB body cap (runs stream many chunks); this bounds per-run growth so a rogue/compromised runner can't fill the disk. On reaching the cap, further ingest is refused with `413`. `0` disables the cap. |
@@ -94,7 +94,7 @@ Full contract: `20260720-namespace-update.md`.
 **The process log.** Total disk cost is bounded by **`(KEEP + 1) × MAX_MB`** — 384 MiB
 at the defaults. Rotated generations deliberately do **not** end in `.log`, so the
 run-log reaper (`CRONOMICON_RETENTION_LOG_FILES_DAYS`, § Retention below) never sees
-them, and the live `amadeus.log` is explicitly excluded from that reaper as well —
+them, and the live `cronomicon.log` is explicitly excluded from that reaper as well —
 removing it out from under the open handle would send every later line to an
 unlinked inode. **Process-log retention is the keep count, not a day window.** A
 file-side failure (unwritable path, full disk) is reported once per minute on stderr
@@ -115,8 +115,8 @@ A write failure is reported (rate-limited) to the process log and never stops th
 
 | Var | Default | Notes |
 |---|---|---|
-| `CRONOMICON_DB_PATH` | `/var/lib/amadeus/amadeus.db` | SQLite file on the mounted volume. |
-| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/amadeus/git-cache/job-definitions` | GitLab clone cache. Keep on the volume so it survives restarts. |
+| `CRONOMICON_DB_PATH` | `/var/lib/cronomicon/cronomicon.db` | SQLite file on the mounted volume. |
+| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/cronomicon/git-cache/job-definitions` | GitLab clone cache. Keep on the volume so it survives restarts. |
 
 ## Auth — Trusted Header SSO (Phase A, primary)
 
@@ -175,7 +175,7 @@ Only consulted when `CRONOMICON_AUTH_MODE=oidc`.
 | `CRONOMICON_GITLAB_WEBHOOK_SECRET` | _(empty)_ | Validates `X-Gitlab-Token` on the webhook. Secret. |
 | `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | The GitOps branch used for **both** sync-read and publish-write (V1.1-10) — there is one branch, not a read/write pair. Empty ⇒ fall back to the DB-backed `gitlab_config.write_branch` (**Settings → GitLab**), then `main`. Resolved **fresh per operation**, so a DB-side change applies without a restart; setting it here pins the branch and the panel value is ignored. |
 | `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | Out-of-band bootstrap registration token (T9/A6.1). Multi-use, env-configured; unlike UI-minted tokens (single-use per install since v0.47.4) it is never consumed. Secret. |
-| `CRONOMICON_AGENT_DIR` | `/usr/share/amadeus/agents` | Directory of runner-agent binaries + `SHA256SUMS` served unauthenticated at `GET /agents/{filename}` (provisioning D1; the container image bakes them in). Missing dir ⇒ clean 404 with a build-it-yourself hint — bare-metal deploys can point this at their own build output. |
+| `CRONOMICON_AGENT_DIR` | `/usr/share/cronomicon/agents` | Directory of runner-agent binaries + `SHA256SUMS` served unauthenticated at `GET /agents/{filename}` (provisioning D1; the container image bakes them in). Missing dir ⇒ clean 404 with a build-it-yourself hint — bare-metal deploys can point this at their own build output. |
 
 ### Stale-runner reaper (R3 / D4)
 

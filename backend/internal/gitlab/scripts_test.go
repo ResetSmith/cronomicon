@@ -640,7 +640,7 @@ func TestSync_GitOpsPruning(t *testing.T) {
 
 func TestDiscoverScripts(t *testing.T) {
 	// Create a temp directory for scripts
-	dir, err := os.MkdirTemp("", "amadeus-scripts-test")
+	dir, err := os.MkdirTemp("", "cronomicon-scripts-test")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}

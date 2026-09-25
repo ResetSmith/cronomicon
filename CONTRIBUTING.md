@@ -33,7 +33,7 @@ A local development instance with dev auth and demo data:
 
 ```bash
 CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false \
-  CRONOMICON_DB_PATH=/tmp/amadeus-dev.db ./backend/bin/amadeus
+  CRONOMICON_DB_PATH=/tmp/cronomicon-dev.db ./backend/bin/cronomicon
 ```
 
 ## Making changes

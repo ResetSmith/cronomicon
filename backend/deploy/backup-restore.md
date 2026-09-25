@@ -1,7 +1,7 @@
 # Backup & restore runbook (A4)
 
 Cronomicon keeps all durable state in one SQLite file on the mounted volume
-(`/var/lib/amadeus/amadeus.db`). Backups are a nightly consistent snapshot
+(`/var/lib/cronomicon/cronomicon.db`). Backups are a nightly consistent snapshot
 shipped offsite to S3-compatible storage.
 
 ## How the nightly backup works
@@ -18,30 +18,30 @@ run.) The sweep:
 
 1. Prunes aged rows per the A4 retention policy (90d runs/activity/workflow_runs,
    1yr change_log/schedule_pushes — configurable).
-2. `VACUUM INTO /var/lib/amadeus/backups/amadeus-YYYYMMDD.db` — a consistent
+2. `VACUUM INTO /var/lib/cronomicon/backups/cronomicon-YYYYMMDD.db` — a consistent
    snapshot taken without locking out live traffic (WAL). The write is
    **idempotent**: a same-UTC-day re-run removes the prior snapshot first
    (PP-M2), so a second sweep can't abort on SQLite's overwrite refusal *after*
    the prune already ran.
-3. Uploads the snapshot to `s3://<bucket>/amadeus-backups/amadeus-YYYYMMDD.db`
+3. Uploads the snapshot to `s3://<bucket>/cronomicon-backups/cronomicon-YYYYMMDD.db`
    when S3 is configured (`internal/backup`). If unconfigured, the snapshot is
    kept locally only (the step is skipped — A4 backup is optional, T12).
 4. On success, records the last-success time (flat-KV `settings.backupLastSuccessAt`)
-   and sets the `amadeus_backup_last_success_timestamp_seconds` gauge; on failure
-   increments `amadeus_backup_failures_total`.
+   and sets the `cronomicon_backup_last_success_timestamp_seconds` gauge; on failure
+   increments `cronomicon_backup_failures_total`.
 
 ### Monitoring (PP-H6)
 
 Two Prometheus series are exported at `/metrics`:
 
-- `amadeus_backup_last_success_timestamp_seconds` (gauge) — Unix time of the last
+- `cronomicon_backup_last_success_timestamp_seconds` (gauge) — Unix time of the last
   successful backup.
-- `amadeus_backup_failures_total` (counter) — sweep failures.
+- `cronomicon_backup_failures_total` (counter) — sweep failures.
 
 Recommended alert (a backup is overdue / has been silently failing):
 
 ```
-time() - amadeus_backup_last_success_timestamp_seconds > 129600   # 36h
+time() - cronomicon_backup_last_success_timestamp_seconds > 129600   # 36h
 ```
 
 ## Configuration (environment)
@@ -83,8 +83,8 @@ server uses. **Stop the server first** — the swap replaces the live `.db` and 
 ```
 cronomicon restore --list                          # show available snapshots (newest first)
 cronomicon restore                                 # restore the LATEST snapshot over CRONOMICON_DB_PATH
-cronomicon restore --from amadeus-20260722.db      # restore a specific snapshot
-cronomicon restore --db /var/lib/amadeus/amadeus.db --yes   # non-interactive
+cronomicon restore --from cronomicon-20260722.db      # restore a specific snapshot
+cronomicon restore --db /var/lib/cronomicon/cronomicon.db --yes   # non-interactive
 ```
 
 It refuses an obviously-active DB (a best-effort write-lock probe — not a
@@ -97,12 +97,12 @@ apply migrations and re-supply the KEK/OIDC keys (step 5 below).
 
 1. **Stop** the container/process (so nothing holds the DB open).
 2. Fetch the snapshot:
-   `aws s3 cp s3://<bucket>/amadeus-backups/amadeus-YYYYMMDD.db ./restore.db`
+   `aws s3 cp s3://<bucket>/cronomicon-backups/cronomicon-YYYYMMDD.db ./restore.db`
    (or `mc cp` for MinIO).
 3. Replace the live DB and clear stale WAL/SHM sidecars:
    ```
-   rm -f /var/lib/amadeus/amadeus.db /var/lib/amadeus/amadeus.db-wal /var/lib/amadeus/amadeus.db-shm
-   cp ./restore.db /var/lib/amadeus/amadeus.db
+   rm -f /var/lib/cronomicon/cronomicon.db /var/lib/cronomicon/cronomicon.db-wal /var/lib/cronomicon/cronomicon.db-shm
+   cp ./restore.db /var/lib/cronomicon/cronomicon.db
    ```
 4. **Start** the process. On boot it applies any pending migrations (T4) and
    `/readyz` reports `database: ok` once schema state is clean.
@@ -183,7 +183,7 @@ runner that came back unplaced (agency, then tags).
 The agent logs to journald. On each host:
 
 ```
-journalctl -u amadeus-runner -f
+journalctl -u cronomicon-runner -f
 ```
 
 Three strings tell you which path a runner took:
@@ -197,13 +197,13 @@ Three strings tell you which path a runner took:
 Filtering for just the relevant lines:
 
 ```
-journalctl -u amadeus-runner --since '30 min ago' | grep -Ei 'register|401|404'
+journalctl -u cronomicon-runner --since '30 min ago' | grep -Ei 'register|401|404'
 ```
 
 ## Verifying a backup
 
 `VACUUM INTO` output is a complete, openable database. To spot-check a snapshot:
-`sqlite3 amadeus-YYYYMMDD.db 'PRAGMA integrity_check; SELECT count(*) FROM runs;'`
+`sqlite3 cronomicon-YYYYMMDD.db 'PRAGMA integrity_check; SELECT count(*) FROM runs;'`
 (`cronomicon restore` runs this check automatically after installing a snapshot.)
 
 > Backups are configured **only** via `CRONOMICON_BACKUP_S3_*` env (see Configuration

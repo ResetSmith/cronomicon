@@ -320,12 +320,12 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 	// A4 nightly backup: VACUUM INTO a consistent snapshot, then upload to S3.
 	dir := p.BackupDir
 	if dir == "" {
-		dir = "/var/lib/amadeus/backups"
+		dir = "/var/lib/cronomicon/backups"
 	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("create backup dir %s: %w", dir, err)
 	}
-	snapshot := filepath.Join(dir, fmt.Sprintf("amadeus-%s.db", nowUTC().Format("20060102")))
+	snapshot := filepath.Join(dir, fmt.Sprintf("cronomicon-%s.db", nowUTC().Format("20060102")))
 	// PP-M2: SQLite's VACUUM INTO refuses to overwrite an existing file, so a
 	// second sweep on the same UTC day (boot catch-up, clock change, manual run)
 	// would error AFTER the prune already ran — pruning rows but producing no
@@ -348,12 +348,12 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 
 	// Prune local snapshot files older than 7 days so they don't accumulate
 	// on the volume indefinitely (PP-M5). Only removes *.db files matching
-	// the amadeus-YYYYMMDD.db pattern to avoid touching anything unexpected.
+	// the cronomicon-YYYYMMDD.db pattern to avoid touching anything unexpected.
 	if entries, err := os.ReadDir(dir); err == nil {
-		cutoffFile := fmt.Sprintf("amadeus-%s.db", nowUTC().AddDate(0, 0, -7).Format("20060102"))
+		cutoffFile := fmt.Sprintf("cronomicon-%s.db", nowUTC().AddDate(0, 0, -7).Format("20060102"))
 		for _, e := range entries {
 			name := e.Name()
-			if !e.IsDir() && strings.HasPrefix(name, "amadeus-") && strings.HasSuffix(name, ".db") && name < cutoffFile {
+			if !e.IsDir() && strings.HasPrefix(name, "cronomicon-") && strings.HasSuffix(name, ".db") && name < cutoffFile {
 				if rerr := os.Remove(filepath.Join(dir, name)); rerr != nil {
 					log.Warn("retention: failed to remove old snapshot", "file", name, "error", rerr)
 				} else {
@@ -388,7 +388,7 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 // Only *.log files are candidates. The directory is operator-configurable
 // (settings.ResolveLogDir), so the suffix filter is what stops a mistyped path
 // from turning the reaper loose on unrelated files — the same reason the
-// snapshot GC below matches amadeus-*.db and nothing else. The walk is recursive
+// snapshot GC below matches cronomicon-*.db and nothing else. The walk is recursive
 // so it already handles the per-entity subtree LU-7 introduces.
 //
 // keepUnarchived, when non-nil (SL-4: the archive tier is on), is asked per

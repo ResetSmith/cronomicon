@@ -19,7 +19,7 @@ export default defineConfig({
     // Least-privilege filesystem scope for the dev server: serve only the frontend
     // root, NOT the rest of the repo (Vite's default `fs.allow` is the git-root,
     // which would expose all of backend/). `deny` then blocks any env files and
-    // secrets (e.g. amadeus.env, secrets/amadeus_kek) elsewhere in the repo. The
+    // secrets (e.g. cronomicon.env, secrets/cronomicon_kek) elsewhere in the repo. The
     // documentation/ manuals + runner guides are served by the publishManuals
     // plugin (which reads them with node:fs, bypassing this allow-list), so they
     // need no entry here.

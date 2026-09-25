@@ -23,15 +23,15 @@ v2 mount that holds your secrets (default mount `secret/`).
 vault auth enable approle    # once per cluster
 
 # Least-privilege policy — read only the paths Cronomicon needs (see §2).
-vault policy write amadeus-injection amadeus-injection.hcl
+vault policy write cronomicon-injection cronomicon-injection.hcl
 
-vault write auth/approle/role/amadeus \
-    token_policies=amadeus-injection \
+vault write auth/approle/role/cronomicon \
+    token_policies=cronomicon-injection \
     token_ttl=20m token_max_ttl=1h \
     secret_id_ttl=0            # 0 = non-expiring secret_id (static default; see §4)
 
-vault read  auth/approle/role/amadeus/role-id            # → role_id
-vault write -f auth/approle/role/amadeus/secret-id       # → secret_id
+vault read  auth/approle/role/cronomicon/role-id            # → role_id
+vault write -f auth/approle/role/cronomicon/secret-id       # → secret_id
 ```
 
 Deliver `role_id` and `secret_id` to Cronomicon by **mounted file** (preferred) or
@@ -55,7 +55,7 @@ values stored on secrets and SSH credentials (`<mount>/data/<path>`). Do **not**
 grant blanket `secret/*`.
 
 ```hcl
-# amadeus-injection.hcl
+# cronomicon-injection.hcl
 path "secret/data/cronomicon/*"      { capabilities = ["read"] }
 path "secret/data/cronomicon/ssh/*"  { capabilities = ["read"] }
 # If you use migrate-to-vault (writes a stored secret into Vault): add "create","update"
@@ -89,7 +89,7 @@ secret_id never lands in env/DB/file in plaintext. Cronomicon unwraps it once vi
 
 ```sh
 # Generate a wrapped secret_id (wrapping TTL long enough to survive a deploy):
-vault write -wrap-ttl=60m -f auth/approle/role/amadeus/secret-id   # → wrapping token
+vault write -wrap-ttl=60m -f auth/approle/role/cronomicon/secret-id   # → wrapping token
 ```
 
 Deliver the **wrapping token** as `CRONOMICON_VAULT_SECRET_ID[_FILE]`. Note a wrapping

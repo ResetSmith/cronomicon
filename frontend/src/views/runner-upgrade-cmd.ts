@@ -1,7 +1,7 @@
 // Builder for the runner detail's "Copy upgrade command" (RU1).
 //
 // Upgrading an installed agent is binary-swap + restart: the runner keeps its
-// id, API key, config and unit — only /usr/local/bin/amadeus-runner changes.
+// id, API key, config and unit — only /usr/local/bin/cronomicon-runner changes.
 // Re-running runner-install.sh would also work but is the wrong tool: it creates
 // users, writes the unit, and needs a registration token the operator no longer
 // has.
@@ -20,9 +20,9 @@
 // never a fallback.
 
 /** Where runner-install.sh installs the agent binary. */
-export const AGENT_BIN_PATH = "/usr/local/bin/amadeus-runner";
+export const AGENT_BIN_PATH = "/usr/local/bin/cronomicon-runner";
 /** The systemd unit runner-install.sh writes and enables. */
-export const AGENT_UNIT = "amadeus-runner";
+export const AGENT_UNIT = "cronomicon-runner";
 
 /**
  * upgradeCommand returns the paste-once block that upgrades an installed agent
@@ -57,9 +57,9 @@ export function upgradeCommand(origin: string): string {
     `case "$(uname -m)" in`,
     `  x86_64|amd64)  ARCH=amd64 ;;`,
     `  aarch64|arm64) ARCH=arm64 ;;`,
-    `  *) echo "no published amadeus-runner binary for $(uname -m)" >&2; exit 1 ;;`,
+    `  *) echo "no published cronomicon-runner binary for $(uname -m)" >&2; exit 1 ;;`,
     `esac`,
-    `FILE="amadeus-runner-linux-\${ARCH}"`,
+    `FILE="cronomicon-runner-linux-\${ARCH}"`,
     ``,
     `DL=$(mktemp -d)`,
     `trap 'rm -rf "$DL"' EXIT`,

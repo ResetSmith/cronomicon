@@ -97,7 +97,7 @@ func captureStderr(t *testing.T, fn func()) string {
 // is switched on.
 func TestWriteReachesBothTeeAndFile(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -153,7 +153,7 @@ func TestNoPathIsPurePassThrough(t *testing.T) {
 // assertions are therefore on CONTENT, not on the presence of the files.
 func TestRotationKeepsOldestInHighestGeneration(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path, MaxBytes: 10, Keep: 3})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -197,7 +197,7 @@ func TestRotationKeepsOldestInHighestGeneration(t *testing.T) {
 // supposed to stop.
 func TestKeepBoundsGenerationsOnDisk(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path, MaxBytes: 10, Keep: 2})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -230,7 +230,7 @@ func TestKeepBoundsGenerationsOnDisk(t *testing.T) {
 // the config layer, which is the only place that can distinguish unset from 0.
 func TestKeepZeroRetainsNoGenerations(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path, MaxBytes: 10, Keep: 0})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -264,7 +264,7 @@ func TestSetPathRetriesAPathWhoseOpenFailed(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(blocker, "amadeus.log")
+	path := filepath.Join(blocker, "cronomicon.log")
 
 	tee := &syncBuffer{}
 	w := New(tee, Options{MaxBytes: 1 << 20, Keep: 1})
@@ -295,7 +295,7 @@ func TestSetPathRetriesAPathWhoseOpenFailed(t *testing.T) {
 // cap is a size target, log-line integrity is not negotiable.
 func TestOversizedWriteIsNotSplitAcrossGenerations(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path, MaxBytes: 10, Keep: 2})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -372,7 +372,7 @@ func TestSetPathRepointsAndClosesPreviousFile(t *testing.T) {
 // content assertion passing.
 func TestSetPathToSamePathDoesNotReopen(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -407,7 +407,7 @@ func TestSetPathToSamePathDoesNotReopen(t *testing.T) {
 // no way back except a restart.
 func TestSetPathEmptyDisablesFileLoggingButKeepsTee(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -440,7 +440,7 @@ func TestSetPathEmptyDisablesFileLoggingButKeepsTee(t *testing.T) {
 // ceiling that makes this safe to enable by default.
 func TestReopenAppendsAndCountsExistingBytes(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 
 	firstLifetime := strings.Repeat("o", 59) + "\n" // 60 bytes
 	w1 := New(tee, Options{Path: path, MaxBytes: 100, Keep: 2})
@@ -490,7 +490,7 @@ func TestUnopenablePathDegradesToTeeOnly(t *testing.T) {
 	if err := os.WriteFile(occupied, []byte("not a directory\n"), 0o600); err != nil {
 		t.Fatalf("seed occupied path: %v", err)
 	}
-	bad := filepath.Join(occupied, "amadeus.log")
+	bad := filepath.Join(occupied, "cronomicon.log")
 
 	tee := &syncBuffer{}
 	var w *Writer
@@ -524,7 +524,7 @@ func TestUnopenablePathDegradesToTeeOnly(t *testing.T) {
 // visible rather than being reported once and forgotten.
 func TestNoticeIsRateLimited(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path, MaxBytes: 1 << 20, Keep: 2})
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -632,7 +632,7 @@ func TestWriteRetriesAOpenAfterTheIntervalAndSelfHeals(t *testing.T) {
 	if err := os.WriteFile(occupied, []byte("not a directory\n"), 0o600); err != nil {
 		t.Fatalf("seed occupied path: %v", err)
 	}
-	target := filepath.Join(occupied, "amadeus.log")
+	target := filepath.Join(occupied, "cronomicon.log")
 
 	tee := &syncBuffer{}
 	w := New(tee, Options{MaxBytes: 1 << 20, Keep: 2})
@@ -709,7 +709,7 @@ func TestWriteRetriesAOpenAfterTheIntervalAndSelfHeals(t *testing.T) {
 // reaper deleted in between.
 func TestWriteAfterCloseDoesNotResurrectTheFile(t *testing.T) {
 	tee := &syncBuffer{}
-	path := filepath.Join(t.TempDir(), "amadeus.log")
+	path := filepath.Join(t.TempDir(), "cronomicon.log")
 	w := New(tee, Options{Path: path})
 
 	if _, err := w.Write([]byte("before close\n")); err != nil {

@@ -88,7 +88,7 @@ func TestWorkflowPatchScopeGuard(t *testing.T) {
 		req.Header.Set("Remote-Groups", group)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-CSRF-Token", "tok")
-		req.AddCookie(&http.Cookie{Name: "amadeus_csrf", Value: "tok"})
+		req.AddCookie(&http.Cookie{Name: "cronomicon_csrf", Value: "tok"})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code

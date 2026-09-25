@@ -1,4 +1,4 @@
-// Command amadeus-runner is the Cronomicon runner agent: an out-of-process worker
+// Command cronomicon-runner is the Cronomicon runner agent: an out-of-process worker
 // that registers with the Cronomicon server, long-polls for runs the server has
 // assigned to it (executor='runner'), executes them, and streams their logs
 // back. It is the second execution method alongside the in-app SSH executor —
@@ -43,7 +43,7 @@ var (
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Printf("amadeus-runner %s (commit %s)\n", version, commit)
+		fmt.Printf("cronomicon-runner %s (commit %s)\n", version, commit)
 		return
 	}
 
@@ -58,7 +58,7 @@ func main() {
 
 	cfg, err := agent.Resolve(os.Args[1:], os.Getenv)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "amadeus-runner: "+err.Error())
+		fmt.Fprintln(os.Stderr, "cronomicon-runner: "+err.Error())
 		os.Exit(2)
 	}
 

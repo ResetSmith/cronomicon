@@ -98,14 +98,14 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   (`--checkout-token-file` / `--vault-pass-file`) or a hidden stdin prompt
   (`--checkout-token -` / `--vault-pass -`, echo off) — passing the secret as a
   flag value is explicitly refused, because it would leak via `ps(1)` and shell
-  history. The installed files get `0640 root:amadeus-runner` (same custody as
+  history. The installed files get `0640 root:cronomicon-runner` (same custody as
   `runner.env`); the bytes never transit the Cronomicon server (credential model
   b is unchanged). A stdin prompt requires a TTY, so a piped
   `curl … | sudo bash` install (script on stdin) is rejected with a pointer to
   the file flag rather than silently reading the wrong stream.
 - **Unauthenticated agent/installer serving is by design** (runner provisioning
   D1/D3, v0.47.x). `GET /agents/{filename}` (allowlisted: the two linux
-  `amadeus-runner` binaries + `SHA256SUMS`, from `CRONOMICON_AGENT_DIR`) and
+  `cronomicon-runner` binaries + `SHA256SUMS`, from `CRONOMICON_AGENT_DIR`) and
   `/runner-install.sh` are served without auth: neither artifact is a secret
   (both are buildable from source), the install flow runs before any credential
   exists on the host, and registration itself still requires a token — serving
@@ -155,7 +155,7 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   execute for Cronomicon. A server-side subtract-only capability mask (plan 2
   Phase 4) will add an operator-controlled narrowing lever that survives host
   changes.
-- **Of the two durable log artifacts, `amadeus.log` is NOT redacted and
+- **Of the two durable log artifacts, `cronomicon.log` is NOT redacted and
   `audit.log` IS** (logging update LU-4 / LU-10; audit-stream masking AM,
   v1.5.34). They were one risk when both shipped unredacted, and are assessed
   together here because what changed with the logging update is the same for
@@ -309,7 +309,7 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 | SU-4 | **Bastion SSH host key pinned & verified** — the jump hop strict-compares a pinned `bastions.host_key` (mismatch → abort), else TOFU-captures the first-seen key (mirrors the target hop). A secret-injecting run over a bastion to an *unpinned target* is refused | `sshexec.bastionHostKeyCallback` (conn.go, probe.go); interim guard in `sshexec.execute`; migration `640` | **Automated:** `sshexec.TestBastionHostKeyCallback`, `TestSSHExecutorRefusesSecretsOverUnpinnedBastion`, `db.TestMigrate640RoundTrip`. |
 | SU-5 | **Server-side session revocation** — OIDC sessions carry an epoch stamped at login; an RBAC change bumps a global counter, rejecting pre-change sessions on next request. The acting admin keeps their session via a same-request cookie re-issue. TTL 12h→8h | `auth.Service` epoch (`readSession`/`RevokeOtherSessions`); bump in the 4 `access_mount.go` RBAC handlers; migration `641` | **Automated:** `auth.TestSessionEpochRevocation`, `db.TestMigrate641RoundTrip`, the `access_mount` integration flow. |
 | SU-10 | **Best-effort key zeroization** — the unwrapped DEK and loaded KEK are wiped on return from each envelope op | `secrets.zero`; `defer zero(...)` in `kek.go`/`seal.go`/`blob.go` | **Automated:** existing `secrets` round-trip suite (unaffected). |
-| SU-11 | **Legacy mock token neutralized** — `crn_reg_EXAMPLE` replaces the realistic literal in the frozen `amadeus-data.jsx` prototype (not a live secret) | in-place edit | — |
+| SU-11 | **Legacy mock token neutralized** — `crn_reg_EXAMPLE` replaces the realistic literal in the frozen `cronomicon-data.jsx` prototype (not a live secret) | in-place edit | — |
 
 ### Phase-C residual / accepted notes
 
@@ -346,7 +346,7 @@ closes the five highest-value/lowest-risk findings, each mirroring an in-repo pa
 | AM-2 | **Every caller-supplied text column is masked** — `target` on all three writers and `reason` on auth events, not only `details`/`summary`; before the INSERT, so row, stream line and CSV export agree | same writers | **Automated:** `auditlog.TestRedactorMasksTheDatabaseRowAndNotOnlyTheStream` (eight columns). |
 | AM-3 | **One writer per audit table** — no raw `INSERT INTO activity/change_log/auth_events` outside `internal/auditlog` (the break-glass `grant-admin` CLI was the one offender) | source scan | **Automated:** `auditlog.TestAuditWriterConformance_OnlyThisPackageInserts`. |
 | AM-4 | **Process-wide redaction dictionary** — stored secrets + SSH credentials + the seven encrypted settings columns (ONE table, `secrets.EncryptedSettingsColumns`, shared with `rewrap-secrets`; the redaction side had listed three) + multi-line env_vars, every scope; rebuilt lazily after each source write, 5-minute TTL backstop, last-good kept on a failed rebuild, partial-with-error on undecryptable rows | `internal/redactdict`; `secrets.RedactionReport`; `secrets.RedactionSourceChanged` at 16 write sites | **Automated:** `redactdict.TestBuildUnionsEverySourceAndKeepsVariablesVisible`, `TestBuildReportsUndecryptableAsPartial`, `TestStoreLifecycle`, `TestStoreConcurrentReadersNeverBlockOnRebuild` (`-race`), `TestEveryRedactionSourceWriterNotifies`, `secrets.TestRedactionReportCoversEverySettingsColumn`. |
-| AM-5 | **Installed at boot, degraded builds audited** — `redactdict.Install` after migrate and before the first audit write; the healthy→degraded transition writes one `system / Audit / redactor-unavailable` row (+ WARN), recovery one `redactor-restored` row; unconditional, no knob | `cmd/amadeus/main.go`; `redactdict.Install` | **Automated:** `redactdict.TestInstallMasksAuditRowsEndToEnd`, `TestInstallReportsAnOutageOnceAndItsRecoveryOnce`. |
+| AM-5 | **Installed at boot, degraded builds audited** — `redactdict.Install` after migrate and before the first audit write; the healthy→degraded transition writes one `system / Audit / redactor-unavailable` row (+ WARN), recovery one `redactor-restored` row; unconditional, no knob | `cmd/cronomicon/main.go`; `redactdict.Install` | **Automated:** `redactdict.TestInstallMasksAuditRowsEndToEnd`, `TestInstallReportsAnOutageOnceAndItsRecoveryOnce`. |
 
 ### AM residual / accepted notes
 

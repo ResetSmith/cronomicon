@@ -1,19 +1,19 @@
 # systemd unit for the Cronomicon runner agent (R7.1).
 #
-# Runs amadeus-runner as a dedicated non-root service that reads its config from
-# an env file (/etc/amadeus-runner/runner.env — see amadeus-runner.env.example)
-# and persists its identity under /var/lib/amadeus-runner so a restart resumes
+# Runs cronomicon-runner as a dedicated non-root service that reads its config from
+# an env file (/etc/cronomicon-runner/runner.env — see cronomicon-runner.env.example)
+# and persists its identity under /var/lib/cronomicon-runner so a restart resumes
 # the same runners row (R2.4 / D4) instead of orphaning it.
 #
 # Install:
-#   sudo useradd --system --home-dir /var/lib/amadeus-runner \
-#                --shell /usr/sbin/nologin amadeus-runner
-#   sudo install -d -o amadeus-runner -g amadeus-runner -m 0750 /var/lib/amadeus-runner
-#   sudo install -d -m 0750 /etc/amadeus-runner
-#   sudo install -m 0640 amadeus-runner.env.example /etc/amadeus-runner/runner.env  # then edit
-#   sudo install -m 0755 amadeus-runner /usr/local/bin/amadeus-runner
-#   sudo install -m 0644 amadeus-runner.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now amadeus-runner
+#   sudo useradd --system --home-dir /var/lib/cronomicon-runner \
+#                --shell /usr/sbin/nologin cronomicon-runner
+#   sudo install -d -o cronomicon-runner -g cronomicon-runner -m 0750 /var/lib/cronomicon-runner
+#   sudo install -d -m 0750 /etc/cronomicon-runner
+#   sudo install -m 0640 cronomicon-runner.env.example /etc/cronomicon-runner/runner.env  # then edit
+#   sudo install -m 0755 cronomicon-runner /usr/local/bin/cronomicon-runner
+#   sudo install -m 0644 cronomicon-runner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cronomicon-runner
 #
 # Drain before stopping a runner (operators: use the Settings → Runners "Drain"
 # action so active runs finish; the agent honours drain on its next poll). See
@@ -21,33 +21,33 @@
 
 [Unit]
 Description=Cronomicon runner agent
-Documentation=file:///usr/share/doc/amadeus-runner/install-runner.md
+Documentation=file:///usr/share/doc/cronomicon-runner/install-runner.md
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=amadeus-runner
-Group=amadeus-runner
+User=cronomicon-runner
+Group=cronomicon-runner
 
 # Config: the env file carries CRONOMICON_RUNNER_* (server URL, registration token,
 # name, capabilities, inventory mode, key custody, etc.). A "-" prefix lets the
 # service start even if the file is absent on first install, but it WILL fail
 # fast in the agent's own validation until the required vars are set.
-EnvironmentFile=-/etc/amadeus-runner/runner.env
+EnvironmentFile=-/etc/cronomicon-runner/runner.env
 
 # Optional Vault Agent sidecar (deploy/vault-agent/): if the sidecar is
 # installed it renders NAME-referenced secrets (e.g. an Ansible become password)
 # here from Vault; the "-" makes this a no-op when the sidecar is absent, so this
 # line is non-breaking for runners that provision secrets by hand. systemd reads
 # it only at start — restart the runner to pick up a rotated secret.
-EnvironmentFile=-/etc/amadeus-runner/secrets.env
+EnvironmentFile=-/etc/cronomicon-runner/secrets.env
 
 # Identity persistence — keep this consistent with the env file value.
-Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
-WorkingDirectory=/var/lib/amadeus-runner
+Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
+WorkingDirectory=/var/lib/cronomicon-runner
 
-ExecStart=/usr/local/bin/amadeus-runner
+ExecStart=/usr/local/bin/cronomicon-runner
 
 # Graceful drain on stop: SIGTERM makes the agent stop claiming new work and let
 # active runs finish. Give long-running ansible/terraform plays time to wind down.
@@ -79,9 +79,9 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 
 # Only the identity/key state directory is writable; everything else is read-only
-# (ProtectSystem=strict). /var/lib/amadeus-runner is created and owned by us.
-StateDirectory=amadeus-runner
-ReadWritePaths=/var/lib/amadeus-runner
+# (ProtectSystem=strict). /var/lib/cronomicon-runner is created and owned by us.
+StateDirectory=cronomicon-runner
+ReadWritePaths=/var/lib/cronomicon-runner
 
 # Network: the agent only needs outbound HTTPS to the server and SSH to targets
 # (IPv4/IPv6/UNIX for local toolchains). No need for exotic address families.

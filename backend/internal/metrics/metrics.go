@@ -73,72 +73,72 @@ func New() *Registry {
 	m := &Registry{
 		reg: reg,
 		httpRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "amadeus_http_requests_total",
+			Name: "cronomicon_http_requests_total",
 			Help: "HTTP requests by method, matched route, and status class.",
 		}, []string{"method", "route", "status"}),
 		httpDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "amadeus_http_request_duration_seconds",
+			Name:    "cronomicon_http_request_duration_seconds",
 			Help:    "HTTP request latency by method and matched route.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"method", "route"}),
 		runsStarted: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "amadeus_runs_started_total",
+			Name: "cronomicon_runs_started_total",
 			Help: "Runs claimed by a runner (queued→running).",
 		}),
 		runsFinished: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "amadeus_runs_finished_total",
+			Name: "cronomicon_runs_finished_total",
 			Help: "Runs reaching a terminal status, by status.",
 		}, []string{"status"}),
 		logIngestBytes: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "amadeus_log_ingest_bytes_total",
+			Name: "cronomicon_log_ingest_bytes_total",
 			Help: "Total bytes of run-log chunks ingested.",
 		}),
 		logIngestChunks: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "amadeus_log_ingest_chunks_total",
+			Name: "cronomicon_log_ingest_chunks_total",
 			Help: "Total run-log chunks ingested.",
 		}),
 		schedulePublish: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "amadeus_schedule_publishes_total",
+			Name: "cronomicon_schedule_publishes_total",
 			Help: "Successful schedule publishes to GitLab.",
 		}),
 		webhookSyncs: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "amadeus_webhook_syncs_total",
+			Name: "cronomicon_webhook_syncs_total",
 			Help: "GitLab webhook-triggered syncs, by outcome.",
 		}, []string{"outcome"}),
 		backupLastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "amadeus_backup_last_success_timestamp_seconds",
+			Name: "cronomicon_backup_last_success_timestamp_seconds",
 			Help: "Unix time of the last successful backup sweep (PP-H6). Alert when stale (e.g. now-this > 36h).",
 		}),
 		backupFailures: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "amadeus_backup_failures_total",
+			Name: "cronomicon_backup_failures_total",
 			Help: "Backup sweep failures (PP-H6 / PP-M4).",
 		}),
 		sshOrphansReconciled: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "amadeus_ssh_orphans_reconciled_total",
+			Name: "cronomicon_ssh_orphans_reconciled_total",
 			Help: "SSH runs left 'running' by a crash and reconciled to failure=executor_lost (PP-H2).",
 		}),
 		slaBreaches: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "amadeus_sla_breaches_total",
+			Name: "cronomicon_sla_breaches_total",
 			Help: "SLA alerts raised, by kind: overdue (a run past its deadline) or missed (a fire that never happened). Neither kills or retries anything (SL).",
 		}, []string{"kind"}),
 		logArchiveLastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "amadeus_log_archive_last_success_timestamp_seconds",
+			Name: "cronomicon_log_archive_last_success_timestamp_seconds",
 			Help: "Unix time of the last S3 log-archive sync tick that finished without error (SL-2). Alert when older than a few intervals.",
 		}),
 		logArchiveFailures: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "amadeus_log_archive_failures_total",
+			Name: "cronomicon_log_archive_failures_total",
 			Help: "Log-archive sync ticks that ended with at least one failed upload (SL-2).",
 		}),
 		logArchivePending: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "amadeus_log_archive_pending",
+			Name: "cronomicon_log_archive_pending",
 			Help: "Terminal runs whose log is not yet archived, as of the last sync tick (SL-2). Growing tick over tick means the interval is too long for the volume or the link is too slow.",
 		}),
 		redactionDictSize: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "amadeus_redaction_dictionary_size",
+			Name: "cronomicon_redaction_dictionary_size",
 			Help: "Values in the process-wide redaction dictionary after its last rebuild (AM-4).",
 		}),
 		redactionDictRebuilds: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "amadeus_redaction_dictionary_rebuilds_total",
+			Name: "cronomicon_redaction_dictionary_rebuilds_total",
 			Help: "Rebuilds of the process-wide redaction dictionary by outcome: complete, partial (some encrypted values could not be decrypted — check the KEK), failed (database error; the previous dictionary was kept).",
 		}, []string{"outcome"}),
 	}
@@ -149,7 +149,7 @@ func New() *Registry {
 		m.logArchiveLastSuccess, m.logArchiveFailures, m.logArchivePending,
 		m.redactionDictSize, m.redactionDictRebuilds,
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-			Name: "amadeus_active_runners",
+			Name: "cronomicon_active_runners",
 			Help: "Runners currently online (computed on scrape).",
 		}, activeRunners),
 	)

@@ -219,7 +219,7 @@ func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 		t.Fatalf("CRONOMICON_KEY_deploy_key path not exposed on stdin:\n%s", logStr)
 	}
 	// Off the run tree: a dedicated materialize dir, not the job workdir.
-	if !strings.Contains(deliveredPath, "amadeus-keys-") {
+	if !strings.Contains(deliveredPath, "cronomicon-keys-") {
 		t.Errorf("delivered key path is not in a dedicated key dir: %q", deliveredPath)
 	}
 	// Wiped after the run: cleanup ran when executor.run returned, before the log

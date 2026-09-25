@@ -3,14 +3,14 @@
 Go backend for Cronomicon (single static binary, single process — T1/T3). Serves
 the API + embedded frontend from one container, backed by SQLite.
 
-> Two binaries: `cmd/amadeus` (server) and `cmd/amadeus-runner` (the
+> Two binaries: `cmd/cronomicon` (server) and `cmd/cronomicon-runner` (the
 > out-of-process runner agent). The release of record is the top entry of
 > `../CHANGELOG.md`; the package map is in `../AGENTS.md`.
 
 ## Layout
 
 ```
-cmd/amadeus/        entrypoint + `validate` subcommand (T11)
+cmd/cronomicon/        entrypoint + `validate` subcommand (T11)
 internal/
   config/           env → typed Config
   db/               SQLite open, golang-migrate, retention sweep, UUIDv7 ids
@@ -44,9 +44,9 @@ held to `openapi.yaml` by the conformance tests in `internal/api/` instead.
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_ADDR` | `:8080` | listen address |
-| `CRONOMICON_DB_PATH` | `/var/lib/amadeus/amadeus.db` | SQLite file (mounted volume, S13) |
+| `CRONOMICON_DB_PATH` | `/var/lib/cronomicon/cronomicon.db` | SQLite file (mounted volume, S13) |
 | `CRONOMICON_LOG_LEVEL` / `_FORMAT` | `info` / `json` | |
-| `CRONOMICON_LOG_FILE_ENABLED` / `CRONOMICON_LOG_FILE` / `_MAX_MB` / `_KEEP` | `true` / — / `64` / `5` | Process log written to disk **in addition to stdout** (stdout is never replaced). Empty `CRONOMICON_LOG_FILE` ⇒ `amadeus.log` in the run-log directory, following it live when that setting changes; an explicit path must be **absolute** and attaches earlier in boot (captures the build banner + config warnings). Rotates at `_MAX_MB` keeping `_KEEP` generations (`amadeus.log.1` … `.N`), so disk ≤ `(KEEP+1) × MAX_MB`. **Not** governed by `_RETENTION_LOG_FILES_DAYS`, and **not** redacted — see `deploy/security-review.md`. |
+| `CRONOMICON_LOG_FILE_ENABLED` / `CRONOMICON_LOG_FILE` / `_MAX_MB` / `_KEEP` | `true` / — / `64` / `5` | Process log written to disk **in addition to stdout** (stdout is never replaced). Empty `CRONOMICON_LOG_FILE` ⇒ `cronomicon.log` in the run-log directory, following it live when that setting changes; an explicit path must be **absolute** and attaches earlier in boot (captures the build banner + config warnings). Rotates at `_MAX_MB` keeping `_KEEP` generations (`cronomicon.log.1` … `.N`), so disk ≤ `(KEEP+1) × MAX_MB`. **Not** governed by `_RETENTION_LOG_FILES_DAYS`, and **not** redacted — see `deploy/security-review.md`. |
 | `CRONOMICON_AUDIT_LOG_ENABLED` / `CRONOMICON_AUDIT_LOG` | `true` / — | Compliance **audit stream** (`audit.log`) — a separate file from the process log: one JSON-Lines record per audited event (`change_log`, a named subset of `activity`, and every auth event), keys fixed by a versioned schema (`"v": 1`). Empty path ⇒ `audit.log` in the run-log directory, following it live; an explicit path must be **absolute**. Rotates **daily by UTC date** to `audit.log.YYYYMMDD`; lifetime is the `auditLogFiles` retention knob (default 730 days), not a keep count. The **database is authoritative** — the file is an export of it, so `false` loses the stream, not the trail. Durable and not redacted by default — see `deploy/security-review.md`. |
 | `CRONOMICON_OIDC_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET` / `_REDIRECT_URL` | — | OIDC relying party (A3.1/T8). Unset ⇒ login disabled (degraded). |
 | `CRONOMICON_SESSION_HASH_KEY` / `_BLOCK_KEY` | — | base64 32 bytes; unset ⇒ ephemeral keys (dev only) |
@@ -73,7 +73,7 @@ To browse the UI with realistic content before OIDC/GitLab/runners are wired up:
 
 ```bash
 CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false \
-  CRONOMICON_DB_PATH=/tmp/amadeus-dev.db ./bin/amadeus
+  CRONOMICON_DB_PATH=/tmp/cronomicon-dev.db ./bin/cronomicon
 ```
 
 Open the app and click **"Developer login (bypass SSO)"** on the sign-in
@@ -90,16 +90,16 @@ is a no-op once the DB has data, so it never clobbers a real (GitLab-synced) DB.
 ## Deployment & storage layout (S13)
 
 Single container, single process (T3). All durable state lives under one mounted
-volume at `/var/lib/amadeus` (the `Dockerfile` declares it as a `VOLUME`):
+volume at `/var/lib/cronomicon` (the `Dockerfile` declares it as a `VOLUME`):
 
 | Path | Contents |
 |---|---|
-| `/var/lib/amadeus/amadeus.db` (+ `-wal`/`-shm`) | SQLite database (`CRONOMICON_DB_PATH`) |
-| `/var/lib/amadeus/logs/<code>/<traceId>.log` | per-run log files (redacted at ingest, T7/S7), grouped into one folder per job/workflow. `<code>` is an opaque 8-hex-character code from migration `710`'s `entity_codes` registry; runs owned by no definition (the SSH connection test) use `_system`. Each folder carries a `_meta.json` sidecar naming the owning entity. Runs enqueued before `710` stay at the flat `/var/lib/amadeus/logs/<traceId>.log` path — nothing is migrated and both layouts coexist. |
-| `/var/lib/amadeus/logs/amadeus.log` (+ `amadeus.log.1` … `.N`) | **process log** — the same slog stream written to stdout, teed to disk so a crash is diagnosable where nothing collects stdout (`CRONOMICON_LOG_FILE`). Mode `0640` in a `0750` directory. Rotated by size, not date; the generations don't end in `.log` and the live file is excluded by name, so the run-log reaper touches neither. **Not redacted** — see `deploy/security-review.md`. |
-| `/var/lib/amadeus/logs/audit.log` (+ `audit.log.YYYYMMDD`) | compliance **audit stream** — JSON Lines, one record per audited event, rotated daily by UTC date (`CRONOMICON_AUDIT_LOG`). Mode `0640` in a `0750` directory. The dated generations don't end in `.log`, so the run-log reaper skips them; the live file is excluded from it by name. Governed by the `auditLogFiles` retention knob (730 days), not `logFiles`. Also **not redacted**. |
-| `/var/lib/amadeus/backups/` | nightly `VACUUM INTO` snapshots before S3 upload (A4) |
-| `/var/lib/amadeus/git-cache/job-definitions/` | cached clone of the job-definitions repo (B3, `CRONOMICON_GIT_CACHE_DIR`) |
+| `/var/lib/cronomicon/cronomicon.db` (+ `-wal`/`-shm`) | SQLite database (`CRONOMICON_DB_PATH`) |
+| `/var/lib/cronomicon/logs/<code>/<traceId>.log` | per-run log files (redacted at ingest, T7/S7), grouped into one folder per job/workflow. `<code>` is an opaque 8-hex-character code from migration `710`'s `entity_codes` registry; runs owned by no definition (the SSH connection test) use `_system`. Each folder carries a `_meta.json` sidecar naming the owning entity. Runs enqueued before `710` stay at the flat `/var/lib/cronomicon/logs/<traceId>.log` path — nothing is migrated and both layouts coexist. |
+| `/var/lib/cronomicon/logs/cronomicon.log` (+ `cronomicon.log.1` … `.N`) | **process log** — the same slog stream written to stdout, teed to disk so a crash is diagnosable where nothing collects stdout (`CRONOMICON_LOG_FILE`). Mode `0640` in a `0750` directory. Rotated by size, not date; the generations don't end in `.log` and the live file is excluded by name, so the run-log reaper touches neither. **Not redacted** — see `deploy/security-review.md`. |
+| `/var/lib/cronomicon/logs/audit.log` (+ `audit.log.YYYYMMDD`) | compliance **audit stream** — JSON Lines, one record per audited event, rotated daily by UTC date (`CRONOMICON_AUDIT_LOG`). Mode `0640` in a `0750` directory. The dated generations don't end in `.log`, so the run-log reaper skips them; the live file is excluded from it by name. Governed by the `auditLogFiles` retention knob (730 days), not `logFiles`. Also **not redacted**. |
+| `/var/lib/cronomicon/backups/` | nightly `VACUUM INTO` snapshots before S3 upload (A4) |
+| `/var/lib/cronomicon/git-cache/job-definitions/` | cached clone of the job-definitions repo (B3, `CRONOMICON_GIT_CACHE_DIR`) |
 
 The three log paths above are the **defaults**. The run-log directory is
 operator-editable (Settings → Log Storage) and since LU-5 a change is applied to
@@ -125,4 +125,4 @@ degrade gracefully — the server boots and serves with them absent.
   `cronomicon validate` on every MR (fail-fast, line-numbered; opt-in MR-comment
   job included). Operator walkthrough — copy, pin `CRONOMICON_IMAGE`, read a
   failure — in **`deploy/README.md` → "CI Setup"**. The CLI is covered by an
-  e2e test (`cmd/amadeus/validate_test.go`).
+  e2e test (`cmd/cronomicon/validate_test.go`).

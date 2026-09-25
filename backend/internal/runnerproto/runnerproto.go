@@ -1,6 +1,6 @@
 // Package runnerproto holds the runner↔server JSON wire types and the protocol
 // version, so the server (internal/runner) and the future agent
-// (cmd/amadeus-runner) share one contract and can't silently drift
+// (cmd/cronomicon-runner) share one contract and can't silently drift
 // (runners-update.md R0.2 / D3 — the agent imports this package directly).
 //
 // Wire format is load-bearing: the json tags here are the on-the-wire field
@@ -146,12 +146,12 @@ import (
 //	      rides the assignment (not a capability handshake) because that is the
 //	      one message where the server can say, per run, "I understand partial
 //	      chunks for this trace id".
-//	v13 — the rebrand (RN). The injected run namespace is CRONOMICON_* (was
-//	      AMADEUS_*), the output marker is ::cronomicon-output, tokens carry
-//	      crn_/crnsvc_ prefixes and the agent binary is cronomicon-runner. No
-//	      wire SHAPE changed; the bump exists so an agent built before the
-//	      rename is refused at registration (426) instead of assembling a run
-//	      env and scanning for a marker that no script emits any more.
+//	v13 — the rebrand (RN). The injected run namespace prefix, the output
+//	      marker (::cronomicon-output), the token prefixes (crn_/crnsvc_) and
+//	      the agent binary name (cronomicon-runner) all changed. No wire
+//	      SHAPE changed; the bump exists so an agent built before the rename
+//	      is refused at registration (426) instead of assembling a run env
+//	      and scanning for a marker that no script emits any more.
 const ProtocolVersion = 13
 
 // MinProtocolVersion is the oldest agent protocol this server accepts, checked

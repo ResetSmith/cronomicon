@@ -50,12 +50,12 @@ func loadWith(t *testing.T, env map[string]string) *Config {
 // deprecation warning.
 func TestKEKNewNames(t *testing.T) {
 	c := loadWith(t, map[string]string{
-		"CRONOMICON_KEK_FILE":    "/run/secrets/amadeus_kek",
+		"CRONOMICON_KEK_FILE":    "/run/secrets/cronomicon_kek",
 		"CRONOMICON_KEK":         "inline-kek",
 		"CRONOMICON_KEK_VERSION": "3",
 	})
-	if c.SecretKEKFile != "/run/secrets/amadeus_kek" {
-		t.Errorf("SecretKEKFile = %q, want /run/secrets/amadeus_kek", c.SecretKEKFile)
+	if c.SecretKEKFile != "/run/secrets/cronomicon_kek" {
+		t.Errorf("SecretKEKFile = %q, want /run/secrets/cronomicon_kek", c.SecretKEKFile)
 	}
 	if c.SecretKEKEnv != "inline-kek" {
 		t.Errorf("SecretKEKEnv = %q, want inline-kek", c.SecretKEKEnv)
@@ -126,13 +126,13 @@ func TestLogFileDefaults(t *testing.T) {
 // container is usually "/" and for a systemd unit is whatever WorkingDirectory
 // happens to be. Nobody discovers this until they need the log.
 func TestLogFilePathMustBeAbsolute(t *testing.T) {
-	err := loadErrWith(t, map[string]string{"CRONOMICON_LOG_FILE": "logs/amadeus.log"})
+	err := loadErrWith(t, map[string]string{"CRONOMICON_LOG_FILE": "logs/cronomicon.log"})
 	if !strings.Contains(err.Error(), "CRONOMICON_LOG_FILE") {
 		t.Errorf("error %q should name CRONOMICON_LOG_FILE so the operator knows which knob to fix", err)
 	}
 
-	c := loadWith(t, map[string]string{"CRONOMICON_LOG_FILE": "/var/log/amadeus/amadeus.log"})
-	if c.LogFilePath != "/var/log/amadeus/amadeus.log" {
+	c := loadWith(t, map[string]string{"CRONOMICON_LOG_FILE": "/var/log/cronomicon/cronomicon.log"})
+	if c.LogFilePath != "/var/log/cronomicon/cronomicon.log" {
 		t.Errorf("LogFilePath = %q, want the absolute path to be accepted verbatim", c.LogFilePath)
 	}
 }

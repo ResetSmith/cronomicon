@@ -66,7 +66,7 @@ func TestNormalizeAppliesTheStabilityDefault(t *testing.T) {
 // The allowlist is the whole security posture: the SERVER picks the globs, so
 // the agent is the thing that says no.
 func TestPathAllowed(t *testing.T) {
-	roots := []string{"/srv/incoming", "/var/spool/amadeus"}
+	roots := []string{"/srv/incoming", "/var/spool/cronomicon"}
 	for _, tc := range []struct {
 		path string
 		want bool
@@ -74,7 +74,7 @@ func TestPathAllowed(t *testing.T) {
 		{"/srv/incoming/a.csv", true},
 		{"/srv/incoming/nested/deep/a.csv", true},
 		{"/srv/incoming", true},
-		{"/var/spool/amadeus/x", true},
+		{"/var/spool/cronomicon/x", true},
 		{"/etc/shadow", false},
 		{"/srv/incoming-other/a.csv", false}, // prefix-but-not-child
 		{"/srv/a.csv", false},

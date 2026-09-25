@@ -6,7 +6,7 @@
 
 <blockquote><p><strong>Credential model (b), locked (<code>runners-update.md</code> D1).</strong> Cronomicon <strong>never</strong> decrypts or transmits private-key bytes. The runner holds its <strong>own</strong> keys; the server only ships host <em>references</em>. See <code>runner-security.html</code> for the full posture and blast-radius record.</p></blockquote>
 
-<p>The agent binary is <code>amadeus-runner</code> (built from <code>backend/cmd/amadeus-runner</code>). Its complete config surface lives in <code>internal/agent/config.go</code>; the var names in this guide are the real ones.</p>
+<p>The agent binary is <code>cronomicon-runner</code> (built from <code>backend/cmd/cronomicon-runner</code>). Its complete config surface lives in <code>internal/agent/config.go</code>; the var names in this guide are the real ones.</p>
 
 <hr />
 
@@ -14,7 +14,7 @@
 
 <p>Have these ready before you start:</p>
 
-<ul><li><strong>Server URL</strong> — the reachable base URL of the Cronomicon server (<code>https://amadeus.example.com</code>). If it presents a <strong>private/internal CA</strong> certificate, also have that CA bundle (PEM) on hand (§5).</li><li><strong>A registration token</strong> — single-use, one per install (§1).</li><li><strong>A capability decision — usually none</strong>: by default the agent auto-detects the host's toolchains at startup and claims the matching run-types; you only pass <code>-c</code> to narrow the set. For a <em>container</em> deployment you still pick slim vs fat, since the image decides which toolchains exist to detect (§2).</li><li><strong>For a systemd install:</strong> <code>root</code> on a Linux host (Debian/Ubuntu or RHEL-family) and an <code>amadeus-runner</code> binary — either pre-built (§2) or fetched from the server itself with the installer's <code>--download</code> flag (§2/§3; container-deployed servers bundle the binaries).</li><li><strong><code>known_hosts</code> for the targets — optional pre-seeding now</strong>. Host-key verification is strict (the agent refuses an unknown/changed key), but <code>--known-hosts</code> is no longer required up front: you can <strong>scan &amp; approve</strong> a target's key from the Runners view when the first run fails verification (human-approved TOFU — see the Security Guide §8 and <a href="./runner-manage.html">runner-manage.html</a>). Pre-seed a curated <code>known_hosts</code> with <code>--known-hosts</code> if you'd rather trust hosts ahead of time; either way, the runner's own keys still go in via <code>--key-dir</code> / <code>--key-map</code>.</li></ul>
+<ul><li><strong>Server URL</strong> — the reachable base URL of the Cronomicon server (<code>https://cronomicon.example.com</code>). If it presents a <strong>private/internal CA</strong> certificate, also have that CA bundle (PEM) on hand (§5).</li><li><strong>A registration token</strong> — single-use, one per install (§1).</li><li><strong>A capability decision — usually none</strong>: by default the agent auto-detects the host's toolchains at startup and claims the matching run-types; you only pass <code>-c</code> to narrow the set. For a <em>container</em> deployment you still pick slim vs fat, since the image decides which toolchains exist to detect (§2).</li><li><strong>For a systemd install:</strong> <code>root</code> on a Linux host (Debian/Ubuntu or RHEL-family) and an <code>cronomicon-runner</code> binary — either pre-built (§2) or fetched from the server itself with the installer's <code>--download</code> flag (§2/§3; container-deployed servers bundle the binaries).</li><li><strong><code>known_hosts</code> for the targets — optional pre-seeding now</strong>. Host-key verification is strict (the agent refuses an unknown/changed key), but <code>--known-hosts</code> is no longer required up front: you can <strong>scan &amp; approve</strong> a target's key from the Runners view when the first run fails verification (human-approved TOFU — see the Security Guide §8 and <a href="./runner-manage.html">runner-manage.html</a>). Pre-seed a curated <code>known_hosts</code> with <code>--known-hosts</code> if you'd rather trust hosts ahead of time; either way, the runner's own keys still go in via <code>--key-dir</code> / <code>--key-map</code>.</li></ul>
 
 <p>The fastest route on a Linux VM is the <strong><code>runner-install.sh</code></strong> script (§3), which does §2/§4/§9 in one shot. Read §1 first to get a token, then jump to §3.</p>
 
@@ -23,13 +23,13 @@
 <h2>1 · Add a runner (one click) — or mint a token by hand</h2>
 
 <blockquote><p><strong>Fast path — the <code>+ Add Runner</code> button.</strong> On the <strong>Runners</strong> view, click <strong>+ Add Runner</strong>, optionally label it, and press <strong>Mint &amp; build command</strong>. You get a single <strong>flagless</strong> one-liner:</p>
-<pre><code>curl -fsSL https://amadeus.example.com/install/crn_reg_… | sudo bash</code></pre>
+<pre><code>curl -fsSL https://cronomicon.example.com/install/crn_reg_… | sudo bash</code></pre>
 <p>Paste it on the host as root — done. The server URL, the token, and the agent-binary download are <strong>baked into the script</strong> by the <code>/install/&lt;token&gt;</code> endpoint, so nothing rides the command line; capabilities auto-detect on the host (§8). A <em>download-inspect-run</em> variant is offered for shops that don't pipe curl into sudo (the saved file is already personalized, so it too runs with no arguments). This is the recommended path; the manual token/flag flow below still exists for pre-authored installs and config management.</p>
 <p><strong>Behind an SSO / forward-auth proxy?</strong> If <code>curl …/install/&lt;token&gt;</code> fails with <code>bash: syntax error near unexpected token `&lt;'</code> / <code>`&lt;!doctype html&gt;'</code>, the reverse proxy redirected the request to its login page and returned HTML instead of the script. The runner endpoints are unauthenticated by design (the token IS the credential; the runner authenticates the server with its own bearer) and <strong>must be bypassed at the proxy</strong> — the same bypass the runner's <code>poll</code>/<code>register</code> calls need. Add <code>/install/*</code> (and <code>/agents/*</code>, <code>/runner-install.sh</code>) to the proxy's auth-bypass allowlist; see <code>deploy/deployment-guide.md</code> for the exact Authelia rule.</p></blockquote>
 
 <p>In the UI, open the <strong>Runners</strong> view (top-level nav) and find the <strong>Register New Runner</strong> card: click <strong>Mint token</strong> (optionally giving it a <strong>label</strong>, e.g. the intended runner name) to get a fresh <code>crn_reg_*</code> bearer (24h expiry). Tokens are <strong>single-use</strong>: each one registers exactly <strong>one</strong> runner and dies on that first successful registration — the card's token list shows which runner consumed which token. The plaintext is shown <strong>only once at mint</strong> — <strong>Reveal</strong>/<strong>Copy</strong> it immediately; it is stored only as a hash and can never be re-revealed. Installing several runners? Mint one token per host — minting does <strong>not</strong> invalidate other tokens. Registration mints a long-lived per-runner key (<code>crn_run_*</code>, 365d), persisted to the runner's identity file; the registration token is dead from then on and is never needed again (config changes propagate via <strong>Resync</strong>, which uses the runner's own key). An unused token can be revoked from the list at any time.</p>
 
-<p>The card's <strong>Install Command</strong> is a real, copy-pasteable §3 invocation: it <code>curl</code>s <code>/runner-install.sh</code> <strong>from the Cronomicon server itself</strong> and pipes it into <code>sudo bash</code> with this server's URL and the token filled in (the freshly minted token is substituted while its plaintext is revealed — otherwise a <code>&lt;TOKEN&gt;</code> placeholder). A <em>download-inspect-run</em> variant is available under the command for orgs that don't pipe curl into sudo. Run it on the target host next to a pre-built <code>amadeus-runner</code> binary (§2); capabilities are auto-detected from the host's toolchains at startup — add <code>-c</code> only to narrow them.</p>
+<p>The card's <strong>Install Command</strong> is a real, copy-pasteable §3 invocation: it <code>curl</code>s <code>/runner-install.sh</code> <strong>from the Cronomicon server itself</strong> and pipes it into <code>sudo bash</code> with this server's URL and the token filled in (the freshly minted token is substituted while its plaintext is revealed — otherwise a <code>&lt;TOKEN&gt;</code> placeholder). A <em>download-inspect-run</em> variant is available under the command for orgs that don't pipe curl into sudo. Run it on the target host next to a pre-built <code>cronomicon-runner</code> binary (§2); capabilities are auto-detected from the host's toolchains at startup — add <code>-c</code> only to narrow them.</p>
 
 <p>(A registration credential can also be seeded out-of-band via <code>CRONOMICON_RUNNER_BOOTSTRAP_TOKEN</code> on the <strong>server</strong> — unlike minted tokens it is multi-use; see <code>env-matrix.md</code>.)</p>
 
@@ -53,15 +53,15 @@
 <p>Build either image from <code>backend/</code> (the Go module root is the build context):</p>
 
 <pre><code>cd backend
-docker build -f deploy/Dockerfile.runner     -t amadeus-runner:slim .
-docker build -f deploy/Dockerfile.runner.fat -t amadeus-runner:fat  .</code></pre>
+docker build -f deploy/Dockerfile.runner     -t cronomicon-runner:slim .
+docker build -f deploy/Dockerfile.runner.fat -t cronomicon-runner:fat  .</code></pre>
 
 <p>Or get just the binary for a systemd install — <strong>download it from the server, or build it</strong>:</p>
 
-<ul><li><strong>Download (container-deployed server):</strong> the server image bundles cross-compiled agent binaries (linux amd64/arm64) plus a <code>SHA256SUMS</code> file, served unauthenticated at <code>/agents/amadeus-runner-linux-{amd64,arm64}</code>. The §3 installer's <code>--download</code> flag detects the host architecture, fetches the binary, and <strong>verifies its checksum</strong> before installing — so a host needs nothing but <code>curl</code> and reachability to the Cronomicon server. (A source-built/bare-metal server returns a clean 404 here — build instead, or point <code>CRONOMICON_AGENT_DIR</code> at a directory holding the files.)</li><li><strong>Build:</strong></li></ul>
+<ul><li><strong>Download (container-deployed server):</strong> the server image bundles cross-compiled agent binaries (linux amd64/arm64) plus a <code>SHA256SUMS</code> file, served unauthenticated at <code>/agents/cronomicon-runner-linux-{amd64,arm64}</code>. The §3 installer's <code>--download</code> flag detects the host architecture, fetches the binary, and <strong>verifies its checksum</strong> before installing — so a host needs nothing but <code>curl</code> and reachability to the Cronomicon server. (A source-built/bare-metal server returns a clean 404 here — build instead, or point <code>CRONOMICON_AGENT_DIR</code> at a directory holding the files.)</li><li><strong>Build:</strong></li></ul>
 
 <pre><code>cd backend
-CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
+CGO_ENABLED=0 go build -o cronomicon-runner ./cmd/cronomicon-runner</code></pre>
 
 <hr />
 
@@ -70,7 +70,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 <p>For a single-host systemd install, <code>deploy/runner-install.sh</code> — served by the app at <code>/runner-install.sh</code>, which is where the Runners view's <strong>Download</strong> button and the panel's install command fetch it, so the target host never needs to reach anything but the Cronomicon server — automates §2's binary placement, the service account and directories, the env file, and the hardened unit — everything in §9 — in one root-run command, and can also install the runner's <code>known_hosts</code>, key custody, CA trust, and local inventory (§5/§7/§8) so an SSH-capable runner is usable the moment the script exits. It detects Debian/Ubuntu vs RHEL-family from <code>/etc/os-release</code>.</p>
 
 <pre><code>sudo ./runner-install.sh \
-  --server   https://amadeus.example.com \
+  --server   https://cronomicon.example.com \
   --token    crn_reg_xxxxxxxxxxxx \
   --name     runner-dc1-01 \
   --download \
@@ -87,29 +87,29 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 <tr><td><code>-t, --token</code></td><td><strong>yes</strong></td><td>—</td><td>Registration token (<code>crn_reg_*</code>).</td></tr>
 <tr><td><code>-n, --name</code></td><td>no</td><td><code>$(hostname)</code></td><td>Runner display name (keep it <strong>stable</strong>).</td></tr>
 <tr><td><code>-c, --capabilities</code></td><td>no</td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Omit ⇒ the agent auto-detects the host's toolchains at startup; set only to narrow.</td></tr>
-<tr><td><code>-b, --binary</code></td><td>no</td><td><code>./amadeus-runner</code>, <code>./bin/…</code>, <code>backend/bin/…</code></td><td>Path to the pre-built binary.</td></tr>
+<tr><td><code>-b, --binary</code></td><td>no</td><td><code>./cronomicon-runner</code>, <code>./bin/…</code>, <code>backend/bin/…</code></td><td>Path to the pre-built binary.</td></tr>
 <tr><td><code>--download</code></td><td>no</td><td>off</td><td>Fetch the agent binary from the server's <code>/agents/</code> endpoint (arch auto-detected, <strong>SHA-256 verified</strong> — a checksum mismatch aborts, never falls back). Falls back to <code>-b</code>/auto-search when the deployment doesn't bundle binaries (§2). Uses <code>--ca-cert</code> for the fetch when given.</td></tr>
-<tr><td><code>--known-hosts</code></td><td>no</td><td>—</td><td>OpenSSH <code>known_hosts</code> file — installed to <code>/var/lib/amadeus-runner/known_hosts</code> (<code>0640</code>, owner <code>amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_KNOWN_HOSTS</code> (§8).</td></tr>
-<tr><td><code>--key-dir</code></td><td>no</td><td>—</td><td>Directory of private keys — copied into <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code> dir, <code>0600</code> files, owner <code>amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_KEY_DIR</code> (§8). Mutually exclusive with <code>--key-map</code>.</td></tr>
-<tr><td><code>--key-map</code></td><td>no</td><td>—</td><td><code>NAME=path,NAME2=path2</code> — each key is copied to <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> and the rewritten map wired via <code>CRONOMICON_RUNNER_KEY_MAP</code> (§8). Mutually exclusive with <code>--key-dir</code>.</td></tr>
-<tr><td><code>--generate-key</code></td><td>no</td><td>—</td><td><code>&lt;NAME&gt;</code> — mint a fresh passphrase-less <code>ed25519</code> key at <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> (owned by <code>amadeus-runner</code>) and print its <strong>public</strong> key to add to each target's <code>authorized_keys</code>. The private key never leaves the host. Refuses to overwrite an existing key. Reference it in Cronomicon host config by <code>&lt;NAME&gt;</code> (the <code>authKeyEnvVar</code>).</td></tr>
-<tr><td><code>--ca-cert</code></td><td>no</td><td>—</td><td>Private CA bundle (PEM) — installed to <code>/etc/amadeus-runner/ca.pem</code> and wired via <code>CRONOMICON_RUNNER_CA_CERT</code> (§5).</td></tr>
+<tr><td><code>--known-hosts</code></td><td>no</td><td>—</td><td>OpenSSH <code>known_hosts</code> file — installed to <code>/var/lib/cronomicon-runner/known_hosts</code> (<code>0640</code>, owner <code>cronomicon-runner</code>) and wired via <code>CRONOMICON_RUNNER_KNOWN_HOSTS</code> (§8).</td></tr>
+<tr><td><code>--key-dir</code></td><td>no</td><td>—</td><td>Directory of private keys — copied into <code>/var/lib/cronomicon-runner/keys</code> (<code>0700</code> dir, <code>0600</code> files, owner <code>cronomicon-runner</code>) and wired via <code>CRONOMICON_RUNNER_KEY_DIR</code> (§8). Mutually exclusive with <code>--key-map</code>.</td></tr>
+<tr><td><code>--key-map</code></td><td>no</td><td>—</td><td><code>NAME=path,NAME2=path2</code> — each key is copied to <code>/var/lib/cronomicon-runner/keys/&lt;NAME&gt;</code> and the rewritten map wired via <code>CRONOMICON_RUNNER_KEY_MAP</code> (§8). Mutually exclusive with <code>--key-dir</code>.</td></tr>
+<tr><td><code>--generate-key</code></td><td>no</td><td>—</td><td><code>&lt;NAME&gt;</code> — mint a fresh passphrase-less <code>ed25519</code> key at <code>/var/lib/cronomicon-runner/keys/&lt;NAME&gt;</code> (owned by <code>cronomicon-runner</code>) and print its <strong>public</strong> key to add to each target's <code>authorized_keys</code>. The private key never leaves the host. Refuses to overwrite an existing key. Reference it in Cronomicon host config by <code>&lt;NAME&gt;</code> (the <code>authKeyEnvVar</code>).</td></tr>
+<tr><td><code>--ca-cert</code></td><td>no</td><td>—</td><td>Private CA bundle (PEM) — installed to <code>/etc/cronomicon-runner/ca.pem</code> and wired via <code>CRONOMICON_RUNNER_CA_CERT</code> (§5).</td></tr>
 <tr><td><code>--inventory</code></td><td>no</td><td><code>cronomicon</code></td><td><code>cronomicon</code> or <code>local</code> (§7); <code>local</code> requires <code>--local-inventory</code>.</td></tr>
-<tr><td><code>--local-inventory</code></td><td>no</td><td>—</td><td>Local inventory JSON (with <code>--inventory local</code>) — installed to <code>/etc/amadeus-runner/inventory.json</code> and wired via <code>CRONOMICON_RUNNER_LOCAL_INVENTORY</code> (§7).</td></tr>
+<tr><td><code>--local-inventory</code></td><td>no</td><td>—</td><td>Local inventory JSON (with <code>--inventory local</code>) — installed to <code>/etc/cronomicon-runner/inventory.json</code> and wired via <code>CRONOMICON_RUNNER_LOCAL_INVENTORY</code> (§7).</td></tr>
 <tr><td><code>--allow-checkout</code></td><td>no</td><td>off</td><td>Opt into runner-side pinned playbook checkout — writes <code>CRONOMICON_RUNNER_ALLOW_CHECKOUT=true</code> (§12).</td></tr>
 <tr><td><code>--checkout-repos</code></td><td>no</td><td>—</td><td>Comma-separated allowlist of repo clone URLs the runner may check out — writes <code>CRONOMICON_RUNNER_CHECKOUT_REPOS</code> (§12).</td></tr>
-<tr><td><code>--checkout-token-file</code></td><td>no</td><td>—</td><td>Path to a read-only deploy-token file — installed to <code>/etc/amadeus-runner/checkout-token</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE</code> (§12).</td></tr>
+<tr><td><code>--checkout-token-file</code></td><td>no</td><td>—</td><td>Path to a read-only deploy-token file — installed to <code>/etc/cronomicon-runner/checkout-token</code> (<code>0640 root:cronomicon-runner</code>) and wired via <code>CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE</code> (§12).</td></tr>
 <tr><td><code>--checkout-token -</code></td><td>no</td><td>—</td><td>Prompt for the deploy token on stdin (input hidden) and write it to the same path. <strong>Never pass the token as a flag value</strong> — it would leak via <code>ps</code>/shell history; the installer refuses.</td></tr>
-<tr><td><code>--vault-pass-file</code></td><td>no</td><td>—</td><td>Path to an Ansible Vault password file — installed to <code>/etc/amadeus-runner/vault-pass</code> (<code>0640 root:amadeus-runner</code>) and wired via <code>CRONOMICON_RUNNER_VAULT_PASSWORD_FILE</code> (§8/§12).</td></tr>
+<tr><td><code>--vault-pass-file</code></td><td>no</td><td>—</td><td>Path to an Ansible Vault password file — installed to <code>/etc/cronomicon-runner/vault-pass</code> (<code>0640 root:cronomicon-runner</code>) and wired via <code>CRONOMICON_RUNNER_VAULT_PASSWORD_FILE</code> (§8/§12).</td></tr>
 <tr><td><code>--vault-pass -</code></td><td>no</td><td>—</td><td>Prompt for the vault password on stdin (input hidden) and write it to the same path (same no-secret-as-value rule).</td></tr>
 </tbody>
 </table></div>
 
 <blockquote><p><strong>Secrets are never a flag value.</strong> The checkout deploy token and vault password are placed <em>either</em> from a file you staged (<code>--checkout-token-file</code> / <code>--vault-pass-file</code>) <em>or</em> typed at a hidden prompt (<code>--checkout-token -</code> / <code>--vault-pass -</code>) — the installer refuses a secret passed as a flag value, since it would be visible in <code>ps</code> and shell history. A hidden prompt needs a real terminal, so a piped <code>curl … | sudo bash</code> install must use the file form (the script's own stdin is the piped source). This makes a checkout+vault Ansible runner install in one invocation — no post-install file placement, no env merge.</p></blockquote>
 
-<p>What it does: creates the <code>amadeus-runner</code> system user/group, <code>0750</code> <code>/var/lib/amadeus-runner</code> (state) and <code>/etc/amadeus-runner</code> (config), installs the binary to <code>/usr/local/bin/amadeus-runner</code> (with <code>--download</code>, fetching and checksum-verifying it from the server first), installs whatever the optional flags supplied (<code>known_hosts</code>, keys, CA bundle, local inventory — with the ownership/modes in the table above), writes <code>runner.env</code> (mode <code>0640</code>) wiring it all up, writes the hardened <code>amadeus-runner.service</code>, then <code>daemon-reload</code> + <code>enable</code> + <code>restart</code>. It prints the runner name, capabilities, inventory mode, installed paths, and <code>systemctl is-active</code> when done.</p>
+<p>What it does: creates the <code>cronomicon-runner</code> system user/group, <code>0750</code> <code>/var/lib/cronomicon-runner</code> (state) and <code>/etc/cronomicon-runner</code> (config), installs the binary to <code>/usr/local/bin/cronomicon-runner</code> (with <code>--download</code>, fetching and checksum-verifying it from the server first), installs whatever the optional flags supplied (<code>known_hosts</code>, keys, CA bundle, local inventory — with the ownership/modes in the table above), writes <code>runner.env</code> (mode <code>0640</code>) wiring it all up, writes the hardened <code>cronomicon-runner.service</code>, then <code>daemon-reload</code> + <code>enable</code> + <code>restart</code>. It prints the runner name, capabilities, inventory mode, installed paths, and <code>systemctl is-active</code> when done.</p>
 
-<blockquote><p><strong>SSH-capable runner? Pass the custody flags.</strong> With <code>--known-hosts</code> and <code>--key-dir</code>/<code>--key-map</code>/<code>--generate-key</code>, the runner is ready for its first SSH run when the script exits — nothing to hand-edit. The installer <strong>always</strong> creates <code>/var/lib/amadeus-runner/keys</code> (<code>0700</code>) and wires <code>CRONOMICON_RUNNER_KEY_DIR</code> to it, so if you omit the key flags you need only <em>drop a key file into that directory</em> (named after its <code>authKeyEnvVar</code>) or re-run with <code>--generate-key NAME</code> — no <code>runner.env</code> edit for the key path. The agent still refuses SSH without <code>known_hosts</code> (§8), so the script prints a loud <em>"before the first SSH run"</em> block when <code>--known-hosts</code> was omitted, and <code>known_hosts</code> can be seeded then via <strong>scan &amp; approve</strong>. See §4 for the full surface and §11 to verify.</p></blockquote>
+<blockquote><p><strong>SSH-capable runner? Pass the custody flags.</strong> With <code>--known-hosts</code> and <code>--key-dir</code>/<code>--key-map</code>/<code>--generate-key</code>, the runner is ready for its first SSH run when the script exits — nothing to hand-edit. The installer <strong>always</strong> creates <code>/var/lib/cronomicon-runner/keys</code> (<code>0700</code>) and wires <code>CRONOMICON_RUNNER_KEY_DIR</code> to it, so if you omit the key flags you need only <em>drop a key file into that directory</em> (named after its <code>authKeyEnvVar</code>) or re-run with <code>--generate-key NAME</code> — no <code>runner.env</code> edit for the key path. The agent still refuses SSH without <code>known_hosts</code> (§8), so the script prints a loud <em>"before the first SSH run"</em> block when <code>--known-hosts</code> was omitted, and <code>known_hosts</code> can be seeded then via <strong>scan &amp; approve</strong>. See §4 for the full surface and §11 to verify.</p></blockquote>
 
 <p>If you'd rather wire systemd up by hand (or need a non-default layout), skip the script and follow §9 instead.</p>
 
@@ -132,7 +132,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 <tr><td><code>-capabilities</code></td><td><code>CRONOMICON_RUNNER_CAPABILITIES</code></td><td><code>capabilities</code></td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Unset ⇒ probed from the host's toolchains at startup; set to narrow.</td></tr>
 <tr><td><code>-max-concurrent</code></td><td><code>CRONOMICON_RUNNER_MAX_CONCURRENT</code></td><td><code>maxConcurrent</code></td><td><code>5</code></td><td>Max simultaneous runs.</td></tr>
 <tr><td><code>-inventory</code></td><td><code>CRONOMICON_RUNNER_INVENTORY</code></td><td><code>inventory</code></td><td><code>cronomicon</code></td><td><code>cronomicon</code> or <code>local</code> (D8 — see §7).</td></tr>
-<tr><td><code>-identity-file</code></td><td><code>CRONOMICON_RUNNER_IDENTITY_FILE</code></td><td><code>identityFile</code></td><td><code>amadeus-runner-identity.json</code></td><td>Where <code>{id, apiKey}</code> persists (§6).</td></tr>
+<tr><td><code>-identity-file</code></td><td><code>CRONOMICON_RUNNER_IDENTITY_FILE</code></td><td><code>identityFile</code></td><td><code>cronomicon-runner-identity.json</code></td><td>Where <code>{id, apiKey}</code> persists (§6).</td></tr>
 <tr><td><code>-poll-interval</code></td><td><code>CRONOMICON_RUNNER_POLL_INTERVAL</code></td><td><code>pollInterval</code></td><td><code>60s</code></td><td>Heartbeat/poll cadence (D7).</td></tr>
 <tr><td><code>-key-dir</code></td><td><code>CRONOMICON_RUNNER_KEY_DIR</code></td><td><code>keyDir</code></td><td>—</td><td>Dir searched for keys by name (§8).</td></tr>
 <tr><td><code>-key-map</code></td><td><code>CRONOMICON_RUNNER_KEY_MAP</code></td><td><code>keyMap</code></td><td>—</td><td><code>NAME=path,NAME2=path2</code> key map (§8).</td></tr>
@@ -150,29 +150,29 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 <p>A config file uses camelCase keys (unknown keys are a loud error):</p>
 
 <pre><code>{
-  "serverUrl": "https://amadeus.example.com",
+  "serverUrl": "https://cronomicon.example.com",
   "name": "runner-dc1-01",
   "capabilities": ["bash", "perl", "powershell", "python"],
   "inventory": "cronomicon",
-  "knownHostsFile": "/var/lib/amadeus-runner/known_hosts",
-  "identityFile": "/var/lib/amadeus-runner/identity.json"
+  "knownHostsFile": "/var/lib/cronomicon-runner/known_hosts",
+  "identityFile": "/var/lib/cronomicon-runner/identity.json"
 }</code></pre>
 
-<p>Run <code>amadeus-runner version</code> to print the build version/commit.</p>
+<p>Run <code>cronomicon-runner version</code> to print the build version/commit.</p>
 
 <h3>Worked example A — SSH-onward bash/perl/powershell/python runner, <code>inventory=cronomicon</code></h3>
 
 <p>A reachable-segment runner that executes bash/perl/powershell/python over SSH; the <strong>server</strong> resolves the targets and ships fully-resolved host references.</p>
 
-<pre><code>amadeus-runner \
-  -server https://amadeus.example.com \
+<pre><code>cronomicon-runner \
+  -server https://cronomicon.example.com \
   -registration-token crn_reg_xxxxxxxxxxxx \
   -name runner-dc1-01 \
   -capabilities bash,perl,powershell,python \
   -inventory cronomicon \
-  -key-dir /var/lib/amadeus-runner/keys \
-  -known-hosts /var/lib/amadeus-runner/known_hosts \
-  -identity-file /var/lib/amadeus-runner/identity.json</code></pre>
+  -key-dir /var/lib/cronomicon-runner/keys \
+  -known-hosts /var/lib/cronomicon-runner/known_hosts \
+  -identity-file /var/lib/cronomicon-runner/identity.json</code></pre>
 
 <p>The manifest carries each target's <code>address/port/user/via</code> plus an <code>authKeyEnvVar</code> <strong>name</strong>; the agent resolves that name to a local key in <code>-key-dir</code> (or <code>-key-map</code>/env) and dials — directly or through the <code>via</code> bastion.</p>
 
@@ -180,16 +180,16 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 
 <p>A runner living inside a segment Cronomicon can't see (T-b). The manifest carries only the <strong>scope name</strong>; the agent expands it against its <strong>own</strong> inventory and uses its <strong>own</strong> keys.</p>
 
-<pre><code>amadeus-runner \
-  -server https://amadeus.example.com \
+<pre><code>cronomicon-runner \
+  -server https://cronomicon.example.com \
   -registration-token crn_reg_xxxxxxxxxxxx \
   -name runner-isolated-seg-a \
   -capabilities bash,ansible \
   -inventory local \
-  -local-inventory /etc/amadeus-runner/inventory.json \
-  -key-map PROD_KEY=/var/lib/amadeus-runner/keys/prod.pem \
-  -known-hosts /var/lib/amadeus-runner/known_hosts \
-  -identity-file /var/lib/amadeus-runner/identity.json</code></pre>
+  -local-inventory /etc/cronomicon-runner/inventory.json \
+  -key-map PROD_KEY=/var/lib/cronomicon-runner/keys/prod.pem \
+  -known-hosts /var/lib/cronomicon-runner/known_hosts \
+  -identity-file /var/lib/cronomicon-runner/identity.json</code></pre>
 
 <p><code>inventory.json</code> maps a scope name → host targets (host references only — the agent supplies the key by <code>authKeyEnvVar</code> name, never the bytes):</p>
 
@@ -222,7 +222,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 
 <p>Set this up correctly at install time:</p>
 
-<ul><li>Put the identity file on <strong>durable</strong> storage: a named volume in containers (<code>/var/lib/amadeus-runner</code>), a real path under systemd <code>StateDirectory</code>.</li><li>Keep <code>-name</code> <strong>stable</strong> across restarts.</li><li>A present-but-corrupt identity file is a <strong>hard error</strong> (the agent will not silently re-register and orphan the existing row) — restore or delete it deliberately.</li></ul>
+<ul><li>Put the identity file on <strong>durable</strong> storage: a named volume in containers (<code>/var/lib/cronomicon-runner</code>), a real path under systemd <code>StateDirectory</code>.</li><li>Keep <code>-name</code> <strong>stable</strong> across restarts.</li><li>A present-but-corrupt identity file is a <strong>hard error</strong> (the agent will not silently re-register and orphan the existing row) — restore or delete it deliberately.</li></ul>
 
 <p>(The day-2 side of this — re-registration after a server reap, and forcing a re-register to push config — lives in <a href="./runner-manage.html"><code>runner-manage.html</code></a>.)</p>
 
@@ -251,45 +251,45 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre>
 <p>This is the long-form of what §3's <code>runner-install.sh</code> automates — use it when you need a custom layout or want to see each step.</p>
 
 <pre><code># Build/copy the binary.
-cd backend &amp;&amp; CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner
-sudo install -m 0755 amadeus-runner /usr/local/bin/
+cd backend &amp;&amp; CGO_ENABLED=0 go build -o cronomicon-runner ./cmd/cronomicon-runner
+sudo install -m 0755 cronomicon-runner /usr/local/bin/
 
 # Service account + dirs.
-sudo useradd --system --home-dir /var/lib/amadeus-runner \
-             --shell /usr/sbin/nologin amadeus-runner
-sudo install -d -o amadeus-runner -g amadeus-runner -m 0750 /var/lib/amadeus-runner
-sudo install -d -m 0750 /etc/amadeus-runner
+sudo useradd --system --home-dir /var/lib/cronomicon-runner \
+             --shell /usr/sbin/nologin cronomicon-runner
+sudo install -d -o cronomicon-runner -g cronomicon-runner -m 0750 /var/lib/cronomicon-runner
+sudo install -d -m 0750 /etc/cronomicon-runner
 
-# Config + unit (edit runner.env first — see amadeus-runner.env.example).
-sudo install -m 0640 deploy/amadeus-runner.env.example /etc/amadeus-runner/runner.env
-sudo install -m 0644 deploy/amadeus-runner.service /etc/systemd/system/
+# Config + unit (edit runner.env first — see cronomicon-runner.env.example).
+sudo install -m 0640 deploy/cronomicon-runner.env.example /etc/cronomicon-runner/runner.env
+sudo install -m 0644 deploy/cronomicon-runner.service /etc/systemd/system/
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now amadeus-runner
-sudo systemctl status amadeus-runner
-journalctl -u amadeus-runner -f</code></pre>
+sudo systemctl enable --now cronomicon-runner
+sudo systemctl status cronomicon-runner
+journalctl -u cronomicon-runner -f</code></pre>
 
-<p>The unit runs the agent as a non-root, sandboxed service (<code>NoNewPrivileges</code>, <code>ProtectSystem=strict</code>, a single writable <code>StateDirectory</code>, a restricted syscall set). See <code>amadeus-runner.service</code> for the full hardening set.</p>
+<p>The unit runs the agent as a non-root, sandboxed service (<code>NoNewPrivileges</code>, <code>ProtectSystem=strict</code>, a single writable <code>StateDirectory</code>, a restricted syscall set). See <code>cronomicon-runner.service</code> for the full hardening set.</p>
 
 <hr />
 
 <h2>10 · Container install</h2>
 
 <pre><code># Persist identity + keys across restarts on a named volume.
-docker volume create amadeus-runner-data
+docker volume create cronomicon-runner-data
 
-docker run -d --name amadeus-runner-01 --restart unless-stopped \
-  -e CRONOMICON_RUNNER_SERVER=https://amadeus.example.com \
+docker run -d --name cronomicon-runner-01 --restart unless-stopped \
+  -e CRONOMICON_RUNNER_SERVER=https://cronomicon.example.com \
   -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_xxxxxxxxxxxx \
   -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
   -e CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python \
   -e CRONOMICON_RUNNER_INVENTORY=cronomicon \
-  -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
-  -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
-  -v amadeus-runner-data:/var/lib/amadeus-runner \
-  amadeus-runner:slim</code></pre>
+  -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/cronomicon-runner/keys \
+  -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/cronomicon-runner/known_hosts \
+  -v cronomicon-runner-data:/var/lib/cronomicon-runner \
+  cronomicon-runner:slim</code></pre>
 
-<p>The explicit <code>CRONOMICON_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). For an ansible/terraform runner, swap <code>amadeus-runner:fat</code> and either omit the var (detect) or set <code>CRONOMICON_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
+<p>The explicit <code>CRONOMICON_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent auto-detects the <em>image's</em> toolchains at startup (the image choice becomes the capability decision). For an ansible/terraform runner, swap <code>cronomicon-runner:fat</code> and either omit the var (detect) or set <code>CRONOMICON_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
 
 <hr />
 
@@ -297,7 +297,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 
 <p>Confirm the runner came up and registered:</p>
 
-<ol><li><strong>Logs</strong> — <code>journalctl -u amadeus-runner -f</code> (systemd) or <code>docker logs -f amadeus-runner-01</code> (container) should show <code>registered with server</code> on the first start (or <code>resumed runner identity</code> on a restart), then quiet <code>poll</code> activity on the cadence. No <code>register: server returned …</code> errors.</li><li><strong>Runners view</strong> — the runner appears <strong>online</strong>, showing its capabilities, load, version, and an inventory chip (<code>cronomicon</code> / <code>local</code>).</li><li><strong>Version</strong> — <code>amadeus-runner version</code> prints the build (a plain local <code>go build</code> reports <code>dev</code>; release images stamp the real version/commit).</li><li><em>(optional)</em> Trigger a small <code>bash</code> run scoped to a host this runner serves and watch the log stream back, to confirm key custody + <code>known_hosts</code> are wired correctly.</li></ol>
+<ol><li><strong>Logs</strong> — <code>journalctl -u cronomicon-runner -f</code> (systemd) or <code>docker logs -f cronomicon-runner-01</code> (container) should show <code>registered with server</code> on the first start (or <code>resumed runner identity</code> on a restart), then quiet <code>poll</code> activity on the cadence. No <code>register: server returned …</code> errors.</li><li><strong>Runners view</strong> — the runner appears <strong>online</strong>, showing its capabilities, load, version, and an inventory chip (<code>cronomicon</code> / <code>local</code>).</li><li><strong>Version</strong> — <code>cronomicon-runner version</code> prints the build (a plain local <code>go build</code> reports <code>dev</code>; release images stamp the real version/commit).</li><li><em>(optional)</em> Trigger a small <code>bash</code> run scoped to a host this runner serves and watch the log stream back, to confirm key custody + <code>known_hosts</code> are wired correctly.</li></ol>
 
 <p>If the runner doesn't appear, or shows offline, see <a href="./runner-manage.html"><code>runner-manage.html</code></a> "Check status &amp; health".</p>
 
@@ -373,4 +373,4 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 
 <hr />
 
-<p>See also: <a href="./runner-manage.html"><code>runner-manage.html</code></a> (day-2: manage, update, resync, remove), <code>runner-security.html</code> (credential-model posture &amp; blast radius, checkout security model), <code>amadeus-runner.env.example</code> (annotated env template), <code>env-matrix.md</code> (server-side vars).</p>
+<p>See also: <a href="./runner-manage.html"><code>runner-manage.html</code></a> (day-2: manage, update, resync, remove), <code>runner-security.html</code> (credential-model posture &amp; blast radius, checkout security model), <code>cronomicon-runner.env.example</code> (annotated env template), <code>env-matrix.md</code> (server-side vars).</p>

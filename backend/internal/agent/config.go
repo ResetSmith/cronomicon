@@ -1,5 +1,5 @@
 // Package agent holds the testable logic for the Cronomicon runner agent
-// (cmd/amadeus-runner) — the out-of-process worker that registers with the
+// (cmd/cronomicon-runner) — the out-of-process worker that registers with the
 // server, long-polls for assigned runs, and executes them. The thin main.go
 // wires this package to flags/signals.
 //
@@ -35,7 +35,7 @@ func jsonUnmarshalStrict(data []byte, v any) error {
 // config file, environment variables (CRONOMICON_RUNNER_*), and command-line
 // flags. See Resolve for the precedence rules.
 type Config struct {
-	// ServerURL is the base URL of the Cronomicon server, e.g. https://amadeus:8080.
+	// ServerURL is the base URL of the Cronomicon server, e.g. https://cronomicon:8080.
 	ServerURL string
 	// CACertPath is an optional path to a PEM CA bundle to trust for TLS. Empty
 	// uses the system trust store.
@@ -154,7 +154,7 @@ type Config struct {
 	// scope-grant rule that empty means zero access rather than everything.
 	WatchPaths []string
 	// MirrorDir is where per-repo bare mirrors are kept (persistent, fetch-updated
-	// — RX.3). Empty ⇒ <StateDir>/mirrors (or <os.TempDir>/amadeus-mirrors).
+	// — RX.3). Empty ⇒ <StateDir>/mirrors (or <os.TempDir>/cronomicon-mirrors).
 	MirrorDir string
 	// CheckoutToken is the read-only deploy credential the agent uses to fetch the
 	// playbooks repo (RX.11 — per-runner GitLab deploy token, read_repository
@@ -204,7 +204,7 @@ func defaultConfig() Config {
 		OS:             "Linux",
 		MaxConcurrent:  5,
 		Inventory:      "cronomicon",
-		IdentityFile:   "amadeus-runner-identity.json",
+		IdentityFile:   "cronomicon-runner-identity.json",
 		PollInterval:   60 * time.Second, // D7
 		KeyMap:         map[string]string{},
 		LogRetryBudget: 5,
@@ -249,7 +249,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 
 	// Layer 3: flags (highest precedence). We define flags whose defaults are the
 	// already-resolved cfg values, so an unset flag leaves the lower layer intact.
-	fs := flag.NewFlagSet("amadeus-runner", flag.ContinueOnError)
+	fs := flag.NewFlagSet("cronomicon-runner", flag.ContinueOnError)
 	var (
 		serverURL         = fs.String("server", cfg.ServerURL, "Cronomicon server base URL")
 		caCert            = fs.String("ca-cert", cfg.CACertPath, "path to a PEM CA bundle to trust for TLS")
@@ -337,7 +337,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 }
 
 // normalizeServerURL trims a trailing slash and, when the value carries no
-// scheme (e.g. "amadeus.example.com" set via env or a non-bash installer that
+// scheme (e.g. "cronomicon.example.com" set via env or a non-bash installer that
 // skipped the prepend guard), defaults it to https://. A bare host otherwise
 // reaches net/http as a schemeless URL and fails at request time with the
 // opaque `unsupported protocol scheme ""`; self-healing here turns that into a

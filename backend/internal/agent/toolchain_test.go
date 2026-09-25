@@ -94,7 +94,7 @@ func TestDetectCapabilities(t *testing.T) {
 	cfg := Config{
 		Capabilities:      []string{"ansible", "terraform"},
 		AllowCheckout:     true,
-		VaultPasswordFile: "/etc/amadeus/vault.pw",
+		VaultPasswordFile: "/etc/cronomicon/vault.pw",
 	}
 	caps, tc, err := detectCapabilities(context.Background(), cfg)
 	if err != nil {

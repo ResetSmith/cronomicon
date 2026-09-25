@@ -35,7 +35,7 @@ func materializeSecretFiles(files []runnerproto.ManifestSecretFile) (fileEnv map
 		return nil, cleanup, nil
 	}
 
-	dir, err := os.MkdirTemp(keyBaseDir(), "amadeus-secretfiles-")
+	dir, err := os.MkdirTemp(keyBaseDir(), "cronomicon-secretfiles-")
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("create secret-file dir: %w", err)
 	}

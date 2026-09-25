@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_BIN_PATH, AGENT_UNIT, upgradeCommand } from "./runner-upgrade-cmd";
 
-const ORIGIN = "https://amadeus.example.com";
+const ORIGIN = "https://cronomicon.example.com";
 
 // These assertions guard the CONTRACT with runner-install.sh (the paths and the
 // /agents/ endpoints it installs to and fetches from). The script's runtime
@@ -11,8 +11,8 @@ const ORIGIN = "https://amadeus.example.com";
 // install-script contract, so that is what is pinned.
 describe("upgradeCommand", () => {
   it("targets the same binary path and unit runner-install.sh installs", () => {
-    expect(AGENT_BIN_PATH).toBe("/usr/local/bin/amadeus-runner");
-    expect(AGENT_UNIT).toBe("amadeus-runner");
+    expect(AGENT_BIN_PATH).toBe("/usr/local/bin/cronomicon-runner");
+    expect(AGENT_UNIT).toBe("cronomicon-runner");
     const cmd = upgradeCommand(ORIGIN);
     expect(cmd).toContain(`BIN="${AGENT_BIN_PATH}"`);
     expect(cmd).toContain(`systemctl restart ${AGENT_UNIT}`);
@@ -29,7 +29,7 @@ describe("upgradeCommand", () => {
     const cmd = upgradeCommand(ORIGIN);
     expect(cmd).toContain("x86_64|amd64)  ARCH=amd64");
     expect(cmd).toContain("aarch64|arm64) ARCH=arm64");
-    expect(cmd).toContain("amadeus-runner-linux-${ARCH}");
+    expect(cmd).toContain("cronomicon-runner-linux-${ARCH}");
   });
 
   // A mismatch must abort BEFORE anything is installed. `set -euo pipefail` plus

@@ -93,7 +93,7 @@ func (s *Service) SetOnSyncComplete(f func(ctx context.Context, sha string)) {
 
 // NewService builds the GitLab Service.
 //
-// cloneDir should be a persistent path (e.g. /var/lib/amadeus/git-cache/job-definitions).
+// cloneDir should be a persistent path (e.g. /var/lib/cronomicon/git-cache/job-definitions).
 // repoURL/token are resolved by the caller (settings.ResolveGitlabRuntime:
 // env first, DB-backed config second). If token is empty, clones are attempted
 // unauthenticated — this works for public repos; private repos will fail (the

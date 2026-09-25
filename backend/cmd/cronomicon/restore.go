@@ -27,7 +27,7 @@ import (
 //
 //	cronomicon restore --list                 # show available snapshots
 //	cronomicon restore                        # restore the latest over CRONOMICON_DB_PATH
-//	cronomicon restore --from amadeus-20260722.db --db /var/lib/amadeus/amadeus.db
+//	cronomicon restore --from cronomicon-20260722.db --db /var/lib/cronomicon/cronomicon.db
 //
 // It reads the same CRONOMICON_BACKUP_S3_* / CRONOMICON_DB_PATH env the server uses.
 // The server must be STOPPED first — the swap replaces the live .db and its

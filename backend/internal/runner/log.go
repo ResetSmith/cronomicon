@@ -248,7 +248,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		// ceiling. Measured on the on-disk (redacted) size, so the file is strictly
 		// bounded (plus the one truncation-notice line). Write the notice and bail to 413.
 		if maxRunLog > 0 && persistedStart+int64(ingestBytes)+int64(len(redacted))+1 > maxRunLog {
-			_, _ = f.WriteString("amadeus: run log size limit reached; further output discarded\n")
+			_, _ = f.WriteString("cronomicon: run log size limit reached; further output discarded\n")
 			truncated = true
 			break
 		}
@@ -292,7 +292,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("ingest: captured output would leak an injected secret; failing run closed",
 			"trace_id", traceID, "output", leakedOutput)
 		if _, werr := f.WriteString(fmt.Sprintf(
-			"amadeus: output %q would leak an injected secret value; refusing to capture it and failing the run\n",
+			"cronomicon: output %q would leak an injected secret value; refusing to capture it and failing the run\n",
 			leakedOutput)); werr != nil {
 			s.log.Error("write leak-refusal line", "trace_id", traceID, "error", werr)
 		}

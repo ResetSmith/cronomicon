@@ -1,4 +1,4 @@
-# Slim runner image (R7.1 / R4.1): the amadeus-runner agent for the SSH-ONWARD
+# Slim runner image (R7.1 / R4.1): the cronomicon-runner agent for the SSH-ONWARD
 # use case (bash/perl/powershell against reachable or bastion-jumped targets).
 #
 # Unlike the app image (backend/Dockerfile), the agent imports NO cgo packages —
@@ -17,7 +17,7 @@
 #   docker build -f deploy/Dockerfile.runner \
 #     --build-arg VERSION=$(git describe --tags --always --dirty) \
 #     --build-arg COMMIT=$(git rev-parse --short HEAD) \
-#     -t amadeus-runner:slim .
+#     -t cronomicon-runner:slim .
 #
 # (run from backend/, so the build context is backend/.)
 
@@ -29,31 +29,31 @@ COPY go.mod go.sum* ./
 RUN go mod download
 COPY . ./
 
-# Build metadata, stamped into `amadeus-runner version`.
+# Build metadata, stamped into `cronomicon-runner version`.
 ARG VERSION=dev
 ARG COMMIT=none
 # CGO off → a static binary that runs on distroless/static.
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-    -o /out/amadeus-runner ./cmd/amadeus-runner
+    -o /out/cronomicon-runner ./cmd/cronomicon-runner
 
 # ── Stage 2: minimal static runtime. No glibc, no shell, no package manager.
 # distroless/static ships CA certificates (for the agent's HTTPS to the server)
 # and the nonroot user; nothing else.
 FROM gcr.io/distroless/static-debian12
 
-LABEL org.opencontainers.image.title="amadeus-runner" \
+LABEL org.opencontainers.image.title="cronomicon-runner" \
       org.opencontainers.image.description="Cronomicon runner agent (slim — SSH-onward, no local toolchains)" \
       org.opencontainers.image.source="https://github.com/ResetSmith/cronomicon"
 
 WORKDIR /app
-COPY --from=build /out/amadeus-runner /app/amadeus-runner
+COPY --from=build /out/cronomicon-runner /app/cronomicon-runner
 
-# Identity file + any mounted keys/known_hosts live under /var/lib/amadeus-runner.
+# Identity file + any mounted keys/known_hosts live under /var/lib/cronomicon-runner.
 # Persist it (see install-runner.md "identity persistence") so a restart resumes
 # the same runners row instead of orphaning it (R2.4 / D4).
-VOLUME ["/var/lib/amadeus-runner"]
-ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
+VOLUME ["/var/lib/cronomicon-runner"]
+ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
 
 # Config comes from CRONOMICON_RUNNER_* env (and/or -config file). Required at run:
 #   CRONOMICON_RUNNER_SERVER, CRONOMICON_RUNNER_REGISTRATION_TOKEN,
@@ -61,4 +61,4 @@ ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
 # See deploy/install-runner.md for the full surface and worked examples.
 
 USER nonroot:nonroot
-ENTRYPOINT ["/app/amadeus-runner"]
+ENTRYPOINT ["/app/cronomicon-runner"]

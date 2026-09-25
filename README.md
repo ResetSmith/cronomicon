@@ -32,7 +32,7 @@ cd backend && make build
 
 # Run with dev auth and demo data
 CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false \
-  CRONOMICON_DB_PATH=/tmp/amadeus-dev.db ./bin/amadeus
+  CRONOMICON_DB_PATH=/tmp/cronomicon-dev.db ./bin/cronomicon
 
 # Visit http://localhost:8080 → click "Developer login"
 ```
@@ -41,16 +41,16 @@ CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false
 
 ```bash
 # From the repo root — the Dockerfile copies frontend/ and backend/
-docker build -f backend/Dockerfile -t amadeus:latest .
-docker run -d -p 8080:8080 -v /var/lib/amadeus:/var/lib/amadeus \
-  --env-file amadeus.env amadeus:latest
+docker build -f backend/Dockerfile -t cronomicon:latest .
+docker run -d -p 8080:8080 -v /var/lib/cronomicon:/var/lib/cronomicon \
+  --env-file cronomicon.env cronomicon:latest
 ```
 
 `docker-compose.yml` at the repo root is the reference stack (Cronomicon behind a reverse proxy with an OIDC provider). See [backend/README.md](backend/README.md) for every configuration option and [backend/deploy/](backend/deploy/) for the deployment guide.
 
 ## Architecture
 
-Cronomicon is deployed as **a single static Go binary** (`T1/T3`) — one container, one process, one SQLite database (`/var/lib/amadeus/amadeus.db`). The frontend is embedded in the binary and served as static assets from `web/dist/`.
+Cronomicon is deployed as **a single static Go binary** (`T1/T3`) — one container, one process, one SQLite database (`/var/lib/cronomicon/cronomicon.db`). The frontend is embedded in the binary and served as static assets from `web/dist/`.
 
 ### Core Surfaces
 
@@ -64,7 +64,7 @@ Cronomicon is deployed as **a single static Go binary** (`T1/T3`) — one contai
 #### Job Execution
 
 - **Multi-executor support**: SSH (direct + bastion), Ansible, Terraform, Bash, PowerShell, Perl, Python
-- **Distributed runners**: Autonomous `amadeus-runner` agents with capability-based job routing
+- **Distributed runners**: Autonomous `cronomicon-runner` agents with capability-based job routing
 - **Self-service runner provisioning (v0.47.x)**: The server hosts the installer and distributes the agent binary; a one-click **Add Runner** flow issues **single-use registration tokens**, and runners self-register. Server-managed runner settings with **config-drift detection** and a one-click **Resync**, host-key scan-and-approve, runner **tags** + inline group membership, and a unified auth model (**one key + one trust store** for both Bash and Ansible, with an optional **Vault Agent sidecar** for runner-local secrets)
 - **Ansible checkout projects (v0.46.0–v0.46.6)**: Runners execute full Ansible playbook **projects** (roles, `vars_files`, `.j2` templates) by checking out the playbooks repo at a **server-pinned commit SHA** — opt-in per job and per runner (`-allow-checkout` + a repo allowlist). Per-run `requirements.yml`/galaxy installs, Ansible Vault, requirement-token **claim gating** (`vault`, `collection:<fqcn>` route a run only to runners that satisfy it), and a per-run `systemd-run` **sandbox** with scoped child env. Body-only playbook runs are unchanged.
 - **Scope-aware execution**: Jobs bound to named scopes (prod/staging/dev); since v0.56.4 both the **scope and the verb** are enforced on every execution route — a viewer cannot trigger or kill, and an operator holds the verbs only where their grant says
@@ -160,7 +160,7 @@ Six producers can start a run, and each one records what it was:
 - **The Dashboard leads with its answer (v1.5.3–v1.5.5)**: A **verdict strip** at the top says whether anything needs attention (dismissible per attention set — it returns the moment a new failure appears), then the **Score** timeline — 24h back / 12h ahead, filled marks for runs, hollow for scheduled, coincident runs stacked as **chords**, every stat tile a link — then **Up next** (the next three fires) and **Recent errors** (folded per job, deep-linking into that job's History)
 - **Activity feed (server-searched since v1.5.24)**: Real-time stream of runs, config changes, pushes, and syncs — searched and paged on the server, with a Kind filter, an **Actor** picker (users / runners / system), a **Range** select with custom From/To, and a runner name on every card that has one (v1.5.24–v1.5.29)
 - **Audit trail**: Config change log **plus a compliance audit stream with real auth events** (login/logout/denial/CSRF, v0.52.11), exportable, with per-window retention that genuinely reaps files (v0.52.8)
-- **Structured logging (v0.52.8–.12)**: A process log on disk (`amadeus.log`) with a live re-pointable log directory, and run logs grouped into **per-entity folders** keyed by a stable entity code
+- **Structured logging (v0.52.8–.12)**: A process log on disk (`cronomicon.log`) with a live re-pointable log directory, and run logs grouped into **per-entity folders** keyed by a stable entity code
 - **S3 log archive (v1.5.33)**: Local disk stays the only write target during a run; a scheduled sweep copies sealed logs to any S3-compatible bucket (verify-by-size, budgeted, with an optional expiry window), History reads an archived log through the server when the local file is gone, and the local reaper never removes an unarchived log while the tier is on
 - **Runner placement survives re-registration (v1.5.30)**: A runner that loses its identity re-registers into the general pool; its previous agency placement is snapshotted before the old row is deleted and the Runners view offers **Restore placement** — never automatic, because the name is self-declared
 - **Sensitive data redaction**: **Unconditional** — injected references, stored secrets, and per-run overrides are masked in logs; there is no toggle
@@ -898,19 +898,19 @@ go test ./internal/runner -v
 ```bash
 docker run -d \
   -p 8080:8080 \
-  -v /var/lib/amadeus:/var/lib/amadeus \
+  -v /var/lib/cronomicon:/var/lib/cronomicon \
   -v /run/secrets:/run/secrets:ro \
   -e CRONOMICON_OIDC_ISSUER=https://auth.example.com \
   -e CRONOMICON_OIDC_CLIENT_ID=cronomicon \
   -e CRONOMICON_OIDC_CLIENT_SECRET=... \
-  -e CRONOMICON_OIDC_REDIRECT_URL=https://amadeus.example.com/api/v1/auth/callback \
-  -e CRONOMICON_KEK_FILE=/run/secrets/amadeus-kek \
-  -e CRONOMICON_BACKUP_S3_BUCKET=amadeus-backups \
-  amadeus:1.5.45
+  -e CRONOMICON_OIDC_REDIRECT_URL=https://cronomicon.example.com/api/v1/auth/callback \
+  -e CRONOMICON_KEK_FILE=/run/secrets/cronomicon-kek \
+  -e CRONOMICON_BACKUP_S3_BUCKET=cronomicon-backups \
+  cronomicon:1.5.45
 ```
 
 The full variable matrix is in [`backend/deploy/env-matrix.md`](backend/deploy/env-matrix.md) and the
-annotated template in [`backend/deploy/amadeus.env.example`](backend/deploy/amadeus.env.example).
+annotated template in [`backend/deploy/cronomicon.env.example`](backend/deploy/cronomicon.env.example).
 The KEK file must not be world-readable — the server refuses to start if it is (v1.5.30).
 
 ### Runner Agents (Distributed Execution)
@@ -919,13 +919,13 @@ Runners are provisioned **from the app**: open the **Runners** view → **Add Ru
 generated one-line install command, which is backed by a single-use registration token:
 
 ```bash
-curl -fsSL https://amadeus.example.com/install/<token> | sudo bash
+curl -fsSL https://cronomicon.example.com/install/<token> | sudo bash
 # or, with the script and binary downloaded from the server:
-sudo ./runner-install.sh -s https://amadeus.example.com -t <token> -n runner-dc1-01 -c bash,ansible
+sudo ./runner-install.sh -s https://cronomicon.example.com -t <token> -n runner-dc1-01 -c bash,ansible
 ```
 
-The installer writes a systemd unit and `/etc/amadeus/amadeus-runner.env` (template:
-[`backend/deploy/amadeus-runner.env.example`](backend/deploy/amadeus-runner.env.example)). Every deployed
+The installer writes a systemd unit and `/etc/cronomicon/cronomicon-runner.env` (template:
+[`backend/deploy/cronomicon-runner.env.example`](backend/deploy/cronomicon-runner.env.example)). Every deployed
 runner must speak wire protocol **v12** — registration is refused below the floor (v1.5.40). See
 [backend/deploy/](backend/deploy/) for hardened units and security guides.
 
@@ -963,7 +963,7 @@ Third-party components and trademarks are listed in [NOTICE](NOTICE).
 
 ## Support & Troubleshooting
 
-- **Logs**: `docker logs <container>`, the process log at `<log dir>/amadeus.log`, and run logs grouped in per-entity folders under the configured log directory (Settings → Execution → Log Storage; local path changes apply live, v0.52.9–.10)
+- **Logs**: `docker logs <container>`, the process log at `<log dir>/cronomicon.log`, and run logs grouped in per-entity folders under the configured log directory (Settings → Execution → Log Storage; local path changes apply live, v0.52.9–.10)
 - **Database health**: `GET /readyz` (checks DB migrations, OIDC identity)
 - **Runner offline**: Check `CRONOMICON_RUNNER_OFFLINE_AFTER` (default 5m); a runner with no heartbeat for over 2 minutes shows **degraded**, stale runners are marked offline, and rows silent for `CRONOMICON_RUNNER_DEREGISTER_AFTER` (default 14d) are removed with their placement snapshotted for restore
 - **SSH execution fails**: Verify bastion ProxyJump config and host keys in `~/.ssh/known_hosts`

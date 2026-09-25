@@ -17,9 +17,9 @@ func TestPersonalizeInstallScript(t *testing.T) {
 	// header default lines are baked. This mirrors the real script, where
 	// `--download) DOWNLOAD=1` coexists with the `DOWNLOAD=0` default.
 	published := "#!/bin/bash\nSERVER_URL=\"\"\nREG_TOKEN=\"\"\nDOWNLOAD=0\n--download) DOWNLOAD=1 ;;\n"
-	want := "#!/bin/bash\nSERVER_URL=\"https://amadeus.example.com\"\nREG_TOKEN=\"" +
+	want := "#!/bin/bash\nSERVER_URL=\"https://cronomicon.example.com\"\nREG_TOKEN=\"" +
 		validInstallToken + "\"\nDOWNLOAD=1\n--download) DOWNLOAD=1 ;;\n"
-	out := personalizeInstallScript(published, "https://amadeus.example.com", validInstallToken)
+	out := personalizeInstallScript(published, "https://cronomicon.example.com", validInstallToken)
 	if out != want {
 		t.Errorf("personalize baked the wrong bytes:\ngot  %q\nwant %q", out, want)
 	}
@@ -49,7 +49,7 @@ func serveInstall(t *testing.T, token string, headers map[string]string) *httpte
 func TestInstallEndpointServesBakedScript(t *testing.T) {
 	rec := serveInstall(t, validInstallToken, map[string]string{
 		"X-Forwarded-Proto": "https",
-		"X-Forwarded-Host":  "amadeus.example.com",
+		"X-Forwarded-Host":  "cronomicon.example.com",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -62,7 +62,7 @@ func TestInstallEndpointServesBakedScript(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`SERVER_URL="https://amadeus.example.com"`,
+		`SERVER_URL="https://cronomicon.example.com"`,
 		`REG_TOKEN="` + validInstallToken + `"`,
 		"DOWNLOAD=1",
 	} {
@@ -75,7 +75,7 @@ func TestInstallEndpointServesBakedScript(t *testing.T) {
 func TestInstallEndpointAcceptsIPv6AndContainerHosts(t *testing.T) {
 	// IPv6 literals ([..]) and container-DNS hostnames (underscore) must bake a
 	// valid SERVER_URL rather than 400 (they're inert inside double quotes).
-	for _, host := range []string{"[2001:db8::1]:8443", "amadeus_backend:8080"} {
+	for _, host := range []string{"[2001:db8::1]:8443", "cronomicon_backend:8080"} {
 		rec := serveInstall(t, validInstallToken, map[string]string{
 			"X-Forwarded-Proto": "https",
 			"X-Forwarded-Host":  host,
@@ -119,10 +119,10 @@ func TestInstallEndpointServedBytesMatchPublished(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := personalizeInstallScript(string(published), "https://amadeus.example.com", validInstallToken)
+	want := personalizeInstallScript(string(published), "https://cronomicon.example.com", validInstallToken)
 	rec := serveInstall(t, validInstallToken, map[string]string{
 		"X-Forwarded-Proto": "https",
-		"X-Forwarded-Host":  "amadeus.example.com",
+		"X-Forwarded-Host":  "cronomicon.example.com",
 	})
 	if rec.Body.String() != want {
 		t.Error("served /install script diverges from personalize(published /runner-install.sh)")

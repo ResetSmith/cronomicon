@@ -20,9 +20,9 @@ The compose file ships with Traefik (TLS termination) + Authelia (SSO) bundled:
 browser ──TLS 443──▶ traefik ──forward-auth──▶ authelia (LDAP/AD → Remote-Groups)
                           │ injects Remote-*
                           ▼
-                       amadeus:8080  (internal Docker network; NOT published to host)
+                       cronomicon:8080  (internal Docker network; NOT published to host)
                           │
-                          ├──▶ /var/lib/amadeus volume
+                          ├──▶ /var/lib/cronomicon volume
                           └──▶ apprise
 ```
 
@@ -37,17 +37,17 @@ remove Traefik and Authelia from the compose file and publish cronomicon directl
 ```
 browser ──TLS──▶ Nginx Proxy Manager (existing; injects Remote-*)
                           │
-                          ▼ proxied to amadeus:8080
+                          ▼ proxied to cronomicon:8080
                        cronomicon (published on host port, e.g. 8080)
                           │
-                          └──▶ /var/lib/amadeus volume
+                          └──▶ /var/lib/cronomicon volume
 ```
 
 Publish cronomicon on the host by adding a `ports` entry to the `cronomicon` service
 and removing the `internal: true` constraint from the network so NPM can reach
 it. Use `CRONOMICON_TRUSTED_PROXIES=10.0.0.0/8` (or NPM's specific IP).
 
-**Our `amadeus.env` is already configured for Option B** (NPM on `10.x.x.x`,
+**Our `cronomicon.env` is already configured for Option B** (NPM on `10.x.x.x`,
 external Apprise at `apprise.example.com`). The steps below call out where
 the two options diverge.
 
@@ -71,7 +71,7 @@ assume you are building on the Docker host directly.
 ## Step 1 — Clone and switch to the release
 
 ```bash
-git clone git@gitlab.example.com:ops/amadeus.git
+git clone git@gitlab.example.com:ops/cronomicon.git
 cd cronomicon
 git checkout v0.36.5
 ```
@@ -93,16 +93,16 @@ encrypts every secret the app holds (SMTP passwords, stored credentials). It is
 ```bash
 cd backend/deploy
 mkdir -p secrets
-openssl rand -base64 32 > secrets/amadeus_kek
-chmod 600 secrets/amadeus_kek
+openssl rand -base64 32 > secrets/cronomicon_kek
+chmod 600 secrets/cronomicon_kek
 ```
 
 > **Critical:** Back this file up independently and separately from any database
 > backup. If you lose the KEK and your S3/volume backup together, every stored
 > secret is permanently unrecoverable. The S3 backup alone is useless without it.
 
-The compose file mounts `secrets/amadeus_kek` read-only into the container at
-`/run/secrets/amadeus_kek`, which `CRONOMICON_KEK_FILE` points at. (The KEK is app
+The compose file mounts `secrets/cronomicon_kek` read-only into the container at
+`/run/secrets/cronomicon_kek`, which `CRONOMICON_KEK_FILE` points at. (The KEK is app
 config, not a store secret, so it lives under `CRONOMICON_KEK*`; the older
 `CRONOMICON_SECRET_KEK*` spelling stopped reading in v1.5.41.)
 
@@ -117,9 +117,9 @@ stored secrets will fail to decrypt.
 Drop your TLS certificate and key into `traefik/certs/`:
 
 ```bash
-cp /path/to/amadeus.crt traefik/certs/amadeus.crt
-cp /path/to/amadeus.key traefik/certs/amadeus.key
-chmod 600 traefik/certs/amadeus.key
+cp /path/to/cronomicon.crt traefik/certs/cronomicon.crt
+cp /path/to/cronomicon.key traefik/certs/cronomicon.key
+chmod 600 traefik/certs/cronomicon.key
 ```
 
 The Traefik dynamic config at `traefik/dynamic/dynamic.yml` references these
@@ -143,11 +143,11 @@ FQDNs in the three Traefik label rules:
 - "traefik.http.routers.authelia.rule=Host(`auth.YOUR-DOMAIN`)"
 
 # cronomicon service
-- "traefik.http.routers.amadeus.rule=Host(`amadeus.YOUR-DOMAIN`)"
+- "traefik.http.routers.cronomicon.rule=Host(`cronomicon.YOUR-DOMAIN`)"
 ```
 
 **`authelia/configuration.yml`** — replace `example.com` / `auth.example.com` /
-`amadeus.example.com` throughout:
+`cronomicon.example.com` throughout:
 
 ```yaml
 access_control:
@@ -160,7 +160,7 @@ access_control:
     # runner's poll/register are redirected to the login page and return HTML,
     # not the script — the "syntax error near `<!doctype html>'" install failure.
     # Must come BEFORE the one_factor rule.
-    - domain: amadeus.YOUR-DOMAIN
+    - domain: cronomicon.YOUR-DOMAIN
       policy: bypass
       resources:
         - "^/healthz$"
@@ -175,7 +175,7 @@ access_control:
         - "^/api/v1/runners/[^/]+/hostkeys$"
         - "^/api/v1/runs/[^/]+/manifest$"
         - "^/api/v1/runs/[^/]+/log$"
-    - domain: amadeus.YOUR-DOMAIN
+    - domain: cronomicon.YOUR-DOMAIN
       policy: one_factor
       subject:
         - "group:cronomicon-users"
@@ -184,7 +184,7 @@ session:
   cookies:
     - domain: YOUR-DOMAIN
       authelia_url: https://auth.YOUR-DOMAIN
-      default_redirection_url: https://amadeus.YOUR-DOMAIN
+      default_redirection_url: https://cronomicon.YOUR-DOMAIN
 ```
 
 ---
@@ -252,9 +252,9 @@ in `authResponseHeaders`.
 
 ---
 
-## Step 6 — Configure `amadeus.env`
+## Step 6 — Configure `cronomicon.env`
 
-The file `amadeus.env` (gitignored) is already partially filled in. Verify and
+The file `cronomicon.env` (gitignored) is already partially filled in. Verify and
 complete each section:
 
 ### Auth
@@ -298,15 +298,15 @@ CRONOMICON_COOKIE_SECURE=true
 ### KEK
 
 ```bash
-CRONOMICON_KEK_FILE=/run/secrets/amadeus_kek   # already set; matches the compose mount
+CRONOMICON_KEK_FILE=/run/secrets/cronomicon_kek   # already set; matches the compose mount
 ```
 
 ### GitLab integration
 
 ```bash
-CRONOMICON_GITLAB_BASE_URL=https://gitlab.example.com/ops/amadeus-ops.git
-CRONOMICON_GITLAB_TOKEN=<read-scoped PAT — already set in amadeus.env>
-CRONOMICON_GITLAB_WEBHOOK_SECRET=<already generated in amadeus.env>
+CRONOMICON_GITLAB_BASE_URL=https://gitlab.example.com/ops/cronomicon-ops.git
+CRONOMICON_GITLAB_TOKEN=<read-scoped PAT — already set in cronomicon.env>
+CRONOMICON_GITLAB_WEBHOOK_SECRET=<already generated in cronomicon.env>
 ```
 
 The webhook secret is optional but recommended: it validates that push events
@@ -320,7 +320,7 @@ trigger, but push-triggered syncs are unauthenticated.
 ### Runner bootstrap token
 
 ```bash
-CRONOMICON_RUNNER_BOOTSTRAP_TOKEN=<already generated in amadeus.env>
+CRONOMICON_RUNNER_BOOTSTRAP_TOKEN=<already generated in cronomicon.env>
 ```
 
 Runners use this token to register themselves. It is valid for 24 hours per
@@ -365,7 +365,7 @@ cronomicon on the host and remove Traefik/Authelia:
 
 1. On the `cronomicon` service add a `ports` entry:
    ```yaml
-   amadeus:
+   cronomicon:
      ports:
        - "8080:8080"
    ```
@@ -442,7 +442,7 @@ If the app refuses to boot with `trusted proxies required`, check
 Run the verification script against the live stack:
 
 ```bash
-APP_URL=https://amadeus.YOUR-DOMAIN ./verify-deployment.sh
+APP_URL=https://cronomicon.YOUR-DOMAIN ./verify-deployment.sh
 ```
 
 Expected output:
@@ -469,7 +469,7 @@ accessible on the Docker host at port 8080 (the internal network is not
 `internal: true` in this topology). Always run the direct-port probe:
 
 ```bash
-APP_URL=https://amadeus.YOUR-DOMAIN \
+APP_URL=https://cronomicon.YOUR-DOMAIN \
 APP_DIRECT_URL=http://127.0.0.1:8080 \
 ./verify-deployment.sh
 ```
@@ -482,14 +482,14 @@ Also verify manually:
 ```bash
 # cronomicon must NOT be reachable on the host directly — only Traefik publishes ports
 curl http://localhost:8080        # must fail / connection refused
-curl https://amadeus.YOUR-DOMAIN  # must redirect to Authelia login
+curl https://cronomicon.YOUR-DOMAIN  # must redirect to Authelia login
 ```
 
 ---
 
 ## Step 10 — First login and bootstrap admin
 
-1. Navigate to `https://amadeus.YOUR-DOMAIN` in a browser.
+1. Navigate to `https://cronomicon.YOUR-DOMAIN` in a browser.
 2. Authelia redirects you to its login page.
 3. Log in as a user who is a member of the AD group set in
    `CRONOMICON_BOOTSTRAP_ADMIN_GROUP` (`cronomicon-admins` in the example env).
@@ -504,7 +504,7 @@ curl https://amadeus.YOUR-DOMAIN  # must redirect to Authelia login
 
 Once real group mappings are in place:
 
-1. Open `amadeus.env` and remove (or comment out) `CRONOMICON_BOOTSTRAP_ADMIN_GROUP`.
+1. Open `cronomicon.env` and remove (or comment out) `CRONOMICON_BOOTSTRAP_ADMIN_GROUP`.
 2. Redeploy:
    ```bash
    docker compose up -d
@@ -520,8 +520,8 @@ it grants admin to any member of that group regardless of the DB mappings.
 
 For push-triggered syncs (jobs update immediately on merge):
 
-1. In GitLab, go to your `amadeus-ops` repo → **Settings → Webhooks**.
-2. URL: `https://amadeus.YOUR-DOMAIN/api/v1/gitlab/webhook`
+1. In GitLab, go to your `cronomicon-ops` repo → **Settings → Webhooks**.
+2. URL: `https://cronomicon.YOUR-DOMAIN/api/v1/gitlab/webhook`
 3. Secret token: the value you set in `CRONOMICON_GITLAB_WEBHOOK_SECRET`
 4. Trigger: **Push events**
 5. SSL verification: enabled
@@ -542,12 +542,12 @@ See `documentation/runner-install.html` for full instructions (and
 
 ```bash
 # On the runner host
-CRONOMICON_RUNNER_URL=https://amadeus.YOUR-DOMAIN \
-CRONOMICON_RUNNER_BOOTSTRAP_TOKEN=<value from amadeus.env> \
+CRONOMICON_RUNNER_URL=https://cronomicon.YOUR-DOMAIN \
+CRONOMICON_RUNNER_BOOTSTRAP_TOKEN=<value from cronomicon.env> \
 CRONOMICON_RUNNER_NAME=runner-1 \
 CRONOMICON_RUNNER_OS=Linux \
 CRONOMICON_RUNNER_CAPABILITIES=bash,python \
-./amadeus-runner  # or use the systemd unit: amadeus-runner.service
+./cronomicon-runner  # or use the systemd unit: cronomicon-runner.service
 ```
 
 Two runner images are available:
@@ -565,12 +565,12 @@ Regenerate via `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` (redeploy) or via
 
 ## Persistence and data safety
 
-All durable state lives on the `amadeus-data` named Docker volume at
-`/var/lib/amadeus`:
+All durable state lives on the `cronomicon-data` named Docker volume at
+`/var/lib/cronomicon`:
 
 | Path | Contents |
 |---|---|
-| `amadeus.db` (+ `-wal`, `-shm`) | SQLite database |
+| `cronomicon.db` (+ `-wal`, `-shm`) | SQLite database |
 | `git-cache/` | GitLab clone cache (survives restarts) |
 | `backups/` | Nightly local `VACUUM INTO` snapshots |
 | run logs | Per-run execution output |
@@ -582,7 +582,7 @@ persists across reboots automatically.
 To inspect volume data from the host:
 
 ```bash
-docker run --rm -v amadeus_amadeus-data:/data busybox ls -la /data
+docker run --rm -v cronomicon_cronomicon-data:/data busybox ls -la /data
 ```
 
 ---
@@ -620,7 +620,7 @@ image tag. Keep at least one snapshot from before every upgrade.
 ## CI-fronted deployment (DockHand pulls, never builds)
 
 Since 2026-09-18 the image is built by the CI pipeline and pushed to
-`registry.example.com/amadeus`. DockHand no longer builds anything: the pipeline calls
+`registry.example.com/cronomicon`. DockHand no longer builds anything: the pipeline calls
 the stack's webhook after the push and DockHand re-pulls `:latest`.
 
 Why: DockHand built from a working copy it kept across deploys; that copy
@@ -647,14 +647,14 @@ In DockHand → the cronomicon git stack → Edit:
    it — the pipeline calls it only after a tag's image has been pushed, and a
    push-triggered call would redeploy before the new image exists.
 3. **Environment variables:** remove `CRONOMICON_IMAGE` and `CRONOMICON_VERSION` if
-   present. The compose file defaults to `registry.example.com/amadeus:latest`
+   present. The compose file defaults to `registry.example.com/cronomicon:latest`
    and CI stamps the version from the tag. (Set `CRONOMICON_IMAGE` only to pin a
    specific tag, e.g. to roll back to `…:v1.5.44`.)
 4. **Registry credential:** only if the internal registry requires authentication
    to pull — Settings → Registries → Add Registry. The sibling stacks pull
    without one.
-5. **Data volume:** the compose file declares `amadeus-data` as
-   `external: true` with the name `amadeus_amadeus-data`. Confirm with
+5. **Data volume:** the compose file declares `cronomicon-data` as
+   `external: true` with the name `cronomicon_cronomicon-data`. Confirm with
    `docker volume ls` that this is the volume the running stack uses; if
    DockHand's project name differs, correct the `name:` under `volumes:` —
    compose refuses to start rather than creating an empty one.
@@ -679,7 +679,7 @@ release so `:latest` resumes.
 ### Building on the host (break-glass)
 
 ```bash
-CRONOMICON_IMAGE=amadeus:local docker compose up -d --build   # from a FRESH clone
+CRONOMICON_IMAGE=cronomicon:local docker compose up -d --build   # from a FRESH clone
 ```
 
 Supported only from a clean checkout; not the normal path.
@@ -721,8 +721,8 @@ answers via the public URL. If you must expose it, choose one of:
           users:
             - "prometheus:$apr1$..."   # htpasswd -nB prometheus
     routers:
-      amadeus-metrics:
-        rule: "Host(`amadeus.YOUR-DOMAIN`) && Path(`/metrics`)"
+      cronomicon-metrics:
+        rule: "Host(`cronomicon.YOUR-DOMAIN`) && Path(`/metrics`)"
         entryPoints: [websecure]
         tls: {}
         middlewares: [strip-remote-headers, metrics-basic]
@@ -747,7 +747,7 @@ static IP (`172.28.0.2/32` for the bundled compose stack).
 **Login redirects to Authelia but comes back unauthenticated / loops**
 `CRONOMICON_TRUSTED_PROXIES` does not match the actual source IP reaching the app.
 Check cronomicon logs for `peer not in trusted proxies`. Run
-`docker network inspect amadeus_internal` to see Traefik's actual IP.
+`docker network inspect cronomicon_internal` to see Traefik's actual IP.
 
 **`/readyz` returns 503 after startup**
 Migrations are still running (normal for the first boot after an upgrade) or
@@ -755,16 +755,16 @@ the DB volume is not writable. Check `docker compose logs cronomicon`.
 
 **Version shows `dev` instead of `v0.36.5`**
 The `CRONOMICON_VERSION` build arg was not passed. Run the stamped build from
-Step 7. Confirm with `curl https://amadeus.YOUR-DOMAIN/version`.
+Step 7. Confirm with `curl https://cronomicon.YOUR-DOMAIN/version`.
 
 **Stored secrets fail to decrypt after moving from dev**
-The KEK in `secrets/amadeus_kek` does not match the one used to encrypt the
+The KEK in `secrets/cronomicon_kek` does not match the one used to encrypt the
 secrets in the DB. Replace with the original KEK, or re-enter the secrets in
 the UI after deploying with the correct KEK.
 
 **`CRONOMICON_GITLAB_WEBHOOK_SECRET` set but rotation API returns 409**
 This is expected behaviour — the env value pins the secret and blocks the
-UI-based rotation API. To rotate: change the value in `amadeus.env` and
+UI-based rotation API. To rotate: change the value in `cronomicon.env` and
 `docker compose up -d`. Update the GitLab webhook to match.
 
 ---

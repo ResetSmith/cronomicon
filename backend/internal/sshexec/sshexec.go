@@ -322,7 +322,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// only (never values).
 	if rerr != nil {
 		s.log.Error("ssh executor resolve references", "trace_id", r.traceID, "error", rerr)
-		sink.line("", "amadeus: reference injection failed: "+runref.OperatorMessage(rerr))
+		sink.line("", "cronomicon: reference injection failed: "+runref.OperatorMessage(rerr))
 		s.finalize(ctx, r, "failure", nil)
 		return
 	}
@@ -333,7 +333,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	if resolved != nil && len(resolved.Refs) > 0 {
 		if err := s.auditInjection(runCtx, r, resolved); err != nil {
 			s.log.Error("ssh executor injection audit failed", "trace_id", r.traceID, "error", err)
-			sink.line("", "amadeus: dispatch audit failed; run halted (references are not injected without an audit trail)")
+			sink.line("", "cronomicon: dispatch audit failed; run halted (references are not injected without an audit trail)")
 			s.finalize(ctx, r, "failure", nil)
 			return
 		}
@@ -354,7 +354,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		}
 		s.log.Warn("ssh executor: key-bound run reached dispatch on the ssh executor",
 			"trace_id", r.traceID, "references", names)
-		sink.line("", "amadeus: this run binds SSH key "+strings.Join(names, ", ")+
+		sink.line("", "cronomicon: this run binds SSH key "+strings.Join(names, ", ")+
 			" and resolved to the SSH executor, which cannot deliver key files; run it on a runner, or bind the key as a Secret and write the file in the job body")
 		s.finalize(ctx, r, "failure", nil)
 		return
@@ -362,7 +362,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 
 	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.gitCacheDir, r.jobName, r.jobSource, r.runType)
 	if err != nil {
-		sink.line("", "amadeus: "+err.Error())
+		sink.line("", "cronomicon: "+err.Error())
 		s.finalize(ctx, r, "failure", nil)
 		return
 	}
@@ -374,12 +374,12 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	targets, _, err := execspec.ResolveRun(runCtx, s.db, r.scope, r.targetHost,
 		execspec.OverrideHosts(r.overrideJSON), execspec.OverrideGroups(r.overrideJSON))
 	if err != nil {
-		sink.line("", "amadeus: target resolution failed: "+err.Error())
+		sink.line("", "cronomicon: target resolution failed: "+err.Error())
 		s.finalize(ctx, r, "failure", nil)
 		return
 	}
 	if len(targets) == 0 {
-		sink.line("", "amadeus: no hosts resolved for this run (empty scope/target)")
+		sink.line("", "cronomicon: no hosts resolved for this run (empty scope/target)")
 		s.finalize(ctx, r, "failure", nil)
 		return
 	}
@@ -393,12 +393,12 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		if r.sshCred != "" {
 			id, found, err := sshkeys.IDByLabel(runCtx, s.db, r.sshCred)
 			if err != nil {
-				sink.line("", "amadeus: ssh credential lookup failed: "+err.Error())
+				sink.line("", "cronomicon: ssh credential lookup failed: "+err.Error())
 				s.finalize(ctx, r, "failure", nil)
 				return
 			}
 			if !found {
-				sink.line("", fmt.Sprintf("amadeus: ssh credential %q no longer exists (deleted or renamed since this run was queued)", r.sshCred))
+				sink.line("", fmt.Sprintf("cronomicon: ssh credential %q no longer exists (deleted or renamed since this run was queued)", r.sshCred))
 				s.finalize(ctx, r, "failure", nil)
 				return
 			}
@@ -425,7 +425,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		for _, t := range targets {
 			if t.Via != "" && t.HostKey == "" {
 				sink.line("", fmt.Sprintf(
-					"amadeus: refusing to inject secrets over bastion %q to unpinned target %q — pin the target host key first (run once without secrets)", t.Via, t.Name))
+					"cronomicon: refusing to inject secrets over bastion %q to unpinned target %q — pin the target host key first (run once without secrets)", t.Via, t.Name))
 				s.finalizeReason(ctx, r, "failure", nil, "unpinned_bastion_target")
 				return
 			}
@@ -449,7 +449,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		s.log.Error("ssh executor: captured output would leak an injected secret; failing run closed",
 			"trace_id", r.traceID, "output", leaked)
 		sink.line("", fmt.Sprintf(
-			"amadeus: output %q would leak an injected secret value; refusing to capture it and failing the run", leaked))
+			"cronomicon: output %q would leak an injected secret value; refusing to capture it and failing the run", leaked))
 		s.finalizeReason(ctx, r, "failure", nil, "output_secret_leak")
 		return
 	}
@@ -459,7 +459,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 
 	status, exit := aggregate(results)
 	if execCtx.Err() == context.DeadlineExceeded {
-		sink.line("", "amadeus: job timed out")
+		sink.line("", "cronomicon: job timed out")
 		status = "failure"
 	}
 	s.finalize(ctx, r, status, exit)
@@ -618,26 +618,26 @@ func (s *Service) fanOut(ctx context.Context, targets []target, cmd remotecmd.Re
 // runTarget connects to one host and runs the command, streaming output.
 func (s *Service) runTarget(ctx context.Context, t target, cmd remotecmd.Rendered, sink *logSink) hostResult {
 	if t.ResolveErr != "" {
-		sink.line(t.Name, "amadeus: "+t.ResolveErr)
+		sink.line(t.Name, "cronomicon: "+t.ResolveErr)
 		return hostResult{host: t.Name, exitCode: -1, err: fmt.Errorf("%s", t.ResolveErr)}
 	}
 
 	signer, err := loadSigner(ctx, s.db, s.cfg, s.sec, t.AuthCredentialID, t.AuthKeyEnvVar)
 	if err != nil {
-		sink.line(t.Name, "amadeus: auth: "+err.Error())
+		sink.line(t.Name, "cronomicon: auth: "+err.Error())
 		return hostResult{host: t.Name, exitCode: -1, err: err}
 	}
 
 	client, closeFn, err := s.dial(ctx, t, signer)
 	if err != nil {
-		sink.line(t.Name, "amadeus: connect: "+err.Error())
+		sink.line(t.Name, "cronomicon: connect: "+err.Error())
 		return hostResult{host: t.Name, exitCode: -1, err: err}
 	}
 	defer closeFn()
 
 	session, err := client.NewSession()
 	if err != nil {
-		sink.line(t.Name, "amadeus: session: "+err.Error())
+		sink.line(t.Name, "cronomicon: session: "+err.Error())
 		return hostResult{host: t.Name, exitCode: -1, err: err}
 	}
 	defer session.Close()
@@ -679,7 +679,7 @@ func (s *Service) runTarget(ctx context.Context, t target, cmd remotecmd.Rendere
 	//
 	// So if the remote closed the session while we were still writing stdin, the
 	// copy failed with io.EOF, which is not an *ssh.ExitError — the run scored -1,
-	// emitted "amadeus: EOF" and was marked FAILED even though the command exited 0.
+	// emitted "cronomicon: EOF" and was marked FAILED even though the command exited 0.
 	//
 	// That is reachable in production, not just in tests. Since H1 the interpreter
 	// is invoked in a form that reads its PROGRAM from stdin (`bash -s`, `python3 -`,
@@ -695,7 +695,7 @@ func (s *Service) runTarget(ctx context.Context, t target, cmd remotecmd.Rendere
 	if cmd.Stdin != "" {
 		stdinPipe, perr := session.StdinPipe()
 		if perr != nil {
-			sink.line(t.Name, "amadeus: stdin: "+perr.Error())
+			sink.line(t.Name, "cronomicon: stdin: "+perr.Error())
 			return hostResult{host: t.Name, exitCode: -1, err: perr}
 		}
 		go func() {
@@ -717,7 +717,7 @@ func (s *Service) runTarget(ctx context.Context, t target, cmd remotecmd.Rendere
 			exit = ee.ExitStatus()
 		} else {
 			exit = -1
-			sink.line(t.Name, "amadeus: "+runErr.Error())
+			sink.line(t.Name, "cronomicon: "+runErr.Error())
 		}
 	}
 	return hostResult{host: t.Name, exitCode: exit, err: runErr}

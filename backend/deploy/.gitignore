@@ -1,5 +1,5 @@
 # Never commit live deployment secrets, certs, or environment.
-amadeus.env
+cronomicon.env
 authelia/users_database.yml
 authelia/secrets/
 secrets/

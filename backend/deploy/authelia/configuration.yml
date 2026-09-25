@@ -53,7 +53,7 @@ access_control:
     # The app still enforces the runner bearer on the /api paths below, so the
     # bypass here only skips the SSO, not authentication. This rule must come
     # BEFORE the one_factor rule (first match wins).
-    - domain: amadeus.example.com
+    - domain: cronomicon.example.com
       policy: bypass
       resources:
         - "^/healthz$"
@@ -68,7 +68,7 @@ access_control:
         - "^/api/v1/runners/[^/]+/hostkeys$"
         - "^/api/v1/runs/[^/]+/manifest$"
         - "^/api/v1/runs/[^/]+/log$"
-    - domain: amadeus.example.com
+    - domain: cronomicon.example.com
       policy: one_factor
       subject:
         - "group:cronomicon-users"
@@ -80,7 +80,7 @@ session:
   cookies:
     - domain: example.com
       authelia_url: https://auth.example.com
-      default_redirection_url: https://amadeus.example.com
+      default_redirection_url: https://cronomicon.example.com
       expiration: 12h
       inactivity: 1h
 

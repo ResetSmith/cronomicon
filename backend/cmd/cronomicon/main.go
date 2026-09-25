@@ -191,7 +191,7 @@ func run() error {
 			"error", err)
 	}
 
-	// LU-4: attach amadeus.log now that the run-log directory is readable. Only
+	// LU-4: attach cronomicon.log now that the run-log directory is readable. Only
 	// the build banner and config warnings precede this point, so nothing of
 	// diagnostic value is stdout-only — but the attach line repeats the build
 	// stamp so the file is self-identifying without cross-referencing stdout.
@@ -574,8 +574,8 @@ func newLogger(cfg *config.Config) (*slog.Logger, *logsink.Writer) {
 	return slog.New(h), sink
 }
 
-// processLogPath returns where amadeus.log should live: the explicit
-// CRONOMICON_LOG_FILE when set, else amadeus.log beside the run logs. Empty means
+// processLogPath returns where cronomicon.log should live: the explicit
+// CRONOMICON_LOG_FILE when set, else cronomicon.log beside the run logs. Empty means
 // file logging is switched off.
 func processLogPath(cfg *config.Config, logDir string) string {
 	if !cfg.LogFileEnabled {
@@ -607,7 +607,7 @@ const auditLogName = "audit.log"
 // processLogName is also what main excludes from the LU-1 reaper: the reaper
 // collects *.log by mtime, and removing this one out from under an open handle
 // would send every later line to an unlinked inode.
-const processLogName = "amadeus.log"
+const processLogName = "cronomicon.log"
 
 // runValidate implements `cronomicon validate <path>...` (T11), reusing the runtime
 // YAML/pragma parser from the gitlab slice (T10/S10). A path that is a directory

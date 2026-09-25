@@ -8,7 +8,7 @@ import {
   personalizedInstallTwoStep,
 } from "./runner-install-cmd";
 
-const ORIGIN = "https://amadeus.example.com";
+const ORIGIN = "https://cronomicon.example.com";
 const TOKEN = "crn_reg_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 describe("installOneLiner", () => {

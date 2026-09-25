@@ -44,8 +44,8 @@ const FILES = [
     // The annotated runner.env skeleton — fetched by the "Provision a Runner"
     // helper (runner-provision.ts), which patches values into it verbatim so
     // the emitted env can't drift from this single source (Phase 6).
-    src: "backend/deploy/amadeus-runner.env.example",
-    publish: "amadeus-runner.env.example",
+    src: "backend/deploy/cronomicon-runner.env.example",
+    publish: "cronomicon-runner.env.example",
     type: "text/plain; charset=utf-8",
   },
 ];
@@ -252,7 +252,7 @@ function buildGuide(guide, assets) {
 
 export function publishManuals() {
   return {
-    name: "amadeus-publish-manuals",
+    name: "cronomicon-publish-manuals",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const path = (req.url || "").split("?")[0];

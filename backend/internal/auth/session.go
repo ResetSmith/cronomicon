@@ -28,7 +28,7 @@ const (
 	// cookies to reason about in THAT release: everyone re-authenticates once here,
 	// while the field is still inert and a bad resolution cannot deny anyone.
 	// Deliberately paid a release early, for exactly that reason.
-	sessionCookieName = "amadeus_session_v3"
+	sessionCookieName = "cronomicon_session_v3"
 	// sessionTTL bounds how long a session survives (SU-5): dropped from 12h to 8h so
 	// stale access is bounded even between epoch bumps. The session-epoch check
 	// (auth.Service) is the primary revocation mechanism; the TTL is the backstop.

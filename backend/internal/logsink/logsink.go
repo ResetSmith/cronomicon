@@ -299,5 +299,5 @@ func (w *Writer) notice(err error) {
 		return
 	}
 	w.lastNotice = now
-	fmt.Fprintf(os.Stderr, "amadeus: process log file unavailable (stdout unaffected): %v\n", err)
+	fmt.Fprintf(os.Stderr, "cronomicon: process log file unavailable (stdout unaffected): %v\n", err)
 }

@@ -5,8 +5,8 @@ tls:
   # Mounted certificate (./traefik/certs). For automated certs instead, enable a
   # certificatesResolver (ACME) in the traefik command and drop this block.
   certificates:
-    - certFile: /etc/traefik/certs/amadeus.crt
-      keyFile: /etc/traefik/certs/amadeus.key
+    - certFile: /etc/traefik/certs/cronomicon.crt
+      keyFile: /etc/traefik/certs/cronomicon.key
   options:
     default:
       minVersion: VersionTLS12

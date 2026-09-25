@@ -11,7 +11,7 @@
 // that still load-tests routing/auth but not the append path.
 //
 // Usage:
-//   BASE=https://amadeus.staging.example.com RUNNER_TOKEN=crn_run_xxx \
+//   BASE=https://cronomicon.staging.example.com RUNNER_TOKEN=crn_run_xxx \
 //   TRACE_IDS=run-1,run-2,run-3 \
 //   k6 run --vus 50 --duration 5m backend/deploy/loadtest/log-ingest.js
 

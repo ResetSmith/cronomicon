@@ -114,7 +114,7 @@ func composeReq(t *testing.T, h http.Handler, method, path, group, body string) 
 	if method != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-CSRF-Token", "tok")
-		req.AddCookie(&http.Cookie{Name: "amadeus_csrf", Value: "tok"})
+		req.AddCookie(&http.Cookie{Name: "cronomicon_csrf", Value: "tok"})
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

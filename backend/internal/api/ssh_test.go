@@ -28,7 +28,7 @@ func devLogin(t *testing.T, tsURL string) (*http.Client, string) {
 	u, _ := url.Parse(tsURL)
 	var csrf string
 	for _, c := range jar.Cookies(u) {
-		if c.Name == "amadeus_csrf" {
+		if c.Name == "cronomicon_csrf" {
 			csrf = c.Value
 		}
 	}

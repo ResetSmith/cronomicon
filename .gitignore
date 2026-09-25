@@ -1,14 +1,14 @@
 # Live runtime environment — contains real credentials (PAT, tokens). The
-# tracked template lives at backend/deploy/amadeus.env.example.
-backend/amadeus.env
-amadeus.env
+# tracked template lives at backend/deploy/cronomicon.env.example.
+backend/cronomicon.env
+cronomicon.env
 backend/deploy/secrets
 
-# Compiled binaries — built locally by backend/Makefile (`-o backend/amadeus`
+# Compiled binaries — built locally by backend/Makefile (`-o backend/cronomicon`
 # and the runner); the Docker image builds its own inside the container. Local
 # builds keep working; these outputs are just no longer tracked.
-backend/amadeus
-backend/amadeus-runner
+backend/cronomicon
+backend/cronomicon-runner
 backend/bin
 frontend/tsconfig.tsbuildinfo
 

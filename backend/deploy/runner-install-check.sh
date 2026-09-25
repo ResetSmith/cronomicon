@@ -64,7 +64,7 @@ check "help lists --vault-pass-file" bash -c "bash '$SCRIPT' --help | grep -q --
 check_rejects "missing --server rejected" "Server URL" \
   bash "$SCRIPT" -t crn_reg_x
 check_rejects "missing --token rejected" "Registration token" \
-  bash "$SCRIPT" -s https://amadeus.example.com
+  bash "$SCRIPT" -s https://cronomicon.example.com
 
 # --- Flag combinations (validated before the root gate) ---
 check_rejects "--key-dir + --key-map rejected" "mutually exclusive" \

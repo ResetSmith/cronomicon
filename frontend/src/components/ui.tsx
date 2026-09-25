@@ -1,5 +1,5 @@
 // Canonical UI kit — ported from the prototype's shared components
-// (amadeus-core.jsx). Views should prefer these over rolling their own so the
+// (cronomicon-core.jsx). Views should prefer these over rolling their own so the
 // app keeps one visual language. Everything reads the mutable `c` tokens during
 // render (theme.ts), so components repaint on theme toggle via the Outlet
 // remount in Shell.

@@ -55,7 +55,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 	deliveredKeys, keyEnv, cleanupKeys, kerr := materializeKeys(m.Keys)
 	defer cleanupKeys()
 	if kerr != nil {
-		emit("amadeus: " + kerr.Error())
+		emit("cronomicon: " + kerr.Error())
 		buf.seal(makeEnvelope(-1, start, time.Now(), ""))
 		return -1
 	}
@@ -73,7 +73,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 	fileEnv, cleanupFiles, ferr := materializeSecretFiles(m.SecretFiles)
 	defer cleanupFiles()
 	if ferr != nil {
-		emit("amadeus: " + ferr.Error())
+		emit("cronomicon: " + ferr.Error())
 		buf.seal(makeEnvelope(-1, start, time.Now(), ""))
 		return -1
 	}
@@ -99,7 +99,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 		// SSH run-types (bash/perl/powershell/python) fan out to targets.
 		targets, err := e.resolveTargets(m)
 		if err != nil {
-			emit("amadeus: " + err.Error())
+			emit("cronomicon: " + err.Error())
 			exitCode = 1
 		} else {
 			cmd := buildRemoteCommand(m)
@@ -117,7 +117,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 	}
 
 	if runCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-		emit(fmt.Sprintf("amadeus: run timed out after %ds; process killed", m.TimeoutSeconds))
+		emit(fmt.Sprintf("cronomicon: run timed out after %ds; process killed", m.TimeoutSeconds))
 		if exitCode == 0 {
 			exitCode = -1
 		}

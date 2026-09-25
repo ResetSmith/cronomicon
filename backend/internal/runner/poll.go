@@ -111,7 +111,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	// handler also refuses.
 	if protocolVersion < runnerproto.MinProtocolVersion {
 		httpx.Fail(w, http.StatusUpgradeRequired, "protocol_too_old",
-			fmt.Sprintf("runner speaks protocol version %d; this server requires %d — upgrade the amadeus-runner binary and restart it (the runner keeps its identity; no deregistration needed)",
+			fmt.Sprintf("runner speaks protocol version %d; this server requires %d — upgrade the cronomicon-runner binary and restart it (the runner keeps its identity; no deregistration needed)",
 				protocolVersion, runnerproto.MinProtocolVersion))
 		return
 	}

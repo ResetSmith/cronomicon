@@ -8,10 +8,10 @@
 # own enforcement from outside the trust boundary.
 #
 # Usage:
-#   APP_URL=https://amadeus.example.com ./verify-deployment.sh
+#   APP_URL=https://cronomicon.example.com ./verify-deployment.sh
 #   # Optionally probe the app port directly (bypassing the proxy) to prove the
 #   # trusted-proxy control — this is the most important check:
-#   APP_DIRECT_URL=http://amadeus-host:8080 APP_URL=https://amadeus.example.com ./verify-deployment.sh
+#   APP_DIRECT_URL=http://cronomicon-host:8080 APP_URL=https://cronomicon.example.com ./verify-deployment.sh
 #
 # Exit non-zero if any check fails.
 

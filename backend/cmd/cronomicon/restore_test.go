@@ -12,7 +12,7 @@ import (
 // migrated DB and fails on a non-DB file (FU-3 Phase C).
 func TestVerifyRestoredDB(t *testing.T) {
 	dir := t.TempDir()
-	good := filepath.Join(dir, "amadeus.db")
+	good := filepath.Join(dir, "cronomicon.db")
 	pool, err := db.Open(good)
 	if err != nil {
 		t.Fatalf("open: %v", err)

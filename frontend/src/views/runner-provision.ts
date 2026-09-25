@@ -4,7 +4,7 @@
 //
 // Single-source rule (the plan's drift requirement): the env artifact is NOT
 // authored here — it patches values into the VERBATIM
-// backend/deploy/amadeus-runner.env.example, published by
+// backend/deploy/cronomicon-runner.env.example, published by
 // vite-manuals-plugin.js at ENV_EXAMPLE_PATH. setVar throws if a var it needs
 // is missing from the template, so a rename in the example (or config.go)
 // breaks loudly here and in the unit tests instead of drifting silently.
@@ -15,7 +15,7 @@
 import { RUNNER_INSTALL_SCRIPT_PATH } from "./runner-install-cmd";
 import { RUN_TYPES, RUNNER_ONLY_TYPES } from "../runtypes";
 
-export const ENV_EXAMPLE_PATH = "/amadeus-runner.env.example";
+export const ENV_EXAMPLE_PATH = "/cronomicon-runner.env.example";
 
 // The closed run-type vocabulary now lives in runtypes.ts (RP-5); re-exported
 // under the provisioning names. ansible/terraform are runner-only local
@@ -25,8 +25,8 @@ export const FAT_RUN_TYPES = RUNNER_ONLY_TYPES;
 
 // Installer-standard destination paths (runner-install.sh header constants).
 // The env artifact references these so it matches what the script installs.
-const STATE_DIR = "/var/lib/amadeus-runner";
-const CONF_DIR = "/etc/amadeus-runner";
+const STATE_DIR = "/var/lib/cronomicon-runner";
+const CONF_DIR = "/etc/cronomicon-runner";
 const DEST = {
   knownHosts: `${STATE_DIR}/known_hosts`,
   keysDir: `${STATE_DIR}/keys`,
@@ -80,7 +80,7 @@ function assertVar(text: string, name: string): RegExp {
   const re = new RegExp(`^#?[ \\t]*${name}=.*$`, "m");
   if (!re.test(text)) {
     throw new Error(
-      `env template is missing ${name} — backend/deploy/amadeus-runner.env.example and runner-provision.ts have drifted`,
+      `env template is missing ${name} — backend/deploy/cronomicon-runner.env.example and runner-provision.ts have drifted`,
     );
   }
   return re;
@@ -206,7 +206,7 @@ export function provisionOneLiner(o: ProvisionOptions): string {
   if (o.checkout) parts.push(`--allow-checkout`);
   if (o.checkoutRepos) parts.push(`--checkout-repos ${shellArg(o.checkoutRepos)}`);
   // The *-file flags take a SOURCE path on the installing host; the installer
-  // copies it to the standard /etc/amadeus-runner/{checkout-token,vault-pass}.
+  // copies it to the standard /etc/cronomicon-runner/{checkout-token,vault-pass}.
   if (o.checkoutTokenFile) parts.push(`--checkout-token-file ${shellArg(o.checkoutTokenFile)}`);
   if (o.vaultPasswordFile) parts.push(`--vault-pass-file ${shellArg(o.vaultPasswordFile)}`);
   return parts.join(" ");
@@ -255,12 +255,12 @@ export function provisionDockerRun(o: ProvisionOptions): string {
           `# (slim ⇒ SSH-onward run-types; use :fat for ansible/terraform).`,
         ]
       : []),
-    `docker volume create amadeus-runner-data`,
+    `docker volume create cronomicon-runner-data`,
     ``,
     `docker run -d --name ${shellArg(name)} --restart unless-stopped \\`,
     ...env.map((e) => `  -e ${shellArg(e)} \\`),
-    `  -v amadeus-runner-data:${STATE_DIR} \\`,
-    `  amadeus-runner:${fat ? "fat" : "slim"}`,
+    `  -v cronomicon-runner-data:${STATE_DIR} \\`,
+    `  cronomicon-runner:${fat ? "fat" : "slim"}`,
   ];
   return lines.join("\n");
 }

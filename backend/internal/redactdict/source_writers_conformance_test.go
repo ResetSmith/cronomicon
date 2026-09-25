@@ -21,7 +21,7 @@ import (
 // A "writer" is any non-test file that writes to secrets / ssh_credentials /
 // env_vars or calls secrets.EncryptString (the settings columns). Exempt:
 // internal/seed (demo data, before any dictionary exists) and
-// cmd/amadeus/rewrap.go (re-wraps ciphertext; the plaintext, which is what the
+// cmd/cronomicon/rewrap.go (re-wraps ciphertext; the plaintext, which is what the
 // dictionary holds, is unchanged).
 
 var (
@@ -34,7 +34,7 @@ func TestEveryRedactionSourceWriterNotifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exempt := map[string]bool{"cmd/amadeus/rewrap.go": true, "internal/secrets/blob.go": true}
+	exempt := map[string]bool{"cmd/cronomicon/rewrap.go": true, "internal/secrets/blob.go": true}
 	var silent []string
 	for _, dir := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {

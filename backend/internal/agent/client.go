@@ -38,7 +38,7 @@ var errIdentityRejected = fmt.Errorf("runner token rejected by server (401 — d
 // protocol and is refused the same way. The identity file is kept, the agent
 // keeps polling (and keeps saying so in its log), and the fix — upgrading this
 // binary — resolves it with no operator surgery on the server side.
-var errProtocolTooOld = fmt.Errorf("server refused this agent's wire protocol (426 — upgrade the amadeus-runner binary)")
+var errProtocolTooOld = fmt.Errorf("server refused this agent's wire protocol (426 — upgrade the cronomicon-runner binary)")
 
 // errNoWork signals a poll that returned 204 No Content (no assignment, no
 // control). Not an error condition — the loop just waits for the next tick.

@@ -38,7 +38,7 @@ type Config struct {
 	// additional on-disk copy, which exists so a crash is diagnosable on a host
 	// where nothing is collecting stdout.
 	//
-	// LogFilePath empty means "{run-log dir}/amadeus.log", resolved from the
+	// LogFilePath empty means "{run-log dir}/cronomicon.log", resolved from the
 	// log-storage setting after the DB opens and re-pointed live when that
 	// setting changes (LU-5). Set it to pin the process log somewhere else —
 	// worth doing if the run-log tree ever moves to slower or shared storage,
@@ -101,7 +101,7 @@ type Config struct {
 	RunnerBootstrapToken string // shared registration token, 24h rotation
 
 	// Runner-agent binary distribution (runner provisioning D1). The server
-	// image bakes cross-compiled amadeus-runner binaries + SHA256SUMS into this
+	// image bakes cross-compiled cronomicon-runner binaries + SHA256SUMS into this
 	// directory; GET /agents/{filename} serves them so a target host can
 	// install a runner with nothing but curl + the Cronomicon server. Deployments
 	// without the files (bare-metal `go build`) get a clean 404 with a
@@ -263,7 +263,7 @@ func Load() (*Config, error) {
 		LogFileKeep:         envInt("CRONOMICON_LOG_FILE_KEEP", logsink.DefaultKeep),
 		AuditLogEnabled:     envBool("CRONOMICON_AUDIT_LOG_ENABLED", true),
 		AuditLogPath:        env("CRONOMICON_AUDIT_LOG", ""),
-		DBPath:              env("CRONOMICON_DB_PATH", "/var/lib/amadeus/amadeus.db"),
+		DBPath:              env("CRONOMICON_DB_PATH", "/var/lib/cronomicon/cronomicon.db"),
 		AuthMode:            env("CRONOMICON_AUTH_MODE", AuthModeTrustedHeader),
 		TrustedProxies:      envList("CRONOMICON_TRUSTED_PROXIES"),
 		TrustedHeaderUser:   env("CRONOMICON_TRUSTED_HEADER_USER", "Remote-User"),
@@ -284,7 +284,7 @@ func Load() (*Config, error) {
 		DevAuth:                 envBool("CRONOMICON_DEV_AUTH", false),
 		DevSeed:                 envBool("CRONOMICON_DEV_SEED", false),
 		RunnerBootstrapToken:    env("CRONOMICON_RUNNER_BOOTSTRAP_TOKEN", ""),
-		AgentDir:                env("CRONOMICON_AGENT_DIR", "/usr/share/amadeus/agents"),
+		AgentDir:                env("CRONOMICON_AGENT_DIR", "/usr/share/cronomicon/agents"),
 		RunnerOfflineAfter:      envDuration("CRONOMICON_RUNNER_OFFLINE_AFTER", 5*time.Minute),
 		RunnerDeregisterAfter:   envDuration("CRONOMICON_RUNNER_DEREGISTER_AFTER", 336*time.Hour), // 14d (D4)
 		SecretKEKFile:           kekFile,

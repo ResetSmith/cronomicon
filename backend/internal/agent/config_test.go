@@ -111,11 +111,11 @@ func TestResolveServerURLScheme(t *testing.T) {
 	ok := []struct {
 		name, in, want string
 	}{
-		{"bare host", "amadeus.example.com", "https://amadeus.example.com"},
-		{"bare host:port", "amadeus.example.com:8080", "https://amadeus.example.com:8080"},
+		{"bare host", "cronomicon.example.com", "https://cronomicon.example.com"},
+		{"bare host:port", "cronomicon.example.com:8080", "https://cronomicon.example.com:8080"},
 		{"https preserved + slash trimmed", "https://srv/", "https://srv"},
 		{"http preserved (dev/local)", "http://localhost:8080", "http://localhost:8080"},
-		{"surrounding whitespace trimmed", "  amadeus.example.com  ", "https://amadeus.example.com"},
+		{"surrounding whitespace trimmed", "  cronomicon.example.com  ", "https://cronomicon.example.com"},
 	}
 	for _, tc := range ok {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestResolveServerURLScheme(t *testing.T) {
 	}
 
 	bad := []struct{ name, in string }{
-		{"unusable scheme", "ftp://amadeus.example.com"},
+		{"unusable scheme", "ftp://cronomicon.example.com"},
 		{"scheme but no host", "https:///only-a-path"},
 	}
 	for _, tc := range bad {

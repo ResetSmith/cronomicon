@@ -89,7 +89,7 @@ func TestWorkflowTriggerScopeGuard(t *testing.T) {
 		req.Header.Set("Remote-User", group+"@example.com")
 		req.Header.Set("Remote-Groups", group)
 		req.Header.Set("X-CSRF-Token", "tok")
-		req.AddCookie(&http.Cookie{Name: "amadeus_csrf", Value: "tok"})
+		req.AddCookie(&http.Cookie{Name: "cronomicon_csrf", Value: "tok"})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec.Code

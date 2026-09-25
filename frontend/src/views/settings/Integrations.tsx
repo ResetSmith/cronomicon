@@ -281,7 +281,7 @@ export function LogStorageSection() {
             hint="Applies immediately — the next run writes here, no restart. Runs already in progress finish writing to the old path, and existing logs are not moved."
             last={!isS3}
           >
-            <input value={form.local?.path ?? ""} onChange={(e) => patch({ local: { ...form.local, path: e.target.value } })} placeholder="/var/lib/amadeus/logs" style={wide()} />
+            <input value={form.local?.path ?? ""} onChange={(e) => patch({ local: { ...form.local, path: e.target.value } })} placeholder="/var/lib/cronomicon/logs" style={wide()} />
           </SettingRow>
           {isS3 && (
             <>

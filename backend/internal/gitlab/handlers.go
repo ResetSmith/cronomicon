@@ -370,7 +370,7 @@ func DefaultCloneDir() string {
 	if d := os.Getenv("CRONOMICON_GIT_CACHE_DIR"); d != "" {
 		return d
 	}
-	return filepath.Join("/var/lib/amadeus/git-cache", "job-definitions")
+	return filepath.Join("/var/lib/cronomicon/git-cache", "job-definitions")
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -20,13 +20,13 @@ blocks that work.
    │ Vault Agent  │ ─────────────────► │  Vault  │
    │  (sidecar)   │ ◄───────────────── │ KV-v2   │
    └──────┬───────┘   KV read (lease)  └─────────┘
-          │ renders (0640 root:amadeus-runner)
+          │ renders (0640 root:cronomicon-runner)
           ▼
-   /etc/amadeus-runner/secrets.env
+   /etc/cronomicon-runner/secrets.env
           │ EnvironmentFile=- (optional, sourced at start)
           ▼
    ┌──────────────────┐
-   │ amadeus-runner   │  buildChildEnv forwards the NAME to the play when the
+   │ cronomicon-runner   │  buildChildEnv forwards the NAME to the play when the
    │  (agent)         │  inventory references {{ lookup('env','NAME') }}
    └──────────────────┘
 ```
@@ -45,25 +45,25 @@ blocks that work.
 
 | File | Installs to | Purpose |
 |------|-------------|---------|
-| `vault-agent.hcl` | `/etc/amadeus-runner/vault/vault-agent.hcl` | Vault Agent config: AppRole auto-auth + the template stanza |
-| `secrets.env.ctmpl` | `/etc/amadeus-runner/vault/secrets.env.ctmpl` | Template that renders KV secrets into `NAME=value` lines |
-| `amadeus-vault-agent.service` | `/etc/systemd/system/amadeus-vault-agent.service` | systemd unit for the sidecar |
+| `vault-agent.hcl` | `/etc/cronomicon-runner/vault/vault-agent.hcl` | Vault Agent config: AppRole auto-auth + the template stanza |
+| `secrets.env.ctmpl` | `/etc/cronomicon-runner/vault/secrets.env.ctmpl` | Template that renders KV secrets into `NAME=value` lines |
+| `cronomicon-vault-agent.service` | `/etc/systemd/system/cronomicon-vault-agent.service` | systemd unit for the sidecar |
 
-The rendered output is `/etc/amadeus-runner/secrets.env`, which
-`amadeus-runner.service` sources via an **optional** `EnvironmentFile=-` line
+The rendered output is `/etc/cronomicon-runner/secrets.env`, which
+`cronomicon-runner.service` sources via an **optional** `EnvironmentFile=-` line
 (the `-` prefix means the runner still starts cleanly when the sidecar is not
 installed — this is non-breaking for existing runners).
 
 ## Prerequisites
 
 - The `vault` binary (Vault Agent mode) on the runner host.
-- A Vault KV-v2 mount holding the secrets, e.g. `amadeus/runners/<runner>`.
+- A Vault KV-v2 mount holding the secrets, e.g. `cronomicon/runners/<runner>`.
 - An AppRole (`role_id` + `secret_id`) whose policy grants **read-only** access
   to only that path. Prefer delivering the `secret_id` **response-wrapped** and
   unwrapping it into the file below, so a long-lived `secret_id` never sits on
   disk.
 
-Example policy (`amadeus-runner-nwd`):
+Example policy (`cronomicon-runner-nwd`):
 
 ```hcl
 path "cronomicon/data/runners/nwd/*" {
@@ -77,22 +77,22 @@ Run as root on the runner host (paths assume the standard layout from
 `runner-install.sh`):
 
 ```bash
-install -d -m 0750 -o root -g amadeus-runner /etc/amadeus-runner/vault
-install -m 0640 vault-agent.hcl      /etc/amadeus-runner/vault/vault-agent.hcl
-install -m 0640 secrets.env.ctmpl    /etc/amadeus-runner/vault/secrets.env.ctmpl
-install -m 0644 amadeus-vault-agent.service /etc/systemd/system/
+install -d -m 0750 -o root -g cronomicon-runner /etc/cronomicon-runner/vault
+install -m 0640 vault-agent.hcl      /etc/cronomicon-runner/vault/vault-agent.hcl
+install -m 0640 secrets.env.ctmpl    /etc/cronomicon-runner/vault/secrets.env.ctmpl
+install -m 0644 cronomicon-vault-agent.service /etc/systemd/system/
 
 # AppRole material (0600 root) — role_id is not secret; secret_id is.
 umask 077
-printf '%s' "<ROLE_ID>"   > /etc/amadeus-runner/vault/role_id
-printf '%s' "<SECRET_ID>" > /etc/amadeus-runner/vault/secret_id   # prefer response-wrapped, see below
+printf '%s' "<ROLE_ID>"   > /etc/cronomicon-runner/vault/role_id
+printf '%s' "<SECRET_ID>" > /etc/cronomicon-runner/vault/secret_id   # prefer response-wrapped, see below
 
 # Point the sidecar at your Vault
 sed -i 's#https://vault.example.com:8200#https://vault.your-domain:8200#' \
-    /etc/amadeus-runner/vault/vault-agent.hcl
+    /etc/cronomicon-runner/vault/vault-agent.hcl
 
 systemctl daemon-reload
-systemctl enable --now amadeus-vault-agent
+systemctl enable --now cronomicon-vault-agent
 ```
 
 Response-wrapped `secret_id` (recommended): store the single-use wrap token
@@ -100,26 +100,26 @@ instead and let the agent unwrap it — set `secret_id_response_wrapping_path`
 handling per your workflow, or unwrap once at provisioning time:
 
 ```bash
-VAULT_TOKEN=<wrap-token> vault unwrap -field=secret_id > /etc/amadeus-runner/vault/secret_id
+VAULT_TOKEN=<wrap-token> vault unwrap -field=secret_id > /etc/cronomicon-runner/vault/secret_id
 ```
 
 ## Wire the runner to source the rendered file
 
-`amadeus-runner.service` already carries the optional line:
+`cronomicon-runner.service` already carries the optional line:
 
 ```ini
-EnvironmentFile=-/etc/amadeus-runner/secrets.env
+EnvironmentFile=-/etc/cronomicon-runner/secrets.env
 ```
 
 `systemd` reads `EnvironmentFile` **only at service start**, so the runner picks
 up a newly rendered value on its next (re)start. Two options for rotation:
 
 1. **Manual (default, safest):** after Vault rotates the secret and the sidecar
-   re-renders, `sudo systemctl restart amadeus-runner`. The runner drains active
+   re-renders, `sudo systemctl restart cronomicon-runner`. The runner drains active
    runs on SIGTERM (`TimeoutStopSec=300`).
 2. **Automatic:** uncomment the `command` line in `secrets.env.ctmpl`'s template
    stanza (in `vault-agent.hcl`) so the sidecar runs
-   `systemctl try-restart amadeus-runner` on every render. Note this triggers a
+   `systemctl try-restart cronomicon-runner` on every render. Note this triggers a
    drain-and-restart on rotation — fine for a pilot, but understand active runs
    are asked to wind down.
 
@@ -143,11 +143,11 @@ into `secrets.env` by hand.
 
 ```bash
 # The sidecar authenticated and rendered
-systemctl status amadeus-vault-agent
-sudo test -f /etc/amadeus-runner/secrets.env && echo "rendered"
+systemctl status cronomicon-vault-agent
+sudo test -f /etc/cronomicon-runner/secrets.env && echo "rendered"
 
 # The runner can read it (as the runner user), names present but not printed here
-sudo runuser -u amadeus-runner -- bash -c 'set -a; . /etc/amadeus-runner/secrets.env; set +a; \
+sudo runuser -u cronomicon-runner -- bash -c 'set -a; . /etc/cronomicon-runner/secrets.env; set +a; \
     [ -n "$NWD_BECOME_PASS" ] && echo "NWD_BECOME_PASS is set"'
 
 # Re-run the job; the play should show the become escalation succeeding on hosts

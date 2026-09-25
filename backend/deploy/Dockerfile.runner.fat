@@ -1,4 +1,4 @@
-# Fat runner image (R4.1 — the confirmed T-a driver): the SAME amadeus-runner
+# Fat runner image (R4.1 — the confirmed T-a driver): the SAME cronomicon-runner
 # agent PLUS the local toolchains it shells out to — ansible (+ Python) and
 # terraform. ansible/terraform run ON the executor, not on the remote host, so a
 # runner that claims `ansible`/`terraform` runs must carry the toolchain locally.
@@ -21,7 +21,7 @@
 #   docker build -f deploy/Dockerfile.runner.fat \
 #     --build-arg VERSION=$(git describe --tags --always --dirty) \
 #     --build-arg COMMIT=$(git rev-parse --short HEAD) \
-#     -t amadeus-runner:fat .
+#     -t cronomicon-runner:fat .
 
 # ── Stage 1: compile the agent. A static (CGO off) binary drops cleanly onto the
 # Debian-slim final stage and has no glibc-version coupling.
@@ -34,14 +34,14 @@ ARG VERSION=dev
 ARG COMMIT=none
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
-    -o /out/amadeus-runner ./cmd/amadeus-runner
+    -o /out/cronomicon-runner ./cmd/cronomicon-runner
 
 # ── Stage 2: a real userland — the toolchains need Python, an OpenSSH client
 # (ansible dials targets over ssh), and the terraform binary. We pin versions so
 # the image is reproducible; bump them deliberately.
 FROM debian:bookworm-slim
 
-LABEL org.opencontainers.image.title="amadeus-runner-fat" \
+LABEL org.opencontainers.image.title="cronomicon-runner-fat" \
       org.opencontainers.image.description="Cronomicon runner agent + ansible/terraform local toolchains" \
       org.opencontainers.image.source="https://github.com/ResetSmith/cronomicon"
 
@@ -76,12 +76,12 @@ RUN set -eux; \
 RUN useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin cronomicon
 
 WORKDIR /app
-COPY --from=build /out/amadeus-runner /app/amadeus-runner
+COPY --from=build /out/cronomicon-runner /app/cronomicon-runner
 
 # Identity + keys/inventory persist here (see install-runner.md).
-RUN mkdir -p /var/lib/amadeus-runner && chown amadeus:cronomicon /var/lib/amadeus-runner
-VOLUME ["/var/lib/amadeus-runner"]
-ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
+RUN mkdir -p /var/lib/cronomicon-runner && chown cronomicon:cronomicon /var/lib/cronomicon-runner
+VOLUME ["/var/lib/cronomicon-runner"]
+ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
 
 USER cronomicon
-ENTRYPOINT ["/app/amadeus-runner"]
+ENTRYPOINT ["/app/cronomicon-runner"]

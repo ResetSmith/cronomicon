@@ -32,11 +32,11 @@ func getAgent(t *testing.T, s *Server, name string) *httptest.ResponseRecorder {
 func TestAgentDownloadServesAllowlistedFile(t *testing.T) {
 	dir := t.TempDir()
 	content := []byte("#!fake-binary\n")
-	if err := os.WriteFile(filepath.Join(dir, "amadeus-runner-linux-amd64"), content, 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "cronomicon-runner-linux-amd64"), content, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := getAgent(t, agentTestServer(t, dir), "amadeus-runner-linux-amd64")
+	rec := getAgent(t, agentTestServer(t, dir), "cronomicon-runner-linux-amd64")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
@@ -46,14 +46,14 @@ func TestAgentDownloadServesAllowlistedFile(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "application/octet-stream" {
 		t.Errorf("Content-Type = %q, want application/octet-stream", ct)
 	}
-	if cd := rec.Header().Get("Content-Disposition"); cd != `attachment; filename="amadeus-runner-linux-amd64"` {
+	if cd := rec.Header().Get("Content-Disposition"); cd != `attachment; filename="cronomicon-runner-linux-amd64"` {
 		t.Errorf("Content-Disposition = %q", cd)
 	}
 }
 
 func TestAgentDownloadServesChecksums(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte("abc  amadeus-runner-linux-amd64\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "SHA256SUMS"), []byte("abc  cronomicon-runner-linux-amd64\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rec := getAgent(t, agentTestServer(t, dir), "SHA256SUMS")
@@ -71,7 +71,7 @@ func TestAgentDownloadRejectsUnknownFilename(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "secrets.env"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"secrets.env", "amadeus-runner-windows-amd64.exe", "..", "index.html"} {
+	for _, name := range []string{"secrets.env", "cronomicon-runner-windows-amd64.exe", "..", "index.html"} {
 		rec := getAgent(t, agentTestServer(t, dir), name)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("GET /agents/%s = %d, want 404", name, rec.Code)
@@ -88,7 +88,7 @@ func TestAgentDownloadRejectsUnknownFilename(t *testing.T) {
 
 func TestAgentDownloadUnbundledDeployment(t *testing.T) {
 	// Allowlisted name, but the agent dir doesn't exist (bare-metal build).
-	rec := getAgent(t, agentTestServer(t, filepath.Join(t.TempDir(), "missing")), "amadeus-runner-linux-arm64")
+	rec := getAgent(t, agentTestServer(t, filepath.Join(t.TempDir(), "missing")), "cronomicon-runner-linux-arm64")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}

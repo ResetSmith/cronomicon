@@ -130,7 +130,7 @@ vars:
 
 <h2>5 · SSH auth on the runner: names, not bytes</h2>
 
-<p>Cronomicon ships <strong>key names, never key material</strong>, to a runner by default. The agent resolves each name locally — against its key-map or key-dir (default <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code>) — so a compromised control plane never yields target keys, and a compromised runner exposes only its own segment. Provision keys at install time (<code>--generate-key &lt;NAME&gt;</code> mints one and prints the public half) or drop files into the key-dir later.</p>
+<p>Cronomicon ships <strong>key names, never key material</strong>, to a runner by default. The agent resolves each name locally — against its key-map or key-dir (default <code>/var/lib/cronomicon-runner/keys/&lt;NAME&gt;</code>) — so a compromised control plane never yields target keys, and a compromised runner exposes only its own segment. Provision keys at install time (<code>--generate-key &lt;NAME&gt;</code> mints one and prints the public half) or drop files into the key-dir later.</p>
 
 <p><strong>Where the name comes from</strong>, in precedence order on an Ansible run:</p>
 
@@ -156,7 +156,7 @@ The runner scans the inventory for <code>lookup('env',NAME)</code> names, and br
 
 <p>Two consequences worth knowing. The flag is <strong>global to the run</strong>, so it cannot vary per host the way an inventory-authored <code>ansible_become_password</code> can — a fleet with heterogeneous become passwords wants pattern 2. And the job automatically requires the <code>become-file</code> capability, so its runs <strong>wait for a runner with ansible-core ≥ 2.12</strong> rather than being assigned to one that would silently ignore the flag.</p>
 
-<p><strong>2 · Inventory lookup (per-host variation).</strong> The older pattern, still correct when different hosts need different passwords: put <code>ansible_become_password="{{ lookup('env','PROD_BECOME_PASS') }}"</code> in the inventory (an inline value is rejected at ingest) and supply the value either as a <strong>reference binding</strong> — which is what lets one playbook serve several departments, see §6 — or runner-locally via <code>/etc/amadeus-runner/secrets.env</code> or the Vault Agent sidecar (§6).</p>
+<p><strong>2 · Inventory lookup (per-host variation).</strong> The older pattern, still correct when different hosts need different passwords: put <code>ansible_become_password="{{ lookup('env','PROD_BECOME_PASS') }}"</code> in the inventory (an inline value is rejected at ingest) and supply the value either as a <strong>reference binding</strong> — which is what lets one playbook serve several departments, see §6 — or runner-locally via <code>/etc/cronomicon-runner/secrets.env</code> or the Vault Agent sidecar (§6).</p>
 
 <blockquote><p><strong>Setting a become password is a grant, and it is gated.</strong> Naming a Secret here has the runner write that value to a file, so the Composer requires <strong>Manage Env Vars</strong> <em>and</em> membership of the department that owns the row — you cannot bind another department's password. Git sync is deliberately advisory instead: a synced job naming a missing Secret produces a warning rather than failing the whole sync, and the run fails closed at dispatch.</p></blockquote>
 

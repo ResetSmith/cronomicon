@@ -42,15 +42,15 @@ stays unhealthy (traffic held). Do **not** try to hand-patch the live DB.
 > Single-writer, single-node SQLite (decision: no HA, no PITR for v1) — the
 > snapshot granularity is the nightly backup, so a dirty migration loses at most
 > the day's changes. For a risky migration, take a manual snapshot first:
-> `cp /var/lib/amadeus/amadeus.db /var/lib/amadeus/backups/pre-upgrade-$(date +%F).db`
+> `cp /var/lib/cronomicon/cronomicon.db /var/lib/cronomicon/backups/pre-upgrade-$(date +%F).db`
 > (do this while stopped, or via `VACUUM INTO`).
 
 ## Inspecting schema state
 
 ```
 # version + dirty flag are surfaced at /readyz (see the database check)
-curl -s https://amadeus.example.com/readyz | jq .
+curl -s https://cronomicon.example.com/readyz | jq .
 
 # or, against a stopped DB on the volume:
-sqlite3 /var/lib/amadeus/amadeus.db 'SELECT * FROM schema_migrations;'
+sqlite3 /var/lib/cronomicon/cronomicon.db 'SELECT * FROM schema_migrations;'
 ```

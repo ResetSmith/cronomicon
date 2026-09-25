@@ -4,7 +4,7 @@
 # This file is the handoff SEED for the backend repo. It was generated from
 # the architecture notes (A1–A7 + T1–T13, ratified Jun 9 2026) and the
 # S-series backend/schema contracts in the backlog, with entity shapes
-# derived from the ratified prototype (amadeus-data.jsx).
+# derived from the ratified prototype (cronomicon-data.jsx).
 #
 # IMPORTANT (architecture.md §1 / T5): once backend code exists, this spec MUST
 # be generated from code (e.g. swaggo) and wired into CI. Hand-maintenance of
@@ -120,10 +120,10 @@ paths:
       operationId: downloadAgent
       summary: Download a runner-agent binary or its checksums
       description: |
-        Serves the cross-compiled `amadeus-runner` binaries and their
+        Serves the cross-compiled `cronomicon-runner` binaries and their
         `SHA256SUMS` baked into the server image (runner provisioning D1;
         directory overridable via `CRONOMICON_AGENT_DIR`). Allowlisted filenames
-        only: `amadeus-runner-linux-amd64`, `amadeus-runner-linux-arm64`,
+        only: `cronomicon-runner-linux-amd64`, `cronomicon-runner-linux-arm64`,
         `SHA256SUMS`. Consumed by `runner-install.sh --download`, which
         verifies the checksum before installing. Served at the server root,
         outside /api/v1. Unauthenticated by design — the binary is not a
@@ -136,7 +136,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [amadeus-runner-linux-amd64, amadeus-runner-linux-arm64, SHA256SUMS]
+            enum: [cronomicon-runner-linux-amd64, cronomicon-runner-linux-arm64, SHA256SUMS]
       responses:
         '200':
           description: The artifact (binaries as octet-stream, SHA256SUMS as text).
@@ -164,7 +164,7 @@ paths:
         token, and binary-download-on baked in, so a whole install is one
         flagless pipe (runner provisioning plan 2 Phase 2, D2):
 
-            curl -fsSL https://amadeus.example.com/install/crn_reg_… | sudo bash
+            curl -fsSL https://cronomicon.example.com/install/crn_reg_… | sudo bash
 
         A dumb substitution endpoint: it does NOT read the DB or validate the
         token against it (no token-validity oracle). Registration remains the
@@ -6185,7 +6185,7 @@ components:
     operatorSession:
       type: apiKey
       in: cookie
-      name: amadeus_session
+      name: cronomicon_session
       description: |
         Operator browser surface (T8). The OIDC token lives in an httpOnly,
         Secure, SameSite=Lax cookie and is validated on every request; expired
@@ -10414,7 +10414,7 @@ components:
             local:
               type: object
               properties:
-                path: { type: string, default: /var/lib/amadeus/logs }
+                path: { type: string, default: /var/lib/cronomicon/logs }
             s3:
               type: object
               description: >-

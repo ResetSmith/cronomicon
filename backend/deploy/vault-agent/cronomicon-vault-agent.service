@@ -1,36 +1,36 @@
 # systemd unit for the Cronomicon runner's Vault Agent sidecar (opt-in stopgap).
 #
 # Authenticates to Vault with an AppRole and renders
-# /etc/amadeus-runner/secrets.env, which amadeus-runner.service sources at start
-# (via its optional `EnvironmentFile=-/etc/amadeus-runner/secrets.env` line).
+# /etc/cronomicon-runner/secrets.env, which cronomicon-runner.service sources at start
+# (via its optional `EnvironmentFile=-/etc/cronomicon-runner/secrets.env` line).
 # See deploy/vault-agent/README.md.
 #
 # Install:
-#   sudo install -d -m 0750 -o root -g amadeus-runner /etc/amadeus-runner/vault
-#   sudo install -m 0640 vault-agent.hcl   /etc/amadeus-runner/vault/vault-agent.hcl
-#   sudo install -m 0640 secrets.env.ctmpl /etc/amadeus-runner/vault/secrets.env.ctmpl
-#   sudo install -m 0644 amadeus-vault-agent.service /etc/systemd/system/
-#   # place role_id / secret_id under /etc/amadeus-runner/vault (0600 root)
-#   sudo systemctl daemon-reload && sudo systemctl enable --now amadeus-vault-agent
+#   sudo install -d -m 0750 -o root -g cronomicon-runner /etc/cronomicon-runner/vault
+#   sudo install -m 0640 vault-agent.hcl   /etc/cronomicon-runner/vault/vault-agent.hcl
+#   sudo install -m 0640 secrets.env.ctmpl /etc/cronomicon-runner/vault/secrets.env.ctmpl
+#   sudo install -m 0644 cronomicon-vault-agent.service /etc/systemd/system/
+#   # place role_id / secret_id under /etc/cronomicon-runner/vault (0600 root)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cronomicon-vault-agent
 
 [Unit]
 Description=Cronomicon runner Vault Agent sidecar
-Documentation=file:///usr/share/doc/amadeus-runner/vault-agent/README.md
+Documentation=file:///usr/share/doc/cronomicon-runner/vault-agent/README.md
 After=network-online.target
 Wants=network-online.target
 # The runner starts cleanly without us (EnvironmentFile is optional), but if both
 # are enabled, render before the runner so the first start already sees secrets.
-Before=amadeus-runner.service
+Before=cronomicon-runner.service
 
 [Service]
 Type=simple
-# Runs as root so it can write the rendered file as root:amadeus-runner into the
+# Runs as root so it can write the rendered file as root:cronomicon-runner into the
 # read-only /etc tree (see ReadWritePaths). The Vault token stays in memory; only
 # the scoped, leased secrets reach disk (0640).
 User=root
 Group=root
 
-ExecStart=/usr/bin/vault agent -config=/etc/amadeus-runner/vault/vault-agent.hcl
+ExecStart=/usr/bin/vault agent -config=/etc/cronomicon-runner/vault/vault-agent.hcl
 
 Restart=on-failure
 RestartSec=10s
@@ -59,8 +59,8 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 # Writable: the rendered secrets file (in the otherwise read-only /etc tree) and
 # the pid file under /run. Nothing else.
-ReadWritePaths=/etc/amadeus-runner
-RuntimeDirectory=amadeus-vault-agent
+ReadWritePaths=/etc/cronomicon-runner
+RuntimeDirectory=cronomicon-vault-agent
 
 [Install]
 WantedBy=multi-user.target

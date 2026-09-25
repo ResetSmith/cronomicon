@@ -1733,7 +1733,7 @@
                         </tr>
                         <tr>
                             <td>Runner (agent)</td>
-                            <td>The <code>amadeus-runner</code> program on a separate host. It asks the server for work,
+                            <td>The <code>cronomicon-runner</code> program on a separate host. It asks the server for work,
                                 does the work, and streams the log back <em>while the run is in progress</em>, sealing
                                 it at the end.</td>
                         </tr>
@@ -1804,7 +1804,7 @@
                     Semantic Versioning from release 1.0.0 on. For the release-by-release history behind any
                     behavior in this book &mdash; features, fixes, migrations, and the reasoning &mdash; see the
                     project's <a
-                        href="https://gitlab.example.com/ops/amadeus/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
+                        href="https://gitlab.example.com/ops/cronomicon/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
                     in the Cronomicon repository.</p>
 
                 <h3>How to read this manual</h3>
@@ -2062,7 +2062,7 @@
                         the run goes to all member hosts of the scope (&sect;4.3).</li>
                     <li><strong>Apply the timeout.</strong> The job's <code>timeout_seconds</code> limits the full run.
                         On overrun, the server kills the run and sets it to failed with
-                        <code>amadeus: job timed out</code>.</li>
+                        <code>cronomicon: job timed out</code>.</li>
                     <li><strong>Fan out.</strong> The run occurs on each host, with a maximum of <strong>4 hosts in
                             parallel</strong>. Each host's output streams line by line. When there is more than one
                         host, each line has the prefix <code>[hostname]</code>.</li>
@@ -2079,7 +2079,7 @@
                         also carries a <strong>disposition</strong> &mdash; the run takes the outcome the operator
                         chose, while <code>killed_by</code> separately records that a person ended it. A per-host
                         watcher then sends <code>SIGKILL</code> and closes the SSH session. This really stops a command
-                        that hangs and sends no output. A timed-out run logs <code>amadeus: job timed out</code>. The
+                        that hangs and sends no output. A timed-out run logs <code>cronomicon: job timed out</code>. The
                         in-app executor is single-instance. Thus, at startup, the server finds each <code>ssh</code> run
                         that a crash or restart left <code>running</code>. An age reaper also finds them periodically,
                         after <code>CRONOMICON_SSH_EXECUTOR_STALE_AFTER</code> (default <strong>24h</strong>, set far above
@@ -3534,7 +3534,7 @@
                         locally, so it is not in the dictionary. Be careful when a script shows an un-injected Vault
                         value.</li>
                     <li><strong>Schedule env values.</strong> They are plaintext in Git, and never redacted.</li>
-                    <li><strong>The server's own process log</strong> (<code>amadeus.log</code>). Redaction applies
+                    <li><strong>The server's own process log</strong> (<code>cronomicon.log</code>). Redaction applies
                         to <em>run</em> logs at ingest. The process log has no redactor. Thus a credential that gets
                         into a server log line (usually inside an error string) is written as-is. That was always
                         true of stdout, but the file is a <em>durable</em> artifact on the data volume. It is
@@ -3827,11 +3827,11 @@ docker exec &lt;cronomicon&gt; cronomicon rewrap-secrets             # move it a
                     <p>This is harmless for a per-install token, which is spent and expired. It is not harmless for a
                         bootstrap token, which is permanent. The agent accepts a JSON config file as its first
                         configuration layer, and a value supplied there never enters the process environment:</p>
-                    <pre><code>// /etc/amadeus-runner/config.json   (0640 root:amadeus-runner)
+                    <pre><code>// /etc/cronomicon-runner/config.json   (0640 root:cronomicon-runner)
 { "registrationToken": "crn_reg_..." }
 
 // in the unit:
-ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json</code></pre>
+ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config.json</code></pre>
                     <p><strong>Remove the token from <code>runner.env</code> when you do this.</strong> Leaving it in
                         both places closes nothing.</p>
                 </div>
@@ -3929,7 +3929,7 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
             <!-- ====================== 7. RUNNER FLEET ====================== -->
             <section id="runner-ops" class="part-lead">
                 <h2><span class="secnum">7</span> Runner Fleet Management</h2>
-                <p class="lead-p">A runner is the <code>amadeus-runner</code> binary on a separate host. It registers,
+                <p class="lead-p">A runner is the <code>cronomicon-runner</code> binary on a separate host. It registers,
                     long-polls for runs tagged <code>executor='runner'</code>, does the runs, and streams the logs back
                     <em>while they execute</em> &mdash; a flush of pending whole lines every two seconds, sealed by a
                     trailing envelope at the end.
@@ -3974,22 +3974,22 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                 <h3>7.2 Installation &amp; registration</h3>
                 <p><strong>One-click:</strong> the <strong>+ Add Runner</strong> button in the Runners view mints a
                     token and gives you one command with no flags:
-                    <code>curl -fsSL https://amadeus.example.com/install/&lt;token&gt; | sudo bash</code>. The
+                    <code>curl -fsSL https://cronomicon.example.com/install/&lt;token&gt; | sudo bash</code>. The
                     <code>/install/&lt;token&gt;</code> endpoint puts the server URL, the token, and the binary download
                     into the script (capabilities still auto-detect), so nothing goes on the command line. The manual
                     flag form below stays for pre-authored and config-managed installs.</p>
                 <div class="codeblock">
                     <div class="cap">Linux systemd (run as root): capabilities auto-detect; add -c only to narrow</div>
                     <pre>sudo ./runner-install.sh \
- -s https://amadeus.example.com \
+ -s https://cronomicon.example.com \
  -t crn_reg_xxxxxxxx \
  -n runner-dc1-01 \
  --known-hosts ./known_hosts \
  --key-dir ./keys</pre>
                 </div>
-                <p>The script creates the <code>amadeus-runner</code> user, installs the binary to
-                    <code>/usr/local/bin</code>, writes <code>/etc/amadeus-runner/runner.env</code>, installs a hardened
-                    systemd unit, and starts the service. The key directory (<code>/var/lib/amadeus-runner/keys</code>,
+                <p>The script creates the <code>cronomicon-runner</code> user, installs the binary to
+                    <code>/usr/local/bin</code>, writes <code>/etc/cronomicon-runner/runner.env</code>, installs a hardened
+                    systemd unit, and starts the service. The key directory (<code>/var/lib/cronomicon-runner/keys</code>,
                     <code>0700</code>) and <code>CRONOMICON_RUNNER_KEY_DIR</code> are <strong>always</strong> provisioned.
                     Thus a key added later operates with no <code>runner.env</code> edit.
                     <code>--generate-key &lt;NAME&gt;</code> makes a passphrase-less ed25519 key that the runner owns,
@@ -4002,21 +4002,21 @@ ExecStart=/usr/local/bin/amadeus-runner -config /etc/amadeus-runner/config.json<
                 <p>Checkout and Vault runners take one-pass secret placement: <code>--allow-checkout</code>,
                     <code>--checkout-repos &lt;csv&gt;</code>, <code>--checkout-token-file &lt;path&gt;</code>, and
                     <code>--vault-pass-file &lt;path&gt;</code>. The two secret files are copied into
-                    <code>0640 root:amadeus-runner</code> custody, and the bytes never cross the server. A secret passed
+                    <code>0640 root:cronomicon-runner</code> custody, and the bytes never cross the server. A secret passed
                     as a flag <em>value</em> is refused: use the file form, or the hidden-prompt
                     <code>--checkout-token -</code>. The full flag table is in the Install Guide &sect;3. Or run a
                     container:</p>
                 <div class="codeblock">
                     <div class="cap">Container</div>
-                    <pre>docker volume create amadeus-runner-data
-docker run -d --name amadeus-runner-01 --restart unless-stopped \
- -e CRONOMICON_RUNNER_SERVER=https://amadeus.example.com \
+                    <pre>docker volume create cronomicon-runner-data
+docker run -d --name cronomicon-runner-01 --restart unless-stopped \
+ -e CRONOMICON_RUNNER_SERVER=https://cronomicon.example.com \
  -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_xxxx \
  -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
- -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
- -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
- -v amadeus-runner-data:/var/lib/amadeus-runner \
- amadeus-runner:slim # use :fat for ansible/terraform</pre>
+ -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/cronomicon-runner/keys \
+ -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/cronomicon-runner/known_hosts \
+ -v cronomicon-runner-data:/var/lib/cronomicon-runner \
+ cronomicon-runner:slim # use :fat for ansible/terraform</pre>
                 </div>
                 <div class="callout note">
                     <div class="ct"><span class="em">ℹ️</span> The panel's Install Command is the real installer</div>
@@ -4029,8 +4029,8 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         a check of it, and then run it. The command's <code>--download</code> flag gets the agent binary
                         from the server's <code>/agents/</code> endpoint (included in the container image; SHA-256
                         verified), so the host needs only curl. A deployment without included binaries falls back to a
-                        local pre-built <code>amadeus-runner</code> (or <code>-b &lt;path&gt;</code>). Make sure of the
-                        agent with <code>amadeus-runner version</code>.</p>
+                        local pre-built <code>cronomicon-runner</code> (or <code>-b &lt;path&gt;</code>). Make sure of the
+                        agent with <code>cronomicon-runner version</code>.</p>
                 </div>
 
                 <h3>7.3 The two-token model &amp; identity</h3>
@@ -4042,7 +4042,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         unused tokens from the list.</li>
                     <li><strong>Per-runner API key</strong> (<code>crn_run_*</code>): minted at registration, valid 365
                         days, kept in the agent's <strong>identity file</strong> (<code>0600</code> JSON, default
-                        <code>/var/lib/amadeus-runner/identity.json</code>). The agent uses it for all later polls,
+                        <code>/var/lib/cronomicon-runner/identity.json</code>). The agent uses it for all later polls,
                         manifests, and logs. You can blank the registration token after this.</li>
                 </ul>
                 <p>Keep <code>--name</code> stable and the identity file on durable storage. Then a restart
@@ -4287,8 +4287,8 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         <code>no_log: true</code>. Or make HashiCorp Vault the source of truth for that secret, and for
                         each <code>{{ lookup('env','NAME') }}</code> runner-local secret, with the opt-in <strong>Vault
                             Agent sidecar</strong> (<code>backend/deploy/vault-agent/</code>). The AppRole-authed
-                        sidecar renders <code>/etc/amadeus-runner/secrets.env</code>
-                        (<code>0640 root:amadeus-runner</code>), and the unit sources it <em>optionally</em>. The runner
+                        sidecar renders <code>/etc/cronomicon-runner/secrets.env</code>
+                        (<code>0640 root:cronomicon-runner</code>), and the unit sources it <em>optionally</em>. The runner
                         never holds a Vault token, and the value never crosses the control-plane&rarr;runner channel.
                     </li>
                     <li><strong>Capability tokens &amp; claim-gating.</strong> Runners advertise <code>checkout</code>,
@@ -4352,7 +4352,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                     descriptive:</strong> a job or a single run can be <em>pinned</em> to a tag, and only runners
                     carrying it may claim that work &mdash; see &sect;7.10. Editing a runner's tags therefore changes
                     what it is eligible to run, from its next poll. For install-time and startup triage,
-                    <code>amadeus-runner doctor</code> runs bounded preflight checks: the server-URL scheme;
+                    <code>cronomicon-runner doctor</code> runs bounded preflight checks: the server-URL scheme;
                     <code>/healthz</code> reachability (it can tell an SSO login page from a real response); each
                     <code>$PATH</code> directory responsive; the identity file writable; and registration-token /
                     resumed-identity readiness. It prints a labeled PASS/WARN/FAIL report. It is wired as a non-fatal
@@ -4536,7 +4536,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         <path class="svg-line" d="M560 130 C580 110, 590 90, 600 70" marker-end="url(#ar6)" />
                         <rect class="svg-box" x="585" y="120" width="120" height="56" rx="9" />
                         <text class="svg-sub" x="645" y="140" text-anchor="middle"
-                            font-size="9.5">/var/lib/amadeus</text>
+                            font-size="9.5">/var/lib/cronomicon</text>
                         <text class="svg-sub" x="645" y="154" text-anchor="middle" font-size="9">SQLite+WAL ·
                             git-cache</text>
                         <text class="svg-sub" x="645" y="166" text-anchor="middle" font-size="9">logs · backups</text>
@@ -4637,9 +4637,9 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         and in the identity-provider config (<code>deploy/authelia/</code> in the bundled stack).</li>
                     <li>Point your identity provider at your LDAP or Active Directory server. Make sure that group membership shows in
                         <code>Remote-Groups</code>.</li>
-                    <li><code>cp amadeus.env.example amadeus.env</code>. Set <code>CRONOMICON_TRUSTED_PROXIES</code> to the
+                    <li><code>cp cronomicon.env.example cronomicon.env</code>. Set <code>CRONOMICON_TRUSTED_PROXIES</code> to the
                         proxy's static internal IP (<code>172.28.0.2/32</code> in the included stack).</li>
-                    <li>Write the base64 KEK to <code>secrets/amadeus_kek</code>, and back it up separately.</li>
+                    <li>Write the base64 KEK to <code>secrets/cronomicon_kek</code>, and back it up separately.</li>
                     <li>Set <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> for this first deploy. Then run
                         <code>docker compose up -d --build</code>.</li>
                     <li>Log in as a member of that group (you get admin). Create the real access grants in Settings
@@ -4696,7 +4696,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                 </div>
 
                 <h3>8.4 Health, persistence &amp; verification</h3>
-                <p>All durable state is on the <code>amadeus-data</code> volume at <code>/var/lib/amadeus</code>: SQLite
+                <p>All durable state is on the <code>cronomicon-data</code> volume at <code>/var/lib/cronomicon</code>: SQLite
                     in WAL (write-ahead logging) mode, the git-cache, the logs, and the backups. The container is
                     disposable; the volume is not. Health endpoints (all unauthenticated): <code>/healthz</code>
                     (liveness + version), <code>/readyz</code> (503 until the DB is reachable and the migrations are
@@ -4704,8 +4704,8 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                     against a live stack:</p>
                 <div class="codeblock">
                     <div class="cap">verify-deployment.sh: proves enforcement from outside the trust boundary</div>
-                    <pre>APP_DIRECT_URL=http://amadeus-host:8080 \
-APP_URL=https://amadeus.example.com \
+                    <pre>APP_DIRECT_URL=http://cronomicon-host:8080 \
+APP_URL=https://cronomicon.example.com \
 ./verify-deployment.sh</pre>
                 </div>
                 <p>The critical check calls the app port directly with <strong>spoofed</strong>
@@ -4723,7 +4723,7 @@ APP_URL=https://amadeus.example.com \
                     only way to tell, from the log tree alone, what a folder is, or if its entity still exists. This is
                     what makes the tree readable after it is archived, or mounted where the database is not.</p>
                 <div class="codeblock">
-                    <div class="cap">/var/lib/amadeus/logs: the foldered layout, with pre-upgrade logs adjacent</div>
+                    <div class="cap">/var/lib/cronomicon/logs: the foldered layout, with pre-upgrade logs adjacent</div>
                     <pre>logs/
  0000001f/ &lt;- a job's folder
  _meta.json {"code":"0000001f","kind":"job","source":"git","name":"nightly-backup",...}
@@ -4734,13 +4734,13 @@ APP_URL=https://amadeus.example.com \
  _system/ &lt;- runs owned by no definition (SSH "Test connection")
  b81e5f77-....log
  5c6a9d02-....log &lt;- enqueued before the upgrade: still at the flat path
- amadeus.log &lt;- the process log (knobs in Appendix C)
- amadeus.log.1 &lt;- rotated by size; does not end in .log, so the reaper skips it
+ cronomicon.log &lt;- the process log (knobs in Appendix C)
+ cronomicon.log.1 &lt;- rotated by size; does not end in .log, so the reaper skips it
  audit.log &lt;- the compliance audit stream (§8.8)
  audit.log.20260726 &lt;- rotated by UTC date; likewise invisible to the reaper</pre>
                 </div>
                 <p>All four kinds of file share this one directory. Only the <code>*.log</code> run logs are subject to
-                    the run-log retention window. The live <code>amadeus.log</code> and <code>audit.log</code> are
+                    the run-log retention window. The live <code>cronomicon.log</code> and <code>audit.log</code> are
                     excluded by name, and their rotated generations do not match <code>*.log</code> at all. The
                     <code>_meta.json</code> sidecars are also never reaped.</p>
                 <p>Know two things before you look on disk. <strong>Nothing was migrated:</strong> runs enqueued before
@@ -4777,8 +4777,8 @@ APP_URL=https://amadeus.example.com \
                     no DB-backed backup setting (the inert one was removed in FU-3). On boot, the worker runs an
                     immediate catch-up sweep <em>only if</em> the last successful backup is overdue (24h or more). Thus
                     frequent restarts cannot push the only durable backup past 24h. Success and failure export as
-                    Prometheus metrics (<code>amadeus_backup_last_success_timestamp_seconds</code>,
-                    <code>amadeus_backup_failures_total</code>). Restore is a <strong>file swap</strong>, and the
+                    Prometheus metrics (<code>cronomicon_backup_last_success_timestamp_seconds</code>,
+                    <code>cronomicon_backup_failures_total</code>). Restore is a <strong>file swap</strong>, and the
                     included <code>cronomicon restore</code> subcommand scripts it: download the latest or a named
                     snapshot, swap, and run <code>PRAGMA integrity_check</code>. Stop the server first:</p>
                 <ol class="steps">
@@ -4786,7 +4786,7 @@ APP_URL=https://amadeus.example.com \
                     <li>Run <code>cronomicon restore --list</code>, then <code>cronomicon restore</code> (latest) or
                         <code>cronomicon restore --from &lt;snapshot&gt;</code>. Or do it by hand: get the snapshot
                         (<code>aws s3 cp &hellip;</code> / <code>mc cp &hellip;</code>), remove the live DB and the
-                        stale sidecars (<code>amadeus.db</code>, <code>-wal</code>, <code>-shm</code>), and copy the
+                        stale sidecars (<code>cronomicon.db</code>, <code>-wal</code>, <code>-shm</code>), and copy the
                         snapshot into place.</li>
                     <li><strong>Start</strong> the container. It applies pending migrations. <code>/readyz</code>
                         reports <code>database: ok</code> when clean.</li>
@@ -4840,12 +4840,12 @@ APP_URL=https://amadeus.example.com \
                     rather than persisting a connection that does not work. The egress guard applies (private ranges
                     allowed by default, loopback and cloud metadata blocked); the secret key is envelope-encrypted and
                     covered by <code>cronomicon rewrap-secrets</code>.</p>
-                <p><strong>Monitoring.</strong> <code>amadeus_log_archive_last_success_timestamp_seconds</code>,
-                    <code>amadeus_log_archive_failures_total</code> and <code>amadeus_log_archive_pending</code>
+                <p><strong>Monitoring.</strong> <code>cronomicon_log_archive_last_success_timestamp_seconds</code>,
+                    <code>cronomicon_log_archive_failures_total</code> and <code>cronomicon_log_archive_pending</code>
                     join the backup metrics; a third consecutive failed tick logs at <code>ERROR</code>. Each tick that
                     did something writes one Activity row (<code>log-archive</code>); idle ticks write nothing.
-                    Two further gauges arrived with v1.5.34: <code>amadeus_redaction_dictionary_size</code> and
-                    <code>amadeus_redaction_dictionary_rebuilds_total{outcome}</code> (<code>complete</code> |
+                    Two further gauges arrived with v1.5.34: <code>cronomicon_redaction_dictionary_size</code> and
+                    <code>cronomicon_redaction_dictionary_rebuilds_total{outcome}</code> (<code>complete</code> |
                     <code>partial</code> | <code>failed</code>) for the process-wide redaction dictionary (&sect;8.8).</p>
 
                 <h3>8.7 Day-2 runbook essentials</h3>
@@ -4895,7 +4895,7 @@ APP_URL=https://amadeus.example.com \
                                     after the deploy, <strong>review the scope matrix and turn off &ldquo;All
                                         scopes&rdquo; for each role that must be limited</strong> (that matrix was later
                                     replaced by Access Grants; see the v0.56 note below). The session cookie is also
-                                    renamed <code>amadeus_session</code>&rarr;<code>amadeus_session_v2</code>, which
+                                    renamed <code>cronomicon_session</code>&rarr;<code>cronomicon_session_v2</code>, which
                                     forces a one-time re-login in OIDC mode (trusted-header resolves per request;
                                     nothing to do). <strong>v0.52.8&ndash;0.52.11 (logging update):</strong> the first
                                     nightly sweep after the upgrade <strong>deletes on-disk run logs older than the
@@ -5082,7 +5082,7 @@ APP_URL=https://amadeus.example.com \
                         category <code>Audit</code>, action <code>redactor-unavailable</code>, whose details say how many
                         encrypted values it could not open. The row is itself in the stream, so a gap in masking is
                         never silent. When a later rebuild succeeds it writes one <code>redactor-restored</code> row.
-                        Watch <code>amadeus_redaction_dictionary_rebuilds_total{outcome="partial"}</code> for the
+                        Watch <code>cronomicon_redaction_dictionary_rebuilds_total{outcome="partial"}</code> for the
                         same signal in Prometheus. There is no switch to turn masking off, as for run logs. With a
                         730-day window, anything that does leak into <code>details</code> stays for two years; if you
                         treat the data volume as lower-trust than your log collector, set
@@ -5459,10 +5459,10 @@ APP_URL=https://amadeus.example.com \
                         <p class="faq-cause"><strong>Cause:</strong> the reaper set it offline after about 5 min with no
                             heartbeat. The in-flight runs became <code>runner_lost</code>.</p>
                         <p><strong>Correction:</strong> make sure that the agent runs and can get to the server over
-                            HTTPS (<code>journalctl -u amadeus-runner</code>). The runner is re-admitted on its next
+                            HTTPS (<code>journalctl -u cronomicon-runner</code>). The runner is re-admitted on its next
                             authenticated poll: the row goes back to <code>online</code>, and the same response delivers
                             pending resync, managed settings, and work. If the unit is stopped,
-                            <code>systemctl start amadeus-runner</code> is the whole recovery. Before v0.57.19 that
+                            <code>systemctl start cronomicon-runner</code> is the whole recovery. Before v0.57.19 that
                             restart did not work &mdash; the agent was told to drain and exited immediately (&sect;7.6).
                             Run the lost jobs again.</p>
                     </div>
@@ -5512,12 +5512,12 @@ APP_URL=https://amadeus.example.com \
                             wrong <code>CRONOMICON_RUNNER_SERVER</code>, an SSO login page in front of the API, an
                             unresponsive <code>$PATH</code> entry (stale NFS/autofs), a stalled systemd sandbox, a key
                             name that does not resolve, or an unknown target host key.</p>
-                        <p><strong>Correction:</strong> run <code>amadeus-runner doctor</code>. It is a bounded
+                        <p><strong>Correction:</strong> run <code>cronomicon-runner doctor</code>. It is a bounded
                             preflight that resolves the same config as the agent and prints a labeled PASS/WARN/FAIL
                             report: the server-URL scheme, <code>/healthz</code> reachability (it can tell an SSO HTML
                             login page from a real response), each <code>$PATH</code> directory, identity-file
                             writability, and registration-token readiness. <code>--quick</code> skips the slow toolchain
-                            and sandbox probes. <code>amadeus-runner doctor --auth NAME [user@host]</code> resolves a
+                            and sandbox probes. <code>cronomicon-runner doctor --auth NAME [user@host]</code> resolves a
                             credential exactly as a run would and, with a target given, dials it with the agent's own
                             SSH stack. It classifies the result: auth OK, host-key-unknown (&rarr; Scan &amp; approve),
                             permission-denied, or connect-failed. The installer wires <code>doctor --quick</code> as a
@@ -5907,7 +5907,7 @@ APP_URL=https://amadeus.example.com \
                         registered, and the SSH executor off, runs queue but never occur. This is expected, not an
                         outage.</dd>
                     <dt>CSRF double-submit</dt>
-                    <dd>State-changing operator requests must send the <code>amadeus_csrf</code> cookie again, in an
+                    <dd>State-changing operator requests must send the <code>cronomicon_csrf</code> cookie again, in an
                         <code>X-CSRF-Token</code> header. A mismatch is rejected with <code>403</code>. Runner bearer
                         requests are exempt.</dd>
                     <dt>DEK (Data Encryption Key)</dt>
@@ -5973,7 +5973,7 @@ APP_URL=https://amadeus.example.com \
                     <dt>Identity file</dt>
                     <dd>A <code>0600</code> JSON file (<code>{id, apiKey}</code>) that a runner writes at its first
                         registration and reads at a restart. With it, the runner continues its registry row and does not
-                        orphan it. Default <code>/var/lib/amadeus-runner/identity.json</code>.</dd>
+                        orphan it. Default <code>/var/lib/cronomicon-runner/identity.json</code>.</dd>
                     <dt>Inventory mode (cronomicon vs local)</dt>
                     <dd>A per-runner selection. <code>cronomicon</code> (default): the server resolves scope hosts and
                         sends fully-resolved targets. <code>local</code>: the manifest carries only the scope name, and
@@ -6108,7 +6108,7 @@ APP_URL=https://amadeus.example.com \
                             variables</em> heuristic, which was demoted out of the run path to a Composer seed and a
                         drift lint. See <a href="user-manual.html#jobs">&sect;6</a>.</dd>
                     <dt>Runner / runner agent</dt>
-                    <dd>The external <code>amadeus-runner</code> binary on a separate host. It registers, long-polls for
+                    <dd>The external <code>cronomicon-runner</code> binary on a separate host. It registers, long-polls for
                         <code>executor='runner'</code> runs, does them, and streams logs back while they execute (a 2-second
                         flush, sealed by a trailing envelope). Ansible, terraform, and
                         isolated targets need it. Outbound HTTP only.</dd>
@@ -6124,7 +6124,7 @@ APP_URL=https://amadeus.example.com \
                         an amber &ldquo;Lost&rdquo; badge.</dd>
                     <dt>Schedule (definition)</dt>
                     <dd>A first-class named cron for use by more than one job (+ optional plaintext env), referenced by
-                        jobs and workflows through <code>scheduleRefs</code>. Source: git or amadeus. An edit of an
+                        jobs and workflows through <code>scheduleRefs</code>. Source: git or cronomicon. An edit of an
                         cronomicon schedule sends the new cron, and its activation window, to each referencer.</dd>
                     <dt>Activation window</dt>
                     <dd>Optional <code>startAt</code>/<code>endAt</code> bounds on a schedule entry. They delay its
@@ -6533,7 +6533,7 @@ APP_URL=https://amadeus.example.com \
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_DB_PATH</code></td>
-                                <td><code>/var/lib/amadeus/amadeus.db</code></td>
+                                <td><code>/var/lib/cronomicon/cronomicon.db</code></td>
                                 <td>Keep it on the mounted volume</td>
                             </tr>
                             <tr>
@@ -6564,13 +6564,13 @@ APP_URL=https://amadeus.example.com \
                                 <td><code>true</code> / <em>(empty)</em> / <code>64</code> / <code>5</code></td>
                                 <td>The server's <strong>process log</strong> on disk, written <strong>in addition to
                                         stdout</strong>. Stdout is never replaced, so journald and docker collection are
-                                    not affected. An empty <code>CRONOMICON_LOG_FILE</code> gives <code>amadeus.log</code>
+                                    not affected. An empty <code>CRONOMICON_LOG_FILE</code> gives <code>cronomicon.log</code>
                                     in the run-log directory (Settings &rarr; Log Storage), and it follows that
                                     directory when the setting changes. An explicit path must be
                                     <strong>absolute</strong> (rejected at boot if not), and it attaches earlier in
                                     boot, so it also captures the build banner and config warnings. It rotates at
                                     <code>_MAX_MB</code> and keeps <code>_KEEP</code> generations
-                                    (<code>amadeus.log.1</code> &hellip; <code>.N</code>), so disk &le;
+                                    (<code>cronomicon.log.1</code> &hellip; <code>.N</code>), so disk &le;
                                     <code>(KEEP + 1) &times; MAX_MB</code>: 384&nbsp;MiB at the defaults.
                                     <code>_RETENTION_LOG_FILES_DAYS</code> does <strong>not</strong> govern it (that
                                     window reaps <em>run</em> logs; the live file is excluded by name, and the
@@ -6757,7 +6757,7 @@ APP_URL=https://amadeus.example.com \
                     badge), <code>drain_timeout</code> (force-killed at the drain deadline),
                     <code>vault_unreachable</code>, <code>log_stream_lost</code> (a runner's final, non-partial log
                     upload arrived without a parseable trailing envelope; mid-run <code>X-Log-Partial: 1</code> chunks
-                    are exempt by design, &sect;7.5), <code>amadeus: job timed out</code>.
+                    are exempt by design, &sect;7.5), <code>cronomicon: job timed out</code>.
                 </p>
                 <p><strong>Trigger kinds</strong> (<code>runs.trigger_kind</code> /
                     <code>workflow_runs.trigger_kind</code>): <code>manual</code> (a click),

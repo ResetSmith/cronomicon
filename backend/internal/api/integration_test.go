@@ -292,7 +292,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	u, _ := url.Parse(ts.URL)
 	var csrfToken string
 	for _, cookie := range jar.Cookies(u) {
-		if cookie.Name == "amadeus_csrf" {
+		if cookie.Name == "cronomicon_csrf" {
 			csrfToken = cookie.Value
 		}
 	}
@@ -371,7 +371,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	json.NewDecoder(r.Body).Decode(&logStorageCfg)
 	r.Body.Close()
 
-	logStorageCfg.Local = &settings.LocalLogConfig{Path: "/var/lib/amadeus/it-logs"}
+	logStorageCfg.Local = &settings.LocalLogConfig{Path: "/var/lib/cronomicon/it-logs"}
 	b, _ = json.Marshal(logStorageCfg)
 	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings/log-storage", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
@@ -391,7 +391,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	// is left as the previous save wrote it (refuse-don't-persist).
 	s3Cfg := settings.LogStorageConfig{
 		Backend: "s3",
-		Local:   &settings.LocalLogConfig{Path: "/var/lib/amadeus/it-logs"},
+		Local:   &settings.LocalLogConfig{Path: "/var/lib/cronomicon/it-logs"},
 		S3: &settings.S3LogConfig{
 			Endpoint: "127.0.0.1:1", Bucket: "logs", Region: "us-east-1",
 			AccessKey: "AKIA", SecretKey: "secret", Prefix: "cronomicon/",
@@ -418,7 +418,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 	var after settings.LogStorageConfig
 	json.NewDecoder(r.Body).Decode(&after)
 	r.Body.Close()
-	if after.Backend != "local" || after.Local == nil || after.Local.Path != "/var/lib/amadeus/it-logs" || after.S3 != nil {
+	if after.Backend != "local" || after.Local == nil || after.Local.Path != "/var/lib/cronomicon/it-logs" || after.S3 != nil {
 		t.Fatalf("refused s3 save changed the row: %+v", after)
 	}
 
@@ -667,7 +667,7 @@ func devLoginWithCSRF(t *testing.T, ts *httptest.Server) (*http.Client, string) 
 	u, _ := url.Parse(ts.URL)
 	var csrf string
 	for _, cookie := range jar.Cookies(u) {
-		if cookie.Name == "amadeus_csrf" {
+		if cookie.Name == "cronomicon_csrf" {
 			csrf = cookie.Value
 		}
 	}
@@ -1028,7 +1028,7 @@ func TestRequestBodySizeLimit(t *testing.T) {
 	u, _ := url.Parse(ts.URL)
 	var csrfToken string
 	for _, c := range jar.Cookies(u) {
-		if c.Name == "amadeus_csrf" {
+		if c.Name == "cronomicon_csrf" {
 			csrfToken = c.Value
 		}
 	}

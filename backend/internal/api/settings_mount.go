@@ -1901,7 +1901,7 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	if format == "csv" {
 		contentType = "text/csv"
 	}
-	filename := fmt.Sprintf("amadeus-audit.%s", format)
+	filename := fmt.Sprintf("cronomicon-audit.%s", format)
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	w.WriteHeader(http.StatusOK)

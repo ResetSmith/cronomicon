@@ -119,7 +119,7 @@ $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec
 <tr><td>Error “Read and Prompt functionality is not available”</td><td>Something asked a question under <code>-NonInteractive</code> — <code>Read-Host</code>, a confirm, a credential dialog. Replace with run inputs / <code>-Confirm:$false</code> (§4).</td></tr>
 <tr><td>Run reads <strong>Success</strong> but the work failed</td><td>A non-terminating error or a failed native command didn't move the exit code. Add the §4 preamble and the <code>$LASTEXITCODE</code> check.</td></tr>
 <tr><td><span class="pill fail"><span class="dot"></span>cred_error</span> on a Windows host despite a correct key</td><td>The account is an Administrator and the key isn't in <code>administrators_authorized_keys</code> (§3).</td></tr>
-<tr><td>Host-key mismatch / <code>conn_error</code> / <code>unpinned_bastion_target</code> / <code>executor_lost</code> / <code>amadeus: job timed out</code></td><td>Shared shell-family causes — see the <a href="./bash-guide.html"><code>bash-guide.html</code></a> §7 table; the rules are identical for PowerShell.</td></tr>
+<tr><td>Host-key mismatch / <code>conn_error</code> / <code>unpinned_bastion_target</code> / <code>executor_lost</code> / <code>cronomicon: job timed out</code></td><td>Shared shell-family causes — see the <a href="./bash-guide.html"><code>bash-guide.html</code></a> §7 table; the rules are identical for PowerShell.</td></tr>
 </tbody>
 </table></div>
 

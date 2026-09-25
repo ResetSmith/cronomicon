@@ -177,7 +177,7 @@ func verifiedMsg(signer ssh.Signer) string {
 // errReachableDone aborts the handshake once the host key has verified; seeing
 // it means the probe succeeded. Detection is by the captured key, not by
 // matching this error's text inside x/crypto's handshake wrapper.
-var errReachableDone = errors.New("amadeus: reachability probe complete")
+var errReachableDone = errors.New("cronomicon: reachability probe complete")
 
 // errBastionNoKey marks the one hop the reachability tier cannot skip auth on:
 // a keyless target behind a bastion still needs the BASTION's own key to hop.
@@ -192,7 +192,7 @@ func reachConfig(inner ssh.HostKeyCallback, cap *reachCapture) *ssh.ClientConfig
 	return &ssh.ClientConfig{
 		// Never authenticates — a recognizable name keeps the remote side's
 		// auth log explicable (mirrors keyscan's "cronomicon-keyscan").
-		User: "amadeus-probe",
+		User: "cronomicon-probe",
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			if err := inner(hostname, remote, key); err != nil {
 				return err // pin mismatch / unparseable pin — surfaces as conn_error

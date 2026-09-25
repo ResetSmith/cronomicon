@@ -36,13 +36,13 @@ func TestProvenanceColumnsExposed(t *testing.T) {
 	seed(`INSERT INTO jobs(name, source, run_type, command, created_at, last_modified_at)
 	      VALUES('cronomicon-job','cronomicon','bash','echo cronomicon',?,?)`, createdAt, modifiedAt)
 
-	// ── Workflows: one git + one amadeus. ──────────────────────────────────────
+	// ── Workflows: one git + one cronomicon. ──────────────────────────────────────
 	seed(`INSERT INTO workflows(name, source, steps, synced_at)
 	      VALUES('git-wf','git','[]','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO workflows(name, source, steps, created_at, last_modified_at)
 	      VALUES('cronomicon-wf','cronomicon','[]',?,?)`, createdAt, modifiedAt)
 
-	// ── Schedules: one git + one amadeus. ──────────────────────────────────────
+	// ── Schedules: one git + one cronomicon. ──────────────────────────────────────
 	seed(`INSERT INTO schedules(name, source, cron, content_hash, source_path, synced_at)
 	      VALUES('git-sched','git','0 0 2 * * *','sha256:bbb','schedules/git-sched.yaml','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO schedules(name, source, cron, content_hash, created_at, last_modified_at)

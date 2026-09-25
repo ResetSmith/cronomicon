@@ -740,7 +740,7 @@ func TestLogStorageConfig(t *testing.T) {
 	// the s3 *backend* itself is gated).
 	updated, err := UpdateLogStorageConfig(ctx, pool, cfg, LogStorageConfig{
 		Backend: "local",
-		Local:   &LocalLogConfig{Path: "/var/lib/amadeus/custom-logs"},
+		Local:   &LocalLogConfig{Path: "/var/lib/cronomicon/custom-logs"},
 		S3: &S3LogConfig{
 			Bucket: "my-bucket", Endpoint: "http://s3.example.com", Region: "us-east-1",
 			AccessKey: "key", SecretKey: "secret", Prefix: "cronomicon/",
@@ -749,7 +749,7 @@ func TestLogStorageConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Local.Path != "/var/lib/amadeus/custom-logs" {
+	if updated.Local.Path != "/var/lib/cronomicon/custom-logs" {
 		t.Fatalf("local.path not persisted: %+v", updated.Local)
 	}
 	if updated.S3 == nil || updated.S3.AccessKey != "key" || updated.S3.Prefix != "cronomicon/" {
@@ -971,7 +971,7 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 //   - FileCount read as "roughly how many runs are on disk" was inflated by
 //     files that have nothing to do with runs.
 //   - OldestLogAt was pinned to whichever file was oldest — in practice
-//     amadeus.log, which is created once at first boot and appended to forever.
+//     cronomicon.log, which is created once at first boot and appended to forever.
 //     So the "oldest log" never moved, exactly when an operator was trying to
 //     judge whether retention was working.
 //
@@ -999,8 +999,8 @@ func logTreeFixture(t *testing.T) (dir string, totalBytes int64) {
 	}{
 		{filepath.Join(code, "trace-foldered.log"), 100, 2 * time.Hour}, // run log (foldered)
 		{"trace-flat.log", 200, 3 * time.Hour},                          // run log (flat, pre-710)
-		{"amadeus.log", 400, 100 * time.Hour},                           // process log — OLDEST FILE IN THE TREE
-		{"amadeus.log.1", 800, 90 * time.Hour},                          // rotated process log
+		{"cronomicon.log", 400, 100 * time.Hour},                        // process log — OLDEST FILE IN THE TREE
+		{"cronomicon.log.1", 800, 90 * time.Hour},                       // rotated process log
 		{"audit.log", 1600, 4 * time.Hour},                              // audit stream
 		{filepath.Join(code, "_meta.json"), 3200, 5 * time.Hour},        // folder sidecar
 	}
@@ -1034,7 +1034,7 @@ func TestLogStatsCountOnlyRunLogsButSizeEverything(t *testing.T) {
 	}
 }
 
-// TestLogStatsOldestIgnoresTheProcessLog is the LU-11 bug itself. amadeus.log is
+// TestLogStatsOldestIgnoresTheProcessLog is the LU-11 bug itself. cronomicon.log is
 // the oldest file in the fixture by a wide margin and is rewritten continuously,
 // so letting it set OldestLogAt makes the value permanently stale — the operator
 // sees an ancient timestamp no matter how aggressively retention runs.
@@ -1055,7 +1055,7 @@ func TestLogStatsOldestIgnoresTheProcessLog(t *testing.T) {
 		t.Fatalf("stat flat run log: %v", err)
 	}
 	if diff := got.Sub(flatInfo.ModTime().UTC()); diff > time.Second || diff < -time.Second {
-		procInfo, _ := os.Stat(filepath.Join(dir, "amadeus.log"))
+		procInfo, _ := os.Stat(filepath.Join(dir, "cronomicon.log"))
 		t.Errorf("OldestLogAt = %v, want the oldest RUN log %v (the process log at %v must not set it)",
 			got, flatInfo.ModTime().UTC(), procInfo.ModTime().UTC())
 	}
@@ -1077,7 +1077,7 @@ func TestLogStatsClassifyEachFileKind(t *testing.T) {
 		size  int64
 	}{
 		{"runLogs", stats.Classes.RunLogs, 2, 100 + 200},
-		{"processLog", stats.Classes.ProcessLog, 2, 400 + 800}, // amadeus.log + amadeus.log.1
+		{"processLog", stats.Classes.ProcessLog, 2, 400 + 800}, // cronomicon.log + cronomicon.log.1
 		{"auditLog", stats.Classes.AuditLog, 1, 1600},
 		{"other", stats.Classes.Other, 1, 3200}, // the _meta.json sidecar
 	}

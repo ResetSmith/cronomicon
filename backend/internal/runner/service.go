@@ -33,7 +33,7 @@ import (
 const (
 	// DefaultLogDir is the fallback per-run log directory, used until the
 	// settings-resolved path is pushed in via SetLogDir (and by tests).
-	DefaultLogDir = "/var/lib/amadeus/logs"
+	DefaultLogDir = "/var/lib/cronomicon/logs"
 
 	// pollTimeout is the server-side long-poll timeout (A6.2).
 	pollTimeout = 30 * time.Second

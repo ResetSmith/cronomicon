@@ -220,7 +220,7 @@ func TestLocalCommandPrivateKeyCheckout(t *testing.T) {
 		Checkout: &runnerproto.ManifestCheckout{Entry: "site.yml", UsesVault: true},
 		Targets:  []runnerproto.ManifestTarget{{Name: "h1", AuthKeyEnvVar: "DEPLOY"}},
 	}
-	cfg := Config{KeyDir: dir, VaultPasswordFile: "/etc/amadeus/vault.pw"}
+	cfg := Config{KeyDir: dir, VaultPasswordFile: "/etc/cronomicon/vault.pw"}
 	argv, stdin, _, err := localCommand(m, cfg, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -474,7 +474,7 @@ func TestBuildChildEnvReferencePassthroughsUnaffected(t *testing.T) {
 	environ := []string{
 		"PATH=/usr/bin",
 		"CRONOMICON_SECRET_RH8_BECOME_PASS=becomepw",
-		"CRONOMICON_KEY_ANSIBLE_RH8=/etc/amadeus-runner/keys/rh8",
+		"CRONOMICON_KEY_ANSIBLE_RH8=/etc/cronomicon-runner/keys/rh8",
 		"CRONOMICON_RUN_ID=01a03520-0000-7000-0000-000000000000",
 	}
 	m := &runnerproto.ManifestResponse{EnvPassthrough: []string{
@@ -626,13 +626,13 @@ func TestBuildChildEnvNoAuthBridgeDisablesBridge(t *testing.T) {
 
 func TestBuildChildEnvAnsibleTrustInjection(t *testing.T) {
 	m := &runnerproto.ManifestResponse{RunType: "ansible"}
-	cfg := Config{KnownHostsFile: "/var/lib/amadeus-runner/known_hosts"}
+	cfg := Config{KnownHostsFile: "/var/lib/cronomicon-runner/known_hosts"}
 	env, prov, err := buildChildEnv(m, cfg, []string{"PATH=/usr/bin"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := envNames(env)["ANSIBLE_SSH_COMMON_ARGS"]
-	want := "-o UserKnownHostsFile=/var/lib/amadeus-runner/known_hosts -o StrictHostKeyChecking=yes"
+	want := "-o UserKnownHostsFile=/var/lib/cronomicon-runner/known_hosts -o StrictHostKeyChecking=yes"
 	if got != want {
 		t.Errorf("ANSIBLE_SSH_COMMON_ARGS = %q, want %q", got, want)
 	}
@@ -645,7 +645,7 @@ func TestBuildChildEnvAnsibleTrustOverride(t *testing.T) {
 	// D-C: an operator -ansible-ssh-common-args override is injected INSTEAD.
 	m := &runnerproto.ManifestResponse{RunType: "ansible"}
 	cfg := Config{
-		KnownHostsFile:       "/var/lib/amadeus-runner/known_hosts",
+		KnownHostsFile:       "/var/lib/cronomicon-runner/known_hosts",
 		AnsibleSSHCommonArgs: "-o ProxyJump=bastion -o StrictHostKeyChecking=yes",
 	}
 	env, _, err := buildChildEnv(m, cfg, []string{"PATH=/usr/bin"}, nil)
@@ -743,10 +743,10 @@ func fakeToolchain(t *testing.T, script string) (emit func(string), lines func()
 	return emit, lines
 }
 
-// assertNoRunDirs fails if any amadeus-run-* workdir survives under stateDir.
+// assertNoRunDirs fails if any cronomicon-run-* workdir survives under stateDir.
 func assertNoRunDirs(t *testing.T, stateDir string) {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(stateDir, "amadeus-run-*"))
+	matches, err := filepath.Glob(filepath.Join(stateDir, "cronomicon-run-*"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +778,7 @@ func TestRunLocalToolchainScopedEnvAndWorkdir(t *testing.T) {
 		t.Errorf("scoped run leaked AGENT_SECRET to the child:\n%s", out)
 	}
 	// cwd is the per-run workdir (under StateDir), torn down after the run.
-	if !strings.Contains(out, filepath.Join(stateDir, "amadeus-run-")) {
+	if !strings.Contains(out, filepath.Join(stateDir, "cronomicon-run-")) {
 		t.Errorf("child cwd is not the per-run workdir under StateDir:\n%s", out)
 	}
 	assertNoRunDirs(t, stateDir)

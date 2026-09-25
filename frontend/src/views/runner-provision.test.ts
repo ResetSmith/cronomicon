@@ -13,15 +13,15 @@ import {
 } from "./runner-provision";
 
 // The REAL template from backend/deploy — the same bytes the manuals plugin
-// publishes at /amadeus-runner.env.example. Using it here makes these tests
+// publishes at /cronomicon-runner.env.example. Using it here makes these tests
 // the drift guard: if the example loses/renames a var the generator patches,
 // generateRunnerEnv throws and this suite fails.
 const example = readFileSync(
-  resolve(dirname(fileURLToPath(import.meta.url)), "../../../backend/deploy/amadeus-runner.env.example"),
+  resolve(dirname(fileURLToPath(import.meta.url)), "../../../backend/deploy/cronomicon-runner.env.example"),
   "utf8",
 );
 
-const ORIGIN = "https://amadeus.example.com";
+const ORIGIN = "https://cronomicon.example.com";
 
 function fullOpts(): ProvisionOptions {
   return {
@@ -38,7 +38,7 @@ function fullOpts(): ProvisionOptions {
     maxConcurrent: 8,
     checkout: true,
     checkoutRepos: "https://gitlab.example.com/infra/playbooks.git",
-    vaultPasswordFile: "/etc/amadeus-runner/vault-pass",
+    vaultPasswordFile: "/etc/cronomicon-runner/vault-pass",
     sandboxMemoryMax: "2G",
     sandboxCpuQuota: "150%",
     sandboxTasksMax: "512",
@@ -56,7 +56,7 @@ describe("generateRunnerEnv", () => {
     expect(env).toMatch(/^# CRONOMICON_RUNNER_CAPABILITIES=/m);
     expect(env).not.toMatch(/^CRONOMICON_RUNNER_CAPABILITIES=/m);
     expect(env).toContain("CRONOMICON_RUNNER_INVENTORY=cronomicon");
-    expect(env).toContain("CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json");
+    expect(env).toContain("CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json");
     // Untouched optionals stay commented; the example's annotations survive.
     expect(env).toMatch(/^# CRONOMICON_RUNNER_MAX_CONCURRENT=/m);
     expect(env).toMatch(/^# CRONOMICON_RUNNER_ALLOW_CHECKOUT=/m);
@@ -69,18 +69,18 @@ describe("generateRunnerEnv", () => {
     const env = generateRunnerEnv(example, fullOpts());
     expect(env).toContain("CRONOMICON_RUNNER_CAPABILITIES=ansible,bash");
     expect(env).toContain("CRONOMICON_RUNNER_INVENTORY=local");
-    expect(env).toContain("CRONOMICON_RUNNER_LOCAL_INVENTORY=/etc/amadeus-runner/inventory.json");
+    expect(env).toContain("CRONOMICON_RUNNER_LOCAL_INVENTORY=/etc/cronomicon-runner/inventory.json");
     expect(env).toContain("CRONOMICON_RUNNER_MAX_CONCURRENT=8");
-    expect(env).toContain("CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts");
+    expect(env).toContain("CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/cronomicon-runner/known_hosts");
     // key-map values are rewritten to the installer's keys/<NAME> destinations.
     expect(env).toContain(
-      "CRONOMICON_RUNNER_KEY_MAP=PROD_KEY=/var/lib/amadeus-runner/keys/PROD_KEY,DB_KEY=/var/lib/amadeus-runner/keys/DB_KEY",
+      "CRONOMICON_RUNNER_KEY_MAP=PROD_KEY=/var/lib/cronomicon-runner/keys/PROD_KEY,DB_KEY=/var/lib/cronomicon-runner/keys/DB_KEY",
     );
-    expect(env).toContain("CRONOMICON_RUNNER_CA_CERT=/etc/amadeus-runner/ca.pem");
+    expect(env).toContain("CRONOMICON_RUNNER_CA_CERT=/etc/cronomicon-runner/ca.pem");
     expect(env).toContain("CRONOMICON_RUNNER_ALLOW_CHECKOUT=true");
     expect(env).toContain("CRONOMICON_RUNNER_CHECKOUT_REPOS=https://gitlab.example.com/infra/playbooks.git");
-    expect(env).toContain("CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=/etc/amadeus-runner/checkout-token");
-    expect(env).toContain("CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=/etc/amadeus-runner/vault-pass");
+    expect(env).toContain("CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=/etc/cronomicon-runner/checkout-token");
+    expect(env).toContain("CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=/etc/cronomicon-runner/vault-pass");
     expect(env).toContain("CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX=2G");
     expect(env).toContain("CRONOMICON_RUNNER_SANDBOX_CPU_QUOTA=150%");
     expect(env).toContain("CRONOMICON_RUNNER_SANDBOX_TASKS_MAX=512");
@@ -95,7 +95,7 @@ describe("generateRunnerEnv", () => {
       keyDirSrc: "/home/op/keys",
       knownHostsSrc: "/home/op/known_hosts",
     });
-    expect(env).toContain("CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys");
+    expect(env).toContain("CRONOMICON_RUNNER_KEY_DIR=/var/lib/cronomicon-runner/keys");
     expect(env).toMatch(/^# CRONOMICON_RUNNER_KEY_MAP=/m);
   });
 
@@ -154,7 +154,7 @@ describe("provisionOneLiner", () => {
     // Phase 3: checkout + vault ride the one-liner instead of an env merge.
     expect(cmd).toContain("--allow-checkout");
     expect(cmd).toContain("--checkout-repos https://gitlab.example.com/infra/playbooks.git");
-    expect(cmd).toContain("--vault-pass-file /etc/amadeus-runner/vault-pass");
+    expect(cmd).toContain("--vault-pass-file /etc/cronomicon-runner/vault-pass");
   });
 
   it("emits --checkout-token-file when a token source path is given", () => {
@@ -173,30 +173,30 @@ describe("provisionOneLiner", () => {
 describe("provisionDockerRun", () => {
   it("default (auto-detect): slim image, no capabilities env, detection note", () => {
     const cmd = provisionDockerRun(defaultProvisionOptions(ORIGIN));
-    expect(cmd).toContain("docker volume create amadeus-runner-data");
+    expect(cmd).toContain("docker volume create cronomicon-runner-data");
     expect(cmd).toContain("--name runner-01");
     expect(cmd).toContain(`-e CRONOMICON_RUNNER_SERVER=${ORIGIN}`);
     expect(cmd).not.toContain("CRONOMICON_RUNNER_CAPABILITIES"); // agent detects in-container
     expect(cmd).toContain("auto-detect");
-    expect(cmd).toContain("-v amadeus-runner-data:/var/lib/amadeus-runner");
-    expect(cmd.trim().endsWith("amadeus-runner:slim")).toBe(true);
+    expect(cmd).toContain("-v cronomicon-runner-data:/var/lib/cronomicon-runner");
+    expect(cmd.trim().endsWith("cronomicon-runner:slim")).toBe(true);
   });
 
   it("an explicit capability override rides the env", () => {
     const cmd = provisionDockerRun({ ...defaultProvisionOptions(ORIGIN), capabilities: ["bash", "perl"] });
     expect(cmd).toContain("-e CRONOMICON_RUNNER_CAPABILITIES=bash,perl");
-    expect(cmd.trim().endsWith("amadeus-runner:slim")).toBe(true);
+    expect(cmd.trim().endsWith("cronomicon-runner:slim")).toBe(true);
   });
 
   it("switches to the fat image when a local-toolchain capability is picked", () => {
     const cmd = provisionDockerRun(fullOpts());
-    expect(cmd.trim().endsWith("amadeus-runner:fat")).toBe(true);
+    expect(cmd.trim().endsWith("cronomicon-runner:fat")).toBe(true);
     expect(cmd).toContain("-e CRONOMICON_RUNNER_INVENTORY=local");
     // Container file paths live on the volume.
-    expect(cmd).toContain("-e CRONOMICON_RUNNER_LOCAL_INVENTORY=/var/lib/amadeus-runner/inventory.json");
-    expect(cmd).toContain("-e CRONOMICON_RUNNER_CA_CERT=/var/lib/amadeus-runner/ca.pem");
-    expect(cmd).toContain("-e CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=/var/lib/amadeus-runner/checkout-token");
-    expect(cmd).toContain("-e CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=/var/lib/amadeus-runner/vault-pass");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_LOCAL_INVENTORY=/var/lib/cronomicon-runner/inventory.json");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_CA_CERT=/var/lib/cronomicon-runner/ca.pem");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_CHECKOUT_TOKEN_FILE=/var/lib/cronomicon-runner/checkout-token");
+    expect(cmd).toContain("-e CRONOMICON_RUNNER_VAULT_PASSWORD_FILE=/var/lib/cronomicon-runner/vault-pass");
     expect(cmd).toContain("-e CRONOMICON_RUNNER_SANDBOX_MEMORY_MAX=2G");
   });
 });
@@ -208,7 +208,7 @@ describe("vocabulary", () => {
 
   it("keyMapDestSpec rewrites source paths to installed key paths", () => {
     expect(keyMapDestSpec("A=/x/a.pem, B=/y/b.key")).toBe(
-      "A=/var/lib/amadeus-runner/keys/A,B=/var/lib/amadeus-runner/keys/B",
+      "A=/var/lib/cronomicon-runner/keys/A,B=/var/lib/cronomicon-runner/keys/B",
     );
   });
 

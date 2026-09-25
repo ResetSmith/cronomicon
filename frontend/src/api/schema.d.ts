@@ -58,10 +58,10 @@ export interface paths {
         };
         /**
          * Download a runner-agent binary or its checksums
-         * @description Serves the cross-compiled `amadeus-runner` binaries and their
+         * @description Serves the cross-compiled `cronomicon-runner` binaries and their
          *     `SHA256SUMS` baked into the server image (runner provisioning D1;
          *     directory overridable via `CRONOMICON_AGENT_DIR`). Allowlisted filenames
-         *     only: `amadeus-runner-linux-amd64`, `amadeus-runner-linux-arm64`,
+         *     only: `cronomicon-runner-linux-amd64`, `cronomicon-runner-linux-arm64`,
          *     `SHA256SUMS`. Consumed by `runner-install.sh --download`, which
          *     verifies the checksum before installing. Served at the server root,
          *     outside /api/v1. Unauthenticated by design — the binary is not a
@@ -90,7 +90,7 @@ export interface paths {
          *     token, and binary-download-on baked in, so a whole install is one
          *     flagless pipe (runner provisioning plan 2 Phase 2, D2):
          *
-         *         curl -fsSL https://amadeus.example.com/install/crn_reg_… | sudo bash
+         *         curl -fsSL https://cronomicon.example.com/install/crn_reg_… | sudo bash
          *
          *     A dumb substitution endpoint: it does NOT read the DB or validate the
          *     token against it (no token-validity oracle). Registration remains the
@@ -7000,7 +7000,7 @@ export interface components {
             /** @enum {string} */
             backend?: "local" | "s3";
             local?: {
-                /** @default /var/lib/amadeus/logs */
+                /** @default /var/lib/cronomicon/logs */
                 path: string;
             };
             /** @description The archive tier's connection (SL-1, the s3-logging plan). `backend: s3` means local AND archive: local disk stays the only write target during a run, and the scheduled sync copies sealed logs to this bucket afterwards. A save with `backend: s3` probes the bucket with the credentials it would store and answers 422 `validation_failed` (the S3 error code in the message) without writing the row when the probe fails. */
@@ -7616,7 +7616,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                filename: "amadeus-runner-linux-amd64" | "amadeus-runner-linux-arm64" | "SHA256SUMS";
+                filename: "cronomicon-runner-linux-amd64" | "cronomicon-runner-linux-arm64" | "SHA256SUMS";
             };
             cookie?: never;
         };

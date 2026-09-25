@@ -100,7 +100,7 @@ export { fmtDuration } from "../../utils/datetime";
 
 // ── Tiny shared atoms ──
 
-// Pill badge matching the prototype (amadeus-core.jsx Badge): rounded, tinted
+// Pill badge matching the prototype (cronomicon-core.jsx Badge): rounded, tinted
 // fill, no border. Pass the status color from runStatusColor/outcomeColor.
 export function badgeStyle(color: string): React.CSSProperties {
   return {

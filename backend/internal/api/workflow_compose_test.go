@@ -72,7 +72,7 @@ func TestWorkflowComposeCRUD(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
 	if created.Source != "cronomicon" || len(created.Steps) != 2 {
-		t.Errorf("created source=%q steps=%d, want amadeus/2", created.Source, len(created.Steps))
+		t.Errorf("created source=%q steps=%d, want cronomicon/2", created.Source, len(created.Steps))
 	}
 
 	// ── Unknown job in steps → 422 ──────────────────────────────────────────────

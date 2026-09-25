@@ -14,7 +14,7 @@ import (
 )
 
 // mountScheduleDefs owns the read-only first-class Schedules catalog (A10a,
-// amadeus-v20.md Phase 1).
+// cronomicon-v20.md Phase 1).
 //
 // A first-class Schedule is a standalone named cron (+ optional env) parsed from
 // schedules/*.yaml in the GitLab clone and cached read-only. Jobs/workflows

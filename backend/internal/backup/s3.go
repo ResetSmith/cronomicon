@@ -26,7 +26,7 @@ type Uploader func(ctx context.Context, localPath string) error
 
 // backupPrefix is the object-key prefix all snapshots live under. Shared by the
 // uploader and the restore Downloader so both agree on where snapshots are.
-const backupPrefix = "amadeus-backups/"
+const backupPrefix = "cronomicon-backups/"
 
 // newClient builds the SSRF-guarded minio client shared by the uploader and the
 // restore Downloader. Credentials default to AWS S3 when no endpoint is given;

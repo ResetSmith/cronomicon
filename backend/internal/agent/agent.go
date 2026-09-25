@@ -289,7 +289,7 @@ func (a *Agent) pollOnce(ctx context.Context) {
 		// this line is the operator's signal, and it must not be a one-shot at
 		// startup, because the agent that needs it has usually been running for
 		// weeks before the server was upgraded underneath it.
-		a.log.Error("poll refused: this agent is older than the server allows — upgrade the amadeus-runner binary and restart; the runner keeps its identity and needs no deregistration",
+		a.log.Error("poll refused: this agent is older than the server allows — upgrade the cronomicon-runner binary and restart; the runner keeps its identity and needs no deregistration",
 			"error", err)
 		return
 	case err != nil:
@@ -460,7 +460,7 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 		// Without a manifest we can't execute; stream a single failure line +
 		// envelope so the run terminates instead of hanging.
 		buf := &logBuffer{}
-		buf.writeLine("amadeus: manifest fetch failed: " + err.Error())
+		buf.writeLine("cronomicon: manifest fetch failed: " + err.Error())
 		buf.seal(makeEnvelope(1, time.Now(), time.Now(), ""))
 		if serr := streamLogs(ctx, a.client, a.id, traceID, buf, a.cfg.LogRetryBudget, false); serr != nil {
 			a.log.Error("stream logs (manifest failure)", "trace_id", traceID, "error", serr)

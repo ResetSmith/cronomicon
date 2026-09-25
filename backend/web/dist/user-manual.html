@@ -1984,7 +1984,7 @@
                     section, the Calendars and Agencies tabs, the Composer's Script field, the empty Dashboard). It describes the product
                     as it stands today; for the release-by-release history of how it got here &mdash; every feature,
                     fix, and the reasoning behind them &mdash; see the project's <a
-                        href="https://gitlab.example.com/ops/amadeus/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
+                        href="https://gitlab.example.com/ops/cronomicon/-/blob/main/CHANGELOG.md"><code>CHANGELOG.md</code></a>
                     in the Cronomicon repository.</p>
 
                 <h3>How to read this manual</h3>
@@ -2382,7 +2382,7 @@
                     </div>
                     <div class="card">
                         <h4><span class="pill crn">runner</span> &nbsp;Runner agent</h4>
-                        <p class="muted">The external <code>amadeus-runner</code> binary on a separate host long-polls
+                        <p class="muted">The external <code>cronomicon-runner</code> binary on a separate host long-polls
                             for work and streams logs back. <strong>Required for ansible &amp; terraform</strong> and
                             for network-isolated targets. Firewall-friendly (outbound HTTP only).</p>
                     </div>
@@ -2824,7 +2824,7 @@
                 </p>
 
                 <h3>4.4 CSRF protection</h3>
-                <p>Every state-changing request must echo the <code>amadeus_csrf</code> cookie in an
+                <p>Every state-changing request must echo the <code>cronomicon_csrf</code> cookie in an
                     <code>X-CSRF-Token</code> header; the SPA does this for you. A mismatch is rejected with
                     <code>403 “missing or invalid CSRF token.”</code> If you ever hit that, reload the page so a fresh
                     token is issued (it usually means a stale tab or cleared cookies). Runner agents use bearer-token
@@ -6593,7 +6593,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <strong>Reveal</strong>/<strong>Copy</strong> it immediately (shown only once).
                     </li>
                     <li>Install on the host (systemd):
-                        <code>sudo ./runner-install.sh -s https://amadeus.example.com -t &lt;token&gt; -n runner-dc1-01 -c bash,perl,powershell</code>
+                        <code>sudo ./runner-install.sh -s https://cronomicon.example.com -t &lt;token&gt; -n runner-dc1-01 -c bash,perl,powershell</code>
                         — or run the container (see <a href="administrator-manual.html#runner-ops">Runner Fleet
                             Management</a> in the Administrator Manual).
                     </li>
@@ -6603,7 +6603,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     </li>
                     <li>Keep <code>--name</code> stable and the identity file on durable storage so restarts resume the
                         same registry row.</li>
-                    <li>Verify with <code>systemctl status</code> / <code>journalctl -u amadeus-runner</code>, then
+                    <li>Verify with <code>systemctl status</code> / <code>journalctl -u cronomicon-runner</code>, then
                         click <strong>Reload page</strong> — it should appear Online with its capability chips.</li>
                     <li>To retire later: <strong>Drain</strong>, then <strong>Deregister</strong> and delete the
                         identity file. (Regenerating the token does not revoke it.)</li>
@@ -6972,7 +6972,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <p class="faq-cause"><strong>Cause:</strong> the reaper marked it offline after ~5 min without a
                             heartbeat; in-flight runs were reconciled as <code>runner_lost</code>.</p>
                         <p><strong>Fix:</strong> confirm the agent is running and can reach the server over HTTPS
-                            (<code>journalctl -u amadeus-runner</code>). It resumes its identity once it polls again;
+                            (<code>journalctl -u cronomicon-runner</code>). It resumes its identity once it polls again;
                             re-run the lost jobs.</p>
                     </div>
                 </details>
@@ -7214,7 +7214,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         registered (and the SSH executor off), runs queue but never execute — expected, not an outage.
                     </dd>
                     <dt>CSRF double-submit</dt>
-                    <dd>State-changing operator requests must echo the <code>amadeus_csrf</code> cookie in an
+                    <dd>State-changing operator requests must echo the <code>cronomicon_csrf</code> cookie in an
                         <code>X-CSRF-Token</code> header; a mismatch is rejected with <code>403</code>. Runner bearer
                         requests are exempt.
                     </dd>
@@ -7273,7 +7273,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dt>Identity file</dt>
                     <dd>A <code>0600</code> JSON file (<code>{id, apiKey}</code>) a runner writes on first registration
                         and reads on restart to resume its registry row instead of orphaning it. Default
-                        <code>/var/lib/amadeus-runner/identity.json</code>.
+                        <code>/var/lib/cronomicon-runner/identity.json</code>.
                     </dd>
                     <dt>Inventory mode (cronomicon vs local)</dt>
                     <dd>Per-runner. <code>cronomicon</code> (default): the server resolves scope hosts and ships
@@ -7373,7 +7373,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         run path to a Composer seed + drift lint. See <a href="#jobs">§6</a>.
                     </dd>
                     <dt>Runner / runner agent</dt>
-                    <dd>The external <code>amadeus-runner</code> binary on a separate host that registers, long-polls
+                    <dd>The external <code>cronomicon-runner</code> binary on a separate host that registers, long-polls
                         for <code>executor='runner'</code> runs, executes them and streams logs back. Required for
                         ansible/terraform and isolated targets; outbound HTTP only.</dd>
                     <dt>Runner API key (crn_run_*)</dt>
@@ -7384,7 +7384,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         failure with an amber “Lost” badge.</dd>
                     <dt>Schedule (definition)</dt>
                     <dd>A first-class reusable named cron (+ optional plaintext env) referenced by jobs/workflows via
-                        <code>scheduleRefs</code>. Source git or amadeus. Editing an cronomicon schedule propagates the new
+                        <code>scheduleRefs</code>. Source git or cronomicon. Editing an cronomicon schedule propagates the new
                         cron to every referencer.
                     </dd>
                     <dt>Schedule Push</dt>
@@ -7732,7 +7732,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_DB_PATH</code></td>
-                                <td><code>/var/lib/amadeus/amadeus.db</code></td>
+                                <td><code>/var/lib/cronomicon/cronomicon.db</code></td>
                                 <td>Keep on the mounted volume</td>
                             </tr>
                             <tr>
@@ -7872,7 +7872,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     reconciled by the startup sweep or age reaper — shows a <em>plain</em> Failed badge with the reason,
                     <strong>not</strong> the amber Lost badge), <code>drain_timeout</code> (force-killed at drain
                     deadline), <code>vault_unreachable</code>, <code>log_stream_lost</code>,
-                    <code>amadeus: job timed out</code>, and <code>unbound_references</code> (a scheduled run that
+                    <code>cronomicon: job timed out</code>, and <code>unbound_references</code> (a scheduled run that
                     needed a department-owned credential but had no scope — see below).
                 </p>
 

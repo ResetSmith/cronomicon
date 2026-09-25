@@ -192,7 +192,7 @@ func hungPathDirs(ctx context.Context) []string {
 // checkWritableDir verifies dir exists and is writable by creating+removing a
 // temp file (the same operation saveIdentity needs).
 func checkWritableDir(dir string) error {
-	f, err := os.CreateTemp(dir, ".amadeus-doctor-*")
+	f, err := os.CreateTemp(dir, ".cronomicon-doctor-*")
 	if err != nil {
 		return fmt.Errorf("%s not writable: %w", dir, err)
 	}

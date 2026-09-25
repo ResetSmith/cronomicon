@@ -55,7 +55,7 @@ func logPathPool(t *testing.T) *sql.DB {
 // from the run row alone, with no filesystem probing, which is what makes the two
 // layouts free to coexist.
 func TestLogPathRoutesByEntityCodePresence(t *testing.T) {
-	dir := "/var/lib/amadeus/logs"
+	dir := "/var/lib/cronomicon/logs"
 	trace := "abc123def456"
 
 	got, err := LogPath(dir, "a3f2c1d0", trace)

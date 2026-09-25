@@ -131,7 +131,7 @@ func logDirLogin(t *testing.T, ts *httptest.Server) (*http.Client, string) {
 	resp.Body.Close()
 	u, _ := url.Parse(ts.URL)
 	for _, c := range jar.Cookies(u) {
-		if c.Name == "amadeus_csrf" {
+		if c.Name == "cronomicon_csrf" {
 			return client, c.Value
 		}
 	}

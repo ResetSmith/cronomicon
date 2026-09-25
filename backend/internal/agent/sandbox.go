@@ -24,7 +24,7 @@ const sandboxProbeTimeout = 3 * time.Second
 // The filesystem/namespace/syscall hardening (ProtectSystem=strict, PrivateTmp,
 // NoNewPrivileges, the syscall filter) is NOT re-declared here — a scope unit
 // ignores exec directives. It is INHERITED from the agent's own service unit
-// (deploy/amadeus-runner.service), which every child process runs inside; the
+// (deploy/cronomicon-runner.service), which every child process runs inside; the
 // per-run workdir lives under the unit's single ReadWritePaths (StateDirectory),
 // so the tree is writable and everything else is read-only. The scope adds the
 // per-run resource bound (and is where an egress IPAddressAllow would attach).
@@ -133,10 +133,10 @@ func sandboxProvenance(cfg Config, sandboxed bool) string {
 		if len(caps) > 0 {
 			suffix = " [" + strings.Join(caps, " ") + "]"
 		}
-		return "amadeus: sandbox: systemd-run --scope" + suffix + "; fs/syscall hardening inherited from the agent unit"
+		return "cronomicon: sandbox: systemd-run --scope" + suffix + "; fs/syscall hardening inherited from the agent unit"
 	}
 	if cfg.AllowCheckout {
-		return "amadeus: WARNING: running UNSANDBOXED — no usable systemd-run; this checkout run is NOT resource-capped by a per-run scope (only its timeout applies)"
+		return "cronomicon: WARNING: running UNSANDBOXED — no usable systemd-run; this checkout run is NOT resource-capped by a per-run scope (only its timeout applies)"
 	}
-	return "amadeus: sandbox: unsandboxed (no usable systemd-run; per-run resource caps unavailable)"
+	return "cronomicon: sandbox: unsandboxed (no usable systemd-run; per-run resource caps unavailable)"
 }

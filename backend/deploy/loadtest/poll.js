@@ -8,7 +8,7 @@
 // session — so this exercises the RequireRunner path with no CSRF.
 //
 // Usage (against a seeded ops/staging instance — never production):
-//   BASE=https://amadeus.staging.example.com \
+//   BASE=https://cronomicon.staging.example.com \
 //   RUNNER_ID=ldtest-1 RUNNER_TOKEN=crn_run_xxx \
 //   k6 run --vus 200 --duration 10m backend/deploy/loadtest/poll.js
 //

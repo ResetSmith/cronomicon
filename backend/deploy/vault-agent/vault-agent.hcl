@@ -1,6 +1,6 @@
 # Vault Agent config for the Cronomicon runner sidecar (opt-in stopgap).
 #
-# Renders /etc/amadeus-runner/secrets.env from a Vault KV-v2 mount so the runner
+# Renders /etc/cronomicon-runner/secrets.env from a Vault KV-v2 mount so the runner
 # resolves NAME-referenced secrets (e.g. an Ansible become password) from Vault
 # instead of a hand-managed file. See README.md in this directory.
 #
@@ -9,16 +9,16 @@
 
 # Fail fast at startup if Vault is unreachable rather than serving a stale file.
 exit_after_auth = false
-# Matches RuntimeDirectory=amadeus-vault-agent in the unit (writable under the
+# Matches RuntimeDirectory=cronomicon-vault-agent in the unit (writable under the
 # hardened sandbox; /run is otherwise read-only).
-pid_file        = "/run/amadeus-vault-agent/agent.pid"
+pid_file        = "/run/cronomicon-vault-agent/agent.pid"
 
 vault {
   address = "https://vault.example.com:8200"
 
   # If your Vault presents a private CA, point at the bundle (read-only mount is
   # fine under the hardened unit):
-  # ca_cert = "/etc/amadeus-runner/vault/ca.pem"
+  # ca_cert = "/etc/cronomicon-runner/vault/ca.pem"
 
   # Optional Enterprise namespace:
   # namespace = "admin/infra"
@@ -32,8 +32,8 @@ auto_auth {
   method "approle" {
     mount_path = "auth/approle"
     config = {
-      role_id_file_path   = "/etc/amadeus-runner/vault/role_id"
-      secret_id_file_path = "/etc/amadeus-runner/vault/secret_id"
+      role_id_file_path   = "/etc/cronomicon-runner/vault/role_id"
+      secret_id_file_path = "/etc/cronomicon-runner/vault/secret_id"
 
       # Keep the secret_id file after reading it (default removes it). We manage
       # its lifecycle/rotation ourselves; set to true if you deliver a fresh
@@ -54,21 +54,21 @@ cache {
 # Render the runner's secrets. The template file lists exactly which KV fields
 # become which env-var NAMEs; edit secrets.env.ctmpl, not this stanza.
 template {
-  source      = "/etc/amadeus-runner/vault/secrets.env.ctmpl"
-  destination = "/etc/amadeus-runner/secrets.env"
+  source      = "/etc/cronomicon-runner/vault/secrets.env.ctmpl"
+  destination = "/etc/cronomicon-runner/secrets.env"
 
   # The runner user must be able to READ it; only root/sidecar writes it.
   perms = "0640"
   # Vault Agent >= 1.11 supports owner/group; if your build predates that, drop
   # these and manage ownership via the unit's UMask + a shared group instead.
   user  = "root"
-  group = "amadeus-runner"
+  group = "cronomicon-runner"
 
   # Atomic swap so the runner never sources a half-written file.
   error_on_missing_key = true
 
   # Auto-restart the runner on rotation (opt-in — see README "rotation"). This
   # drains active runs (SIGTERM, up to TimeoutStopSec). Leave commented to pick
-  # up rotated secrets on the next manual `systemctl restart amadeus-runner`.
-  # command = "/usr/bin/systemctl try-restart amadeus-runner"
+  # up rotated secrets on the next manual `systemctl restart cronomicon-runner`.
+  # command = "/usr/bin/systemctl try-restart cronomicon-runner"
 }

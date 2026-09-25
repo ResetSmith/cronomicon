@@ -89,7 +89,7 @@ func TestIDORScopeGates(t *testing.T) {
 		req.Header.Set("Remote-Groups", group)
 		// Set IP to a trusted proxy
 		req.RemoteAddr = "192.0.2.1:1234"
-		req.AddCookie(&http.Cookie{Name: "amadeus_csrf", Value: "dummy-csrf-token"})
+		req.AddCookie(&http.Cookie{Name: "cronomicon_csrf", Value: "dummy-csrf-token"})
 		req.Header.Set("X-CSRF-Token", "dummy-csrf-token")
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, req)

@@ -1619,7 +1619,7 @@ export function JobComposer() {
             <textarea
               style={{ ...input(), minHeight: 62, fontFamily: c.mono, resize: "vertical" }}
               value={preserved.watch.map((w) => w.path).join("\n")}
-              placeholder={"/srv/incoming/*.csv\n/var/spool/amadeus/*.xml"}
+              placeholder={"/srv/incoming/*.csv\n/var/spool/cronomicon/*.xml"}
               onChange={(e) =>
                 setP({
                   watch: e.target.value

@@ -66,12 +66,12 @@ func materializeCheckout(ctx context.Context, m *runnerproto.ManifestResponse, c
 
 	// Provenance (RX.12): the verified SHA buys back the auditability run-time
 	// materialization costs. (Dependency provenance lands with Phase 3.)
-	emit(fmt.Sprintf("amadeus: checkout verified — repo=%s sha=%s entry=%s", c.Repo, c.SHA, c.Entry))
+	emit(fmt.Sprintf("cronomicon: checkout verified — repo=%s sha=%s entry=%s", c.Repo, c.SHA, c.Entry))
 	return nil
 }
 
 // mirrorRoot is where persistent bare mirrors live (RX.3): -mirror-dir, else
-// <state-dir>/mirrors, else <tmp>/amadeus-mirrors.
+// <state-dir>/mirrors, else <tmp>/cronomicon-mirrors.
 func mirrorRoot(cfg Config) string {
 	if cfg.MirrorDir != "" {
 		return cfg.MirrorDir
@@ -80,7 +80,7 @@ func mirrorRoot(cfg Config) string {
 	if base == "" {
 		base = os.TempDir()
 	}
-	return filepath.Join(base, "amadeus-mirrors")
+	return filepath.Join(base, "cronomicon-mirrors")
 }
 
 // mirrorName maps a repo identity to a filesystem-safe mirror directory name.
@@ -188,7 +188,7 @@ func repoURLWithUser(repo, user string) string {
 // environment — /proc/<pid>/environ is mode 0400 and execve does not log environ,
 // unlike argv. The returned cleanup removes the file.
 func writeAskpassHelper() (path string, cleanup func(), err error) {
-	f, err := os.CreateTemp("", "amadeus-askpass-*.sh")
+	f, err := os.CreateTemp("", "cronomicon-askpass-*.sh")
 	if err != nil {
 		return "", func() {}, err
 	}

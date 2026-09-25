@@ -15,7 +15,7 @@
 <div class="tbl"><table>
 <thead><tr><th></th><th><code>ssh</code> — in-app SSH executor</th><th><code>runner</code> — agent in the segment</th></tr></thead>
 <tbody>
-<tr><td><strong>Who dials the target</strong></td><td>The Cronomicon server (direct or via bastion)</td><td>A registered <code>amadeus-runner</code> host</td></tr>
+<tr><td><strong>Who dials the target</strong></td><td>The Cronomicon server (direct or via bastion)</td><td>A registered <code>cronomicon-runner</code> host</td></tr>
 <tr><td><strong>Reaches</strong></td><td>Anything the server (or its bastions) can route to</td><td>Network-isolated segments; only outbound HTTP to the server</td></tr>
 <tr><td><strong>Keys live</strong></td><td>On the server (named secrets / stored credentials)</td><td>On the runner (key-dir, names-only manifests)</td></tr>
 <tr><td><strong>Enable</strong></td><td><strong>Off by default</strong> — <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code> (pool concurrency <code>CRONOMICON_SSH_EXECUTOR_CONCURRENCY</code>, default 4)</td><td>Install a runner; the <strong>slim</strong> image / any host with a shell claims <code>bash</code> automatically</td></tr>
@@ -125,7 +125,7 @@ printf '%s\n' "$CRONOMICON_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl res
 <li><strong>Be idempotent.</strong> Retries (<code>retries:</code>), schedule re-fires and operator re-runs all mean the script will run again; make “again” safe.</li>
 <li><strong>Exit codes are the contract.</strong> <code>0</code> only when the work truly succeeded; per-host failures aggregate into the partial-warning state for free.</li>
 <li><strong>Pin single-host jobs with <code>target_host</code></strong> rather than a one-host scope — and remember the pin now holds on scheduled and workflow paths too.</li>
-<li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code> (the overrun kill logs <code>amadeus: job timed out</code>), <code>concurrency_policy: Forbid</code> for non-reentrant scripts.</li>
+<li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code> (the overrun kill logs <code>cronomicon: job timed out</code>), <code>concurrency_policy: Forbid</code> for non-reentrant scripts.</li>
 <li><strong>Run inputs instead of prompts</strong>, <code>::cronomicon-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
 <li><strong>Keep scripts in Git behind <code>script_ref</code></strong> so they are reviewed, versioned and reused; save inline <code>command:</code> for true one-liners. Lint with <code>shellcheck</code> + <code>cronomicon validate</code> in CI.</li>
 </ul>
@@ -148,7 +148,7 @@ printf '%s\n' "$CRONOMICON_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl res
 <tr><td><code>422 scope_membership</code></td><td>A per-run host subset names a host outside the effective scope.</td></tr>
 <tr><td>Per-host failure “no matching host record”</td><td>A scope member has no SSH host record — add it in Settings → SSH Targets (or fix the inventory import).</td></tr>
 <tr><td><code>unpinned_bastion_target</code></td><td>A secret-injecting run over a bastion to a target with no pinned host key. Probe the target (Test connection) or run once without secrets to capture it.</td></tr>
-<tr><td>Run killed with <code>amadeus: job timed out</code></td><td><code>timeout_seconds</code> is smaller than reality — or the script hung (interactive prompt, dead remote). Fix the hang first, then size the timeout.</td></tr>
+<tr><td>Run killed with <code>cronomicon: job timed out</code></td><td><code>timeout_seconds</code> is smaller than reality — or the script hung (interactive prompt, dead remote). Fix the hang first, then size the timeout.</td></tr>
 <tr><td>Run failed, reason <code>executor_lost</code></td><td>The server restarted mid-run and reconciled it at startup (plain Failed badge — distinct from a runner's amber <strong>Lost</strong>). Re-run.</td></tr>
 <tr><td>Run failed, reason <code>output_secret_leak</code></td><td>A <code>::cronomicon-output</code> value contained an injected secret; all outputs were dropped deliberately. Emit something derived instead of the secret itself.</td></tr>
 <tr><td>Manual run rejected <code>409</code> / cron fire skipped</td><td>The global <code>maxConcurrent</code> cap is reached, or a <code>Forbid</code> policy suppressed the overlap (recorded once as a <span class="pill mut"><span class="dot"></span>skipped</span> run).</td></tr>

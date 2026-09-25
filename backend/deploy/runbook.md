@@ -45,7 +45,7 @@ Run periodically, not just at go-live:
 ## Bootstrap-admin re-enable (lockout recovery)
 
 If all admin mappings are lost (e.g. AD group renamed) and no one can administer:
-1. Set `CRONOMICON_BOOTSTRAP_ADMIN_GROUP=<a group you control>` in `amadeus.env`.
+1. Set `CRONOMICON_BOOTSTRAP_ADMIN_GROUP=<a group you control>` in `cronomicon.env`.
 2. `docker compose up -d cronomicon`. A loud warning logs while it's active.
 3. Log in (you're now admin), fix `ad_group_mappings` in Settings.
 4. **Remove the var** and `docker compose up -d cronomicon` again. Confirm the

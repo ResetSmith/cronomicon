@@ -31,7 +31,7 @@ import {
   type ProvisionOptions,
 } from "./runner-provision";
 
-// Ported from the prototype's RunnersSection (amadeus-settings.jsx).
+// Ported from the prototype's RunnersSection (cronomicon-settings.jsx).
 // GET /runners, GET|POST /runners/registration-tokens (single-use, Phase 7),
 // DELETE /runners/registration-tokens/{id}, POST /runners/{id}/drain,
 // POST /runners/{id}/resync, DELETE /runners/{id}.
@@ -877,7 +877,7 @@ function fmtDate(iso?: string): string {
 // registration and polling, and it is what publishes /agents/). A function, not a
 // module const, so it is not evaluated at import time in a non-browser context.
 function runnerOrigin(): string {
-  return typeof window !== "undefined" ? window.location.origin : "https://amadeus.example.com";
+  return typeof window !== "undefined" ? window.location.origin : "https://cronomicon.example.com";
 }
 
 
@@ -1265,7 +1265,7 @@ export function Runners() {
   // LB8: a usable, copyable plaintext exists only when freshly minted — the
   // list never carries plaintext — so gate every copyable affordance on this.
   const revealable = minted != null && token !== "";
-  const origin = typeof window !== "undefined" ? window.location.origin : "https://amadeus.example.com";
+  const origin = typeof window !== "undefined" ? window.location.origin : "https://cronomicon.example.com";
 
   const tiles = [
     { l: "Total", v: runners.length, color: c.text },
@@ -1587,7 +1587,7 @@ export function Runners() {
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Run on the target host. <code>--download</code> fetches the agent binary from this server with
                   checksum verification (deployments without bundled binaries fall back to a local{" "}
-                  <code>amadeus-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected from
+                  <code>cronomicon-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected from
                   the host's toolchains at startup; add <code>-c</code> only to narrow them — see the Install
                   Guide.{" "}
                   <button
@@ -2323,7 +2323,7 @@ function RunnerSettingsDrawer({
 
 // ProvisionPanel turns one set of choices into three copy-paste artifacts: a
 // complete annotated runner.env (patched into the verbatim
-// amadeus-runner.env.example — single-sourced, fetched from the app), the
+// cronomicon-runner.env.example — single-sourced, fetched from the app), the
 // matching runner-install.sh one-liner (Phase-1 flags included), and the
 // docker run variant (slim/fat derived from the capability pick). Pure
 // frontend; the generators live in runner-provision.ts with unit tests.
@@ -2720,7 +2720,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
             </div>
             <div style={hintStyle}>
               Leave blank for non-ansible runners. These are <strong>source files on this host</strong> the
-              installer copies to <code>/etc/amadeus-runner/</code> at <code>0640</code> — the server never ships
+              installer copies to <code>/etc/cronomicon-runner/</code> at <code>0640</code> — the server never ships
               secret bytes. The checkout <strong>policy</strong> (allow-checkout + the repo allowlist), max jobs,
               and sandbox caps are no longer set here: enable and tune them on the runner's row (
               <strong>⚙ Settings</strong>) once it registers, and they apply on the next poll (v0.47.12). Register
@@ -2755,7 +2755,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
                 oneLiner,
                 <>
                   Run as root on the runner host: downloads the agent binary from this server, creates the
-                  service user and <code>amadeus-runner</code> systemd unit, installs any referenced files
+                  service user and <code>cronomicon-runner</code> systemd unit, installs any referenced files
                   (known_hosts, keys, inventory, checkout token, vault password) into the standard paths, writes
                   the env, and starts the agent. Max jobs, sandbox caps, and checkout policy are then tuned on the
                   runner's row — no env merge, no restart.
@@ -2765,7 +2765,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
                 envText,
                 <>
                   The annotated template with your choices applied — for hand-rolled installs or pushing via
-                  Ansible/Puppet. Place it at <code>/etc/amadeus-runner/runner.env</code> (mode 0640) and stage
+                  Ansible/Puppet. Place it at <code>/etc/cronomicon-runner/runner.env</code> (mode 0640) and stage
                   any referenced files at the standard paths it names; the Install Guide's manual section covers
                   the service unit.
                 </>,
@@ -2789,7 +2789,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
                 <strong style={{ color: c.text }}>After the install:</strong> the agent registers itself with the
                 token, then polls every 60 seconds. It appears in the Runner Registry above within about a
                 minute — press <strong>Test</strong> on its row to confirm, then run a job scoped to one of its
-                capabilities. If it never appears, check <code>journalctl -u amadeus-runner</code> (or{" "}
+                capabilities. If it never appears, check <code>journalctl -u cronomicon-runner</code> (or{" "}
                 <code>docker logs</code>) on the host; the usual causes are an expired/used token or the host
                 not reaching <code>{origin}</code>.
               </div>

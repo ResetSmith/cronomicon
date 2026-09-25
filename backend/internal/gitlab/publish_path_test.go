@@ -49,7 +49,7 @@ func TestPublishScheduleRejectsTraversal(t *testing.T) {
 	svc := &Service{cloneDir: t.TempDir()}
 	h := NewHandlers(svc)
 
-	body := `{"filePath":"../../../tmp/amadeus-evil.yaml","content":"apiVersion: cronomicon.io/v1\nkind: Job\n"}`
+	body := `{"filePath":"../../../tmp/cronomicon-evil.yaml","content":"apiVersion: cronomicon.io/v1\nkind: Job\n"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/schedules/publish", strings.NewReader(body))
 	req.Header.Set("If-Match", "deadbeefdeadbeef")
 	rec := httptest.NewRecorder()

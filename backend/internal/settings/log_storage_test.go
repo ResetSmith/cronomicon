@@ -25,7 +25,7 @@ func boolp(b bool) *bool { return &b }
 func s3Input(fake *fakes3.Server, bucket string) LogStorageConfig {
 	return LogStorageConfig{
 		Backend: "s3",
-		Local:   &LocalLogConfig{Path: "/var/lib/amadeus/logs"},
+		Local:   &LocalLogConfig{Path: "/var/lib/cronomicon/logs"},
 		S3: &S3LogConfig{
 			Endpoint: fake.Endpoint(), Bucket: bucket, Region: "us-east-1",
 			AccessKey: "AKIAFAKE", SecretKey: "fakesecret", Prefix: "/cronomicon/", UseSSL: new(false),
@@ -161,7 +161,7 @@ func TestLogStorageS3SaveProbesAndPersists(t *testing.T) {
 
 	// Switching back to local stops the tier but keeps the S3 fields and reports
 	// no archive (count is 0) — SL-Q14.
-	got, err = UpdateLogStorageConfig(ctx, pool, cfg, LogStorageConfig{Backend: "local", Local: &LocalLogConfig{Path: "/var/lib/amadeus/logs"}, S3: in2.S3}, "tester")
+	got, err = UpdateLogStorageConfig(ctx, pool, cfg, LogStorageConfig{Backend: "local", Local: &LocalLogConfig{Path: "/var/lib/cronomicon/logs"}, S3: in2.S3}, "tester")
 	if err != nil {
 		t.Fatal(err)
 	}

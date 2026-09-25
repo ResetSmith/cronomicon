@@ -33,7 +33,7 @@ func materializeKeys(keys []runnerproto.ManifestKey) (keyMap, keyEnv map[string]
 		return nil, nil, cleanup, nil
 	}
 
-	dir, err := os.MkdirTemp(keyBaseDir(), "amadeus-keys-")
+	dir, err := os.MkdirTemp(keyBaseDir(), "cronomicon-keys-")
 	if err != nil {
 		return nil, nil, cleanup, fmt.Errorf("create key dir: %w", err)
 	}
@@ -105,7 +105,7 @@ func keyBaseDir() string {
 	const shm = "/dev/shm"
 	if fi, err := os.Stat(shm); err == nil && fi.IsDir() {
 		// Confirm writability rather than trusting the mode bits.
-		if probe, err := os.MkdirTemp(shm, ".amadeus-probe-"); err == nil {
+		if probe, err := os.MkdirTemp(shm, ".cronomicon-probe-"); err == nil {
 			_ = os.Remove(probe)
 			return shm
 		}

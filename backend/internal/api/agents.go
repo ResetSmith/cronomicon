@@ -10,9 +10,9 @@ import (
 
 // Runner-agent binary distribution (runner provisioning plan D1, Phase 3).
 //
-// GET /agents/{filename} serves the cross-compiled amadeus-runner binaries and
+// GET /agents/{filename} serves the cross-compiled cronomicon-runner binaries and
 // their SHA256SUMS from a directory baked into the server image (Dockerfile
-// `agents` stage → /usr/share/amadeus/agents, overridable via
+// `agents` stage → /usr/share/cronomicon/agents, overridable via
 // CRONOMICON_AGENT_DIR). A runner host by definition reaches the Cronomicon server,
 // so this removes the "build the binary yourself / reach GitLab" prerequisite:
 // runner-install.sh --download fetches from here and verifies the checksum.
@@ -28,9 +28,9 @@ import (
 // yet) and the checksum file.
 
 var agentFiles = map[string]string{
-	"amadeus-runner-linux-amd64": "application/octet-stream",
-	"amadeus-runner-linux-arm64": "application/octet-stream",
-	"SHA256SUMS":                 "text/plain; charset=utf-8",
+	"cronomicon-runner-linux-amd64": "application/octet-stream",
+	"cronomicon-runner-linux-arm64": "application/octet-stream",
+	"SHA256SUMS":                    "text/plain; charset=utf-8",
 }
 
 func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
 	contentType, ok := agentFiles[name]
 	if !ok {
 		httpx.Fail(w, http.StatusNotFound, "not_found",
-			"unknown agent artifact — published files are amadeus-runner-linux-{amd64,arm64} and SHA256SUMS")
+			"unknown agent artifact — published files are cronomicon-runner-linux-{amd64,arm64} and SHA256SUMS")
 		return
 	}
 
@@ -47,7 +47,7 @@ func (s *Server) handleAgentDownload(w http.ResponseWriter, r *http.Request) {
 	if err != nil || info.IsDir() {
 		// Bare-metal / source-built deployments don't bundle the binaries.
 		httpx.Fail(w, http.StatusNotFound, "agents_not_bundled",
-			"this deployment does not bundle runner-agent binaries — build one yourself: CGO_ENABLED=0 go build ./cmd/amadeus-runner (see /runner-install.html §2), or set CRONOMICON_AGENT_DIR")
+			"this deployment does not bundle runner-agent binaries — build one yourself: CGO_ENABLED=0 go build ./cmd/cronomicon-runner (see /runner-install.html §2), or set CRONOMICON_AGENT_DIR")
 		return
 	}
 

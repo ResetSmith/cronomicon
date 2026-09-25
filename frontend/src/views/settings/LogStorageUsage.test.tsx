@@ -16,7 +16,7 @@ import { cleanup, render, waitFor, within } from "@testing-library/react";
 
 const BASE = {
   backend: "local",
-  local: { path: "/var/lib/amadeus/logs" },
+  local: { path: "/var/lib/cronomicon/logs" },
   stats: {
     totalSizeBytes: 0,
     fileCount: 0,

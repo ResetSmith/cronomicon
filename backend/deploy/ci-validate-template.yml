@@ -10,7 +10,7 @@
 # never disagree. Pin CRONOMICON_IMAGE to the version your Cronomicon deployment runs.
 
 variables:
-  CRONOMICON_IMAGE: "registry.example.com/amadeus:latest"
+  CRONOMICON_IMAGE: "registry.example.com/cronomicon:latest"
 
 validate-job-definitions:
   stage: test
