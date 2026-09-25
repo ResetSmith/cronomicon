@@ -421,12 +421,12 @@ func seedGlobalFreezeToday(t *testing.T, pool *sql.DB, s *Scheduler) {
 	// outage shaped like a feature).
 	if _, err := pool.Exec(
 		`INSERT INTO calendars (name, source, global, created_at)
-		 VALUES ('change-freeze','amadeus',1,'2026-08-12T00:00:00Z')`); err != nil {
+		 VALUES ('change-freeze','cronomicon',1,'2026-08-12T00:00:00Z')`); err != nil {
 		t.Fatalf("seed calendar: %v", err)
 	}
 	if _, err := pool.Exec(
 		`INSERT INTO calendar_days (calendar_source, calendar_name, day, label)
-		 VALUES ('amadeus','change-freeze',?,'Change freeze')`, day); err != nil {
+		 VALUES ('cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
 		t.Fatalf("seed calendar day: %v", err)
 	}
 }

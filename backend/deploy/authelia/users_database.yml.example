@@ -16,5 +16,5 @@ users:
     password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_ME"
     email: admin@example.com
     groups:
-      - amadeus-users
+      - cronomicon-users
       - cronomicon-admins

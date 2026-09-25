@@ -250,7 +250,7 @@ func TestManagedSettingsDoNotFlapDrift(t *testing.T) {
 	// Give the runner a stored declared-config digest and mark it v4 so drift
 	// detection is active. A managed override to maxConcurrent must NOT change
 	// the declared digest nor trigger a re-register.
-	digest := runnerproto.ConfigDigest("d", "Linux", []string{"bash"}, 5, "amadeus", "1.0", runnerproto.ProtocolVersion)
+	digest := runnerproto.ConfigDigest("d", "Linux", []string{"bash"}, 5, "cronomicon", "1.0", runnerproto.ProtocolVersion)
 	if _, err := svc.db.Exec(`UPDATE runners SET config_digest = ?, protocol_version = ? WHERE id = ?`, digest, runnerproto.ProtocolVersion, id); err != nil {
 		t.Fatal(err)
 	}

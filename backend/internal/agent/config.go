@@ -55,7 +55,7 @@ type Config struct {
 	Capabilities []string
 	// MaxConcurrent bounds simultaneously-executing runs on this agent.
 	MaxConcurrent int
-	// Inventory is the inventory-canonicality mode (D8): "amadeus" (manifest
+	// Inventory is the inventory-canonicality mode (D8): "cronomicon" (manifest
 	// carries resolved targets) or "local" (agent resolves scope→hosts itself).
 	Inventory string
 
@@ -203,7 +203,7 @@ func defaultConfig() Config {
 	return Config{
 		OS:             "Linux",
 		MaxConcurrent:  5,
-		Inventory:      "amadeus",
+		Inventory:      "cronomicon",
 		IdentityFile:   "amadeus-runner-identity.json",
 		PollInterval:   60 * time.Second, // D7
 		KeyMap:         map[string]string{},
@@ -258,7 +258,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 		osFlag            = fs.String("os", cfg.OS, "runner OS: Linux or Windows")
 		capsFlag          = fs.String("capabilities", strings.Join(cfg.Capabilities, ","), "comma-separated run-type capabilities (empty = auto-detect from the host's toolchains; set to narrow)")
 		maxConc           = fs.Int("max-concurrent", cfg.MaxConcurrent, "max simultaneously-executing runs")
-		inventory         = fs.String("inventory", cfg.Inventory, "inventory mode: amadeus or local")
+		inventory         = fs.String("inventory", cfg.Inventory, "inventory mode: cronomicon or local")
 		identityFile      = fs.String("identity-file", cfg.IdentityFile, "path to persist {id, apiKey}")
 		pollInterval      = fs.Duration("poll-interval", cfg.PollInterval, "poll/heartbeat cadence")
 		keyDir            = fs.String("key-dir", cfg.KeyDir, "directory to search for private keys named by authKeyEnvVar")
@@ -377,8 +377,8 @@ func (c Config) validate() error {
 	if c.OS != "Linux" && c.OS != "Windows" {
 		return fmt.Errorf("os must be 'Linux' or 'Windows', got %q", c.OS)
 	}
-	if c.Inventory != "amadeus" && c.Inventory != "local" {
-		return fmt.Errorf("inventory must be 'amadeus' or 'local', got %q", c.Inventory)
+	if c.Inventory != "cronomicon" && c.Inventory != "local" {
+		return fmt.Errorf("inventory must be 'cronomicon' or 'local', got %q", c.Inventory)
 	}
 	if c.MaxConcurrent <= 0 {
 		return fmt.Errorf("max-concurrent must be > 0, got %d", c.MaxConcurrent)

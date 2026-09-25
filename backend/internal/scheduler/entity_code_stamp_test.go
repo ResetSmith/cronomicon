@@ -146,7 +146,7 @@ func TestEnqueueIgnoresADeletedEntityCode(t *testing.T) {
 
 // TestEnqueueStampsPerJobSource keeps the dual-source namespaces apart at the
 // enqueue site. `jobs` is keyed PRIMARY KEY (source, name), so a git `deploy` and
-// an amadeus `deploy` are two jobs; if the subquery ignored the source argument
+// an cronomicon `deploy` are two jobs; if the subquery ignored the source argument
 // they would share one folder and interleave their run history.
 func TestEnqueueStampsPerJobSource(t *testing.T) {
 	pool := mustPool(t)
@@ -157,16 +157,16 @@ func TestEnqueueStampsPerJobSource(t *testing.T) {
 		t.Fatalf("seed git job: %v", err)
 	}
 	if _, err := pool.ExecContext(ctx,
-		`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled)VALUES ('uid-ama-deploy', 'deploy','amadeus','bash','Allow',1)`); err != nil {
-		t.Fatalf("seed amadeus job: %v", err)
+		`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled)VALUES ('uid-ama-deploy', 'deploy','cronomicon','bash','Allow',1)`); err != nil {
+		t.Fatalf("seed cronomicon job: %v", err)
 	}
 	gitCode, err := entitycode.Allocate(ctx, pool, entitycode.KindJob, "git", "deploy", "uid-deploy")
 	if err != nil {
 		t.Fatalf("allocate git: %v", err)
 	}
-	amaCode, err := entitycode.Allocate(ctx, pool, entitycode.KindJob, "amadeus", "deploy", "uid-ama-deploy")
+	amaCode, err := entitycode.Allocate(ctx, pool, entitycode.KindJob, "cronomicon", "deploy", "uid-ama-deploy")
 	if err != nil {
-		t.Fatalf("allocate amadeus: %v", err)
+		t.Fatalf("allocate cronomicon: %v", err)
 	}
 	if gitCode == amaCode {
 		t.Fatalf("registry handed both sources the same code %q", gitCode)
@@ -179,15 +179,15 @@ func TestEnqueueStampsPerJobSource(t *testing.T) {
 		t.Fatalf("enqueue git run: %v", err)
 	}
 	amaTrace, err := EnqueueRunWithID(ctx, pool, EnqueueParams{
-		JobName: "deploy", JobSource: "amadeus", RunType: "bash", TriggerKind: "manual", TriggeredBy: "tester",
+		JobName: "deploy", JobSource: "cronomicon", RunType: "bash", TriggerKind: "manual", TriggeredBy: "tester",
 	})
 	if err != nil {
-		t.Fatalf("enqueue amadeus run: %v", err)
+		t.Fatalf("enqueue cronomicon run: %v", err)
 	}
 	if got, _ := runEntityCode(t, pool, gitTrace); got != gitCode {
 		t.Errorf("git run entity_code = %q, want %q", got, gitCode)
 	}
 	if got, _ := runEntityCode(t, pool, amaTrace); got != amaCode {
-		t.Errorf("amadeus run entity_code = %q, want %q", got, amaCode)
+		t.Errorf("cronomicon run entity_code = %q, want %q", got, amaCode)
 	}
 }

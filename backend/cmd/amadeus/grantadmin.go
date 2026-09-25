@@ -14,7 +14,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
-// `amadeus grant-admin` — the break-glass recovery path for an ADMIN LOCKOUT
+// `cronomicon grant-admin` — the break-glass recovery path for an ADMIN LOCKOUT
 // (RF-25 / RB-Q15, the RBAC-fixes plan; RF-Q4 resolved 2026-08-04).
 //
 // Why this exists: on an OIDC deployment, CRONOMICON_BOOTSTRAP_ADMIN_GROUP does
@@ -43,7 +43,7 @@ func runGrantAdmin(args []string) int {
 	fs := flag.NewFlagSet("grant-admin", flag.ContinueOnError)
 	dbPath := fs.String("db", "", "database path (default: CRONOMICON_DB_PATH from config)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, `usage: amadeus grant-admin [-db path] <ad-group | email>
+		fmt.Fprintln(os.Stderr, `usage: cronomicon grant-admin [-db path] <ad-group | email>
 
 Break-glass admin recovery. STOP THE SERVER FIRST if it is running against the
 same database file.
@@ -105,7 +105,7 @@ same database file.
 			fmt.Printf("  %s\n", g)
 		}
 		fmt.Println("\nRe-run with the group that should hold admin — the grant applies to EVERYONE in it:")
-		fmt.Printf("  amadeus grant-admin %q\n", groups[0])
+		fmt.Printf("  cronomicon grant-admin %q\n", groups[0])
 		return 0
 	}
 

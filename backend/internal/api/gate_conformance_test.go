@@ -72,7 +72,7 @@ func TestPausedJob_ClickOverridesButTokenDoesNot(t *testing.T) {
 		t.Fatalf("control: token-triggering a LIVE job = %d", resp.StatusCode)
 	}
 
-	pauseJobRow(t, pool, "amadeus", "billing")
+	pauseJobRow(t, pool, "cronomicon", "billing")
 
 	t.Run("the human click still runs it", func(t *testing.T) {
 		code, b := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs/"+itoa(jobID)+"/run", csrf, map[string]any{})
@@ -126,7 +126,7 @@ func TestPausedWorkflow_TriggerStillRefuses(t *testing.T) {
 
 	if _, err := pool.Exec(`
 		INSERT INTO paused_jobs (source, owner_kind, name, paused_by, paused_at)
-		VALUES ('amadeus', 'workflow', 'release', 'op@example.com', '2026-08-12T00:00:00Z')`); err != nil {
+		VALUES ('cronomicon', 'workflow', 'release', 'op@example.com', '2026-08-12T00:00:00Z')`); err != nil {
 		t.Fatalf("pause workflow: %v", err)
 	}
 

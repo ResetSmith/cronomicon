@@ -7,7 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 // mode used to hand FolderBrowser the unsorted rows with a caret-free header.
 // Two bugs fell out of that, both visible on a stock Jobs page:
 //
-//   1. An amadeus-authored job has no sourcePath, so jobDisplayPath fell back to
+//   1. An cronomicon-authored job has no sourcePath, so jobDisplayPath fell back to
 //      jobName() — the DB id. Every such job entered the folder tree labelled
 //      with a UUIDv7, which is time-ordered, so the default view listed jobs in
 //      CREATION order while the NAME column rendered metadata.name. It read as
@@ -19,12 +19,12 @@ import { MemoryRouter } from "react-router-dom";
 // time — it just never reached the view the user actually lands on.
 
 // Deliberately NOT alpha, and NOT id order: neither a plain pass-through nor an
-// id sort can fake a pass here. Ids are the UUIDv7 shape amadeus rows carry.
+// id sort can fake a pass here. Ids are the UUIDv7 shape cronomicon rows carry.
 const JOBS = {
   items: [
-    { id: "0198f0a0-0000-7000-8000-000000000001", name: "zulu-job", type: "bash", scope: "Prod", source: "amadeus", status: "idle", schedule: "manual", sourcePath: null },
-    { id: "0198f0a0-0000-7000-8000-000000000002", name: "alpha-job", type: "bash", scope: "Prod", source: "amadeus", status: "idle", schedule: "manual", sourcePath: null },
-    { id: "0198f0a0-0000-7000-8000-000000000003", name: "mike-job", type: "bash", scope: "Prod", source: "amadeus", status: "idle", schedule: "manual", sourcePath: null },
+    { id: "0198f0a0-0000-7000-8000-000000000001", name: "zulu-job", type: "bash", scope: "Prod", source: "cronomicon", status: "idle", schedule: "manual", sourcePath: null },
+    { id: "0198f0a0-0000-7000-8000-000000000002", name: "alpha-job", type: "bash", scope: "Prod", source: "cronomicon", status: "idle", schedule: "manual", sourcePath: null },
+    { id: "0198f0a0-0000-7000-8000-000000000003", name: "mike-job", type: "bash", scope: "Prod", source: "cronomicon", status: "idle", schedule: "manual", sourcePath: null },
   ],
   totalItems: 3,
   totalPages: 1,

@@ -33,7 +33,7 @@ const LOCAL = {
 const S3 = {
   backend: "s3",
   local: { path: "/var/lib/amadeus/logs" },
-  s3: { endpoint: "minio:9000", bucket: "logs", region: "us-east-1", accessKey: "AK", prefix: "amadeus/", useSsl: false },
+  s3: { endpoint: "minio:9000", bucket: "logs", region: "us-east-1", accessKey: "AK", prefix: "cronomicon/", useSsl: false },
   sync: { mode: "interval", intervalSeconds: 300 },
   archive: {
     count: 12,

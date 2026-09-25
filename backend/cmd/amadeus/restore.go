@@ -19,15 +19,15 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/config"
 )
 
-// runRestore implements `amadeus restore` (FU-3 Phase C): fetch a database
+// runRestore implements `cronomicon restore` (FU-3 Phase C): fetch a database
 // snapshot from the configured S3 backup bucket and swap it into place, then
 // verify it with PRAGMA integrity_check. It replaces the by-hand `aws s3 cp` +
 // file-swap steps in backend/deploy/backup-restore.md, grounding the tooling in
 // that runbook.
 //
-//	amadeus restore --list                 # show available snapshots
-//	amadeus restore                        # restore the latest over CRONOMICON_DB_PATH
-//	amadeus restore --from amadeus-20260722.db --db /var/lib/amadeus/amadeus.db
+//	cronomicon restore --list                 # show available snapshots
+//	cronomicon restore                        # restore the latest over CRONOMICON_DB_PATH
+//	cronomicon restore --from amadeus-20260722.db --db /var/lib/amadeus/amadeus.db
 //
 // It reads the same CRONOMICON_BACKUP_S3_* / CRONOMICON_DB_PATH env the server uses.
 // The server must be STOPPED first — the swap replaces the live .db and its
@@ -104,15 +104,15 @@ func runRestore(args []string) int {
 
 	// Best-effort guard: refuse if the target DB is actively being written (a
 	// running server). Not a full liveness check — the operator must still stop
-	// amadeus first (the swap replaces the WAL). See dbLooksInUse.
+	// cronomicon first (the swap replaces the WAL). See dbLooksInUse.
 	if why := dbLooksInUse(target); why != "" {
-		fmt.Fprintf(os.Stderr, "restore: refusing — target DB %q looks in use (%s). Stop amadeus first.\n", target, why)
+		fmt.Fprintf(os.Stderr, "restore: refusing — target DB %q looks in use (%s). Stop cronomicon first.\n", target, why)
 		return 1
 	}
 
 	if !*yes {
 		fmt.Printf("Restore snapshot %q OVER %q?\n", key, target)
-		fmt.Printf("  The existing DB and its -wal/-shm sidecars will be REPLACED. Ensure amadeus is stopped.\n")
+		fmt.Printf("  The existing DB and its -wal/-shm sidecars will be REPLACED. Ensure cronomicon is stopped.\n")
 		fmt.Print("Continue? [y/N] ")
 		var resp string
 		_, _ = fmt.Scanln(&resp)
@@ -169,7 +169,7 @@ func runRestore(args []string) int {
 	}
 
 	fmt.Printf("restore: OK — %q restored from %q; PRAGMA integrity_check passed.\n", target, key)
-	fmt.Println("Start amadeus to apply migrations, then re-supply the KEK/OIDC keys out-of-band.")
+	fmt.Println("Start cronomicon to apply migrations, then re-supply the KEK/OIDC keys out-of-band.")
 	return 0
 }
 
@@ -231,7 +231,7 @@ func verifyRestoredDB(path string) error {
 		return fmt.Errorf("integrity_check returned %q", result)
 	}
 	// Sanity: the runs table should be queryable (schema present). Absent rows is
-	// fine; an error means the snapshot is not a usable amadeus DB.
+	// fine; an error means the snapshot is not a usable cronomicon DB.
 	var n int
 	if err := pool.QueryRowContext(ctx, "SELECT count(*) FROM runs").Scan(&n); err != nil {
 		return fmt.Errorf("row-count sanity (SELECT FROM runs): %w", err)

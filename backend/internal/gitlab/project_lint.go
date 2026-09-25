@@ -22,7 +22,7 @@ import (
 //     Vault-encrypted files ($ANSIBLE_VAULT) are exempt (RX.13).
 //
 // Findings are returned as ValidationError so the caller decides severity:
-// `amadeus validate` / CI treats them as errors (fail), git sync surfaces them
+// `cronomicon validate` / CI treats them as errors (fail), git sync surfaces them
 // as never-blocking warnings (SyncLintProjectWarnings).
 func LintProject(repoDir, projectRoot string) []ValidationError {
 	var errs []ValidationError

@@ -37,7 +37,7 @@ func TestMigrate1030RewritesInFlightConcurrencyKeys(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','git','uid-backup','bash','t')`)
-	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('shared','amadeus','uid-shared','bash','t')`)
+	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('shared','cronomicon','uid-shared','bash','t')`)
 
 	// Running, with the OLD default key — must move.
 	exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind, concurrency_key, created_at)
@@ -54,7 +54,7 @@ func TestMigrate1030RewritesInFlightConcurrencyKeys(t *testing.T) {
 	// Active with an OPERATOR-AUTHORED key — must NOT move: jobs.concurrency_key is
 	// a deliberately shared namespace and re-keying it would un-share the gate.
 	exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind, concurrency_key, created_at)
-	      VALUES('r-custom','shared','amadeus','bash','running','t','scheduled','nightly-window','t')`)
+	      VALUES('r-custom','shared','cronomicon','bash','running','t','scheduled','nightly-window','t')`)
 	// A parked row: promotion re-judges Forbid with this key, so it moves too.
 	exec(`INSERT INTO pending_runs(id, kind, name, source, run_at, scheduled_by, created_at, status, concurrency_key)
 	      VALUES('p-1','job','backup','git','t','t','t','pending','git/backup')`)

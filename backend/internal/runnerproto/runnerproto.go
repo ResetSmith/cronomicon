@@ -177,7 +177,7 @@ const MinProtocolVersion = ProtocolVersion
 //   - capabilities are sorted (order-insensitive) — the agent's detection
 //     order is not stable across runs;
 //   - maxConcurrent <= 0 normalizes to 5 (the register handler's default);
-//   - inventory "" normalizes to "amadeus" (D8 default);
+//   - inventory "" normalizes to "cronomicon" (D8 default);
 //   - fields are newline-framed with a field prefix so values can't bleed
 //     into each other ("ab"+"c" != "a"+"bc").
 func ConfigDigest(name, os string, capabilities []string, maxConcurrent int,
@@ -189,7 +189,7 @@ func ConfigDigest(name, os string, capabilities []string, maxConcurrent int,
 		maxConcurrent = 5
 	}
 	if inventory == "" {
-		inventory = "amadeus"
+		inventory = "cronomicon"
 	}
 
 	var b strings.Builder
@@ -348,7 +348,7 @@ type ManifestResponse struct {
 	// via the host's AuthKeyEnvVar and resolved by the agent (D1).
 	Env map[string]string `json:"env"`
 	// InventoryMode is the owning runner's inventory canonicality (D8):
-	//   "amadeus" — Targets is fully resolved from scope_hosts→ssh_hosts.
+	//   "cronomicon" — Targets is fully resolved from scope_hosts→ssh_hosts.
 	//   "local"   — Targets is empty; the agent resolves Scope against its own
 	//               inventory (T-b network-isolated segments).
 	InventoryMode  string           `json:"inventoryMode"`
@@ -356,7 +356,7 @@ type ManifestResponse struct {
 	Targets        []ManifestTarget `json:"targets"`
 	TimeoutSeconds int              `json:"timeoutSeconds"`
 
-	// Inventory is the Ansible inventory file shipped to an amadeus-mode runner
+	// Inventory is the Ansible inventory file shipped to an cronomicon-mode runner
 	// for `ansible-playbook -i` (protocol v2). It is byte-exact and SECRET-FREE
 	// by invariant — secret-bearing vars are rejected at ingest (Path A / D1), so
 	// this never carries a decrypted secret value. nil for non-ansible runs and
@@ -518,7 +518,7 @@ type ManifestAnsibleOptions struct {
 }
 
 // ManifestInventory is the inventory-file payload carried by a v2 manifest for an
-// amadeus-mode ansible run. Raw is the -i material; it is secret-free because
+// cronomicon-mode ansible run. Raw is the -i material; it is secret-free because
 // ingest (internal/inventory.ValidateSecrets) rejects secret-bearing inventory.
 type ManifestInventory struct {
 	Raw    string   `json:"raw"`              // byte-exact inventory content (D3)

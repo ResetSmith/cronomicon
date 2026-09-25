@@ -15,7 +15,7 @@ import (
 
 // Downloader is the read side of the backup path (FU-3 Phase C): it lists and
 // fetches snapshots from the same bucket the Uploader writes to, for the
-// `amadeus restore` subcommand. The uploader is otherwise put-only.
+// `cronomicon restore` subcommand. The uploader is otherwise put-only.
 type Downloader struct {
 	client *minio.Client
 	bucket string

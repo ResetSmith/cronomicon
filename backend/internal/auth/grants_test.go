@@ -36,9 +36,9 @@ func exec(t *testing.T, pool *sql.DB, q string, args ...any) {
 func seedTwoAgencies(t *testing.T, pool *sql.DB) {
 	t.Helper()
 	exec(t, pool, `INSERT INTO scopes (id,name,source,created_at) VALUES
-		('s-tax','tax','amadeus','2026-01-01T00:00:00Z'),
-		('s-aud','tax-audit','amadeus','2026-01-01T00:00:00Z'),
-		('s-fin','finance','amadeus','2026-01-01T00:00:00Z')`)
+		('s-tax','tax','cronomicon','2026-01-01T00:00:00Z'),
+		('s-aud','tax-audit','cronomicon','2026-01-01T00:00:00Z'),
+		('s-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(t, pool, `INSERT INTO agencies (id,name,created_at) VALUES
 		('a-tax','Tax','2026-01-01T00:00:00Z'),
 		('a-fin','Finance','2026-01-01T00:00:00Z')`)
@@ -72,7 +72,7 @@ func TestResolveGrantsExpandsAgencies(t *testing.T) {
 	}
 
 	// Add a scope to the agency: the SAME grant now covers it, with no grant edit.
-	exec(t, pool, `INSERT INTO scopes (id,name,source,created_at) VALUES ('s-new','tax-filing','amadeus','2026-01-01T00:00:00Z')`)
+	exec(t, pool, `INSERT INTO scopes (id,name,source,created_at) VALUES ('s-new','tax-filing','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(t, pool, `INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('s-new','a-tax')`)
 	grants, _ = ResolveGrants(context.Background(), pool, []string{"sg-tax"})
 	if len(grants[0].Scopes) != 3 {

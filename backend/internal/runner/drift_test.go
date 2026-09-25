@@ -69,7 +69,7 @@ func pollHasReRegister(t *testing.T, rec *httptest.ResponseRecorder) bool {
 // registerWith's body: name, os Linux, caps [bash], version 1.0, protocol 4 —
 // the digest the real register handler stored for it.
 func registeredDigest(name string) string {
-	return runnerproto.ConfigDigest(name, "Linux", []string{"bash"}, 5, "amadeus", "1.0", runnerproto.ProtocolVersion)
+	return runnerproto.ConfigDigest(name, "Linux", []string{"bash"}, 5, "cronomicon", "1.0", runnerproto.ProtocolVersion)
 }
 
 // TestPollDriftDetection: a matching digest is quiet; a mismatch delivers
@@ -86,7 +86,7 @@ func TestPollDriftDetection(t *testing.T) {
 	}
 
 	// Drifted digest (e.g. operator added a capability + restarted) → op now.
-	drifted := runnerproto.ConfigDigest("driftr", "Linux", []string{"bash", "ansible"}, 5, "amadeus", "1.0", runnerproto.ProtocolVersion)
+	drifted := runnerproto.ConfigDigest("driftr", "Linux", []string{"bash", "ansible"}, 5, "cronomicon", "1.0", runnerproto.ProtocolVersion)
 	if rec := driftPoll(t, svc, id, tok, drifted); !pollHasReRegister(t, rec) {
 		t.Fatalf("drifted digest: expected a re-register op, got %d %s", rec.Code, rec.Body.String())
 	}

@@ -1273,7 +1273,7 @@
             background: var(--textMuted)
         }
 
-        .pill.amad {
+        .pill.crn {
             background: var(--accentBg);
             color: var(--accent)
         }
@@ -1838,7 +1838,7 @@
 
 <h2 id="2-getting-scripts-in">2 · Getting scripts in</h2>
 
-<p>Identical to the rest of the catalog (<a href="./bash-guide.html">Bash Guide</a> §2 in depth): any raw <code>*.ps1</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>powershell</code>; or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>amadeus validate .</code> into CI — and <code>Invoke-ScriptAnalyzer</code> (PSScriptAnalyzer) sits beside it as naturally as shellcheck does for bash.</p>
+<p>Identical to the rest of the catalog (<a href="./bash-guide.html">Bash Guide</a> §2 in depth): any raw <code>*.ps1</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>powershell</code>; or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>cronomicon validate .</code> into CI — and <code>Invoke-ScriptAnalyzer</code> (PSScriptAnalyzer) sits beside it as naturally as shellcheck does for bash.</p>
 
 <hr />
 
@@ -1914,7 +1914,7 @@ $cred = New-Object System.Management.Automation.PSCredential($env:SVC_USER, $sec
 <li><strong>No prompts, ever:</strong> run inputs instead of <code>Read-Host</code>; <code>-Confirm:$false</code>/<code>-Force</code> on cmdlets that ask; <code>-NonInteractive</code> turns forgotten prompts into immediate errors, which is the good outcome.</li>
 <li><strong>Be idempotent</strong> — retries, schedule re-fires and re-runs all mean “again”; test with <code>-WhatIf</code> during authoring, then remove it.</li>
 <li><strong>Pin single-host jobs with <code>target_host</code></strong>; size <code>timeout_seconds</code> to reality (a hung Windows Update call is the classic overrun); <code>concurrency_policy: Forbid</code> for non-reentrant maintenance.</li>
-<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>, lint with PSScriptAnalyzer + <code>amadeus validate</code> in CI, and use <code>::cronomicon-output</code> markers — not temp files — to pass data between workflow steps.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>, lint with PSScriptAnalyzer + <code>cronomicon validate</code> in CI, and use <code>::cronomicon-output</code> markers — not temp files — to pass data between workflow steps.</li>
 </ul>
 
 <hr />

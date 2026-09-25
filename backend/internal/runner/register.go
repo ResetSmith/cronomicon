@@ -65,9 +65,9 @@ type runnerResponse struct {
 	Load          int      `json:"load"`
 	MaxConcurrent int      `json:"maxConcurrent"`
 	Version       string   `json:"version"`
-	// Inventory is the per-runner inventory canonicality (D8): 'amadeus' (the
+	// Inventory is the per-runner inventory canonicality (D8): 'cronomicon' (the
 	// manifest carries fully-resolved targets) or 'local' (the agent resolves
-	// hosts against its own inventory). Defaults to 'amadeus'.
+	// hosts against its own inventory). Defaults to 'cronomicon'.
 	Inventory string `json:"inventory"`
 	// ProtocolVersion is the runner↔server wire-protocol version the agent
 	// declared at its last (re-)registration (migration 390). The Runners view
@@ -348,7 +348,7 @@ type registerRequest struct {
 	Version       string   `json:"version"`
 	MaxConcurrent int      `json:"maxConcurrent"`
 	// Inventory selects the per-runner inventory canonicality (D8):
-	// 'amadeus' (default) or 'local'. Optional; absent ⇒ 'amadeus'.
+	// 'cronomicon' (default) or 'local'. Optional; absent ⇒ 'cronomicon'.
 	Inventory string `json:"inventory"`
 	// ProtocolVersion is the runner↔server wire-protocol version the agent
 	// speaks (R0.2). REQUIRED: absent decodes as zero and is refused with the
@@ -376,12 +376,12 @@ func (req *registerRequest) normalizeAndValidate() string {
 	if req.OS != "Linux" && req.OS != "Windows" {
 		return "os must be 'Linux' or 'Windows'"
 	}
-	// Inventory canonicality (D8): default 'amadeus', validate the closed set.
+	// Inventory canonicality (D8): default 'cronomicon', validate the closed set.
 	if req.Inventory == "" {
-		req.Inventory = "amadeus"
+		req.Inventory = "cronomicon"
 	}
-	if req.Inventory != "amadeus" && req.Inventory != "local" {
-		return "inventory must be 'amadeus' or 'local'"
+	if req.Inventory != "cronomicon" && req.Inventory != "local" {
+		return "inventory must be 'cronomicon' or 'local'"
 	}
 	return ""
 }

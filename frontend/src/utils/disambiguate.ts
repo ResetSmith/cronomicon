@@ -32,7 +32,7 @@ export interface NamedRef {
   /** The definition's permanent identity. Absent ⇒ this row never badges. */
   uid?: string | null;
   name?: string | null;
-  /** git | amadeus — the last-resort qualifier when colliding rows have no agencies. */
+  /** git | cronomicon — the last-resort qualifier when colliding rows have no agencies. */
   source?: string | null;
   agencies?: string[] | null;
   /**

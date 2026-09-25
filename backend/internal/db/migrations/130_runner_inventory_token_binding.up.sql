@@ -1,11 +1,11 @@
 -- 130 runner inventory mode + token→runner binding (runners-update.md R1, D8 + R1.4).
 --
 -- D8 — per-runner inventory canonicality: a runner registers as either
--- 'amadeus' (manifest carries fully-resolved scope_hosts→ssh_hosts targets;
+-- 'cronomicon' (manifest carries fully-resolved scope_hosts→ssh_hosts targets;
 -- fits T-a) or 'local' (manifest carries only the scope name; the agent
 -- resolves hosts against its own inventory; fits T-b network-isolated segments).
-ALTER TABLE runners ADD COLUMN inventory TEXT NOT NULL DEFAULT 'amadeus'
-    CHECK (inventory IN ('amadeus','local'));
+ALTER TABLE runners ADD COLUMN inventory TEXT NOT NULL DEFAULT 'cronomicon'
+    CHECK (inventory IN ('cronomicon','local'));
 
 -- R1.4 — bind a runner API key to its owning runner so the manifest + log
 -- endpoints can authorize by run ownership (run.runner_id == caller.runnerId).

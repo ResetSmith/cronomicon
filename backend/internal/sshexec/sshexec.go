@@ -205,7 +205,7 @@ func sleep(ctx context.Context, d time.Duration) {
 type claimedRun struct {
 	traceID      string
 	jobName      string
-	jobSource    string // git | amadeus (A9); resolves the job's denormalized body by (name,source)
+	jobSource    string // git | cronomicon (A9); resolves the job's denormalized body by (name,source)
 	scriptRef    string // referenced Script name (P1.3 script binding owner); "" ⇒ legacy inline body
 	jobUID       string // the executed job's frozen identity (runs.job_uid, R2-1); keys the binding read (R2F-1)
 	runType      string
@@ -342,7 +342,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// KB — a bound SSH key that reached dispatch on this executor. Every producer
 	// refuses a key-bound run that resolves to ssh at enqueue (runref.
 	// KeyBindingsOnSSH), so this is reachable only by a binding added while the
-	// run was queued or parked. The executor connects FROM amadeus and cannot
+	// run was queued or parked. The executor connects FROM cronomicon and cannot
 	// place the key on the target, so the run fails HERE, before connecting —
 	// after the injection audit above, in the same order the missing-binding
 	// path uses (the audit records what was declared). It used to warn and

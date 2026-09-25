@@ -112,7 +112,7 @@ func TestAnnotationSurvivesSoftDeleteRestore(t *testing.T) {
 	pool := openAnnotationPool(t)
 
 	annExec(t, pool, `INSERT INTO jobs(uid, name, source, run_type, synced_at)
-	                  VALUES('uid-job','billing','amadeus','bash','t')`)
+	                  VALUES('uid-job','billing','cronomicon','bash','t')`)
 	annotate(t, pool, "job", "uid-job", "restore me")
 
 	// Bin it.
@@ -128,7 +128,7 @@ func TestAnnotationSurvivesSoftDeleteRestore(t *testing.T) {
 	}
 }
 
-// TestAnnotationPerTwin is the R2-5 case the uid key exists for: two amadeus
+// TestAnnotationPerTwin is the R2-5 case the uid key exists for: two cronomicon
 // jobs may share a name, and each must carry its OWN annotation — including
 // when one of them is deleted.
 //
@@ -139,11 +139,11 @@ func TestAnnotationSurvivesSoftDeleteRestore(t *testing.T) {
 func TestAnnotationPerTwin(t *testing.T) {
 	pool := openAnnotationPool(t)
 
-	// Two same-named amadeus jobs in different departments — legal since 1050.
+	// Two same-named cronomicon jobs in different departments — legal since 1050.
 	annExec(t, pool, `INSERT INTO jobs(uid, name, source, run_type, scope, synced_at)
-	                  VALUES('uid-a','backup','amadeus','bash','Finance','t')`)
+	                  VALUES('uid-a','backup','cronomicon','bash','Finance','t')`)
 	annExec(t, pool, `INSERT INTO jobs(uid, name, source, run_type, scope, synced_at)
-	                  VALUES('uid-b','backup','amadeus','bash','Platform','t')`)
+	                  VALUES('uid-b','backup','cronomicon','bash','Platform','t')`)
 	annotate(t, pool, "job", "uid-a", "finance: call the DBA list")
 	annotate(t, pool, "job", "uid-b", "platform: call the SRE rota")
 

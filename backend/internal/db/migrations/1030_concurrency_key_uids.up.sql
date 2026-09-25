@@ -28,7 +28,7 @@
 --   * ONLY where the job still exists and has a uid to move to.
 --
 -- Note the join carries source: two jobs may already share a name across the
--- git/amadeus pools, and each in-flight run must land on its OWN job's uid.
+-- git/cronomicon pools, and each in-flight run must land on its OWN job's uid.
 
 UPDATE runs
    SET concurrency_key = (

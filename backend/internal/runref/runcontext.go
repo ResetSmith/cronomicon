@@ -17,7 +17,7 @@ import (
 type RunContext struct {
 	ID          string // run / trace id
 	Job         string // job name
-	JobSource   string // git | amadeus
+	JobSource   string // git | cronomicon
 	Scope       string // "" = global
 	Type        string // run_type
 	TriggeredBy string // actor email

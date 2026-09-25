@@ -10,7 +10,7 @@ import (
 )
 
 // TestScheduleComposeCRUD exercises the in-app first-class Schedule authoring write
-// API (schedule-builder.md): create an amadeus schedule, the bad-cron 422, the
+// API (schedule-builder.md): create an cronomicon schedule, the bad-cron 422, the
 // duplicate-name 409, the CSRF guard, that git schedules are read-only (409), that an
 // edit PROPAGATES to a referencing job's definition_schedules row (the D1c crux), that
 // delete-when-referenced blocks with 409, and that ?force detaches cleanly while
@@ -69,7 +69,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 		t.Errorf("bad cron = %d, want 422", code)
 	}
 
-	// ── Create an amadeus schedule ────────────────────────────────────────────────
+	// ── Create an cronomicon schedule ────────────────────────────────────────────────
 	resp = do(http.MethodPost, ts.URL+"/api/v1/schedule-defs",
 		map[string]any{"name": "nightly", "cron": "0 0 2 * * *", "description": "nightly window", "env": map[string]string{"STAGE": "prod"}}, true)
 	var created struct {
@@ -84,19 +84,19 @@ func TestScheduleComposeCRUD(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
-	if created.Source != "amadeus" || created.Cron != "0 0 2 * * *" {
-		t.Errorf("created = %+v, want source=amadeus cron='0 0 2 * * *'", created)
+	if created.Source != "cronomicon" || created.Cron != "0 0 2 * * *" {
+		t.Errorf("created = %+v, want source=cronomicon cron='0 0 2 * * *'", created)
 	}
 	if created.ContentHash == "" || created.Env["STAGE"] != "prod" {
 		t.Errorf("created content_hash/env not persisted: %+v", created)
 	}
 
-	// ── Duplicate amadeus name → 409 ───────────────────────────────────────────────
+	// ── Duplicate cronomicon name → 409 ───────────────────────────────────────────────
 	resp = do(http.MethodPost, ts.URL+"/api/v1/schedule-defs", map[string]any{"name": "nightly", "cron": "0 0 3 * * *"}, true)
 	code = resp.StatusCode
 	resp.Body.Close()
 	if code != http.StatusConflict {
-		t.Errorf("duplicate amadeus name = %d, want 409", code)
+		t.Errorf("duplicate cronomicon name = %d, want 409", code)
 	}
 
 	// ── Git schedule is read-only (409 on PUT + DELETE) ─────────────────────────────
@@ -121,7 +121,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 		t.Errorf("PUT unknown schedule = %d, want 404", code)
 	}
 
-	// ── A referencing amadeus job binds 'nightly' (so we can prove propagation) ─────
+	// ── A referencing cronomicon job binds 'nightly' (so we can prove propagation) ─────
 	resp = do(http.MethodPost, ts.URL+"/api/v1/jobs",
 		map[string]any{"name": "backup-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"nightly"}}, true)
 	code = resp.StatusCode
@@ -136,7 +136,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 	if refCron != "0 0 2 * * *" || !srcRef.Valid || srcRef.String != "nightly" {
 		t.Fatalf("binding cron=%q source_ref=%v, want '0 0 2 * * *' / 'nightly'", refCron, srcRef)
 	}
-	_ = pool.QueryRow(`SELECT schedule FROM jobs WHERE source='amadeus' AND name='backup-job'`).Scan(&mirror)
+	_ = pool.QueryRow(`SELECT schedule FROM jobs WHERE source='cronomicon' AND name='backup-job'`).Scan(&mirror)
 	if mirror != "0 0 2 * * *" {
 		t.Errorf("legacy mirror after bind = %q, want '0 0 2 * * *'", mirror)
 	}
@@ -152,7 +152,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 	if refCron != "0 0 5 * * *" {
 		t.Errorf("propagation failed: referencing job's definition_schedules cron = %q, want '0 0 5 * * *'", refCron)
 	}
-	_ = pool.QueryRow(`SELECT schedule FROM jobs WHERE source='amadeus' AND name='backup-job'`).Scan(&mirror)
+	_ = pool.QueryRow(`SELECT schedule FROM jobs WHERE source='cronomicon' AND name='backup-job'`).Scan(&mirror)
 	if mirror != "0 0 5 * * *" {
 		t.Errorf("legacy mirror not resynced on edit = %q, want '0 0 5 * * *'", mirror)
 	}
@@ -165,7 +165,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 		t.Fatalf("delete while referenced = %d, want 409", code)
 	}
 	var stillThere int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM schedules WHERE source='amadeus' AND name='nightly'`).Scan(&stillThere)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM schedules WHERE source='cronomicon' AND name='nightly'`).Scan(&stillThere)
 	if stillThere != 1 {
 		t.Errorf("blocked delete still removed the schedule (%d)", stillThere)
 	}
@@ -181,8 +181,8 @@ func TestScheduleComposeCRUD(t *testing.T) {
 	// runtime entries are still detached — a binned schedule must stop firing its
 	// referrers, and they are rebuilt from the catalog row on restore.
 	var schedLive, schedBinned, bindN int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM schedules WHERE source='amadeus' AND name='nightly' AND deleted_at IS NULL`).Scan(&schedLive)
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM schedules WHERE source='amadeus' AND name='nightly' AND deleted_at IS NOT NULL`).Scan(&schedBinned)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM schedules WHERE source='cronomicon' AND name='nightly' AND deleted_at IS NULL`).Scan(&schedLive)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM schedules WHERE source='cronomicon' AND name='nightly' AND deleted_at IS NOT NULL`).Scan(&schedBinned)
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM definition_schedules WHERE source_ref='nightly'`).Scan(&bindN)
 	if schedLive != 0 || bindN != 0 {
 		t.Errorf("forced delete left residue: live schedule=%d bindings=%d, want 0/0", schedLive, bindN)
@@ -191,7 +191,7 @@ func TestScheduleComposeCRUD(t *testing.T) {
 		t.Errorf("schedule rows in the recycle bin = %d, want 1", schedBinned)
 	}
 	var mirrorNull sql.NullString
-	_ = pool.QueryRow(`SELECT schedule FROM jobs WHERE source='amadeus' AND name='backup-job'`).Scan(&mirrorNull)
+	_ = pool.QueryRow(`SELECT schedule FROM jobs WHERE source='cronomicon' AND name='backup-job'`).Scan(&mirrorNull)
 	if mirrorNull.Valid {
 		t.Errorf("legacy mirror not cleared after detach: %q, want NULL (no remaining entries)", mirrorNull.String)
 	}

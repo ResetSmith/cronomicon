@@ -55,7 +55,7 @@ func secretRBACServer(t *testing.T, restrict map[string]string) (http.Handler, *
 		}
 		agencyID, scopeID := "ag:"+scope, "sc:"+scope
 		exec(`INSERT OR IGNORE INTO agencies (id,name,created_at) VALUES (?,?,'2026-01-01T00:00:00Z')`, agencyID, "agency-"+scope)
-		exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES (?,?,'amadeus','2026-01-01T00:00:00Z')`, scopeID, scope)
+		exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES (?,?,'cronomicon','2026-01-01T00:00:00Z')`, scopeID, scope)
 		exec(`INSERT OR IGNORE INTO scope_agencies (scope_id,agency_id) VALUES (?,?)`, scopeID, agencyID)
 		exec(`INSERT OR IGNORE INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_at)
 		      VALUES (?,?,?,?,0,'2026-01-01T00:00:00Z')`, "g:"+group+":"+role, group, role, agencyID)

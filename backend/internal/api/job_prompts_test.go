@@ -55,7 +55,7 @@ func TestJobComposePromptsRoundTrip(t *testing.T) {
 	}
 	dbPrompts := func() string {
 		var v string
-		_ = pool.QueryRow(`SELECT prompts_json FROM jobs WHERE source='amadeus' AND name='prompty'`).Scan(&v)
+		_ = pool.QueryRow(`SELECT prompts_json FROM jobs WHERE source='cronomicon' AND name='prompty'`).Scan(&v)
 		return v
 	}
 

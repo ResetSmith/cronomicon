@@ -37,7 +37,7 @@ all: build
 build:
 	CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -o $(BIN) ./cmd/amadeus
 
-# Stop any amadeus instance left over from a previous make run/dev. Without
+# Stop any cronomicon instance left over from a previous make run/dev. Without
 # this, a stale process keeps port 8080 and the new instance dies with
 # "bind: address already in use" — while the browser silently keeps talking
 # to the OLD binary (stale code, NetworkErrors on restart).

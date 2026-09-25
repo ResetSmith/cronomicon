@@ -134,7 +134,7 @@ func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 			Executor:      "runner",
 			Interp:        []string{"bash", "-c"},
 			Body:          "echo hi",
-			InventoryMode: "amadeus",
+			InventoryMode: "cronomicon",
 			Targets: []runnerproto.ManifestTarget{{
 				Name: "testhost", Address: host, Port: port, User: "tester", AuthKeyEnvVar: "AGENT_KEY",
 			}},
@@ -154,7 +154,7 @@ func TestAgentInjectsSecretAndDeliversKeyE2E(t *testing.T) {
 		OS:                "Linux",
 		Capabilities:      []string{"bash"},
 		MaxConcurrent:     2,
-		Inventory:         "amadeus",
+		Inventory:         "cronomicon",
 		IdentityFile:      filepath.Join(t.TempDir(), "id.json"),
 		PollInterval:      20 * time.Millisecond,
 		KeyMap:            map[string]string{"AGENT_KEY": keyPath},

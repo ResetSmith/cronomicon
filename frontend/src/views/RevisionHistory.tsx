@@ -4,7 +4,7 @@ import { c } from "../theme";
 import { Btn, Modal } from "../components/ui";
 import { fmtInAppZone } from "../utils/datetime";
 
-// Revision history for one amadeus-source definition (RH-F).
+// Revision history for one cronomicon-source definition (RH-F).
 //
 // The diff is line-oriented over pretty-printed JSON rather than a structural
 // object diff. That is a deliberate v1 choice: a JSON diff renderer is a project

@@ -56,7 +56,7 @@ type Server struct {
 	// Set from Options (main.go wires it to scheduler.ReloadIfChanged).
 	scheduleReload func(ctx context.Context, sha string)
 	// scheduleForceReload unconditionally rebuilds the scheduler's cron entries.
-	// Invoked after in-app (amadeus-source) definition writes, which don't advance
+	// Invoked after in-app (cronomicon-source) definition writes, which don't advance
 	// the git SHA the onSyncComplete hook gates on (A9 / v20 Phase 3).
 	scheduleForceReload func(ctx context.Context)
 	// scheduleTimezoneReload rebuilds the cron engine in a new effective app zone
@@ -333,12 +333,12 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountScripts(mux)              // B-Git: /scripts, /scripts/{name} (read-only catalog)
 	s.mountPendingRuns(mux)          // AR: DELETE /pending-runs/{id} (cancel a deferred ad-hoc run)
 	s.mountScheduleDefs(mux)         // A10a: /schedule-defs, /schedule-defs/{name} (first-class Schedules catalog)
-	s.mountScheduleCompose(mux)      // schedule-builder.md: POST/PUT/DELETE /schedule-defs (in-app amadeus-source Schedule authoring; Compose RBAC)
+	s.mountScheduleCompose(mux)      // schedule-builder.md: POST/PUT/DELETE /schedule-defs (in-app cronomicon-source Schedule authoring; Compose RBAC)
 	s.mountCalendars(mux)            // CAL-4: /calendars/* (working calendars — holiday skip / run-day sets bound to schedule entries)
 	s.mountReactions(mux)            // RX-12: /reactions/* (a definition runs when another definition finishes)
 	s.mountFileSightings(mux)        // FX-E1: GET /jobs/{jobId}/file-sightings (the arrival ledger's read surface)
-	s.mountJobCompose(mux)           // A11: POST/PUT/DELETE /jobs (in-app amadeus-source Job composition; Compose RBAC)
-	s.mountWorkflowCompose(mux)      // A11/Phase 4: POST/PUT/DELETE /workflows (in-app amadeus-source Workflow composition)
+	s.mountJobCompose(mux)           // A11: POST/PUT/DELETE /jobs (in-app cronomicon-source Job composition; Compose RBAC)
+	s.mountWorkflowCompose(mux)      // A11/Phase 4: POST/PUT/DELETE /workflows (in-app cronomicon-source Workflow composition)
 	s.mountSettings(mux)             // B6: /env-vars, /secrets, /scopes, /alerts, /ssh-hosts, /settings, /audit/export
 	s.mountBindings(mux)             // vault-integration.md P1.1: /{job,script}-reference-bindings/*, /script-reference-scan (explicit reference bindings)
 	s.mountAccess(mux)               // LB3: /roles, /ad-group-mappings/*, /scope-restrictions

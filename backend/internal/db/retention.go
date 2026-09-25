@@ -43,7 +43,7 @@ type RetentionPolicy struct {
 	// already been pruned — so the log volume grew without limit. Zero means
 	// "keep forever", matching the day knobs above.
 	LogFilesDays int
-	// RecycleBinDays bounds how long a soft-deleted amadeus-source definition
+	// RecycleBinDays bounds how long a soft-deleted cronomicon-source definition
 	// stays restorable (RH). Zero means keep forever, like every knob here — but
 	// note the asymmetry: for every OTHER knob "forever" costs disk, while for
 	// this one it costs a name, because a binned definition still occupies its
@@ -562,7 +562,7 @@ func pruneEmptyLogDirs(root string, log *slog.Logger) {
 // nowUTC is a seam for tests.
 var nowUTC = func() time.Time { return time.Now().UTC() }
 
-// purgeExpiredDefinitions hard-deletes soft-deleted amadeus-source definitions
+// purgeExpiredDefinitions hard-deletes soft-deleted cronomicon-source definitions
 // whose recycle-bin window has closed (RH).
 //
 // It reads the names first and purges them one at a time through the injected
@@ -588,7 +588,7 @@ func purgeExpiredDefinitions(ctx context.Context, pool *sql.DB, p RetentionPolic
 	} {
 		rows, err := pool.QueryContext(ctx,
 			`SELECT name FROM `+table+`
-			  WHERE source='amadeus' AND deleted_at IS NOT NULL AND deleted_at < ?`, cutoff)
+			  WHERE source='cronomicon' AND deleted_at IS NOT NULL AND deleted_at < ?`, cutoff)
 		if err != nil {
 			return fmt.Errorf("recycle-bin scan %s: %w", table, err)
 		}

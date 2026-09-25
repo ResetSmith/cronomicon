@@ -122,7 +122,7 @@ degrade gracefully — the server boots and serves with them absent.
   `deploy/backup-restore.md`.
 - **CI-time validation (V1.1-1 / T11):** `deploy/ci-validate-template.yml` is the
   drop-in `.gitlab-ci.yml` snippet for the job-definitions repo that runs
-  `amadeus validate` on every MR (fail-fast, line-numbered; opt-in MR-comment
+  `cronomicon validate` on every MR (fail-fast, line-numbered; opt-in MR-comment
   job included). Operator walkthrough — copy, pin `CRONOMICON_IMAGE`, read a
   failure — in **`deploy/README.md` → "CI Setup"**. The CLI is covered by an
   e2e test (`cmd/amadeus/validate_test.go`).

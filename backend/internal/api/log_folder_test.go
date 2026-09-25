@@ -332,7 +332,7 @@ func TestExplicitJobDeleteMintsAFreshCodeOnRecreate(t *testing.T) {
 	id := createJob("recycled")
 	uidOf := func() string {
 		var u string
-		_ = pool.QueryRowContext(ctx, `SELECT uid FROM jobs WHERE source='amadeus' AND name='recycled'`).Scan(&u)
+		_ = pool.QueryRowContext(ctx, `SELECT uid FROM jobs WHERE source='cronomicon' AND name='recycled'`).Scan(&u)
 		return u
 	}
 	first, err := entitycode.Lookup(ctx, pool, entitycode.KindJob, uidOf())

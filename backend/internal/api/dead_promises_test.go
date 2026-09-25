@@ -23,7 +23,7 @@ func TestFileSightingsAreReadable(t *testing.T) {
 		t.Helper()
 		if _, err := pool.Exec(`
 			INSERT INTO file_watch_sightings (id, job_source, job_name, path, size_bytes, mtime, runner_id, seen_at, run_id, refused_reason)
-			VALUES (?, 'amadeus', 'ingest', ?, 2048, '2026-08-12T01:59:00Z', 'r1', ?, ?, ?)`,
+			VALUES (?, 'cronomicon', 'ingest', ?, 2048, '2026-08-12T01:59:00Z', 'r1', ?, ?, ?)`,
 			id, path, "2026-08-12T02:00:0"+id[len(id)-1:]+"Z", runID, refused); err != nil {
 			t.Fatalf("seed sighting: %v", err)
 		}
@@ -74,7 +74,7 @@ func TestJobDetailLiftsTheQueuedReason(t *testing.T) {
 	if _, err := pool.Exec(`
 		INSERT INTO runs (id, job_name, job_source, run_type, status, queued_reason,
 		                  triggered_by, trigger_kind, created_at)
-		VALUES ('q1', 'billing', 'amadeus', 'bash', 'queued', 'no runner is online',
+		VALUES ('q1', 'billing', 'cronomicon', 'bash', 'queued', 'no runner is online',
 		        'op@example.com', 'manual', '2026-08-12T02:00:00Z')`); err != nil {
 		t.Fatalf("seed queued run: %v", err)
 	}

@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS workflows (
 );
 
 CREATE TABLE IF NOT EXISTS definition_schedules (
-    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind  TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name  TEXT NOT NULL,
     name        TEXT NOT NULL,
@@ -153,11 +153,11 @@ CREATE TABLE IF NOT EXISTS definition_schedules (
 -- trigger the prune tests would silently prove the wrong thing about what a
 -- deleted job takes with it.
 CREATE TABLE IF NOT EXISTS reactions (
-    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source  TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind    TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name    TEXT NOT NULL,
     name          TEXT NOT NULL,
-    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','amadeus')),
+    on_source     TEXT NOT NULL DEFAULT 'git' CHECK (on_source IN ('git','cronomicon')),
     on_kind       TEXT NOT NULL CHECK (on_kind IN ('job','workflow')),
     on_name       TEXT NOT NULL,
     on_outcome    TEXT NOT NULL CHECK (on_outcome IN ('success','failure','stopped','any')),
@@ -185,7 +185,7 @@ BEGIN
 END;
 
 CREATE TABLE IF NOT EXISTS calendars (
-    source            TEXT NOT NULL DEFAULT 'amadeus',
+    source            TEXT NOT NULL DEFAULT 'cronomicon',
     name              TEXT NOT NULL,
     description       TEXT,
     global            INTEGER NOT NULL DEFAULT 0,
@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS calendar_days (
 CREATE TABLE IF NOT EXISTS schedules (
     uid                TEXT, -- AF-4a surrogate identity (migration 1000)
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     cron             TEXT NOT NULL,
     env              TEXT,

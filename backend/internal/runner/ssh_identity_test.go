@@ -21,14 +21,14 @@ import (
 func seedIdentityRun(t *testing.T, svc *Service, runnerID, sshUser, sshCred string) string {
 	t.Helper()
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('idjob','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('idjob','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	seedScopeHost(t, svc, "prod", "web1", "HOST_KEY_NAME")
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, ssh_user, ssh_credential, started_at, created_at)
-		VALUES(?, 'idjob', 'amadeus', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
+		VALUES(?, 'idjob', 'cronomicon', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
 		traceID, runnerID, nullIfEmpty(sshUser), nullIfEmpty(sshCred), now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -127,13 +127,13 @@ func TestClaimGatePerRunCredential(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('cjob','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('cjob','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, status, executor, triggered_by, trigger_kind, ssh_credential, created_at)
-		VALUES(?, 'cjob', 'amadeus', 'bash', 'queued', 'runner', 'ops@x', 'manual', 'prod-key', ?)`,
+		VALUES(?, 'cjob', 'cronomicon', 'bash', 'queued', 'runner', 'ops@x', 'manual', 'prod-key', ?)`,
 		traceID, now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestClaimGatePerRunCredential(t *testing.T) {
 func seedAnsibleIdentityRun(t *testing.T, svc *Service, runnerID, sshUser, sshCred string) string {
 	t.Helper()
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('ansjob','amadeus','ansible','site.yml','Allow',?)`, now()); err != nil {
+		VALUES('ansjob','cronomicon','ansible','site.yml','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	seedScopeHost(t, svc, "prod", "web1", "HOST_KEY_NAME")
@@ -188,7 +188,7 @@ func seedAnsibleIdentityRun(t *testing.T, svc *Service, runnerID, sshUser, sshCr
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, ssh_user, ssh_credential, started_at, created_at)
-		VALUES(?, 'ansjob', 'amadeus', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
+		VALUES(?, 'ansjob', 'cronomicon', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?, ?)`,
 		traceID, runnerID, nullIfEmpty(sshUser), nullIfEmpty(sshCred), now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestManifestSSHFamilyIdentityUnchanged(t *testing.T) {
 func seedAnsibleOptsRun(t *testing.T, svc *Service, runnerID, overrideJSON string) string {
 	t.Helper()
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('optjob','amadeus','ansible','site.yml','Allow',?)`, now()); err != nil {
+		VALUES('optjob','cronomicon','ansible','site.yml','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	seedScopeHost(t, svc, "prod", "web1", "HOST_KEY_NAME")
@@ -302,7 +302,7 @@ func seedAnsibleOptsRun(t *testing.T, svc *Service, runnerID, overrideJSON strin
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, override_json, started_at, created_at)
-		VALUES(?, 'optjob', 'amadeus', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?)`,
+		VALUES(?, 'optjob', 'cronomicon', 'ansible', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?, ?)`,
 		traceID, runnerID, nullIfEmpty(overrideJSON), now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}

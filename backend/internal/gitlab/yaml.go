@@ -4,7 +4,7 @@
 //   - Validate apiVersion (T10) and the cronomicon:v1 inventory pragma (S10).
 //   - Upsert jobs/workflows/scopes into the shared DB tables on sync.
 //   - Implement the schedule write-path (POST /schedules/publish) with A2 If-Match OCC.
-//   - Expose ValidateFile for the `amadeus validate` CLI.
+//   - Expose ValidateFile for the `cronomicon validate` CLI.
 package gitlab
 
 import (
@@ -44,8 +44,8 @@ var validKinds = map[string]bool{
 	"InventorySidecar": true,
 }
 
-// amadeusHeader is the top-level shape every Cronomicon YAML file must have.
-type amadeusHeader struct {
+// cronomiconHeader is the top-level shape every Cronomicon YAML file must have.
+type cronomiconHeader struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
 }
@@ -150,7 +150,7 @@ func (r ReactionEntry) OnSourceOrDefault() string {
 }
 
 // NormalizeReactions validates a definition's reaction list SHAPE — everything
-// checkable without a database, so `amadeus validate` can catch it at MR time
+// checkable without a database, so `cronomicon validate` can catch it at MR time
 // rather than at sync. Cross-reference checks (does the upstream exist, does it
 // close a cycle) need the DB and live in sync.go.
 //
@@ -198,10 +198,10 @@ func NormalizeReactions(in []ReactionEntry) ([]ReactionEntry, []ValidationError)
 			})
 			continue
 		}
-		if src := e.OnSourceOrDefault(); src != "git" && src != "amadeus" {
+		if src := e.OnSourceOrDefault(); src != "git" && src != "cronomicon" {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("spec.reactions[%s].onSource", name),
-				Message: fmt.Sprintf("onSource %q must be git or amadeus", src),
+				Message: fmt.Sprintf("onSource %q must be git or cronomicon", src),
 			})
 			continue
 		}
@@ -333,7 +333,7 @@ type JobYAML struct {
 // It surfaces as a fillable field in the ad-hoc Run dialog; the operator's answer
 // is submitted as env[Name]=value and merged into runs.env_json via the existing
 // per-run override path (UDV2). Persisted (as a JSON array) on jobs.prompts_json
-// for both git (sync) and amadeus (composer) jobs.
+// for both git (sync) and cronomicon (composer) jobs.
 type PromptSpec struct {
 	Name     string   `yaml:"name" json:"name"`                             // env var key the answer binds to (required, unique within a job)
 	Label    string   `yaml:"label,omitempty" json:"label,omitempty"`       // human-facing prompt text; defaults to Name in the UI
@@ -523,7 +523,7 @@ func NormalizeSchedules(legacy string, list []ScheduleEntry) ([]ScheduleEntry, [
 
 // ValidateFile parses and validates the YAML file at path, returning line-numbered
 // errors. The path is used only for error attribution; it is acceptable to call
-// this on a temp file. This is the entry point wired into `amadeus validate`.
+// this on a temp file. This is the entry point wired into `cronomicon validate`.
 func ValidateFile(path string) ([]ValidationError, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -657,7 +657,7 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 				}
 			}
 			// RX-13 — the SHAPE of a reaction is checkable without a database, so
-			// `amadeus validate` catches a bad outcome or a malformed name at MR
+			// `cronomicon validate` catches a bad outcome or a malformed name at MR
 			// time. This is strictly better than the calendar-binding precedent,
 			// which could check nothing offline because a binding names a row.
 			if _, rxErrs := NormalizeReactions(j.Spec.Reactions); len(rxErrs) > 0 {
@@ -969,7 +969,7 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 			// --limit`, which refuses any name carrying a pattern metacharacter. A
 			// refused pin means NO --limit, so the run would widen to the full
 			// inventory instead of the pinned host. A warning (not an error) so
-			// `amadeus validate` flags it pre-merge without failing CI on it; the
+			// `cronomicon validate` flags it pre-merge without failing CI on it; the
 			// sync path warns in the same terms, and the manifest hard-fails such a
 			// run with a 409.
 			//
@@ -1277,7 +1277,7 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 		if err != nil {
 			return nil // pass 2 reports read errors
 		}
-		var hdr amadeusHeader
+		var hdr cronomiconHeader
 		_ = yaml.Unmarshal(data, &hdr)
 		if hdr.APIVersion != requiredAPIVersion || hdr.Kind != "Script" {
 			return nil
@@ -1340,7 +1340,7 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 				errs = append(errs, fmt.Errorf("read %s: %w", rel, err))
 				return nil
 			}
-			var hdr amadeusHeader
+			var hdr cronomiconHeader
 			_ = yaml.Unmarshal(data, &hdr)
 			if hdr.APIVersion == requiredAPIVersion && hdr.Kind == "Script" {
 				// Wrappers are ALWAYS processed — a wrapper is never filtered by a

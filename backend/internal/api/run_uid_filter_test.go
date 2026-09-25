@@ -30,14 +30,14 @@ func TestRunsJobUIDFilter(t *testing.T) {
 	seed(`INSERT INTO jobs(name, source, uid, run_type, concurrency_policy, synced_at)
 	      VALUES('shared-name','git','uid-git','bash','Allow','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO jobs(name, source, uid, run_type, concurrency_policy, synced_at)
-	      VALUES('shared-name','amadeus','uid-ama','bash','Allow','2026-01-01T00:00:00Z')`)
+	      VALUES('shared-name','cronomicon','uid-ama','bash','Allow','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO jobs(name, source, uid, run_type, concurrency_policy, synced_at)
 	      VALUES('solo','git','uid-solo','bash','Allow','2026-01-01T00:00:00Z')`)
 
 	seed(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at)
 	      VALUES('run-git-1','shared-name','git','uid-git','bash','success','t','manual','2026-08-13T01:00:00Z')`)
 	seed(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at)
-	      VALUES('run-ama-1','shared-name','amadeus','uid-ama','bash','success','t','manual','2026-08-13T02:00:00Z')`)
+	      VALUES('run-ama-1','shared-name','cronomicon','uid-ama','bash','success','t','manual','2026-08-13T02:00:00Z')`)
 	seed(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at)
 	      VALUES('run-solo-1','solo','git','uid-solo','bash','success','t','manual','2026-08-13T03:00:00Z')`)
 

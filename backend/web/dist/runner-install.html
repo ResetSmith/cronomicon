@@ -1273,7 +1273,7 @@
             background: var(--textMuted)
         }
 
-        .pill.amad {
+        .pill.crn {
             background: var(--accentBg);
             color: var(--accent)
         }
@@ -1911,7 +1911,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
 <tr><td><code>--key-map</code></td><td>no</td><td>—</td><td><code>NAME=path,NAME2=path2</code> — each key is copied to <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> and the rewritten map wired via <code>CRONOMICON_RUNNER_KEY_MAP</code> (§8). Mutually exclusive with <code>--key-dir</code>.</td></tr>
 <tr><td><code>--generate-key</code></td><td>no</td><td>—</td><td><code>&lt;NAME&gt;</code> — mint a fresh passphrase-less <code>ed25519</code> key at <code>/var/lib/amadeus-runner/keys/&lt;NAME&gt;</code> (owned by <code>amadeus-runner</code>) and print its <strong>public</strong> key to add to each target's <code>authorized_keys</code>. The private key never leaves the host. Refuses to overwrite an existing key. Reference it in Cronomicon host config by <code>&lt;NAME&gt;</code> (the <code>authKeyEnvVar</code>).</td></tr>
 <tr><td><code>--ca-cert</code></td><td>no</td><td>—</td><td>Private CA bundle (PEM) — installed to <code>/etc/amadeus-runner/ca.pem</code> and wired via <code>CRONOMICON_RUNNER_CA_CERT</code> (§5).</td></tr>
-<tr><td><code>--inventory</code></td><td>no</td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (§7); <code>local</code> requires <code>--local-inventory</code>.</td></tr>
+<tr><td><code>--inventory</code></td><td>no</td><td><code>cronomicon</code></td><td><code>cronomicon</code> or <code>local</code> (§7); <code>local</code> requires <code>--local-inventory</code>.</td></tr>
 <tr><td><code>--local-inventory</code></td><td>no</td><td>—</td><td>Local inventory JSON (with <code>--inventory local</code>) — installed to <code>/etc/amadeus-runner/inventory.json</code> and wired via <code>CRONOMICON_RUNNER_LOCAL_INVENTORY</code> (§7).</td></tr>
 <tr><td><code>--allow-checkout</code></td><td>no</td><td>off</td><td>Opt into runner-side pinned playbook checkout — writes <code>CRONOMICON_RUNNER_ALLOW_CHECKOUT=true</code> (§12).</td></tr>
 <tr><td><code>--checkout-repos</code></td><td>no</td><td>—</td><td>Comma-separated allowlist of repo clone URLs the runner may check out — writes <code>CRONOMICON_RUNNER_CHECKOUT_REPOS</code> (§12).</td></tr>
@@ -1948,7 +1948,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
 <tr><td><code>-os</code></td><td><code>CRONOMICON_RUNNER_OS</code></td><td><code>os</code></td><td><code>Linux</code></td><td><code>Linux</code> or <code>Windows</code>.</td></tr>
 <tr><td><code>-capabilities</code></td><td><code>CRONOMICON_RUNNER_CAPABILITIES</code></td><td><code>capabilities</code></td><td>— (auto-detect)</td><td>Comma-separated run-types claimed. Unset ⇒ probed from the host's toolchains at startup; set to narrow.</td></tr>
 <tr><td><code>-max-concurrent</code></td><td><code>CRONOMICON_RUNNER_MAX_CONCURRENT</code></td><td><code>maxConcurrent</code></td><td><code>5</code></td><td>Max simultaneous runs.</td></tr>
-<tr><td><code>-inventory</code></td><td><code>CRONOMICON_RUNNER_INVENTORY</code></td><td><code>inventory</code></td><td><code>amadeus</code></td><td><code>amadeus</code> or <code>local</code> (D8 — see §7).</td></tr>
+<tr><td><code>-inventory</code></td><td><code>CRONOMICON_RUNNER_INVENTORY</code></td><td><code>inventory</code></td><td><code>cronomicon</code></td><td><code>cronomicon</code> or <code>local</code> (D8 — see §7).</td></tr>
 <tr><td><code>-identity-file</code></td><td><code>CRONOMICON_RUNNER_IDENTITY_FILE</code></td><td><code>identityFile</code></td><td><code>amadeus-runner-identity.json</code></td><td>Where <code>{id, apiKey}</code> persists (§6).</td></tr>
 <tr><td><code>-poll-interval</code></td><td><code>CRONOMICON_RUNNER_POLL_INTERVAL</code></td><td><code>pollInterval</code></td><td><code>60s</code></td><td>Heartbeat/poll cadence (D7).</td></tr>
 <tr><td><code>-key-dir</code></td><td><code>CRONOMICON_RUNNER_KEY_DIR</code></td><td><code>keyDir</code></td><td>—</td><td>Dir searched for keys by name (§8).</td></tr>
@@ -1970,14 +1970,14 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
   "serverUrl": "https://amadeus.example.com",
   "name": "runner-dc1-01",
   "capabilities": ["bash", "perl", "powershell", "python"],
-  "inventory": "amadeus",
+  "inventory": "cronomicon",
   "knownHostsFile": "/var/lib/amadeus-runner/known_hosts",
   "identityFile": "/var/lib/amadeus-runner/identity.json"
 }</code></pre></div>
 
 <p>Run <code>amadeus-runner version</code> to print the build version/commit.</p>
 
-<h3>Worked example A — SSH-onward bash/perl/powershell/python runner, <code>inventory=amadeus</code></h3>
+<h3>Worked example A — SSH-onward bash/perl/powershell/python runner, <code>inventory=cronomicon</code></h3>
 
 <p>A reachable-segment runner that executes bash/perl/powershell/python over SSH; the <strong>server</strong> resolves the targets and ships fully-resolved host references.</p>
 
@@ -1986,7 +1986,7 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
   -registration-token crn_reg_xxxxxxxxxxxx \
   -name runner-dc1-01 \
   -capabilities bash,perl,powershell,python \
-  -inventory amadeus \
+  -inventory cronomicon \
   -key-dir /var/lib/amadeus-runner/keys \
   -known-hosts /var/lib/amadeus-runner/known_hosts \
   -identity-file /var/lib/amadeus-runner/identity.json</code></pre></div>
@@ -2049,11 +2049,11 @@ CGO_ENABLED=0 go build -o amadeus-runner ./cmd/amadeus-runner</code></pre></div>
 
 <p>Selected <strong>per-runner at registration</strong> via <code>-inventory</code>:</p>
 
-<ul><li><strong><code>amadeus</code></strong> (default; suits <strong>T-a</strong> and reachable/semi-reachable targets): the server resolves the scope (<code>scope_hosts → ssh_hosts</code>) and the manifest carries <strong>fully-resolved</strong> target references. Use this when Cronomicon's inventory is the source of truth and the runner is just an execution location closer to the targets (or one carrying the ansible/terraform toolchain).</li><li><strong><code>local</code></strong> (suits <strong>T-b</strong> network-isolated segments): the manifest carries only the <strong>scope name</strong>; the agent resolves it against its own <code>-local-inventory</code>. Use this when the targets live where Cronomicon can't see them, so it shouldn't (and can't) hold their topology. Keeps the isolated segment's host list out of the control plane entirely.</li></ul>
+<ul><li><strong><code>cronomicon</code></strong> (default; suits <strong>T-a</strong> and reachable/semi-reachable targets): the server resolves the scope (<code>scope_hosts → ssh_hosts</code>) and the manifest carries <strong>fully-resolved</strong> target references. Use this when Cronomicon's inventory is the source of truth and the runner is just an execution location closer to the targets (or one carrying the ansible/terraform toolchain).</li><li><strong><code>local</code></strong> (suits <strong>T-b</strong> network-isolated segments): the manifest carries only the <strong>scope name</strong>; the agent resolves it against its own <code>-local-inventory</code>. Use this when the targets live where Cronomicon can't see them, so it shouldn't (and can't) hold their topology. Keeps the isolated segment's host list out of the control plane entirely.</li></ul>
 
 <p>A <code>local</code>-mode runner <strong>requires</strong> <code>-local-inventory</code>; resolving a scope that isn't in the file is an error.</p>
 
-<p>Because <code>inventory</code> is a <strong>declared</strong> field (set at registration), switching a runner between <code>amadeus</code> and <code>local</code> requires a resync (one click) — see <a href="./runner-manage.html">Runner Config Guide</a> "Resync".</p>
+<p>Because <code>inventory</code> is a <strong>declared</strong> field (set at registration), switching a runner between <code>cronomicon</code> and <code>local</code> requires a resync (one click) — see <a href="./runner-manage.html">Runner Config Guide</a> "Resync".</p>
 
 <hr />
 
@@ -2100,7 +2100,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
   -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_xxxxxxxxxxxx \
   -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
   -e CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python \
-  -e CRONOMICON_RUNNER_INVENTORY=amadeus \
+  -e CRONOMICON_RUNNER_INVENTORY=cronomicon \
   -e CRONOMICON_RUNNER_KEY_DIR=/var/lib/amadeus-runner/keys \
   -e CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/amadeus-runner/known_hosts \
   -v amadeus-runner-data:/var/lib/amadeus-runner \
@@ -2114,7 +2114,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
 
 <p>Confirm the runner came up and registered:</p>
 
-<ol><li><strong>Logs</strong> — <code>journalctl -u amadeus-runner -f</code> (systemd) or <code>docker logs -f amadeus-runner-01</code> (container) should show <code>registered with server</code> on the first start (or <code>resumed runner identity</code> on a restart), then quiet <code>poll</code> activity on the cadence. No <code>register: server returned …</code> errors.</li><li><strong>Runners view</strong> — the runner appears <strong>online</strong>, showing its capabilities, load, version, and an inventory chip (<code>amadeus</code> / <code>local</code>).</li><li><strong>Version</strong> — <code>amadeus-runner version</code> prints the build (a plain local <code>go build</code> reports <code>dev</code>; release images stamp the real version/commit).</li><li><em>(optional)</em> Trigger a small <code>bash</code> run scoped to a host this runner serves and watch the log stream back, to confirm key custody + <code>known_hosts</code> are wired correctly.</li></ol>
+<ol><li><strong>Logs</strong> — <code>journalctl -u amadeus-runner -f</code> (systemd) or <code>docker logs -f amadeus-runner-01</code> (container) should show <code>registered with server</code> on the first start (or <code>resumed runner identity</code> on a restart), then quiet <code>poll</code> activity on the cadence. No <code>register: server returned …</code> errors.</li><li><strong>Runners view</strong> — the runner appears <strong>online</strong>, showing its capabilities, load, version, and an inventory chip (<code>cronomicon</code> / <code>local</code>).</li><li><strong>Version</strong> — <code>amadeus-runner version</code> prints the build (a plain local <code>go build</code> reports <code>dev</code>; release images stamp the real version/commit).</li><li><em>(optional)</em> Trigger a small <code>bash</code> run scoped to a host this runner serves and watch the log stream back, to confirm key custody + <code>known_hosts</code> are wired correctly.</li></ol>
 
 <p>If the runner doesn't appear, or shows offline, see <a href="./runner-manage.html">Runner Config Guide</a> "Check status &amp; health".</p>
 

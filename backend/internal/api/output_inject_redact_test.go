@@ -83,16 +83,16 @@ func TestRunDetailMasksInjectedOutputValue(t *testing.T) {
 		t.Fatalf("create secret: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow','2026-01-01T00:00:00Z')`); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','DB_PASS','2026-01-01T00:00:00Z')`); err != nil {
+		VALUES('job','cronomicon','j1','secret','DB_PASS','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
 	const trace = "run-inj-00000001"
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, scope, triggered_by, trigger_kind, created_at, outputs_json)
-		VALUES(?, 'j1', 'amadeus', 'bash', 'success', ?, 't@x', 'manual', '2026-01-01T00:00:00Z', ?)`,
+		VALUES(?, 'j1', 'cronomicon', 'bash', 'success', ?, 't@x', 'manual', '2026-01-01T00:00:00Z', ?)`,
 		trace, scope, `{"LEAK":"`+secretVal+`","CLEAN":"pg-prod-01"}`); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -116,17 +116,17 @@ func TestRunDetailFailsClosedWhenInjectedUnresolvable(t *testing.T) {
 
 	const scope = "prod"
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow','2026-01-01T00:00:00Z')`); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	// Bind a secret that does NOT exist → resolution fails → fail closed.
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','GONE','2026-01-01T00:00:00Z')`); err != nil {
+		VALUES('job','cronomicon','j1','secret','GONE','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
 	const trace = "run-inj-00000002"
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, scope, triggered_by, trigger_kind, created_at, outputs_json)
-		VALUES(?, 'j1', 'amadeus', 'bash', 'success', ?, 't@x', 'manual', '2026-01-01T00:00:00Z', ?)`,
+		VALUES(?, 'j1', 'cronomicon', 'bash', 'success', ?, 't@x', 'manual', '2026-01-01T00:00:00Z', ?)`,
 		trace, scope, `{"CLEAN":"pg-prod-01"}`); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}

@@ -72,12 +72,12 @@ func TestScheduleDefsCatalog(t *testing.T) {
 	}
 
 	// ── Source filter ────────────────────────────────────────────────────────────
-	var amadeusList struct {
+	var cronomiconList struct {
 		TotalItems int `json:"totalItems"`
 	}
-	getJSON(t, client, ts.URL+"/api/v1/schedule-defs?source=amadeus", &amadeusList)
-	if amadeusList.TotalItems != 0 {
-		t.Errorf("amadeus-source list = %d, want 0", amadeusList.TotalItems)
+	getJSON(t, client, ts.URL+"/api/v1/schedule-defs?source=cronomicon", &cronomiconList)
+	if cronomiconList.TotalItems != 0 {
+		t.Errorf("cronomicon-source list = %d, want 0", cronomiconList.TotalItems)
 	}
 
 	// ── Detail + usedBy ───────────────────────────────────────────────────────────

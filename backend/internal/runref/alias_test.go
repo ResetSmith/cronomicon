@@ -285,7 +285,7 @@ func TestAliasValidationAndStorage(t *testing.T) {
 		name string
 		b    Binding
 	}{
-		{"amadeus-prefixed alias", Binding{Kind: KindVar, Name: "OK", As: "CRONOMICON_FOO"}},
+		{"cronomicon-prefixed alias", Binding{Kind: KindVar, Name: "OK", As: "CRONOMICON_FOO"}},
 		{"non-posix alias", Binding{Kind: KindVar, Name: "OK", As: "has-dash"}},
 		{"reserved KEK alias on a secret", Binding{Kind: KindSecret, Name: "OK", As: "KEK"}},
 	}

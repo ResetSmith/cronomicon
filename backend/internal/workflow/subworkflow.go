@@ -224,7 +224,7 @@ func (e *Engine) parentContext(ctx context.Context, parentTraceID string) (workf
 func (e *Engine) loadChildWorkflow(ctx context.Context, name, parentSource string) (source string, steps []Step, wfID int64, ok bool) {
 	order := []string{parentSource, "git"}
 	if parentSource == "git" {
-		order = []string{"git", "amadeus"}
+		order = []string{"git", "cronomicon"}
 	}
 	for _, src := range order {
 		var raw string

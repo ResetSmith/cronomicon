@@ -1,7 +1,7 @@
 -- 990_role_compose — Compose becomes a grantable permission (AF-2,
 -- the af2-compose-permission plan).
 --
--- Authoring amadeus-source jobs and workflows was gated by RequireRole("admin")
+-- Authoring cronomicon-source jobs and workflows was gated by RequireRole("admin")
 -- — the only role check in the codebase — because v20 decision Q-5 deferred a
 -- real permission until the scope enforcement behind it existed. AF-1 built the
 -- missing half: every job now states its agency, so "may this actor author HERE"

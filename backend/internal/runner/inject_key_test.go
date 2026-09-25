@@ -46,17 +46,17 @@ func TestManifestDeliversKeyMaterial(t *testing.T) {
 	const keyMaterial = "PEM-DEPLOY-KEY-MATERIAL-XYZ"
 	seedKeyCredential(t, svc, "deploy_key", keyMaterial)
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('jk','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('jk','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','jk','key','deploy_key',?)`, now()); err != nil {
+		VALUES('job','cronomicon','jk','key','deploy_key',?)`, now()); err != nil {
 		t.Fatalf("seed key binding: %v", err)
 	}
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, started_at, created_at)
-		VALUES(?, 'jk', 'amadeus', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?)`,
+		VALUES(?, 'jk', 'cronomicon', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', ?, ?)`,
 		traceID, runnerID, now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -117,18 +117,18 @@ func TestIngestMasksDeliveredKeyMaterial(t *testing.T) {
 	const keyMaterial = "PEM-SECRET-KEY-TO-MASK-9f3a"
 	seedKeyCredential(t, svc, "deploy_key", keyMaterial)
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('jk','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('jk','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','jk','key','deploy_key',?)`, now()); err != nil {
+		VALUES('job','cronomicon','jk','key','deploy_key',?)`, now()); err != nil {
 		t.Fatalf("seed key binding: %v", err)
 	}
 	traceID := db.NewTraceID()
 	// injects_secret=1: a real dispatch of this key-bearing run sets the M5 flag.
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, injects_secret, started_at, created_at)
-		VALUES(?, 'jk', 'amadeus', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', 1, ?, ?)`,
+		VALUES(?, 'jk', 'cronomicon', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', 1, ?, ?)`,
 		traceID, runnerID, now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}

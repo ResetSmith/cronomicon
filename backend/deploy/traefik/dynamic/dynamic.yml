@@ -15,7 +15,7 @@ tls:
 http:
   middlewares:
     # Defense in depth (B.3): clear any client-supplied Remote-* identity headers
-    # at the edge before forward-auth, so they can NEVER reach amadeus from an
+    # at the edge before forward-auth, so they can NEVER reach cronomicon from an
     # external caller. Authelia's forward-auth then injects the authenticated
     # values. Setting a customRequestHeader to "" removes it.
     strip-remote-headers:

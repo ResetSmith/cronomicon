@@ -32,7 +32,7 @@ func archivedStore(t *testing.T, fake *fakes3.Server) *logarchive.Store {
 	t.Helper()
 	st, err := logarchive.New(logarchive.Params{
 		ClientParams: logarchive.ClientParams{Endpoint: fake.Endpoint(), Region: "us-east-1", AccessKey: "AK", SecretKey: "SK"},
-		Bucket:       "logs", Prefix: "amadeus/",
+		Bucket:       "logs", Prefix: "cronomicon/",
 	}, httpx.EgressPolicy{AllowPrivate: true, AllowLoopback: true}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestGetLogArchiveFallback(t *testing.T) {
 		svc := newTestService(t).WithLogArchive(func() *logarchive.Store { return store })
 		seedLogRun(t, svc, archTrace, body)
 		stampArchived(t, svc, archTrace)
-		fake.Put("logs", "amadeus/"+archTrace+".log", []byte("STALE"))
+		fake.Put("logs", "cronomicon/"+archTrace+".log", []byte("STALE"))
 		rec := getLog(t, svc, archTrace, "")
 		if rec.Code != 200 || rec.Body.String() != body || rec.Header().Get("X-Log-Offset") != size {
 			t.Fatalf("local read: %d %q offset=%s", rec.Code, rec.Body.String(), rec.Header().Get("X-Log-Offset"))
@@ -72,7 +72,7 @@ func TestGetLogArchiveFallback(t *testing.T) {
 		svc := newTestService(t).WithLogArchive(func() *logarchive.Store { return store })
 		path := seedLogRun(t, svc, archTrace, body)
 		stampArchived(t, svc, archTrace)
-		fake.Put("logs", "amadeus/"+archTrace+".log", []byte(body))
+		fake.Put("logs", "cronomicon/"+archTrace+".log", []byte(body))
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
@@ -100,7 +100,7 @@ func TestGetLogArchiveFallback(t *testing.T) {
 			VALUES(?, 'j', 'bash', '', 'success', 'tester', 'manual', 'ssh', datetime('now'), '0a1b2c3d', '2026-09-09T12:00:00Z')`, archTrace); err != nil {
 			t.Fatal(err)
 		}
-		fake.Put("logs", "amadeus/0a1b2c3d/"+archTrace+".log", []byte("foldered\n"))
+		fake.Put("logs", "cronomicon/0a1b2c3d/"+archTrace+".log", []byte("foldered\n"))
 		rec := getLog(t, svc, archTrace, "")
 		if rec.Code != 200 || rec.Body.String() != "foldered\n" {
 			t.Fatalf("foldered archived read: %d %q", rec.Code, rec.Body.String())

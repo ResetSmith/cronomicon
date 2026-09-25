@@ -41,14 +41,14 @@ func seedJob(t *testing.T, e *Engine, uid, name, source, runType, scope string) 
 func TestPinnedStepResolvesTheTwinItNames(t *testing.T) {
 	e := identityPool(t)
 	ctx := context.Background()
-	seedJob(t, e, "uid-a", "deploy", "amadeus", "bash", "fin-prod")
-	seedJob(t, e, "uid-b", "deploy", "amadeus", "ansible", "dss-prod")
+	seedJob(t, e, "uid-a", "deploy", "cronomicon", "bash", "fin-prod")
+	seedJob(t, e, "uid-b", "deploy", "cronomicon", "ansible", "dss-prod")
 
 	for _, tc := range []struct{ uid, wantType, wantScope string }{
 		{"uid-a", "bash", "fin-prod"},
 		{"uid-b", "ansible", "dss-prod"},
 	} {
-		src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: tc.uid}, "amadeus")
+		src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: tc.uid}, "cronomicon")
 		if !ok {
 			t.Fatalf("%s did not resolve", tc.uid)
 		}
@@ -58,14 +58,14 @@ func TestPinnedStepResolvesTheTwinItNames(t *testing.T) {
 		if jd.runType != tc.wantType || jd.scope != tc.wantScope || jd.uid != tc.uid {
 			t.Errorf("%s = (%s, %s, %s), want (%s, %s, %s)", tc.uid, jd.runType, jd.scope, jd.uid, tc.wantType, tc.wantScope, tc.uid)
 		}
-		if src != "amadeus" {
+		if src != "cronomicon" {
 			t.Errorf("%s source = %q, want the row's own source", tc.uid, src)
 		}
 	}
 
 	// The name-only step over the same catalog still refuses — unchanged, and the
 	// reason the pinned form exists.
-	_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy"}, "amadeus")
+	_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy"}, "cronomicon")
 	if !ok || jd.unavailable == "" {
 		t.Errorf("ambiguous name-only step = (%v, %q), want a refusal", ok, jd.unavailable)
 	}
@@ -78,9 +78,9 @@ func TestPinnedStepIgnoresSourcePrecedence(t *testing.T) {
 	e := identityPool(t)
 	ctx := context.Background()
 	seedJob(t, e, "uid-git", "report", "git", "bash", "")
-	seedJob(t, e, "uid-ama", "report", "amadeus", "ansible", "")
+	seedJob(t, e, "uid-ama", "report", "cronomicon", "ansible", "")
 
-	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "report", Source: "amadeus", UID: "uid-git"}, "amadeus")
+	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "report", Source: "cronomicon", UID: "uid-git"}, "cronomicon")
 	if !ok {
 		t.Fatal("pinned step did not resolve")
 	}
@@ -96,9 +96,9 @@ func TestPinnedStepIgnoresSourcePrecedence(t *testing.T) {
 func TestDanglingPinnedStepRefuses(t *testing.T) {
 	e := identityPool(t)
 	ctx := context.Background()
-	seedJob(t, e, "uid-live", "deploy", "amadeus", "bash", "")
+	seedJob(t, e, "uid-live", "deploy", "cronomicon", "bash", "")
 
-	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: "uid-gone"}, "amadeus")
+	src, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "deploy", UID: "uid-gone"}, "cronomicon")
 	if !ok {
 		t.Fatal("a dangling pin must resolve to a REFUSAL def, not to nothing — the step needs a terminal child run")
 	}
@@ -119,13 +119,13 @@ func TestNameOnlyStepKeepsA11Precedence(t *testing.T) {
 	e := identityPool(t)
 	ctx := context.Background()
 	seedJob(t, e, "uid-git", "report", "git", "bash", "")
-	seedJob(t, e, "uid-ama", "report", "amadeus", "ansible", "")
+	seedJob(t, e, "uid-ama", "report", "cronomicon", "ansible", "")
 
 	for _, tc := range []struct{ override, wfSource, wantUID string }{
-		{"", "git", "uid-git"},        // the workflow's own source wins
-		{"", "amadeus", "uid-ama"},    // ditto, the other way
-		{"git", "amadeus", "uid-git"}, // an explicit override is absolute
-		{"amadeus", "git", "uid-ama"}, //
+		{"", "git", "uid-git"},           // the workflow's own source wins
+		{"", "cronomicon", "uid-ama"},    // ditto, the other way
+		{"git", "cronomicon", "uid-git"}, // an explicit override is absolute
+		{"cronomicon", "git", "uid-ama"}, //
 	} {
 		_, jd, ok := e.resolveJobDef(ctx, StepRef{Name: "report", Source: tc.override}, tc.wfSource)
 		if !ok || jd.uid != tc.wantUID {
@@ -140,14 +140,14 @@ func TestNameOnlyStepKeepsA11Precedence(t *testing.T) {
 func TestLookupJobDefsKeepsTwinsApart(t *testing.T) {
 	e := identityPool(t)
 	ctx := context.Background()
-	seedJob(t, e, "uid-a", "deploy", "amadeus", "bash", "fin-prod")
-	seedJob(t, e, "uid-b", "deploy", "amadeus", "ansible", "dss-prod")
+	seedJob(t, e, "uid-a", "deploy", "cronomicon", "bash", "fin-prod")
+	seedJob(t, e, "uid-b", "deploy", "cronomicon", "ansible", "dss-prod")
 
 	steps := []Step{
 		{Type: "job", Name: "deploy", JobUID: "uid-a"},
 		{Type: "job", Name: "deploy", JobUID: "uid-b"},
 	}
-	defs, err := e.lookupJobDefs(ctx, steps, "amadeus")
+	defs, err := e.lookupJobDefs(ctx, steps, "cronomicon")
 	if err != nil {
 		t.Fatalf("lookupJobDefs: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestLookupJobDefsKeepsTwinsApart(t *testing.T) {
 
 	// JobScopes must therefore see BOTH departments' scopes: the authorization
 	// guard reads this list, and a missing scope is a check that never runs.
-	scopes, err := e.JobScopes(ctx, steps, "amadeus")
+	scopes, err := e.JobScopes(ctx, steps, "cronomicon")
 	if err != nil {
 		t.Fatalf("JobScopes: %v", err)
 	}

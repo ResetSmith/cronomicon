@@ -16,11 +16,11 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
 
-// runRewrapSecrets implements `amadeus rewrap-secrets` (DR-5): re-wrap every
+// runRewrapSecrets implements `cronomicon rewrap-secrets` (DR-5): re-wrap every
 // stored credential under the active KEK so an old key can actually be retired.
 //
-//	amadeus rewrap-secrets --dry-run   # what is outstanding, per store and version
-//	amadeus rewrap-secrets             # re-wrap everything to CRONOMICON_KEK_VERSION
+//	cronomicon rewrap-secrets --dry-run   # what is outstanding, per store and version
+//	cronomicon rewrap-secrets             # re-wrap everything to CRONOMICON_KEK_VERSION
 //
 // KEK rotation is zero-downtime but LAZY: a row moves to the new version only
 // when it is rewritten, so without this an operator must hand-touch every secret,
@@ -43,7 +43,7 @@ func runRewrapSecrets(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "report what is outstanding per store and KEK version, change nothing")
 	dbPath := fs.String("db", "", "database path (default: CRONOMICON_DB_PATH from config)")
 	fs.Usage = func() {
-		fmt.Fprint(os.Stderr, `Usage: amadeus rewrap-secrets [--dry-run] [--db <path>]
+		fmt.Fprint(os.Stderr, `Usage: cronomicon rewrap-secrets [--dry-run] [--db <path>]
 
 Re-wraps every stored credential under the active KEK (CRONOMICON_KEK_VERSION) so a
 superseded key can be retired. Covers three stores: stored secrets, SSH

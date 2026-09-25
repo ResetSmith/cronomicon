@@ -1091,7 +1091,7 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 			}{"inventory_secret_rejected", "the inventory contains inline secret values; use env-var-NAME indirection", validationErr.Errors})
 			return
 		}
-		if strings.Contains(err.Error(), "only amadeus-source") {
+		if strings.Contains(err.Error(), "only cronomicon-source") {
 			httpx.Fail(w, http.StatusConflict, "conflict", err.Error())
 			return
 		}
@@ -1131,7 +1131,7 @@ func (s *Server) handleDeleteScope(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("scopeId")
 	found, err := settings.DeleteScope(r.Context(), s.db, sid, id.Email)
 	if err != nil {
-		if strings.Contains(err.Error(), "only amadeus-source") || strings.Contains(err.Error(), "referenced by") {
+		if strings.Contains(err.Error(), "only cronomicon-source") || strings.Contains(err.Error(), "referenced by") {
 			httpx.Fail(w, http.StatusConflict, "conflict", err.Error())
 			return
 		}
@@ -1715,7 +1715,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	capSec := secrets.New(s.db, s.cfg, s.log)
 	settings.WireVaultClient(r.Context(), s.db, s.cfg, capSec, s.log)
 	vaultOK := capSec.VaultConfigured()
-	// compose = the caller may author amadeus-source jobs and workflows (A11). Was
+	// compose = the caller may author cronomicon-source jobs and workflows (A11). Was
 	// HasRole("admin") until AF-2 made it a grantable, agency-bound permission; it
 	// is now a flat-union flag like its siblings — "may you compose SOMEWHERE" —
 	// and like them it is for nav gating only. Per-object truth is the server's

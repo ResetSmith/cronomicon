@@ -66,7 +66,7 @@ installed — this is non-breaking for existing runners).
 Example policy (`amadeus-runner-nwd`):
 
 ```hcl
-path "amadeus/data/runners/nwd/*" {
+path "cronomicon/data/runners/nwd/*" {
   capabilities = ["read"]
 }
 ```

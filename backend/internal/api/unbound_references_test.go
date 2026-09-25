@@ -107,7 +107,7 @@ func TestBindingAScopeClearsTheRefusal(t *testing.T) {
 		}
 	}
 	// Give Finance a scope, so a run bound to it carries Finance's agencies.
-	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc-fin','finance','amadeus','t')`)
+	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc-fin','finance','cronomicon','t')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-fin','ag-fin')`)
 	exec(`INSERT INTO reference_bindings(owner_kind,owner_source,owner_name,ref_kind,ref_name,created_at)
 	      VALUES('job','git','unscoped-job','secret','DEPT_PASSWORD','t')`)

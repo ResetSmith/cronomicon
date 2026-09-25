@@ -101,7 +101,7 @@ type BrokenReference struct {
 	Name   string `json:"name"`
 }
 
-// ListScopes returns scopes. If sourceFilter is provided, it filters by source ('git' or 'amadeus').
+// ListScopes returns scopes. If sourceFilter is provided, it filters by source ('git' or 'cronomicon').
 func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]Scope, error) {
 	// Fetch GitLab config first to resolve GitLabURL for git-source scopes.
 	var repoURL, writeBranch string
@@ -194,7 +194,7 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 				sc.LastChangedAt = &t
 			}
 		} else {
-			// amadeus source
+			// cronomicon source
 			if err := json.Unmarshal([]byte(typesJSON), &sc.Capability.Types); err != nil {
 				sc.Capability.Types = []string{"bash"}
 			}
@@ -220,7 +220,7 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	return out, nil
 }
 
-// GetScope fetches a single scope by ID (handles both git and amadeus sources).
+// GetScope fetches a single scope by ID (handles both git and cronomicon sources).
 func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) {
 	// Fetch GitLab config to resolve GitLabURL.
 	var repoURL, writeBranch string
@@ -300,7 +300,7 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 			sc.LastChangedAt = &t
 		}
 	} else {
-		// amadeus source
+		// cronomicon source
 		if err := json.Unmarshal([]byte(typesJSON), &sc.Capability.Types); err != nil {
 			sc.Capability.Types = []string{"bash"}
 		}
@@ -398,7 +398,7 @@ func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, act
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO scopes (id, name, source, description, supported_types, created_by, created_at, last_modified_by, last_modified_at, raw_inventory, inventory_format, projection_status, projection_json)
-		 VALUES (?, ?, 'amadeus', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, inp.Scope, inp.Description, string(typesJSON), actor, now, actor, now, rawInv, invFmt, projStatus, projJSON)
 	if err != nil {
 		return nil, fmt.Errorf("create scope: %w", err)
@@ -434,8 +434,8 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 	if err != nil || existing == nil {
 		return nil, nil, err
 	}
-	if existing.Source != "amadeus" {
-		return nil, nil, fmt.Errorf("only amadeus-source scopes are editable")
+	if existing.Source != "cronomicon" {
+		return nil, nil, fmt.Errorf("only cronomicon-source scopes are editable")
 	}
 
 	if inp.RawInventory != nil && *inp.RawInventory != "" {
@@ -571,14 +571,14 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 	return sc, broken, err
 }
 
-// DeleteScope removes an amadeus-source scope. Returns 409 if jobs reference it.
+// DeleteScope removes an cronomicon-source scope. Returns 409 if jobs reference it.
 func DeleteScope(ctx context.Context, database *sql.DB, id, actor string) (bool, error) {
 	existing, err := GetScope(ctx, database, id)
 	if err != nil || existing == nil {
 		return false, err
 	}
-	if existing.Source != "amadeus" {
-		return false, fmt.Errorf("only amadeus-source scopes can be deleted")
+	if existing.Source != "cronomicon" {
+		return false, fmt.Errorf("only cronomicon-source scopes can be deleted")
 	}
 	// Check job references (jobs table owned by B3/B5). FX-A4: a binned job is not
 	// a live reference — it cannot run, and blocking the scope delete on one made

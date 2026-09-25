@@ -60,7 +60,7 @@ func composeRBACServer(t *testing.T) (http.Handler, *sql.DB) {
 
 	for _, a := range []struct{ agency, scope string }{{"FIN", "fin-prod"}, {"TAX", "tax-prod"}} {
 		exec(`INSERT INTO agencies (id,name,created_at) VALUES (?,?,'2026-01-01T00:00:00Z')`, "ag:"+a.agency, a.agency)
-		exec(`INSERT INTO scopes (id,name,source,created_at) VALUES (?,?,'amadeus','2026-01-01T00:00:00Z')`, "sc:"+a.scope, a.scope)
+		exec(`INSERT INTO scopes (id,name,source,created_at) VALUES (?,?,'cronomicon','2026-01-01T00:00:00Z')`, "sc:"+a.scope, a.scope)
 		exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES (?,?)`, "sc:"+a.scope, "ag:"+a.agency)
 	}
 	grant := func(group, role, agency string) {
@@ -83,7 +83,7 @@ func composeRBACServer(t *testing.T) (http.Handler, *sql.DB) {
 	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
 	seedJob := func(name string, scope any) {
 		exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, created_at)
-		      VALUES(?,'amadeus','bash','pg_dump mydb',?,'sha256:bbb','2026-01-01T00:00:00Z')`, name, scope)
+		      VALUES(?,'cronomicon','bash','pg_dump mydb',?,'sha256:bbb','2026-01-01T00:00:00Z')`, name, scope)
 	}
 	seedJob("fin-job", "fin-prod")
 	seedJob("tax-job", "tax-prod")
@@ -124,7 +124,7 @@ func composeReq(t *testing.T, h http.Handler, method, path, group, body string) 
 func composeJobID(t *testing.T, pool *sql.DB, name string) string {
 	t.Helper()
 	var id int64
-	if err := pool.QueryRow(`SELECT rowid FROM jobs WHERE name=? AND source='amadeus'`, name).Scan(&id); err != nil {
+	if err := pool.QueryRow(`SELECT rowid FROM jobs WHERE name=? AND source='cronomicon'`, name).Scan(&id); err != nil {
 		t.Fatalf("job id for %s: %v", name, err)
 	}
 	return strconv.FormatInt(id, 10)
@@ -394,7 +394,7 @@ func TestWorkflowComposeIsBoundToItsJobsAgencies(t *testing.T) {
 		// Seed a workflow over the tax job directly, then try to take it over by
 		// sending a graph of only FIN jobs — the both-sides rule for workflows.
 		if _, err := pool.Exec(`INSERT INTO workflows(name, source, steps, enabled, created_at)
-		                        VALUES('wf-taxonly','amadeus','[{"type":"job","name":"tax-job"}]',1,'2026-01-01T00:00:00Z')`); err != nil {
+		                        VALUES('wf-taxonly','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-01-01T00:00:00Z')`); err != nil {
 			t.Fatalf("seed workflow: %v", err)
 		}
 		var id int64

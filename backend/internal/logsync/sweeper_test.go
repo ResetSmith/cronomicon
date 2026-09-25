@@ -47,7 +47,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(fake.Close)
 	store, err := logarchive.New(logarchive.Params{
 		ClientParams: logarchive.ClientParams{Endpoint: fake.Endpoint(), Region: "us-east-1", AccessKey: "AK", SecretKey: "SK"},
-		Bucket:       "logs", Prefix: "amadeus/",
+		Bucket:       "logs", Prefix: "cronomicon/",
 	}, httpx.EgressPolicy{AllowPrivate: true, AllowLoopback: true}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -166,11 +166,11 @@ func TestTickArchivesPendingAndStampsMarkers(t *testing.T) {
 
 	// Keys mirror the folder layout; the sidecar rode along; content is exact.
 	keys := h.fake.Keys("logs")
-	want := []string{"amadeus/" + t2 + ".log", "amadeus/0a1b2c3d/" + t1 + ".log", "amadeus/0a1b2c3d/_meta.json"}
+	want := []string{"cronomicon/" + t2 + ".log", "cronomicon/0a1b2c3d/" + t1 + ".log", "cronomicon/0a1b2c3d/_meta.json"}
 	if strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Fatalf("keys = %v, want %v", keys, want)
 	}
-	if got, _ := h.fake.Get("logs", "amadeus/0a1b2c3d/"+t1+".log"); string(got) != "one\n" {
+	if got, _ := h.fake.Get("logs", "cronomicon/0a1b2c3d/"+t1+".log"); string(got) != "one\n" {
 		t.Fatalf("object content = %q", got)
 	}
 	count, bytes, lastErr := h.counters()
@@ -306,8 +306,8 @@ func TestReconcileRestoresMarkersAndCounters(t *testing.T) {
 	// An object already in the bucket for a pending run (DB restored from an
 	// older snapshot), plus a stray non-log key and drifted counters.
 	h.run(t1, "0a1b2c3d", "success", 5*time.Minute, "hello")
-	h.fake.Put("logs", "amadeus/0a1b2c3d/"+t1+".log", []byte("hello"))
-	h.fake.Put("logs", "amadeus/0a1b2c3d/_meta.json", []byte("{}"))
+	h.fake.Put("logs", "cronomicon/0a1b2c3d/"+t1+".log", []byte("hello"))
+	h.fake.Put("logs", "cronomicon/0a1b2c3d/_meta.json", []byte("{}"))
 	_, _ = h.pool.Exec(`UPDATE log_storage_config SET archived_count=99, archived_bytes=9999 WHERE id=1`)
 
 	res, err := h.sw.RunOnce(ctx, true, "operator@example.com")
@@ -427,7 +427,7 @@ func TestExpireArchived(t *testing.T) {
 	if err != nil || res.Expired != 0 {
 		t.Fatalf("window 0: %+v %v", res, err)
 	}
-	if _, ok := h.fake.Get("logs", "amadeus/0a1b2c3d/"+t1+".log"); !ok {
+	if _, ok := h.fake.Get("logs", "cronomicon/0a1b2c3d/"+t1+".log"); !ok {
 		t.Fatal("window 0 must never delete")
 	}
 
@@ -436,7 +436,7 @@ func TestExpireArchived(t *testing.T) {
 	if err != nil || res.Expired != 1 {
 		t.Fatalf("window 30: %+v %v", res, err)
 	}
-	if _, ok := h.fake.Get("logs", "amadeus/0a1b2c3d/"+t1+".log"); ok {
+	if _, ok := h.fake.Get("logs", "cronomicon/0a1b2c3d/"+t1+".log"); ok {
 		t.Fatal("expired object still in the bucket")
 	}
 	if a, s := h.state(t1); a != "" || s != "expired" {
@@ -449,7 +449,7 @@ func TestExpireArchived(t *testing.T) {
 	if count != 1 || bytes != int64(len("new\n")) {
 		t.Fatalf("counters after expiry = (%d,%d)", count, bytes)
 	}
-	if _, ok := h.fake.Get("logs", "amadeus/0a1b2c3d/_meta.json"); !ok {
+	if _, ok := h.fake.Get("logs", "cronomicon/0a1b2c3d/_meta.json"); !ok {
 		t.Fatal("sidecar must stay while the folder still holds a log")
 	}
 

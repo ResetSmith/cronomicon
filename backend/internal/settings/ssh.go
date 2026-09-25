@@ -32,7 +32,7 @@ func hostKeyMeta(line string) (pinned bool, fingerprint, keyType string) {
 // SshHost is the wire shape for a host record.
 type SshHost struct {
 	ID               string  `json:"id"`
-	Source           string  `json:"source"` // git (imported from inventory, read-only) | amadeus (operator-authored)
+	Source           string  `json:"source"` // git (imported from inventory, read-only) | cronomicon (operator-authored)
 	Hostname         string  `json:"hostname"`
 	Address          *string `json:"address"`
 	Port             int     `json:"port"`
@@ -238,7 +238,7 @@ func CreateSshHost(ctx context.Context, database *sql.DB, inp SshHostInput, acto
 	_, err := database.ExecContext(ctx,
 		`INSERT INTO ssh_hosts (id, source, hostname, address, port, os, via, auth_key_env_var, auth_credential_id, username,
 		                         created_by, created_at, last_modified_by, last_modified_at)
-		 VALUES (?, 'amadeus', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, inp.Hostname, inp.Address, port, inp.OS, inp.Via, inp.AuthKeyEnvVar, inp.AuthCredentialID, inp.User,
 		actor, now, actor, now,
 	)
@@ -251,10 +251,10 @@ func CreateSshHost(ctx context.Context, database *sql.DB, inp SshHostInput, acto
 
 // UpdateSshHost replaces an SSH host. git-source rows (imported from inventory)
 // are read-only — they are owned by sync; an operator overlay is a separate
-// amadeus row (M4 / §9.5).
+// cronomicon row (M4 / §9.5).
 func UpdateSshHost(ctx context.Context, database *sql.DB, id string, inp SshHostInput, actor string) (*SshHost, error) {
 	if existing, _ := GetSshHost(ctx, database, id); existing != nil && existing.Source == "git" {
-		return nil, fmt.Errorf("only amadeus-source hosts are editable (this host is imported from inventory by sync)")
+		return nil, fmt.Errorf("only cronomicon-source hosts are editable (this host is imported from inventory by sync)")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	port := inp.Port
@@ -266,7 +266,7 @@ func UpdateSshHost(ctx context.Context, database *sql.DB, id string, inp SshHost
 	// mutated.
 	res, err := database.ExecContext(ctx,
 		`UPDATE ssh_hosts SET hostname=?, address=?, port=?, os=?, via=?, auth_key_env_var=?, auth_credential_id=?, username=?,
-		  last_modified_by=?, last_modified_at=? WHERE id=? AND source='amadeus'`,
+		  last_modified_by=?, last_modified_at=? WHERE id=? AND source='cronomicon'`,
 		inp.Hostname, inp.Address, port, inp.OS, inp.Via, inp.AuthKeyEnvVar, inp.AuthCredentialID, inp.User,
 		actor, now, id,
 	)
@@ -282,14 +282,14 @@ func UpdateSshHost(ctx context.Context, database *sql.DB, id string, inp SshHost
 }
 
 // DeleteSshHost removes an SSH host. git-source rows are sync-owned and not
-// operator-deletable (they reappear on the next sync); only amadeus rows delete.
+// operator-deletable (they reappear on the next sync); only cronomicon rows delete.
 func DeleteSshHost(ctx context.Context, database *sql.DB, id, actor string) (bool, error) {
 	h, _ := GetSshHost(ctx, database, id)
 	if h != nil && h.Source == "git" {
-		return false, fmt.Errorf("only amadeus-source hosts can be deleted (this host is imported from inventory by sync)")
+		return false, fmt.Errorf("only cronomicon-source hosts can be deleted (this host is imported from inventory by sync)")
 	}
 	// Fail-closed: the WHERE excludes git rows even if the pre-check was skipped.
-	res, err := database.ExecContext(ctx, `DELETE FROM ssh_hosts WHERE id=? AND source='amadeus'`, id)
+	res, err := database.ExecContext(ctx, `DELETE FROM ssh_hosts WHERE id=? AND source='cronomicon'`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete ssh host: %w", err)
 	}

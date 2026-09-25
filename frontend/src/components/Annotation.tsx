@@ -174,7 +174,7 @@ export function CriticalChip({ title }: { title?: string }) {
  * Editing is open to any logged-in user (AN-Q1), matching the Tags section
  * further down the same panel, which renders its editor unconditionally. There
  * is deliberately no `canEdit` prop: the one in JobDetail means
- * `canCompose && source === "amadeus"`, so borrowing it would deny annotations
+ * `canCompose && source === "cronomicon"`, so borrowing it would deny annotations
  * on every git-sourced job — precisely the population that needs them, since
  * git owns their description and this is their only operator-writable surface.
  */

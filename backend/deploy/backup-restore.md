@@ -73,7 +73,7 @@ time() - amadeus_backup_last_success_timestamp_seconds > 129600   # 36h
 
 SQLite restore is a file swap — no import step.
 
-### Tooling: `amadeus restore` (FU-3)
+### Tooling: `cronomicon restore` (FU-3)
 
 The binary bundles a restore subcommand that scripts the download + swap + verify
 steps below, reading the same `CRONOMICON_BACKUP_S3_*` / `CRONOMICON_DB_PATH` env the
@@ -81,10 +81,10 @@ server uses. **Stop the server first** — the swap replaces the live `.db` and 
 `-wal`/`-shm` sidecars.
 
 ```
-amadeus restore --list                          # show available snapshots (newest first)
-amadeus restore                                 # restore the LATEST snapshot over CRONOMICON_DB_PATH
-amadeus restore --from amadeus-20260722.db      # restore a specific snapshot
-amadeus restore --db /var/lib/amadeus/amadeus.db --yes   # non-interactive
+cronomicon restore --list                          # show available snapshots (newest first)
+cronomicon restore                                 # restore the LATEST snapshot over CRONOMICON_DB_PATH
+cronomicon restore --from amadeus-20260722.db      # restore a specific snapshot
+cronomicon restore --db /var/lib/amadeus/amadeus.db --yes   # non-interactive
 ```
 
 It refuses an obviously-active DB (a best-effort write-lock probe — not a
@@ -204,7 +204,7 @@ journalctl -u amadeus-runner --since '30 min ago' | grep -Ei 'register|401|404'
 
 `VACUUM INTO` output is a complete, openable database. To spot-check a snapshot:
 `sqlite3 amadeus-YYYYMMDD.db 'PRAGMA integrity_check; SELECT count(*) FROM runs;'`
-(`amadeus restore` runs this check automatically after installing a snapshot.)
+(`cronomicon restore` runs this check automatically after installing a snapshot.)
 
 > Backups are configured **only** via `CRONOMICON_BACKUP_S3_*` env (see Configuration
 > above) — there is no DB-stored backup setting. (The inert `BackupConfig` on the

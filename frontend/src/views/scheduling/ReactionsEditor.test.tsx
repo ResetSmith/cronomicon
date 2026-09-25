@@ -31,7 +31,7 @@ describe("reactionToWire — the preservedInline defence", () => {
     const server = {
       ownerKind: "job" as const,
       ownerName: "load",
-      ownerSource: "amadeus" as const,
+      ownerSource: "cronomicon" as const,
       name: "r",
       onKind: "job" as const,
       onName: "extract",
@@ -55,8 +55,8 @@ describe("reactionToWire — the preservedInline defence", () => {
 });
 
 describe("reactionsError — the client mirror of the server's 422s", () => {
-  const owner = { kind: "job" as const, name: "load", source: "amadeus" };
-  const ok = { ...emptyReaction(1), onName: "extract", onSource: "amadeus" as const };
+  const owner = { kind: "job" as const, name: "load", source: "cronomicon" };
+  const ok = { ...emptyReaction(1), onName: "extract", onSource: "cronomicon" as const };
 
   it("accepts a valid list", () => {
     expect(reactionsError(owner, [ok])).toBeNull();

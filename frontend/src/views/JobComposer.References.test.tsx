@@ -14,7 +14,7 @@ import { MemoryRouter } from "react-router-dom";
 const EDIT_JOB = {
   id: 7,
   name: "nightly-backup",
-  source: "amadeus",
+  source: "cronomicon",
   scriptRef: "tools/backup.sh",
   scope: "Prod",
   prompts: [],

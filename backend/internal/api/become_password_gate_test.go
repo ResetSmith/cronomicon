@@ -41,7 +41,7 @@ func becomeGateServer(t *testing.T) (http.Handler, *sql.DB) {
 	// Finance: a department the 'sec-admins' persona does NOT hold. Its scope must
 	// exist and map to its agency, or a Finance-scoped job resolves nothing.
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc-fin','finance','amadeus','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-fin','ag-fin')`)
 
 	// One secret per department, both named the same in their own scope — the
@@ -132,7 +132,7 @@ func TestBecomePasswordUnchangedJobIsNotLockedOut(t *testing.T) {
 		t.Fatalf("create = %d, want 201 (%s)", rec.Code, rec.Body.String())
 	}
 	var stored sql.NullString
-	if err := pool.QueryRow(`SELECT become_password_secret FROM jobs WHERE source='amadeus' AND name='j-keep'`).Scan(&stored); err != nil {
+	if err := pool.QueryRow(`SELECT become_password_secret FROM jobs WHERE source='cronomicon' AND name='j-keep'`).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored.String != "BECOME_PASSWORD" {

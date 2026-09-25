@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// runHealthcheck implements `amadeus healthcheck` — the container HEALTHCHECK
+// runHealthcheck implements `cronomicon healthcheck` — the container HEALTHCHECK
 // probe. The distroless final image has no shell, curl, or wget, so the binary
 // probes itself over HTTP (B.5). It hits /healthz (liveness) by default; pass
 // -ready to probe /readyz instead (dependency + migration readiness).

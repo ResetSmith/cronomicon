@@ -4,7 +4,7 @@
 -- PUT /api/v1/{env-var,env-secret,ssh-credential}-tags/{id} and stored ONLY here.
 --
 -- Unlike scripts.tags (280) there is NO sync-preservation concern: all three
--- tables are amadeus-owned exceptions to "GitLab is the source of truth"
+-- tables are cronomicon-owned exceptions to "GitLab is the source of truth"
 -- (env_vars/secrets per 004; ssh_credentials per 460), so no Git upsert ever
 -- touches them and DEFAULT '[]' simply covers existing rows. For secrets and
 -- ssh_credentials the tags are plaintext metadata in their own column — they

@@ -80,7 +80,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	)
 	nowStr := iso(now)
 
-	// ── Scopes (operator-managed / amadeus-source so they list in Settings) ────
+	// ── Scopes (operator-managed / cronomicon-source so they list in Settings) ────
 	type scopeSpec struct {
 		name, desc, types string
 		hosts             []string
@@ -107,7 +107,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			rawInv = "[all]\n" + strings.Join(sc.hosts, "\n") + "\n"
 		}
 		exec(`INSERT INTO scopes (id, name, source, description, supported_types, raw_inventory, inventory_format, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, 'amadeus', ?, ?, ?, 'ini', ?, ?, ?, ?)`,
+		      VALUES (?, ?, 'cronomicon', ?, ?, ?, 'ini', ?, ?, ?, ?)`,
 			id, sc.name, sc.desc, sc.types, rawInv, dev, ago(20*day), dev, ago(2*day))
 		for _, h := range sc.hosts {
 			exec(`INSERT INTO scope_hosts (scope_id, host) VALUES (?, ?)`, id, h)
@@ -323,7 +323,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			e.kind, e.owner, e.owner)
 	}
 
-	// ── First-class Schedules catalog (operator-authored amadeus rows) ─────────
+	// ── First-class Schedules catalog (operator-authored cronomicon rows) ─────────
 	// So the Schedules catalog + the Schedule Builder edit/delete affordances are
 	// populated in dev preview. content_hash is a placeholder digest (the catalog
 	// shows only a short prefix; the real digest is recomputed on any in-app edit).
@@ -333,7 +333,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"nightly-window", "Nightly maintenance window", "0 0 2 * * *", "", "sha256:seednight"},
 	} {
 		exec(`INSERT INTO schedules (name, source, description, cron, env, content_hash, created_by, created_at, last_modified_by, last_modified_at, uid)
-		      VALUES (?, 'amadeus', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		      VALUES (?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			sd.name, sd.desc, sd.cron, nullStr(sd.env), sd.hash, dev, ago(10*day), dev, ago(2*day), db.NewID())
 	}
 
@@ -612,7 +612,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}
 
 	// ── SSH key credential (SK.13) ─────────────────────────────────────────────
-	// A first-class SSH key the amadeus hosts + bastions below attach to via FK,
+	// A first-class SSH key the cronomicon hosts + bastions below attach to via FK,
 	// so the SK.10/SK.11 picker and the Env Vars → SSH Keys management tab are
 	// browsable in dev preview. Display-only: dev preview has no KEK to seal real
 	// key material, so this stored row carries the DERIVED metadata (type +
@@ -670,7 +670,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			via = h.via
 		}
 		exec(`INSERT INTO ssh_hosts (id, hostname, address, port, os, via, auth_credential_id, username, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, 22, ?, ?, ?, 'amadeus', 'verified', ?, ?, ?, ?, ?)`,
+		      VALUES (?, ?, ?, 22, ?, ?, ?, 'cronomicon', 'verified', ?, ?, ?, ?, ?)`,
 			db.NewID(), h.host, h.addr, h.os, via, sshCredID, ago(2*day), dev, ago(16*day), dev, ago(3*day))
 	}
 	// One git-IMPORTED host (M4) so the demo shows the read-only "git" badge + the

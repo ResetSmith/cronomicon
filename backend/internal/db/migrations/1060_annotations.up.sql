@@ -18,7 +18,7 @@
 -- see the trigger note below for what that costs.
 CREATE TABLE annotations (
     owner_kind TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
-    -- The UID, never the name. Under R2-5 two amadeus definitions may share a
+    -- The UID, never the name. Under R2-5 two cronomicon definitions may share a
     -- name within a source, so a name-keyed sidecar would hand one twin the
     -- other's notes — the exact defect class R2F-1 just fixed for bindings.
     -- There is deliberately no name column to fall back to.

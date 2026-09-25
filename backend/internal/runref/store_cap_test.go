@@ -16,7 +16,7 @@ func TestReplaceBindingsRowCap(t *testing.T) {
 	for i := range over {
 		over[i] = Binding{Kind: KindVar, Name: "V"}
 	}
-	err := ReplaceBindings(context.Background(), pool, Owner{Kind: "job", Source: "amadeus", Name: "j"}, over, "tester")
+	err := ReplaceBindings(context.Background(), pool, Owner{Kind: "job", Source: "cronomicon", Name: "j"}, over, "tester")
 	if _, ok := errors.AsType[*envref.Error](err); !ok {
 		t.Fatalf("expected *envref.Error for an oversized set, got %v", err)
 	}
@@ -26,7 +26,7 @@ func TestReplaceBindingsRowCap(t *testing.T) {
 	for i := range atCap {
 		atCap[i] = Binding{Kind: KindVar, Name: "OK"}
 	}
-	if err := ReplaceBindings(context.Background(), pool, Owner{Kind: "job", Source: "amadeus", Name: "j"}, atCap, "tester"); err != nil {
+	if err := ReplaceBindings(context.Background(), pool, Owner{Kind: "job", Source: "cronomicon", Name: "j"}, atCap, "tester"); err != nil {
 		t.Fatalf("at-cap set rejected: %v", err)
 	}
 }

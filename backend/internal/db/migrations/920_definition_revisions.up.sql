@@ -1,8 +1,8 @@
--- 920_definition_revisions — revision history + recycle bin for amadeus-source
+-- 920_definition_revisions — revision history + recycle bin for cronomicon-source
 -- definitions (RH, the prod-features plan §4).
 --
 -- WHY. Git-source definitions get history, diff, blame and restore from Git.
--- In-app (amadeus-source) Jobs, Workflows and Schedules got none of it: rows
+-- In-app (cronomicon-source) Jobs, Workflows and Schedules got none of it: rows
 -- were edited in place and deleted hard, and the config-change audit log records
 -- THAT a change happened, never a restorable snapshot of WHAT. As the dual-source
 -- model pushes more authoring in-app, "an admin fat-fingered the workflow editor"
@@ -58,7 +58,7 @@ CREATE INDEX idx_schedules_deleted ON schedules(deleted_at) WHERE deleted_at IS 
 CREATE TABLE definition_revisions (
     id             TEXT PRIMARY KEY,        -- UUIDv7
     kind           TEXT NOT NULL CHECK (kind IN ('job','workflow','schedule')),
-    source         TEXT NOT NULL,           -- always 'amadeus' today; git history is Git's
+    source         TEXT NOT NULL,           -- always 'cronomicon' today; git history is Git's
     name           TEXT NOT NULL,
     revision_no    INTEGER NOT NULL,        -- 1-based, monotonic per (kind, source, name)
     action         TEXT NOT NULL CHECK (action IN ('created','updated','deleted','restored')),

@@ -43,7 +43,7 @@ export interface ProvisionOptions {
   // Empty ⇒ auto-detect: the agent probes the host's toolchains at startup
   // (D1: 1B). Non-empty is an explicit narrowing override (-c).
   capabilities: string[];
-  inventory: "amadeus" | "local";
+  inventory: "cronomicon" | "local";
   // Source paths on the installing host (ride the one-liner's Phase-1 flags;
   // the env/docker artifacts reference the installed DEST paths).
   knownHostsSrc?: string;
@@ -68,7 +68,7 @@ export function defaultProvisionOptions(origin: string): ProvisionOptions {
     token: "<TOKEN>",
     name: "",
     capabilities: [], // auto-detect on the host (override to narrow)
-    inventory: "amadeus",
+    inventory: "cronomicon",
     keyMode: "none",
     checkout: false,
   };

@@ -34,7 +34,7 @@ type RetentionDays struct {
 	// (LU-Q4(c)). Keeping the file window longer is the whole point: it is what
 	// preserves a tamper-evident tail after the rows themselves have been pruned.
 	AuditLogFiles int `json:"auditLogFiles"`
-	// RecycleBin bounds how long a soft-deleted amadeus-source definition stays
+	// RecycleBin bounds how long a soft-deleted cronomicon-source definition stays
 	// restorable before the reaper hard-deletes it (RH). It is the one knob here
 	// whose expiry destroys a DEFINITION rather than a log of one, which is why
 	// its default is the shortest window that still spans a long weekend plus a

@@ -206,8 +206,8 @@ func TestTriggerRefusesAmbiguousNameAndAcceptsSourceParam(t *testing.T) {
 	seedTriggerJob(t, pool, "shared-name", 1)
 	if _, err := pool.Exec(`
 		INSERT INTO jobs (name, source, run_type, concurrency_policy, enabled, requestable, synced_at)
-		VALUES ('shared-name', 'amadeus', 'bash', 'Allow', 1, 1, '2026-08-11T00:00:00Z')`); err != nil {
-		t.Fatalf("seed amadeus twin: %v", err)
+		VALUES ('shared-name', 'cronomicon', 'bash', 'Allow', 1, 1, '2026-08-11T00:00:00Z')`); err != nil {
+		t.Fatalf("seed cronomicon twin: %v", err)
 	}
 
 	_, token := mintAccount(t, ts, client, csrf, map[string]any{
@@ -225,17 +225,17 @@ func TestTriggerRefusesAmbiguousNameAndAcceptsSourceParam(t *testing.T) {
 		t.Errorf("error code = %q, want ambiguous_name", body.Code)
 	}
 
-	resp2 := triggerAs(t, ts, token, "/api/v1/trigger/jobs/shared-name?source=amadeus")
+	resp2 := triggerAs(t, ts, token, "/api/v1/trigger/jobs/shared-name?source=cronomicon")
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusAccepted {
-		t.Fatalf("?source=amadeus status = %d, want 202", resp2.StatusCode)
+		t.Fatalf("?source=cronomicon status = %d, want 202", resp2.StatusCode)
 	}
 	var src string
 	if err := pool.QueryRow(`SELECT job_source FROM runs WHERE job_name='shared-name'`).Scan(&src); err != nil {
 		t.Fatalf("read run: %v", err)
 	}
-	if src != "amadeus" {
-		t.Errorf("job_source = %q, want amadeus — ?source= picked the wrong definition", src)
+	if src != "cronomicon" {
+		t.Errorf("job_source = %q, want cronomicon — ?source= picked the wrong definition", src)
 	}
 }
 

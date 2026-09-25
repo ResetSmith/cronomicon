@@ -73,15 +73,15 @@ RUN set -eux; \
     terraform version
 
 # Non-root service account (the agent never needs root).
-RUN useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin amadeus
+RUN useradd --system --create-home --uid 10001 --shell /usr/sbin/nologin cronomicon
 
 WORKDIR /app
 COPY --from=build /out/amadeus-runner /app/amadeus-runner
 
 # Identity + keys/inventory persist here (see install-runner.md).
-RUN mkdir -p /var/lib/amadeus-runner && chown amadeus:amadeus /var/lib/amadeus-runner
+RUN mkdir -p /var/lib/amadeus-runner && chown amadeus:cronomicon /var/lib/amadeus-runner
 VOLUME ["/var/lib/amadeus-runner"]
 ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json
 
-USER amadeus
+USER cronomicon
 ENTRYPOINT ["/app/amadeus-runner"]

@@ -193,10 +193,10 @@ func TestBinnedOwnerIsNotALiveScheduleReference(t *testing.T) {
 		t.Fatalf("bin job = %d: %s", c, b)
 	}
 
-	// usedBy must stop counting it. The ?source=amadeus is load-bearing:
+	// usedBy must stop counting it. The ?source=cronomicon is load-bearing:
 	// getScheduleDef defaults to source=git, so without it this GET 404s and the
 	// Contains check below passes for a reason that has nothing to do with the bin.
-	code, body = rhDo(t, client, http.MethodGet, ts.URL+"/api/v1/schedule-defs/nightly?source=amadeus", csrf, nil)
+	code, body = rhDo(t, client, http.MethodGet, ts.URL+"/api/v1/schedule-defs/nightly?source=cronomicon", csrf, nil)
 	if code != http.StatusOK {
 		t.Fatalf("get schedule = %d (want 200): %s", code, body)
 	}
@@ -233,7 +233,7 @@ func TestBinnedDefinitionReactionsAreReadableAndRemovable(t *testing.T) {
 
 	if code, b := rhDo(t, client, http.MethodPut, ts.URL+"/api/v1/reactions/job/billing", csrf, map[string]any{
 		"reactions": []map[string]any{
-			{"name": "on-upstream", "onKind": "job", "onName": "upstream", "onSource": "amadeus", "onOutcome": "success"},
+			{"name": "on-upstream", "onKind": "job", "onName": "upstream", "onSource": "cronomicon", "onOutcome": "success"},
 		},
 	}); code != http.StatusOK && code != http.StatusNoContent {
 		t.Fatalf("author reaction = %d: %s", code, b)

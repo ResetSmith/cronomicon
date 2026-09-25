@@ -70,8 +70,8 @@ func TestImportGitHosts(t *testing.T) {
 		t.Errorf("web2 group-var inherit = user=%q key=%q, want svc/WEB_KEY", w2user.String, w2key.String)
 	}
 
-	// An operator overlay (amadeus) row for web1 must survive the prune.
-	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id,source,hostname,username,created_at) VALUES('op1','amadeus','web1','operator','t')`); err != nil {
+	// An operator overlay (cronomicon) row for web1 must survive the prune.
+	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id,source,hostname,username,created_at) VALUES('op1','cronomicon','web1','operator','t')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,7 +86,7 @@ func TestImportGitHosts(t *testing.T) {
 	sync(t, "2026-01-02T00:00:00Z")
 
 	// web1 git row: host_key preserved across re-sync, synced_at re-stamped.
-	// (web1 now has 2 rows — git + amadeus overlay — so query the git row explicitly.)
+	// (web1 now has 2 rows — git + cronomicon overlay — so query the git row explicitly.)
 	var gitKey, gitSynced string
 	if err := pool.QueryRow(`SELECT COALESCE(host_key,''), COALESCE(synced_at,'') FROM ssh_hosts WHERE hostname='web1' AND source='git'`).Scan(&gitKey, &gitSynced); err != nil {
 		t.Fatal(err)
@@ -102,18 +102,18 @@ func TestImportGitHosts(t *testing.T) {
 	if _, err := pool.Exec(`DELETE FROM ssh_hosts WHERE source='git' AND (synced_at IS NULL OR synced_at < ?)`, "2026-01-02T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	var web2git, web1git, web1amadeus int
+	var web2git, web1git, web1cronomicon int
 	pool.QueryRow(`SELECT COUNT(*) FROM ssh_hosts WHERE hostname='web2' AND source='git'`).Scan(&web2git)
 	pool.QueryRow(`SELECT COUNT(*) FROM ssh_hosts WHERE hostname='web1' AND source='git'`).Scan(&web1git)
-	pool.QueryRow(`SELECT COUNT(*) FROM ssh_hosts WHERE hostname='web1' AND source='amadeus'`).Scan(&web1amadeus)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM ssh_hosts WHERE hostname='web1' AND source='cronomicon'`).Scan(&web1cronomicon)
 	if web2git != 0 {
 		t.Errorf("web2 git row should be pruned (dropped from inventory), still present")
 	}
 	if web1git != 1 {
 		t.Errorf("web1 git row should survive (re-stamped), got %d", web1git)
 	}
-	if web1amadeus != 1 {
-		t.Errorf("operator (amadeus) overlay must NEVER be pruned, got %d", web1amadeus)
+	if web1cronomicon != 1 {
+		t.Errorf("operator (cronomicon) overlay must NEVER be pruned, got %d", web1cronomicon)
 	}
 }
 

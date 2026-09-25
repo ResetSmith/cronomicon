@@ -74,7 +74,7 @@ func TestRunPathHostSubset(t *testing.T) {
 		}
 	}
 	scopeID := db.NewID()
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'Fleet', 'amadeus', 't')`, scopeID)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'Fleet', 'cronomicon', 't')`, scopeID)
 	for _, h := range []string{"node1", "node2"} {
 		exec(`INSERT INTO scope_hosts(scope_id, host) VALUES (?, ?)`, scopeID, h)
 		exec(`INSERT INTO ssh_hosts(id, hostname, port, username, auth_key_env_var, created_at)
@@ -137,7 +137,7 @@ func TestRunPathGroupSubset(t *testing.T) {
 	}
 	// Scope with a parsed (ok) projection + group "web".
 	scopeID := db.NewID()
-	exec(`INSERT INTO scopes(id,name,source,created_at,projection_status) VALUES (?,'Fleet','amadeus','t','ok')`, scopeID)
+	exec(`INSERT INTO scopes(id,name,source,created_at,projection_status) VALUES (?,'Fleet','cronomicon','t','ok')`, scopeID)
 	for _, h := range []string{"node1", "node2"} {
 		exec(`INSERT INTO scope_hosts(scope_id,host) VALUES (?,?)`, scopeID, h)
 		exec(`INSERT INTO ssh_hosts(id,hostname,port,username,auth_key_env_var,created_at) VALUES (?,?,22,'deploy','','t')`, db.NewID(), h)
@@ -146,7 +146,7 @@ func TestRunPathGroupSubset(t *testing.T) {
 	exec(`INSERT INTO scope_group_hosts(scope_id,group_name,host) VALUES (?,'web','node1')`, scopeID)
 	// Scope with a degraded projection.
 	brokenID := db.NewID()
-	exec(`INSERT INTO scopes(id,name,source,created_at,projection_status) VALUES (?,'Broken','amadeus','t','unavailable')`, brokenID)
+	exec(`INSERT INTO scopes(id,name,source,created_at,projection_status) VALUES (?,'Broken','cronomicon','t','unavailable')`, brokenID)
 	exec(`INSERT INTO scope_hosts(scope_id,host) VALUES (?,?)`, brokenID, "bnode")
 	exec(`INSERT INTO ssh_hosts(id,hostname,port,username,auth_key_env_var,created_at) VALUES (?,?,22,'deploy','','t')`, db.NewID(), "bnode")
 

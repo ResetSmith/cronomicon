@@ -40,7 +40,7 @@ func dispositionFixture(t *testing.T, jobName, runID string) (http.Handler, *sql
 		}
 	}
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES (?, 'amadeus', 'bash', NULL, 1)`, jobName)
+	      VALUES (?, 'cronomicon', 'bash', NULL, 1)`, jobName)
 	seedRunFor(t, exec, runID, jobName, "")
 	return h, pool, killPathFor(t, pool, jobName)
 }
@@ -383,14 +383,14 @@ func TestStoppedFilterIsOrthogonalToStatus(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('mixed','amadeus','bash',NULL,1)`)
+	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('mixed','cronomicon','bash',NULL,1)`)
 	// Three terminal runs: an ordinary success, a stop recorded as success, and
 	// an unclassified stop. Only the middle one is invisible to status alone.
 	exec(`INSERT INTO runs (id, job_name, job_source, run_type, status, killed_by, triggered_by,
 	                        trigger_kind, executor, created_at)
-	      VALUES ('r-ok','mixed','amadeus','bash','success',NULL,'t','manual','ssh','2026-01-01T00:00:00Z'),
-	             ('r-stopped-ok','mixed','amadeus','bash','success','ops@example.com','t','manual','ssh','2026-01-01T00:00:01Z'),
-	             ('r-stopped','mixed','amadeus','bash','killed','ops@example.com','t','manual','ssh','2026-01-01T00:00:02Z')`)
+	      VALUES ('r-ok','mixed','cronomicon','bash','success',NULL,'t','manual','ssh','2026-01-01T00:00:00Z'),
+	             ('r-stopped-ok','mixed','cronomicon','bash','success','ops@example.com','t','manual','ssh','2026-01-01T00:00:01Z'),
+	             ('r-stopped','mixed','cronomicon','bash','killed','ops@example.com','t','manual','ssh','2026-01-01T00:00:02Z')`)
 
 	ids := func(query string) map[string]bool {
 		t.Helper()
@@ -458,17 +458,17 @@ func TestReactionProvenanceIsServedBothDirections(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	exec(`INSERT INTO jobs (name, source, run_type, enabled) VALUES ('up','amadeus','bash',1),('down','amadeus','bash',1)`)
+	exec(`INSERT INTO jobs (name, source, run_type, enabled) VALUES ('up','cronomicon','bash',1),('down','cronomicon','bash',1)`)
 	exec(`INSERT INTO runs (id, job_name, job_source, run_type, status, triggered_by, trigger_kind, created_at)
-	      VALUES ('r-cause','up','amadeus','bash','success','scheduler','scheduled','2026-01-01T00:00:00Z')`)
+	      VALUES ('r-cause','up','cronomicon','bash','success','scheduler','scheduled','2026-01-01T00:00:00Z')`)
 	// Two effects, one a job run and one a workflow run — the graph crosses
 	// tables, so answering only for jobs answers half of it.
 	exec(`INSERT INTO runs (id, job_name, job_source, run_type, status, triggered_by, trigger_kind,
 	                        reacted_to_run_id, reaction_depth, created_at)
-	      VALUES ('r-effect','down','amadeus','bash','success','reactor','reaction','r-cause',1,'2026-01-01T00:01:00Z')`)
+	      VALUES ('r-effect','down','cronomicon','bash','success','reactor','reaction','r-cause',1,'2026-01-01T00:01:00Z')`)
 	exec(`INSERT INTO workflow_runs (id, workflow_name, workflow_source, status, triggered_by, trigger_kind,
 	                                 reacted_to_run_id, reaction_depth, created_at)
-	      VALUES ('wfr-effect','cleanup','amadeus','success','reactor','reaction','r-cause',1,'2026-01-01T00:01:00Z')`)
+	      VALUES ('wfr-effect','cleanup','cronomicon','success','reactor','reaction','r-cause',1,'2026-01-01T00:01:00Z')`)
 
 	get := func(path string) []map[string]any {
 		t.Helper()

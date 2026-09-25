@@ -83,7 +83,7 @@ func seedScopedGroupRole(t *testing.T, s *Service, group, role, scope string) {
 		agencyID, "agency-"+scope, now); err != nil {
 		t.Fatalf("seed agency: %v", err)
 	}
-	if _, err := s.db.Exec(`INSERT OR IGNORE INTO scopes(id, name, source, created_at) VALUES(?,?,'amadeus',?)`,
+	if _, err := s.db.Exec(`INSERT OR IGNORE INTO scopes(id, name, source, created_at) VALUES(?,?,'cronomicon',?)`,
 		scopeID, scope, now); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}

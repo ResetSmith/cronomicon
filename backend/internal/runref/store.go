@@ -19,7 +19,7 @@ import (
 //
 // The arms are exclusive by construction — the CASE picks one — so no caller can
 // accidentally get the UNION, which is precisely what the pre-R2F-1 name-only
-// query returned for two same-named amadeus siblings.
+// query returned for two same-named cronomicon siblings.
 const ownerMatch = `CASE WHEN ? != '' THEN owner_uid = ?
 		      ELSE owner_kind = ? AND owner_source = ? AND owner_name = ? END`
 

@@ -260,7 +260,7 @@ func TestDetectedRunTypesFeedConfigDigest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return runnerproto.ConfigDigest("r1", "Linux", caps, 5, "amadeus", "test", runnerproto.ProtocolVersion)
+		return runnerproto.ConfigDigest("r1", "Linux", caps, 5, "cronomicon", "test", runnerproto.ProtocolVersion)
 	}
 	binDir := fakeRunTypeBins(t, "bash")
 	before := digest()

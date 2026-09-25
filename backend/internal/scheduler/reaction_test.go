@@ -886,7 +886,7 @@ func TestFailedFireRecordsAnErrorVerdict(t *testing.T) {
 	// reaction's owner_uid, so a re-SOURCE alone no longer strands it — only a
 	// new identity does, and that is exactly what this simulates.
 	if _, err := pool.ExecContext(ctxb(),
-		`UPDATE jobs SET source='amadeus', uid='uid-remade' WHERE name='down'`); err != nil {
+		`UPDATE jobs SET source='cronomicon', uid='uid-remade' WHERE name='down'`); err != nil {
 		t.Fatal(err)
 	}
 

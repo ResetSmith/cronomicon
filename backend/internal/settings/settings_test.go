@@ -743,7 +743,7 @@ func TestLogStorageConfig(t *testing.T) {
 		Local:   &LocalLogConfig{Path: "/var/lib/amadeus/custom-logs"},
 		S3: &S3LogConfig{
 			Bucket: "my-bucket", Endpoint: "http://s3.example.com", Region: "us-east-1",
-			AccessKey: "key", SecretKey: "secret", Prefix: "amadeus/",
+			AccessKey: "key", SecretKey: "secret", Prefix: "cronomicon/",
 		},
 	}, "tester")
 	if err != nil {
@@ -752,7 +752,7 @@ func TestLogStorageConfig(t *testing.T) {
 	if updated.Local.Path != "/var/lib/amadeus/custom-logs" {
 		t.Fatalf("local.path not persisted: %+v", updated.Local)
 	}
-	if updated.S3 == nil || updated.S3.AccessKey != "key" || updated.S3.Prefix != "amadeus/" {
+	if updated.S3 == nil || updated.S3.AccessKey != "key" || updated.S3.Prefix != "cronomicon/" {
 		t.Fatalf("s3 fields not persisted: %+v", updated.S3)
 	}
 	if updated.S3.SecretKey != "" {
@@ -874,20 +874,20 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 	}
 
 	// Check sorting and details.
-	// source DESC, name: "local-env" is "amadeus" so it comes before "git", wait.
-	// Wait, "local-env" source is "amadeus", "dev-env" source is "git".
+	// source DESC, name: "local-env" is "cronomicon" so it comes before "git", wait.
+	// Wait, "local-env" source is "cronomicon", "dev-env" source is "git".
 	// 'local' vs 'git'. If sorting is source DESC, "local" (starts with l) comes before "git" (starts with g). Wait, no: "local" > "git" alphabetically so DESC puts "local" first.
-	var gitScope, amadeusScope Scope
+	var gitScope, cronomiconScope Scope
 	for _, sc := range allList {
 		if sc.Source == "git" {
 			gitScope = sc
-		} else if sc.Source == "amadeus" {
-			amadeusScope = sc
+		} else if sc.Source == "cronomicon" {
+			cronomiconScope = sc
 		}
 	}
 
-	if amadeusScope.ID != localScope.ID {
-		t.Errorf("amadeus scope ID mismatch")
+	if cronomiconScope.ID != localScope.ID {
+		t.Errorf("cronomicon scope ID mismatch")
 	}
 
 	if gitScope.ID != gitScopeID {
@@ -938,13 +938,13 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 		t.Fatalf("expected 1 git scope, got %d", len(gitOnly))
 	}
 
-	// 6. Test ListScopes (filtered by amadeus).
-	localOnly, err := ListScopes(ctx, pool, "amadeus")
+	// 6. Test ListScopes (filtered by cronomicon).
+	localOnly, err := ListScopes(ctx, pool, "cronomicon")
 	if err != nil {
-		t.Fatalf("ListScopes(amadeus) failed: %v", err)
+		t.Fatalf("ListScopes(cronomicon) failed: %v", err)
 	}
 	if len(localOnly) != 1 || localOnly[0].ID != localScope.ID {
-		t.Fatalf("expected 1 amadeus scope, got %d", len(localOnly))
+		t.Fatalf("expected 1 cronomicon scope, got %d", len(localOnly))
 	}
 
 	// 7. Test GetScope.

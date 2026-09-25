@@ -71,7 +71,7 @@ func seedKey(t *testing.T, pool *sql.DB, cfg *config.Config, label, material str
 func TestReplaceAndListBindings(t *testing.T) {
 	pool := openDB(t)
 	ctx := context.Background()
-	owner := Owner{Kind: "job", Source: "amadeus", Name: "deploy"}
+	owner := Owner{Kind: "job", Source: "cronomicon", Name: "deploy"}
 
 	// Duplicate entries dedupe; result is sorted (kind, name).
 	err := ReplaceBindings(ctx, pool, owner, []Binding{
@@ -125,14 +125,14 @@ func TestBindingsClearedOnOwnerDelete(t *testing.T) {
 	// cascade-clear its bindings (migration 590 triggers) so a later same-named
 	// owner cannot silently inherit the grant.
 	if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, content_hash, synced_at)
-		VALUES('uid-deploy','deploy','amadeus','bash','echo','sha256:x',?)`, now); err != nil {
+		VALUES('uid-deploy','deploy','cronomicon','bash','echo','sha256:x',?)`, now); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	if _, err := pool.Exec(`INSERT INTO scripts(name, run_type, command, content_hash, synced_at)
 		VALUES('build','bash','echo','sha256:y',?)`, now); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
-	jobOwner := Owner{Kind: "job", Source: "amadeus", Name: "deploy"}
+	jobOwner := Owner{Kind: "job", Source: "cronomicon", Name: "deploy"}
 	scriptOwner := Owner{Kind: "script", Name: "build"}
 	if err := ReplaceBindings(ctx, pool, jobOwner, []Binding{{Kind: KindSecret, Name: "DB_PASS"}}, "a"); err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestBindingsClearedOnOwnerDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := pool.Exec(`DELETE FROM jobs WHERE source='amadeus' AND name='deploy'`); err != nil {
+	if _, err := pool.Exec(`DELETE FROM jobs WHERE source='cronomicon' AND name='deploy'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`DELETE FROM scripts WHERE name='build'`); err != nil {
@@ -166,7 +166,7 @@ func TestReplaceBindingsValidation(t *testing.T) {
 		b    Binding
 	}{
 		{"invalid kind", Binding{Kind: "bogus", Name: "X"}},
-		{"amadeus-prefixed name", Binding{Kind: KindVar, Name: "CRONOMICON_FOO"}},
+		{"cronomicon-prefixed name", Binding{Kind: KindVar, Name: "CRONOMICON_FOO"}},
 		{"non-posix name", Binding{Kind: KindVar, Name: "has-dash"}},
 		{"reserved KEK secret", Binding{Kind: KindSecret, Name: "KEK"}},
 	}

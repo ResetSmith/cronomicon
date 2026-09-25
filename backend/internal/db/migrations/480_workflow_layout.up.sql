@@ -6,7 +6,7 @@
 -- ADVISORY ONLY: layout_json is pure presentation. It is NOT part of the workflow
 -- definition — it never feeds `steps`, is excluded from `steps_hash`, and the
 -- engine/walkSteps/ValidateSteps never read it. Like the tags columns (290/470) it
--- is amadeus-owned and NEVER parsed from Git or written by any sync/compose upsert
+-- is cronomicon-owned and NEVER parsed from Git or written by any sync/compose upsert
 -- of the definition, so a Git re-sync leaves it untouched. Additive ALTER — no
 -- table rebuild; existing rows read back NULL.
 ALTER TABLE workflows ADD COLUMN layout_json TEXT;

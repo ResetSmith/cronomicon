@@ -26,24 +26,24 @@ browser ──TLS 443──▶ traefik ──forward-auth──▶ authelia (LDA
                           └──▶ apprise
 ```
 
-In this topology `amadeus` is not exposed on the host — only Traefik publishes
+In this topology `cronomicon` is not exposed on the host — only Traefik publishes
 80/443. Use `CRONOMICON_TRUSTED_PROXIES=172.28.0.2/32` (Traefik's static IP).
 
 **Option B — External proxy (our current setup)**
 
 If you already run a reverse proxy (e.g. Nginx Proxy Manager) and SSO layer,
-remove Traefik and Authelia from the compose file and publish amadeus directly:
+remove Traefik and Authelia from the compose file and publish cronomicon directly:
 
 ```
 browser ──TLS──▶ Nginx Proxy Manager (existing; injects Remote-*)
                           │
                           ▼ proxied to amadeus:8080
-                       amadeus (published on host port, e.g. 8080)
+                       cronomicon (published on host port, e.g. 8080)
                           │
                           └──▶ /var/lib/amadeus volume
 ```
 
-Publish amadeus on the host by adding a `ports` entry to the `amadeus` service
+Publish cronomicon on the host by adding a `ports` entry to the `cronomicon` service
 and removing the `internal: true` constraint from the network so NPM can reach
 it. Use `CRONOMICON_TRUSTED_PROXIES=10.0.0.0/8` (or NPM's specific IP).
 
@@ -60,7 +60,7 @@ On the Docker host:
 - Docker Engine 24+ and Docker Compose v2 (`docker compose`, not `docker-compose`)
 - The repository checked out at the host (or the pre-built image pushed to a registry)
 - DNS entries for your FQDNs pointing at the host
-- TLS certificate + key for the amadeus hostname (wildcard or SAN cert)
+- TLS certificate + key for the cronomicon hostname (wildcard or SAN cert)
 
 If you are building remotely (CI push to registry, then deploy), see
 [Remote / CI build](#remote--ci-build) below. The instructions that follow
@@ -72,7 +72,7 @@ assume you are building on the Docker host directly.
 
 ```bash
 git clone git@gitlab.example.com:ops/amadeus.git
-cd amadeus
+cd cronomicon
 git checkout v0.36.5
 ```
 
@@ -142,7 +142,7 @@ FQDNs in the three Traefik label rules:
 # authelia service
 - "traefik.http.routers.authelia.rule=Host(`auth.YOUR-DOMAIN`)"
 
-# amadeus service
+# cronomicon service
 - "traefik.http.routers.amadeus.rule=Host(`amadeus.YOUR-DOMAIN`)"
 ```
 
@@ -178,7 +178,7 @@ access_control:
     - domain: amadeus.YOUR-DOMAIN
       policy: one_factor
       subject:
-        - "group:amadeus-users"
+        - "group:cronomicon-users"
 
 session:
   cookies:
@@ -245,8 +245,8 @@ These are mounted read-only by the `authelia` service (see `docker-compose.yml`)
 **Option C: use an existing external Authelia**
 
 Remove the `authelia` service from `docker-compose.yml` entirely and remove the
-`authelia` `depends_on` from the `amadeus` service. Update the Traefik middleware
-label on `amadeus` to point `forwardauth.address` at your existing Authelia URL.
+`authelia` `depends_on` from the `cronomicon` service. Update the Traefik middleware
+label on `cronomicon` to point `forwardauth.address` at your existing Authelia URL.
 Ensure your Authelia's access policy passes `Remote-User,Remote-Groups,Remote-Email,Remote-Name`
 in `authResponseHeaders`.
 
@@ -265,7 +265,7 @@ CRONOMICON_AUTH_MODE=trusted-header
 
 **`CRONOMICON_TRUSTED_PROXIES` — this is the most important setting and the #1
 cause of login failures if wrong.** It must exactly match the IP (or CIDR) that
-amadeus sees as the source of requests from your reverse proxy.
+cronomicon sees as the source of requests from your reverse proxy.
 
 **Our setup uses an existing Nginx Proxy Manager (NPM) on the `10.x.x.x`
 network, not the bundled Traefik.** The env file is already set correctly for
@@ -278,10 +278,10 @@ CRONOMICON_TRUSTED_PROXIES=10.0.0.0/8
 If you are deploying behind a different edge, use the specific IP or CIDR of
 that proxy. For the bundled Traefik compose stack the value would instead be
 `172.28.0.2/32` (Traefik's static internal address). When in doubt, check what
-IP amadeus logs as the peer on a request:
+IP cronomicon logs as the peer on a request:
 
 ```bash
-docker compose logs amadeus | grep "peer not in trusted"
+docker compose logs cronomicon | grep "peer not in trusted"
 # or enable debug logging to see the remote addr on every request
 ```
 
@@ -361,9 +361,9 @@ credentials. See `backup-restore.md`.
 and proceed to Step 8.
 
 **Option B (external NPM — our setup):** edit `docker-compose.yml` to publish
-amadeus on the host and remove Traefik/Authelia:
+cronomicon on the host and remove Traefik/Authelia:
 
-1. On the `amadeus` service add a `ports` entry:
+1. On the `cronomicon` service add a `ports` entry:
    ```yaml
    amadeus:
      ports:
@@ -372,7 +372,7 @@ amadeus on the host and remove Traefik/Authelia:
 
 2. Remove or comment out the `traefik` and `authelia` services entirely.
 
-3. Remove the `depends_on: authelia` block from the `amadeus` service.
+3. Remove the `depends_on: authelia` block from the `cronomicon` service.
 
 4. Change the `internal` network to a regular (non-isolated) network by
    removing `internal: true`:
@@ -420,13 +420,13 @@ embedded fresh — never shipped as a stale committed asset.
 Watch the logs:
 
 ```bash
-docker compose logs -f amadeus
+docker compose logs -f cronomicon
 ```
 
 On a healthy first boot you will see:
 
 ```
-amadeus build version=v0.36.5 commit=<sha> built=<date>
+cronomicon build version=v0.36.5 commit=<sha> built=<date>
 database migrations applied
 git sync started
 listening on :8080
@@ -464,7 +464,7 @@ Expected output:
 ```
 
 **The spoofed-header check is the single most important security control.**
-Because we use an external NPM rather than the bundled Traefik, amadeus is
+Because we use an external NPM rather than the bundled Traefik, cronomicon is
 accessible on the Docker host at port 8080 (the internal network is not
 `internal: true` in this topology). Always run the direct-port probe:
 
@@ -480,7 +480,7 @@ does, `CRONOMICON_TRUSTED_PROXIES` is misconfigured.
 Also verify manually:
 
 ```bash
-# amadeus must NOT be reachable on the host directly — only Traefik publishes ports
+# cronomicon must NOT be reachable on the host directly — only Traefik publishes ports
 curl http://localhost:8080        # must fail / connection refused
 curl https://amadeus.YOUR-DOMAIN  # must redirect to Authelia login
 ```
@@ -534,7 +534,7 @@ trigger from the UI. Push-triggered sync is a convenience, not a requirement.
 ## Step 13 — Registering a runner
 
 Cronomicon needs at least one runner to execute jobs. Runners are separate
-processes that poll the amadeus API, claim work, and report results.
+processes that poll the cronomicon API, claim work, and report results.
 
 See `documentation/runner-install.html` for full instructions (and
 `documentation/runner-manage.html` for day-2 ops) — these also render as the in-app
@@ -637,7 +637,7 @@ Pipeline:
 
 ### One-time DockHand stack setup
 
-In DockHand → the amadeus git stack → Edit:
+In DockHand → the cronomicon git stack → Edit:
 
 1. **Deploy options:** Build images on deploy **OFF**; Re-pull images **ON**;
    Force redeployment **ON**. With Build left on, DockHand runs
@@ -695,7 +695,7 @@ Supported only from a clean checkout; not the normal path.
 | `GET /version` | Build metadata: version, commit, date | No |
 | `GET /metrics` | Prometheus metrics — internal network only | No (internal) |
 
-The container HEALTHCHECK probes `/readyz` via `amadeus healthcheck -ready`.
+The container HEALTHCHECK probes `/readyz` via `cronomicon healthcheck -ready`.
 Traefik's `depends_on` waits for this to pass before routing traffic.
 
 ### Protecting `/metrics`
@@ -726,7 +726,7 @@ answers via the public URL. If you must expose it, choose one of:
         entryPoints: [websecure]
         tls: {}
         middlewares: [strip-remote-headers, metrics-basic]
-        service: amadeus   # whatever service the `amadeus` router points at
+        service: cronomicon   # whatever service the `cronomicon` router points at
   ```
 
   Because Traefik picks the most specific rule, this router wins over the
@@ -746,12 +746,12 @@ static IP (`172.28.0.2/32` for the bundled compose stack).
 
 **Login redirects to Authelia but comes back unauthenticated / loops**
 `CRONOMICON_TRUSTED_PROXIES` does not match the actual source IP reaching the app.
-Check amadeus logs for `peer not in trusted proxies`. Run
+Check cronomicon logs for `peer not in trusted proxies`. Run
 `docker network inspect amadeus_internal` to see Traefik's actual IP.
 
 **`/readyz` returns 503 after startup**
 Migrations are still running (normal for the first boot after an upgrade) or
-the DB volume is not writable. Check `docker compose logs amadeus`.
+the DB volume is not writable. Check `docker compose logs cronomicon`.
 
 **Version shows `dev` instead of `v0.36.5`**
 The `CRONOMICON_VERSION` build arg was not passed. Run the stamped build from

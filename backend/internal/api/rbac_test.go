@@ -215,7 +215,7 @@ func TestRunPathScopeGuard(t *testing.T) {
 	// RB-15: the same matrix, expressed as grants — agency-shaped for the scoped
 	// roles (RB-Q1 has no single-scope shape) and "*" for the unrestricted admin.
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-a','agency-a','2026-01-01T00:00:00Z')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-a','ScopeA','amadeus','2026-01-01T00:00:00Z')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-a','ScopeA','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-a','ag-a')`)
 	exec(`INSERT INTO access_grants (id,ad_group,role,agency_id,all_scopes,created_at) VALUES
 		('gv','run-viewers','viewer','ag-a',0,'2026-01-01T00:00:00Z'),

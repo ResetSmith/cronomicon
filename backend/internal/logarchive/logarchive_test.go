@@ -40,14 +40,14 @@ func TestNormalizePrefix(t *testing.T) {
 }
 
 func TestKeyShapes(t *testing.T) {
-	s := &Store{prefix: "amadeus/"}
-	if got := s.Key("0a1b2c3d", "trace-1"); got != "amadeus/0a1b2c3d/trace-1.log" {
+	s := &Store{prefix: "cronomicon/"}
+	if got := s.Key("0a1b2c3d", "trace-1"); got != "cronomicon/0a1b2c3d/trace-1.log" {
 		t.Errorf("with code: %q", got)
 	}
-	if got := s.Key("", "trace-1"); got != "amadeus/trace-1.log" {
+	if got := s.Key("", "trace-1"); got != "cronomicon/trace-1.log" {
 		t.Errorf("without code: %q", got)
 	}
-	if got := s.MetaKey("0a1b2c3d"); got != "amadeus/0a1b2c3d/_meta.json" {
+	if got := s.MetaKey("0a1b2c3d"); got != "cronomicon/0a1b2c3d/_meta.json" {
 		t.Errorf("meta: %q", got)
 	}
 	bare := &Store{prefix: ""}
@@ -95,7 +95,7 @@ func TestPutHeadGetListDelete(t *testing.T) {
 	fake := fakes3.New("logs")
 	defer fake.Close()
 	ctx := context.Background()
-	s := newStore(t, fake, "logs", "/amadeus/")
+	s := newStore(t, fake, "logs", "/cronomicon/")
 
 	dir := t.TempDir()
 	local := filepath.Join(dir, "trace-1.log")
@@ -164,13 +164,13 @@ func TestPutHeadGetListDelete(t *testing.T) {
 	}
 
 	// List under the folder.
-	fake.Put("logs", "amadeus/0a1b2c3d/_meta.json", []byte("{}"))
+	fake.Put("logs", "cronomicon/0a1b2c3d/_meta.json", []byte("{}"))
 	fake.Put("logs", "other/x.log", []byte("x"))
 	objs, err := s.List(ctx, "0a1b2c3d/")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(objs) != 2 || objs[0].Key != "amadeus/0a1b2c3d/_meta.json" || objs[1].Key != key {
+	if len(objs) != 2 || objs[0].Key != "cronomicon/0a1b2c3d/_meta.json" || objs[1].Key != key {
 		t.Fatalf("List = %+v", objs)
 	}
 	all, _ := s.List(ctx, "")

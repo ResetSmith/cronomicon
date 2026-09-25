@@ -17,7 +17,7 @@ const holdsTriggerVerb = () =>
   roles.some((r) => ["admin", "approver", "operator"].includes(r.toLowerCase()));
 
 const WORKFLOWS = [
-  { id: 1, name: "paused-wf", source: "amadeus", status: "success", disabled: true, steps: [] },
+  { id: 1, name: "paused-wf", source: "cronomicon", status: "success", disabled: true, steps: [] },
   { id: 2, name: "live-wf", source: "git", status: "success", disabled: false, steps: [] },
 ];
 
@@ -116,7 +116,7 @@ describe("Workflows — pause/resume gate (FX-8)", () => {
   });
 
   // A git-source workflow CAN be paused — PATCH, unlike DELETE, has no source
-  // guard — so the button must not inherit Edit/Delete's amadeus-only gate.
+  // guard — so the button must not inherit Edit/Delete's cronomicon-only gate.
   it("keeps it on a git-source workflow", async () => {
     const q = await renderWorkflows();
     expandRow(q, "live-wf"); // source: git

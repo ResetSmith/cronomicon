@@ -141,12 +141,12 @@ func TestManifestPinnedLimit(t *testing.T) {
 	seedAnsibleScope(t, svc, "prod", "[web]\nweb1\nweb2\n")
 	insertJobDef(t, svc, "patch", "ansible", "- hosts: web\n", 0)
 
-	// amadeus-mode pinned ansible run -> Limit == "<host>".
+	// cronomicon-mode pinned ansible run -> Limit == "<host>".
 	t1 := db.NewTraceID()
 	insertClaimedRunTargetHost(t, svc, t1, "patch", "ansible", "prod", runnerID, "web1")
 	m := getManifest(t, svc, as, t1, tok)
 	if m.Limit != "web1" {
-		t.Errorf("amadeus-mode pinned limit = %q, want web1", m.Limit)
+		t.Errorf("cronomicon-mode pinned limit = %q, want web1", m.Limit)
 	}
 
 	// local-inventory-mode pinned ansible run ships the SAME limit (names only,
@@ -200,7 +200,7 @@ func TestManifestPinnedLimitMetacharRejected(t *testing.T) {
 }
 
 // TestManifestLimit verifies the M3 --limit computation: structured group/host
-// names in amadeus mode, local-mode ships Limit but NO inventory (no-leak), and a
+// names in cronomicon mode, local-mode ships Limit but NO inventory (no-leak), and a
 // raw ansibleLimit passthrough takes precedence over the structured limit.
 func TestManifestLimit(t *testing.T) {
 	svc := newTestService(t)
@@ -214,7 +214,7 @@ func TestManifestLimit(t *testing.T) {
 	seedAnsibleScope(t, svc, "prod", "[web]\nweb1\n")
 	insertJobDef(t, svc, "patch", "ansible", "- hosts: web\n", 0)
 
-	// amadeus ansible run with override groups → Limit = group NAMES + Inventory shipped.
+	// cronomicon ansible run with override groups → Limit = group NAMES + Inventory shipped.
 	t1 := db.NewTraceID()
 	insertClaimedRunOverride(t, svc, t1, "patch", "ansible", "prod", runnerID, `{"groups":["web","db"]}`)
 	m := getManifest(t, svc, as, t1, tok)
@@ -222,7 +222,7 @@ func TestManifestLimit(t *testing.T) {
 		t.Errorf("structured limit = %q, want web,db", m.Limit)
 	}
 	if m.Inventory == nil {
-		t.Errorf("amadeus ansible run should ship inventory")
+		t.Errorf("cronomicon ansible run should ship inventory")
 	}
 
 	// Raw ansibleLimit passthrough takes precedence over the structured limit.
@@ -269,7 +269,7 @@ func seedScopeHost(t *testing.T, svc *Service, scope, host, authKeyEnvVar string
 	ts := now()
 	scopeID := db.NewID()
 	if _, err := svc.db.Exec(`
-		INSERT INTO scopes(id, name, source, created_at) VALUES (?, ?, 'amadeus', ?)`,
+		INSERT INTO scopes(id, name, source, created_at) VALUES (?, ?, 'cronomicon', ?)`,
 		scopeID, scope, ts); err != nil {
 		t.Fatalf("seed scope: %v", err)
 	}
@@ -341,9 +341,9 @@ func TestManifestOwnership(t *testing.T) {
 	}
 }
 
-// TestManifestAmadeusMode verifies the amadeus inventory mode: targets are
+// TestManifestCronomiconMode verifies the cronomicon inventory mode: targets are
 // fully resolved and carry the auth-key env-var NAME only (D1 — never key bytes).
-func TestManifestAmadeusMode(t *testing.T) {
+func TestManifestCronomiconMode(t *testing.T) {
 	svc := newTestService(t)
 	as := authSvc(t, svc)
 
@@ -359,8 +359,8 @@ func TestManifestAmadeusMode(t *testing.T) {
 
 	m := getManifest(t, svc, as, traceID, tok)
 
-	if m.InventoryMode != "amadeus" {
-		t.Errorf("inventoryMode = %q, want amadeus", m.InventoryMode)
+	if m.InventoryMode != "cronomicon" {
+		t.Errorf("inventoryMode = %q, want cronomicon", m.InventoryMode)
 	}
 	if m.Scope != "prod" || m.RunType != "bash" || m.JobName != "deploy" {
 		t.Errorf("manifest header mismatch: %+v", m)
@@ -543,7 +543,7 @@ func seedAnsibleScope(t *testing.T, svc *Service, scope, raw string) {
 	}
 }
 
-// TestManifestAnsibleInventory: an amadeus-mode ansible run on a v2 agent ships
+// TestManifestAnsibleInventory: an cronomicon-mode ansible run on a v2 agent ships
 // the scope's byte-exact inventory for `-i` (M1 / §7.3).
 func TestManifestAnsibleInventory(t *testing.T) {
 	svc := newTestService(t)
@@ -565,7 +565,7 @@ func TestManifestAnsibleInventory(t *testing.T) {
 
 	m := getManifest(t, svc, as, traceID, tok)
 	if m.Inventory == nil {
-		t.Fatalf("expected inventory shipped for amadeus ansible run, got nil")
+		t.Fatalf("expected inventory shipped for cronomicon ansible run, got nil")
 	}
 	if m.Inventory.Raw != raw {
 		t.Errorf("inventory raw = %q, want byte-exact %q", m.Inventory.Raw, raw)
@@ -603,7 +603,7 @@ func TestManifestLocalModeAnsibleNoInventory(t *testing.T) {
 	}
 }
 
-// TestManifestAnsibleNoInventoryRejected: an amadeus ansible run against a scope
+// TestManifestAnsibleNoInventoryRejected: an cronomicon ansible run against a scope
 // with NO managed inventory hard-fails (409) rather than run unscoped (§7.3/§15).
 func TestManifestAnsibleNoInventoryRejected(t *testing.T) {
 	svc := newTestService(t)
@@ -616,7 +616,7 @@ func TestManifestAnsibleNoInventoryRejected(t *testing.T) {
 	}
 	bindRunnerToken(t, svc, tok, runnerID)
 
-	// A scope with hosts but NO raw inventory (an amadeus host-list scope, or one
+	// A scope with hosts but NO raw inventory (an cronomicon host-list scope, or one
 	// not yet re-synced). seedScopeHost inserts a scope without raw_inventory.
 	seedScopeHost(t, svc, "prod", "web01", "PROD_KEY")
 	insertJobDef(t, svc, "patch", "ansible", "- hosts: web\n", 0)

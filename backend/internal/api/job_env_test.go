@@ -53,7 +53,7 @@ func TestJobComposeJobEnvRoundTrip(t *testing.T) {
 	}
 	dbEnv := func() sql.NullString {
 		var v sql.NullString
-		_ = pool.QueryRow(`SELECT env_json FROM jobs WHERE source='amadeus' AND name='envy'`).Scan(&v)
+		_ = pool.QueryRow(`SELECT env_json FROM jobs WHERE source='cronomicon' AND name='envy'`).Scan(&v)
 		return v
 	}
 

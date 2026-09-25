@@ -89,7 +89,7 @@ func TestComposeRequiresAnExplicitScope(t *testing.T) {
 	// caller's list.
 	var scope *string
 	if err := pool.QueryRowContext(ctx,
-		`SELECT scope FROM jobs WHERE name='deliberately-global' AND source='amadeus'`).Scan(&scope); err != nil {
+		`SELECT scope FROM jobs WHERE name='deliberately-global' AND source='cronomicon'`).Scan(&scope); err != nil {
 		t.Fatalf("read back scope: %v", err)
 	}
 	if scope != nil {

@@ -2,11 +2,11 @@
 #
 # Drop this into the .gitlab-ci.yml of the repo that holds your Cronomicon job
 # definitions (jobs/*.yaml, workflows/*.yaml, inventory/*.ini). It runs
-# `amadeus validate` on every merge request so malformed definitions —
+# `cronomicon validate` on every merge request so malformed definitions —
 # unknown apiVersion (T10), bad pragmas (S10) — are caught before they reach
 # Cronomicon, with line-numbered errors.
 #
-# The `amadeus` binary ships the same parser the runtime uses, so CI and runtime
+# The `cronomicon` binary ships the same parser the runtime uses, so CI and runtime
 # never disagree. Pin CRONOMICON_IMAGE to the version your Cronomicon deployment runs.
 
 variables:
@@ -26,7 +26,7 @@ validate-job-definitions:
       for f in $(find jobs workflows inventory -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.ini' \) 2>/dev/null); do
         found=1
         echo "validating $f"
-        amadeus validate "$f"
+        cronomicon validate "$f"
       done
       if [ "$found" = "0" ]; then echo "no definition files found"; fi
 
@@ -51,7 +51,7 @@ validate-job-definitions:
 #     - |
 #       set +e
 #       out="$(find jobs workflows inventory -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.ini' \) -print0 2>/dev/null \
-#               | xargs -0 -r -n1 amadeus validate 2>&1)"
+#               | xargs -0 -r -n1 cronomicon validate 2>&1)"
 #       code=$?
 #       echo "$out"
 #       if [ "$code" -ne 0 ] && [ -n "$GITLAB_MR_TOKEN" ]; then

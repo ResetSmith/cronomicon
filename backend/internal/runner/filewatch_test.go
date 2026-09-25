@@ -432,12 +432,12 @@ func TestGlobalFreezeStopsAnArrival(t *testing.T) {
 	day := time.Now().UTC().Format("2006-01-02")
 	if _, err := svc.db.Exec(
 		`INSERT INTO calendars (name, source, global, created_at)
-		 VALUES ('change-freeze','amadeus',1,'2026-08-12T00:00:00Z')`); err != nil {
+		 VALUES ('change-freeze','cronomicon',1,'2026-08-12T00:00:00Z')`); err != nil {
 		t.Fatalf("seed calendar: %v", err)
 	}
 	if _, err := svc.db.Exec(
 		`INSERT INTO calendar_days (calendar_source, calendar_name, day, label)
-		 VALUES ('amadeus','change-freeze',?,'Change freeze')`, day); err != nil {
+		 VALUES ('cronomicon','change-freeze',?,'Change freeze')`, day); err != nil {
 		t.Fatalf("seed calendar day: %v", err)
 	}
 

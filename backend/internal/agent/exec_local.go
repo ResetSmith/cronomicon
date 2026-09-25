@@ -152,7 +152,7 @@ func runLocalToolchain(ctx context.Context, m *runnerproto.ManifestResponse, cfg
 // itself owns no cleanup.
 //
 // ansible: the playbook body is fed on stdin via `ansible-playbook /dev/stdin`.
-// An amadeus-mode run ships a managed inventory (m.Inventory); it is materialized
+// An cronomicon-mode run ships a managed inventory (m.Inventory); it is materialized
 // to a temp file and passed with `-i` so the playbook targets the resolved hosts.
 // A local-mode run carries no inventory and runs as before (no -i; the runner's
 // own ansible config supplies any inventory). `--limit` is appended when set.

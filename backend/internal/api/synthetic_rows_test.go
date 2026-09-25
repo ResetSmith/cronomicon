@@ -57,8 +57,8 @@ func TestSuppressionDoesNotImpersonateTheLastRun(t *testing.T) {
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "billing")
 
-	seedExecutedRun(t, pool, "amadeus", "billing", "2026-08-10T02:00:00Z", "success")
-	seedSkip(t, pool, "amadeus", "billing", "2026-08-11T02:00:00Z",
+	seedExecutedRun(t, pool, "cronomicon", "billing", "2026-08-10T02:00:00Z", "success")
+	seedSkip(t, pool, "cronomicon", "billing", "2026-08-11T02:00:00Z",
 		`Skipped: suppressed by calendar "holidays" (Independence Day)`)
 
 	t.Run("detail", func(t *testing.T) {
@@ -130,7 +130,7 @@ func TestJobWithOnlySuppressionsHasNoLastRun(t *testing.T) {
 	client, csrf := devLoginWithCSRF(t, ts)
 	seedRHScript(t, pool)
 	jobID := createRHJob(t, ts, client, csrf, "billing")
-	seedSkip(t, pool, "amadeus", "billing", "2026-08-11T02:00:00Z", "Skipped: the job is paused")
+	seedSkip(t, pool, "cronomicon", "billing", "2026-08-11T02:00:00Z", "Skipped: the job is paused")
 
 	code, body := rhDo(t, client, http.MethodGet, ts.URL+"/api/v1/jobs/"+itoa(jobID), csrf, nil)
 	if code != http.StatusOK {
@@ -159,11 +159,11 @@ func TestAnalyticsTotalCountsRunsNotSuppressions(t *testing.T) {
 	createRHJob(t, ts, client, csrf, "billing")
 
 	// Inside the 30-day window, so the analytics filter admits both.
-	seedExecutedRun(t, pool, "amadeus", "billing", daysAgo(2), "success")
-	seedSkip(t, pool, "amadeus", "billing", daysAgo(1), "Skipped: the job is paused")
+	seedExecutedRun(t, pool, "cronomicon", "billing", daysAgo(2), "success")
+	seedSkip(t, pool, "cronomicon", "billing", daysAgo(1), "Skipped: the job is paused")
 
 	code, body := rhDo(t, client, http.MethodGet,
-		ts.URL+"/api/v1/analytics/runs?job=billing&source=amadeus&window=30d", csrf, nil)
+		ts.URL+"/api/v1/analytics/runs?job=billing&source=cronomicon&window=30d", csrf, nil)
 	if code != http.StatusOK {
 		t.Fatalf("analytics = %d: %s", code, body)
 	}
@@ -217,13 +217,13 @@ func TestWorkflowSuppressionDoesNotImpersonateTheLastRun(t *testing.T) {
 
 	if _, err := pool.Exec(`
 		INSERT INTO workflow_runs (id, workflow_name, workflow_source, status, triggered_by, trigger_kind, created_at)
-		VALUES ('wf-ok', 'release', 'amadeus', 'success', 'op@example.com', 'manual', '2026-08-10T02:00:00Z')`); err != nil {
+		VALUES ('wf-ok', 'release', 'cronomicon', 'success', 'op@example.com', 'manual', '2026-08-10T02:00:00Z')`); err != nil {
 		t.Fatalf("seed workflow run: %v", err)
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO workflow_runs (id, workflow_name, workflow_source, status, queued_reason,
 		                           triggered_by, trigger_kind, created_at)
-		VALUES ('wf-skip', 'release', 'amadeus', 'skipped', 'Skipped: suppressed by calendar "weekends"',
+		VALUES ('wf-skip', 'release', 'cronomicon', 'skipped', 'Skipped: suppressed by calendar "weekends"',
 		        'scheduler', 'scheduled', '2026-08-11T02:00:00Z')`); err != nil {
 		t.Fatalf("seed workflow suppression: %v", err)
 	}

@@ -854,7 +854,7 @@ spec: {run_type: ansible, project_root: scripts/proj, entry: scripts/other/site.
 }
 
 // TestLintProject covers Phase 3 (RX.5/§6.2): requirements.yml pinning lint and
-// the tree secret-scan, both surfaced by `amadeus validate`.
+// the tree secret-scan, both surfaced by `cronomicon validate`.
 func TestLintProject(t *testing.T) {
 	dir := t.TempDir()
 	mk := func(rel, body string) {

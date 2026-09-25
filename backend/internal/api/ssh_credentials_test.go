@@ -86,7 +86,7 @@ func TestSshCredentialsAPI(t *testing.T) {
 
 	// Reference it from a host → delete blocked (409 + usage), then forced (204).
 	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, port, created_at, source, auth_credential_id)
-	      VALUES('h1','web1',22,'t','amadeus',?)`, id); err != nil {
+	      VALUES('h1','web1',22,'t','cronomicon',?)`, id); err != nil {
 		t.Fatal(err)
 	}
 	resp, body = credDoJSON(t, client, http.MethodDelete, ts.URL+"/api/v1/ssh/credentials/"+id, csrf, nil)

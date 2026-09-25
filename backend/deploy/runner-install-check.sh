@@ -69,7 +69,7 @@ check_rejects "missing --token rejected" "Registration token" \
 # --- Flag combinations (validated before the root gate) ---
 check_rejects "--key-dir + --key-map rejected" "mutually exclusive" \
   bash "$SCRIPT" -s https://x -t crn_reg_x --key-dir /tmp --key-map K=/tmp/k
-check_rejects "bad --inventory value rejected" "must be 'amadeus' or 'local'" \
+check_rejects "bad --inventory value rejected" "must be 'cronomicon' or 'local'" \
   bash "$SCRIPT" -s https://x -t crn_reg_x --inventory bogus
 check_rejects "--inventory local without --local-inventory rejected" "requires --local-inventory" \
   bash "$SCRIPT" -s https://x -t crn_reg_x --inventory local

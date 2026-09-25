@@ -225,7 +225,7 @@ func workflowStepScopes(ctx context.Context, db *sql.DB, stepsJSON string) ([]st
 	walk(root)
 	var scopes []string
 	for _, r := range refs {
-		order := []string{"amadeus", "git"}
+		order := []string{"cronomicon", "git"}
 		if r.source != "" {
 			order = []string{r.source}
 		}

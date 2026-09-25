@@ -289,7 +289,7 @@ func TestRedactionValuesIncludesSshCredentials(t *testing.T) {
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek)}
 	ctx := context.Background()
 
-	material := "AMADEUS-TEST-SSH-PRIVATE-KEY-7f3a9c2e"
+	material := "CRONOMICON-TEST-SSH-PRIVATE-KEY-7f3a9c2e"
 	sealed, err := NewSealer(cfg).Seal([]byte(material))
 	if err != nil {
 		t.Fatalf("seal: %v", err)

@@ -12,10 +12,10 @@ func envHas(env []string, key, val string) bool {
 	return slices.Contains(env, key+"="+val)
 }
 
-// TestResolveKeyPathStripsAmadeusKeyPrefix proves the agent key resolver treats
+// TestResolveKeyPathStripsCronomiconKeyPrefix proves the agent key resolver treats
 // an CRONOMICON_KEY_<bare> reference as the bare key-map/key-dir name (W3): files and
 // map entries are never renamed.
-func TestResolveKeyPathStripsAmadeusKeyPrefix(t *testing.T) {
+func TestResolveKeyPathStripsCronomiconKeyPrefix(t *testing.T) {
 	dir, keyPath := keyDirWith(t, "ansible_rh8_key")
 
 	if p, src, ok := resolveKeyPath(nil, dir, "CRONOMICON_KEY_ansible_rh8_key"); !ok || p != keyPath || src != "key-dir" {

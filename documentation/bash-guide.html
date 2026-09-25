@@ -33,9 +33,9 @@
 <ul>
 <li><strong>Raw files, auto-discovered.</strong> Any <code>*.sh</code> under <code>scripts/</code> in the definitions repo becomes a Script named with its extension (sub-folders just shape the catalog's folder tree). <code>*.pl</code>, <code>*.ps1</code> and <code>*.py</code> discover the sibling run types the same way.</li>
 <li><strong>Or a <code>kind: Script</code> YAML</strong> with exactly one of <code>command</code> (one-liner), <code>script</code> (inline multi-line body), or <code>scriptPath</code> (repo-relative file) — plus optional declared <code>prompts</code> (§4).</li>
-<li><strong>Jobs bind by reference.</strong> A job carries <code>script_ref: &lt;name&gt;</code> rather than its own copy, so one reviewed script serves many jobs. In-app, the <a href="user-manual.html#compose">Composer</a> builds the same binding for amadeus-source jobs.</li>
+<li><strong>Jobs bind by reference.</strong> A job carries <code>script_ref: &lt;name&gt;</code> rather than its own copy, so one reviewed script serves many jobs. In-app, the <a href="user-manual.html#compose">Composer</a> builds the same binding for cronomicon-source jobs.</li>
 <li><strong>Let the catalog help you.</strong> The Scripts view lints script bodies and surfaces <a href="user-manual.html#scripts">“Variables this script uses”</a> — a heuristic scan of <code>$VARS</code> in the body that the Run dialog and Composer use to hint at unsatisfied variables. Declared run inputs always beat the inferred list.</li>
-<li><strong>Validate at merge time.</strong> Wire <code>amadeus validate .</code> into the repo's CI (<a href="administrator-manual.html#gitops">§5.4</a>) — and there is no reason not to run <code>shellcheck</code> beside it.</li>
+<li><strong>Validate at merge time.</strong> Wire <code>cronomicon validate .</code> into the repo's CI (<a href="administrator-manual.html#gitops">§5.4</a>) — and there is no reason not to run <code>shellcheck</code> beside it.</li>
 </ul>
 
 <hr />
@@ -127,7 +127,7 @@ printf '%s\n' "$CRONOMICON_SECRET_BECOME_PASSWORD" | sudo -S -p '' systemctl res
 <li><strong>Pin single-host jobs with <code>target_host</code></strong> rather than a one-host scope — and remember the pin now holds on scheduled and workflow paths too.</li>
 <li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code> (the overrun kill logs <code>amadeus: job timed out</code>), <code>concurrency_policy: Forbid</code> for non-reentrant scripts.</li>
 <li><strong>Run inputs instead of prompts</strong>, <code>::cronomicon-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
-<li><strong>Keep scripts in Git behind <code>script_ref</code></strong> so they are reviewed, versioned and reused; save inline <code>command:</code> for true one-liners. Lint with <code>shellcheck</code> + <code>amadeus validate</code> in CI.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong> so they are reviewed, versioned and reused; save inline <code>command:</code> for true one-liners. Lint with <code>shellcheck</code> + <code>cronomicon validate</code> in CI.</li>
 </ul>
 
 <hr />

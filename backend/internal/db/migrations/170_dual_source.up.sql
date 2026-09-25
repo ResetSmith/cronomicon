@@ -1,7 +1,7 @@
--- 170 Dual-source foundation (amadeus-v20.md — A9, Phase 2).
+-- 170 Dual-source foundation (cronomicon-v20.md — A9, Phase 2).
 --
 -- Jobs, Workflows, and Schedules may originate in Git (canonical, MR-reviewed) OR
--- in Cronomicon's DB (operator-authored in-app). Each carries `source ∈ {git,amadeus}`
+-- in Cronomicon's DB (operator-authored in-app). Each carries `source ∈ {git,cronomicon}`
 -- and the runtime key becomes `(source, name)` (A9 — relaxes A2, scoping it to
 -- git-source rows). This is the **repo's first SQLite table-rebuild migration** —
 -- ALTER TABLE cannot change a PRIMARY KEY, so jobs/workflows/paused_jobs/
@@ -20,7 +20,7 @@
 -- ── jobs → PK (source, name) ────────────────────────────────────────────────
 CREATE TABLE jobs_new (
     name               TEXT NOT NULL,
-    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source             TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     run_type           TEXT NOT NULL CHECK (run_type IN ('bash','ansible','terraform','powershell','perl')),
     description        TEXT,
     scope              TEXT,
@@ -35,14 +35,14 @@ CREATE TABLE jobs_new (
     concurrency_key    TEXT,
     sensitive_logging  INTEGER NOT NULL DEFAULT 0 CHECK (sensitive_logging IN (0,1)),
     source_path        TEXT,
-    synced_at          TEXT,                      -- was NOT NULL; relaxed so amadeus rows (no git sync) can omit it
+    synced_at          TEXT,                      -- was NOT NULL; relaxed so cronomicon rows (no git sync) can omit it
     command            TEXT,
     script             TEXT,
     script_path        TEXT,
     executor           TEXT CHECK (executor IN ('runner','ssh')),
     script_ref         TEXT,
     content_hash       TEXT,
-    -- S4 provenance for operator-authored (source='amadeus') rows.
+    -- S4 provenance for operator-authored (source='cronomicon') rows.
     created_by         TEXT,
     created_at         TEXT,
     last_modified_by   TEXT,
@@ -64,7 +64,7 @@ ALTER TABLE jobs_new RENAME TO jobs;
 -- ── workflows → PK (source, name) ───────────────────────────────────────────
 CREATE TABLE workflows_new (
     name             TEXT NOT NULL,
-    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source           TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     description      TEXT,
     steps            TEXT NOT NULL DEFAULT '[]',
     schedule         TEXT,
@@ -87,7 +87,7 @@ ALTER TABLE workflows_new RENAME TO workflows;
 -- replaces the string-prefix hack. substr (not LIKE — '_' is a LIKE wildcard)
 -- splits the legacy key.
 CREATE TABLE paused_jobs_new (
-    source     TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source     TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     owner_kind TEXT NOT NULL DEFAULT 'job' CHECK (owner_kind IN ('job','workflow')),
     name       TEXT NOT NULL,
     paused_by  TEXT NOT NULL,
@@ -105,7 +105,7 @@ ALTER TABLE paused_jobs_new RENAME TO paused_jobs;
 
 -- ── definition_schedules → PK (owner_source, owner_kind, owner_name, name) ───
 CREATE TABLE definition_schedules_new (
-    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','amadeus')),
+    owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
     owner_kind   TEXT NOT NULL CHECK (owner_kind IN ('job','workflow')),
     owner_name   TEXT NOT NULL,
     name         TEXT NOT NULL,

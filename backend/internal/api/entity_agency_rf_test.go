@@ -364,7 +364,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	// Two departments, and a scope that belongs to Production.
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-prod','Production','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc-p','prod','amadeus','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc-p','prod','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-p','ag-prod')`)
 
 	// Alice: manageEnvVars on FINANCE, triggerJobs on PRODUCTION. Neither grant
@@ -384,7 +384,7 @@ func TestPerRunReferencesAreDepartmental(t *testing.T) {
 	}
 
 	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled,created_at)
-	      VALUES ('j-prod','amadeus','bash','prod',1,'2026-01-01T00:00:00Z')`)
+	      VALUES ('j-prod','cronomicon','bash','prod',1,'2026-01-01T00:00:00Z')`)
 	// The secret lives in Production — the SAME department as the run, so dispatch
 	// would resolve it. Only the actor's grants stand between her and its value.
 	prodSecret := secretID(t, pool, "SEC_PROD")
@@ -484,7 +484,7 @@ func TestUnmemberedReferenceIsAttachable(t *testing.T) {
 		t.Fatalf("RefreshRoles: %v", err)
 	}
 	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled,created_at)
-	      VALUES ('j-prod','amadeus','bash','prod',1,'2026-01-01T00:00:00Z')`)
+	      VALUES ('j-prod','cronomicon','bash','prod',1,'2026-01-01T00:00:00Z')`)
 	// SEC_GLOBAL is seeded global and in NO agency — the shared-infrastructure row.
 	if rec := reqAs(t, h, http.MethodPost, runPath(t, pool, "j-prod"), "sec-operators",
 		`{"references":[{"kind":"secret","name":"SEC_GLOBAL"}]}`); rec.Code != http.StatusAccepted {

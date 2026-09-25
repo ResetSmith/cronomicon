@@ -17,7 +17,7 @@ import { MemoryRouter } from "react-router-dom";
 //     predicate (AN-Q5). The Jobs catalog is server-paged and stays name-only.
 
 const WORKFLOWS = [
-  { id: 1, name: "release-train", source: "amadeus", status: "success", disabled: false, steps: [], critical: true, contact: "#platform" },
+  { id: 1, name: "release-train", source: "cronomicon", status: "success", disabled: false, steps: [], critical: true, contact: "#platform" },
   { id: 2, name: "nightly-tidy", source: "git", status: "success", disabled: false, steps: [] },
 ];
 

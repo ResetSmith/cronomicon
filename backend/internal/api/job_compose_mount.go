@@ -28,16 +28,16 @@ import (
 
 // mountJobCompose owns the in-app Job composition write surface (A11 / v20 Phase 3).
 //
-// An amadeus-source Job is a DB-authored binding of a (Git) Script × Schedule(s) ×
+// An cronomicon-source Job is a DB-authored binding of a (Git) Script × Schedule(s) ×
 // Scope × execution options — no Git round-trip. It enqueues runs through the same
 // scheduler/executor seam as a Git job; only its origin differs. Git-source jobs are
 // read-only here (mutations return 409 — they round-trip through the Git publish flow).
 //
 // Routes (all behind requireCompose — the FIRST server-side authz enforcement):
 //
-//	POST   /api/v1/jobs            create an amadeus-source job
-//	PUT    /api/v1/jobs/{jobId}    edit an amadeus-source job (409 on git rows)
-//	DELETE /api/v1/jobs/{jobId}    delete an amadeus-source job (409 on git rows)
+//	POST   /api/v1/jobs            create an cronomicon-source job
+//	PUT    /api/v1/jobs/{jobId}    edit an cronomicon-source job (409 on git rows)
+//	DELETE /api/v1/jobs/{jobId}    delete an cronomicon-source job (409 on git rows)
 func (s *Server) mountJobCompose(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/jobs", s.requireCompose(http.HandlerFunc(s.createJob)))
 	mux.Handle("PUT /api/v1/jobs/{jobId}", s.requireCompose(http.HandlerFunc(s.updateJob)))
@@ -216,7 +216,7 @@ type jobComposeInput struct {
 }
 
 // resolvedScript carries the denormalized executable fields (Decision 7) copied
-// from the referenced Git Script onto the amadeus job row.
+// from the referenced Git Script onto the cronomicon job row.
 type composeScript struct {
 	runType, command, script, scriptPath, executor, contentHash string
 }
@@ -242,7 +242,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scope is required (use \"\" for All)")
 		return
 	}
-	conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "amadeus", in.Name, in.scopeOf(), "")
+	conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, in.scopeOf(), "")
 	if cerr != nil {
 		httpx.Fail500(w, s.log, "db_error", cerr)
 		return
@@ -251,7 +251,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		msg := execspec.NamePoolRefusal
 		var sameScopeBinned int
 		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT COUNT(*) FROM jobs WHERE source='amadeus' AND name=? AND COALESCE(scope,'')=? AND deleted_at IS NOT NULL`,
+			`SELECT COUNT(*) FROM jobs WHERE source='cronomicon' AND name=? AND COALESCE(scope,'')=? AND deleted_at IS NOT NULL`,
 			in.Name, in.scopeOf()).Scan(&sameScopeBinned)
 		if sameScopeBinned > 0 {
 			msg = "a job with this name is in the recycle bin — restore or purge it to reuse the name"
@@ -270,8 +270,8 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
-	if existing.Source != "amadeus" {
-		httpx.Fail(w, http.StatusConflict, "conflict", "only amadeus-source jobs are editable in-app; git jobs round-trip through the publish flow")
+	if existing.Source != "cronomicon" {
+		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source jobs are editable in-app; git jobs round-trip through the publish flow")
 		return
 	}
 	if existing.DeletedAt != nil {
@@ -294,7 +294,7 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 	// R2-5 — a scope EDIT can move the job into an agency where its name is
 	// taken; checked against every sibling but itself.
 	if in.Scope != nil {
-		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "amadeus", in.Name, in.scopeOf(), existing.UID)
+		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, in.scopeOf(), existing.UID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -315,8 +315,8 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
-	if existing.Source != "amadeus" {
-		httpx.Fail(w, http.StatusConflict, "conflict", "only amadeus-source jobs are deletable in-app")
+	if existing.Source != "cronomicon" {
+		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source jobs are deletable in-app")
 		return
 	}
 	// AF-2 — deleting is authoring: same per-scope authority as editing.
@@ -353,7 +353,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.ExecContext(r.Context(),
 		`UPDATE jobs SET deleted_at=?, deleted_by=?
-		  WHERE (uid = ? OR (? = '' AND source='amadeus' AND name = ?)) AND deleted_at IS NULL`,
+		  WHERE (uid = ? OR (? = '' AND source='cronomicon' AND name = ?)) AND deleted_at IS NULL`,
 		now, id.Email, existing.UID, existing.UID, existing.Name)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -365,7 +365,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	}
 	// The tombstone records what the definition looked like when it was binned,
 	// so the history reads as a complete story even after a purge.
-	if err := snapshotRevision(r.Context(), tx, revKindJob, "amadeus", existing.Name, existing.UID, id.Email, revActionDeleted,
+	if err := snapshotRevision(r.Context(), tx, revKindJob, "cronomicon", existing.Name, existing.UID, id.Email, revActionDeleted,
 		map[string]any{"deletedAt": now, "deletedBy": id.Email}); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -391,7 +391,7 @@ func (in jobComposeInput) scopeOf() string {
 }
 
 // writeComposedJob validates the binding, denormalizes the referenced script, and
-// upserts the amadeus job + its definition_schedules in one transaction.
+// upserts the cronomicon job + its definition_schedules in one transaction.
 func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in jobComposeInput, actor string, isCreate bool, uid string) {
 	if d := strings.TrimSpace(in.MustFinishBy); d != "" && !cronutil.ValidDeadline(d) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
@@ -488,7 +488,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 					"env passthrough name "+n+" is not a valid environment-variable name (letters, digits and '_', not starting with a digit)")
 				return
 			}
-			if envref.HasAmadeusPrefix(n) {
+			if envref.HasCronomiconPrefix(n) {
 				httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
 					"env passthrough name "+n+" is reserved: CRONOMICON_* names are references Cronomicon injects, not variables read from the runner's environment")
 				return
@@ -714,7 +714,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 	defer tx.Rollback()
 
-	// Upsert the amadeus job row (source='amadeus'); denormalized executable fields
+	// Upsert the cronomicon job row (source='cronomicon'); denormalized executable fields
 	// come from the script so the scheduler/execspec/serializers read jobs.* unchanged.
 	// prompts_json (UDV1) shares gitlab.MarshalPrompts with the git sync path so the
 	// serialization is byte-identical regardless of source; always sent (even '[]') so
@@ -728,7 +728,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		                 created_by, created_at, last_modified_by, last_modified_at, env_json, prompts_json,
 		                 requires_json, prompt_enforcement, ssh_user, ssh_credential, env_passthrough,
 		                 become_password_secret, runner_tag, uid)
-		VALUES(?, 'amadeus', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET
 			run_type=excluded.run_type, description=excluded.description, scope=excluded.scope,
 			target_host=excluded.target_host, schedule=excluded.schedule, tags=excluded.tags,
@@ -763,7 +763,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		nullStrIf(gitlab.NormalizeRunnerTag(in.RunnerTag)),
 		// R2-5 — the identity is the conflict target now: a create inserts a
 		// fresh uid, an edit collides on the existing one and lands in the DO
-		// UPDATE arm. (source, name) stopped being unique for amadeus rows, so
+		// UPDATE arm. (source, name) stopped being unique for cronomicon rows, so
 		// it can no longer be what an edit converges on.
 		uid)
 	if err != nil {
@@ -775,7 +775,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	// the row it names commit or roll back together. Deliberately NOT next to the
 	// changelog block below — that runs post-commit on s.db and would leave a
 	// committed job with no code if it failed.
-	if _, err := entitycode.Allocate(r.Context(), tx, entitycode.KindJob, "amadeus", in.Name, uid); err != nil {
+	if _, err := entitycode.Allocate(r.Context(), tx, entitycode.KindJob, "cronomicon", in.Name, uid); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -788,12 +788,12 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	if isCreate {
 		action = revActionCreated
 	}
-	if err := snapshotRevision(r.Context(), tx, revKindJob, "amadeus", in.Name, uid, actor, action, in); err != nil {
+	if err := snapshotRevision(r.Context(), tx, revKindJob, "cronomicon", in.Name, uid, actor, action, in); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
 
-	// Replace the amadeus-source schedule bindings (source-scoped, like sync's git path).
+	// Replace the cronomicon-source schedule bindings (source-scoped, like sync's git path).
 	if _, err := tx.ExecContext(r.Context(),
 		`DELETE FROM definition_schedules WHERE owner_kind='job' AND owner_uid=?`, uid); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -808,7 +808,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		if _, err := tx.ExecContext(r.Context(), `
 			INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, env, position, source_ref, start_at, end_at, interval, skip_calendars, only_calendars,
 				owner_uid, schedule_uid)
-			VALUES('amadeus','job',?,?,?,?,?,?,?,?,?,?,?,
+			VALUES('cronomicon','job',?,?,?,?,?,?,?,?,?,?,?,
 				?,
 				(SELECT s.uid FROM schedules s WHERE s.name = ?
 				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,
@@ -835,7 +835,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	})
 	s.forceScheduleReload(r.Context())
 
-	jr := s.fetchJobByName(r, in.Name, "amadeus")
+	jr := s.fetchJobByName(r, in.Name, "cronomicon")
 	status := http.StatusOK
 	if isCreate {
 		status = http.StatusCreated

@@ -22,7 +22,7 @@ type Schedule = components["schemas"]["Schedule"];
 type EnvRow = { key: string; value: string };
 
 // In-app first-class Schedule authoring (schedule-builder.md) — the schedule analog
-// of the Compose (Job) and Workflow Editor surfaces. Creates/edits an amadeus-source
+// of the Compose (Job) and Workflow Editor surfaces. Creates/edits an cronomicon-source
 // Schedule (name + cron + optional env + description); an edit propagates the new
 // cron to every job/workflow that referenced it. Gated on the Compose capability
 // (Admin-only in v20). Reached from the Schedules page (no top-nav item). ?name=
@@ -54,13 +54,13 @@ export function ScheduleBuilder() {
   const [err, setErr] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
-  // Edit mode: load the existing amadeus schedule into the form.
+  // Edit mode: load the existing cronomicon schedule into the form.
   useEffect(() => {
     if (!editName) return;
     let cancelled = false;
     (async () => {
       const { data, error } = await api.GET("/schedule-defs/{name}", {
-        params: { path: { name: editName }, query: { source: "amadeus" } },
+        params: { path: { name: editName }, query: { source: "cronomicon" } },
       });
       if (cancelled) return;
       if (error || !data) {
@@ -175,12 +175,12 @@ export function ScheduleBuilder() {
       <div style={{ color: c.textSec, fontSize: c.fontSm }}>
         {isEdit ? (
           <>
-            Editing the <strong>amadeus-source</strong> schedule <span style={{ fontFamily: c.mono }}>{editName}</span>.
+            Editing the <strong>cronomicon-source</strong> schedule <span style={{ fontFamily: c.mono }}>{editName}</span>.
             Saving propagates the new cron to every job and workflow that references it.
           </>
         ) : (
           <>
-            Author an <strong>amadeus-source</strong> schedule: a reusable named cron that jobs and workflows
+            Author an <strong>cronomicon-source</strong> schedule: a reusable named cron that jobs and workflows
             can bind via <em>scheduleRefs</em> — no Git round-trip.
           </>
         )}

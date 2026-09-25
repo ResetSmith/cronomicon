@@ -337,7 +337,7 @@ func TestFrozenSnapshotGovernsOwnership(t *testing.T) {
 	}
 	// Re-home the SCOPE to TeamB. An in-flight run still carries the old snapshot and
 	// must still get TeamA's row.
-	f.exec(`INSERT INTO scopes(id,name,source,created_at) VALUES('sc-p','prod','amadeus','2026-01-01T00:00:00Z')`)
+	f.exec(`INSERT INTO scopes(id,name,source,created_at) VALUES('sc-p','prod','cronomicon','2026-01-01T00:00:00Z')`)
 	f.exec(`INSERT INTO scope_agencies(scope_id,agency_id) VALUES('sc-p','ag-b')`)
 	got, err = f.resolveSecret(t, "TOKEN", "prod", []string{"TeamA"})
 	if err != nil {

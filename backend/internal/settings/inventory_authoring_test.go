@@ -13,7 +13,7 @@ func TestPutScopeInventory(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	id := db.NewID()
-	if _, err := pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','amadeus','t','["bash"]')`, id); err != nil {
+	if _, err := pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -26,7 +26,7 @@ func TestPutScopeInventory(t *testing.T) {
 		t.Fatalf("doc = %+v", doc)
 	}
 	if doc.Raw == nil || *doc.Raw != raw {
-		t.Errorf("raw not stored/exposed for amadeus scope")
+		t.Errorf("raw not stored/exposed for cronomicon scope")
 	}
 	if doc.Projection == nil || doc.Projection.Groups == nil {
 		t.Errorf("projection missing: %+v", doc.Projection)
@@ -75,7 +75,7 @@ func TestImportScopeHosts(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	id := db.NewID()
-	pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','amadeus','t','["bash"]')`, id)
+	_, _ = pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, id)
 	raw := "[all:vars]\nansible_user=deploy\n[web]\nweb1 ansible_host=10.0.0.1\nweb2 ansible_host=10.0.0.2\n[web:vars]\ncronomicon_auth_key_env_var=EDGE_KEY\n"
 	if _, le, err := PutScopeInventory(ctx, pool, id, raw, "ini", "op"); err != nil || len(le) != 0 {
 		t.Fatalf("put: %v %v", err, le)
@@ -89,7 +89,7 @@ func TestImportScopeHosts(t *testing.T) {
 		t.Errorf("import = %+v, want 2 created", res)
 	}
 	var addr, user, key string
-	pool.QueryRow(`SELECT address, username, auth_key_env_var FROM ssh_hosts WHERE hostname='web1' AND scope_id=? AND source='amadeus'`, id).
+	pool.QueryRow(`SELECT address, username, auth_key_env_var FROM ssh_hosts WHERE hostname='web1' AND scope_id=? AND source='cronomicon'`, id).
 		Scan(&addr, &user, &key)
 	if addr != "10.0.0.1" || user != "deploy" || key != "EDGE_KEY" {
 		t.Errorf("web1 imported conn = %s/%s/%s, want 10.0.0.1/deploy/EDGE_KEY", addr, user, key)
@@ -134,7 +134,7 @@ func TestPutScopeInventory_DegradeKeepsMembership(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	id := db.NewID()
-	pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','amadeus','t','["bash"]')`, id)
+	_, _ = pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, id)
 	// web[01:99] is an out-of-subset host range → degrades; web3 sits AFTER it.
 	doc, le, err := PutScopeInventory(ctx, pool, id, "[web]\nweb1\nweb2\nweb[01:99]\nweb3\n", "ini", "op")
 	if err != nil || len(le) != 0 {

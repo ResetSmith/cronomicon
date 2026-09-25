@@ -157,7 +157,7 @@ type jobRow struct {
 	// row. New integrations should prefer it; ID remains for compatibility.
 	UID        string  `json:"uid,omitempty"`
 	Name       string  `json:"name"`
-	Source     string  `json:"source"`               // git | amadeus (A9)
+	Source     string  `json:"source"`               // git | cronomicon (A9)
 	SourcePath *string `json:"sourcePath,omitempty"` // repo-relative file path (folder browsing)
 	Type       string  `json:"type"`
 	Host       *string `json:"host"`
@@ -233,7 +233,7 @@ type jobRow struct {
 	ScriptPath  *string `json:"scriptPath,omitempty"`
 	Executor    *string `json:"executor,omitempty"`
 	// RT-2 — the runner pin. RunnerTag is the declared pin (git-owned for git
-	// jobs, Composer-owned for amadeus ones). RunnerTagEffective is the resolved
+	// jobs, Composer-owned for cronomicon ones). RunnerTagEffective is the resolved
 	// job-level answer the Run dialog prefills from; it is computed server-side
 	// so clients cannot implement the precedence three ways, and it stays a
 	// separate field even though it now equals RunnerTag — the per-run rung above
@@ -347,7 +347,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			COALESCE(an.critical, 0) AS critical,
 			COALESCE(an.contact, '') AS contact
 		FROM jobs j
-		-- Joined on the uid, never the name: two amadeus jobs may share a name
+		-- Joined on the uid, never the name: two cronomicon jobs may share a name
 		-- (R2-5), and a name join would show one twin the other's chip.
 		LEFT JOIN annotations an ON an.owner_kind = 'job' AND an.owner_uid = j.uid
 		-- FX-D1: the newest EXECUTED run, not the newest ROW. A calendar veto, a
@@ -640,7 +640,7 @@ func (s *Server) fetchJobByID(r *http.Request, jobID string) *jobRow {
 	return s.fetchJobDetail(r, "rowid", jobID)
 }
 
-// defSource resolves a definition's source ('git'|'amadeus') by its rowid, for
+// defSource resolves a definition's source ('git'|'cronomicon') by its rowid, for
 // the source-aware paused_jobs key (migration 170 / Q-G). `table` is a fixed
 // identifier chosen by the caller (never user input). Defaults to 'git'.
 func (s *Server) defSource(r *http.Request, table, rowid string) string {
@@ -1428,7 +1428,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		return
 	}
 	// KB — the same rule for a bound SSH key: the ssh executor connects FROM
-	// amadeus and cannot place a key file on the target, so a key-bound run that
+	// cronomicon and cannot place a key file on the target, so a key-bound run that
 	// resolves to ssh is refused here rather than started with an input it will
 	// never receive (the executor used to warn and skip). Tests the RESOLVED
 	// executor for the reason the block above gives; serves the token trigger
@@ -2246,7 +2246,7 @@ type workflowRow struct {
 	// UID — the stable surrogate identity (AF-4a); see jobRow.UID.
 	UID         string   `json:"uid,omitempty"`
 	Name        string   `json:"name"`
-	Source      string   `json:"source"`               // git | amadeus (A9)
+	Source      string   `json:"source"`               // git | cronomicon (A9)
 	SourcePath  *string  `json:"sourcePath,omitempty"` // repo-relative file path (folder browsing)
 	Description string   `json:"description"`
 	Tags        []string `json:"tags"`

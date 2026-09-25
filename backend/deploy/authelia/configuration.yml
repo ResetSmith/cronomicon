@@ -71,7 +71,7 @@ access_control:
     - domain: amadeus.example.com
       policy: one_factor
       subject:
-        - "group:amadeus-users"
+        - "group:cronomicon-users"
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 session:

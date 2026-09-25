@@ -7,7 +7,7 @@
 #                             │
 #                             └──▶ /var/lib/amadeus volume
 #
-# Under this topology, amadeus is published directly on the host (port 8080).
+# Under this topology, cronomicon is published directly on the host (port 8080).
 # Ensure your external proxy strips any client-supplied Remote-* headers before injecting.
 # Use CRONOMICON_TRUSTED_PROXIES=10.0.0.0/8 (or your proxy's specific IP/CIDR).
 

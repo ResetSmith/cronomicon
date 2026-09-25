@@ -45,7 +45,7 @@ func TestComposeAndPauseStampSatelliteUIDs(t *testing.T) {
 
 	var jobUID string
 	if err := pool.QueryRowContext(ctx,
-		`SELECT uid FROM jobs WHERE name='uid-sat-job' AND source='amadeus'`).Scan(&jobUID); err != nil {
+		`SELECT uid FROM jobs WHERE name='uid-sat-job' AND source='cronomicon'`).Scan(&jobUID); err != nil {
 		t.Fatalf("read job uid: %v", err)
 	}
 	if jobUID == "" {
@@ -74,7 +74,7 @@ func TestComposeAndPauseStampSatelliteUIDs(t *testing.T) {
 	// Pause it through the API and check the pause row.
 	var jobID int64
 	if err := pool.QueryRowContext(ctx,
-		`SELECT rowid FROM jobs WHERE name='uid-sat-job' AND source='amadeus'`).Scan(&jobID); err != nil {
+		`SELECT rowid FROM jobs WHERE name='uid-sat-job' AND source='cronomicon'`).Scan(&jobID); err != nil {
 		t.Fatalf("read job rowid: %v", err)
 	}
 	pauseReq, _ := http.NewRequest("POST",

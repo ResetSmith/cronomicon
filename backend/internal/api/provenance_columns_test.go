@@ -7,7 +7,7 @@ import (
 
 // TestProvenanceColumnsExposed pins V1.1-17 Phase A: the four definition-list
 // endpoints (jobs, workflows, scripts, schedule-defs) each surface readOnly
-// `createdAt` + `lastModifiedAt` timestamps. amadeus-source rows carry the real
+// `createdAt` + `lastModifiedAt` timestamps. cronomicon-source rows carry the real
 // S4 provenance dates; git-source rows (and all scripts, whose table has no
 // provenance columns until the V2 migration) serialize them as null.
 //
@@ -30,23 +30,23 @@ func TestProvenanceColumnsExposed(t *testing.T) {
 		modifiedAt = "2026-02-03T04:05:06Z"
 	)
 
-	// ── Jobs: one git (no provenance) + one amadeus (with provenance). ──────────
+	// ── Jobs: one git (no provenance) + one cronomicon (with provenance). ──────────
 	seed(`INSERT INTO jobs(name, source, run_type, command, content_hash, synced_at)
 	      VALUES('git-job','git','bash','echo git','sha256:aaa','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO jobs(name, source, run_type, command, created_at, last_modified_at)
-	      VALUES('amadeus-job','amadeus','bash','echo amadeus',?,?)`, createdAt, modifiedAt)
+	      VALUES('cronomicon-job','cronomicon','bash','echo cronomicon',?,?)`, createdAt, modifiedAt)
 
 	// ── Workflows: one git + one amadeus. ──────────────────────────────────────
 	seed(`INSERT INTO workflows(name, source, steps, synced_at)
 	      VALUES('git-wf','git','[]','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO workflows(name, source, steps, created_at, last_modified_at)
-	      VALUES('amadeus-wf','amadeus','[]',?,?)`, createdAt, modifiedAt)
+	      VALUES('cronomicon-wf','cronomicon','[]',?,?)`, createdAt, modifiedAt)
 
 	// ── Schedules: one git + one amadeus. ──────────────────────────────────────
 	seed(`INSERT INTO schedules(name, source, cron, content_hash, source_path, synced_at)
 	      VALUES('git-sched','git','0 0 2 * * *','sha256:bbb','schedules/git-sched.yaml','2026-01-01T00:00:00Z')`)
 	seed(`INSERT INTO schedules(name, source, cron, content_hash, created_at, last_modified_at)
-	      VALUES('amadeus-sched','amadeus','0 0 3 * * *','sha256:ccc',?,?)`, createdAt, modifiedAt)
+	      VALUES('cronomicon-sched','cronomicon','0 0 3 * * *','sha256:ccc',?,?)`, createdAt, modifiedAt)
 
 	// ── Scripts: git-only catalog; the table has no provenance columns in Phase A
 	// so createdAt/lastModifiedAt are always null. ──────────────────────────────
@@ -68,7 +68,7 @@ func TestProvenanceColumnsExposed(t *testing.T) {
 
 	// assertProv looks up `name` in the list and checks its provenance fields.
 	// wantSet=false asserts both are null (git/script rows); wantSet=true asserts
-	// both equal the seeded amadeus dates.
+	// both equal the seeded cronomicon dates.
 	assertProv := func(t *testing.T, label string, items []provRow, name string, wantSet bool) {
 		t.Helper()
 		var row *provRow
@@ -102,14 +102,14 @@ func TestProvenanceColumnsExposed(t *testing.T) {
 		label  string
 		url    string
 		gitRow string
-		amaRow string // empty ⇒ no amadeus row to assert (scripts)
+		amaRow string // empty ⇒ no cronomicon row to assert (scripts)
 	}{
-		{"jobs", ts.URL + "/api/v1/jobs", "git-job", "amadeus-job"},
-		{"workflows", ts.URL + "/api/v1/workflows", "git-wf", "amadeus-wf"},
+		{"jobs", ts.URL + "/api/v1/jobs", "git-job", "cronomicon-job"},
+		{"workflows", ts.URL + "/api/v1/workflows", "git-wf", "cronomicon-wf"},
 		// schedule-defs defaults to the git source filter; assert the two
 		// sources separately so both rows are reachable.
 		{"schedule-defs(git)", ts.URL + "/api/v1/schedule-defs?source=git", "git-sched", ""},
-		{"schedule-defs(amadeus)", ts.URL + "/api/v1/schedule-defs?source=amadeus", "", "amadeus-sched"},
+		{"schedule-defs(cronomicon)", ts.URL + "/api/v1/schedule-defs?source=cronomicon", "", "cronomicon-sched"},
 		{"scripts", ts.URL + "/api/v1/scripts", "git-script", ""},
 	}
 
@@ -125,11 +125,11 @@ func TestProvenanceColumnsExposed(t *testing.T) {
 	}
 
 	// ── Detail endpoints carry the same fields. ────────────────────────────────
-	// amadeus job detail (looked up by rowid) returns populated provenance.
+	// cronomicon job detail (looked up by rowid) returns populated provenance.
 	var amaJobID int64
 	if err := pool.QueryRowContext(ctx,
-		`SELECT rowid FROM jobs WHERE name='amadeus-job'`).Scan(&amaJobID); err != nil {
-		t.Fatalf("lookup amadeus-job rowid: %v", err)
+		`SELECT rowid FROM jobs WHERE name='cronomicon-job'`).Scan(&amaJobID); err != nil {
+		t.Fatalf("lookup cronomicon-job rowid: %v", err)
 	}
 	var jobDetail provRow
 	getJSON(t, client, ts.URL+"/api/v1/jobs/"+itoa(amaJobID), &jobDetail)
@@ -140,11 +140,11 @@ func TestProvenanceColumnsExposed(t *testing.T) {
 		t.Errorf("job detail lastModifiedAt = %v, want %q", jobDetail.LastModifiedAt, modifiedAt)
 	}
 
-	// amadeus workflow detail (by rowid) returns populated provenance.
+	// cronomicon workflow detail (by rowid) returns populated provenance.
 	var amaWfID int64
 	if err := pool.QueryRowContext(ctx,
-		`SELECT rowid FROM workflows WHERE name='amadeus-wf'`).Scan(&amaWfID); err != nil {
-		t.Fatalf("lookup amadeus-wf rowid: %v", err)
+		`SELECT rowid FROM workflows WHERE name='cronomicon-wf'`).Scan(&amaWfID); err != nil {
+		t.Fatalf("lookup cronomicon-wf rowid: %v", err)
 	}
 	var wfDetail provRow
 	getJSON(t, client, ts.URL+"/api/v1/workflows/"+itoa(amaWfID), &wfDetail)
@@ -155,9 +155,9 @@ func TestProvenanceColumnsExposed(t *testing.T) {
 		t.Errorf("workflow detail lastModifiedAt = %v, want %q", wfDetail.LastModifiedAt, modifiedAt)
 	}
 
-	// amadeus schedule-def detail returns populated provenance.
+	// cronomicon schedule-def detail returns populated provenance.
 	var schedDetail provRow
-	getJSON(t, client, ts.URL+"/api/v1/schedule-defs/amadeus-sched?source=amadeus", &schedDetail)
+	getJSON(t, client, ts.URL+"/api/v1/schedule-defs/cronomicon-sched?source=cronomicon", &schedDetail)
 	if schedDetail.CreatedAt == nil || *schedDetail.CreatedAt != createdAt {
 		t.Errorf("schedule detail createdAt = %v, want %q", schedDetail.CreatedAt, createdAt)
 	}

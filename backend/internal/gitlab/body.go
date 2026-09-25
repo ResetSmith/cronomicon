@@ -7,7 +7,7 @@ import (
 )
 
 // The two body helpers sync.go uses. They lived in migrate.go — the one-time
-// `amadeus migrate-scripts` engine — until the DD band deleted it (v1.5.41);
+// `cronomicon migrate-scripts` engine — until the DD band deleted it (v1.5.41);
 // they are sync's, not the migration's.
 
 // readBodyAt resolves an executable body to its raw bytes against dir: an inline

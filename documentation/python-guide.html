@@ -23,7 +23,7 @@
 
 <h2>2 · Getting scripts in</h2>
 
-<p>Identical to the rest of the catalog (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §2 in depth): any raw <code>*.py</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>python</code> (the name keeps its extension; sub-folders shape the catalog's folder tree); or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>amadeus validate .</code> into CI — and <code>ruff</code> (or <code>flake8</code>) sits beside it as naturally as shellcheck does for bash.</p>
+<p>Identical to the rest of the catalog (<a href="./bash-guide.html"><code>bash-guide.html</code></a> §2 in depth): any raw <code>*.py</code> under <code>scripts/</code> in the definitions repo is auto-discovered as a Script with run type <code>python</code> (the name keeps its extension; sub-folders shape the catalog's folder tree); or author a <code>kind: Script</code> YAML with exactly one of <code>command</code> / <code>script</code> / <code>scriptPath</code> and optional declared <code>prompts</code>; jobs bind by <code>script_ref</code>, or in-app via the <a href="user-manual.html#compose">Composer</a>. Wire <code>cronomicon validate .</code> into CI — and <code>ruff</code> (or <code>flake8</code>) sits beside it as naturally as shellcheck does for bash.</p>
 
 <p><strong>The catalog reads your code for its variables.</strong> The Scripts view's <em>“Variables this script uses”</em> — the same list the Run dialog and Composer hint from — comes from a heuristic scan of environment access in the body:</p>
 
@@ -99,7 +99,7 @@ print(f"run {os.environ['CRONOMICON_RUN_ID']} on scope {os.environ['CRONOMICON_R
 <li><strong>Be idempotent</strong> — retries, schedule re-fires and operator re-runs all mean “again.”</li>
 <li><strong>Run inputs instead of <code>input()</code></strong>, <code>::cronomicon-output</code> markers instead of temp files, env instead of argv for anything sensitive.</li>
 <li><strong>Bound everything</strong>: a realistic <code>timeout_seconds</code>, <code>concurrency_policy: Forbid</code> (or <code>Queue</code>) for non-reentrant scripts.</li>
-<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>; lint with <code>ruff</code> + <code>amadeus validate</code> in CI.</li>
+<li><strong>Keep scripts in Git behind <code>script_ref</code></strong>; lint with <code>ruff</code> + <code>cronomicon validate</code> in CI.</li>
 </ul>
 
 <hr />

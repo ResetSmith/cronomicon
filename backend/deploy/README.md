@@ -12,9 +12,9 @@ and topology.
             │  • forward-auth ─▶ authelia (Trusted Header SSO; LDAP/AD)
             │  • injects Remote-*       │
             └──────────┬────────────────┘
-                       │ internal docker network (amadeus NOT published)
+                       │ internal docker network (cronomicon NOT published)
                        ▼
-              amadeus (Go binary + embedded SPA)  ──▶ apprise (Phase C)
+              cronomicon (Go binary + embedded SPA)  ──▶ apprise (Phase C)
                        │
                        ▼  /var/lib/amadeus  (SQLite + WAL, run logs, git cache, backups)
 ```
@@ -23,7 +23,7 @@ and topology.
 
 | Path | Purpose |
 |---|---|
-| `docker-compose.yml` | The stack: traefik · authelia · amadeus · apprise. |
+| `docker-compose.yml` | The stack: traefik · authelia · cronomicon · apprise. |
 | `amadeus.env.example` | Copy to `amadeus.env` (gitignored) — the app's runtime env. |
 | `env-matrix.md` | Every env var, default, and which are required. |
 | `traefik/dynamic/dynamic.yml` | TLS + edge `Remote-*` stripping middleware. |
@@ -105,7 +105,7 @@ All durable state lives on the `amadeus-data` volume at `/var/lib/amadeus`:
 | `backups/` | Nightly local `VACUUM INTO` snapshots. |
 | run logs | Per-run execution logs. |
 
-**Single writer** — exactly one `amadeus` replica (SQLite is single-node; no HA).
+**Single writer** — exactly one `cronomicon` replica (SQLite is single-node; no HA).
 Data survives `docker compose down && up` because it's on a named volume.
 
 ## Health & readiness (B.5)
@@ -113,7 +113,7 @@ Data survives `docker compose down && up` because it's on a named volume.
 - `GET /healthz` — liveness (process up; also returns version/commit).
 - `GET /readyz` — readiness: DB reachable + migrations applied + (oidc mode)
   identity provider up. 503 until ready.
-- Container HEALTHCHECK: `amadeus healthcheck -ready` — the distroless image has
+- Container HEALTHCHECK: `cronomicon healthcheck -ready` — the distroless image has
   no shell/curl, so the binary probes itself over HTTP.
 
 ## Backups & retention (B.7)
@@ -124,7 +124,7 @@ retention windows via env — see `backup-restore.md` and `env-matrix.md`.
 
 ## CI Setup — validate job definitions (V1.1-1 / T11)
 
-The Cronomicon binary ships an `amadeus validate` subcommand that runs the **same
+The Cronomicon binary ships an `cronomicon validate` subcommand that runs the **same
 parser the runtime uses** (YAML `apiVersion`, kinds, schedules, inventory
 pragmas, and cross-file `script_ref` resolution), so CI and runtime never
 disagree. Wire it into the **job-definitions repo** (the GitLab repo holding
@@ -153,14 +153,14 @@ jobs/backup.yaml:2: unsupported apiVersion "cronomicon.io/v2"
 ```
 
 Fix the file at the reported line and push; the pipeline re-runs on the MR.
-Reproduce any failure locally with `amadeus validate jobs/backup.yaml` (or
-`amadeus validate .` for a whole-repo cross-`script_ref` check).
+Reproduce any failure locally with `cronomicon validate jobs/backup.yaml` (or
+`cronomicon validate .` for a whole-repo cross-`script_ref` check).
 
 ## Verifying the stack (exit criteria)
 
 - `docker compose up -d --build` brings the stack up; the UI is reachable **only**
   over TLS through Traefik — `curl http://localhost:8080` from the host fails
-  (amadeus is not published).
+  (cronomicon is not published).
 - Hitting `https://amadeus.example.com` redirects through Authelia; after login
   you arrive authenticated with roles from `Remote-Groups`.
 - `docker compose down && docker compose up -d` preserves the DB, logs, git cache.

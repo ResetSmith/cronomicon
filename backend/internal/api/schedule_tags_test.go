@@ -14,7 +14,7 @@ import (
 // the CSRF guard, a valid full-replace with normalization, the length/count/control
 // caps, the missing-field 422, the unknown-schedule 404, that the tags surface on
 // the detail and list reads, the empty-array clear, AND the source-disambiguation
-// invariant — a git and an amadeus schedule can share a name, so the (source, name)
+// invariant — a git and an cronomicon schedule can share a name, so the (source, name)
 // key must tag exactly one of them.
 func TestUpdateScheduleTags(t *testing.T) {
 	ts, pool := newTestServer(t)
@@ -25,11 +25,11 @@ func TestUpdateScheduleTags(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	// A git and an amadeus schedule sharing the name "nightly".
+	// A git and an cronomicon schedule sharing the name "nightly".
 	seed(`INSERT INTO schedules(name, source, cron, content_hash, source_path, synced_at)
 	      VALUES('nightly','git','0 0 * * *','sha256:g','schedules/nightly.yaml','t')`)
 	seed(`INSERT INTO schedules(name, source, cron, content_hash, synced_at)
-	      VALUES('nightly','amadeus','0 1 * * *','sha256:a','t')`)
+	      VALUES('nightly','cronomicon','0 1 * * *','sha256:a','t')`)
 
 	client, csrf := devLoginWithCSRF(t, ts)
 	put := func(name, source string, body any, hdrCSRF bool) *http.Response {
@@ -82,21 +82,21 @@ func TestUpdateScheduleTags(t *testing.T) {
 	if got := dbTags("git"); got != `["Prod","cron"]` {
 		t.Errorf("git tags = %q, want %q", got, `["Prod","cron"]`)
 	}
-	if got := dbTags("amadeus"); got != "[]" {
-		t.Errorf("amadeus tags = %q, want [] (only the git row should change)", got)
+	if got := dbTags("cronomicon"); got != "[]" {
+		t.Errorf("cronomicon tags = %q, want [] (only the git row should change)", got)
 	}
 
-	// Tag the amadeus row independently; the git row stays put.
-	resp = put("nightly", "amadeus", map[string]any{"tags": []string{"adhoc"}}, true)
+	// Tag the cronomicon row independently; the git row stays put.
+	resp = put("nightly", "cronomicon", map[string]any{"tags": []string{"adhoc"}}, true)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT amadeus = %d, want 200", resp.StatusCode)
+		t.Fatalf("PUT cronomicon = %d, want 200", resp.StatusCode)
 	}
-	if got := dbTags("amadeus"); got != `["adhoc"]` {
-		t.Errorf("amadeus tags = %q, want %q", got, `["adhoc"]`)
+	if got := dbTags("cronomicon"); got != `["adhoc"]` {
+		t.Errorf("cronomicon tags = %q, want %q", got, `["adhoc"]`)
 	}
 	if got := dbTags("git"); got != `["Prod","cron"]` {
-		t.Errorf("git tags changed by an amadeus write: %q", got)
+		t.Errorf("git tags changed by an cronomicon write: %q", got)
 	}
 
 	// ── Default source is git (no ?source) ───────────────────────────────────────
@@ -108,17 +108,17 @@ func TestUpdateScheduleTags(t *testing.T) {
 	if got := dbTags("git"); got != `["defaulted"]` {
 		t.Errorf("default-source write hit %q, want the git row", got)
 	}
-	if got := dbTags("amadeus"); got != `["adhoc"]` {
-		t.Errorf("default-source write disturbed the amadeus row: %q", got)
+	if got := dbTags("cronomicon"); got != `["adhoc"]` {
+		t.Errorf("default-source write disturbed the cronomicon row: %q", got)
 	}
 
 	// ── Surfaces on the detail read (per source) ─────────────────────────────────
 	var detail struct {
 		Tags []string `json:"tags"`
 	}
-	getJSON(t, client, ts.URL+"/api/v1/schedule-defs/nightly?source=amadeus", &detail)
+	getJSON(t, client, ts.URL+"/api/v1/schedule-defs/nightly?source=cronomicon", &detail)
 	if len(detail.Tags) != 1 || detail.Tags[0] != "adhoc" {
-		t.Errorf("amadeus detail tags = %v, want [adhoc]", detail.Tags)
+		t.Errorf("cronomicon detail tags = %v, want [adhoc]", detail.Tags)
 	}
 
 	// ── Surfaces on the list read (both rows present, correct tags) ──────────────
@@ -139,8 +139,8 @@ func TestUpdateScheduleTags(t *testing.T) {
 	if len(seen["git"]) != 1 || seen["git"][0] != "defaulted" {
 		t.Errorf("list git tags = %v, want [defaulted]", seen["git"])
 	}
-	if len(seen["amadeus"]) != 1 || seen["amadeus"][0] != "adhoc" {
-		t.Errorf("list amadeus tags = %v, want [adhoc]", seen["amadeus"])
+	if len(seen["cronomicon"]) != 1 || seen["cronomicon"][0] != "adhoc" {
+		t.Errorf("list cronomicon tags = %v, want [adhoc]", seen["cronomicon"])
 	}
 
 	// ── Length boundary: 64 accepted, 65 rejected ────────────────────────────────

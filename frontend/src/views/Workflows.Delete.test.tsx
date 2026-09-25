@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 
 // The expanded-panel Delete action, mirroring Jobs.Delete.test.tsx: the gate
-// (compose capability AND an amadeus source), the confirm as the commit point,
+// (compose capability AND an cronomicon source), the confirm as the commit point,
 // and the 409 the server uses to protect git-synced rows being rendered as a
 // sentence rather than a status code.
 
@@ -13,7 +13,7 @@ let deleteStatus = 200;
 const deletes: { path: string; workflowId: unknown }[] = [];
 
 const WORKFLOWS = [
-  { id: 1, name: "amadeus-wf", source: "amadeus", status: "success", steps: [] },
+  { id: 1, name: "cronomicon-wf", source: "cronomicon", status: "success", steps: [] },
   { id: 2, name: "git-wf", source: "git", status: "success", steps: [] },
 ];
 
@@ -75,7 +75,7 @@ const renderWorkflows = async () => {
   const q = within(container);
   // Search mode gives the flat results table; the folder browser is irrelevant here.
   fireEvent.change(q.getByPlaceholderText("Search workflows…"), { target: { value: "wf" } });
-  await waitFor(() => expect(q.getByText("amadeus-wf")).toBeTruthy());
+  await waitFor(() => expect(q.getByText("cronomicon-wf")).toBeTruthy());
   return q;
 };
 
@@ -91,9 +91,9 @@ const deleteBtn = (q: ReturnType<typeof within>) => q.queryByRole("button", { na
 const panelOpen = (q: ReturnType<typeof within>) => q.getByText("Recent runs");
 
 describe("Workflows — expanded-row Delete", () => {
-  it("offers Delete on an amadeus row when the caller may compose", async () => {
+  it("offers Delete on an cronomicon row when the caller may compose", async () => {
     const q = await renderWorkflows();
-    expandRow(q, "amadeus-wf");
+    expandRow(q, "cronomicon-wf");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
   });
 
@@ -102,16 +102,16 @@ describe("Workflows — expanded-row Delete", () => {
     expandRow(q, "git-wf");
     await waitFor(() => expect(panelOpen(q)).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
-    // Same gate as Edit, the shipped precedent for amadeus-only actions. Scoped
+    // Same gate as Edit, the shipped precedent for cronomicon-only actions. Scoped
     // to this row: Edit lives in the always-visible actions cell, so the OTHER
-    // (amadeus) row legitimately still shows one.
+    // (cronomicon) row legitimately still shows one.
     expect(within(q.getByText("git-wf").closest("tr")!).queryByRole("link", { name: "Edit" })).toBeNull();
   });
 
   it("hides Delete when the compose capability is off", async () => {
     composeOn = false;
     const q = await renderWorkflows();
-    expandRow(q, "amadeus-wf");
+    expandRow(q, "cronomicon-wf");
     await waitFor(() => expect(panelOpen(q)).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
   });
@@ -133,7 +133,7 @@ describe("Workflows — expanded-row Delete", () => {
 
   it("confirms before deleting, then DELETEs the expanded workflow's id", async () => {
     const q = await renderWorkflows();
-    expandRow(q, "amadeus-wf");
+    expandRow(q, "cronomicon-wf");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
 
     fireEvent.click(deleteBtn(q)!);
@@ -143,12 +143,12 @@ describe("Workflows — expanded-row Delete", () => {
     fireEvent.click(q.getByRole("button", { name: "Delete Workflow" }));
 
     await waitFor(() => expect(deletes).toEqual([{ path: "/workflows/{workflowId}", workflowId: 1 }]));
-    await waitFor(() => expect(q.getByText('Workflow "amadeus-wf" deleted.')).toBeTruthy());
+    await waitFor(() => expect(q.getByText('Workflow "cronomicon-wf" deleted.')).toBeTruthy());
   });
 
   it("cancelling the confirm sends nothing", async () => {
     const q = await renderWorkflows();
-    expandRow(q, "amadeus-wf");
+    expandRow(q, "cronomicon-wf");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
 
     fireEvent.click(deleteBtn(q)!);
@@ -158,19 +158,19 @@ describe("Workflows — expanded-row Delete", () => {
     expect(q.queryByText(/This cannot be undone/)).toBeNull();
   });
 
-  it("turns a 409 into the amadeus-only explanation", async () => {
+  it("turns a 409 into the cronomicon-only explanation", async () => {
     deleteStatus = 409;
     const q = await renderWorkflows();
-    expandRow(q, "amadeus-wf");
+    expandRow(q, "cronomicon-wf");
     await waitFor(() => expect(deleteBtn(q)).toBeTruthy());
 
     fireEvent.click(deleteBtn(q)!);
     fireEvent.click(q.getByRole("button", { name: "Delete Workflow" }));
 
     await waitFor(() =>
-      expect(q.getByText(/Only amadeus-source workflows can be deleted in-app\./)).toBeTruthy(),
+      expect(q.getByText(/Only cronomicon-source workflows can be deleted in-app\./)).toBeTruthy(),
     );
     expect(q.queryByText(/workflow is git-managed/)).toBeNull();
-    expect(q.queryByText('Workflow "amadeus-wf" deleted.')).toBeNull();
+    expect(q.queryByText('Workflow "cronomicon-wf" deleted.')).toBeNull();
   });
 });

@@ -1276,7 +1276,7 @@
             background: var(--textMuted)
         }
 
-        .pill.amad {
+        .pill.crn {
             background: var(--accentBg);
             color: var(--accent)
         }
@@ -2203,7 +2203,7 @@
                             <tr>
                                 <td><strong>Env Var</strong></td>
                                 <td>A name/value pair, secret or non-secret, scoped to a scope.</td>
-                                <td>key, value, <code>secret</code>, <code>source</code> (amadeus or vault)</td>
+                                <td>key, value, <code>secret</code>, <code>source</code> (cronomicon or vault)</td>
                             </tr>
                             <tr>
                                 <td><strong>Job</strong></td>
@@ -2243,7 +2243,7 @@
                         <text class="svg-lbl" x="170" y="22" text-anchor="middle" font-size="13"
                             fill="var(--primary)">GIT path (version-controlled)</text>
                         <text class="svg-lbl" x="540" y="22" text-anchor="middle" font-size="13"
-                            fill="var(--accent)">AMADEUS path (in-app)</text>
+                            fill="var(--accent)">CRONOMICON path (in-app)</text>
                         <rect class="svg-box-p" x="40" y="40" width="260" height="38" rx="8" />
                         <text class="svg-sub" x="170" y="64" text-anchor="middle" font-size="11.5">edit YAML → validate
                             → merge MR</text>
@@ -2381,7 +2381,7 @@
                         </p>
                     </div>
                     <div class="card">
-                        <h4><span class="pill amad">runner</span> &nbsp;Runner agent</h4>
+                        <h4><span class="pill crn">runner</span> &nbsp;Runner agent</h4>
                         <p class="muted">The external <code>amadeus-runner</code> binary on a separate host long-polls
                             for work and streams logs back. <strong>Required for ansible &amp; terraform</strong> and
                             for network-isolated targets. Firewall-friendly (outbound HTTP only).</p>
@@ -3241,7 +3241,7 @@
                         (<code>/compose</code>) — shown to admins. <strong>+ Publish to GitLab</strong> opens the GitOps
                         publish builder (<code>/jobs/publish</code>) — shown to admins <em>and approvers</em> (the
                         Publish capability).</li>
-                    <li>The list shows the <strong>Source</strong> of every row: <span class="pill amad">AMADEUS</span>
+                    <li>The list shows the <strong>Source</strong> of every row: <span class="pill crn">CRONOMICON</span>
                         (composed in-app) keeps a tinted pill, while Git-authored rows read as quiet
                         <em class="muted">git</em> text. The two
                         are deliberately lopsided — in most installs nearly every row is Git-authored, so a pill on each
@@ -3381,7 +3381,7 @@
                 </div>
                 <div class="card" style="margin:14px 0">
                     <h4>✏️ Edit / 🗑️ Delete</h4>
-                    <p class="muted">Both appear in the expanded row for <strong>amadeus-source</strong> jobs, to
+                    <p class="muted">Both appear in the expanded row for <strong>cronomicon-source</strong> jobs, to
                         users with the Compose capability. <strong>Edit</strong> opens the Composer;
                         <strong>Delete</strong> confirms first, then removes the job — its <em>run history is
                             kept</em>, its definition, schedule and references are not. Git jobs are never editable
@@ -3559,7 +3559,7 @@
                             <strong>“Limit to specific hosts”</strong> checkbox reveals a per-host multi-select. Left
                             unticked it runs on all hosts in the scope; a host that isn't a scope member is rejected
                             <code>422 scope_membership</code>. A runner run always targets the full scope (a subset is
-                            honored only by amadeus-inventory runners).
+                            honored only by cronomicon-inventory runners).
                         </p>
                     </div>
                 </div>
@@ -3959,7 +3959,7 @@
                 <h3>7.4 The Workflow Editor — Simple ｜ Graph (Advanced)</h3>
                 <div class="view-hd"><span class="route">/workflow-editor</span> <span class="gate admin">Admin only
                         (Compose)</span></div>
-                <p>Creates and edits <strong>amadeus-source</strong> workflows, optionally bound to schedules. (A
+                <p>Creates and edits <strong>cronomicon-source</strong> workflows, optionally bound to schedules. (A
                     <strong>Git-authored</strong> workflow opens <em>read-only</em> here — the page directs you to the
                     GitLab publish flow instead.) The editor has two modes that convert into each other losslessly:
                 </p>
@@ -3978,7 +3978,7 @@
                     <li><strong>Simple editor</strong> — the linear list, best for flat chains. Pick a
                         <strong>Name</strong> (slug <code>^[a-z0-9][a-z0-9_-]{0,63}$</code>), add steps with <strong>+
                             Job</strong> / <strong>+ Parallel group</strong> / <strong>+ Branch</strong> (job pickers
-                        badged <code>git</code>/<code>amadeus</code>), reorder with ↑/↓, tick schedules to make it
+                        badged <code>git</code>/<code>cronomicon</code>), reorder with ↑/↓, tick schedules to make it
                         cron-driven, leave <strong>Enabled</strong> on, and <strong>Create workflow</strong> (or
                         <strong>Save</strong>). Each job step's <strong>Advanced ▼</strong> reveals its optional label,
                         its <strong>Inputs (A12)</strong> rows (§7.5), and per-step retry overrides (<em>Retries ·
@@ -4004,7 +4004,7 @@
                     ~14 nodes. Dirty state shows <em>“• unsaved changes”</em> and leaving prompts <em>“Discard unsaved
                         changes to this workflow?”</em>. The <strong>Simple editor</strong> button switches back only
                     while the graph has no nesting (its tooltip explains: <em>“This graph nests parallel/branch steps —
-                        not representable in the linear editor”</em>). <strong>Delete workflow</strong> (amadeus-source
+                        not representable in the linear editor”</em>). <strong>Delete workflow</strong> (cronomicon-source
                     only) is available in both modes behind a confirm.</p>
 
                 <h3>7.5 Passing data between steps (A12)</h3>
@@ -4257,14 +4257,14 @@
                 <div class="grid c3">
                     <div class="card">
                         <h4>📚 Catalog</h4>
-                        <p class="muted">Reusable schedule <em>definitions</em> (Git + amadeus) with cron, source badge,
+                        <p class="muted">Reusable schedule <em>definitions</em> (Git + cronomicon) with cron, source badge,
                             tags, and a <strong>Used by</strong> blast-radius count. A schedule may carry an
                             <strong>active period</strong>; the Inventory tab badges one that has not started yet as
                             <span class="tag">pending</span> (with its start date beneath) and one past its end date as
                             <span class="tag">expired</span>. The Cron column shows whichever rule the entry uses — a
                             cron expression, an interval (<code>7d</code>), or <code>once</code> — with the plain-words
                             reading beneath it. Supports a <strong>Tag filter</strong> dropdown. <strong>+ New
-                                schedule</strong> opens the <a href="#compose">Schedule Builder</a>; amadeus rows get
+                                schedule</strong> opens the <a href="#compose">Schedule Builder</a>; cronomicon rows get
                             Edit/Delete. Expanding a row reveals the inline tag editor (SQLite-only, preserved on sync,
                             editable by any logged-in user).
                         </p>
@@ -4319,7 +4319,7 @@
                 </figure>
 
                 <h3>9.1 Deleting an in-use schedule</h3>
-                <p>Deleting an amadeus schedule that nothing references is immediate. If it <em>is</em> referenced, the
+                <p>Deleting an cronomicon schedule that nothing references is immediate. If it <em>is</em> referenced, the
                     server returns <code>409</code> and the UI swaps the button to <strong>Force delete (N
                         refs)</strong> — clicking it re-issues the delete with <code>?force=true</code>, detaching the
                     references.</p>
@@ -4505,7 +4505,7 @@
                 </div>
                 <div class="callout warn">
                     <div class="ct"><span class="em">📡</span> Editing a shared schedule changes every referencer</div>
-                    <p>Saving a new cron on an amadeus schedule propagates it to <strong>every job and workflow</strong>
+                    <p>Saving a new cron on an cronomicon schedule propagates it to <strong>every job and workflow</strong>
                         that references it. Check the <em>Used by</em> count first. An <strong>orphan</strong> schedule
                         (Used by 0) never fires — bind it to something via <code>scheduleRefs</code>.</p>
                 </div>
@@ -4647,19 +4647,19 @@
                         class="gate admin">Admin or Approver (Publish)</span>
                 </div>
                 <p class="lead-p">The three in-app authoring surfaces. <strong>Compose</strong> and the <strong>Schedule
-                        Builder</strong> need the Compose capability (Admin-only) and write <em>amadeus-source</em>
+                        Builder</strong> need the Compose capability (Admin-only) and write <em>cronomicon-source</em>
                     definitions; <strong>Publish to GitLab</strong> needs the Publish capability (Admin <em>or</em>
                     Approver) and writes <em>Git</em> definitions. All three gates are enforced server-side, not just
                     hidden in the SPA; non-admins (or non-approvers, for Publish) see a notice instead of the form.</p>
 
                 <h3>10.1 Compose (the Job Composer)</h3>
-                <p>The Composer builds an <strong>amadeus-source Job</strong> from existing pieces — no Git round-trip —
+                <p>The Composer builds an <strong>cronomicon-source Job</strong> from existing pieces — no Git round-trip —
                     and makes the composable-primitive formula concrete: a Job is a binding of <strong>Script ×
                         Schedule(s) × Scope × env</strong>. It has grown round-trip-safe full-state editing, inline
                     schedules, the scope-context and Advanced panels, job-level env, the script-variables hint, declared
                     Run inputs, and searchable Script/Scope pickers with a unified Schedule section, so it is
                     considerably richer than a plain form. Saving a new job goes live immediately, badged <span
-                        class="pill amad">AMADEUS</span>. The route is admin-only and <strong>enforced
+                        class="pill crn">CRONOMICON</span>. The route is admin-only and <strong>enforced
                         server-side</strong> (<code>POST/PUT/DELETE /jobs</code> sit behind <em>session → CSRF →
                         admin</em>); a non-admin gets the notice <em>“In-app job composition requires the Compose
                         capability (Admin-only).”</em></p>
@@ -4968,7 +4968,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <ul>
                     <li><strong>Reusable (shared)</strong> — checkbox rows binding first-class <a
                             href="#schedules">Schedule</a> definitions via <code>scheduleRefs</code>. Each row shows a
-                        source badge (<span class="pill amad">AMADEUS</span>/<span class="pill git">GIT</span>), the
+                        source badge (<span class="pill crn">CRONOMICON</span>/<span class="pill git">GIT</span>), the
                         cron and its human form, the <strong>next (app zone)</strong> fire time, and an
                         <code>env: {keys}</code> summary. A small <strong>+ New schedule</strong> button on its own row
                         deep-links to the Schedule Builder.
@@ -5003,17 +5003,17 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </ul>
 
                 <h4>Edit, save &amp; delete</h4>
-                <p>Edit mode (<code>/compose?id=…</code>) loads an existing amadeus job and prefills every field;
+                <p>Edit mode (<code>/compose?id=…</code>) loads an existing cronomicon job and prefills every field;
                     <strong>Save</strong> sits beside a <strong>Cancel</strong> (→ Jobs), and the form stays populated
                     after a successful save. A <strong>Git-authored</strong> job replaces the whole form with a
                     read-only notice (and the backend independently <code>409</code>s a write to a Git job as a
                     backstop). <strong>Delete</strong> appears only in edit mode, below a divider: a <strong>Delete
                         job</strong> button that expands to <em>“Delete this job and its schedule bindings?”</em> with a
-                    confirm; deleting a Git job fails <code>409 “Only amadeus-source jobs can be deleted in-app.”</code>
+                    confirm; deleting a Git job fails <code>409 “Only cronomicon-source jobs can be deleted in-app.”</code>
                 </p>
 
-                <h3>10.2 Schedule Builder — author a reusable amadeus schedule</h3>
-                <p>Creates/edits one amadeus-source schedule: <strong>Name</strong> (immutable on edit), a <strong>How
+                <h3>10.2 Schedule Builder — author a reusable cronomicon schedule</h3>
+                <p>Creates/edits one cronomicon-source schedule: <strong>Name</strong> (immutable on edit), a <strong>How
                         it runs</strong> mode (see below), the rule for that mode — <strong>Cron</strong> (with a
                     <em>presets…</em> dropdown; accepts 5- and 6-field cron) or an <strong>Interval</strong> — an
                     optional <strong>Active period</strong>, optional <strong>Working calendars</strong> (<a
@@ -5193,7 +5193,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <!-- ===== /scopes ===== -->
                 <h3 id="scopes">11.1 Scopes <span class="route">/scopes</span></h3>
                 <p>A scope is a host group plus a declared set of <strong>Supported run types</strong>.
-                    <strong>Source</strong> is <span class="pill amad">Cronomicon</span> (authored locally) or <span
+                    <strong>Source</strong> is <span class="pill crn">Cronomicon</span> (authored locally) or <span
                         class="pill git">Git</span> (imported from an inventory sync). The table lists <em>Scope ·
                         Source · Description · Supported Types · Hosts · Updated</em>; click a row to expand its detail.
                 </p>
@@ -5446,7 +5446,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </div>
 
                 <h3>11.4 Secrets (Stored or Vault)</h3>
-                <p>Each secret's <strong>Source</strong> is <span class="pill amad">Stored</span> (encrypted in Cronomicon)
+                <p>Each secret's <strong>Source</strong> is <span class="pill crn">Stored</span> (encrypted in Cronomicon)
                     or <span class="pill git">Vault</span> (a reference resolved at run time; the Vault option appears
                     only when Vault is configured).</p>
                 <ul>
@@ -5475,7 +5475,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     envelope-encrypted entity that replaces the old “an SSH key is an opaque secret referenced by name.”
                     Its writes are <strong>Configure app</strong>-gated (distinct from the <em>Manage env vars</em> gate
                     on Variables/Secrets). Each row shows <strong>Label · Type · Fingerprint</strong> (SHA256, click to
-                    copy) <strong>· Source</strong> (<span class="pill amad">Stored</span> / <span
+                    copy) <strong>· Source</strong> (<span class="pill crn">Stored</span> / <span
                         class="pill git">Vault</span>) <strong>· Tags · Used By</strong> (the count of hosts/bastions
                     referencing it) <strong>· Bound By</strong> (the jobs/scripts that declare a
                     <code>CRONOMICON_KEY_&lt;label&gt;</code> binding to it, a different question from <em>Used By</em>: a
@@ -5508,7 +5508,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </div>
 
                 <h3 id="refbindings">11.6 Reference bindings &amp; run-time injection <span
-                        class="pill amad">v0.49</span></h3>
+                        class="pill crn">v0.49</span></h3>
                 <p>Historically Cronomicon <strong>never auto-injected</strong> a scope's Env Vars into a run — you
                     referenced them from the script and the values came from the shell environment you supplied. Since
                     <strong>v0.49</strong> there is an explicit, <strong>opt-in</strong> path: a job or script
@@ -6000,7 +6000,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     Capabilities: <span class="tag">bash</span> <span class="tag">ansible</span> <span
                         class="tag">terraform</span> <span class="tag">powershell</span> <span class="tag">perl</span>
                     <span class="tag">python</span> &nbsp;·&nbsp;
-                    Inventory: <span class="tag">amadeus inv</span> <span class="tag">local inv</span>
+                    Inventory: <span class="tag">cronomicon inv</span> <span class="tag">local inv</span>
                 </p>
                 <p>Beyond the run types, a runner may advertise <strong>feature</strong> capabilities, and each carries
                     a hover hint naming what it permits — a chip you cannot interpret is no help when it is the reason a
@@ -6484,7 +6484,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 <h3>15.1 Create and run your first job</h3>
                 <p class="muted">Views: Scripts → Scopes → Compose → Jobs → Dashboard → History</p>
                 <ol class="steps">
-                    <li>Decide the origin. The fastest first job is an <strong>in-app (amadeus-source)</strong> job —
+                    <li>Decide the origin. The fastest first job is an <strong>in-app (cronomicon-source)</strong> job —
                         but you must be an <strong>Admin</strong> (Compose). The Git path is for reviewed,
                         version-controlled definitions.</li>
                     <li>Make sure a <strong>Script</strong> exists: open <a href="#scripts">Scripts</a> and confirm
@@ -6550,7 +6550,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <li>On <code>201</code> the definition appears in Jobs after the next sync (≤ 5 min, instant via
                         webhook). On <code>412</code>, click <em>“Reload latest base_sha &amp; retry on top.”</em></li>
                     <li>Review the push in <a href="#history">History → Schedule Pushes</a>. Remember: editing an
-                        amadeus schedule's cron later propagates to <em>every</em> referencer — check the Used-by count
+                        cronomicon schedule's cron later propagates to <em>every</em> referencer — check the Used-by count
                         first.</li>
                 </ol>
 
@@ -6578,7 +6578,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 class="dot"></span>warning</span> (partial) means some files had validation errors —
                         open Details, fix the YAML, re-sync. A red <span class="pill fail"><span
                                 class="dot"></span>failure</span> means clone/auth failed (check PAT + URL).</li>
-                    <li>Recommended: add the <code>amadeus validate</code> CI template so broken YAML is rejected at
+                    <li>Recommended: add the <code>cronomicon validate</code> CI template so broken YAML is rejected at
                         merge time. See <a href="administrator-manual.html#gitops">GitOps &amp; GitLab Sync</a>
                         (Administrator Manual).</li>
                 </ol>
@@ -6865,7 +6865,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 href="#reactions">Schedules &rarr; Reactions</a>, where they can never fire until you
                             repoint or delete them. If you would rather keep the graph intact, cancel and edit or remove
                             those reactions first. A similar-looking refusal on the same button &mdash; <em>&ldquo;Only
-                                amadeus-source jobs can be deleted in-app&rdquo;</em> &mdash; is a different thing
+                                cronomicon-source jobs can be deleted in-app&rdquo;</em> &mdash; is a different thing
                             entirely and offers no override: that definition lives in Git, so delete it by removing its
                             file from the repo.</p>
                     </div>
@@ -6908,7 +6908,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <p class="faq-cause"><strong>Cause:</strong> the definition is Git-source, which is read-only
                             over the API.</p>
                         <p><strong>Fix:</strong> edit it in Git (validate, MR, sync), or use Jobs → Publish to GitLab.
-                            Only amadeus-source rows are editable in-app.</p>
+                            Only cronomicon-source rows are editable in-app.</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -7174,7 +7174,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         a named AD group regardless of grants, so the first admin can seed real access grants. Logs a
                         loud warning; remove afterward. <strong>Trusted-header mode only</strong> — the OIDC login path
                         never applies it; lockout recovery on any deployment is the offline
-                        <code>amadeus grant-admin</code> subcommand (see the Administrator Manual, §8.7).
+                        <code>cronomicon grant-admin</code> subcommand (see the Administrator Manual, §8.7).
                     </dd>
                     <dt>Calendar (working calendar)</dt>
                     <dd>A named set of wall-clock <em>dates</em> — holidays, a change freeze, month-end — each
@@ -7275,8 +7275,8 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         and reads on restart to resume its registry row instead of orphaning it. Default
                         <code>/var/lib/amadeus-runner/identity.json</code>.
                     </dd>
-                    <dt>Inventory mode (amadeus vs local)</dt>
-                    <dd>Per-runner. <code>amadeus</code> (default): the server resolves scope hosts and ships
+                    <dt>Inventory mode (cronomicon vs local)</dt>
+                    <dd>Per-runner. <code>cronomicon</code> (default): the server resolves scope hosts and ships
                         fully-resolved targets. <code>local</code>: the manifest carries only the scope name; the agent
                         resolves it against its own inventory (for isolated segments).</dd>
                     <dt>Job-definitions repo</dt>
@@ -7384,7 +7384,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         failure with an amber “Lost” badge.</dd>
                     <dt>Schedule (definition)</dt>
                     <dd>A first-class reusable named cron (+ optional plaintext env) referenced by jobs/workflows via
-                        <code>scheduleRefs</code>. Source git or amadeus. Editing an amadeus schedule propagates the new
+                        <code>scheduleRefs</code>. Source git or amadeus. Editing an cronomicon schedule propagates the new
                         cron to every referencer.
                     </dd>
                     <dt>Schedule Push</dt>
@@ -7621,7 +7621,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                             <tr>
                                 <td>Scopes / inventory</td>
                                 <td><code>GET /scopes/{id}/inventory</code> (advisory projection + raw),
-                                    <code>PUT /scopes/{id}/inventory</code> (amadeus-source author),
+                                    <code>PUT /scopes/{id}/inventory</code> (cronomicon-source author),
                                     <code>POST /scopes/{id}/inventory/import-hosts</code> (→ <code>ssh_hosts</code>)
                                 </td>
                                 <td>ConfigureApp = Admin; git scopes read-only (<code>409</code>)</td>

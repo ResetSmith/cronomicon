@@ -311,7 +311,7 @@ export function LogStorageSection() {
                 <input value={form.s3?.region ?? ""} onChange={(e) => patch({ s3: { ...form.s3, region: e.target.value } })} style={{ ...inputStyle(), width: 160 }} />
               </SettingRow>
               <SettingRow label="Key Prefix">
-                <input value={form.s3?.prefix ?? ""} onChange={(e) => patch({ s3: { ...form.s3, prefix: e.target.value } })} placeholder="amadeus/" style={wide()} />
+                <input value={form.s3?.prefix ?? ""} onChange={(e) => patch({ s3: { ...form.s3, prefix: e.target.value } })} placeholder="cronomicon/" style={wide()} />
               </SettingRow>
               <SettingRow label="Access Key" hint="Leave both keys empty to use the host's AWS credentials (env, profile, or IAM role).">
                 <input value={form.s3?.accessKey ?? ""} onChange={(e) => patch({ s3: { ...form.s3, accessKey: e.target.value } })} style={wide()} />

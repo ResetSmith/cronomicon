@@ -155,7 +155,7 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	}
 	_ = sc
 
-	// Host + amadeus job + the job's reference bindings.
+	// Host + cronomicon job + the job's reference bindings.
 	if _, err := pool.Exec(`
 		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
 		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
@@ -163,21 +163,21 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	// Bind a secret and a variable. (A bound KEY is a different story on this
 	// executor — it fails the run before connecting; see
 	// TestSSHExecutorFailsBeforeConnectingOnKeyBinding.)
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','DB_PASS',?),('job','amadeus','j1','var','REGION',?)`, now, now); err != nil {
+		VALUES('job','cronomicon','j1','secret','DB_PASS',?),('job','cronomicon','j1','var','REGION',?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
 	// The run carries a per-run reference ADDITION in its override envelope: the
 	// undeclared EXTRA variable.
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, override_json, created_at)
-		VALUES('run-1','j1','amadeus','bash',?,'testhost','queued','ops@x','manual','ssh',
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',
 		       '{"references":[{"kind":"var","name":"EXTRA"}]}',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
@@ -306,16 +306,16 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	// Binding names a secret that does not exist → resolution must fail closed.
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','NOPE',?)`, now); err != nil {
+		VALUES('job','cronomicon','j1','secret','NOPE',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','amadeus','bash','s','testhost','queued','ops@x','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash','s','testhost','queued','ops@x','manual','ssh',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,15 +385,15 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','DB_PASS',?)`, now); err != nil {
+		VALUES('job','cronomicon','j1','secret','DB_PASS',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','amadeus','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 	// Break the audit sink so the injection audit write fails.
@@ -489,17 +489,17 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := runref.ReplaceBindings(context.Background(), pool,
-		runref.Owner{Kind: "job", Source: "amadeus", Name: "j1"},
+		runref.Owner{Kind: "job", Source: "cronomicon", Name: "j1"},
 		[]runref.Binding{{Kind: runref.KindKey, Name: "deploy_key"}}, "tester"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','amadeus','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 

@@ -117,7 +117,7 @@ func TestPhase3AppliesTheAgencyPredicate(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-dss','DSS',?)`, now)
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-prod','prod','amadeus',?)`, now)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('sc-prod','prod','cronomicon',?)`, now)
 	var secretID string
 	if err := pool.QueryRow(`SELECT id FROM secrets WHERE key='SEC_GLOBAL'`).Scan(&secretID); err != nil {
 		t.Fatalf("secret id: %v", err)

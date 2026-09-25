@@ -33,7 +33,7 @@ func TestResolveDefaults(t *testing.T) {
 	if cfg.PollInterval != 60*time.Second {
 		t.Errorf("default poll interval = %v, want 60s (D7)", cfg.PollInterval)
 	}
-	if cfg.Inventory != "amadeus" {
+	if cfg.Inventory != "cronomicon" {
 		t.Errorf("default inventory = %q", cfg.Inventory)
 	}
 	if got := cfg.Capabilities; len(got) != 2 || got[0] != "bash" || got[1] != "perl" {

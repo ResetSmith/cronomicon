@@ -776,7 +776,7 @@ export function JobKeyField({
       )}
       {/* The picker renders only while NO key is bound. Assigning the FIRST key must
           stay here — for a git-synced job this field is the only persistent authoring
-          surface (the composer is amadeus-source only, D6). But once one is bound the
+          surface (the composer is cronomicon-source only, D6). But once one is bound the
           "Add another key…" state is gone by request: the multi-key case (a second
           key for a bastion) is composer territory, and here it read as an open-ended
           list invitation on every expanded job. Remove (×) above still works, so

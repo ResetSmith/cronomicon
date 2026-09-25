@@ -67,7 +67,7 @@ func LintBareNames(body string, known map[string]Kind) []Binding {
 	seen := map[string]bool{}
 	var out []Binding
 	for _, tok := range bareWordRe.FindAllString(body, -1) {
-		if envref.HasAmadeusPrefix(tok) {
+		if envref.HasCronomiconPrefix(tok) {
 			continue // already a namespaced reference, not a bare site
 		}
 		kind, ok := known[tok]

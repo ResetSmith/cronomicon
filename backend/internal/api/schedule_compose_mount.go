@@ -22,11 +22,11 @@ import (
 // mountScheduleCompose owns the in-app first-class Schedule authoring write surface
 // (schedule-builder.md — it closes the v20 Phase-1 deferral: operator authoring of
 // first-class Schedules). It is the schedule analog of mountJobCompose /
-// mountWorkflowCompose: an amadeus-source Schedule is a DB-authored named cron (+
+// mountWorkflowCompose: an cronomicon-source Schedule is a DB-authored named cron (+
 // optional env) created/edited/deleted in-app — no Git round-trip. Git-source
 // schedules are read-only here (409); they round-trip through the Git publish flow.
 //
-// Addressed by {name} (D2): amadeus schedule names are unique within source, and git
+// Addressed by {name} (D2): cronomicon schedule names are unique within source, and git
 // rows are read-only, so writes never need ?source disambiguation. A schedule edit
 // PROPAGATES to every job/workflow that referenced it (D1c) via the source_ref
 // column, so a cron change actually takes effect rather than going stale in the
@@ -34,9 +34,9 @@ import (
 //
 // Routes (all behind requireCompose — Admin-only, the same gate as Job/Workflow compose):
 //
-//	POST   /api/v1/schedule-defs           create an amadeus-source schedule
-//	PUT    /api/v1/schedule-defs/{name}    edit an amadeus-source schedule (409 on git, 404 if absent)
-//	DELETE /api/v1/schedule-defs/{name}    delete an amadeus-source schedule (409 when referenced unless ?force=true)
+//	POST   /api/v1/schedule-defs           create an cronomicon-source schedule
+//	PUT    /api/v1/schedule-defs/{name}    edit an cronomicon-source schedule (409 on git, 404 if absent)
+//	DELETE /api/v1/schedule-defs/{name}    delete an cronomicon-source schedule (409 when referenced unless ?force=true)
 //
 // 🔴 RB-30: these three routes are the schedule-authoring surface, and their
 // admin-only gate is what makes RB-Q11(c) — "a scheduled fire of an unscoped job
@@ -104,7 +104,7 @@ func (s *Server) updateScheduleDef(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
 		return
 	case scheduleGitOnly:
-		httpx.Fail(w, http.StatusConflict, "conflict", "only amadeus-source schedules are editable in-app; git schedules round-trip through the publish flow")
+		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source schedules are editable in-app; git schedules round-trip through the publish flow")
 		return
 	}
 	if deleted, err := s.definitionIsDeleted(r.Context(), revKindSchedule, name); err != nil {
@@ -124,7 +124,7 @@ func (s *Server) updateScheduleDef(w http.ResponseWriter, r *http.Request) {
 	s.writeComposedSchedule(w, r, in, id.Email, false)
 }
 
-// writeComposedSchedule is the single write body for amadeus-source schedules,
+// writeComposedSchedule is the single write body for cronomicon-source schedules,
 // shared by create, update and revision-restore.
 //
 // It exists because there wasn't one. Create and update each hand-rolled their
@@ -158,16 +158,16 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	}
 
 	if isCreate {
-		// Disjoint namespaces (Q-A): only an existing AMADEUS schedule of this name
+		// Disjoint namespaces (Q-A): only an existing CRONOMICON schedule of this name
 		// conflicts; a git schedule of the same name may coexist. A binned one
 		// still holds its name — say so, or the operator has no way to know why.
 		var exists int
 		var deleted sql.NullString
 		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='amadeus' AND name=?`,
+			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='cronomicon' AND name=?`,
 			in.Name).Scan(&exists, &deleted)
 		if exists > 0 {
-			msg := "an amadeus schedule with this name already exists"
+			msg := "an cronomicon schedule with this name already exists"
 			if deleted.Valid {
 				msg = "a schedule with this name is in the recycle bin — restore or purge it to reuse the name"
 			}
@@ -205,7 +205,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 			INSERT INTO schedules(name, source, description, cron, env, content_hash,
 			                      start_at, end_at, interval, skip_calendars, only_calendars,
 			                      created_by, created_at, last_modified_by, last_modified_at, uid)
-			VALUES(?, 'amadeus', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			in.Name, nullStrIf(in.Description), cron, envJSON, hash,
 			windowArg(startAt), windowArg(endAt), nullStrIf(interval),
 			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)),
@@ -219,7 +219,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 			                     start_at=?, end_at=?, interval=?,
 			                     skip_calendars=?, only_calendars=?,
 			                     last_modified_by=?, last_modified_at=?
-			WHERE source='amadeus' AND name=?`,
+			WHERE source='cronomicon' AND name=?`,
 			cron, envJSON, nullStrIf(in.Description), hash,
 			windowArg(startAt), windowArg(endAt), nullStrIf(interval),
 			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)),
@@ -256,8 +256,8 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		action = revActionCreated
 	}
 	var schedUID string
-	_ = tx.QueryRowContext(r.Context(), `SELECT uid FROM schedules WHERE source='amadeus' AND name=?`, in.Name).Scan(&schedUID)
-	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "amadeus", in.Name, schedUID, actor, action, in); err != nil {
+	_ = tx.QueryRowContext(r.Context(), `SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, in.Name).Scan(&schedUID)
+	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "cronomicon", in.Name, schedUID, actor, action, in); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -290,7 +290,7 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
 		return
 	case scheduleGitOnly:
-		httpx.Fail(w, http.StatusConflict, "conflict", "only amadeus-source schedules are deletable in-app")
+		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source schedules are deletable in-app")
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
@@ -334,7 +334,7 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.ExecContext(r.Context(),
-		`UPDATE schedules SET deleted_at=?, deleted_by=? WHERE source='amadeus' AND name=? AND deleted_at IS NULL`,
+		`UPDATE schedules SET deleted_at=?, deleted_by=? WHERE source='cronomicon' AND name=? AND deleted_at IS NULL`,
 		now, id.Email, name)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -366,8 +366,8 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var delSchedUID string
-	_ = tx.QueryRowContext(r.Context(), `SELECT uid FROM schedules WHERE source='amadeus' AND name=?`, name).Scan(&delSchedUID)
-	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "amadeus", name, delSchedUID, id.Email, revActionDeleted,
+	_ = tx.QueryRowContext(r.Context(), `SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, name).Scan(&delSchedUID)
+	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "cronomicon", name, delSchedUID, id.Email, revActionDeleted,
 		map[string]any{"deletedAt": now, "deletedBy": id.Email, "detachedBindings": detached}); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -408,20 +408,20 @@ type scheduleState int
 const (
 	scheduleAbsent scheduleState = iota
 	scheduleGitOnly
-	scheduleAmadeus
+	scheduleCronomicon
 )
 
-// scheduleSourceState reports whether a name is an editable amadeus schedule, a
+// scheduleSourceState reports whether a name is an editable cronomicon schedule, a
 // read-only git schedule, or absent — driving the 404 vs 409 vs proceed branch.
 func (s *Server) scheduleSourceState(ctx context.Context, name string) scheduleState {
-	var amadeus, git int
+	var cronomicon, git int
 	_ = s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN source='amadeus' THEN 1 ELSE 0 END), 0),
+		SELECT COALESCE(SUM(CASE WHEN source='cronomicon' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN source='git'     THEN 1 ELSE 0 END), 0)
-		FROM schedules WHERE name=?`, name).Scan(&amadeus, &git)
+		FROM schedules WHERE name=?`, name).Scan(&cronomicon, &git)
 	switch {
-	case amadeus > 0:
-		return scheduleAmadeus
+	case cronomicon > 0:
+		return scheduleCronomicon
 	case git > 0:
 		return scheduleGitOnly
 	default:
@@ -649,12 +649,12 @@ func scheduleEnvJSON(env map[string]string) any {
 	return string(b)
 }
 
-// writeScheduleDef re-fetches the amadeus schedule (with its source_ref usedBy
+// writeScheduleDef re-fetches the cronomicon schedule (with its source_ref usedBy
 // reverse index) and writes it as the create/edit response.
 func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name string, status int) {
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source='amadeus' AND name=?`, name)
+		FROM schedules WHERE source='cronomicon' AND name=?`, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)

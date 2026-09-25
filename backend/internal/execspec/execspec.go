@@ -290,7 +290,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 // ScopeHosts returns the host names belonging to a scope (scope_hosts → scopes) —
 // the single membership source shared by ResolveTargets' fan-out, the F2 subset
 // intersection, and the trigger-boundary membership check in runJob. Source-
-// agnostic: git scopes are materialized into scope_hosts during sync, amadeus
+// agnostic: git scopes are materialized into scope_hosts during sync, cronomicon
 // scopes via settings.
 func ScopeHosts(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
@@ -337,10 +337,10 @@ func OverrideHosts(overrideJSON string) []string {
 // scope-qualified by scope_id, NOT just by hostname, so a job in scope A never
 // dials scope B's same-named host:
 //   - A row with NULL scope_id is a GLOBAL operator overlay (a manually-authored
-//     amadeus host); it is a candidate for every scope and WINS.
+//     cronomicon host); it is a candidate for every scope and WINS.
 //   - A row whose scope_id belongs to the requested scope (a git import OR an
-//     amadeus import for THIS scope) is a candidate; other scopes' rows are not.
-//   - Within candidates: amadeus over git, global overlay (scope_id NULL) over a
+//     cronomicon import for THIS scope) is a candidate; other scopes' rows are not.
+//   - Within candidates: cronomicon over git, global overlay (scope_id NULL) over a
 //     scoped import, then most-recent, then id (a total, deterministic order).
 //
 // The TOFU host-key capture must write back to the SAME row id this resolves (see
@@ -351,7 +351,7 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		FROM ssh_hosts
 		WHERE hostname = ?
 		  AND (scope_id IS NULL OR scope_id IN (SELECT id FROM scopes WHERE name = ?))
-		ORDER BY (source='amadeus') DESC, (scope_id IS NULL) DESC, last_modified_at DESC, id DESC
+		ORDER BY (source='cronomicon') DESC, (scope_id IS NULL) DESC, last_modified_at DESC, id DESC
 		LIMIT 1`, hostname, scope)
 	var id, name string
 	var address, user, via, authKeyEnvVar, authCredentialID, hostKey sql.NullString

@@ -21,7 +21,7 @@ func enableInjection(svc *Service) {
 	svc.cfg.SecretKEKEnv = testKEK
 }
 
-// seedInjectionRun seeds an amadeus job 'j1' + a stored secret + variable (scope
+// seedInjectionRun seeds an cronomicon job 'j1' + a stored secret + variable (scope
 // 'prod') + reference bindings for the job + a claimed runner run, and returns the
 // trace id. protocolVersion + allowInject configure the assigned runner.
 func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersion int, allowInject bool) (traceID, secretVal, varVal string) {
@@ -34,7 +34,7 @@ func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersi
 		t.Fatalf("configure runner: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
-		VALUES('j1','amadeus','bash','echo hi','Allow',?)`, now()); err != nil {
+		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now()); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	sc, err := secrets.New(svc.db, svc.cfg, svc.log).Create(ctx,
@@ -48,7 +48,7 @@ func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersi
 		t.Fatalf("seed var: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','j1','secret','DB_PASS',?),('job','amadeus','j1','var','REGION',?)`, now(), now()); err != nil {
+		VALUES('job','cronomicon','j1','secret','DB_PASS',?),('job','cronomicon','j1','var','REGION',?)`, now(), now()); err != nil {
 		t.Fatalf("seed bindings: %v", err)
 	}
 	traceID = db.NewTraceID()
@@ -58,7 +58,7 @@ func seedInjectionRun(t *testing.T, svc *Service, runnerID string, protocolVersi
 	// must reflect a dispatched secret-bearing run.
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, runner_id, executor, triggered_by, trigger_kind, injects_secret, started_at, created_at)
-		VALUES(?, 'j1', 'amadeus', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', 1, ?, ?)`,
+		VALUES(?, 'j1', 'cronomicon', 'bash', 'prod', 'running', ?, 'runner', 'ops@x', 'manual', 1, ?, ?)`,
 		traceID, runnerID, now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
@@ -175,12 +175,12 @@ func TestClaimRunSecretInjectionGate(t *testing.T) {
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES(?, 'jb', 'amadeus', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
+		VALUES(?, 'jb', 'cronomicon', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
 		traceID, now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','jb','secret','DB_PASS',?)`, now()); err != nil {
+		VALUES('job','cronomicon','jb','secret','DB_PASS',?)`, now()); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
 
@@ -216,12 +216,12 @@ func TestClaimRunGateDisarmedByKillSwitch(t *testing.T) {
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES(?, 'jb', 'amadeus', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
+		VALUES(?, 'jb', 'cronomicon', 'bash', 'prod', 'queued', 'test', 'manual', 'runner', ?)`,
 		traceID, now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 	if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
-		VALUES('job','amadeus','jb','secret','DB_PASS',?)`, now()); err != nil {
+		VALUES('job','cronomicon','jb','secret','DB_PASS',?)`, now()); err != nil {
 		t.Fatalf("seed binding: %v", err)
 	}
 

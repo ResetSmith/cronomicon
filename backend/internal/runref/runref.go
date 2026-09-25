@@ -223,7 +223,7 @@ func CheckAliasCollisions(bindings []Binding) error {
 }
 
 // Owner identifies the job or script a set of bindings belongs to. Source is the
-// job source ('amadeus'|'git'); scripts (a single-namespace catalog) use "".
+// job source ('cronomicon'|'git'); scripts (a single-namespace catalog) use "".
 //
 // R2F-1: UID is the owner's permanent identity, and once two departments may own
 // a job of the same name (R2-5) it is the ONLY thing that tells the twins apart.

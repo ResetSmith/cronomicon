@@ -77,7 +77,7 @@ func errf(format string, a ...any) error { return &Error{Msg: fmt.Sprintf(format
 const (
 	RunID          = PrefixRun + "ID"           // the run / trace id (runs.id)
 	RunJob         = PrefixRun + "JOB"          // job name
-	RunJobSource   = PrefixRun + "JOB_SOURCE"   // git | amadeus
+	RunJobSource   = PrefixRun + "JOB_SOURCE"   // git | cronomicon
 	RunScope       = PrefixRun + "SCOPE"        // run scope ("" = global)
 	RunType        = PrefixRun + "TYPE"         // bash | ansible | terraform | ...
 	RunTriggeredBy = PrefixRun + "TRIGGERED_BY" // the actor that triggered the run
@@ -95,10 +95,10 @@ const (
 	SectionRun
 )
 
-// HasAmadeusPrefix reports whether name is in the CRONOMICON_ namespace at all. This
+// HasCronomiconPrefix reports whether name is in the CRONOMICON_ namespace at all. This
 // is the test the run-env guard uses: operator-authored env may never define ANY
 // CRONOMICON_* key (N-D1, absolute, no carve-outs).
-func HasAmadeusPrefix(name string) bool {
+func HasCronomiconPrefix(name string) bool {
 	return strings.HasPrefix(name, Namespace)
 }
 
@@ -173,7 +173,7 @@ func ValidateRowName(name string) error {
 	if name == "" {
 		return errf("name is required")
 	}
-	if HasAmadeusPrefix(name) {
+	if HasCronomiconPrefix(name) {
 		return errf("invalid name %q: a row name may not start with CRONOMICON_ — the prefix is reference syntax, derived automatically", name)
 	}
 	if !rowNameRe.MatchString(name) {
@@ -203,7 +203,7 @@ func ValidateSecretRowName(name string) error {
 func ValidateOperatorEnv(env map[string]string) error {
 	var bad []string
 	for k := range env {
-		if HasAmadeusPrefix(k) {
+		if HasCronomiconPrefix(k) {
 			bad = append(bad, k)
 		}
 	}

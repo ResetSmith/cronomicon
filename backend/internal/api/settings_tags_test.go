@@ -12,7 +12,7 @@ import (
 )
 
 // TestUpdateConfigTags exercises the operator-authored tag write endpoints added
-// in migration 470 for the three amadeus-owned Env Vars entities — variables,
+// in migration 470 for the three cronomicon-owned Env Vars entities — variables,
 // secrets, and SSH key credentials. Each mirrors the catalog tag contract
 // (normalize / 422 / 404 / clear) but is permission-gated (ManageEnvVars for
 // variables + secrets, ConfigureApp for credentials) and CSRF-guarded, and stores

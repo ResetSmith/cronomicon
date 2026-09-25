@@ -13,7 +13,7 @@ Cronomicon runs golang-migrate **on every boot** (`internal/db/migrate.go`,
 
 `/readyz` reports schema state via the `database` check: it fails (503) while the
 schema version is behind or **dirty** (a half-applied migration), so an
-orchestrator holds traffic until the schema is clean. `amadeus healthcheck -ready`
+orchestrator holds traffic until the schema is clean. `cronomicon healthcheck -ready`
 (the container HEALTHCHECK) wraps the same probe.
 
 ## Normal upgrade

@@ -267,7 +267,7 @@ func (s *Scheduler) reloadJobs(ctx context.Context) error {
 	}
 
 	// Source-aware join (A9): a (source,name) job binds only to its own
-	// (owner_source,owner_name) schedules, so same-named git/amadeus jobs don't
+	// (owner_source,owner_name) schedules, so same-named git/cronomicon jobs don't
 	// cross-fire each other's schedules.
 	// R2-3 — joined on the entry's owner_uid, with the (name, source) pair kept
 	// as the arm for entries that carry no uid. The fallback is not optional
@@ -795,7 +795,7 @@ func AtCapacity(ctx context.Context, database *sql.DB) bool {
 // EnqueueParams holds the fields for an enqueued run.
 type EnqueueParams struct {
 	JobName   string
-	JobSource string // git | amadeus (A9); empty ⇒ 'git'. Snapshotted on the run + used to resolve the job's denormalized fields by (name,source).
+	JobSource string // git | cronomicon (A9); empty ⇒ 'git'. Snapshotted on the run + used to resolve the job's denormalized fields by (name,source).
 	// JobUID is the job's permanent identity (R2-5). Producers that resolved a
 	// real job row pass it, and every denormalizing subselect in the run INSERT
 	// keys on it — the only key that stays unambiguous now that a (source,
@@ -899,7 +899,7 @@ func (p EnqueueParams) jobSourceOrDefault() string {
 }
 
 // resolveEnqueueUID pins the job identity for an enqueue. The pair fallback is
-// single-row; if the pair is ambiguous (two amadeus siblings) the produced uid
+// single-row; if the pair is ambiguous (two cronomicon siblings) the produced uid
 // is whichever row SQLite returns — which is why every real producer passes
 // p.JobUID and this fallback exists for tests and legacy callers only.
 func resolveEnqueueUID(ctx context.Context, database *sql.DB, p EnqueueParams) string {

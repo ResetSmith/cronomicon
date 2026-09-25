@@ -97,7 +97,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up the owning runner's inventory mode (D8) and injection flag.
-	inventoryMode := "amadeus"
+	inventoryMode := "cronomicon"
 	var allowSecretInjection bool
 	if err := s.db.QueryRowContext(r.Context(),
 		`SELECT inventory, allow_secret_injection FROM runners WHERE id = ?`, runnerID.String).
@@ -143,9 +143,9 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// hosts (user + key) from its own inventory, so the override would be silently
 	// ignored — running as the wrong identity. Refuse in the tone of the
 	// no_inventory refusal: not running beats running wrong.
-	if inventoryMode != "amadeus" && (sshUser.String != "" || sshCred.String != "") {
+	if inventoryMode != "cronomicon" && (sshUser.String != "" || sshCred.String != "") {
 		httpx.Fail(w, http.StatusConflict, "conflict",
-			"this run carries a per-run SSH identity override, which a local-inventory runner cannot honor (the agent resolves users/keys from its own inventory); re-run without the override or route to an amadeus-inventory runner")
+			"this run carries a per-run SSH identity override, which a local-inventory runner cannot honor (the agent resolves users/keys from its own inventory); re-run without the override or route to an cronomicon-inventory runner")
 		return
 	}
 
@@ -169,14 +169,14 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve targets only in 'amadeus' mode. In 'local' mode the agent resolves
+	// Resolve targets only in 'cronomicon' mode. In 'local' mode the agent resolves
 	// hosts against its own inventory (T-b), so we ship only the scope name.
 	var targets []runnerproto.ManifestTarget
 	// RP-8 — the ansible identity carriage (set below, shipped on the response).
 	var manifestSSHUser, manifestSSHKeyRef string
-	if inventoryMode == "amadeus" {
+	if inventoryMode == "cronomicon" {
 		// F2 host subset + M3 group expansion (override_json.hosts/groups): enforced
-		// here for amadeus-inventory runners since the server resolves their targets.
+		// here for cronomicon-inventory runners since the server resolves their targets.
 		// Local-inventory runners resolve hosts agent-side and honor --limit instead.
 		resolved, _, err := execspec.ResolveRun(r.Context(), s.db, scope.String, targetHost.String,
 			execspec.OverrideHosts(overrideJSON.String), execspec.OverrideGroups(overrideJSON.String))
@@ -236,14 +236,14 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Ansible inventory attach (§7.3, M1). Only for amadeus-mode ANSIBLE runs:
+	// Ansible inventory attach (§7.3, M1). Only for cronomicon-mode ANSIBLE runs:
 	// terraform runner runs never carry inventory, and local-mode runners hold
 	// their own inventory (we must never ship them the host list — the no-leak
 	// property). The Raw shipped here is secret-free because secret-bearing
 	// inventory is rejected at ingest (internal/inventory.ValidateSecrets); the
 	// manifest path never calls secrets.Reveal (D1).
 	var inv *runnerproto.ManifestInventory
-	if inventoryMode == "amadeus" && runType == "ansible" && scope.String != "" {
+	if inventoryMode == "cronomicon" && runType == "ansible" && scope.String != "" {
 		var raw, format sql.NullString
 		// Sequential query (not nested inside an open rows cursor) — safe under the
 		// SQLite pool rule.
@@ -266,7 +266,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Job-level execution knobs (jobs.timeout_seconds, jobs.env_passthrough),
-	// source-qualified (A9) so an amadeus job's knobs aren't read off a
+	// source-qualified (A9) so an cronomicon job's knobs aren't read off a
 	// same-named git job.
 	js := jobSource.String
 	if js == "" {

@@ -256,7 +256,7 @@ func TestRefreshEntityMetaUpdatesOnlyAnExistingSidecar(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	code, err := entitycode.Allocate(ctx, pool, entitycode.KindJob, "amadeus", "reindex", "uid-reindex")
+	code, err := entitycode.Allocate(ctx, pool, entitycode.KindJob, "cronomicon", "reindex", "uid-reindex")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestRefreshEntityMetaUpdatesOnlyAnExistingSidecar(t *testing.T) {
 
 	// A never-written-to folder gets nothing: no sidecar, and no directory
 	// conjured to hold one.
-	other, err := entitycode.Allocate(ctx, pool, entitycode.KindWorkflow, "amadeus", "never-ran", "uid-never-ran")
+	other, err := entitycode.Allocate(ctx, pool, entitycode.KindWorkflow, "cronomicon", "never-ran", "uid-never-ran")
 	if err != nil {
 		t.Fatalf("allocate other: %v", err)
 	}

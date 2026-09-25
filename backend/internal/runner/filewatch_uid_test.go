@@ -15,7 +15,7 @@ func TestWatchEchoMatchesByUID(t *testing.T) {
 	// shape per-agency naming generalises.
 	specs := []runnerproto.WatchSpec{
 		{JobSource: "git", JobName: "ingest", JobUID: "uid-git", Path: "/srv/in/*.csv"},
-		{JobSource: "amadeus", JobName: "ingest", JobUID: "uid-ama", Path: "/srv/in/*.csv"},
+		{JobSource: "cronomicon", JobName: "ingest", JobUID: "uid-ama", Path: "/srv/in/*.csv"},
 	}
 	got, ok := matchDistributedWatch(sightingIn{
 		JobUID: "uid-ama", JobSource: "git", JobName: "ingest", Path: "/srv/in/a.csv"}, specs)
@@ -23,10 +23,10 @@ func TestWatchEchoMatchesByUID(t *testing.T) {
 		t.Fatal("a uid-bearing sighting matched no distributed watch")
 	}
 	// The uid decides, and the SPEC is what fires — note the report's jobSource
-	// said git while its uid said the amadeus job. The spec wins, so a runner
+	// said git while its uid said the cronomicon job. The spec wins, so a runner
 	// cannot mix one watch's identity with another's name to pick a job.
-	if got.JobUID != "uid-ama" || got.JobSource != "amadeus" {
-		t.Errorf("matched spec = %+v, want the amadeus job the uid named", got)
+	if got.JobUID != "uid-ama" || got.JobSource != "cronomicon" {
+		t.Errorf("matched spec = %+v, want the cronomicon job the uid named", got)
 	}
 }
 

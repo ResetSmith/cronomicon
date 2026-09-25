@@ -34,7 +34,7 @@ func seedRunFor(t *testing.T, exec func(string, ...any), runID, jobName, scope s
 	t.Helper()
 	exec(`INSERT INTO runs (id, job_name, job_source, run_type, status, triggered_by,
 	                        trigger_kind, executor, scope, created_at)
-	      VALUES (?, ?, 'amadeus', 'bash', 'running', 't', 'manual', 'ssh', ?, '2026-01-01T00:00:00Z')`,
+	      VALUES (?, ?, 'cronomicon', 'bash', 'running', 't', 'manual', 'ssh', ?, '2026-01-01T00:00:00Z')`,
 		runID, jobName, scope)
 }
 
@@ -54,10 +54,10 @@ func TestKillAuthorizesOnTheRunsScopeNotTheJobs(t *testing.T) {
 		}
 	}
 	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at)
-	      VALUES ('s-fin','finance','amadeus','2026-01-01T00:00:00Z')`)
+	      VALUES ('s-fin','finance','cronomicon','2026-01-01T00:00:00Z')`)
 	// The template job (§2.5): no scope of its own.
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('restart-service','amadeus','bash',NULL,1)`)
+	      VALUES ('restart-service','cronomicon','bash',NULL,1)`)
 	killPath := "/api/v1/jobs/" + jobRowIDStr(t, pool, "restart-service") + "/kill"
 
 	// A run bound to FINANCE. The prod operator holds killJobs — but not there.
@@ -102,7 +102,7 @@ func TestKillOfAnUnboundRunIsUnrestrictedOnly(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('nightly-backup','amadeus','bash',NULL,1)`)
+	      VALUES ('nightly-backup','cronomicon','bash',NULL,1)`)
 	killPath := "/api/v1/jobs/" + jobRowIDStr(t, pool, "nightly-backup") + "/kill"
 	seedRunFor(t, exec, "r-unbound", "nightly-backup", "")
 
@@ -118,7 +118,7 @@ func TestKillOfAnUnboundRunIsUnrestrictedOnly(t *testing.T) {
 		}
 	}
 	exec2(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	       VALUES ('nightly-backup','amadeus','bash',NULL,1)`)
+	       VALUES ('nightly-backup','cronomicon','bash',NULL,1)`)
 	seedRunFor(t, exec2, "r-unbound", "nightly-backup", "")
 	killPath2 := "/api/v1/jobs/" + jobRowIDStr(t, pool2, "nightly-backup") + "/kill"
 	if rec := reqAs(t, h2, http.MethodPost, killPath2, "sec-admins", ""); rec.Code == http.StatusForbidden {
@@ -138,7 +138,7 @@ func TestKillRequiresTheVerbNotJustTheScope(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('j-prod','amadeus','bash','prod',1)`)
+	      VALUES ('j-prod','cronomicon','bash','prod',1)`)
 	seedRunFor(t, exec, "r1", "j-prod", "prod")
 	killPath := "/api/v1/jobs/" + jobRowIDStr(t, pool, "j-prod") + "/kill"
 
@@ -165,7 +165,7 @@ func TestPauseResumeRequireKillJobsForAnInScopeViewer(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled)
-	      VALUES ('j-prod','amadeus','bash','prod',1)`)
+	      VALUES ('j-prod','cronomicon','bash','prod',1)`)
 	base := "/api/v1/jobs/" + jobRowIDStr(t, pool, "j-prod")
 
 	for _, verb := range []string{"/pause", "/resume"} {

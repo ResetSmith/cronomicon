@@ -19,7 +19,7 @@ something upstream/adjacent fails:
 ## Rollback plan
 
 1. **App rollback:** pin the previous image tag in `docker-compose.yml`
-   (`amadeus` service) and `docker compose up -d amadeus`. The binary is
+   (`cronomicon` service) and `docker compose up -d cronomicon`. The binary is
    forward-only on schema (see below), so only roll back to a tag whose schema
    version ≤ the current DB version, unless you also restore a snapshot.
 2. **Data rollback:** restore the last good snapshot per `backup-restore.md`
@@ -46,9 +46,9 @@ Run periodically, not just at go-live:
 
 If all admin mappings are lost (e.g. AD group renamed) and no one can administer:
 1. Set `CRONOMICON_BOOTSTRAP_ADMIN_GROUP=<a group you control>` in `amadeus.env`.
-2. `docker compose up -d amadeus`. A loud warning logs while it's active.
+2. `docker compose up -d cronomicon`. A loud warning logs while it's active.
 3. Log in (you're now admin), fix `ad_group_mappings` in Settings.
-4. **Remove the var** and `docker compose up -d amadeus` again. Confirm the
+4. **Remove the var** and `docker compose up -d cronomicon` again. Confirm the
    warning stops logging.
 
 ## Shutdown drain

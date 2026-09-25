@@ -42,7 +42,7 @@ export const emptyReaction = (n: number): ReactionDraft => ({
   name: `reaction-${n}`,
   onKind: "job",
   onName: "",
-  onSource: "amadeus",
+  onSource: "cronomicon",
   onOutcome: "success",
   delaySeconds: 0,
   minIntervalSeconds: 0,
@@ -111,7 +111,7 @@ export function reactionsError(
     if (
       r.onKind === owner.kind &&
       r.onName === owner.name &&
-      (r.onSource ?? "git") === (owner.source ?? "amadeus")
+      (r.onSource ?? "git") === (owner.source ?? "cronomicon")
     ) {
       return `${n}: a definition cannot react to itself`;
     }
@@ -257,7 +257,7 @@ export function ReactionsEditor({
                 value={targetKey(r)}
                 onChange={(e) => {
                   const [kind, source, ...rest] = e.target.value.split(":");
-                  set(i, { onKind: kind as "job" | "workflow", onSource: source as "git" | "amadeus", onName: rest.join(":") });
+                  set(i, { onKind: kind as "job" | "workflow", onSource: source as "git" | "cronomicon", onName: rest.join(":") });
                 }}
               >
                 <option value={targetKey(r)}>{r.onName ? `${r.onKind} · ${r.onName}` : "Choose…"}</option>

@@ -11,7 +11,7 @@
 --
 -- Owner is the (kind, source, name) triple mirroring definition_schedules'
 -- owner_* model: jobs are dual-source ((source,name) PK) so owner_source
--- disambiguates git vs amadeus; scripts are a single-namespace catalog (PK name),
+-- disambiguates git vs cronomicon; scripts are a single-namespace catalog (PK name),
 -- stored with owner_source=''. Bindings are full-replaced per owner (the
 -- tags/schedules authoring pattern) — the API DELETEs all rows for an owner then
 -- INSERTs the new set in one transaction.

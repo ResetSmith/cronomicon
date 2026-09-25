@@ -23,8 +23,8 @@ const SCRIPT_BINDINGS: Record<string, { kind: string; name: string; reference?: 
 
 const JOBS = {
   items: [
-    { id: 1, name: "job-with-refs", type: "bash", scope: "Prod", source: "amadeus", status: "success" },
-    { id: 2, name: "job-no-refs", type: "bash", scope: "Prod", source: "amadeus", status: "success" },
+    { id: 1, name: "job-with-refs", type: "bash", scope: "Prod", source: "cronomicon", status: "success" },
+    { id: 2, name: "job-no-refs", type: "bash", scope: "Prod", source: "cronomicon", status: "success" },
     { id: 3, name: "job-script-refs", type: "bash", scope: "Prod", source: "git", status: "success" },
   ],
   totalItems: 3,
@@ -131,7 +131,7 @@ describe("Jobs — effective references (JP-4b)", () => {
     expect(q.getByText("from script")).toBeTruthy();
   });
 
-  it("offers Edit in Composer only for an amadeus row the caller may compose", async () => {
+  it("offers Edit in Composer only for an cronomicon row the caller may compose", async () => {
     const q = await renderJobs("job-with-refs");
     expandRow(q, "job-with-refs");
     await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASSWORD")).toBeTruthy());

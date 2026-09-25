@@ -726,7 +726,7 @@ func TestFirstClassScheduleBindingBlocksDeleteAndGlobal(t *testing.T) {
 	}
 	if _, err := pool.ExecContext(ctx, `
 		INSERT INTO schedules(name, source, cron, content_hash, only_calendars, created_at)
-		VALUES('fiscal-only','amadeus','0 0 2 * * *','sha256:x','["fiscal-close"]','2026-01-01T00:00:00Z')`); err != nil {
+		VALUES('fiscal-only','cronomicon','0 0 2 * * *','sha256:x','["fiscal-close"]','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("seed schedule: %v", err)
 	}
 

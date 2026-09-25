@@ -20,7 +20,7 @@ import { MemoryRouter } from "react-router-dom";
 const deletes: { path: string; jobId: unknown; query: unknown }[] = [];
 
 const JOBS = {
-  items: [{ id: 7, name: "upstream-job", type: "bash", scope: "Prod", source: "amadeus", status: "idle", schedule: null }],
+  items: [{ id: 7, name: "upstream-job", type: "bash", scope: "Prod", source: "cronomicon", status: "idle", schedule: null }],
   totalItems: 1,
   totalPages: 1,
   page: 1,
@@ -133,7 +133,7 @@ describe("Jobs — deleting a job reactions watch (RX-24)", () => {
 
   it("does not offer a force for the git-source 409, which force cannot clear", async () => {
     deleteImpl = () => ({
-      error: { code: "conflict", message: "only amadeus-source jobs are deletable in-app" },
+      error: { code: "conflict", message: "only cronomicon-source jobs are deletable in-app" },
       response: { ok: false, status: 409 },
     });
 
@@ -141,7 +141,7 @@ describe("Jobs — deleting a job reactions watch (RX-24)", () => {
     await openDeleteDialog(q);
     fireEvent.click(q.getByRole("button", { name: "Delete Job" }));
 
-    await waitFor(() => expect(q.getByText(/Only amadeus-source jobs can be deleted in-app/)).toBeTruthy());
+    await waitFor(() => expect(q.getByText(/Only cronomicon-source jobs can be deleted in-app/)).toBeTruthy());
     expect(q.queryByRole("button", { name: "Delete anyway" })).toBeNull();
     expect(deletes).toHaveLength(1); // no retry against a refusal that cannot lift
   });

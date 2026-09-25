@@ -19,7 +19,7 @@ func writeFixture(t *testing.T, path, content string) {
 	}
 }
 
-// TestValidatePaths is the CLI-level e2e for `amadeus validate` (V1.1-1): it
+// TestValidatePaths is the CLI-level e2e for `cronomicon validate` (V1.1-1): it
 // exercises the runValidate core (validatePaths) the way CI does, asserting the
 // exit code AND the line-numbered stderr format the .gitlab-ci.yml template
 // relies on. Library-level parsing is covered by internal/gitlab; this guards

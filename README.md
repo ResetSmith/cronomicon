@@ -117,7 +117,7 @@ Six producers can start a run, and each one records what it was:
 - **Job-level env (v0.29.0)**: a Job declares an env map merged into **every** run, with precedence job-env → schedule env → per-run override
 - **Operator-owned tags (v0.36.1–v0.36.5)**: User-authored tags on Scripts, Jobs, Workflows, and Schedules are SQLite-only, preserved during Git resyncs, and inline-editable by any logged-in user
 - **Operator annotations (v1.2.4–v1.2.7)**: A job or workflow carries free-text **notes**, a **critical** flag, and a **contact** — who to call when it breaks. Like tags they live only in Cronomicon, survive Git syncs, and never overwrite the Git-owned `description`. **Critical** is a sortable column of its own (v1.4.0), and a failure notification names the contact and says whether the definition is critical
-- **Revision history & recycle bin (v0.57.27)**: A Git-source definition has history, blame and undelete through Git; amadeus-source Jobs, Workflows and Schedules now have the same — every edit records a revision you can view and **restore**, and a delete is recoverable from a recycle bin instead of gone
+- **Revision history & recycle bin (v0.57.27)**: A Git-source definition has history, blame and undelete through Git; cronomicon-source Jobs, Workflows and Schedules now have the same — every edit records a revision you can view and **restore**, and a delete is recoverable from a recycle bin instead of gone
 
 #### Catalog & script intelligence
 
@@ -131,10 +131,10 @@ Six producers can start a run, and each one records what it was:
 - **Reference-based secret injection (v0.49.x)**: A job binds **reference names** — an env var, a stored secret, or a Vault path — instead of embedding plaintext. At dispatch time the resolver injects only the declared references into the run's environment (on both the SSH and runner paths), redacts them from logs, and records a one-time audit entry of exactly what was injected
 - **HashiCorp Vault as a secret source (v0.49.x)**: Env vars and SSH credentials can resolve from Vault instead of the local encrypted store, configured under **Settings → Integrations → Vault** — authenticating via **AppRole or a static token** (token auth wired end-to-end in v0.52.29; switching methods requires re-entering the credential)
 - **Security remediation (v0.51.x)**: Scope-scoped reads (out-of-scope rows 404/drop from listings), 8-hour sessions with **revocation on RBAC edits**, bastion host-key pinning, an SSRF egress guard on credentialed outbound calls, git-token argv-leak fix, and secret zeroization
-- **KEK rotation you can finish (v1.5.30)**: `amadeus rewrap-secrets` re-encrypts all three encrypted stores (secrets, SSH credentials, encrypted settings) under the current key; `--dry-run` counts rows per key version without decrypting. A world-readable `CRONOMICON_KEK_FILE` **refuses to boot**
+- **KEK rotation you can finish (v1.5.30)**: `cronomicon rewrap-secrets` re-encrypts all three encrypted stores (secrets, SSH credentials, encrypted settings) under the current key; `--dry-run` counts rows per key version without decrypting. A world-readable `CRONOMICON_KEK_FILE` **refuses to boot**
 - **The audit stream is masked (v1.5.34)**: One process-wide redaction dictionary — stored secrets, SSH credentials, encrypted settings, multi-line variables — is applied to every compliance audit row before it is written, and the same dictionary feeds the per-run log redactor so the two cannot drift
 - **Env-var namespace references (v0.48.x)**: One env var or secret can derive its value from another through reserved reference prefixes, resolved when a run's environment is built
-- **Departmental access control (v0.56.x, superseding the A5 matrix of v0.50.x)**: Access is decided by **Access Grants** — each grant pairs an AD group with a role and the **agency** (department) it applies to, or "All scopes" for unrestricted reach — so "Operator, but only for Tax" is one row. Roles are **editable data** (seven permissions; custom roles are rows, not code), a permission and a scope must come from the **same grant** (holding Operator in Finance grants nothing in Tax), and secrets, variables, SSH keys and runners are **departmentally owned**: writes and secret reveal require the verb on the owning agency, and entities in no agency are shared infrastructure only unrestricted operators may change. **No grants means no access**; recovery from a lockout is the offline `amadeus grant-admin` subcommand. The legacy two-axis tables were dropped in v0.57.8 (schema 850)
+- **Departmental access control (v0.56.x, superseding the A5 matrix of v0.50.x)**: Access is decided by **Access Grants** — each grant pairs an AD group with a role and the **agency** (department) it applies to, or "All scopes" for unrestricted reach — so "Operator, but only for Tax" is one row. Roles are **editable data** (seven permissions; custom roles are rows, not code), a permission and a scope must come from the **same grant** (holding Operator in Finance grants nothing in Tax), and secrets, variables, SSH keys and runners are **departmentally owned**: writes and secret reveal require the verb on the owning agency, and entities in no agency are shared infrastructure only unrestricted operators may change. **No grants means no access**; recovery from a lockout is the offline `cronomicon grant-admin` subcommand. The legacy two-axis tables were dropped in v0.57.8 (schema 850)
 - **Agency-first ownership (v1.0.13–v1.0.15)**: Every job now **states** its agency, and "All agencies (global)" is a deliberate, visible choice rather than what an unfilled field silently meant. Authoring became a grantable departmental permission (above), and a department can **administer its own access** — deciding who does its work — without a global admin
 - **Two departments, one name (v1.1.0–v1.2.3)**: Jobs, workflows and schedules carry a **permanent id** independent of their name, so name uniqueness relaxes to per-agency: Finance and Tax may each own a `monthly-close`. Everything that used to identify a definition by name — run history, schedule entries, pauses, parked runs, reactions, credential bindings, concurrency gates, log-folder codes and alert targets — follows the id instead, and any screen where a name is ambiguous says which department it means. Runner protocol reached **v11**
 
@@ -214,11 +214,11 @@ The sidebar groups the primitives by what you're doing:
 |---|---|---|
 | **Scripts** | `/scripts` | Browse the Git script catalog + "used by" index (read-only) |
 | **Schedules** | `/schedules` | Browse first-class reusable cron schedules + "used by" index, plus the **Calendars**, **Reactions**, and **Upcoming** tabs |
-| **Schedule Builder** | `/schedule-builder` | Author an in-app **amadeus-source Schedule** with a visual cron helper and env variables |
-| **Compose** | `/compose` | Build an **amadeus-source Job** from a Script + Schedule(s) + Scope + env |
-| **Workflow Editor** | `/workflow-editor` | Assemble an **amadeus-source Workflow** on a graph canvas |
+| **Schedule Builder** | `/schedule-builder` | Author an in-app **cronomicon-source Schedule** with a visual cron helper and env variables |
+| **Compose** | `/compose` | Build an **cronomicon-source Job** from a Script + Schedule(s) + Scope + env |
+| **Workflow Editor** | `/workflow-editor` | Assemble an **cronomicon-source Workflow** on a graph canvas |
 | **Jobs** / **Workflows** | `/jobs` · `/workflows` | List, run, pause/resume, and trigger (both Git- and Cronomicon-source), with the **Run dialog**, operator annotations, revision history and the recycle bin |
-| **Scopes** | `/scopes` | Manage execution scopes (hosts/inventory, run-type capabilities, git-vs-amadeus source) + the **Agencies** catalog (network-isolation zones) |
+| **Scopes** | `/scopes` | Manage execution scopes (hosts/inventory, run-type capabilities, git-vs-cronomicon source) + the **Agencies** catalog (network-isolation zones) |
 | **Publish to GitLab** | `Jobs → Publish` | The publish builder that commits a job's schedule back to GitLab (the old standalone `/schedule` hub is dissolved; the route redirects to `/schedules`) |
 | Dashboard · Activity · History · Env Vars · Runners · Settings | — | The **Score** timeline + Current status, audit, run history, variables/secrets/SSH keys, runner fleet, config (incl. **Service Accounts** and **Users & Access**) |
 
@@ -259,7 +259,7 @@ each step.
 
 > [!NOTE]
 > **What you need:** a clone of the Cronomicon **config repo** (the GitLab repo Cronomicon syncs — the one
-> with the `scripts/`, `jobs/`, `workflows/`, `schedules/`, `inventory/` folders); the `amadeus`
+> with the `scripts/`, `jobs/`, `workflows/`, `schedules/`, `inventory/` folders); the `cronomicon`
 > binary on your `PATH` for local validation; and a login. The **in-app** shortcuts additionally
 > need the **compose** permission (grantable per department since v1.0.14, or held globally by an admin).
 
@@ -307,12 +307,12 @@ See [Scripts (`scripts/`)](#1-scripts-scripts) below for inline-body and file-re
 Catch mistakes on your laptop instead of at sync time:
 
 ```bash
-amadeus validate /path/to/config-repo
+cronomicon validate /path/to/config-repo
 ```
 
 This parses every YAML file, confirms every cross-reference resolves (a `script_ref` or `scheduleRefs`
 that points at nothing is a **hard error**), and **warns** on orphan scripts — a script registered but
-not yet used by any Job, which is fine while you're still wiring things up. Wire `amadeus validate`
+not yet used by any Job, which is fine while you're still wiring things up. Wire `cronomicon validate`
 into your CI so a bad definition can never merge.
 
 ### Step 3 — Commit, push, and let Cronomicon sync
@@ -351,12 +351,12 @@ spec:
   retries: 2
 ```
 
-Run `amadeus validate` again, push, and sync. The Job appears in the **Jobs** view.
+Run `cronomicon validate` again, push, and sync. The Job appears in the **Jobs** view.
 
 **In-app shortcut (needs `compose`)** — click **Jobs → + Create** to open **Compose**: pick the Script from a
 dropdown, choose a Scope, add Schedule(s) (either inline or by referencing a first-class schedule
 authored in Git or in-app via the **Schedule Builder**), set options, and save. It goes live immediately with no Git
-round-trip and is badged *amadeus*-source. (Compose **reuses** a Git Script — it never authors the
+round-trip and is badged *cronomicon*-source. (Compose **reuses** a Git Script — it never authors the
 script itself; scripts are always Git.)
 
 > [!NOTE]
@@ -401,7 +401,7 @@ spec:
 ```
 
 **In-app shortcut (needs `compose`)** — **Workflows → + Create** opens the **Workflow Editor**: add jobs as
-steps (the picker badges each job *git* or *amadeus*), optionally attach schedules, and save.
+steps (the picker badges each job *git* or *cronomicon*), optionally attach schedules, and save.
 The editor supports building complex graph structures, including parallel groups, branching logic based on step statuses or outputs, and per-step configurations like retries, backoff, and continue-on-error.
 
 **Passing data between steps (optional).** A job prints a marker on stdout, and a later step consumes
@@ -441,7 +441,7 @@ While a workflow run is executing, you can watch its status update live, inspect
 |---|---|---|
 | **Good for** | reviewed, versioned, auditable definitions — the canonical path | quick changes with no Git round-trip |
 | **Covers** | Scripts, Jobs, Workflows, Schedules, Scopes | Jobs, Workflows, Schedules, Scopes — **Scripts are always Git** |
-| **How you change it** | edit YAML → `amadeus validate` → MR → sync | fill in a form → save (live immediately) |
+| **How you change it** | edit YAML → `cronomicon validate` → MR → sync | fill in a form → save (live immediately) |
 | **Who** | anyone who can push to the repo | anyone holding **`compose`** for that department (admins everywhere) |
 | **Editing the other source** | — | a Git-defined row is **read-only** in the app (the API returns `409`); edit it in Git |
 
@@ -705,7 +705,7 @@ Before committing and pushing changes to Git, you should validate your repositor
 Run validation:
 
 ```bash
-amadeus validate /path/to/your/repo
+cronomicon validate /path/to/your/repo
 ```
 
 This checks:
@@ -717,28 +717,28 @@ This checks:
 ## Authoring path 2 — In-app (Compose)
 
 Operators holding the **`compose`** permission for the target department can create definitions directly in the
-UI — no Git round-trip. These land as **amadeus-source** rows that run through the exact same
+UI — no Git round-trip. These land as **cronomicon-source** rows that run through the exact same
 scheduler/executor seam as Git-defined ones; only the origin differs.
 
-- **Compose** (`/compose` / `JobComposer.tsx`) → builds an amadeus-source **Job** by binding a Git **Script**
+- **Compose** (`/compose` / `JobComposer.tsx`) → builds an cronomicon-source **Job** by binding a Git **Script**
   (`scriptRef`) to a **Scope**, one or more **Schedules** (refs or inline), and execution options.
   The referenced script's run-type/body/executor are denormalized onto the job at write time.
-- **Workflow Editor** (`/workflow-editor` / `WorkflowEditor.tsx`) → assembles an amadeus-source **Workflow** on an
+- **Workflow Editor** (`/workflow-editor` / `WorkflowEditor.tsx`) → assembles an cronomicon-source **Workflow** on an
   interactive **graph canvas** (React Flow): ordered job steps, parallel groups, and **nested** branch arms, with
   A12 inter-job data passing drawn as edges (steps may target Git- or Cronomicon-source jobs via the A11 source
   precedence). A **Simple ｜ Advanced** toggle keeps the linear list editor for flat chains; hand-arranged node
   positions persist per workflow.
-- **Schedule Builder** (`/schedule-builder` / `ScheduleBuilder.tsx`) → authors an amadeus-source **Schedule**
-  (reusable named cron + optional env variables) directly in the UI. When an amadeus-source schedule is edited, the changes automatically propagate to all referencing Jobs/Workflows, reloading the scheduler immediately.
-- **Schedules** (`/schedules` / `Schedules.tsx`) → browse the reusable schedule catalog (Git + amadeus) and the
-  jobs/workflows that reference each. Admins can click **+ New schedule** to launch the Schedule Builder, or edit/delete amadeus-source rows directly.
+- **Schedule Builder** (`/schedule-builder` / `ScheduleBuilder.tsx`) → authors an cronomicon-source **Schedule**
+  (reusable named cron + optional env variables) directly in the UI. When an cronomicon-source schedule is edited, the changes automatically propagate to all referencing Jobs/Workflows, reloading the scheduler immediately.
+- **Schedules** (`/schedules` / `Schedules.tsx`) → browse the reusable schedule catalog (Git + cronomicon) and the
+  jobs/workflows that reference each. Admins can click **+ New schedule** to launch the Schedule Builder, or edit/delete cronomicon-source rows directly.
 
 Mechanics:
 
 - Backed by `POST/PUT/DELETE /api/v1/jobs`, `/api/v1/workflows`, and `/api/v1/schedule-defs` (session + CSRF + admin role).
   Mutating a **Git-source** definition through these returns **409** — Git rows are read-only in-app.
 - Writes validate references (unknown `scriptRef`/step job → `422`; deleting a schedule referenced by jobs/workflows returns `409` unless `?force=true` is supplied to cascade and reload), de-duplicate names within the
-  amadeus namespace (`409`), write a Change Log + activity entry, and immediately reload the
+  cronomicon namespace (`409`), write a Change Log + activity entry, and immediately reload the
   scheduler so a composed schedule fires without waiting for the next sync.
 - The SPA shows/hides the composer via `GET /api/v1/capabilities` (`compose` flag).
 
@@ -798,13 +798,13 @@ audit identity and needs no CSRF header.
 | `POST /jobs/{jobId}/run` | Trigger a manual run | session + CSRF |
 | `POST /jobs/{jobId}/pause` · `/resume` · `/kill` | Pause / resume schedule, kill a run | session + CSRF |
 | `PUT /job-tags/{jobId}` | Full-replace a job's tags | session + CSRF |
-| 🆕 `POST /jobs` · `PUT /jobs/{jobId}` · `DELETE /jobs/{jobId}` | Compose / edit / delete an **amadeus-source** job | `compose`, checked against the job's scope; `409` on git rows |
+| 🆕 `POST /jobs` · `PUT /jobs/{jobId}` · `DELETE /jobs/{jobId}` | Compose / edit / delete an **cronomicon-source** job | `compose`, checked against the job's scope; `409` on git rows |
 | `GET /workflows` · `POST /workflows/{workflowId}/trigger` | List / trigger workflows | session (+CSRF on trigger) |
 | `PUT /workflow-tags/{workflowId}` | Full-replace a workflow's tags | session + CSRF |
 | `POST /workflows/runs/{traceId}/cancel` | Cancel a running workflow | session + CSRF |
 | `POST /workflows/validate` | Dry-run validation of workflow steps | session + CSRF |
 | `PATCH /workflows/{workflowId}` | Pause / resume a workflow | session + CSRF + scope guard (v0.52.37) |
-| 🆕 `POST /workflows` · `PUT /workflows/{workflowId}` · `DELETE /workflows/{workflowId}` | Compose / edit / delete an **amadeus-source** workflow | `compose` on every job in the graph; `409` on git rows |
+| 🆕 `POST /workflows` · `PUT /workflows/{workflowId}` · `DELETE /workflows/{workflowId}` | Compose / edit / delete an **cronomicon-source** workflow | `compose` on every job in the graph; `409` on git rows |
 | `GET /scripts` · `GET /scripts/{name}` | Read-only Git script catalog + `usedBy` | session |
 | `PUT /schedule-tags/{name}` | Full-replace a schedule's tags | session + CSRF; has `?source` parameter |
 | 🆕 `GET /schedule-defs` · `GET /schedule-defs/{name}` | First-class schedule catalog + `usedBy` | session |
@@ -813,7 +813,7 @@ audit identity and needs no CSRF header.
 | `PUT /job-annotation/{jobId}` · `PUT /workflow-annotation/{workflowId}` | Set notes / criticality / contact | session + CSRF (any authenticated user) |
 | `GET /reactions` · `PUT/DELETE /reactions/{ownerKind}/{ownerName}[/{name}]` | Read / author what reacts to what | reads session; writes admin (shared surface) |
 | `GET /calendars` · `POST /calendars` · `PUT/DELETE /calendars/{name}` · `PUT …/days` | Working calendars and the dates they name | reads session; writes admin (shared surface) |
-| `GET /definitions/{kind}/{name}/revisions` · `POST …/{no}/restore` | Revision history for amadeus-source definitions | admin |
+| `GET /definitions/{kind}/{name}/revisions` · `POST …/{no}/restore` | Revision history for cronomicon-source definitions | admin |
 | `GET /recycle-bin` · `POST /recycle-bin/{kind}/{name}/restore` · `DELETE /recycle-bin/{kind}/{name}` | Restore or purge a deleted definition | admin |
 | `GET/POST /service-accounts` · `DELETE /service-accounts/{id}` | List / mint / revoke machine principals; the token plaintext is returned **once**, on create | `manageRoles` |
 | `POST /trigger/jobs/{name}` · `POST /trigger/workflows/{name}` | Start a run as a machine principal | service-account token (Bearer), no session |
@@ -901,7 +901,7 @@ docker run -d \
   -v /var/lib/amadeus:/var/lib/amadeus \
   -v /run/secrets:/run/secrets:ro \
   -e CRONOMICON_OIDC_ISSUER=https://auth.example.com \
-  -e CRONOMICON_OIDC_CLIENT_ID=amadeus \
+  -e CRONOMICON_OIDC_CLIENT_ID=cronomicon \
   -e CRONOMICON_OIDC_CLIENT_SECRET=... \
   -e CRONOMICON_OIDC_REDIRECT_URL=https://amadeus.example.com/api/v1/auth/callback \
   -e CRONOMICON_KEK_FILE=/run/secrets/amadeus-kek \

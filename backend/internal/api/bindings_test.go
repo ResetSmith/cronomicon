@@ -147,14 +147,14 @@ func TestReferenceBindingsAPI(t *testing.T) {
 		t.Fatalf("scan bareReferences wrong: %+v", scan.BareReferences)
 	}
 
-	// ── Job bindings: seed an amadeus job, replace + read back by rowid ──────────
+	// ── Job bindings: seed an cronomicon job, replace + read back by rowid ──────────
 	if _, err := pool.ExecContext(ctx,
 		`INSERT INTO jobs(name, source, run_type, command, content_hash, synced_at)
-		 VALUES('j1','amadeus','bash','echo hi','sha256:y',?)`, now); err != nil {
+		 VALUES('j1','cronomicon','bash','echo hi','sha256:y',?)`, now); err != nil {
 		t.Fatalf("seed job: %v", err)
 	}
 	var jobID int64
-	if err := pool.QueryRow(`SELECT rowid FROM jobs WHERE name='j1' AND source='amadeus'`).Scan(&jobID); err != nil {
+	if err := pool.QueryRow(`SELECT rowid FROM jobs WHERE name='j1' AND source='cronomicon'`).Scan(&jobID); err != nil {
 		t.Fatalf("job rowid: %v", err)
 	}
 	jobPath := "/api/v1/job-reference-bindings/" + strconv.FormatInt(jobID, 10)

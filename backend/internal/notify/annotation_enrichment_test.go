@@ -205,7 +205,7 @@ func TestMissedRunAlertIsEnrichedThroughTheNameArm(t *testing.T) {
 // department's contact on the other's failure.
 func TestAmbiguousNameIsNotEnriched(t *testing.T) {
 	e := newAnnEnv(t)
-	e.exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','amadeus','uid-fin','bash','t')`)
+	e.exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','cronomicon','uid-fin','bash','t')`)
 	e.exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','git','uid-plat','bash','t')`)
 	annotate(t, e, "job", "uid-fin", "finance-dba@corp.example", true)
 

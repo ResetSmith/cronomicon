@@ -28,11 +28,11 @@ func TestSplit(t *testing.T) {
 	}
 }
 
-func TestHasAmadeusPrefix(t *testing.T) {
-	if !HasAmadeusPrefix("CRONOMICON_ANYTHING") {
+func TestHasCronomiconPrefix(t *testing.T) {
+	if !HasCronomiconPrefix("CRONOMICON_ANYTHING") {
 		t.Error("CRONOMICON_ANYTHING should be in the namespace")
 	}
-	if HasAmadeusPrefix("PATH") {
+	if HasCronomiconPrefix("PATH") {
 		t.Error("PATH is not in the namespace")
 	}
 }

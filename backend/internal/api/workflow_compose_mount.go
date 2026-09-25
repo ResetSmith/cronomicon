@@ -21,16 +21,16 @@ import (
 )
 
 // mountWorkflowCompose owns the in-app Workflow composition write surface (A11 /
-// v20 Phase 4). An amadeus-source Workflow is a DB-authored step graph over jobs;
+// v20 Phase 4). An cronomicon-source Workflow is a DB-authored step graph over jobs;
 // git-source workflows are read-only here (409). Coexists with the existing
 // PATCH /workflows/{id} (disabled toggle) and POST /workflows/{id}/trigger.
 //
 // Routes (behind requireCompose):
 //
-//	POST   /api/v1/workflows               create an amadeus-source workflow
+//	POST   /api/v1/workflows               create an cronomicon-source workflow
 //	POST   /api/v1/workflows/validate      dry-run validate a step graph (WB-A1; no write)
-//	PUT    /api/v1/workflows/{workflowId}   edit an amadeus-source workflow (409 on git)
-//	DELETE /api/v1/workflows/{workflowId}   delete an amadeus-source workflow (409 on git)
+//	PUT    /api/v1/workflows/{workflowId}   edit an cronomicon-source workflow (409 on git)
+//	DELETE /api/v1/workflows/{workflowId}   delete an cronomicon-source workflow (409 on git)
 func (s *Server) mountWorkflowCompose(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/workflows", s.requireCompose(http.HandlerFunc(s.createWorkflow)))
 	mux.Handle("POST /api/v1/workflows/validate", s.requireCompose(http.HandlerFunc(s.validateWorkflow)))
@@ -107,7 +107,7 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 	steps, perr := workflow.ParseSteps(string(in.Steps))
 	if perr == nil {
 		scopes := s.collectStepScopes(r, steps)
-		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "amadeus", in.Name, scopes, "")
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, scopes, "")
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -128,8 +128,8 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
-	if existing.Source != "amadeus" {
-		httpx.Fail(w, http.StatusConflict, "conflict", "only amadeus-source workflows are editable in-app")
+	if existing.Source != "cronomicon" {
+		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source workflows are editable in-app")
 		return
 	}
 	if existing.DeletedAt != nil {
@@ -159,8 +159,8 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
 		return
 	}
-	if existing.Source != "amadeus" {
-		httpx.Fail(w, http.StatusConflict, "conflict", "only amadeus-source workflows are deletable in-app")
+	if existing.Source != "cronomicon" {
+		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source workflows are deletable in-app")
 		return
 	}
 	// AF-2 — deleting is authoring: same per-job authority as editing the graph.
@@ -189,7 +189,7 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.ExecContext(r.Context(),
 		`UPDATE workflows SET deleted_at=?, deleted_by=?
-		  WHERE (uid = ? OR (? = '' AND source='amadeus' AND name = ?)) AND deleted_at IS NULL`,
+		  WHERE (uid = ? OR (? = '' AND source='cronomicon' AND name = ?)) AND deleted_at IS NULL`,
 		now, id.Email, existing.UID, existing.UID, existing.Name)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -199,7 +199,7 @@ func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusConflict, "conflict", "this workflow is already in the recycle bin")
 		return
 	}
-	if err := snapshotRevision(r.Context(), tx, revKindWorkflow, "amadeus", existing.Name, existing.UID, id.Email, revActionDeleted,
+	if err := snapshotRevision(r.Context(), tx, revKindWorkflow, "cronomicon", existing.Name, existing.UID, id.Email, revActionDeleted,
 		map[string]any{"deletedAt": now, "deletedBy": id.Email}); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -283,7 +283,7 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, in workflowComposeInput, actor string, isCreate bool, uid string) {
 	// Validate the step graph parses, and that each referenced job resolves to an
 	// existing job (in either source — the A11 precedence picks the effective one
-	// at run time, defaulting to the workflow's own amadeus source).
+	// at run time, defaulting to the workflow's own cronomicon source).
 	steps, err := workflow.ParseSteps(string(in.Steps))
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid steps: "+err.Error())
@@ -350,7 +350,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO workflows(name, source, description, steps, schedule, enabled,
 		                      created_by, created_at, last_modified_by, last_modified_at, layout_json, uid)
-		VALUES(?, 'amadeus', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uid) DO UPDATE SET
 			description=excluded.description, steps=excluded.steps, schedule=excluded.schedule,
 			enabled=excluded.enabled, last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at,
@@ -366,7 +366,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 
 	// LU-6: allocate inside the transaction — see writeComposedJob for why this
 	// must not sit beside the post-commit changelog block.
-	if _, err := entitycode.Allocate(r.Context(), tx, entitycode.KindWorkflow, "amadeus", in.Name, uid); err != nil {
+	if _, err := entitycode.Allocate(r.Context(), tx, entitycode.KindWorkflow, "cronomicon", in.Name, uid); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -385,7 +385,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		if _, err := tx.ExecContext(r.Context(), `
 			INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, env, position, source_ref, start_at, end_at, interval, skip_calendars, only_calendars,
 				owner_uid, schedule_uid)
-			VALUES('amadeus','workflow',?,?,?,?,?,?,?,?,?,?,?,
+			VALUES('cronomicon','workflow',?,?,?,?,?,?,?,?,?,?,?,
 				?,
 				(SELECT s.uid FROM schedules s WHERE s.name = ?
 				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,
@@ -402,7 +402,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	if isCreate {
 		revAction = revActionCreated
 	}
-	if err := snapshotRevision(r.Context(), tx, revKindWorkflow, "amadeus", in.Name, uid, actor, revAction, in); err != nil {
+	if err := snapshotRevision(r.Context(), tx, revKindWorkflow, "cronomicon", in.Name, uid, actor, revAction, in); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -423,7 +423,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	s.forceScheduleReload(r.Context())
 
 	var rowid int64
-	_ = s.db.QueryRowContext(r.Context(), `SELECT rowid FROM workflows WHERE source='amadeus' AND name=?`, in.Name).Scan(&rowid)
+	_ = s.db.QueryRowContext(r.Context(), `SELECT rowid FROM workflows WHERE source='cronomicon' AND name=?`, in.Name).Scan(&rowid)
 	wr := s.fetchWorkflowByID(r, strconv.FormatInt(rowid, 10))
 	status := http.StatusOK
 	if isCreate {
@@ -432,7 +432,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	httpx.JSON(w, status, wr)
 }
 
-// validateComposedWorkflowSteps runs the full validation for an amadeus workflow's
+// validateComposedWorkflowSteps runs the full validation for an cronomicon workflow's
 // step graph and returns the combined error list (empty ⇒ valid): WB-S5 structural
 // /enum shape (workflow.ValidateSteps), the same-path duplicate-name guard
 // (PP-H8 a), then job-existence for every referenced job. Shared by the write path
@@ -670,8 +670,8 @@ func copySeen(m map[string]bool) map[string]bool {
 // — the two are opposite answers for authorization (the second is the All pool,
 // which is admin-only) and a bare sql.NullString conflates them.
 //
-// The composed workflow's source is 'amadeus': these endpoints only write
-// amadeus-source workflows, so that is the wfSource the engine will resolve
+// The composed workflow's source is 'cronomicon': these endpoints only write
+// cronomicon-source workflows, so that is the wfSource the engine will resolve
 // with. Sharing workflow.StepSourceOrder is the point — the previous
 // implementation asked `ORDER BY source LIMIT 1`, which authorized against
 // whichever source sorted first rather than the one that will actually run.
@@ -685,7 +685,7 @@ func (s *Server) stepJobScope(r *http.Request, ref workflow.StepRef) (sql.NullSt
 			`SELECT scope FROM jobs WHERE uid = ? AND deleted_at IS NULL`, ref.UID).Scan(&scope)
 		return scope, err == nil
 	}
-	for _, src := range workflow.StepSourceOrder(ref.Source, "amadeus") {
+	for _, src := range workflow.StepSourceOrder(ref.Source, "cronomicon") {
 		var scope sql.NullString
 		err := s.db.QueryRowContext(r.Context(),
 			`SELECT scope FROM jobs WHERE name = ? AND source = ? AND deleted_at IS NULL`,

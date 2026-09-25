@@ -78,7 +78,7 @@ func TestEngineInterJobOutputs(t *testing.T) {
 	}
 
 	// childEnvJSON layers job-env (none here) → parent env (empty) → inputs.
-	merged := e.childEnvJSON(ctx, "no-such-wf", "amadeus", "no-such-job", env)
+	merged := e.childEnvJSON(ctx, "no-such-wf", "cronomicon", "no-such-job", env)
 	if !merged.Valid || merged.String == "" {
 		t.Fatalf("childEnvJSON produced no env")
 	}

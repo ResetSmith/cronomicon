@@ -1273,7 +1273,7 @@
             background: var(--textMuted)
         }
 
-        .pill.amad {
+        .pill.crn {
             background: var(--accentBg);
             color: var(--accent)
         }
@@ -1881,7 +1881,7 @@ spec:
   project_root: ansible/deploy-app     # repo-relative directory
   entry: site.yml                      # playbook run from the materialized tree</code></pre></div>
 
-<p>At enqueue the server pins the exact commit SHA; the runner fetches the repo (allowlist-checked), verifies the SHA, materializes the tree, installs <code>requirements.yml</code> per run (already-present pinned collections are not re-downloaded), and runs the entry playbook from it. <code>amadeus validate</code> fails CI on an unpinned collection or a non-SHA git role, and a tree secret-scan catches inline plaintext secrets a <code>vars/*.yml</code> or template could smuggle past the inventory guard. Full operator detail: <a href="administrator-manual.html#runner-ops">Administrator Manual §7.8</a> and the <a href="./runner-install.html">Runner Install Guide</a> guide.</p>
+<p>At enqueue the server pins the exact commit SHA; the runner fetches the repo (allowlist-checked), verifies the SHA, materializes the tree, installs <code>requirements.yml</code> per run (already-present pinned collections are not re-downloaded), and runs the entry playbook from it. <code>cronomicon validate</code> fails CI on an unpinned collection or a non-SHA git role, and a tree secret-scan catches inline plaintext secrets a <code>vars/*.yml</code> or template could smuggle past the inventory guard. Full operator detail: <a href="administrator-manual.html#runner-ops">Administrator Manual §7.8</a> and the <a href="./runner-install.html">Runner Install Guide</a> guide.</p>
 
 <blockquote><p><strong>⚠ Submodules do not compose with Path B.</strong> The sync engine updates git submodules recursively, so a playbooks repo mounted as a submodule under <code>scripts/</code> <em>is</em> discovered — but only its <strong>self-contained</strong> playbooks work: checkout materialization uses <code>git archive</code>, which <strong>omits submodule content</strong>, and a checkout always targets the synced definitions repo. Any playbook that needs roles, includes or vault files must have its project files <strong>committed directly in the definitions repo</strong>. When migrating an existing Ansible repo, converge it into the definitions repo (or repoint the sync at it) rather than mounting it as a submodule.</p></blockquote>
 
@@ -2013,7 +2013,7 @@ The runner scans the inventory for <code>lookup('env',NAME)</code> names, and br
 
 <ul>
 <li><strong>Stay on Path A until roles force Path B.</strong> A self-contained play needs zero runner setup and composes best in-app.</li>
-<li><strong>Pin everything in Path B.</strong> Exact collection versions in <code>requirements.yml</code>, SHA-pinned git roles — the validators enforce it, CI (<code>amadeus validate .</code>) catches it at merge time.</li>
+<li><strong>Pin everything in Path B.</strong> Exact collection versions in <code>requirements.yml</code>, SHA-pinned git roles — the validators enforce it, CI (<code>cronomicon validate .</code>) catches it at merge time.</li>
 <li><strong>Names, never values.</strong> <code>lookup('env','NAME')</code> for keys; <code>spec.become_password_secret</code> for a become password; reference bindings or the sidecar for delivery; nothing secret in inventory, vars files, schedule env, or run overrides.</li>
 <li><strong>Passwordless sudo first.</strong> A <code>NOPASSWD</code> rule scoped to what the play needs beats every password-delivery mechanism here. Use §5's become password when a target's policy forbids that — not as the default.</li>
 <li><strong>Let the scope pick the department's credential.</strong> One playbook asking for one name, with each department owning its own row, beats a naming convention per team (§6). Keep scopes mapped one-to-one onto departments and the ambiguity refusal can never fire.</li>

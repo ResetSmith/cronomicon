@@ -32,7 +32,7 @@ v1.5.41).
 **The `CRONOMICON_RUN_*` fixed set** (injected into every run by the executor; not
 bindable, never from a store row — a run's own metadata, always log-safe):
 `CRONOMICON_RUN_ID` (run/trace id), `CRONOMICON_RUN_JOB` (job name), `CRONOMICON_RUN_JOB_SOURCE`
-(`git`|`amadeus`), `CRONOMICON_RUN_SCOPE` (`""` = global), `CRONOMICON_RUN_TYPE` (run type),
+(`git`|`cronomicon`), `CRONOMICON_RUN_SCOPE` (`""` = global), `CRONOMICON_RUN_TYPE` (run type),
 `CRONOMICON_RUN_TRIGGERED_BY` (actor), `CRONOMICON_RUN_EXECUTOR` (`ssh`|`runner`). The SSH
 executor injects these today (P1.3); the runner executor follows (P1.4).
 
@@ -224,7 +224,7 @@ current key to `CRONOMICON_KEK_1` (or `_1_FILE`), (2) set the new key in
 next time each is saved; new secrets are wrapped with v2 immediately.
 
 Rotation is **lazy** — a value moves only when it is rewritten — so step (4) is
-to finish it with `amadeus rewrap-secrets`, which covers all three encrypted
+to finish it with `cronomicon rewrap-secrets`, which covers all three encrypted
 stores (`secrets`, `ssh_credentials`, and the `EncryptString` settings
 integrations: GitLab token + webhook secret, S3 log-storage key, Vault
 credentials, SMTP password, observability bearer token). Run it **inside the
@@ -232,8 +232,8 @@ deployment** so the container's mounted KEK is used and nobody handles key
 material; it works against the live database and is idempotent.
 
 ```
-docker exec <amadeus> amadeus rewrap-secrets --dry-run   # counts per store and version
-docker exec <amadeus> amadeus rewrap-secrets             # move everything to the active version
+docker exec <cronomicon> cronomicon rewrap-secrets --dry-run   # counts per store and version
+docker exec <cronomicon> cronomicon rewrap-secrets             # move everything to the active version
 ```
 
 Only once `--dry-run` reports rotation complete can the `_1` key be retired. The

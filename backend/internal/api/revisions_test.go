@@ -45,7 +45,7 @@ func rhDo(t *testing.T, client *http.Client, method, url, csrf string, body any)
 	return resp.StatusCode, buf.Bytes()
 }
 
-// createRHJob makes an amadeus job with one schedule entry and returns its rowid.
+// createRHJob makes an cronomicon job with one schedule entry and returns its rowid.
 func createRHJob(t *testing.T, ts *httptest.Server, client *http.Client, csrf, name string) int64 {
 	t.Helper()
 	code, body := rhDo(t, client, http.MethodPost, ts.URL+"/api/v1/jobs", csrf, map[string]any{
@@ -137,7 +137,7 @@ func TestRestoreRevisionRewritesTheDefinition(t *testing.T) {
 
 	// Operator-owned tags are set AFTER the snapshot was taken; a restore must
 	// not revert them (PF-Q8).
-	if _, err := pool.Exec(`UPDATE jobs SET tags='["keep-me"]' WHERE source='amadeus' AND name='billing'`); err != nil {
+	if _, err := pool.Exec(`UPDATE jobs SET tags='["keep-me"]' WHERE source='cronomicon' AND name='billing'`); err != nil {
 		t.Fatalf("seed tags: %v", err)
 	}
 
@@ -150,7 +150,7 @@ func TestRestoreRevisionRewritesTheDefinition(t *testing.T) {
 	var desc sql.NullString
 	var tags string
 	if err := pool.QueryRow(
-		`SELECT description, COALESCE(tags,'[]') FROM jobs WHERE source='amadeus' AND name='billing'`).Scan(&desc, &tags); err != nil {
+		`SELECT description, COALESCE(tags,'[]') FROM jobs WHERE source='cronomicon' AND name='billing'`).Scan(&desc, &tags); err != nil {
 		t.Fatalf("read job: %v", err)
 	}
 	if desc.String == "the regrettable edit" {
@@ -266,7 +266,7 @@ func TestPurgeFreesTheNameAndRemovesTheRow(t *testing.T) {
 	}
 
 	var rows, bindings int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='amadeus' AND name='billing'`).Scan(&rows)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs WHERE source='cronomicon' AND name='billing'`).Scan(&rows)
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM definition_schedules WHERE owner_name='billing'`).Scan(&bindings)
 	if rows != 0 {
 		t.Errorf("purged job row survived: %d", rows)
@@ -370,7 +370,7 @@ func TestBinnedWorkflowIsNotTriggerable(t *testing.T) {
 	})
 	// PF-Q15's opt-in is set, so the job twin's 404 below can only come from the
 	// deleted_at filter — a 403 would mean we proved the wrong thing.
-	if _, err := pool.Exec(`UPDATE jobs SET requestable=1 WHERE source='amadeus' AND name='step-one'`); err != nil {
+	if _, err := pool.Exec(`UPDATE jobs SET requestable=1 WHERE source='cronomicon' AND name='step-one'`); err != nil {
 		t.Fatalf("opt the job in: %v", err)
 	}
 
@@ -520,7 +520,7 @@ func TestRestoringABinnedScheduleRebuildsItsBindings(t *testing.T) {
 		t.Helper()
 		var m sql.NullString
 		if err := pool.QueryRow(
-			`SELECT schedule FROM jobs WHERE source='amadeus' AND name='backup-job'`).Scan(&m); err != nil {
+			`SELECT schedule FROM jobs WHERE source='cronomicon' AND name='backup-job'`).Scan(&m); err != nil {
 			t.Fatalf("read legacy mirror: %v", err)
 		}
 		return m
@@ -873,7 +873,7 @@ func TestSubWorkflowUnknownReferenceIsRefused(t *testing.T) {
 func workflowID(t *testing.T, pool *sql.DB, name string) int64 {
 	t.Helper()
 	var id int64
-	if err := pool.QueryRow(`SELECT rowid FROM workflows WHERE source='amadeus' AND name=?`, name).Scan(&id); err != nil {
+	if err := pool.QueryRow(`SELECT rowid FROM workflows WHERE source='cronomicon' AND name=?`, name).Scan(&id); err != nil {
 		t.Fatalf("lookup workflow %s: %v", name, err)
 	}
 	return id

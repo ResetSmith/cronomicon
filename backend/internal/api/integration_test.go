@@ -394,7 +394,7 @@ func TestSettingsEndpointsIntegration(t *testing.T) {
 		Local:   &settings.LocalLogConfig{Path: "/var/lib/amadeus/it-logs"},
 		S3: &settings.S3LogConfig{
 			Endpoint: "127.0.0.1:1", Bucket: "logs", Region: "us-east-1",
-			AccessKey: "AKIA", SecretKey: "secret", Prefix: "amadeus/",
+			AccessKey: "AKIA", SecretKey: "secret", Prefix: "cronomicon/",
 		},
 	}
 	b, _ = json.Marshal(s3Cfg)

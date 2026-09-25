@@ -14,7 +14,7 @@ interface ScheduleEntryStatus {
   ownerKind?: string;
   ownerName?: string;
   // Third segment of the "kind:source:name" key the calendarRollup map is keyed
-  // by — a definition name can recur across the git and amadeus sources.
+  // by — a definition name can recur across the git and cronomicon sources.
   ownerSource?: string;
   scheduleName?: string;
   cron?: string;

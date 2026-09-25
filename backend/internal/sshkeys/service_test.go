@@ -72,7 +72,7 @@ func TestService_StoredRoundTrip(t *testing.T) {
 
 	// Reference the credential from a host; usage reports it and delete is guarded.
 	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, port, created_at, source, auth_credential_id)
-	      VALUES('h1','web1.example.com',22,'t','amadeus',?)`, cred.ID); err != nil {
+	      VALUES('h1','web1.example.com',22,'t','cronomicon',?)`, cred.ID); err != nil {
 		t.Fatalf("seed host: %v", err)
 	}
 	u, err := svc.Usage(ctx, cred.ID)

@@ -305,7 +305,7 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 }
 
 // SetScopeAgency binds (or, with a nil/empty id, clears) a scope's agency. It is
-// an operator overlay valid for BOTH git- and amadeus-source scopes (agency is a
+// an operator overlay valid for BOTH git- and cronomicon-source scopes (agency is a
 // deployment fact the GitOps repo does not own), and survives re-sync because
 // upsertScopes never writes agency_id. Returns (nil, nil) if the scope is not
 // found, or ErrUnknownAgency (mapped 422) if the agency id is not in the catalog.

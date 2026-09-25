@@ -1203,7 +1203,7 @@
             background: var(--textMuted)
         }
 
-        .pill.amad {
+        .pill.crn {
             background: var(--accentBg);
             color: var(--accent)
         }
@@ -1840,13 +1840,13 @@
                 </ol>
                 <div class="callout warn">
                     <div class="ct"><span class="em">🧯</span> The env var operates in trusted-header mode only. For
-                        OIDC recovery, use <code>amadeus grant-admin</code></div>
+                        OIDC recovery, use <code>cronomicon grant-admin</code></div>
                     <p><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> has an effect on the <strong>trusted-header (proxy)
                             login path only</strong>. The OIDC login path never reads it. On an OIDC deployment, the
                         variable does nothing and gives no message. Do not use it there for a first deploy or for a
                         lockout recovery. The approved recovery on <em>each type of</em> deployment is the offline
                         subcommand: <strong>stop the server</strong>, then run
-                        <code>amadeus grant-admin &lt;ad-group&gt;</code> against the database. The command writes an
+                        <code>cronomicon grant-admin &lt;ad-group&gt;</code> against the database. The command writes an
                         unrestricted admin grant for that group. The grant is a normal row, and you can see it and
                         delete it in the Access Grants card. The command is safe to run more than one time. The server
                         records the write as a <code>bootstrap-admin</code> auth event. If you give an <em>email</em> in
@@ -1906,7 +1906,7 @@
                     <em>annotations</em> (the Notes / contact / critical sidecar on jobs and workflows) are writable
                     by any signed-in session (CSRF-protected), including on Git-sourced definitions &mdash; they are
                     operator property, not part of the definition. Two row affordances are worth knowing when you
-                    audit the UI: amadeus-source rows carry a <strong>History</strong> button (revision snapshots,
+                    audit the UI: cronomicon-source rows carry a <strong>History</strong> button (revision snapshots,
                     &sect;5), and where your visible catalog holds two definitions of one name, lists qualify the name
                     with its agency (<code>deploy &middot; FIN</code>) &mdash; the badge appears only when a collision
                     is already inside your own visibility, so it can never reveal another department's catalog.</p>
@@ -2791,7 +2791,7 @@
                     <code>workflows/&lt;name&gt;.yaml</code> may carry a <code>spec.reactions</code> list, each entry
                     naming the watched definition (<code>onKind</code>, <code>onName</code>, and an explicit
                     <code>onSource</code> when it crosses the Git/in-app boundary) and the <code>onOutcome</code> to
-                    match. <code>amadeus validate</code> checks everything checkable without a database, so a bad
+                    match. <code>cronomicon validate</code> checks everything checkable without a database, so a bad
                     outcome or a malformed name fails at merge-request time; the upstream-exists check runs at sync,
                     where a bad reference <strong>drops the whole definition</strong> and skips its prune rather than
                     half-landing it. A definition reacting to a sibling in the same repo validates on the <em>first</em>
@@ -2800,7 +2800,7 @@
                     reactions wholesale and an in-app write would vanish at the next sync.</p>
                 <p>A synced <code>inventory/*.ini</code> does three things:</p>
                 <ul>
-                    <li>The raw file goes <strong>byte-exact</strong> to an amadeus-mode runner for
+                    <li>The raw file goes <strong>byte-exact</strong> to an cronomicon-mode runner for
                         <code>ansible-playbook -i</code>.</li>
                     <li>The server also <strong>parses the file into an advisory projection</strong>: groups,
                         <code>[group:children]</code> and <code>[group:vars]</code>, and inline host-vars. <a
@@ -2816,7 +2816,7 @@
                         a per-host <code>cronomicon_auth_key_env_var</code> or from the per-scope sidecar
                         <code>authKeyEnvVar</code>: <strong>names only, never key material</strong>.</li>
                 </ul>
-                <p>On a hostname clash, an operator-authored <strong>amadeus overlay row wins</strong>. Imported rows
+                <p>On a hostname clash, an operator-authored <strong>cronomicon overlay row wins</strong>. Imported rows
                     are <strong>read-only</strong> in <a href="user-manual.html#settings">Settings &rarr; SSH
                         Targets</a>, with a <span class="pill git"><span class="dot"></span>git</span> badge. To
                     override one, author an Cronomicon host. On sync, the server prunes stale imported rows by owner. It
@@ -2900,7 +2900,7 @@
                 <div class="callout note">
                     <div class="ct"><span class="em">✂️</span> GitOps pruning &amp; refs that point to nothing</div>
                     <p>If you delete a YAML file in Git, the next sync removes the definition. The sync prunes only
-                        <code>source='git'</code> rows. It never touches amadeus rows. A <strong><code>script_ref</code>
+                        <code>source='git'</code> rows. It never touches cronomicon rows. A <strong><code>script_ref</code>
                             or <code>scheduleRef</code> that points to nothing is a hard error</strong>. The error drops
                         that one definition from the sync. The other definitions still sync, and the event shows a <span
                             class="pill warn"><span class="dot"></span>warning</span> (partial) with the error in
@@ -2936,12 +2936,12 @@
                     Pushes).</p>
 
                 <h3>5.4 CI validation (recommended)</h3>
-                <p>The binary contains <code>amadeus validate</code>, which runs the <em>same parser that the runtime
+                <p>The binary contains <code>cronomicon validate</code>, which runs the <em>same parser that the runtime
                         uses</em>. Connect the included CI template to the job-definitions repo, so that broken YAML is
                     rejected at merge time:</p>
                 <div class="codeblock">
                     <div class="cap">Locally, or in .gitlab-ci.yml (same image tag as your deployment)</div>
-                    <pre>amadeus validate .
+                    <pre>cronomicon validate .
 # jobs/backup.yaml:2: unsupported apiVersion "cronomicon.io/v2"</pre>
                 </div>
                 <p><a href="user-manual.html#compose">&sect;10.3</a> in the User Manual tells you about the Publish
@@ -3705,7 +3705,7 @@
 CRONOMICON_KEK_FILE=/run/secrets/kek-v2     # the new key
 CRONOMICON_KEK_1_FILE=/run/secrets/kek-v1   # the old key, still able to decrypt</code></pre>
                 <p><strong>Rotation is lazy: a row moves to the new version only when it is rewritten.</strong> There is
-                    <code>amadeus rewrap-secrets</code> to finish it. Without that command an operator would have to
+                    <code>cronomicon rewrap-secrets</code> to finish it. Without that command an operator would have to
                     touch every encrypted item by hand &mdash; and there are three stores, not one, so missing any of
                     them leaves the old key still required:</p>
                 <div class="tbl-wrap">
@@ -3742,8 +3742,8 @@ CRONOMICON_KEK_1_FILE=/run/secrets/kek-v1   # the old key, still able to decrypt
                 <p>Run the re-wrap from inside the deployment, so the container's own mounted KEK is used and no
                     person handles key material. It works against the live database &mdash; no maintenance window
                     &mdash; and it is idempotent, so re-running is the recovery for an interrupted pass:</p>
-                <pre><code>docker exec &lt;amadeus&gt; amadeus rewrap-secrets --dry-run   # what is outstanding, per store
-docker exec &lt;amadeus&gt; amadeus rewrap-secrets             # move it all to the active version</code></pre>
+                <pre><code>docker exec &lt;cronomicon&gt; cronomicon rewrap-secrets --dry-run   # what is outstanding, per store
+docker exec &lt;cronomicon&gt; cronomicon rewrap-secrets             # move it all to the active version</code></pre>
                 <p><strong>Only once <code>--dry-run</code> reports rotation complete should you drop
                         <code>CRONOMICON_KEK_1</code>.</strong> That report is the whole point of the command: it counts
                     what is sealed under which version <em>without decrypting anything</em>, so it still answers the
@@ -4049,7 +4049,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                     <em>continues</em> the same registry row and does not orphan it.</p>
 
                 <h3>7.4 Inventory modes</h3>
-                <p>You select the mode for each runner: <strong><code>amadeus</code></strong> (the default: the server
+                <p>You select the mode for each runner: <strong><code>cronomicon</code></strong> (the default: the server
                     resolves scope hosts and sends fully-resolved targets, with key <em>names</em> only), or
                     <strong><code>local</code></strong> (the manifest carries only the scope name, and the agent
                     resolves it against its own <code>-local-inventory</code> file). Use <code>local</code> for
@@ -4273,12 +4273,12 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                             allowlist</strong> (<code>-checkout-repos</code>); a <strong>full commit SHA</strong>,
                         pinned at enqueue and verified by the agent (never a ref); a read-only, per-runner
                         <strong>deploy credential</strong> (the worst leak is read access to one repo); and a
-                        <strong>tree secret-scan</strong> in <code>amadeus validate</code> and sync, which catches
+                        <strong>tree secret-scan</strong> in <code>cronomicon validate</code> and sync, which catches
                         inline plaintext secrets that a <code>vars/*.yml</code> or <code>.j2</code> could move past the
                         inventory guard.</li>
                     <li><strong>Dependencies.</strong> A project's <code>requirements.yml</code> is installed <em>per
                             run</em>. Collections already present at the exact pinned version are not downloaded again
-                        (this operates offline). Pins are <strong>enforced</strong>: <code>amadeus validate</code> fails
+                        (this operates offline). Pins are <strong>enforced</strong>: <code>cronomicon validate</code> fails
                         CI on an unpinned collection or a non-SHA git role; sync warns.</li>
                     <li><strong>Vault (opt-in).</strong> A job declares <code>requires: [vault]</code>. The agent
                         supplies <code>--vault-password-file</code> from its own config; the password never travels.
@@ -4526,7 +4526,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                         <path class="svg-line-p" d="M330 142 H385" marker-end="url(#ar6)" /><text class="svg-sub"
                             x="357" y="134" text-anchor="middle" font-size="8.5">internal net</text>
                         <rect class="svg-box-s" x="390" y="110" width="170" height="66" rx="10" />
-                        <text class="svg-lbl" x="475" y="134" text-anchor="middle" font-size="12.5">amadeus</text>
+                        <text class="svg-lbl" x="475" y="134" text-anchor="middle" font-size="12.5">cronomicon</text>
                         <text class="svg-sub" x="475" y="150" text-anchor="middle" font-size="9.5">Go binary + embedded
                             SPA</text>
                         <text class="svg-sub" x="475" y="164" text-anchor="middle" font-size="9.5">never published ·
@@ -4589,7 +4589,7 @@ docker run -d --name amadeus-runner-01 --restart unless-stopped \
                                 <td><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></td>
                                 <td>The first-deploy admin seed, for <strong>trusted-header mode only</strong> (the OIDC
                                     login path never applies it). Remove it after you seed the grants. For lockout
-                                    recovery on all deployments, use <code>amadeus grant-admin</code> (&sect;8.7).</td>
+                                    recovery on all deployments, use <code>cronomicon grant-admin</code> (&sect;8.7).</td>
                             </tr>
                             <tr>
                                 <td><code>CRONOMICON_SSH_EXECUTOR_ENABLED</code></td>
@@ -4779,12 +4779,12 @@ APP_URL=https://amadeus.example.com \
                     frequent restarts cannot push the only durable backup past 24h. Success and failure export as
                     Prometheus metrics (<code>amadeus_backup_last_success_timestamp_seconds</code>,
                     <code>amadeus_backup_failures_total</code>). Restore is a <strong>file swap</strong>, and the
-                    included <code>amadeus restore</code> subcommand scripts it: download the latest or a named
+                    included <code>cronomicon restore</code> subcommand scripts it: download the latest or a named
                     snapshot, swap, and run <code>PRAGMA integrity_check</code>. Stop the server first:</p>
                 <ol class="steps">
                     <li><strong>Stop</strong> the container.</li>
-                    <li>Run <code>amadeus restore --list</code>, then <code>amadeus restore</code> (latest) or
-                        <code>amadeus restore --from &lt;snapshot&gt;</code>. Or do it by hand: get the snapshot
+                    <li>Run <code>cronomicon restore --list</code>, then <code>cronomicon restore</code> (latest) or
+                        <code>cronomicon restore --from &lt;snapshot&gt;</code>. Or do it by hand: get the snapshot
                         (<code>aws s3 cp &hellip;</code> / <code>mc cp &hellip;</code>), remove the live DB and the
                         stale sidecars (<code>amadeus.db</code>, <code>-wal</code>, <code>-shm</code>), and copy the
                         snapshot into place.</li>
@@ -4839,7 +4839,7 @@ APP_URL=https://amadeus.example.com \
                     The save probes the bucket with the credentials it would store and refuses with the S3 error
                     rather than persisting a connection that does not work. The egress guard applies (private ranges
                     allowed by default, loopback and cloud metadata blocked); the secret key is envelope-encrypted and
-                    covered by <code>amadeus rewrap-secrets</code>.</p>
+                    covered by <code>cronomicon rewrap-secrets</code>.</p>
                 <p><strong>Monitoring.</strong> <code>amadeus_log_archive_last_success_timestamp_seconds</code>,
                     <code>amadeus_log_archive_failures_total</code> and <code>amadeus_log_archive_pending</code>
                     join the backup metrics; a third consecutive failed tick logs at <code>ERROR</code>. Each tick that
@@ -4877,7 +4877,7 @@ APP_URL=https://amadeus.example.com \
                                     instances that had only grants, and it now fires on instances that are genuinely
                                     locked out. Treat it as the signal to run this recovery. <strong>All
                                         deployments:</strong> stop the server and run
-                                    <code>amadeus grant-admin &lt;ad-group&gt;</code>. It writes an unrestricted admin
+                                    <code>cronomicon grant-admin &lt;ad-group&gt;</code>. It writes an unrestricted admin
                                     grant for that group (safe to repeat; audited as a <code>bootstrap-admin</code> auth
                                     event; group matching is case-sensitive). Then restart and sign in. Pass an
                                     <em>email</em> in its place to list that user's recorded AD groups, with no write.
@@ -4986,7 +4986,7 @@ APP_URL=https://amadeus.example.com \
                                     the six <code>alert_config</code> columns 1140 dropped, so it starts cleanly and
                                     then fails every alert-rule read and write with &ldquo;no such column&rdquo; while
                                     the rest of the app carries on &mdash; a partial failure, not an obvious one. The
-                                    only true undo is restoring the database file (<code>amadeus restore</code>, which
+                                    only true undo is restoring the database file (<code>cronomicon restore</code>, which
                                     needs a stopped server and a shell). Take a snapshot you can actually put back
                                     <em>before</em> upgrading, or accept that the upgrade is one-way at 1140.</td>
                             </tr>
@@ -5304,7 +5304,7 @@ APP_URL=https://amadeus.example.com \
                         <p class="faq-cause"><strong>Cause:</strong> the definition is Git-source, which is read-only
                             over the API.</p>
                         <p><strong>Correction:</strong> edit it in Git (validate, open a merge request, sync), or use
-                            Jobs &rarr; Publish to GitLab. Only amadeus-source rows are editable in-app.</p>
+                            Jobs &rarr; Publish to GitLab. Only cronomicon-source rows are editable in-app.</p>
                     </div>
                 </details>
                 <details class="faq">
@@ -5863,7 +5863,7 @@ APP_URL=https://amadeus.example.com \
                         of a named AD group, independent of the grants. With it, the first admin can seed the real
                         access grants. The server writes a clear warning; remove the variable after this.
                         <strong>Trusted-header mode only</strong>: the OIDC login path never applies it. The
-                        lockout-recovery lever on all deployments is the offline <code>amadeus grant-admin</code>
+                        lockout-recovery lever on all deployments is the offline <code>cronomicon grant-admin</code>
                         subcommand.</dd>
                     <dt>Calendar (working calendar)</dt>
                     <dd>A named set of wall-clock dates (migrations 860/870), bound to a schedule <em>entry</em> in two
@@ -5974,8 +5974,8 @@ APP_URL=https://amadeus.example.com \
                     <dd>A <code>0600</code> JSON file (<code>{id, apiKey}</code>) that a runner writes at its first
                         registration and reads at a restart. With it, the runner continues its registry row and does not
                         orphan it. Default <code>/var/lib/amadeus-runner/identity.json</code>.</dd>
-                    <dt>Inventory mode (amadeus vs local)</dt>
-                    <dd>A per-runner selection. <code>amadeus</code> (default): the server resolves scope hosts and
+                    <dt>Inventory mode (cronomicon vs local)</dt>
+                    <dd>A per-runner selection. <code>cronomicon</code> (default): the server resolves scope hosts and
                         sends fully-resolved targets. <code>local</code>: the manifest carries only the scope name, and
                         the agent resolves it against its own inventory (for isolated segments).</dd>
                     <dt>Job-definitions repo</dt>
@@ -6064,7 +6064,7 @@ APP_URL=https://amadeus.example.com \
                         runner agent.</dd>
                     <dt>CRONOMICON_RUN_* (run context)</dt>
                     <dd>The dispatcher-owned, non-bindable run-context prefix. A fixed set of log-safe run-metadata
-                        vars: <code>CRONOMICON_RUN_ID</code>, <code>_JOB</code>, <code>_JOB_SOURCE</code> (git|amadeus),
+                        vars: <code>CRONOMICON_RUN_ID</code>, <code>_JOB</code>, <code>_JOB_SOURCE</code> (git|cronomicon),
                         <code>_SCOPE</code> (<code>""</code>=global), <code>_TYPE</code>, <code>_TRIGGERED_BY</code>,
                         <code>_EXECUTOR</code> (ssh|runner). On the SSH path, they merge into the remote command env. On
                         the runner path, they merge into the manifest Env block. They never resolve from a store row,
@@ -6076,7 +6076,7 @@ APP_URL=https://amadeus.example.com \
                         definition is unreachable but keeps its name, annotation, tags, and schedule bindings
                         (&sect;5.5).</dd>
                     <dt>Revision history</dt>
-                    <dd>The append-only per-definition snapshot log for amadeus-source jobs, workflows and schedules
+                    <dd>The append-only per-definition snapshot log for cronomicon-source jobs, workflows and schedules
                         (<code>definition_revisions</code>). Every in-app save appends the compose input; a restore
                         re-submits it through the ordinary, re-validated write path. Git definitions carry their
                         history in Git instead (&sect;5.5).</dd>
@@ -6125,7 +6125,7 @@ APP_URL=https://amadeus.example.com \
                     <dt>Schedule (definition)</dt>
                     <dd>A first-class named cron for use by more than one job (+ optional plaintext env), referenced by
                         jobs and workflows through <code>scheduleRefs</code>. Source: git or amadeus. An edit of an
-                        amadeus schedule sends the new cron, and its activation window, to each referencer.</dd>
+                        cronomicon schedule sends the new cron, and its activation window, to each referencer.</dd>
                     <dt>Activation window</dt>
                     <dd>Optional <code>startAt</code>/<code>endAt</code> bounds on a schedule entry. They delay its
                         first fire, or end it, without a change to the cron expression. They are absolute instants and
@@ -6358,7 +6358,7 @@ APP_URL=https://amadeus.example.com \
                             <tr>
                                 <td>Scopes / inventory</td>
                                 <td><code>GET /scopes/{id}/inventory</code> (the advisory projection + raw),
-                                    <code>PUT /scopes/{id}/inventory</code> (amadeus-source author),
+                                    <code>PUT /scopes/{id}/inventory</code> (cronomicon-source author),
                                     <code>POST /scopes/{id}/inventory/import-hosts</code> (&rarr;
                                     <code>ssh_hosts</code>)</td>
                                 <td>ConfigureApp = Admin; git scopes are read-only (<code>409</code>)</td>
@@ -6523,7 +6523,7 @@ APP_URL=https://amadeus.example.com \
                                 <td><code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code></td>
                                 <td><em>(empty)</em></td>
                                 <td>The first-deploy admin seed (trusted-header mode only; OIDC never applies it; see
-                                    &sect;8.7 for <code>amadeus grant-admin</code>). Remove it after you seed the grants
+                                    &sect;8.7 for <code>cronomicon grant-admin</code>). Remove it after you seed the grants
                                 </td>
                             </tr>
                             <tr>

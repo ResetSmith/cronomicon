@@ -15,8 +15,8 @@ import (
 
 // Sentinel errors the API handlers map to HTTP status codes (M5).
 var (
-	// ErrInventoryGitReadOnly — in-app inventory ops are amadeus-only (409).
-	ErrInventoryGitReadOnly = errors.New("only amadeus-source scopes can be authored in-app; git scopes are managed in GitLab")
+	// ErrInventoryGitReadOnly — in-app inventory ops are cronomicon-only (409).
+	ErrInventoryGitReadOnly = errors.New("only cronomicon-source scopes can be authored in-app; git scopes are managed in GitLab")
 	// ErrInventoryUnsupportedFormat — only INI inventories are parsed in v1 (422).
 	ErrInventoryUnsupportedFormat = errors.New("only 'ini' inventories are supported")
 	// ErrNoInventory — import-hosts needs a stored inventory (409).
@@ -46,9 +46,9 @@ type InventoryImportResult struct {
 type InventoryDocument struct {
 	Source       string               `json:"source"`
 	Format       *string              `json:"format,omitempty"`
-	Editable     bool                 `json:"editable"` // amadeus-source (in-app authoring lands in M5)
+	Editable     bool                 `json:"editable"` // cronomicon-source (in-app authoring lands in M5)
 	HasInventory bool                 `json:"hasInventory"`
-	Raw          *string              `json:"raw,omitempty"`         // amadeus-source only
+	Raw          *string              `json:"raw,omitempty"`         // cronomicon-source only
 	ParseStatus  string               `json:"parseStatus"`           // ok | unavailable (projection is all-or-nothing)
 	ParseReason  *string              `json:"parseReason,omitempty"` // why the preview is unavailable
 	ParseLine    *int                 `json:"parseLine,omitempty"`   // 1-based line of the first out-of-subset construct
@@ -96,7 +96,7 @@ func GetScopeInventory(ctx context.Context, database *sql.DB, id string) (*Inven
 
 	doc := &InventoryDocument{
 		Source:       source,
-		Editable:     source == "amadeus",
+		Editable:     source == "cronomicon",
 		HasInventory: raw.Valid && raw.String != "",
 		ParseStatus:  "ok",
 	}
@@ -106,9 +106,9 @@ func GetScopeInventory(ctx context.Context, database *sql.DB, id string) (*Inven
 	if projStatus.Valid && projStatus.String != "" {
 		doc.ParseStatus = projStatus.String
 	}
-	// Raw is exposed for amadeus-source scopes only (git content lives in GitLab;
+	// Raw is exposed for cronomicon-source scopes only (git content lives in GitLab;
 	// the Scope carries its blob URL).
-	if source == "amadeus" && raw.Valid && raw.String != "" {
+	if source == "cronomicon" && raw.Valid && raw.String != "" {
 		doc.Raw = &raw.String
 	}
 	// Degrade reason/line from projection_json.
@@ -243,7 +243,7 @@ func loadProjection(ctx context.Context, database *sql.DB, scopeID string) (*Inv
 	return proj, nil
 }
 
-// PutScopeInventory writes an operator-authored inventory to an amadeus-source
+// PutScopeInventory writes an operator-authored inventory to an cronomicon-source
 // scope (M5): validates secrets (Path A), parses the projection, and persists raw
 // + projection + scope_hosts membership + inferred capability, then audits. Reuses
 // the SAME inventory.ValidateSecrets / ParseProjection / WriteProjectionTables /
@@ -262,7 +262,7 @@ func PutScopeInventory(ctx context.Context, database *sql.DB, id, raw, format, a
 		}
 		return nil, nil, err
 	}
-	if source != "amadeus" {
+	if source != "cronomicon" {
 		return nil, nil, ErrInventoryGitReadOnly
 	}
 	if format == "" {
@@ -355,8 +355,8 @@ func PutScopeInventory(ctx context.Context, database *sql.DB, id, raw, format, a
 	return doc, nil, err
 }
 
-// ImportScopeHosts materializes an amadeus scope's parsed inventory hosts into
-// ssh_hosts (source='amadeus', scope_id) so the in-app SSH executor can dial them
+// ImportScopeHosts materializes an cronomicon scope's parsed inventory hosts into
+// ssh_hosts (source='cronomicon', scope_id) so the in-app SSH executor can dial them
 // (M5, the cap-C completion deferred from M4 — git scopes auto-import via sync).
 // Keyed by (scope_id, hostname): an existing row is updated when overwrite is set,
 // else skipped. Returns (nil, nil) when no scope matches.
@@ -371,7 +371,7 @@ func ImportScopeHosts(ctx context.Context, database *sql.DB, id string, hosts []
 		}
 		return nil, err
 	}
-	if source != "amadeus" {
+	if source != "cronomicon" {
 		return nil, ErrInventoryGitReadOnly
 	}
 	if !raw.Valid || raw.String == "" {
@@ -413,7 +413,7 @@ func ImportScopeHosts(ctx context.Context, database *sql.DB, id string, hosts []
 		var existingID string
 		var existingAddr sql.NullString
 		err := tx.QueryRowContext(ctx,
-			`SELECT id, address FROM ssh_hosts WHERE hostname=? AND source='amadeus' AND scope_id=?`, hc.Host, id).
+			`SELECT id, address FROM ssh_hosts WHERE hostname=? AND source='cronomicon' AND scope_id=?`, hc.Host, id).
 			Scan(&existingID, &existingAddr)
 		switch {
 		case err == nil && existingID != "":
@@ -440,7 +440,7 @@ func ImportScopeHosts(ctx context.Context, database *sql.DB, id string, hosts []
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO ssh_hosts(id, source, scope_id, hostname, address, port, username, auth_key_env_var,
 				                      status, created_by, created_at, last_modified_by, last_modified_at)
-				VALUES(?, 'amadeus', ?, ?, ?, ?, ?, ?, 'unverified', ?, ?, ?, ?)`,
+				VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, 'unverified', ?, ?, ?, ?)`,
 				db.NewID(), id, hc.Host, nullOf(hc.Address), port, nullOf(hc.User), nullOf(hc.AuthKeyEnvVar), actor, now, actor, now); err != nil {
 				return nil, err
 			}

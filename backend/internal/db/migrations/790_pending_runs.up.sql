@@ -25,7 +25,7 @@ CREATE TABLE pending_runs (
     id           TEXT PRIMARY KEY,
     kind         TEXT NOT NULL CHECK (kind IN ('job','workflow')),
     name         TEXT NOT NULL,
-    source       TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','amadeus')),
+    source       TEXT NOT NULL DEFAULT 'git' CHECK (source IN ('git','cronomicon')),
     scope        TEXT,                 -- job owner's effective scope, for the SU-2 read filter
     run_at       TEXT NOT NULL,        -- RFC3339 UTC instant to fire at
     scheduled_by TEXT NOT NULL,

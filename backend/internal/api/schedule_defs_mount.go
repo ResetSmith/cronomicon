@@ -20,7 +20,7 @@ import (
 // schedules/*.yaml in the GitLab clone and cached read-only. Jobs/workflows
 // reference one via scheduleRefs, expanded into the runtime definition_schedules
 // cache at sync. Authoring of git schedules goes through the Git publish flow;
-// operator (source='amadeus') schedules land via the Phase-3 compose write API.
+// operator (source='cronomicon') schedules land via the Phase-3 compose write API.
 //
 // This is a DISTINCT resource from GET /api/v1/schedules (decision Q-E), which
 // remains the per-binding owner projection consumed by the Schedule Inventory tab.
@@ -28,8 +28,8 @@ import (
 // Routes:
 //
 //	GET /api/v1/schedule-defs
-//	GET /api/v1/schedule-defs/{name}   (includes the usedBy reverse index; ?source=git|amadeus, default git)
-//	PUT /api/v1/schedule-tags/{name}   (set operator-owned tags; ?source=git|amadeus, default git; RequireCSRF)
+//	GET /api/v1/schedule-defs/{name}   (includes the usedBy reverse index; ?source=git|cronomicon, default git)
+//	PUT /api/v1/schedule-tags/{name}   (set operator-owned tags; ?source=git|cronomicon, default git; RequireCSRF)
 func (s *Server) mountScheduleDefs(mux *http.ServeMux) {
 	requireSession := s.auth.RequireSession
 	mux.Handle("GET /api/v1/schedule-defs",
@@ -38,7 +38,7 @@ func (s *Server) mountScheduleDefs(mux *http.ServeMux) {
 		requireSession(http.HandlerFunc(s.getScheduleDef)))
 	// Operator-owned tags (tags-support.md D4): SQLite-only, sync-preserved, any
 	// logged-in user (session + CSRF). Keyed by (source, name) — a git and an
-	// amadeus schedule may share a name — so this is the first write route on this
+	// cronomicon schedule may share a name — so this is the first write route on this
 	// otherwise read-only catalog and needs its own CSRF wrapping.
 	mux.Handle("PUT /api/v1/schedule-tags/{name}",
 		s.auth.RequireSession(s.auth.RequireCSRF(http.HandlerFunc(s.updateScheduleTags))))
@@ -102,7 +102,7 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 
 	where := " WHERE deleted_at IS NULL" // RH
 	var args []any
-	if sourceFilter == "git" || sourceFilter == "amadeus" {
+	if sourceFilter == "git" || sourceFilter == "cronomicon" {
 		where += " AND source = ?"
 		args = append(args, sourceFilter)
 	}
@@ -159,7 +159,7 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	source := r.URL.Query().Get("source")
-	if source != "amadeus" {
+	if source != "cronomicon" {
 		source = "git"
 	}
 	row := s.db.QueryRowContext(r.Context(), `
@@ -211,7 +211,7 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 // updateScheduleTags sets a first-class schedule's user-authored tags
 // (tags-support.md). Tags are SQLite-only (migration 290) and survive Git syncs
 // (upsertSchedules omits them). A schedule is keyed by (source, name) since a git
-// and an amadeus schedule may share a name; ?source defaults to git. Full replace
+// and an cronomicon schedule may share a name; ?source defaults to git. Full replace
 // of the tag set; reuses the shared tagutil.Normalize helper + caps.
 // Gate is session + CSRF only (D4: any logged-in user) — wired in mountScheduleDefs.
 func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +221,7 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	source := r.URL.Query().Get("source")
-	if source != "amadeus" {
+	if source != "cronomicon" {
 		source = "git"
 	}
 

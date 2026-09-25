@@ -49,16 +49,16 @@ func TestUIDRuleFiresForTheRightJobEndToEnd(t *testing.T) {
 	}
 	// Two jobs called 'backup', one per catalog. The rule targets the git one.
 	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','git','uid-git','bash','t')`)
-	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','amadeus','uid-ama','bash','t')`)
+	exec(`INSERT INTO jobs(name, source, uid, run_type, synced_at) VALUES('backup','cronomicon','uid-ama','bash','t')`)
 	exec(`INSERT INTO alert_config
 		(id, target_mode, job_name, job_uid, trigger, channels, recipients, enabled, created_at)
 		VALUES ('r-uid','job','backup','uid-git','failure','["email"]','ops@example.com',1,'now')`)
 	exec(`INSERT INTO notification_config
 		(id, smtp_host, smtp_port, smtp_from, smtp_encryption, smtp_recipients, apprise_enabled, apprise_targets, last_modified_at)
 		VALUES (1,'mail.example.com',587,'cronomicon@example.com','starttls','[]',0,'[]','now')`)
-	// A failing run of the AMADEUS job — same name, different identity.
+	// A failing run of the CRONOMICON job — same name, different identity.
 	exec(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at)
-	      VALUES('trace-ama','backup','amadeus','uid-ama','bash','failure','t','manual','t')`)
+	      VALUES('trace-ama','backup','cronomicon','uid-ama','bash','failure','t','manual','t')`)
 	// …and one of the git job, which the rule DOES target.
 	exec(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, created_at)
 	      VALUES('trace-git','backup','git','uid-git','bash','failure','t','manual','t')`)

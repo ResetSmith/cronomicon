@@ -56,7 +56,7 @@ func evaluateKEKFileMode(path string) (warn bool, err error) {
 		return false, fmt.Errorf(
 			"KEK file %q has mode %04o — it is readable by every account on this host, "+
 				"and it decrypts every stored secret. Fix with: chmod 0400 %s "+
-				"(and chown it to the account amadeus runs as)", path, mode, path)
+				"(and chown it to the account cronomicon runs as)", path, mode, path)
 	}
 	return mode&0o070 != 0, nil
 }

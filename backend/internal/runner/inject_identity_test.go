@@ -25,11 +25,11 @@ func TestCollectReferenceBindingsFollowsRunJobIdentity(t *testing.T) {
 		{"uid-twin-b", "B_PASS"},
 	} {
 		if _, err := svc.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, concurrency_policy, synced_at)
-			VALUES(?,'twin','amadeus','bash','echo hi','Allow',?)`, j.uid, now()); err != nil {
+			VALUES(?,'twin','cronomicon','bash','echo hi','Allow',?)`, j.uid, now()); err != nil {
 			t.Fatalf("seed job %s: %v", j.uid, err)
 		}
 		if _, err := svc.db.Exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at, owner_uid)
-			VALUES('job','amadeus','twin','secret',?,?,?)`, j.secret, now(), j.uid); err != nil {
+			VALUES('job','cronomicon','twin','secret',?,?,?)`, j.secret, now(), j.uid); err != nil {
 			t.Fatalf("seed binding %s: %v", j.secret, err)
 		}
 	}
@@ -38,12 +38,12 @@ func TestCollectReferenceBindingsFollowsRunJobIdentity(t *testing.T) {
 	traceID := db.NewTraceID()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, status, executor, triggered_by, trigger_kind, started_at, created_at)
-		VALUES(?, 'twin', 'amadeus', 'uid-twin-a', 'bash', 'prod', 'running', 'runner', 'ops@x', 'manual', ?, ?)`,
+		VALUES(?, 'twin', 'cronomicon', 'uid-twin-a', 'bash', 'prod', 'running', 'runner', 'ops@x', 'manual', ?, ?)`,
 		traceID, now(), now()); err != nil {
 		t.Fatalf("seed run: %v", err)
 	}
 
-	bindings, err := svc.collectReferenceBindings(ctx, traceID, "twin", "amadeus", "")
+	bindings, err := svc.collectReferenceBindings(ctx, traceID, "twin", "cronomicon", "")
 	if err != nil {
 		t.Fatalf("collectReferenceBindings: %v", err)
 	}

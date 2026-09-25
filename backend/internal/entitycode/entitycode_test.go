@@ -8,7 +8,7 @@
 //   - Allocate is called on EVERY git sync for EVERY definition. If it were not
 //     idempotent the registry would grow a row per sync and the folder a job
 //     writes into would change under it.
-//   - The (kind, source, name) key is three-part because the git and amadeus
+//   - The (kind, source, name) key is three-part because the git and cronomicon
 //     namespaces are disjoint and a job and a workflow may share a name. Collapse
 //     any part of that key and two distinct entities share a log folder.
 //   - The delete/recreate cycle must mint a FRESH code (LU-Q6(b)) while KEEPING
@@ -100,7 +100,7 @@ func TestAllocateIsIdempotentForOneTuple(t *testing.T) {
 
 // TestAllocateKeepsKindAndSourceNamespacesDisjoint pins the three-part key. Both
 // definition tables are keyed PRIMARY KEY (source, name), so job/git/deploy,
-// job/amadeus/deploy and workflow/git/deploy are three entities that legitimately
+// job/cronomicon/deploy and workflow/git/deploy are three entities that legitimately
 // coexist. If the registry keyed on name alone (or on source+name) they would
 // share one code and therefore one log folder, silently interleaving three
 // different entities' run history.
@@ -110,7 +110,7 @@ func TestAllocateKeepsKindAndSourceNamespacesDisjoint(t *testing.T) {
 
 	tuples := []struct{ kind, source, name string }{
 		{KindJob, "git", "deploy"},
-		{KindJob, "amadeus", "deploy"},
+		{KindJob, "cronomicon", "deploy"},
 		{KindWorkflow, "git", "deploy"},
 	}
 	seen := map[string]string{}
@@ -138,7 +138,7 @@ func TestMarkDeletedThenAllocateMintsFreshCodeAndKeepsHistory(t *testing.T) {
 	pool := migratedPool(t)
 	ctx := context.Background()
 
-	old, err := Allocate(ctx, pool, KindJob, "amadeus", "reindex", "uid-reindex")
+	old, err := Allocate(ctx, pool, KindJob, "cronomicon", "reindex", "uid-reindex")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
@@ -150,14 +150,14 @@ func TestMarkDeletedThenAllocateMintsFreshCodeAndKeepsHistory(t *testing.T) {
 		t.Fatalf("Lookup after delete = %q, %v; want \"\", nil — a deleted row is still being resolved", got, err)
 	}
 
-	fresh, err := Allocate(ctx, pool, KindJob, "amadeus", "reindex", "uid-reindex")
+	fresh, err := Allocate(ctx, pool, KindJob, "cronomicon", "reindex", "uid-reindex")
 	if err != nil {
 		t.Fatalf("re-allocate: %v", err)
 	}
 	if fresh == old {
 		t.Errorf("recreated entity reused code %q — it would inherit the deleted entity's log folder", old)
 	}
-	if n := rowsFor(t, pool, KindJob, "amadeus", "reindex"); n != 2 {
+	if n := rowsFor(t, pool, KindJob, "cronomicon", "reindex"); n != 2 {
 		t.Errorf("registry holds %d rows for the tuple, want 2 (one historical, one live) — the old era is not attributable", n)
 	}
 	// Exactly one of the two is live; the other carries the tombstone.
@@ -165,7 +165,7 @@ func TestMarkDeletedThenAllocateMintsFreshCodeAndKeepsHistory(t *testing.T) {
 	if err := pool.QueryRow(`
 		SELECT SUM(deleted_at IS NULL), SUM(deleted_at IS NOT NULL)
 		FROM entity_codes WHERE kind=? AND source=? AND name=?`,
-		KindJob, "amadeus", "reindex").Scan(&live, &dead); err != nil {
+		KindJob, "cronomicon", "reindex").Scan(&live, &dead); err != nil {
 		t.Fatalf("count live/dead: %v", err)
 	}
 	if live != 1 || dead != 1 {
@@ -184,11 +184,11 @@ func TestMarkDeletedOnUnknownTupleIsANoOp(t *testing.T) {
 	if err := MarkDeleted(ctx, pool, KindJob, "uid-never-existed"); err != nil {
 		t.Errorf("MarkDeleted on an unallocated tuple = %v, want nil", err)
 	}
-	if n := rowsFor(t, pool, KindJob, "amadeus", "never-existed"); n != 0 {
+	if n := rowsFor(t, pool, KindJob, "cronomicon", "never-existed"); n != 0 {
 		t.Errorf("MarkDeleted created %d rows for an unknown tuple, want 0", n)
 	}
 	// Twice in a row is also fine.
-	if _, err := Allocate(ctx, pool, KindJob, "amadeus", "twice", "uid-twice"); err != nil {
+	if _, err := Allocate(ctx, pool, KindJob, "cronomicon", "twice", "uid-twice"); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
 	for i := range 2 {
@@ -196,7 +196,7 @@ func TestMarkDeletedOnUnknownTupleIsANoOp(t *testing.T) {
 			t.Errorf("MarkDeleted #%d = %v, want nil", i+1, err)
 		}
 	}
-	if n := rowsFor(t, pool, KindJob, "amadeus", "twice"); n != 1 {
+	if n := rowsFor(t, pool, KindJob, "cronomicon", "twice"); n != 1 {
 		t.Errorf("double MarkDeleted left %d rows, want 1", n)
 	}
 }

@@ -66,7 +66,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	}
 	var jobUser, jobCred sql.NullString
 	if err := pool.QueryRowContext(ctx,
-		`SELECT ssh_user, ssh_credential FROM jobs WHERE source='amadeus' AND name='id-compose'`).Scan(&jobUser, &jobCred); err != nil {
+		`SELECT ssh_user, ssh_credential FROM jobs WHERE source='cronomicon' AND name='id-compose'`).Scan(&jobUser, &jobCred); err != nil {
 		t.Fatalf("fetch job: %v", err)
 	}
 	if jobUser.String != "deploy" || jobCred.String != "prod-key" {
@@ -105,7 +105,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	done()
 	var ansUser sql.NullString
 	if err := pool.QueryRowContext(ctx,
-		`SELECT ssh_user FROM jobs WHERE source='amadeus' AND name='id-ans'`).Scan(&ansUser); err != nil {
+		`SELECT ssh_user FROM jobs WHERE source='cronomicon' AND name='id-ans'`).Scan(&ansUser); err != nil {
 		t.Fatalf("fetch ansible job: %v", err)
 	}
 	if ansUser.String != "deploy" {
@@ -133,7 +133,7 @@ func TestJobComposeSSHIdentity(t *testing.T) {
 	}
 	done()
 	if err := pool.QueryRowContext(ctx,
-		`SELECT ssh_user, ssh_credential FROM jobs WHERE source='amadeus' AND name='id-compose'`).Scan(&jobUser, &jobCred); err != nil {
+		`SELECT ssh_user, ssh_credential FROM jobs WHERE source='cronomicon' AND name='id-compose'`).Scan(&jobUser, &jobCred); err != nil {
 		t.Fatalf("fetch job after clear: %v", err)
 	}
 	if jobUser.Valid || jobCred.Valid {
@@ -187,7 +187,7 @@ func TestJobComposeEnvPassthrough(t *testing.T) {
 	done()
 	var stored string
 	if err := pool.QueryRowContext(ctx,
-		`SELECT env_passthrough FROM jobs WHERE source='amadeus' AND name='ep-ans'`).Scan(&stored); err != nil {
+		`SELECT env_passthrough FROM jobs WHERE source='cronomicon' AND name='ep-ans'`).Scan(&stored); err != nil {
 		t.Fatalf("fetch job: %v", err)
 	}
 	if stored != `["SITE_LICENCE_KEY","VAULT_ADDR"]` {

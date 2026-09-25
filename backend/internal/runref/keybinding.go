@@ -10,7 +10,7 @@ import (
 // run's RESOLVED executor is "ssh", and nil otherwise (KB band,
 // the ssh-key-refusal plan).
 //
-// The in-app SSH executor connects FROM amadeus TO the target, so a bound key
+// The in-app SSH executor connects FROM cronomicon TO the target, so a bound key
 // would have to be placed on the TARGET host — a different problem from the
 // runner's local memfd delivery (D8), and one that was dropped rather than
 // built: it needs a per-host trust flag, a cleanup path for a killed session

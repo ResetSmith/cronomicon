@@ -30,7 +30,7 @@ func TestResolveTargetsSubset(t *testing.T) {
 		}
 	}
 	scopeID := db.NewID()
-	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'Prod', 'amadeus', 't')`, scopeID)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES (?, 'Prod', 'cronomicon', 't')`, scopeID)
 	for _, h := range []string{"web1", "web2", "web3"} {
 		exec(`INSERT INTO scope_hosts(scope_id, host) VALUES (?, ?)`, scopeID, h)
 		exec(`INSERT INTO ssh_hosts(id, hostname, port, username, auth_key_env_var, created_at)

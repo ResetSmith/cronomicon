@@ -55,7 +55,7 @@ describe("generateRunnerEnv", () => {
     // (unset ⇒ the agent probes the host's toolchains at startup).
     expect(env).toMatch(/^# CRONOMICON_RUNNER_CAPABILITIES=/m);
     expect(env).not.toMatch(/^CRONOMICON_RUNNER_CAPABILITIES=/m);
-    expect(env).toContain("CRONOMICON_RUNNER_INVENTORY=amadeus");
+    expect(env).toContain("CRONOMICON_RUNNER_INVENTORY=cronomicon");
     expect(env).toContain("CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/amadeus-runner/identity.json");
     // Untouched optionals stay commented; the example's annotations survive.
     expect(env).toMatch(/^# CRONOMICON_RUNNER_MAX_CONCURRENT=/m);

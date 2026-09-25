@@ -1,4 +1,4 @@
-// Command amadeus is the single static backend binary (T1/T3): it serves the
+// Command cronomicon is the single static backend binary (T1/T3): it serves the
 // API + embedded frontend, and exposes a `validate` subcommand (T11) for
 // CI-time YAML linting that reuses the runtime parser.
 package main
@@ -68,32 +68,32 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "validate":
-			// `amadeus validate <path>` lints YAML job definitions (T11).
+			// `cronomicon validate <path>` lints YAML job definitions (T11).
 			os.Exit(runValidate(os.Args[2:]))
 		case "healthcheck":
-			// `amadeus healthcheck` is the container HEALTHCHECK probe: the
+			// `cronomicon healthcheck` is the container HEALTHCHECK probe: the
 			// distroless image has no shell/curl, so the binary probes itself
 			// over HTTP (B.5). Exit 0 = ready, non-zero = unhealthy.
 			os.Exit(runHealthcheck(os.Args[2:]))
 		case "restore":
-			// `amadeus restore` fetches a snapshot from the S3 backup bucket and
+			// `cronomicon restore` fetches a snapshot from the S3 backup bucket and
 			// swaps it into place, then runs PRAGMA integrity_check (FU-3 Phase C).
 			// Stop the server first. See backend/deploy/backup-restore.md.
 			os.Exit(runRestore(os.Args[2:]))
 		case "rewrap-secrets":
-			// `amadeus rewrap-secrets` re-wraps every stored credential under the
+			// `cronomicon rewrap-secrets` re-wraps every stored credential under the
 			// active KEK so a superseded key can actually be retired (DR-5).
 			// Rotation is otherwise lazy: a row moves only when it is rewritten.
 			// Runs ONLINE — no need to stop the server.
 			os.Exit(runRewrapSecrets(os.Args[2:]))
 		case "grant-admin":
-			// `amadeus grant-admin <ad-group|email>` is the break-glass admin
+			// `cronomicon grant-admin <ad-group|email>` is the break-glass admin
 			// lockout recovery (RF-25/RB-Q15): on OIDC deployments the
 			// CRONOMICON_BOOTSTRAP_ADMIN_GROUP floor does not apply, so this is the
 			// only supported way back in. Stop the server first.
 			os.Exit(runGrantAdmin(os.Args[2:]))
 		case "version":
-			fmt.Printf("amadeus %s (commit %s, built %s)\n", version, commit, buildDate)
+			fmt.Printf("cronomicon %s (commit %s, built %s)\n", version, commit, buildDate)
 			os.Exit(0)
 		}
 	}
@@ -138,7 +138,7 @@ func run() error {
 	defer auditSink.Close()
 	auditlog.SetSink(auditSink.Write)
 
-	logger.Info("amadeus build", "version", version, "commit", commit, "built", buildDate)
+	logger.Info("cronomicon build", "version", version, "commit", commit, "built", buildDate)
 
 	// DR-6: refuse a world-readable KEK file HERE, at boot, rather than letting
 	// the refusal surface hours later on the first secret operation. Nothing
@@ -365,7 +365,7 @@ func run() error {
 			rowid     int64
 			stepsJSON string
 		)
-		// Source-qualified lookup (A9/A11) so a scheduled amadeus workflow resolves
+		// Source-qualified lookup (A9/A11) so a scheduled cronomicon workflow resolves
 		// its own steps rather than a same-named git workflow's.
 		if err := pool.QueryRowContext(ctx,
 			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, source, workflowName,
@@ -455,7 +455,7 @@ func run() error {
 		Context:        ctx0, // PP-M6: bind the SSH executor to the process lifetime
 		ShutdownWG:     &bg,  // PP-L15: drain SSH executor + in-flight runs on shutdown
 		ScheduleReload: sched.ReloadIfChanged,
-		// Unconditional reload for in-app (amadeus-source) definition writes, which
+		// Unconditional reload for in-app (cronomicon-source) definition writes, which
 		// don't advance the git SHA the onSyncComplete hook gates on (A9 / v20 Phase 3).
 		ScheduleForceReload: func(ctx context.Context) { _ = sched.Reload(ctx) },
 		// Rebuild the cron engine in a new zone when the operator changes the
@@ -503,7 +503,7 @@ func run() error {
 	// Graceful shutdown on SIGINT/SIGTERM (ctx0 above carries the same signal).
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("amadeus starting", "addr", cfg.Addr, "db", cfg.DBPath)
+		logger.Info("cronomicon starting", "addr", cfg.Addr, "db", cfg.DBPath)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -609,7 +609,7 @@ const auditLogName = "audit.log"
 // would send every later line to an unlinked inode.
 const processLogName = "amadeus.log"
 
-// runValidate implements `amadeus validate <path>...` (T11), reusing the runtime
+// runValidate implements `cronomicon validate <path>...` (T11), reusing the runtime
 // YAML/pragma parser from the gitlab slice (T10/S10). A path that is a directory
 // is validated as a whole job-definitions checkout: scripts/ is parsed first and
 // each job's script_ref is resolved against it (B-Git), with orphan scripts
@@ -619,14 +619,14 @@ func runValidate(args []string) int {
 	return validatePaths(args, os.Stdout, os.Stderr)
 }
 
-// validatePaths is the testable core of `amadeus validate` (V1.1-1 / Q2): it
+// validatePaths is the testable core of `cronomicon validate` (V1.1-1 / Q2): it
 // writes the "ok"/error report to the given writers and returns the process exit
 // code (0 = valid, 1 = errors, 2 = usage) without calling os.Exit, so a CLI-level
 // test can assert both the exit code and the line-numbered stderr format against
 // a deliberately-broken repo.
 func validatePaths(args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(errOut, "usage: amadeus validate <path>... (file, or a repo dir for cross-file script_ref checks)")
+		_, _ = fmt.Fprintln(errOut, "usage: cronomicon validate <path>... (file, or a repo dir for cross-file script_ref checks)")
 		return 2
 	}
 	exit := 0

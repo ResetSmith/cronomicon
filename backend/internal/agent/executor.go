@@ -127,7 +127,7 @@ func (e *executor) run(ctx context.Context, m *runnerproto.ManifestResponse, buf
 	return exitCode
 }
 
-// resolveTargets picks the host list for an SSH run. In "amadeus" mode the
+// resolveTargets picks the host list for an SSH run. In "cronomicon" mode the
 // manifest already carries fully-resolved targets; in "local" mode the agent
 // resolves the scope against its OWN inventory (T-b network-isolated segments).
 func (e *executor) resolveTargets(m *runnerproto.ManifestResponse) ([]runnerproto.ManifestTarget, error) {

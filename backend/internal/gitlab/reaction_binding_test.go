@@ -87,14 +87,14 @@ func TestReactionsPersistFromJobYAML(t *testing.T) {
 // to 'git' with no way to override it would make cross-plane edges
 // unauthorable from the repo, which is exactly the installation running both
 // sources that most needs them.
-func TestReactionCanWatchAnAmadeusSourceUpstream(t *testing.T) {
+func TestReactionCanWatchAnCronomiconSourceUpstream(t *testing.T) {
 	pool := mustOpenDB(t)
 	svc := &Service{db: pool, cloneDir: t.TempDir()}
-	seedRxDefinition(t, pool, "job", "amadeus", "in-app-job")
+	seedRxDefinition(t, pool, "job", "cronomicon", "in-app-job")
 
 	j := rxJob("load", ReactionEntry{
 		Name: "after-inapp", OnKind: "job", OnName: "in-app-job",
-		OnSource: "amadeus", OnOutcome: "any",
+		OnSource: "cronomicon", OnOutcome: "any",
 	})
 	tx, _ := pool.BeginTx(context.Background(), nil)
 	defer tx.Rollback()
@@ -109,8 +109,8 @@ func TestReactionCanWatchAnAmadeusSourceUpstream(t *testing.T) {
 		`SELECT on_source FROM reactions WHERE owner_name='load'`).Scan(&onSource); err != nil {
 		t.Fatalf("read reaction: %v", err)
 	}
-	if onSource != "amadeus" {
-		t.Errorf("on_source = %q, want amadeus — a repo must be able to author a cross-plane edge", onSource)
+	if onSource != "cronomicon" {
+		t.Errorf("on_source = %q, want cronomicon — a repo must be able to author a cross-plane edge", onSource)
 	}
 }
 
@@ -127,7 +127,7 @@ func TestReactionsReplaceIsSourceScoped(t *testing.T) {
 	if _, err := pool.Exec(`
 		INSERT INTO reactions (owner_source, owner_kind, owner_name, name,
 		                       on_source, on_kind, on_name, on_outcome)
-		VALUES ('amadeus','job','load','operator-authored','git','job','up','failure')`); err != nil {
+		VALUES ('cronomicon','job','load','operator-authored','git','job','up','failure')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -148,14 +148,14 @@ func TestReactionsReplaceIsSourceScoped(t *testing.T) {
 	// The repo drops one.
 	write(ReactionEntry{Name: "a", OnKind: "job", OnName: "up", OnOutcome: "success"})
 
-	var gitCount, amadeusCount int
+	var gitCount, cronomiconCount int
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM reactions WHERE owner_source='git' AND owner_name='load'`).Scan(&gitCount)
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM reactions WHERE owner_source='amadeus' AND owner_name='load'`).Scan(&amadeusCount)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM reactions WHERE owner_source='cronomicon' AND owner_name='load'`).Scan(&cronomiconCount)
 	if gitCount != 1 {
 		t.Errorf("git reactions = %d, want 1 — the replace must drop what the repo removed", gitCount)
 	}
-	if amadeusCount != 1 {
-		t.Errorf("in-app reactions = %d, want 1 — a git sync must never wipe an operator's own rows", amadeusCount)
+	if cronomiconCount != 1 {
+		t.Errorf("in-app reactions = %d, want 1 — a git sync must never wipe an operator's own rows", cronomiconCount)
 	}
 }
 
@@ -200,7 +200,7 @@ func TestOwnerDeleteCascadesReactions(t *testing.T) {
 	}
 }
 
-// NormalizeReactions is the DB-free shape check `amadeus validate` runs at MR
+// NormalizeReactions is the DB-free shape check `cronomicon validate` runs at MR
 // time. The table mirrors the calendar refusal table's shape.
 func TestNormalizeReactionsRefusals(t *testing.T) {
 	for _, tc := range []struct {

@@ -349,7 +349,7 @@ func TestAnnotationWritableOnBinnedDefinition(t *testing.T) {
 
 // TestAnnotationPerTwinOverTheAPI is TestAnnotationPerTwin's API-level sibling
 // (the db-package test proves the storage keeps twins apart; this proves the
-// HTTP path addresses them separately). Two same-named amadeus jobs, one
+// HTTP path addresses them separately). Two same-named cronomicon jobs, one
 // annotated: the other must not inherit it.
 func TestAnnotationPerTwinOverTheAPI(t *testing.T) {
 	ts, pool := newTestServer(t)
@@ -359,7 +359,7 @@ func TestAnnotationPerTwinOverTheAPI(t *testing.T) {
 		t.Helper()
 		if _, err := pool.Exec(`
 			INSERT INTO jobs(name, source, uid, run_type, command, scope, synced_at)
-			VALUES('backup','amadeus',?,'bash','echo hi',?,'t')`, uid, scope); err != nil {
+			VALUES('backup','cronomicon',?,'bash','echo hi',?,'t')`, uid, scope); err != nil {
 			t.Fatalf("seed twin %s: %v", uid, err)
 		}
 		var rowid int64

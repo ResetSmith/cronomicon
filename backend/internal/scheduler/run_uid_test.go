@@ -81,7 +81,7 @@ func TestEnqueueRunUIDResolvesPerSource(t *testing.T) {
 	pool := openPool(t)
 	ctx := context.Background()
 	seedUIDJob(t, pool, "shared-name", "git", "uid-shared-git")
-	seedUIDJob(t, pool, "shared-name", "amadeus", "uid-shared-amadeus")
+	seedUIDJob(t, pool, "shared-name", "cronomicon", "uid-shared-cronomicon")
 
 	gitRun, err := scheduler.EnqueueRunWithID(ctx, pool, scheduler.EnqueueParams{
 		JobName: "shared-name", JobSource: "git", RunType: "bash", TriggerKind: "manual", TriggeredBy: "alice",
@@ -90,17 +90,17 @@ func TestEnqueueRunUIDResolvesPerSource(t *testing.T) {
 		t.Fatalf("enqueue git run: %v", err)
 	}
 	amaRun, err := scheduler.EnqueueRunWithID(ctx, pool, scheduler.EnqueueParams{
-		JobName: "shared-name", JobSource: "amadeus", RunType: "bash", TriggerKind: "manual", TriggeredBy: "alice",
+		JobName: "shared-name", JobSource: "cronomicon", RunType: "bash", TriggerKind: "manual", TriggeredBy: "alice",
 	})
 	if err != nil {
-		t.Fatalf("enqueue amadeus run: %v", err)
+		t.Fatalf("enqueue cronomicon run: %v", err)
 	}
 
 	if got := runUID(t, pool, gitRun); got.String != "uid-shared-git" {
 		t.Errorf("git run job_uid = %v, want uid-shared-git", got)
 	}
-	if got := runUID(t, pool, amaRun); got.String != "uid-shared-amadeus" {
-		t.Errorf("amadeus run job_uid = %v, want uid-shared-amadeus", got)
+	if got := runUID(t, pool, amaRun); got.String != "uid-shared-cronomicon" {
+		t.Errorf("cronomicon run job_uid = %v, want uid-shared-cronomicon", got)
 	}
 }
 

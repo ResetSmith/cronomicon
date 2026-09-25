@@ -44,7 +44,7 @@ interface Runner {
   status?: "online" | "offline" | "degraded" | "draining" | string;
   os?: string;
   capabilities?: string[];
-  inventory?: "amadeus" | "local" | string;
+  inventory?: "cronomicon" | "local" | string;
   load?: number;
   maxConcurrent?: number;
   version?: string;
@@ -521,7 +521,7 @@ function RunnerDetail({
   const overview: { label: string; value: React.ReactNode; mono?: boolean; wide?: boolean; present: boolean }[] = [
     { label: "Runner ID", mono: true, wide: true, present: !!runner.id, value: runner.id ? <CopyText text={runner.id} /> : null },
     { label: "OS", present: !!runner.os, value: runner.os },
-    { label: "Inventory", present: true, value: runner.inventory ?? "amadeus" },
+    { label: "Inventory", present: true, value: runner.inventory ?? "cronomicon" },
     {
       label: "Version",
       present: !!runner.version,
@@ -909,7 +909,7 @@ export function Runners() {
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontWeight: 600 }}>{r.name}</span>
-            {(r.inventory === "amadeus" || r.inventory === "local") && <InventoryChip mode={r.inventory} />}
+            {(r.inventory === "cronomicon" || r.inventory === "local") && <InventoryChip mode={r.inventory} />}
           </div>
           {r.version && <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 1 }}>v{r.version}</div>}
           {(r.tags ?? []).length > 0 && (
@@ -2347,7 +2347,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
   // "Override" toggle, and narrow what the runner claims.
   const [capsOverride, setCapsOverride] = useState(false);
   const [caps, setCaps] = useState<string[]>([]);
-  const [inventory, setInventory] = useState<"amadeus" | "local">("amadeus");
+  const [inventory, setInventory] = useState<"cronomicon" | "local">("cronomicon");
   const [localInventorySrc, setLocalInventorySrc] = useState("");
   const [knownHostsSrc, setKnownHostsSrc] = useState("");
   const [keyMode, setKeyMode] = useState<"none" | "key-dir" | "key-map">("none");
@@ -2612,9 +2612,9 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
               <select
                 style={inputStyle}
                 value={inventory}
-                onChange={(e) => setInventory(e.target.value as "amadeus" | "local")}
+                onChange={(e) => setInventory(e.target.value as "cronomicon" | "local")}
               >
-                <option value="amadeus">amadeus — server resolves targets</option>
+                <option value="cronomicon">cronomicon — server resolves targets</option>
                 <option value="local">local — runner resolves its own inventory</option>
               </select>
               {inventory === "local" && (
@@ -2634,7 +2634,7 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
               )}
             </div>
             <div style={hintStyle}>
-              Who turns a job's scope into concrete hosts. <strong>amadeus</strong> (the default): the server
+              Who turns a job's scope into concrete hosts. <strong>cronomicon</strong> (the default): the server
               resolves targets and ships them with each job — pick this unless you know otherwise.{" "}
               <strong>local</strong>: the runner resolves scopes against its own <code>inventory.json</code> —
               for network segments only the runner can see (the server never learns those hosts). Local mode
@@ -2804,11 +2804,11 @@ function ProvisionPanel({ origin, token }: { origin: string; token: string }) {
 // ── local UI bits ────────────────────────────────────────────────────────────
 
 
-// Inventory-canonicality label (D8 / R7.4). `amadeus` — Cronomicon resolves the
+// Inventory-canonicality label (D8 / R7.4). `cronomicon` — Cronomicon resolves the
 // scope→hosts targets and ships them in the manifest. `local` — the runner
 // resolves hosts against its own inventory (network-isolated segments). Small,
 // subtle chip matching the capability-tag styling above.
-function InventoryChip({ mode }: { mode: "amadeus" | "local" }) {
+function InventoryChip({ mode }: { mode: "cronomicon" | "local" }) {
   const col = mode === "local" ? "#8466c4" : c.info;
   return (
     <span

@@ -44,7 +44,7 @@ func TestWorkflowTriggerScopeGuard(t *testing.T) {
 	// for the unrestricted admin. The agency contains ScopeA, so it expands back to
 	// exactly that scope at login.
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-a','agency-a','2026-01-01T00:00:00Z')`)
-	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-a','ScopeA','amadeus','2026-01-01T00:00:00Z')`)
+	exec(`INSERT OR IGNORE INTO scopes (id,name,source,created_at) VALUES ('sc-a','ScopeA','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc-a','ag-a')`)
 	exec(`INSERT INTO access_grants (id,ad_group,role,agency_id,all_scopes,created_at) VALUES
 		('gv','wf-viewers','viewer','ag-a',0,'2026-01-01T00:00:00Z'),
@@ -58,11 +58,11 @@ func TestWorkflowTriggerScopeGuard(t *testing.T) {
 	      VALUES('job-a','git','bash','echo a','ScopeA','sha256:a','jobs/a.yaml','t')`)
 	exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, source_path, synced_at)
 	      VALUES('job-b','git','bash','echo b','ScopeB','sha256:b','jobs/b.yaml','t')`)
-	// Two enabled amadeus workflows: wf-a runs the ScopeA job, wf-b the ScopeB job.
+	// Two enabled cronomicon workflows: wf-a runs the ScopeA job, wf-b the ScopeB job.
 	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at)
-	      VALUES('wf-a','amadeus','', '[{"type":"job","name":"job-a"}]', 1, 't','t')`)
+	      VALUES('wf-a','cronomicon','', '[{"type":"job","name":"job-a"}]', 1, 't','t')`)
 	exec(`INSERT INTO workflows(name, source, description, steps, enabled, created_at, last_modified_at)
-	      VALUES('wf-b','amadeus','', '[{"type":"job","name":"job-b"}]', 1, 't','t')`)
+	      VALUES('wf-b','cronomicon','', '[{"type":"job","name":"job-b"}]', 1, 't','t')`)
 	rowid := func(name string) string {
 		t.Helper()
 		var id int64

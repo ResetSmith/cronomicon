@@ -28,7 +28,7 @@ func s3Input(fake *fakes3.Server, bucket string) LogStorageConfig {
 		Local:   &LocalLogConfig{Path: "/var/lib/amadeus/logs"},
 		S3: &S3LogConfig{
 			Endpoint: fake.Endpoint(), Bucket: bucket, Region: "us-east-1",
-			AccessKey: "AKIAFAKE", SecretKey: "fakesecret", Prefix: "/amadeus/", UseSSL: boolp(false),
+			AccessKey: "AKIAFAKE", SecretKey: "fakesecret", Prefix: "/cronomicon/", UseSSL: new(false),
 		},
 	}
 }
@@ -103,7 +103,7 @@ func TestLogStorageS3SaveProbesAndPersists(t *testing.T) {
 	if got.S3.SecretKey != "" {
 		t.Fatal("secret key must never be returned")
 	}
-	if got.S3.Prefix != "amadeus/" {
+	if got.S3.Prefix != "cronomicon/" {
 		t.Fatalf("prefix not normalised: %q", got.S3.Prefix)
 	}
 	if got.S3.UseSSL == nil || *got.S3.UseSSL {
@@ -130,7 +130,7 @@ func TestLogStorageS3SaveProbesAndPersists(t *testing.T) {
 	if err != nil || store == nil {
 		t.Fatalf("BuildLogArchive = (%v, %v)", store, err)
 	}
-	if store.Bucket() != "logs" || store.Prefix() != "amadeus/" || store.CredMode() != "static" {
+	if store.Bucket() != "logs" || store.Prefix() != "cronomicon/" || store.CredMode() != "static" {
 		t.Fatalf("store = %s/%s creds=%s", store.Bucket(), store.Prefix(), store.CredMode())
 	}
 	if err := store.Probe(ctx); err != nil {

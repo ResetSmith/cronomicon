@@ -482,7 +482,7 @@ func (s *Server) handleDeleteAgency(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSetScopeAgency binds (or clears) a scope's agency — an operator overlay
-// valid for both git- and amadeus-source scopes. A nil/absent agencyId clears it.
+// valid for both git- and cronomicon-source scopes. A nil/absent agencyId clears it.
 func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {

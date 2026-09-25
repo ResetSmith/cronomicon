@@ -76,7 +76,7 @@ usage() {
   echo "                             ${KEYS_DEST}/<NAME> and print its public key to add to"
   echo "                             each target's authorized_keys. Refuses to overwrite."
   echo "      --ca-cert <pem>        Private CA bundle (PEM) to trust for server TLS"
-  echo "      --inventory <mode>     Inventory mode: amadeus (default) or local"
+  echo "      --inventory <mode>     Inventory mode: cronomicon (default) or local"
   echo "      --local-inventory <f>  Local inventory JSON (required with --inventory local)"
   echo "      --allow-checkout       Opt this runner into pinned playbook checkout"
   echo "      --checkout-repos <csv> Allowlist of repo clone URLs the runner may check out"
@@ -218,8 +218,8 @@ if [ -n "$GENERATE_KEY_NAME" ]; then
 fi
 
 case "$INVENTORY" in
-  ""|amadeus|local) ;;
-  *) echo "Error: --inventory must be 'amadeus' or 'local' (got: ${INVENTORY})." >&2; exit 1 ;;
+  ""|cronomicon|local) ;;
+  *) echo "Error: --inventory must be 'cronomicon' or 'local' (got: ${INVENTORY})." >&2; exit 1 ;;
 esac
 
 if [ "$INVENTORY" = "local" ] && [ -z "$LOCAL_INVENTORY_SRC" ]; then
@@ -262,7 +262,7 @@ if [ "$VAULT_PASS_STDIN" = 1 ] && [ ! -t 0 ]; then
   exit 1
 fi
 
-[ -z "$INVENTORY" ] && INVENTORY="amadeus"
+[ -z "$INVENTORY" ] && INVENTORY="cronomicon"
 
 if [ -n "$KEY_MAP_SPEC" ]; then
   if [[ ! "$KEY_MAP_SPEC" =~ ^[^=,]+=[^=,]+(,[^=,]+=[^=,]+)*$ ]]; then

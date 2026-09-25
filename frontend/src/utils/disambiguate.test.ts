@@ -91,9 +91,9 @@ describe("the suffix itself (R2F-Q1)", () => {
 
   it("falls back to the source when colliding rows have no agencies", () => {
     const git: NamedRef = { uid: "u1", name: "deploy", source: "git" };
-    const ama: NamedRef = { uid: "u2", name: "deploy", source: "amadeus" };
+    const ama: NamedRef = { uid: "u2", name: "deploy", source: "cronomicon" };
     expect(label(git, [git, ama])).toBe("deploy · git");
-    expect(label(ama, [git, ama])).toBe("deploy · amadeus");
+    expect(label(ama, [git, ama])).toBe("deploy · cronomicon");
   });
 
   it("shows the bare name when there is nothing at all to qualify with", () => {
