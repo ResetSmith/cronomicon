@@ -186,8 +186,8 @@ describe("documentation palette (VU-18)", () => {
 // fixed for in Phase A: the Cronomicon binary serves these documents to operators
 // on networks that may have no egress to Google, and a blocked font stylesheet
 // does not error — it silently drops the whole manual to system-ui. The faces
-// are now self-hosted from /fonts/*.woff2, the same absolute paths index.html
-// uses, declared inside the manuals' <style> because vite-manuals-plugin.js
+// are now self-hosted from fonts/*.woff2 (relative — see "resolves wherever the
+// docs are served" below; the same files index.html loads as /fonts/*), declared inside the manuals' <style> because vite-manuals-plugin.js
 // injects that block into the wrapped runner guides and their generated <head>
 // has nowhere to put a <link>.
 
@@ -267,7 +267,7 @@ describe("documentation fonts (VU-1)", () => {
       offenders,
       `documentation/*.html must self-host its fonts (VU-1).\n  ${offenders.join("\n  ")}\n` +
         `A deployment with no egress to Google gets system-ui and no error. Add @font-face ` +
-        `blocks pointing at /fonts/*.woff2 (copy them from frontend/index.html) inside the ` +
+        `blocks pointing at fonts/*.woff2 (relative; copy them from frontend/index.html) inside the ` +
         `manual's <style> — the wrapped runner guides have no <head> of their own.`,
     ).toEqual([]);
   });
@@ -319,18 +319,18 @@ describe("documentation fonts (VU-1)", () => {
     ).toEqual([]);
   });
 
-  it("actually self-hosts the faces it needs, from the paths index.html uses", () => {
+  it("actually self-hosts the faces it needs, from the files index.html uses", () => {
     // Guards the other direction: retiring the @import without adding @font-face
     // would pass both checks above and still ship a document with no webfont.
     const manual = readFileSync(join(DOCS, "user-manual.html"), "utf8");
-    const urls = [...manual.matchAll(/url\(['"]?(\/fonts\/[^'")]+)['"]?\)/g)].map((m) => m[1]);
+    const urls = [...manual.matchAll(/url\(['"]?(fonts\/[^'")]+)['"]?\)/g)].map((m) => m[1]);
     expect(urls.length).toBeGreaterThan(0);
     // Every path the manual asks for must be a file the product actually ships.
     // This checks public/fonts rather than index.html's declarations (F2-2):
     // Fraunces is now docs-only, so the app declares no @font-face for it, but
     // the .woff2 files are still shipped — Vite copies public/ verbatim into
-    // backend/web/dist and //go:embed is recursive, so the manual's absolute
-    // /fonts/* URL resolves from the same binary.
+    // backend/web/dist and //go:embed is recursive, so the manual's relative
+    // fonts/* URL resolves from the same binary.
     for (const u of urls) {
       expect(existsSync(join(SRC, "..", "public", u)), `${u} is not a font the product ships`).toBe(true);
     }
@@ -338,7 +338,7 @@ describe("documentation fonts (VU-1)", () => {
     // — that is the half of the invariant a docs-only face does not relax.
     const index = readFileSync(join(SRC, "..", "index.html"), "utf8");
     for (const u of urls.filter((u) => u.includes("plex"))) {
-      expect(index, `${u} is not a font frontend/index.html serves`).toContain(u);
+      expect(index, `${u} is not a font frontend/index.html serves`).toContain(`/${u}`);
     }
     // Whitespace-tolerant for the same reason as the theme-block anchors above:
     // the manual declares `font-display: swap`, and pinning the un-spaced form
@@ -346,11 +346,27 @@ describe("documentation fonts (VU-1)", () => {
     expect(manual).toMatch(/font-display:\s*swap/);
   });
 
+  // The same files are served at the app root, published under cronomicon.io/docs/,
+  // zipped onto each GitHub Release and opened straight from a checkout. Only a
+  // RELATIVE asset path resolves in all four: /fonts/x or /manual/x breaks under
+  // /docs/ and from disk (file:///fonts/x), silently — the page still renders,
+  // minus its type and screenshots.
+  it("resolves wherever the docs are served: no root-absolute asset path", () => {
+    const offenders: string[] = [];
+    for (const file of DOC_FILES) {
+      const body = stripComments(readFileSync(join(DOCS, file), "utf8"));
+      for (const m of body.matchAll(/(?:src|href|srcset)\s*=\s*["']\/(?!\/)[^"']*|url\(\s*['"]?\/(?!\/)[^'")]*/g)) {
+        offenders.push(`${file}: ${m[0]}`);
+      }
+    }
+    expect(offenders, `use a path relative to the document:\n  ${offenders.join("\n  ")}`).toEqual([]);
+  });
+
   it("carries the self-hosted faces into a wrapped runner guide", () => {
     // The guides are the reason the faces live in the <style> instead of a
     // <link>: wrapGuide builds their <head> and offers no hook for one. Both a
-    // manual (/user-manual.html) and a guide (/runner-install.html) are served
-    // from the root of backend/web/dist, so the same absolute /fonts/* URL
+    // manual (/user-manual.html) and a guide (/runner-install.html) sit beside
+    // fonts/ wherever they are served, so the same relative fonts/* URL
     // resolves for both.
     const style = readFileSync(join(DOCS, "user-manual.html"), "utf8").match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
     const guide = wrapGuide(
@@ -358,8 +374,8 @@ describe("documentation fonts (VU-1)", () => {
       { file: "runner-install.html", label: "Install Guide" },
       style,
     );
-    expect(guide).toContain("/fonts/plex-sans-400-700-latin.woff2");
-    expect(guide).toContain("/fonts/plex-mono-400-latin.woff2");
+    expect(guide).toContain("url('fonts/plex-sans-400-700-latin.woff2')");
+    expect(guide).toContain("url('fonts/plex-mono-400-latin.woff2')");
     expect(FONT_CDNS.some((h) => stripComments(guide).includes(h))).toBe(false);
   });
 

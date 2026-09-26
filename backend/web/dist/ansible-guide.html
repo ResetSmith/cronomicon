@@ -15,9 +15,10 @@
  stylesheet silently drops the whole manual to system-ui with no error — the
  same defect frontend/index.html guards against. Faces copied from
  index.html unchanged (Google's own latin / latin-ext subsets); only the origin
- differs. Absolute /fonts/* resolves for a document at /user-manual.html and for
- a wrapped guide at /runner-install.html alike: Vite copies public/ into
- backend/web/dist and spa.go serves any real file under it.
+ differs. The paths are RELATIVE (fonts/*), never /fonts/*: the manuals and the
+ wrapped guides sit beside fonts/ wherever they are served (the app root, where
+ Vite copies public/ into backend/web/dist; cronomicon.io/docs/; the release docs
+ zip; a checkout opened from disk), and only a relative path resolves in all four.
 
  Families track theme.ts so the manuals and the product read as one thing: IBM
  Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
@@ -31,7 +32,7 @@
             font-style: normal;
             font-weight: 400 700;
             font-display: swap;
-            src: url('/fonts/plex-sans-400-700-latin-ext.woff2') format('woff2');
+            src: url('fonts/plex-sans-400-700-latin-ext.woff2') format('woff2');
             unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
         }
 
@@ -40,7 +41,7 @@
             font-style: normal;
             font-weight: 400 700;
             font-display: swap;
-            src: url('/fonts/plex-sans-400-700-latin.woff2') format('woff2');
+            src: url('fonts/plex-sans-400-700-latin.woff2') format('woff2');
             unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
         }
 
@@ -49,7 +50,7 @@
             font-style: normal;
             font-weight: 500;
             font-display: swap;
-            src: url('/fonts/plex-sans-condensed-500-latin-ext.woff2') format('woff2');
+            src: url('fonts/plex-sans-condensed-500-latin-ext.woff2') format('woff2');
             unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
         }
 
@@ -58,7 +59,7 @@
             font-style: normal;
             font-weight: 500;
             font-display: swap;
-            src: url('/fonts/plex-sans-condensed-500-latin.woff2') format('woff2');
+            src: url('fonts/plex-sans-condensed-500-latin.woff2') format('woff2');
             unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
         }
 
@@ -67,7 +68,7 @@
             font-style: normal;
             font-weight: 600;
             font-display: swap;
-            src: url('/fonts/plex-sans-condensed-600-latin-ext.woff2') format('woff2');
+            src: url('fonts/plex-sans-condensed-600-latin-ext.woff2') format('woff2');
             unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
         }
 
@@ -76,7 +77,7 @@
             font-style: normal;
             font-weight: 600;
             font-display: swap;
-            src: url('/fonts/plex-sans-condensed-600-latin.woff2') format('woff2');
+            src: url('fonts/plex-sans-condensed-600-latin.woff2') format('woff2');
             unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
         }
 
@@ -85,7 +86,7 @@
             font-style: normal;
             font-weight: 400;
             font-display: swap;
-            src: url('/fonts/plex-mono-400-latin-ext.woff2') format('woff2');
+            src: url('fonts/plex-mono-400-latin-ext.woff2') format('woff2');
             unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
         }
 
@@ -94,7 +95,7 @@
             font-style: normal;
             font-weight: 400;
             font-display: swap;
-            src: url('/fonts/plex-mono-400-latin.woff2') format('woff2');
+            src: url('fonts/plex-mono-400-latin.woff2') format('woff2');
             unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
         }
 
@@ -103,7 +104,7 @@
             font-style: normal;
             font-weight: 500;
             font-display: swap;
-            src: url('/fonts/plex-mono-500-latin-ext.woff2') format('woff2');
+            src: url('fonts/plex-mono-500-latin-ext.woff2') format('woff2');
             unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
         }
 
@@ -112,7 +113,7 @@
             font-style: normal;
             font-weight: 500;
             font-display: swap;
-            src: url('/fonts/plex-mono-500-latin.woff2') format('woff2');
+            src: url('fonts/plex-mono-500-latin.woff2') format('woff2');
             unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
         }
 
@@ -121,7 +122,7 @@
             font-style: normal;
             font-weight: 400 700;
             font-display: swap;
-            src: url('/fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
+            src: url('fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
             unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
         }
 
@@ -130,7 +131,7 @@
             font-style: normal;
             font-weight: 400 700;
             font-display: swap;
-            src: url('/fonts/fraunces-400-700-latin.woff2') format('woff2');
+            src: url('fonts/fraunces-400-700-latin.woff2') format('woff2');
             unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
         }
 
@@ -1320,7 +1321,7 @@
         }
 
         /* Screenshots — each figure.shot carries a dark AND a light capture of the real
- app (frontend/public/manual/<view>-<theme>.png, served at /manual/*); the pair
+ app (frontend/public/manual/<view>-<theme>.png, referenced as manual/*); the pair
  swaps with the manual's own theme toggle so the pictured UI always matches the
  reader's chosen theme. Captures are 1600×900 with seeded demo data; the
  width/height attributes prevent layout shift under loading="lazy". */
