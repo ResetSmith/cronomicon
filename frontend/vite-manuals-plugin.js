@@ -57,31 +57,32 @@ export const GUIDES = [
   { file: "runner-install.html", label: "Runner Install Guide" },
   { file: "runner-manage.html", label: "Runner Config Guide" }, // the app calls runner-manage the "Config Guide"
   { file: "runner-security.html", label: "Runner Security Guide" },
-  // Usage guides ride the same wrap pipeline; `eyebrow` overrides the hero
-  // eyebrow (default "🔧 Runner Guide") so a non-runner guide isn't mislabeled.
-  { file: "ansible-guide.html", label: "Ansible Guide", eyebrow: "&#128215; Usage Guide" },
-  { file: "bash-guide.html", label: "Bash Guide", eyebrow: "&#128215; Usage Guide" },
-  { file: "powershell-guide.html", label: "PowerShell Guide", eyebrow: "&#128215; Usage Guide" },
-  { file: "python-guide.html", label: "Python Guide", eyebrow: "&#128215; Usage Guide" },
+  // Usage guides ride the same wrap pipeline; `kind` overrides the hero's
+  // document-kind chip (default "Runner Guide") so a non-runner guide isn't
+  // mislabeled.
+  { file: "ansible-guide.html", label: "Ansible Guide", kind: "Usage Guide" },
+  { file: "bash-guide.html", label: "Bash Guide", kind: "Usage Guide" },
+  { file: "powershell-guide.html", label: "PowerShell Guide", kind: "Usage Guide" },
+  { file: "python-guide.html", label: "Python Guide", kind: "Usage Guide" },
   // Training courses (TR, the training-course plan) ride the same wrap
   // pipeline as the guides: body-only fragments, the manuals' <style>, a TOC
   // built from their <h2>s. They carry their own inline <style>/<script> for the
   // interactive widgets, which pass through wrapGuide untouched.
   // `course: true` moves an entry from the sidebar's Guides section to its
   // Courses section; everything else about the wrap is identical.
-  { file: "training-operator.html", label: "Operator Course", eyebrow: "&#127891; Training", course: true },
-  { file: "training-admin.html", label: "Administrator Course", eyebrow: "&#127891; Training", course: true },
+  { file: "training-operator.html", label: "Operator Course", kind: "Training", course: true },
+  { file: "training-admin.html", label: "Administrator Course", kind: "Training", course: true },
 ];
 
 // The manuals are the single source of visual identity; the wrapped guides
-// reuse their <style>, sidebar logo and hero subtitle verbatim so the look
-// (logo/title/subtitle) can never drift from the manuals'. Read lazily.
+// reuse their <style> and sidebar logo verbatim so the look can never drift
+// from the manuals'. Read lazily.
 function manualAssets() {
   const html = readFileSync(join(DOCS_DIR, "user-manual.html"), "utf8");
   return {
     style: html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "",
-    logo: html.match(/<div class="logo"><img src="(data:image\/[^"]+)"/)?.[1] ?? "",
-    lead: html.match(/<p class="lead">([\s\S]*?)<\/p>/)?.[1]?.trim() ?? "",
+    // \s+, not a space: the manual's markup wraps the <img> onto a new line.
+    logo: html.match(/<div class="logo"><img\s+src="(data:image\/[^"]+)"/)?.[1] ?? "",
   };
 }
 
@@ -92,10 +93,11 @@ const slugify = (s) =>
 
 // wrapGuide turns a body-only fragment into a full standalone document that
 // matches the manuals: reuses their <style>, sidebar logo and hero masthead
-// (eyebrow / "Cronomicon" h1 / lead subtitle — the guide's own title moves to a
-// "Guide" chip), adds a sidebar TOC auto-built from the fragment's <h2>s,
-// sibling-guide + manual cross-links, and a topbar with the same light/dark
-// toggle (sharing the manuals' `am_manual_theme` preference).
+// (the Cronomicon wordmark over the guide's own title, with its kind and
+// version as chips), sets each <h2> as a banded chapter like the manuals'
+// (except in courses — see below), adds a sidebar TOC auto-built from the
+// fragment's <h2>s, sibling-guide + manual cross-links, and a topbar with the
+// same light/dark toggle (sharing the manuals' `am_manual_theme` preference).
 // Exported for unit testing (runner-guide-wrap.test.ts).
 export function wrapGuide(fragment, current, style, brand = {}) {
   let body = fragment.replace(/\r\n/g, "\n");
@@ -138,6 +140,25 @@ export function wrapGuide(fragment, current, style, brand = {}) {
     toc.push({ id, text: stripTags(inner) });
     return existing ? m : `<h2${attrs} id="${id}">${inner}</h2>`;
   });
+
+  // Bands, the manuals' chapter rhythm: each <h2> and everything up to the next
+  // becomes a section.chap, alternating with .alt, and a leading "N · " becomes
+  // the chapter number the manuals set on the gold rule. Runs after the TOC is
+  // collected so ids and TOC labels are unchanged. Not for courses: their deck
+  // script slices main's direct children at every h2/h3, so it needs them
+  // unwrapped.
+  if (!current.course) {
+    const chunks = body.split(/(?=<h2\b)/);
+    const intro = chunks[0].startsWith("<h2") ? "" : chunks.shift();
+    body =
+      intro +
+      chunks
+        .map((chunk, i) => {
+          const h2 = chunk.replace(/^<h2\b([^>]*)>\s*([A-Z]?\d+)\s*·\s*/, '<h2$1><span class="secnum">$2</span> ');
+          return `<section class="chap${i % 2 ? " alt" : ""}">\n${h2}</section>\n`;
+        })
+        .join("");
+  }
 
   const tocLinks = toc
     .map((t) => `<a href="#${t.id}"><span class="ic">&#9656;</span> ${esc(t.text)}</a>`)
@@ -197,11 +218,10 @@ export function wrapGuide(fragment, current, style, brand = {}) {
 </header>
 <main>
   <div class="hero">
-    <div class="eyebrow">${current.eyebrow || "&#128295; Runner Guide"}</div>
-    <h1>Cronomicon</h1>
-    ${brand.lead ? `<p class="lead">${brand.lead}</p>` : ""}
+    <div class="eyebrow">Cronomicon</div>
+    <h1>${esc(title)}</h1>
     <div class="meta">
-      <span class="chip">Guide <b>${esc(title)}</b></span>
+      <span class="chip">${current.kind || "Runner Guide"}</span>
       ${version ? `<span class="chip">Version <b>${esc(version)}</b></span>` : ""}
     </div>
   </div>

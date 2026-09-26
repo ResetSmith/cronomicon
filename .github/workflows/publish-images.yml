@@ -1,7 +1,7 @@
 # Publish the release images to the GitHub Container Registry.
 #
-# Runs when a vX.Y.Z tag is pushed (the last step of the release flow in
-# AGENTS.md) and builds three linux/amd64 images from that tagged commit:
+# Runs when a vX.Y.Z tag is pushed (the last step of a release) and builds
+# three linux/amd64 images from that tagged commit:
 #
 #   ghcr.io/resetsmith/cronomicon             the server (backend/Dockerfile)
 #   ghcr.io/resetsmith/cronomicon-runner      slim runner (backend/Dockerfile.runner)

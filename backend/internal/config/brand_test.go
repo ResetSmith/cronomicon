@@ -65,7 +65,9 @@ func TestNoFormerBrandAnywhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "AGENTS.md")); err != nil {
+	// CHANGELOG.md marks the root: it is tracked and lives only there. (Not
+	// AGENTS.md, which is gitignored and absent from every fresh clone.)
+	if _, err := os.Stat(filepath.Join(root, "CHANGELOG.md")); err != nil {
 		t.Fatalf("repository root not found at %s: %v", root, err)
 	}
 

@@ -5,7 +5,7 @@ the API + embedded frontend from one container, backed by SQLite.
 
 > Two binaries: `cmd/cronomicon` (server) and `cmd/cronomicon-runner` (the
 > out-of-process runner agent). The release of record is the top entry of
-> `../CHANGELOG.md`; the package map is in `../AGENTS.md`.
+> `../CHANGELOG.md`; the layout below maps the main packages.
 
 ## Layout
 

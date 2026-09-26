@@ -15,13 +15,10 @@ const FRAGMENT = `<h1>Runner install &amp; configure guide (R7.2)</h1>
 <pre><code>curl -fsSL https://example/install.sh | sh</code></pre>
 <table><thead><tr><th>Var</th></tr></thead><tbody><tr><td>X</td></tr></tbody></table>`;
 
-// Stand-ins; the real build extracts the manuals' <style>, sidebar logo and
-// hero lead from user-manual.html so the guides share the manuals' masthead.
+// Stand-ins; the real build extracts the manuals' <style> and sidebar logo
+// from user-manual.html so the guides share the manuals' look.
 const STYLE = ".hero{}";
-const BRAND = {
-  logo: "data:image/png;base64,AAAA",
-  lead: "The self-hosted <strong>Script Orchestrator</strong> — stand-in subtitle.",
-};
+const BRAND = { logo: "data:image/png;base64,AAAA" };
 const wrapped = wrapGuide(FRAGMENT, { file: "runner-install.html", label: "Runner Install Guide" }, STYLE, BRAND);
 
 describe("wrapGuide — standalone runner guide generation", () => {
@@ -32,26 +29,51 @@ describe("wrapGuide — standalone runner guide generation", () => {
     expect(wrapped).toContain('data-theme="dark"');
   });
 
-  it("renders the manuals' masthead: logo, Cronomicon title and lead subtitle", () => {
-    // Same logo/title/subtitle as the manuals, single-sourced from user-manual.html.
+  it("renders the manuals' masthead: logo, wordmark and the guide's own title", () => {
+    // Same logo as the manuals, single-sourced from user-manual.html; the hero
+    // is the manuals' too — the Cronomicon wordmark over the document's title.
     expect(wrapped).toContain('<div class="logo"><img src="data:image/png;base64,AAAA" alt="Cronomicon logo"></div>');
-    expect(wrapped).toMatch(/<div class="hero">[\s\S]*<h1>Cronomicon<\/h1>/);
-    expect(wrapped).toContain(`<p class="lead">${BRAND.lead}</p>`);
+    expect(wrapped).toMatch(
+      /<div class="hero">\s*<div class="eyebrow">Cronomicon<\/div>\s*<h1>Runner install &amp; configure guide<\/h1>/,
+    );
   });
 
-  it("lifts the leading <h1> into a Guide chip and splits off the version tag", () => {
-    // The doc title becomes a hero chip; the "(R7.2)" tag becomes a version chip.
-    expect(wrapped).toContain("Guide <b>Runner install &amp; configure guide</b>");
+  it("lifts the leading <h1> into the hero and splits off the version tag", () => {
+    // The "(R7.2)" tag becomes a version chip beside the document-kind chip.
+    expect(wrapped).toContain('<span class="chip">Runner Guide</span>');
     expect(wrapped).toContain("Version <b>R7.2</b>");
     // ...and it is not left duplicated in the body as a bare <h1>.
     expect(wrapped.match(/<h1>/g)?.length).toBe(1);
   });
 
+  it("names a registered guide's kind in its chip", () => {
+    const bash = GUIDES.find((g) => g.file === "bash-guide.html")!;
+    expect(wrapGuide(FRAGMENT, bash, STYLE, BRAND)).toContain('<span class="chip">Usage Guide</span>');
+  });
+
   it("auto-builds a TOC from the <h2>s and gives each an id", () => {
-    expect(wrapped).toContain('<h2 id="0-before-you-begin">0 · Before you begin</h2>');
-    expect(wrapped).toContain('<h2 id="1-install">1 · Install</h2>');
-    expect(wrapped).toContain('<a href="#0-before-you-begin">');
+    expect(wrapped).toContain('<a href="#0-before-you-begin"><span class="ic">&#9656;</span> 0 · Before you begin</a>');
     expect(wrapped).toContain('<a href="#1-install">');
+    // The id survives the chapter-number rewrite below.
+    expect(wrapped).toContain('<h2 id="0-before-you-begin"><span class="secnum">0</span> Before you begin</h2>');
+    expect(wrapped).toContain('<h2 id="1-install"><span class="secnum">1</span> Install</h2>');
+  });
+
+  it("sets each <h2> as an alternating chapter band, leaving the intro above them", () => {
+    const chaps = [...wrapped.matchAll(/<section class="(chap(?: alt)?)">\n<h2/g)].map((m) => m[1]);
+    expect(chaps).toEqual(["chap", "chap alt"]);
+    expect(wrapped).toMatch(/<p>Intro paragraph[\s\S]*?<\/p>\n<section class="chap">/);
+    // Every section opened is closed, so the band wraps the whole chapter.
+    expect(wrapped.match(/<section\b/g)?.length).toBe(wrapped.match(/<\/section>/g)?.length);
+  });
+
+  it("leaves a course's modules unwrapped for its deck script", () => {
+    // The training deck slices main's direct children at every h2/h3; a
+    // section around a module would hide its headings from that walk.
+    const course = GUIDES.find((g) => g.course)!;
+    const out = wrapGuide(FRAGMENT, course, STYLE, BRAND);
+    expect(out).not.toContain('class="chap');
+    expect(out).toContain('<h2 id="0-before-you-begin">0 · Before you begin</h2>');
   });
 
   it("boxes bare <pre> in .codeblock so it gets code styling + copy button", () => {
