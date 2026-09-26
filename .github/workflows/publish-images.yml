@@ -100,3 +100,118 @@ jobs:
             BUILD_DATE=${{ steps.date.outputs.value }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  # The manuals, published after every image is up. They are the same pages the
+  # server embeds (frontend build → backend/web/dist), rebuilt here from the
+  # tagged source so they cannot drift from it, and they use only relative asset
+  # paths (documentation-palette.test.ts guards that), so one bundle works in
+  # all three places it lands:
+  #   • a GitHub Release for the tag: the CHANGELOG section as notes, plus
+  #     cronomicon-docs-X.Y.Z.zip for offline reading;
+  #   • cronomicon.io/docs/ (the site repo's docs/ folder; Pages redeploys) —
+  #     needs the DOCS_DEPLOY_KEY secret, skipped with a warning without it;
+  #   • and, untouched by this job, a checkout: backend/web/dist/*.html open
+  #     straight from disk.
+  docs:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    env:
+      HAS_DOCS_DEPLOY_KEY: ${{ secrets.DOCS_DEPLOY_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `vite build`, not `npm run build`: type-checking is a source gate, the
+      # same reasoning as backend/Dockerfile's frontend stage.
+      - name: Build the manuals
+        working-directory: frontend
+        run: npm ci && npx vite build
+
+      - name: Bundle
+        id: bundle
+        run: |
+          set -eu
+          v="${GITHUB_REF_NAME#v}"
+          name="cronomicon-docs-$v"
+          out="$RUNNER_TEMP/$name"
+          dist=backend/web/dist
+          mkdir -p "$out/fonts"
+          # Every page except index.html, which is the app shell, not a doc.
+          find "$dist" -maxdepth 1 -name '*.html' ! -name index.html -exec cp {} "$out/" \;
+          cp -r "$dist/manual" "$out/manual"
+          cp "$dist"/fonts/*.woff2 "$dist/fonts/OFL.txt" "$out/fonts/"
+          (cd "$RUNNER_TEMP" && zip -qr "$name.zip" "$name")
+          ls -la "$out"
+          {
+            echo "version=$v"
+            echo "dir=$out"
+            echo "zip=$RUNNER_TEMP/$name.zip"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: GitHub Release with notes and the docs zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.bundle.outputs.version }}
+          ZIP: ${{ steps.bundle.outputs.zip }}
+        run: |
+          set -eu
+          notes="$RUNNER_TEMP/notes.md"
+          # This version's CHANGELOG section, without its own heading.
+          awk -v h="## [$V]" 'index($0, "## [") == 1 { if (p) exit; if (index($0, h) == 1) { p = 1; next } } p' CHANGELOG.md > "$notes"
+          cat >> "$notes" <<NOTES
+
+          ## Images
+
+          \`\`\`bash
+          docker pull ghcr.io/resetsmith/cronomicon:$V
+          docker pull ghcr.io/resetsmith/cronomicon-runner:$V
+          docker pull ghcr.io/resetsmith/cronomicon-runner-fat:$V
+          \`\`\`
+
+          ## Documentation
+
+          Online at https://cronomicon.io/docs/. \`cronomicon-docs-$V.zip\` below has
+          the same manuals for offline reading: unzip it and open \`administrator-manual.html\`.
+          NOTES
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$notes"
+            gh release upload "$GITHUB_REF_NAME" "$ZIP" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Cronomicon $V" --notes-file "$notes" "$ZIP"
+          fi
+
+      - name: No deploy key for cronomicon.io
+        if: env.HAS_DOCS_DEPLOY_KEY != 'true'
+        run: echo "::warning::DOCS_DEPLOY_KEY is not set; the manuals were not published to cronomicon.io/docs/"
+
+      - name: Check out the site
+        if: env.HAS_DOCS_DEPLOY_KEY == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: ResetSmith/cronomicon.io
+          ssh-key: ${{ secrets.DOCS_DEPLOY_KEY }}
+          path: site
+
+      - name: Publish to cronomicon.io/docs/
+        if: env.HAS_DOCS_DEPLOY_KEY == 'true'
+        env:
+          V: ${{ steps.bundle.outputs.version }}
+          DIR: ${{ steps.bundle.outputs.dir }}
+        run: |
+          set -eu
+          # docs/index.html is the site's own landing page for the manuals.
+          rsync -a --delete --exclude index.html "$DIR/" site/docs/
+          cd site
+          git add -A docs
+          if git diff --cached --quiet; then echo "docs already current"; exit 0; fi
+          git -c user.name="${{ github.actor }}" \
+              -c user.email="${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com" \
+              commit -m "Publish the Cronomicon $V manuals"
+          git push

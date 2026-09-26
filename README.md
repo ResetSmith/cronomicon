@@ -10,7 +10,8 @@
   <img src="assets/cronomicon-demo.gif" alt="Cronomicon in action: the Dashboard, the Jobs catalog, kicking off a run from the Run dialog, switching from light to dark mode, the run landing in History, and a workflow's step graph" width="900">
 </p>
 
-[![Version](https://img.shields.io/badge/version-2.0.1-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.3-blue)](CHANGELOG.md)
+[![Docs](https://img.shields.io/badge/docs-cronomicon.io-blue)](https://cronomicon.io/docs/)
 [![Status](https://img.shields.io/badge/status-stable-brightgreen)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -755,13 +756,24 @@ Mechanics:
 
 ## Documentation
 
+The manuals are HTML, and the same pages are available four ways:
+
+| Where | Version | How |
+|---|---|---|
+| **[cronomicon.io/docs](https://cronomicon.io/docs/)** | Latest release | Read online, before you deploy |
+| **The running app** | The version you run | Header **Help** menu and the contextual links in each screen |
+| **[GitHub Releases](https://github.com/ResetSmith/cronomicon/releases)** | Each release | `cronomicon-docs-X.Y.Z.zip`: unzip and open `administrator-manual.html` |
+| **A checkout** | That commit | Open `backend/web/dist/administrator-manual.html` in a browser; no server needed |
+
+`documentation/` holds the sources. The runner and usage guides there are fragments the frontend build wraps into full pages, so read the built copies in `backend/web/dist/`.
+
 ### For Operators & Developers
 
-- **[User Manual](documentation/user-manual.html)** — the full per-view reference and task recipes for operators and authors, served in-app from the header **Help** button
-- **[Administrator Manual](documentation/administrator-manual.html)** — service operations: bootstrap, execution model, GitOps, secrets, runner fleet, deployment & day-2
+- **[User Manual](https://cronomicon.io/docs/user-manual.html)** — the full per-view reference and task recipes for operators and authors, served in-app from the header **Help** button
+- **[Administrator Manual](https://cronomicon.io/docs/administrator-manual.html)** — service operations: bootstrap, execution model, GitOps, secrets, runner fleet, deployment & day-2
 - **Training courses** — an operator course (`/training-operator.html`, ten modules, framed for teams migrating from a legacy job scheduler) and an administrator course (`/training-admin.html`, seven modules); both ship in the binary, open in a slide **deck mode** by default, and degrade to a scrolling page without JavaScript
 - **Usage guides** — per-run-type guides for Bash, Ansible, PowerShell and Python, plus the runner **Install**, **Manage** and **Security** guides; the header **Help** menu and contextual links in each screen open the relevant page
-- **Deployment** — the administrator manual's Deployment chapter covers the reverse-proxy + identity-provider topology, health checks, storage layout and day-2 essentials; [`backend/deploy/backup-restore.md`](backend/deploy/backup-restore.md) covers the app's own backup and restore commands
+- **Deployment** — the administrator manual's Deployment chapter covers the reverse-proxy + identity-provider topology, health checks, storage layout and day-2 essentials; [`backend/deploy/backup-restore.md`](backend/deploy/backup-restore.md) covers the nightly backup and the `restore` command
 - **[Security Review](backend/deploy/security-review.md)** — OIDC / trusted-header SSO, CSRF, runner auth, secret management: the controls and where each is enforced
 - **[Changelog](CHANGELOG.md)** — Release notes
 
