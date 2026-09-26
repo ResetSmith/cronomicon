@@ -12,10 +12,10 @@ use GitHub's private vulnerability reporting on this repository instead.
 
 ## Development setup
 
-The repository has two production surfaces, described in `AGENTS.md`:
+The repository has two production surfaces, each with its own README:
 
-- `backend/` — Go 1.26, SQLite, single static binary
-- `frontend/` — React + TypeScript + Vite, embedded into the binary
+- [`backend/`](backend/README.md) — Go 1.26, SQLite, single static binary
+- [`frontend/`](frontend/README.md) — React + TypeScript + Vite, embedded into the binary
 
 ```bash
 # Backend
@@ -42,7 +42,7 @@ CRONOMICON_DEV_AUTH=true CRONOMICON_DEV_SEED=true CRONOMICON_COOKIE_SECURE=false
    request against `develop` as well: GitHub pre-fills `release`, which is the
    production branch and only receives merges from `develop`.
 2. Keep each pull request focused on one change.
-3. Follow the conventions in `AGENTS.md`. In particular:
+3. Follow the project's conventions. In particular:
    - The API contract is `openapi.yaml`; `backend/openapi.yaml` must stay
      byte-identical, and the frontend client is regenerated with
      `npm run gen`.
