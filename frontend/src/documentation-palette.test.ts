@@ -179,6 +179,27 @@ describe("documentation palette (VU-18)", () => {
   });
 });
 
+// ── One stylesheet for the whole set ────────────────────────────────────────
+//
+// The administrator manual used to carry its own, slowly diverging copy of the
+// user manual's <style> (a different hero, sans-only headings, other radii), so
+// the two books read as two products. It now carries the user manual's block
+// byte for byte — the same block vite-manuals-plugin.js injects into every
+// wrapped guide — and this keeps it that way: change the look in
+// user-manual.html, then copy the block across.
+describe("documentation stylesheet", () => {
+  it("is byte-identical in both manuals", () => {
+    const style = (file: string) =>
+      readFileSync(join(DOCS, file), "utf8").match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+    const user = style("user-manual.html");
+    expect(user.length).toBeGreaterThan(10_000);
+    expect(
+      style("administrator-manual.html") === user,
+      "administrator-manual.html's <style> has drifted from user-manual.html's; copy the user manual's block across",
+    ).toBe(true);
+  });
+});
+
 // ── Fonts (VU-1, same defect one layer out) ─────────────────────────────────
 //
 // The manuals used to pull Outfit / JetBrains Mono / Fraunces from

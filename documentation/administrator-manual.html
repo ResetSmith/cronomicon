@@ -8,25 +8,31 @@
     <meta name="description"
         content="The administrator manual for Cronomicon, the self-hosted Script Orchestrator — for the operators who deploy and run the service: first-run bootstrap, execution, GitOps, secrets, the runner fleet, deployment and day-2. Everyday product usage lives in the companion User Manual.">
     <style>
-        /* Fonts are SELF-HOSTED (VU-1). This manual is served by the Cronomicon binary to
- operators on networks that may have no egress to fonts.googleapis.com, and a
- blocked stylesheet silently drops the whole document to system-ui with no
- error — the same defect frontend/index.html guards against. Faces
- copied from index.html unchanged (Google's own latin / latin-ext subsets);
- only the origin differs. The paths are RELATIVE (fonts/*), never /fonts/*: the
- same file is served at the root of the app (spa.go serves any real file under
- backend/web/dist, where Vite copies public/), under cronomicon.io/docs/, from
- the release docs zip, and opened straight from a checkout, and only a relative
- path resolves in all four.
+        /* Fonts are SELF-HOSTED (VU-1), and they are declared HERE rather than via a
+ <link> in this <head> for a second reason: vite-manuals-plugin.js injects this
+ <style> verbatim into the wrapped runner guides, whose generated <head> has no
+ room for link elements. Everything the guides need must live in this block.
+ administrator-manual.html carries a byte-identical copy of this <style>, so
+ the two books and the guides read as one set (documentation-palette.test.ts
+ fails if they drift).
+
+ Why self-hosted: these documents are served by the Cronomicon binary to operators
+ on networks that may have no egress to fonts.googleapis.com, and a blocked
+ stylesheet silently drops the whole manual to system-ui with no error — the
+ same defect frontend/index.html guards against. Faces copied from
+ index.html unchanged (Google's own latin / latin-ext subsets); only the origin
+ differs. The paths are RELATIVE (fonts/*), never /fonts/*: the manuals and the
+ wrapped guides sit beside fonts/ wherever they are served (the app root, where
+ Vite copies public/ into backend/web/dist; cronomicon.io/docs/; the release docs
+ zip; a checkout opened from disk), and only a relative path resolves in all four.
 
  Families track theme.ts so the manuals and the product read as one thing: IBM
  Plex Sans for body, Plex Sans Condensed for uppercase structural type, Plex
- Mono for code. No other families are declared. Fraunces is NOT declared
- here: this manual has no display face, and adding one would be a new
- use of a face theme.ts reserves for brand surfaces.
+ Mono for code. No other families are loaded. Fraunces stays on the
+ hero and headings only — the manuals are a brand surface; do not spread it.
 
- Plex Sans is a single variable file spanning 400-700; Condensed and Mono are
- static per weight. An unreferenced face is never fetched. */
+ Plex Sans and Fraunces are single variable files spanning 400-700; Condensed
+ and Mono are static per weight. An unreferenced face is never fetched. */
         @font-face {
             font-family: 'IBM Plex Sans';
             font-style: normal;
@@ -117,32 +123,55 @@
             unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
         }
 
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('fonts/fraunces-400-700-latin-ext.woff2') format('woff2');
+            unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF
+        }
+
+        @font-face {
+            font-family: 'Fraunces';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: swap;
+            src: url('fonts/fraunces-400-700-latin.woff2') format('woff2');
+            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD
+        }
+
         /* ============================================================
  Cronomicon Manual — palette ported 1:1 from the product
  (frontend/src/theme.ts). Dark is the product default.
 
  VU-18: these are hand-copied hex literals, so they silently rot
  the next time theme.ts moves. frontend/src/documentation-palette.test.ts
- fails if any hex in this file is absent from theme.ts. When the
- product palette changes, re-map by ROLE — page background takes the
- new `bg`, cards `panel`, links `primary`, warning callouts
- `warning` — never by eyeballing which new hex looks closest to the
- old one.
+ fails if any hex in this file (or the wrapped runner-guide
+ fragments, which reuse this <style> verbatim) is absent from
+ theme.ts. When the product palette changes, re-map by ROLE — a
+ doc's page background takes the new `bg`, its cards `panel`, its
+ links `primary`, its warning callouts `warning` — never by
+ eyeballing which new hex looks closest to the old one.
 
- Two roles are easy to get backwards:
- `warning` is a distinct ORANGE (not the same gold as `accent`, so a
- warn badge and an in-flight badge stay distinguishable), and `accent`
- gold is the BRAND — the hero spine, the h2 rule, the active TOC item.
+ Two role assignments are easy to get backwards:
+ `warning` is a distinct ORANGE, not the brand gold (sharing the gold
+ with `accent` would make a warn badge and an in-flight badge
+ indistinguishable), and `accent` gold is the BRAND — the hero
+ spine, the h2 rule, the active TOC item.
  ============================================================ */
         :root {
-            /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono`) so a fallback
- here matches a fallback there. --sansCond is the uppercase structural face —
- eyebrows, nav group labels, code-block captions. */
+            /* Stacks copied from theme.ts (`sans` / `sansCond` / `mono` / `display`) so a
+ fallback here matches a fallback there. --sansCond is the uppercase
+ structural face — eyebrows, nav group labels, code-block captions. */
             --sans: 'IBM Plex Sans', system-ui, sans-serif;
             --sansCond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
             --mono: 'IBM Plex Mono', ui-monospace, monospace;
+            --display: 'Fraunces', Georgia, serif;
             --maxw: 880px;
             --nav-w: 300px;
+            --band-pad: clamp(64px, 8vw, 112px);
+            --gold-rule: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
         }
 
         html[data-theme="dark"] {
@@ -179,7 +208,7 @@
             --shadow: 0 2px 12px rgba(0, 0, 0, .45);
             --shadowSm: 0 1px 4px rgba(0, 0, 0, .3);
             --code: #0d1621;
-            --hero: linear-gradient(135deg, #101a26 0%, #0a1119 60%);
+            --band: #0d1621;
         }
 
         html[data-theme="light"] {
@@ -216,7 +245,7 @@
             --shadow: 0 2px 12px rgba(15, 30, 50, .08);
             --shadowSm: 0 1px 4px rgba(15, 30, 50, .05);
             --code: #eef2f7;
-            --hero: linear-gradient(135deg, #ffffff 0%, #eef2f7 100%);
+            --band: #ffffff;
         }
 
         * {
@@ -543,14 +572,18 @@
             flex: 1;
             min-width: 0;
             display: flex;
-            flex-direction: column
+            flex-direction: column;
+            /* The bands (below) paint past main's reading measure to the edges of this
+ pane. clip, not hidden: it trims them here without turning #wrap into a
+ scroll container, so the sticky topbar keeps sticking. */
+            overflow-x: clip
         }
 
         main {
             width: 100%;
             max-width: var(--maxw);
             margin: 0 auto;
-            padding: 8px 30px 120px
+            padding: 0 30px
         }
 
         section {
@@ -559,124 +592,134 @@
             scroll-margin-top: 70px
         }
 
-        section.part-lead {
-            border-top: 1px dashed var(--border);
-            margin-top: 46px
-        }
-
-        /* ---------- Hero ---------- */
+        /* ---------- Hero ----------
+ The site's hero, not a card: the title sits on the page under the same two
+ glows cronomicon.io uses (gold toward the right, sky toward the top left),
+ painted by ::before across the whole pane (as the Bands are). The glow positions are
+ offsets from main's edges (100vmax is how far ::before overhangs each side)
+ so they land in the same place at every pane width. */
         .hero {
-            background: var(--hero);
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            padding: 42px 40px 36px;
-            margin: 26px 0 8px;
-            box-shadow: var(--shadow);
             position: relative;
-            overflow: hidden
+            isolation: isolate;
+            padding: clamp(56px, 8vw, 104px) 0 clamp(40px, 5vw, 64px)
         }
 
-        .hero:before {
+        /* Starts above the hero, as the site's does, and fades out before its
+ bottom edge, so the glow has no hard edge at either end — including on a
+ course's cover slide, where the hero sits mid-screen. */
+        .hero::before {
             content: "";
             position: absolute;
-            right: -60px;
-            top: -60px;
-            width: 240px;
-            height: 240px;
-            border-radius: 50%;
-            background: radial-gradient(circle, var(--primaryBg), transparent 70%)
+            z-index: -1;
+            inset: -140px -100vmax 0;
+            pointer-events: none;
+            background:
+                radial-gradient(ellipse 560px 400px at calc(100% - 100vmax - 60px) 55%, var(--accentBg), transparent 70%),
+                radial-gradient(ellipse 820px 400px at calc(100vmax + 120px) 140px, var(--primaryBg), transparent 70%);
+            -webkit-mask-image: linear-gradient(to bottom, transparent, black 140px, black 70%, transparent);
+            mask-image: linear-gradient(to bottom, transparent, black 140px, black 70%, transparent)
         }
 
+        /* The Cronomicon wordmark, set as the site's header sets it. */
         .hero .eyebrow {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            font-weight: 600;
+            margin: 0 0 20px;
             font-family: var(--sansCond);
-            letter-spacing: .1em;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1;
+            letter-spacing: .16em;
             text-transform: uppercase;
-            color: var(--primary);
-            background: var(--primaryBg);
-            padding: 5px 12px;
-            border-radius: 30px;
-            margin-bottom: 16px
+            color: var(--accent)
         }
 
         .hero h1 {
-            font-size: 40px;
-            line-height: 1.1;
-            margin: .1em 0 .25em;
-            font-weight: 700;
-            letter-spacing: -.5px
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: clamp(44px, 1.9rem + 3.4vw, 72px);
+            line-height: 1;
+            margin: 0 0 .32em;
+            font-weight: 560;
+            letter-spacing: -.022em;
+            text-wrap: balance
         }
 
         .hero p.lead {
-            font-size: 18px;
+            font-size: 19px;
+            line-height: 1.6;
             color: var(--textSec);
-            max-width: 64ch;
-            margin: 0
+            max-width: 58ch;
+            margin: 0;
+            text-wrap: pretty
         }
 
         .hero .meta {
             display: flex;
             flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 22px
+            gap: 8px;
+            margin-top: 28px
         }
 
         .hero .meta .chip {
-            font-size: 12.5px;
+            font-size: 13px;
             color: var(--textSec);
-            background: var(--panel);
             border: 1px solid var(--border);
-            border-radius: 20px;
-            padding: 5px 13px;
+            border-radius: 4px;
+            padding: 4px 10px;
             font-weight: 500
         }
 
         .hero .meta .chip b {
-            color: var(--text)
+            color: var(--text);
+            font-weight: 600
         }
 
         /* ---------- Typography ---------- */
         h2 {
-            font-size: 27px;
-            font-weight: 700;
-            letter-spacing: -.3px;
-            margin: .3em 0 .5em;
-            padding-bottom: .3em;
-            border-bottom: 2px solid var(--border);
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 30px;
+            font-weight: 600;
+            letter-spacing: -.01em;
+            margin: .3em 0 .55em;
+            padding-bottom: .34em;
+            border-bottom: 2px solid transparent;
+            border-image: var(--gold-rule) 1;
             display: flex;
             align-items: center;
-            gap: 11px
+            gap: 13px
         }
 
         h2 .secnum {
+            font-family: var(--sans);
             font-size: 14px;
             color: var(--onSolid);
             background: var(--primary);
-            min-width: 30px;
-            height: 30px;
-            border-radius: 8px;
+            min-width: 32px;
+            height: 32px;
+            border-radius: 9px;
             display: inline-grid;
             place-items: center;
             font-weight: 700;
-            flex: 0 0 auto
+            flex: 0 0 auto;
+            box-shadow: var(--shadowSm)
         }
 
         h3 {
-            font-size: 20px;
-            font-weight: 650;
-            margin: 1.7em 0 .5em;
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 21.5px;
+            font-weight: 600;
+            letter-spacing: -.005em;
+            margin: 1.8em 0 .5em;
             color: var(--text)
         }
 
         h4 {
             font-size: 16px;
             font-weight: 650;
-            margin: 1.4em 0 .4em;
-            color: var(--text)
+            margin: 1.5em 0 .4em;
+            color: var(--text);
+            letter-spacing: .005em
         }
 
         p {
@@ -943,54 +986,54 @@
             font-size: 10px
         }
 
-        /* ---------- Start-here persona cards ---------- */
+        /* ---------- Start-here on-ramp ----------
+ Open, like the site's lists: no card around the block and none around each
+ persona, just three columns parted by hairlines. */
         .starthere {
-            background: linear-gradient(135deg, var(--primaryBg), transparent 70%);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 24px 24px 20px;
-            margin: 1.6em 0;
-            box-shadow: var(--shadowSm)
+            padding: 0 0 clamp(56px, 7vw, 88px)
         }
 
         .starthere>.sh-hd {
-            font-weight: 700;
-            font-size: 17px;
-            margin: 0 0 4px;
-            display: flex;
-            align-items: center;
-            gap: 9px
+            font-family: var(--display);
+            font-optical-sizing: auto;
+            font-size: 26px;
+            font-weight: 580;
+            line-height: 1.2;
+            letter-spacing: -.012em;
+            margin: 0 0 8px
         }
 
         .starthere>.sh-sub {
             color: var(--textSec);
-            font-size: 14px;
-            margin: 0 0 16px
+            font-size: 16px;
+            max-width: 64ch;
+            margin: 0 0 26px
         }
 
         .persona-grid {
             display: grid;
-            gap: 13px;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            border-top: 1px solid var(--border)
         }
 
         .persona {
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 16px 16px 14px;
             display: flex;
             flex-direction: column;
-            box-shadow: var(--shadowSm)
+            padding: 20px 24px 0 0
+        }
+
+        .persona+.persona {
+            padding-left: 24px;
+            border-left: 1px solid var(--borderLight)
         }
 
         .persona .ph {
             display: flex;
             align-items: center;
             gap: 9px;
-            font-weight: 700;
-            font-size: 15px;
-            margin-bottom: 5px
+            font-weight: 650;
+            font-size: 16px;
+            margin-bottom: 6px
         }
 
         .persona .ph .em {
@@ -999,26 +1042,36 @@
 
         .persona .pdesc {
             color: var(--textSec);
-            font-size: 13.5px;
-            line-height: 1.5;
+            font-size: 14.5px;
+            line-height: 1.55;
             flex: 1;
-            margin: 0 0 11px
+            margin: 0 0 12px
         }
 
         .persona .ppath {
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 600;
-            color: var(--primary);
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding-top: 9px;
-            border-top: 1px solid var(--borderLight)
+            color: var(--primary)
         }
 
         .persona .ppath:hover {
-            color: var(--primaryHover);
-            text-decoration: none
+            color: var(--primaryHover)
+        }
+
+        @media(max-width:760px) {
+            .persona-grid {
+                grid-template-columns: minmax(0, 1fr)
+            }
+
+            .persona,
+            .persona+.persona {
+                padding: 18px 0;
+                border-left: 0
+            }
+
+            .persona+.persona {
+                border-top: 1px solid var(--borderLight)
+            }
         }
 
         /* ---------- Jargon buster ---------- */
@@ -1078,9 +1131,16 @@
         .card {
             background: var(--panel);
             border: 1px solid var(--border);
-            border-radius: 13px;
-            padding: 18px;
-            box-shadow: var(--shadowSm)
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: var(--shadowSm);
+            transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+            border-color: color-mix(in srgb, var(--accent) 45%, var(--border))
         }
 
         .card h4 {
@@ -1250,6 +1310,35 @@
             font-style: italic
         }
 
+        /* Screenshots — each figure.shot carries a dark AND a light capture of the real
+ app (frontend/public/manual/<view>-<theme>.png, referenced as manual/*); the pair
+ swaps with the manual's own theme toggle so the pictured UI always matches the
+ reader's chosen theme. Captures are 1600×900 with seeded demo data; the
+ width/height attributes prevent layout shift under loading="lazy". */
+        figure.shot {
+            padding: 10px
+        }
+
+        figure.shot img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid var(--borderLight);
+            border-radius: 9px
+        }
+
+        figure.shot figcaption {
+            margin-top: 10px
+        }
+
+        html[data-theme="dark"] figure.shot img.light {
+            display: none
+        }
+
+        html[data-theme="light"] figure.shot img.dark {
+            display: none
+        }
+
         .svg-box {
             fill: var(--panel2);
             stroke: var(--border)
@@ -1377,9 +1466,290 @@
             margin: .4em 0
         }
 
+        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+ bar whose right edge is the collapsed one-line summary (RU redesign) */
+        details.dlgbar {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin: 9px 0;
+            background: var(--panel);
+            overflow: hidden
+        }
+
+        details.dlgbar summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 12px 16px
+        }
+
+        details.dlgbar summary::-webkit-details-marker {
+            display: none
+        }
+
+        details.dlgbar summary:before {
+            content: "▸";
+            color: var(--primary);
+            font-size: 12px;
+            flex: 0 0 12px
+        }
+
+        details.dlgbar[open] summary:before {
+            content: "▾"
+        }
+
+        details.dlgbar summary .t {
+            font-weight: 700
+        }
+
+        details.dlgbar summary .pill {
+            flex: 0 0 auto
+        }
+
+        details.dlgbar summary .sum {
+            margin-left: auto;
+            color: var(--textMuted);
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 52%
+        }
+
+        details.dlgbar[open] summary {
+            border-bottom: 1px solid var(--borderLight);
+            background: var(--panel2)
+        }
+
+        details.dlgbar .body {
+            padding: 13px 18px 15px 38px;
+            max-width: 76ch
+        }
+
+        details.dlgbar .body p {
+            margin: .55em 0
+        }
+
+        details.dlgbar summary:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px
+        }
+
+        @media(max-width:640px) {
+            details.dlgbar summary .sum {
+                display: none
+            }
+        }
+
         .faq-cause {
             color: var(--textMuted);
             font-size: 13.5px
+        }
+
+        /* ---------- Bands (cronomicon.io's section rhythm) ----------
+ Every chapter is a full-width band, as every section of the site's home page
+ is: chapters alternate between the page colour and --band with a hairline
+ between them, so a manual reads as a run of rooms rather than one long wall.
+ Each part opens on a .partband title page that indexes its chapters.
+
+ The colour is painted by ::before, which overhangs main by 100vmax on each
+ side and is trimmed to the pane by #wrap's overflow-x: clip, so the text
+ keeps main's reading measure while the band runs edge to edge. Classes, not
+ a bare `section` selector: the training deck builds section.tr-slide at
+ runtime and must not pick any of this up. */
+        section.chap,
+        .partband,
+        .docfoot {
+            position: relative;
+            isolation: isolate
+        }
+
+        section.chap::before,
+        .partband::before,
+        .docfoot::before {
+            content: "";
+            position: absolute;
+            z-index: -1;
+            inset: 0 -100vmax;
+            pointer-events: none
+        }
+
+        section.chap {
+            margin: 0;
+            padding: var(--band-pad) 0
+        }
+
+        section.chap::before {
+            border-top: 1px solid var(--borderLight)
+        }
+
+        section.chap.alt::before {
+            background: var(--band)
+        }
+
+        /* A white card on a white band disappears; lift panels onto the page
+ colour there, as the site does for its diagrams. */
+        html[data-theme="light"] section.chap.alt {
+            --panel: #f4f6fa;
+            --panelHover: #eef2f7
+        }
+
+        section.chap>h2 {
+            display: block;
+            margin: 0 0 .55em;
+            padding: 0;
+            border: 0;
+            border-image: none;
+            font-size: clamp(30px, 1.2rem + 1.9vw, 44px);
+            font-weight: 580;
+            line-height: 1.08;
+            letter-spacing: -.018em;
+            text-wrap: balance
+        }
+
+        /* The chapter number, in the § form the cross-references use ("see
+ §6.5"), on the site's fading gold rule. */
+        section.chap>h2 .secnum {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            min-width: 0;
+            height: auto;
+            margin: 0 0 18px;
+            background: none;
+            box-shadow: none;
+            border-radius: 0;
+            color: var(--accent);
+            font-family: var(--display);
+            font-size: 20px;
+            font-weight: 520;
+            letter-spacing: 0;
+            font-variant-numeric: lining-nums
+        }
+
+        section.chap>h2 .secnum::before {
+            content: "\00a7\2009"
+        }
+
+        section.chap>h2 .secnum::after {
+            content: "";
+            flex: 1;
+            margin-left: 16px;
+            height: 1px;
+            background: var(--gold-rule)
+        }
+
+        /* A guide's chapter anchor is its h2; land it clear of the sticky topbar. */
+        section.chap>h2[id] {
+            scroll-margin-top: 84px
+        }
+
+        section.chap>.lead-p {
+            font-size: 19px;
+            line-height: 1.6;
+            max-width: 64ch;
+            text-wrap: pretty
+        }
+
+        section.chap>.view-hd {
+            margin: 0 0 1em
+        }
+
+        /* Part title pages: the one loud moment, lit like the site's closing
+ section. */
+        .partband {
+            padding: calc(var(--band-pad) * 1.25) 0 var(--band-pad);
+            scroll-margin-top: 70px
+        }
+
+        .partband::before {
+            border-top: 1px solid var(--border);
+            background: radial-gradient(ellipse 640px 440px at calc(100vmax + 80px) 100%, var(--accentBg), transparent 70%)
+        }
+
+        .partband .part-no {
+            margin: 0 0 10px;
+            font-family: var(--display);
+            font-size: 22px;
+            font-weight: 520;
+            color: var(--accent)
+        }
+
+        .partband h2 {
+            display: block;
+            margin: 0 0 .3em;
+            padding: 0;
+            border: 0;
+            border-image: none;
+            font-size: clamp(42px, 1.6rem + 3.4vw, 68px);
+            font-weight: 560;
+            line-height: 1;
+            letter-spacing: -.024em;
+            text-wrap: balance
+        }
+
+        .partband .part-sum {
+            font-size: 19px;
+            line-height: 1.6;
+            color: var(--textSec);
+            max-width: 54ch;
+            margin: 0 0 40px;
+            text-wrap: pretty
+        }
+
+        .part-index {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            columns: 2 260px;
+            column-gap: 48px
+        }
+
+        .part-index li {
+            margin: 0;
+            break-inside: avoid;
+            border-top: 1px solid var(--borderLight)
+        }
+
+        .part-index a {
+            display: flex;
+            align-items: baseline;
+            gap: 14px;
+            padding: 11px 2px;
+            color: var(--text);
+            font-weight: 500
+        }
+
+        .part-index a:hover {
+            color: var(--accent);
+            text-decoration: none
+        }
+
+        .part-index .n {
+            flex: 0 0 1.8em;
+            font-family: var(--display);
+            font-size: 17px;
+            color: var(--accent);
+            font-variant-numeric: lining-nums tabular-nums
+        }
+
+        /* The colophon closes the pane on the band colour. */
+        .docfoot {
+            padding: 44px 0 96px;
+            color: var(--textMuted);
+            font-size: 13px
+        }
+
+        .docfoot::before {
+            background: var(--band);
+            border-top: 1px solid var(--border)
+        }
+
+        .docfoot strong {
+            color: var(--text)
         }
 
         /* ---------- Section intro / view header ---------- */
@@ -1461,6 +1831,36 @@
             color: var(--textSec)
         }
 
+        /* ---------- Gentle motion (one calm entrance; disabled on request) ---------- */
+        @keyframes heroRise {
+            from {
+                opacity: 0;
+                transform: translateY(10px)
+            }
+
+            to {
+                opacity: 1;
+                transform: none
+            }
+        }
+
+        .hero {
+            animation: heroRise .5s cubic-bezier(.22, .61, .36, 1) both
+        }
+
+        @media(prefers-reduced-motion:reduce) {
+            * {
+                animation: none !important;
+                transition: none !important;
+                scroll-behavior: auto !important
+            }
+
+            .card:hover,
+            .persona:hover {
+                transform: none
+            }
+        }
+
         /* ---------- Responsive ---------- */
         #scrim {
             display: none
@@ -1493,15 +1893,7 @@
             }
 
             main {
-                padding: 8px 18px 120px
-            }
-
-            .hero {
-                padding: 30px 22px
-            }
-
-            .hero h1 {
-                font-size: 30px
+                padding: 0 18px
             }
         }
 
@@ -1533,6 +1925,23 @@
 
             section {
                 padding-top: 10px
+            }
+
+            section.chap,
+            .partband,
+            .hero {
+                padding: 24px 0
+            }
+
+            section.chap::before,
+            .partband::before,
+            .hero::before,
+            .docfoot::before {
+                display: none
+            }
+
+            .partband {
+                break-before: page
             }
 
             a {
@@ -1633,8 +2042,8 @@
 
             <!-- ====================== HERO ====================== -->
             <div class="hero">
-                <div class="eyebrow">⚙️ Administrator Manual</div>
-                <h1>Cronomicon</h1>
+                <div class="eyebrow">Cronomicon</div>
+                <h1>Administrator Manual</h1>
                 <p class="lead">Cronomicon is the self-hosted <strong>Script Orchestrator</strong>. Use one web console to
                     schedule and run Bash, Ansible, Terraform, PowerShell, Perl and Python jobs on all your fleet. The
                     console keeps a record of each operation for audit.</p>
@@ -1648,7 +2057,7 @@
 
             <!-- ====================== START HERE ON-RAMP ====================== -->
             <div class="starthere">
-                <p class="sh-hd">&#9881;&#65039; Administering Cronomicon &mdash; what this book contains</p>
+                <p class="sh-hd">What this book covers</p>
                 <p class="sh-sub">This is the operator part of the Cronomicon manual. It tells you how to install the
                     service, connect identity and Git, operate the runner fleet, and keep the service serviceable on
                     day&nbsp;2. The companion <a href="user-manual.html">User Manual</a> gives the day-to-day product
@@ -1675,8 +2084,20 @@
                 </div>
             </div>
 
+            <!-- ====================== PART I ====================== -->
+            <div class="partband" id="part-1">
+                <p class="part-no">Part I</p>
+                <h2>Administering Cronomicon</h2>
+                <p class="part-sum">What the service is made of, how the first administrator gets in, and how the interface decides what each person may do.</p>
+                <ol class="part-index">
+                    <li><a href="#overview"><span class="n">1</span> Overview &amp; Orientation</a></li>
+                    <li><a href="#bootstrap"><span class="n">2</span> First-run Bootstrap</a></li>
+                    <li><a href="#ui-gating"><span class="n">3</span> Permissions &amp; UI Gating</a></li>
+                </ol>
+            </div>
+
             <!-- ====================== 1. OVERVIEW ====================== -->
-            <section id="overview">
+            <section id="overview" class="chap">
                 <h2><span class="secnum">1</span> Overview &amp; Orientation</h2>
                 <p class="lead-p">This is the <strong>Administrator Manual</strong> for Cronomicon. It is the part of the
                     documentation for the persons who <strong>operate the service</strong>, not for the day-to-day
@@ -1823,7 +2244,7 @@
             </section>
 
             <!-- ====================== 2. FIRST-RUN BOOTSTRAP ====================== -->
-            <section id="bootstrap" class="part-lead">
+            <section id="bootstrap" class="chap alt">
                 <h2><span class="secnum">2</span> First-run bootstrap</h2>
                 <p>Access grants give access, and only an admin can create the grants. Thus you seed the first admin
                     with the <code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code> environment variable. This is the sequence (<a
@@ -1863,7 +2284,7 @@
             </section>
 
             <!-- ====================== 3. PERMISSIONS & UI GATING ====================== -->
-            <section id="ui-gating" class="part-lead">
+            <section id="ui-gating" class="chap">
                 <h2><span class="secnum">3</span> How the UI gates actions</h2>
                 <p>The SPA (the single-page application, which is the Cronomicon console in your browser) calls
                     <code>GET /api/v1/capabilities</code>. The response contains two deployment feature flags:
@@ -2014,8 +2435,22 @@
                 </div>
             </section>
 
+            <!-- ====================== PART II ====================== -->
+            <div class="partband" id="part-2">
+                <p class="part-no">Part II</p>
+                <h2>Operations</h2>
+                <p class="part-sum">How runs execute, Git sync, secrets, the runner fleet, and deploying and running the service day to day.</p>
+                <ol class="part-index">
+                    <li><a href="#execution"><span class="n">4</span> How Execution Works</a></li>
+                    <li><a href="#gitops"><span class="n">5</span> GitOps &amp; GitLab Sync</a></li>
+                    <li><a href="#secrets"><span class="n">6</span> Secrets &amp; Security</a></li>
+                    <li><a href="#runner-ops"><span class="n">7</span> Runner Fleet Management</a></li>
+                    <li><a href="#deployment"><span class="n">8</span> Deployment &amp; Day-2</a></li>
+                </ol>
+            </div>
+
             <!-- ====================== 4. EXECUTION ====================== -->
-            <section id="execution" class="part-lead">
+            <section id="execution" class="chap">
                 <h2><span class="secnum">4</span> How Execution Works</h2>
                 <p class="lead-p">This section gives you a model of what occurs when a job runs: how the server selects
                     the executor, the life of an SSH run, how the server resolves hosts and bastions, host-key
@@ -2701,7 +3136,7 @@
             </section>
 
             <!-- ====================== 5. GITOPS ====================== -->
-            <section id="gitops" class="part-lead">
+            <section id="gitops" class="chap alt">
                 <h2><span class="secnum">5</span> GitOps &amp; GitLab Sync</h2>
                 <p class="lead-p">Cronomicon keeps a local clone of your GitLab &ldquo;job-definitions&rdquo; repo. On each
                     sync, it makes its runtime tables from the clone again. For Git definitions, the flow goes in one
@@ -2963,7 +3398,7 @@
             </section>
 
             <!-- ====================== 6. SECRETS & SECURITY ====================== -->
-            <section id="secrets" class="part-lead">
+            <section id="secrets" class="chap">
                 <h2><span class="secnum">6</span> Secrets &amp; Security</h2>
                 <p class="lead-p">How Cronomicon keeps credentials safe: envelope encryption at rest, optional Vault, and
                     audited reveals. This section also tells you exactly how, and where, log redaction operates, and its
@@ -3854,7 +4289,7 @@ ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config
             </section>
 
             <!-- ====================== 7. RUNNER FLEET ====================== -->
-            <section id="runner-ops" class="part-lead">
+            <section id="runner-ops" class="chap alt">
                 <h2><span class="secnum">7</span> Runner Fleet Management</h2>
                 <p class="lead-p">A runner is the <code>cronomicon-runner</code> binary on a separate host. It registers,
                     long-polls for runs tagged <code>executor='runner'</code>, does the runs, and streams the logs back
@@ -4409,7 +4844,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
             </section>
 
             <!-- ====================== 8. DEPLOYMENT ====================== -->
-            <section id="deployment" class="part-lead">
+            <section id="deployment" class="chap">
                 <h2><span class="secnum">8</span> Deployment &amp; Day-2</h2>
                 <p class="lead-p">This section is for the administrator who deploys and operates the service. Cronomicon is
                     a single Go binary that serves an embedded UI. Its data is SQLite on one volume, behind your reverse
@@ -5048,8 +5483,20 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                 </div>
             </section>
 
+            <!-- ====================== PART III ====================== -->
+            <div class="partband" id="part-3">
+                <p class="part-no">Part III</p>
+                <h2>Reference</h2>
+                <p class="part-sum">For looking things up: what to do when something goes wrong, the words the product uses, and the appendices.</p>
+                <ol class="part-index">
+                    <li><a href="#troubleshooting"><span class="n">9</span> Troubleshooting &amp; FAQ</a></li>
+                    <li><a href="#glossary"><span class="n">10</span> Glossary</a></li>
+                    <li><a href="#appendix"><span class="n">11</span> Appendices</a></li>
+                </ol>
+            </div>
+
             <!-- ====================== 9. TROUBLESHOOTING ====================== -->
-            <section id="troubleshooting" class="part-lead">
+            <section id="troubleshooting" class="chap">
                 <h2><span class="secnum">9</span> Troubleshooting &amp; FAQ</h2>
                 <p class="lead-p">The most frequent problems, in groups by area. Click a question to expand the cause
                     and the correction.</p>
@@ -5564,7 +6011,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
             </section>
 
             <!-- ====================== 10. GLOSSARY ====================== -->
-            <section id="glossary" class="part-lead">
+            <section id="glossary" class="chap alt">
                 <h2><span class="secnum">10</span> Glossary</h2>
                 <p class="lead-p">Definitions of the terms that Cronomicon and this manual use.</p>
                 <dl class="gloss">
@@ -6054,7 +6501,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
             </section>
 
             <!-- ====================== 11. APPENDICES ====================== -->
-            <section id="appendix" class="part-lead">
+            <section id="appendix" class="chap">
                 <h2><span class="secnum">11</span> Appendices</h2>
 
                 <h3>Appendix A &mdash; Cron reference</h3>
@@ -6593,9 +7040,8 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                     (<code>CRONOMICON_WATCH_*</code>) tell them apart.</p>
             </section>
 
-            <footer
-                style="border-top:1px solid var(--border);margin-top:50px;padding-top:24px;color:var(--textMuted);font-size:13px">
-                <p><strong style="color:var(--text)">Cronomicon · Administrator Manual</strong> · documents v2.0.3. The
+            <footer class="docfoot">
+                <p><strong>Cronomicon · Administrator Manual</strong> · documents v2.0.3. The
                     status pills, colors, and palette agree with the live product. Use <span
                         class="kbd">Ctrl/Cmd&nbsp;+&nbsp;P</span> to keep this page as a PDF for offline use.</p>
                 <p>This manual is a self-contained HTML file. You do not need an internet connection to read it. The
