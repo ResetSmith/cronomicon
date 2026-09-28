@@ -13,6 +13,50 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.0.4] - 2026-09-28
+
+The manuals, guides and courses share one look, and the README is rewritten for
+someone deploying Cronomicon rather than developing it. This release publishes
+both to cronomicon.io/docs/ and the release zip; they reached `release` after
+the v2.0.3 tag and were not published with it. The application, its API, its
+schema (v1150) and the runner protocol (13) are unchanged.
+
+### Changed
+
+- The administrator manual carries the user manual's `<style>` byte for byte in
+  place of its own diverging copy, so the two books read as one set. A new test
+  in `documentation-palette.test.ts` fails when the two blocks differ: change
+  the look in `user-manual.html`, then copy the block across.
+- Both manuals are set in bands. Each chapter is a `section.chap`, alternating
+  with `.alt`, and each part opens with a title page (`.partband`) that indexes
+  its chapters. The hero title and the chapter and section headings are set
+  in Fraunces, and the hero sits on the page like cronomicon.io's in place of a
+  card.
+- The wrapped guides (runner, usage) get the same bands: `wrapGuide` wraps each
+  `<h2>` and what follows it in a `section.chap` and turns a leading `N · ` into
+  the chapter number. The training courses stay unwrapped, because their deck
+  script slices `main`'s direct children at each heading.
+- The guides' hero shows the Cronomicon wordmark over the guide's own title,
+  with a chip naming the kind of document (Runner Guide, Usage Guide,
+  Training) and its version. The registry's `eyebrow` field is replaced by
+  `kind`, and the guides no longer borrow the user manual's lead paragraph.
+- The README is reorganised around deployment: a contents list, a local trial,
+  then two step-by-step routes (the published image, or building your own)
+  covering configuration, the reverse proxy, first sign-in, runners and
+  upgrades, followed by features, jobs as code, documentation and API. The
+  design-system and frontend state-management notes move to
+  `frontend/README.md`.
+- `CONTRIBUTING.md`, `backend/README.md` and `frontend/README.md` no longer
+  send readers to `AGENTS.md`, which a clone does not contain.
+  `CONTRIBUTING.md` links the two surface READMEs instead. Both manuals and the
+  README's image pins now name v2.0.4.
+
+### Fixed
+
+- The brand guard test (`internal/config/brand_test.go`) failed in any fresh
+  clone: it found the repository root by looking for `AGENTS.md`, which is not
+  tracked. It now looks for `CHANGELOG.md`.
+
 ## [2.0.3] - 2026-09-25
 
 The manuals can be read before you deploy. Each release tag now publishes them
