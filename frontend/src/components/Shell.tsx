@@ -63,9 +63,9 @@ export const meta: Record<string, { label: string; subtitle: string; icon: React
 
 export const nav = [
   { to: "/", end: true },
+  { to: "/scripts" },
   { to: "/jobs" },
   { to: "/workflows" },
-  { to: "/scripts" },
   { to: "/schedules" },
   { to: "/scopes" },
   { to: "/env-vars" },

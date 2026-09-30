@@ -1466,7 +1466,7 @@
             margin: .4em 0
         }
 
-        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+        /* §7.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
  bar whose right edge is the collapsed one-line summary (RU redesign) */
         details.dlgbar {
             border: 1px solid var(--border);
@@ -6132,7 +6132,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         advisory findings (<code>crlf</code>, <code>non_utf8</code>, <code>no_shebang</code>,
                         <code>shebang_mismatch</code>, <code>oversized</code>) as warning chips in the Scripts catalog.
                         It is advisory only: it never blocks a sync, never drops a script, and never enters the content
-                        hash. See <a href="user-manual.html#scripts">&sect;8.3</a>.</dd>
+                        hash. See <a href="user-manual.html#scripts">&sect;6.3</a>.</dd>
                     <dt>Bootstrap admin</dt>
                     <dd>A first-run env var (<code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code>) that gives admin to each member
                         of a named AD group, independent of the grants. With it, the first admin can seed the real
@@ -6234,7 +6234,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         tree in each catalog. A search flattens to full-path results. A definition's folder
                         <em>location</em> (its file path) is separate from its <em>identity</em>
                         (<code>metadata.name</code>/id). Thus a move never changes references or routes. See <a
-                            href="user-manual.html#scripts">&sect;8.1</a>.</dd>
+                            href="user-manual.html#scripts">&sect;6.1</a>.</dd>
                     <dt>Forward-only migrations</dt>
                     <dd>Cronomicon applies up-migrations automatically on each boot. Down-migrations are for dev and test
                         only. Production recovery from a bad migration is: restore from a backup.</dd>
@@ -6291,7 +6291,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         &mdash; which Run dialog sections the operator had open, plus <code>confirmation</code> when a
                         deviating run was confirmed. <code>when-to-run</code> is also on that allowlist; unknown values
                         are dropped, and absence means the caller was not the dialog. See <a
-                            href="user-manual.html#jobs">&sect;6.5</a>.</dd>
+                            href="user-manual.html#jobs">&sect;7.5</a>.</dd>
                     <dt>Per-instance Disable</dt>
                     <dd>The one workflow field that the UI can change on each workflow, Git included. It pauses
                         scheduled fires and blocks manual triggers (<code>409 workflow_disabled</code>). It is the
@@ -6381,7 +6381,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         prompt never blocks the run, and the unfilled name is recorded under <code>promptWarnings</code>
                         in the run's override envelope, for History. It is not the same as the inferred <em>Script
                             variables</em> heuristic, which is only a Composer seed and a
-                        drift lint, never part of the run path. See <a href="user-manual.html#jobs">&sect;6</a>.</dd>
+                        drift lint, never part of the run path. See <a href="user-manual.html#jobs">&sect;7</a>.</dd>
                     <dt>Runner / runner agent</dt>
                     <dd>The external <code>cronomicon-runner</code> binary on a separate host. It registers, long-polls for
                         <code>executor='runner'</code> runs, does them, and streams logs back while they execute (a 2-second
@@ -6425,7 +6425,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                         (bash/sh, perl, powershell, python; ansible and terraform are not yet analyzed). They show
                         read-only as status chips (✓ provided, ● required and missing, ○ optional with a default) in
                         Scripts, the Run dialog, and the Composer. They are advisory; the scope's Env Vars are not
-                        auto-injected. See <a href="user-manual.html#scripts">&sect;8.4</a>.</dd>
+                        auto-injected. See <a href="user-manual.html#scripts">&sect;6.4</a>.</dd>
                     <dt>Scope</dt>
                     <dd>A named target environment: a host list plus its supported run types, with an optional <a
                             href="user-manual.html#scopes">Ansible inventory</a> and a bound <a

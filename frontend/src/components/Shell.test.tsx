@@ -11,9 +11,9 @@ describe("Shell — sidebar IA guard", () => {
   it("renders the ratified top-down nav order (11 items, Scopes before Env Vars)", () => {
     expect(nav.map((n) => n.to)).toEqual([
       "/",
+      "/scripts",
       "/jobs",
       "/workflows",
-      "/scripts",
       "/schedules",
       "/scopes",
       "/env-vars",
