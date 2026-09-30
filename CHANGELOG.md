@@ -13,6 +13,23 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.0.5] - 2026-09-30
+
+The sidebar lists the building blocks in the order a job is built from them.
+The application's behaviour, its API, its schema (v1150) and the runner
+protocol (13) are unchanged.
+
+### Changed
+
+- The sidebar reads Dashboard, Scripts, Jobs, Workflows, Schedules, Scopes, …:
+  Scripts moves ahead of Jobs, because a Script is bound into a Job and Jobs
+  compose into Workflows. The `Shell.test.tsx` order guard follows.
+- The user manual's View Reference keeps its promise to follow the sidebar:
+  Scripts becomes chapter 6, Jobs 7 and Workflows 8, with the chapter banding,
+  the Part II index, the sidebar contents and every cross-reference renumbered,
+  including those in the administrator manual and the Bash, Ansible and
+  PowerShell guides.
+
 ## [2.0.4] - 2026-09-28
 
 The manuals, guides and courses share one look, and the README is rewritten for
