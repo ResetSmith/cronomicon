@@ -22,6 +22,7 @@ frontend/tsconfig.tsbuildinfo
 .aidata/
 skill-observations/
 skill-updates/
+supercmo-media/
 node_modules/
 documentation/user-manual.pdf
 CLAUDE.md
