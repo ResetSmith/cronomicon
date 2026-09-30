@@ -2,7 +2,7 @@
 
 <p>How to run <strong>Bash</strong> (and the rest of the shell family — perl, powershell, python) well inside Cronomicon: which of the two executors actually runs your script, how targets, bastions and host keys resolve, how env, run inputs and step outputs flow through a run, how secrets reach a script without ever touching the repo, and the failure modes worth knowing by name. It assumes you can write a shell script; what it teaches is the <em>Cronomicon-specific</em> shape around it.</p>
 
-<p>Companion reading: the <a href="user-manual.html">User Manual</a> for the per-screen reference (Jobs §6, Scripts §8), the <a href="administrator-manual.html">Administrator Manual</a> for the SSH executor's internals (§4) and GitOps (§5), the <a href="./ansible-guide.html"><code>ansible-guide.html</code></a> for playbooks, the <a href="./powershell-guide.html"><code>powershell-guide.html</code></a> for Windows fleets, the <a href="./python-guide.html"><code>python-guide.html</code></a> for Python specifics, and the <a href="./runner-install.html"><code>runner-install.html</code></a> / <a href="./runner-manage.html"><code>runner-manage.html</code></a> / <a href="./runner-security.html"><code>runner-security.html</code></a> guides for the agent.</p>
+<p>Companion reading: the <a href="user-manual.html">User Manual</a> for the per-screen reference (Scripts §6, Jobs §7), the <a href="administrator-manual.html">Administrator Manual</a> for the SSH executor's internals (§4) and GitOps (§5), the <a href="./ansible-guide.html"><code>ansible-guide.html</code></a> for playbooks, the <a href="./powershell-guide.html"><code>powershell-guide.html</code></a> for Windows fleets, the <a href="./python-guide.html"><code>python-guide.html</code></a> for Python specifics, and the <a href="./runner-install.html"><code>runner-install.html</code></a> / <a href="./runner-manage.html"><code>runner-manage.html</code></a> / <a href="./runner-security.html"><code>runner-security.html</code></a> guides for the agent.</p>
 
 <blockquote><p><strong>The one-sentence model.</strong> A shell script is a <strong>Script</strong> (run type <code>bash</code>), a <strong>Scope</strong> names the hosts it may touch, a <strong>Job</strong> binds the two to schedules and env — and the run executes <em>over SSH</em>, dialed either by the Cronomicon server itself (the in-app SSH executor) or by a runner sitting inside the target's network segment.</p></blockquote>
 
@@ -69,7 +69,7 @@
 
 <h3>Run inputs, not <code>read -p</code></h3>
 
-<p>There is no TTY on either executor — a <code>read -p</code> hangs until the timeout kills the run. Declare operator questions as <strong>run inputs</strong> (<code>spec.prompts</code> — name, label, required, default, options) and read the answers from the env; the Run dialog asks, records provenance, and applies them via the per-run env path. <code>prompt_enforcement: block</code> makes a missing required answer reject the run instead of warning. See <a href="user-manual.html#jobs">User Manual §6.5</a>.</p>
+<p>There is no TTY on either executor — a <code>read -p</code> hangs until the timeout kills the run. Declare operator questions as <strong>run inputs</strong> (<code>spec.prompts</code> — name, label, required, default, options) and read the answers from the env; the Run dialog asks, records provenance, and applies them via the per-run env path. <code>prompt_enforcement: block</code> makes a missing required answer reject the run instead of warning. See <a href="user-manual.html#jobs">User Manual §7.5</a>.</p>
 
 <h3>Exit codes &amp; partial results</h3>
 
@@ -81,7 +81,7 @@
 
 <pre><code>echo "::cronomicon-output name=VERSION::1.4.2"</code></pre>
 
-<p>A downstream step declares an input bound to that output (in the Workflow Editor or Git YAML) and receives it as an env var. Markers are captured from the raw output before redaction — and if a captured value carries an injected secret, the executor drops <em>all</em> captured outputs and fails the run (<code>output_secret_leak</code>) rather than let the secret propagate. Details: <a href="user-manual.html#workflows">User Manual §7.5</a>.</p>
+<p>A downstream step declares an input bound to that output (in the Workflow Editor or Git YAML) and receives it as an env var. Markers are captured from the raw output before redaction — and if a captured value carries an injected secret, the executor drops <em>all</em> captured outputs and fails the run (<code>output_secret_leak</code>) rather than let the secret propagate. Details: <a href="user-manual.html#workflows">User Manual §8.5</a>.</p>
 
 <hr />
 

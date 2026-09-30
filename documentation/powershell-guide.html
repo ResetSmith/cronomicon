@@ -77,7 +77,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }</code></pre>
 
 <pre><code>Write-Output "::cronomicon-output name=HOTFIX_KB::KB5031364"</code></pre>
 
-<p>A downstream step binds an input to it and receives it as env. The <code>output_secret_leak</code> fail-close applies here too — never emit a bound secret as an output. See <a href="user-manual.html#workflows">User Manual §7.5</a>.</p>
+<p>A downstream step binds an input to it and receives it as env. The <code>output_secret_leak</code> fail-close applies here too — never emit a bound secret as an output. See <a href="user-manual.html#workflows">User Manual §8.5</a>.</p>
 
 <hr />
 

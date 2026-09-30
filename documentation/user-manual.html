@@ -1466,7 +1466,7 @@
             margin: .4em 0
         }
 
-        /* §6.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
+        /* §7.5 — Run-dialog behaviours set in the dialog's own idiom: a disclosure
  bar whose right edge is the collapsed one-line summary (RU redesign) */
         details.dlgbar {
             border: 1px solid var(--border);
@@ -1978,9 +1978,9 @@
             <details class="grp-sec">
                 <summary class="grp">Part II &middot; View Reference</summary>
                 <a href="#dashboard"><span class="ic">&#9656;</span> Dashboard</a>
+                <a href="#scripts"><span class="ic">&#9656;</span> Scripts</a>
                 <a href="#jobs"><span class="ic">&#9656;</span> Jobs</a>
                 <a href="#workflows"><span class="ic">&#9656;</span> Workflows &amp; Editor</a>
-                <a href="#scripts"><span class="ic">&#9656;</span> Scripts</a>
                 <a href="#schedules"><span class="ic">&#9656;</span> Schedules</a>
                 <a href="#compose"><span class="ic">&#9656;</span> Compose, Builder &amp; Publish</a>
                 <a href="#envvars"><span class="ic">&#9656;</span> Scopes &amp; Env Vars</a>
@@ -2555,7 +2555,7 @@
                 </div>
                 <p>There is exactly <strong>one documented exception</strong>: the per-instance <em>“disable
                         workflow”</em> toggle. You may disable any workflow — even a Git one — from the UI as an
-                    emergency override, without editing its YAML. (See <a href="#workflows">§7</a>.)</p>
+                    emergency override, without editing its YAML. (See <a href="#workflows">§8</a>.)</p>
 
                 <h3>2.4 Scopes &amp; inventory</h3>
                 <p>A <strong>scope</strong> is a named target environment — a list of hosts plus the executor (run)
@@ -2624,7 +2624,7 @@
                 <p>A run stopped by an operator <em>without</em> saying what the stop meant surfaces as <span
                         class="pill fail"><span class="dot"></span>danger</span> with reason <code>killed</code> — that
                     is the unclassified case. A stop can instead be
-                    recorded as Success, Warning or Failed (<a href="#stop-disposition">§6.6</a>), in which case the run
+                    recorded as Success, Warning or Failed (<a href="#stop-disposition">§7.6</a>), in which case the run
                     carries <em>that</em> status and a <span class="pill mut"><span class="dot"></span>Stopped</span>
                     marker showing a person ended it. A <strong>warning</strong> is a partial outcome — e.g. a scope
                     fan-out where some hosts succeeded and some failed.</p>
@@ -3016,7 +3016,7 @@
                     rows are dropped from the Jobs, Workflow-run and Schedule listings. Your <a href="#envvars">Env Vars
                         and Secrets</a> lists are likewise scope-filtered: you see only your-scope and global rows.
                     (Separately, a per-run host subset whose host isn't a member of the bound scope is rejected
-                    <code>422 scope_membership</code> — see §6.3.)
+                    <code>422 scope_membership</code> — see §7.3.)
                 </p>
                 <p class="muted" style="font-size:13.5px">An admin editing an access grant, a role, or agency membership
                     <strong>immediately revokes all other active sessions</strong> — every other signed-in user must
@@ -3040,9 +3040,9 @@
                 <p class="part-sum">Every screen in the order the sidebar lists them: what it shows, what each control does, and who may use it.</p>
                 <ol class="part-index">
                     <li><a href="#dashboard"><span class="n">5</span> Dashboard</a></li>
-                    <li><a href="#jobs"><span class="n">6</span> Jobs</a></li>
-                    <li><a href="#workflows"><span class="n">7</span> Workflows &amp; Editor</a></li>
-                    <li><a href="#scripts"><span class="n">8</span> Scripts</a></li>
+                    <li><a href="#scripts"><span class="n">6</span> Scripts</a></li>
+                    <li><a href="#jobs"><span class="n">7</span> Jobs</a></li>
+                    <li><a href="#workflows"><span class="n">8</span> Workflows &amp; Editor</a></li>
                     <li><a href="#schedules"><span class="n">9</span> Schedules</a></li>
                     <li><a href="#compose"><span class="n">10</span> Compose, Builder &amp; Publish</a></li>
                     <li><a href="#envvars"><span class="n">11</span> Scopes &amp; Env Vars</a></li>
@@ -3400,9 +3400,208 @@
                 </div>
             </section>
 
-            <!-- ====================== 6. JOBS ====================== -->
-            <section id="jobs" class="chap alt">
-                <h2><span class="secnum">6</span> View Reference: Jobs</h2>
+            <!-- ====================== 6. SCRIPTS ====================== -->
+            <section id="scripts" class="chap alt">
+                <h2><span class="secnum">6</span> View Reference: Scripts</h2>
+                <div class="view-hd"><span class="route">/scripts</span> <span class="gate any">Read-only for any
+                        signed-in user</span></div>
+                <p class="lead-p">A read-only catalog of the reusable executable units synced from GitLab. Scripts are
+                    <strong>always Git-authored</strong> — there is no create/edit form here; you commit YAML (or a raw
+                    script file) to the repo and sync. All three Scripts routes (list, detail, body content) are
+                    <code>RequireSession</code> only — no elevated gate — so any signed-in user can read a script,
+                    matching the Git repo it syncs from.
+                </p>
+                <ul>
+                    <li><strong>Columns:</strong> Script (name + description, plus a highest-severity <a
+                            href="#scripts">lint</a> chip when present), Type (run-type badge), Source
+                        (<code>command</code> / inline <code>script</code> / <code>file</code>), Tags, <strong>Used
+                            by</strong> (job count), Created On, Last Edited. Like the other catalogs, a <strong>Tag
+                            filter</strong> dropdown is available.</li>
+                    <li><strong>↻ Git Pull</strong> (top-right) triggers a <strong>repo-wide</strong> re-sync (jobs,
+                        scripts, schedules, workflows). It is asynchronous — the button shows <em>“Pulling…”</em>, then
+                        <em>“Pull started — list will refresh.”</em>
+                    </li>
+                    <li>A job detail's <code>scriptRef →</code> link deep-links here
+                        (<code>/scripts?focus=&lt;name&gt;</code>); the view fetches that script directly (so it
+                        resolves even past the catalog cap), opens the folder containing it, and auto-expands it.</li>
+                </ul>
+
+                <h3>6.1 Folder browsing &amp; the catalog list</h3>
+                <p>Scripts (and Jobs, Workflows, Schedules) can be organized into <strong>sub-folders</strong> in the
+                    GitOps repo and are browsed as a file-system tree. The four catalogs share one component:</p>
+                <ul>
+                    <li><strong>Breadcrumb + drill-in.</strong> A breadcrumb (root crumb <em>Scripts</em> + clickable
+                        path segments) sits above folder rows — each a 📁 with the folder name and a right-aligned
+                        <strong>“N items ›”</strong> immediate count (folders first, then leaves, sorted
+                        case-insensitively). You drill one level at a time; the current folder lives in the URL as
+                        <code>?path=</code>. An empty folder reads <em>“This folder is empty.”</em>
+                    </li>
+                    <li><strong>Keyboard nav.</strong> With a folder row focused, <span class="kbd">Enter</span> or
+                        <span class="kbd">Space</span> opens it; <span class="kbd">Backspace</span> or <span
+                            class="kbd">Esc</span> goes up one level (ignored at the root, so there are no dead ends).
+                    </li>
+                    <li><strong>Search flattens the tree.</strong> Typing in Search replaces the tree with a flat result
+                        list across <em>all</em> folders, each row labelled with its full repo-relative path. Clearing
+                        Search returns to the tree.</li>
+                    <li><strong>Catalog size.</strong> The Scripts list loads the <em>whole</em> catalog (all pages) up
+                        to a <strong>1000-script cap</strong>. Above the cap it loads only the first 200 and shows
+                        <em>“Large catalog (N scripts). Only the first 200 are loaded — use search to find a specific
+                            script.”</em>, switching Search to a server-side query. (Jobs/Workflows load their full list
+                        in one call, so the cap is Scripts-only.)
+                    </li>
+                    <li><strong>Paging.</strong> Whichever set is resident is then <strong>paged client-side</strong> by
+                        the shared <em>“Show 25 / 50 / 100 entries”</em> control (default <strong>25</strong>) — the
+                        same pager used on <a href="#jobs">Jobs</a> and the <a href="#schedules">Upcoming</a> table. In
+                        flat <strong>Search</strong> it windows the already-filtered match list; in folder-browse it
+                        pages the current folder level (folders then leaves). The 1000-script cap and the first-200
+                        server-search fallback above are unchanged — the pager only windows what is already loaded.</li>
+                </ul>
+                <div class="callout note">
+                    <div class="ct"><span class="em">🧭</span> Folder <em>location</em> vs. <em>identity</em></div>
+                    <p>A definition's folder location comes from its <strong>file path</strong>
+                        (<code>source_path</code>, with the <code>scripts/</code> prefix stripped); its
+                        <strong>identity</strong> stays its <code>metadata.name</code> (jobs use the id). So moving a
+                        definition into a sub-folder changes <em>where it appears in the tree</em> but never its name,
+                        its detail route, or any <code>scriptRef</code>/<code>scheduleRef</code> to it. (The two
+                        coincide for raw scripts and diverge for Cronomicon YAML wrappers.)
+                    </p>
+                </div>
+
+                <h3>6.2 The expanded detail &amp; the body</h3>
+                <p>Expand a row for the metadata grid (<strong>Run type</strong>, <strong>Executor</strong> — <em>“auto
+                        (from run type)”</em> when unset, <strong>Source file</strong>, a 12-char <strong>Content
+                        hash</strong> with the full hash on hover, <strong>Synced</strong> time), the <strong>inline tag
+                        editor</strong> (SQLite-only, preserved on sync, editable by any logged-in user), an optional <a
+                        href="#scripts">Lint</a> section, the body, a <em>“Variables this script uses”</em> panel, a
+                    <strong>reference-bindings</strong> editor (<a href="#refbindings">§11.6</a>) — with a
+                    <strong>Suggest from body</strong> button that scans the script to prefill likely Secret / Variable
+                    / SSH-key bindings — and the <strong>Used by</strong> reverse index (the job chips that reference
+                    it, or <em>“…it is an orphan.”</em>).
+                </p>
+                <p>An inline <code>command</code>/<code>script</code> body comes straight from the database. A
+                    <strong>file-backed</strong> (<code>scriptPath</code>) body is fetched on demand from
+                    <code>GET /api/v1/script-content/{name…}</code> when you expand the row, and renders one of:
+                    <em>“Loading…”</em>, the file (with a <strong>Copy</strong> button), <em>“Binary file (N bytes) —
+                        view in Git.”</em>, <em>“Empty file.”</em>, <em>“Could not read script file from the synced
+                        repository.”</em> (a <code>409</code>, e.g. not yet synced / renamed), or a <em>“Truncated to 1
+                        MiB — view the full file in Git.”</em> note. The <strong>1 MiB cap is display-only</strong> —
+                    execution and content-hashing are uncapped, so an oversized script still runs.
+                </p>
+
+                <h3>6.3 Body-lint warnings</h3>
+                <p>Each body is scanned once per sync — on the same read used to compute the content hash — and findings
+                    are persisted as advisory metadata. A script with findings shows a <strong>Lint</strong> section:
+                    any <span class="pill fail"><span class="dot"></span>danger</span>-severity findings render first in
+                    a red banner, then every finding as a chip (the rule id, with the full remediation message on
+                    hover); the catalog row collapses them into one highest-severity summary chip with a count.
+                    <strong>Lint is purely advisory</strong> — a finding never blocks a sync, never drops a script,
+                    never flips the sync result, and never enters the content hash.
+                </p>
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Rule</th>
+                                <th>Severity</th>
+                                <th>Means</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>crlf</code></td>
+                                <td><span class="pill warn"><span class="dot"></span>warning</span> / info</td>
+                                <td>CRLF / lone-CR line endings that break the remote <code>bash -c</code> shell.
+                                    Downgraded to <strong>info</strong> when every <code>\r</code> falls only on a
+                                    comment or blank line (cosmetic).</td>
+                            </tr>
+                            <tr>
+                                <td><code>non_utf8</code></td>
+                                <td><span class="pill warn"><span class="dot"></span>warning</span></td>
+                                <td>Non-UTF8 bytes or a NUL byte — likely a binary or mis-encoded file.</td>
+                            </tr>
+                            <tr>
+                                <td><code>no_shebang</code></td>
+                                <td><span class="pill warn"><span class="dot"></span>warning</span></td>
+                                <td>A multi-line bash/perl/powershell/python body whose first line isn't a usable
+                                    <code>#!</code>. Single-line inline commands and ansible/terraform are exempt.
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>shebang_mismatch</code></td>
+                                <td>info</td>
+                                <td>There <em>is</em> a <code>#!</code> but it names a different interpreter than the
+                                    run type. Advisory — the executor invokes the configured interpreter and ignores the
+                                    shebang (<code>#!/bin/sh</code> is fine for <code>bash</code>, <code>pwsh</code> for
+                                    <code>powershell</code>; the <code>/usr/bin/env x</code> form is resolved).
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>oversized</code></td>
+                                <td>info</td>
+                                <td>Body larger than the 1 MiB advisory cap. There is no execution size limit.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>6.4 “Variables this script uses”</h3>
+                <p>At sync time the body is also scanned for the <strong>environment variables it references</strong>,
+                    so you can see what a run needs to define before triggering it — the scope's Env Vars are
+                    <em>not</em> auto-injected. The detail panel lists each variable as a status chip: <span
+                        class="pill ok"><span class="dot"></span>✓ already provided</span> (the name is defined as an
+                    Env Var or Secret), <span class="pill warn"><span class="dot"></span>● required &amp; missing</span>
+                    (the body gives no fallback), or <span class="pill mut"><span class="dot"></span>○ optional</span>
+                    (the body supplies a default via <code>${VAR:-…}</code>, shown as <code>=default</code>). The legend
+                    reads <em>“✓ already defined as an Env Var or Secret · ● required · ○ optional (the script supplies
+                        a default).”</em> The same panel is reused in the <a href="#jobs">Run dialog</a> and <a
+                        href="#compose">Job Composer</a>, where each chip also gets a one-click <strong>+ add</strong>.
+                </p>
+                <ul>
+                    <li><strong>Shell-family aware.</strong> The extractor understands <strong>bash/sh</strong>
+                        (<code>$VAR</code>, <code>${VAR}</code>; a default from
+                        <code>${VAR:-x}</code>/<code>${VAR:=x}</code> marks it optional), <strong>perl</strong>
+                        (<code>$ENV{VAR}</code>), <strong>powershell</strong> (<code>$env:VAR</code>) and
+                        <strong>python</strong> (<code>os.environ['VAR']</code>, <code>os.getenv('VAR')</code>; a
+                        fallback in <code>os.getenv('VAR', x)</code>/<code>os.environ.get('VAR', x)</code> marks it
+                        optional). <strong>ansible/terraform</strong> are recognized but not yet analyzed — the panel
+                        notes <em>“Variable detection isn't available for {runType} scripts yet.”</em>
+                    </li>
+                    <li><strong>Noise is subtracted.</strong> Variables the script assigns itself (<code>NAME=</code>,
+                        <code>export</code>, <code>local</code>, <code>read</code>, loop vars), shell special/positional
+                        params (<code>$1</code>, <code>$?</code>, …) and ambient vars (<code>$HOME</code>,
+                        <code>$PATH</code>, <code>LC_*</code>, <code>BASH_*</code>, …) are filtered out.
+                    </li>
+                </ul>
+                <div class="callout gotcha">
+                    <div class="ct"><span class="em">🔄</span> Lint &amp; variables refresh on the next Git Pull</div>
+                    <p>Both are computed only at sync time. A script's findings and variables reflect its body as of
+                        the last sync, and a <strong>Git Pull</strong> (full re-sync) recomputes every row — the columns
+                        default to empty, so a row that has not been scanned yet reads as having <em>no</em>
+                        findings/variables rather than failing.
+                    </p>
+                </div>
+
+                <div class="callout tip">
+                    <div class="ct"><span class="em">🧱</span> Raw scripts are auto-discovered — including in
+                        sub-folders</div>
+                    <p>You don't need a <code>kind: Script</code> wrapper for every file. Raw executables anywhere under
+                        <code>scripts/</code> (<code>*.sh</code>, <code>*.tf</code>, <code>*.ps1</code>,
+                        <code>*.pl</code>, Ansible <code>*.yml</code>) are auto-registered by extension, and their
+                        reference name is the file's path <em>relative to</em> <code>scripts/</code>, keeping the
+                        extension: a top-level file is <code>backup-db.sh</code>, but
+                        <code>ops-playbooks/site.yml</code> in a sub-folder registers under the name
+                        <code>ops-playbooks/site.yml</code>. A <code>script_ref</code> must match the registered name
+                        character-for-character. (Because a sub-folder script's name is a multi-segment path, the detail
+                        and body endpoints are trailing-wildcard routes — <code>GET /scripts/{name…}</code> and
+                        <code>GET /script-content/{name…}</code> — and clients percent-encode the slashes.)
+                    </p>
+                </div>
+
+            </section>
+
+            <!-- ====================== 7. JOBS ====================== -->
+            <section id="jobs" class="chap">
+                <h2><span class="secnum">7</span> View Reference: Jobs</h2>
                 <div class="view-hd"><span class="route">/jobs</span> <span class="gate any">View / Run / Pause / Stop:
                         any signed-in user</span> <span class="gate admin">Create / Edit / Publish: Admin</span></div>
                 <p class="lead-p">The central table of every job (both sources), with status tabs, search, an expandable
@@ -3423,7 +3622,7 @@
                         source.</figcaption>
                 </figure>
 
-                <h3>6.1 Tabs, filters &amp; entry points</h3>
+                <h3>7.1 Tabs, filters &amp; entry points</h3>
                 <p>Five status tabs (each with a live count) filter by the job's aggregate status — note the friendly
                     label mapping:</p>
                 <p style="line-height:2.4">
@@ -3446,7 +3645,7 @@
                         time (the active tab/type/tag filters apply first). Typing in Search flattens the tree to a flat
                         result list with each row's full repo-relative path; clearing it returns to the tree. Folder
                         placement never changes a job's identity, detail route or any reference to it (see <a
-                            href="#scripts">§8</a> for the shared folder browser). The Jobs list fetches the whole
+                            href="#scripts">§6</a> for the shared folder browser). The Jobs list fetches the whole
                         catalog at the server-max page size (<code>pageSize=200</code>) and then <strong>pages it
                             client-side</strong>. Searching flips to a flat result list with a <strong>Show 25 / 50 /
                             100</strong> entries selector (default <strong>25</strong>) beneath the table; while
@@ -3491,7 +3690,7 @@
                         the same way.</li>
                 </ul>
 
-                <h3>6.2 The job detail panel</h3>
+                <h3>7.2 The job detail panel</h3>
                 <p>Click any row (not the Actions cell) to expand an in-place, read-only detail panel — the row is also
                     reachable with <span class="kbd">Tab</span> and opens on <span class="kbd">Enter</span> or <span
                         class="kbd">Space</span> — showing executor, last/next run, last duration, a <strong>Waiting
@@ -3542,7 +3741,7 @@
                     and two only: when the job is built (the Composer's <strong>Run on</strong> field, or &mdash; for a
                     Git-synced job &mdash; its YAML), and <em>per run</em> in the Run dialog's <strong>Where it
                         runs</strong> section, which repoints a single run without touching the definition (<a
-                        href="#jobs">§6.5</a>). The detail panel states the resolved answer rather than offering a
+                        href="#jobs">§7.5</a>). The detail panel states the resolved answer rather than offering a
                     third place to change it.</p>
                 <p>For a Git-synced job that means the durable answer lives in the repository, and changing it is a
                     change to the YAML. When the pinned runners are gone and the work has to move <em>now</em>, the Run
@@ -3561,7 +3760,7 @@
                         runs with trace IDs), the not-recorded tail line, and actions at the top right.</figcaption>
                 </figure>
 
-                <h3>6.3 Lifecycle controls</h3>
+                <h3>7.3 Lifecycle controls</h3>
                 <div class="grid c2">
                     <div class="card">
                         <h4>▶️ Run</h4>
@@ -3591,7 +3790,7 @@
                             this dialog”). The modal offers <strong>Stop latest</strong> (terminate the most recent
                             active run) or <strong>Stop all queued</strong> (drain every stacked-up copy — useful when a
                             frequent schedule piled up with no runner). Stopping also asks <strong>what the stop
-                                meant</strong> — see <a href="#stop-disposition">§6.6</a>. <em>Stop all queued</em>
+                                meant</strong> — see <a href="#stop-disposition">§7.6</a>. <em>Stop all queued</em>
                             deliberately does not ask: those runs never started, so there is no outcome to record about
                             them.</p>
                     </div>
@@ -3625,7 +3824,7 @@
                     </p>
                 </div>
 
-                <h3>6.4 The run lifecycle</h3>
+                <h3>7.4 The run lifecycle</h3>
                 <figure>
                     <svg viewBox="0 0 720 250" role="img" aria-label="Run lifecycle state machine">
                         <!-- trigger -->
@@ -3682,7 +3881,7 @@
                     </p>
                 </div>
 
-                <h3>6.5 The Run dialog &amp; per-run overrides</h3>
+                <h3>7.5 The Run dialog &amp; per-run overrides</h3>
                 <p>Triggering a job opens the Run dialog (titled <em>“Run {job}”</em>), which lets you override five
                     things <strong>for this one run</strong>. All five are optional — accept the defaults to run the job
                     exactly as composed.</p>
@@ -3951,7 +4150,7 @@
                 </div>
                 <h4>Inputs</h4>
                 <p>If the job <a href="#compose">declares</a> run inputs — the same set listed read-only in its detail
-                    panel (<a href="#jobs">§6.2</a>) — the dialog opens with the <strong>Inputs</strong> section: a
+                    panel (<a href="#jobs">§7.2</a>) — the dialog opens with the <strong>Inputs</strong> section: a
                     <code>&lt;select&gt;</code> when the input defines <em>options</em>, otherwise a text input, each
                     pre-filled with its declared <em>default</em>. A summary banner above it states the whole picture at
                     a glance — e.g. <em>“5 inputs — 1 needs a value — 2 awaiting confirmation”</em>.
@@ -4016,7 +4215,7 @@
                             run)”</em>; a plain scheduled/default run has no envelope. The effective values still land
                         in the run's own scope/host/executor/env so both executors apply them with no change.</p>
                 </div>
-                <h3 id="stop-disposition">6.6 Stopping a run, and saying what it meant</h3>
+                <h3 id="stop-disposition">7.6 Stopping a run, and saying what it meant</h3>
                 <p>Ending a run records a <strong>disposition</strong>: whether you stopped it because it was
                     destroying something, because its work was already done and the process had hung, or because you
                     needed the host back should not read the same afterwards, and should not all count as a failure.
@@ -4081,9 +4280,9 @@
 
             </section>
 
-            <!-- ====================== 7. WORKFLOWS ====================== -->
-            <section id="workflows" class="chap">
-                <h2><span class="secnum">7</span> View Reference: Workflows &amp; Workflow Editor</h2>
+            <!-- ====================== 8. WORKFLOWS ====================== -->
+            <section id="workflows" class="chap alt">
+                <h2><span class="secnum">8</span> View Reference: Workflows &amp; Workflow Editor</h2>
                 <div class="view-hd"><span class="route">/workflows</span> <span class="route">/workflow-editor</span>
                     <span class="gate any">View / Run / Pause: any signed-in user</span> <span class="gate admin">+
                         Create / Edit / Delete: Admin</span>
@@ -4091,9 +4290,9 @@
                 <p class="lead-p">Workflows chain Jobs into ordered pipelines with optional parallel groups, conditional
                     branches, and data passed between steps. The list view runs and inspects them; the Workflow Editor
                     authors in-app ones — on a visual <strong>graph canvas</strong> that handles fully nested pipelines
-                    (§7.4).</p>
+                    (§8.4).</p>
 
-                <h3>7.1 The Workflows list</h3>
+                <h3>8.1 The Workflows list</h3>
                 <figure class="shot">
                     <img class="dark" src="manual/workflows-dark.png"
                         alt="The Workflows view: status tabs, the workflow table with steps, schedule, last and next run and result columns, and the Recent Workflow Runs table with trace IDs beneath it"
@@ -4127,7 +4326,7 @@
                         the same sentence the Jobs button produces). Expand a row to see the step-chain diagram, the
                         <strong>inline tag editor</strong> (SQLite-only, preserved on sync, editable by any logged-in
                         user), a <strong>↓ Run History</strong> filter, and the <strong>Pause / Resume</strong> toggle
-                        (§7.3). Cronomicon-source rows also carry <strong>Edit</strong> and, <strong>Delete</strong> — both
+                        (§8.3). Cronomicon-source rows also carry <strong>Edit</strong> and, <strong>Delete</strong> — both
                         gated on the Compose capability, Delete behind a confirm that keeps the run history and removes
                         the definition, its schedule and its references. The editor offers the same delete. All of
                         these sit together at the <strong>top right of the expanded detail</strong>, matching Jobs and
@@ -4142,7 +4341,7 @@
                     wired.
                 </p>
 
-                <h3>7.2 Reading the step chain</h3>
+                <h3>8.2 Reading the step chain</h3>
                 <p>Steps are numbered and connected by <strong>→</strong> arrows (positional order). Three kinds render:
                 </p>
                 <ul>
@@ -4157,7 +4356,7 @@
                     click one to open its vertical <strong>Execution Timeline</strong> (per-step status, duration and
                     timing; system/bookkeeping steps show a ⚙ icon).</p>
 
-                <h3>7.3 The per-instance Pause toggle</h3>
+                <h3>8.3 The per-instance Pause toggle</h3>
                 <div class="callout note">
                     <div class="ct"><span class="em">🚨</span> The one Git-canonicality exception</div>
                     <p><strong>Pause</strong> is the only workflow field the UI can change on <em>any</em> workflow,
@@ -4168,7 +4367,7 @@
                     </p>
                 </div>
 
-                <h3>7.4 The Workflow Editor — Simple ｜ Graph (Advanced)</h3>
+                <h3>8.4 The Workflow Editor — Simple ｜ Graph (Advanced)</h3>
                 <div class="view-hd"><span class="route">/workflow-editor</span> <span class="gate admin">Admin only
                         (Compose)</span></div>
                 <p>Creates and edits <strong>cronomicon-source</strong> workflows, optionally bound to schedules. (A
@@ -4193,7 +4392,7 @@
                         badged <code>git</code>/<code>cronomicon</code>), reorder with ↑/↓, tick schedules to make it
                         cron-driven, leave <strong>Enabled</strong> on, and <strong>Create workflow</strong> (or
                         <strong>Save</strong>). Each job step's <strong>Advanced ▼</strong> reveals its optional label,
-                        its <strong>Inputs (A12)</strong> rows (§7.5), and per-step retry overrides (<em>Retries ·
+                        its <strong>Inputs (A12)</strong> rows (§8.5), and per-step retry overrides (<em>Retries ·
                             Backoff (s) · On error</em>). A read-only canvas preview renders beneath the form;
                         <strong>Graph editor (Advanced) →</strong> switches modes.
                     </li>
@@ -4210,7 +4409,7 @@
                     </li>
                 </ul>
                 <p>On the canvas, drag a job's <strong>handle</strong> onto a downstream job to wire an env input (A12 —
-                    §7.5), and drag a node's <strong>body</strong> to arrange the graph — the hand-made layout saves
+                    §8.5), and drag a node's <strong>body</strong> to arrange the graph — the hand-made layout saves
                     with the workflow (purely cosmetic; it can never affect execution order) and <strong>Reset
                         layout</strong> returns to automatic arrangement. A minimap appears once the graph grows past
                     ~14 nodes. Dirty state shows <em>“• unsaved changes”</em> and leaving prompts <em>“Discard unsaved
@@ -4219,7 +4418,7 @@
                         not representable in the linear editor”</em>). <strong>Delete workflow</strong> (cronomicon-source
                     only) is available in both modes behind a confirm.</p>
 
-                <h3>7.5 Passing data between steps (A12)</h3>
+                <h3>8.5 Passing data between steps (A12)</h3>
                 <p>A producing job prints a marker line on <strong>stdout</strong>; a downstream step consumes it as an
                     injected environment variable.</p>
                 <div class="codeblock">
@@ -4253,205 +4452,6 @@
                         <code>==</code>, <code>!=</code>, <code>contains</code>).
                     </li>
                 </ul>
-            </section>
-
-            <!-- ====================== 8. SCRIPTS ====================== -->
-            <section id="scripts" class="chap alt">
-                <h2><span class="secnum">8</span> View Reference: Scripts</h2>
-                <div class="view-hd"><span class="route">/scripts</span> <span class="gate any">Read-only for any
-                        signed-in user</span></div>
-                <p class="lead-p">A read-only catalog of the reusable executable units synced from GitLab. Scripts are
-                    <strong>always Git-authored</strong> — there is no create/edit form here; you commit YAML (or a raw
-                    script file) to the repo and sync. All three Scripts routes (list, detail, body content) are
-                    <code>RequireSession</code> only — no elevated gate — so any signed-in user can read a script,
-                    matching the Git repo it syncs from.
-                </p>
-                <ul>
-                    <li><strong>Columns:</strong> Script (name + description, plus a highest-severity <a
-                            href="#scripts">lint</a> chip when present), Type (run-type badge), Source
-                        (<code>command</code> / inline <code>script</code> / <code>file</code>), Tags, <strong>Used
-                            by</strong> (job count), Created On, Last Edited. Like the other catalogs, a <strong>Tag
-                            filter</strong> dropdown is available.</li>
-                    <li><strong>↻ Git Pull</strong> (top-right) triggers a <strong>repo-wide</strong> re-sync (jobs,
-                        scripts, schedules, workflows). It is asynchronous — the button shows <em>“Pulling…”</em>, then
-                        <em>“Pull started — list will refresh.”</em>
-                    </li>
-                    <li>A job detail's <code>scriptRef →</code> link deep-links here
-                        (<code>/scripts?focus=&lt;name&gt;</code>); the view fetches that script directly (so it
-                        resolves even past the catalog cap), opens the folder containing it, and auto-expands it.</li>
-                </ul>
-
-                <h3>8.1 Folder browsing &amp; the catalog list</h3>
-                <p>Scripts (and Jobs, Workflows, Schedules) can be organized into <strong>sub-folders</strong> in the
-                    GitOps repo and are browsed as a file-system tree. The four catalogs share one component:</p>
-                <ul>
-                    <li><strong>Breadcrumb + drill-in.</strong> A breadcrumb (root crumb <em>Scripts</em> + clickable
-                        path segments) sits above folder rows — each a 📁 with the folder name and a right-aligned
-                        <strong>“N items ›”</strong> immediate count (folders first, then leaves, sorted
-                        case-insensitively). You drill one level at a time; the current folder lives in the URL as
-                        <code>?path=</code>. An empty folder reads <em>“This folder is empty.”</em>
-                    </li>
-                    <li><strong>Keyboard nav.</strong> With a folder row focused, <span class="kbd">Enter</span> or
-                        <span class="kbd">Space</span> opens it; <span class="kbd">Backspace</span> or <span
-                            class="kbd">Esc</span> goes up one level (ignored at the root, so there are no dead ends).
-                    </li>
-                    <li><strong>Search flattens the tree.</strong> Typing in Search replaces the tree with a flat result
-                        list across <em>all</em> folders, each row labelled with its full repo-relative path. Clearing
-                        Search returns to the tree.</li>
-                    <li><strong>Catalog size.</strong> The Scripts list loads the <em>whole</em> catalog (all pages) up
-                        to a <strong>1000-script cap</strong>. Above the cap it loads only the first 200 and shows
-                        <em>“Large catalog (N scripts). Only the first 200 are loaded — use search to find a specific
-                            script.”</em>, switching Search to a server-side query. (Jobs/Workflows load their full list
-                        in one call, so the cap is Scripts-only.)
-                    </li>
-                    <li><strong>Paging.</strong> Whichever set is resident is then <strong>paged client-side</strong> by
-                        the shared <em>“Show 25 / 50 / 100 entries”</em> control (default <strong>25</strong>) — the
-                        same pager used on <a href="#jobs">Jobs</a> and the <a href="#schedules">Upcoming</a> table. In
-                        flat <strong>Search</strong> it windows the already-filtered match list; in folder-browse it
-                        pages the current folder level (folders then leaves). The 1000-script cap and the first-200
-                        server-search fallback above are unchanged — the pager only windows what is already loaded.</li>
-                </ul>
-                <div class="callout note">
-                    <div class="ct"><span class="em">🧭</span> Folder <em>location</em> vs. <em>identity</em></div>
-                    <p>A definition's folder location comes from its <strong>file path</strong>
-                        (<code>source_path</code>, with the <code>scripts/</code> prefix stripped); its
-                        <strong>identity</strong> stays its <code>metadata.name</code> (jobs use the id). So moving a
-                        definition into a sub-folder changes <em>where it appears in the tree</em> but never its name,
-                        its detail route, or any <code>scriptRef</code>/<code>scheduleRef</code> to it. (The two
-                        coincide for raw scripts and diverge for Cronomicon YAML wrappers.)
-                    </p>
-                </div>
-
-                <h3>8.2 The expanded detail &amp; the body</h3>
-                <p>Expand a row for the metadata grid (<strong>Run type</strong>, <strong>Executor</strong> — <em>“auto
-                        (from run type)”</em> when unset, <strong>Source file</strong>, a 12-char <strong>Content
-                        hash</strong> with the full hash on hover, <strong>Synced</strong> time), the <strong>inline tag
-                        editor</strong> (SQLite-only, preserved on sync, editable by any logged-in user), an optional <a
-                        href="#scripts">Lint</a> section, the body, a <em>“Variables this script uses”</em> panel, a
-                    <strong>reference-bindings</strong> editor (<a href="#refbindings">§11.6</a>) — with a
-                    <strong>Suggest from body</strong> button that scans the script to prefill likely Secret / Variable
-                    / SSH-key bindings — and the <strong>Used by</strong> reverse index (the job chips that reference
-                    it, or <em>“…it is an orphan.”</em>).
-                </p>
-                <p>An inline <code>command</code>/<code>script</code> body comes straight from the database. A
-                    <strong>file-backed</strong> (<code>scriptPath</code>) body is fetched on demand from
-                    <code>GET /api/v1/script-content/{name…}</code> when you expand the row, and renders one of:
-                    <em>“Loading…”</em>, the file (with a <strong>Copy</strong> button), <em>“Binary file (N bytes) —
-                        view in Git.”</em>, <em>“Empty file.”</em>, <em>“Could not read script file from the synced
-                        repository.”</em> (a <code>409</code>, e.g. not yet synced / renamed), or a <em>“Truncated to 1
-                        MiB — view the full file in Git.”</em> note. The <strong>1 MiB cap is display-only</strong> —
-                    execution and content-hashing are uncapped, so an oversized script still runs.
-                </p>
-
-                <h3>8.3 Body-lint warnings</h3>
-                <p>Each body is scanned once per sync — on the same read used to compute the content hash — and findings
-                    are persisted as advisory metadata. A script with findings shows a <strong>Lint</strong> section:
-                    any <span class="pill fail"><span class="dot"></span>danger</span>-severity findings render first in
-                    a red banner, then every finding as a chip (the rule id, with the full remediation message on
-                    hover); the catalog row collapses them into one highest-severity summary chip with a count.
-                    <strong>Lint is purely advisory</strong> — a finding never blocks a sync, never drops a script,
-                    never flips the sync result, and never enters the content hash.
-                </p>
-                <div class="tbl-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Rule</th>
-                                <th>Severity</th>
-                                <th>Means</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td><code>crlf</code></td>
-                                <td><span class="pill warn"><span class="dot"></span>warning</span> / info</td>
-                                <td>CRLF / lone-CR line endings that break the remote <code>bash -c</code> shell.
-                                    Downgraded to <strong>info</strong> when every <code>\r</code> falls only on a
-                                    comment or blank line (cosmetic).</td>
-                            </tr>
-                            <tr>
-                                <td><code>non_utf8</code></td>
-                                <td><span class="pill warn"><span class="dot"></span>warning</span></td>
-                                <td>Non-UTF8 bytes or a NUL byte — likely a binary or mis-encoded file.</td>
-                            </tr>
-                            <tr>
-                                <td><code>no_shebang</code></td>
-                                <td><span class="pill warn"><span class="dot"></span>warning</span></td>
-                                <td>A multi-line bash/perl/powershell/python body whose first line isn't a usable
-                                    <code>#!</code>. Single-line inline commands and ansible/terraform are exempt.
-                                </td>
-                            </tr>
-                            <tr>
-                                <td><code>shebang_mismatch</code></td>
-                                <td>info</td>
-                                <td>There <em>is</em> a <code>#!</code> but it names a different interpreter than the
-                                    run type. Advisory — the executor invokes the configured interpreter and ignores the
-                                    shebang (<code>#!/bin/sh</code> is fine for <code>bash</code>, <code>pwsh</code> for
-                                    <code>powershell</code>; the <code>/usr/bin/env x</code> form is resolved).
-                                </td>
-                            </tr>
-                            <tr>
-                                <td><code>oversized</code></td>
-                                <td>info</td>
-                                <td>Body larger than the 1 MiB advisory cap. There is no execution size limit.</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <h3>8.4 “Variables this script uses”</h3>
-                <p>At sync time the body is also scanned for the <strong>environment variables it references</strong>,
-                    so you can see what a run needs to define before triggering it — the scope's Env Vars are
-                    <em>not</em> auto-injected. The detail panel lists each variable as a status chip: <span
-                        class="pill ok"><span class="dot"></span>✓ already provided</span> (the name is defined as an
-                    Env Var or Secret), <span class="pill warn"><span class="dot"></span>● required &amp; missing</span>
-                    (the body gives no fallback), or <span class="pill mut"><span class="dot"></span>○ optional</span>
-                    (the body supplies a default via <code>${VAR:-…}</code>, shown as <code>=default</code>). The legend
-                    reads <em>“✓ already defined as an Env Var or Secret · ● required · ○ optional (the script supplies
-                        a default).”</em> The same panel is reused in the <a href="#jobs">Run dialog</a> and <a
-                        href="#compose">Job Composer</a>, where each chip also gets a one-click <strong>+ add</strong>.
-                </p>
-                <ul>
-                    <li><strong>Shell-family aware.</strong> The extractor understands <strong>bash/sh</strong>
-                        (<code>$VAR</code>, <code>${VAR}</code>; a default from
-                        <code>${VAR:-x}</code>/<code>${VAR:=x}</code> marks it optional), <strong>perl</strong>
-                        (<code>$ENV{VAR}</code>), <strong>powershell</strong> (<code>$env:VAR</code>) and
-                        <strong>python</strong> (<code>os.environ['VAR']</code>, <code>os.getenv('VAR')</code>; a
-                        fallback in <code>os.getenv('VAR', x)</code>/<code>os.environ.get('VAR', x)</code> marks it
-                        optional). <strong>ansible/terraform</strong> are recognized but not yet analyzed — the panel
-                        notes <em>“Variable detection isn't available for {runType} scripts yet.”</em>
-                    </li>
-                    <li><strong>Noise is subtracted.</strong> Variables the script assigns itself (<code>NAME=</code>,
-                        <code>export</code>, <code>local</code>, <code>read</code>, loop vars), shell special/positional
-                        params (<code>$1</code>, <code>$?</code>, …) and ambient vars (<code>$HOME</code>,
-                        <code>$PATH</code>, <code>LC_*</code>, <code>BASH_*</code>, …) are filtered out.
-                    </li>
-                </ul>
-                <div class="callout gotcha">
-                    <div class="ct"><span class="em">🔄</span> Lint &amp; variables refresh on the next Git Pull</div>
-                    <p>Both are computed only at sync time. A script's findings and variables reflect its body as of
-                        the last sync, and a <strong>Git Pull</strong> (full re-sync) recomputes every row — the columns
-                        default to empty, so a row that has not been scanned yet reads as having <em>no</em>
-                        findings/variables rather than failing.
-                    </p>
-                </div>
-
-                <div class="callout tip">
-                    <div class="ct"><span class="em">🧱</span> Raw scripts are auto-discovered — including in
-                        sub-folders</div>
-                    <p>You don't need a <code>kind: Script</code> wrapper for every file. Raw executables anywhere under
-                        <code>scripts/</code> (<code>*.sh</code>, <code>*.tf</code>, <code>*.ps1</code>,
-                        <code>*.pl</code>, Ansible <code>*.yml</code>) are auto-registered by extension, and their
-                        reference name is the file's path <em>relative to</em> <code>scripts/</code>, keeping the
-                        extension: a top-level file is <code>backup-db.sh</code>, but
-                        <code>ops-playbooks/site.yml</code> in a sub-folder registers under the name
-                        <code>ops-playbooks/site.yml</code>. A <code>script_ref</code> must match the registered name
-                        character-for-character. (Because a sub-folder script's name is a multi-segment path, the detail
-                        and body endpoints are trailing-wildcard routes — <code>GET /scripts/{name…}</code> and
-                        <code>GET /script-content/{name…}</code> — and clients percent-encode the slashes.)
-                    </p>
-                </div>
-
             </section>
 
             <!-- ====================== 9. SCHEDULES ====================== -->
@@ -4768,7 +4768,7 @@
                             <td><span class="pill mut"><span class="dot"></span>stopped</span></td>
                             <td>A <em>person</em> ended it and <strong>did not say what it meant</strong> &mdash; an
                                 unclassified stop, or a cancelled workflow. A stop that <em>was</em> classified follows
-                                that classification instead (<a href="#stop-disposition">&sect;6.6</a>).</td>
+                                that classification instead (<a href="#stop-disposition">&sect;7.6</a>).</td>
                         </tr>
                         <tr>
                             <td><span class="pill run"><span class="dot"></span>any</span></td>
@@ -5087,7 +5087,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <div class="ct"><span class="em">🔎</span> “Variables this script uses” — the script-variables hint
                     </div>
                     <p>When a script is selected, a panel above the env rows lists the environment variables its body
-                        actually references (extracted at sync time — see <a href="#scripts">§8</a>), each as a status
+                        actually references (extracted at sync time — see <a href="#scripts">§6</a>), each as a status
                         chip: <span class="pill ok"><span class="dot"></span>✓ provided</span> (already injected, or
                         defined as an Env Var/Secret in the scope), <span class="pill warn"><span class="dot"></span>●
                             required &amp; missing</span>, or <span class="pill mut"><span class="dot"></span>○
@@ -5762,7 +5762,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </p>
 
                 <h4>Declaring bindings on a Job or Script</h4>
-                <p>Expand a <a href="#jobs">Job</a> row (§6.2) or a <a href="#scripts">Script</a> row (§8) and use the
+                <p>Expand a <a href="#jobs">Job</a> row (§7.2) or a <a href="#scripts">Script</a> row (§6) and use the
                     <strong>reference-bindings editor</strong>: pick a kind (<span class="tag">Secret</span> <span
                         class="tag">Variable</span> <span class="tag">SSH Key</span>), type the reference
                     <strong>name</strong> (a datalist offers your known Env Vars rows), and <strong>Add</strong>; each
@@ -5804,7 +5804,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         because only one of them could win.</p>
                 </div>
                 <p>The <strong>Run dialog</strong> carries the same field on its per-run reference additions (<a
-                        href="#jobs">&sect;6.5</a>), for the one-off case: run this job, this time, with that
+                        href="#jobs">&sect;7.5</a>), for the one-off case: run this job, this time, with that
                     credential, under the name the body expects. Type the alias, then pick the row.</p>
 
                 <h4>What happens at run time</h4>
@@ -6089,7 +6089,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         is <strong>how the run was caused</strong> — pick <em>Reaction</em> to see everything a cascade
                         produced. <strong>Stopped</strong> (<em>Stopped by a human</em> / <em>Not stopped</em>) is
                         deliberately <em>not</em> a Result option, because a stop can be recorded as any result (<a
-                            href="#stop-disposition">&sect;6.6</a>); every run an operator ended also carries a <span
+                            href="#stop-disposition">&sect;7.6</a>); every run an operator ended also carries a <span
                             class="pill mut"><span class="dot"></span>Stopped</span> marker in the row and in its
                         detail, so a stop recorded as a success cannot hide inside <em>Success</em>.
                     </p>
@@ -6135,7 +6135,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                 </ol>
                 <div class="callout note">
                     <div class="ct"><span class="em">🎛️</span> “Ad-hoc overrides (this run)”</div>
-                    <p>If the run was a manual trigger that overrode env and/or hosts (§6.5), the detail drawer shows an
+                    <p>If the run was a manual trigger that overrode env and/or hosts (§7.5), the detail drawer shows an
                         <strong>“Ad-hoc overrides (this run)”</strong> block listing the overridden
                         <strong>Hosts</strong> and <strong>Env</strong> (<code>KEY=value</code>), with the caveat
                         <em>“Operator-supplied for this run, stored plaintext (not secrets) — masked in logs only on a
@@ -7026,7 +7026,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         </p>
                         <p><strong>Fix:</strong> name a single literal host. To target a pattern or a set, use inventory
                             <strong>group</strong> targeting or the raw <code>--limit</code> passthrough in the Run
-                            dialog (<a href="#jobs">§6.5</a>) — a passthrough wins outright, and the pin is then never
+                            dialog (<a href="#jobs">§7.5</a>) — a passthrough wins outright, and the pin is then never
                             folded in.
                         </p>
                     </div>
@@ -7240,7 +7240,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                     <dd>What an operator says a stopped run <em>meant</em> &mdash; Stopped, Failed, Success or Warning.
                         The run takes that status, while <em>stopped by</em> independently records that a person ended
                         it, so a run can read Success and still show a Stopped marker (<a
-                            href="#stop-disposition">&sect;6.6</a>).</dd>
+                            href="#stop-disposition">&sect;7.6</a>).</dd>
                     <dt>A12 inter-job data passing</dt>
                     <dd>The mechanism for a workflow step to consume an upstream step's output. The producer prints
                         <code>::cronomicon-output name=KEY::VALUE</code> on stdout; the consumer declares
@@ -7316,7 +7316,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         surfaces advisory findings — <code>crlf</code>, <code>non_utf8</code>, <code>no_shebang</code>,
                         <code>shebang_mismatch</code>, <code>oversized</code> — as warning chips in the Scripts catalog.
                         Purely advisory: never blocks a sync, drops a script, or enters the content hash. See <a
-                            href="#scripts">§8.3</a>.
+                            href="#scripts">§6.3</a>.
                     </dd>
                     <dt>Bootstrap admin</dt>
                     <dd>A first-run env var (<code>CRONOMICON_BOOTSTRAP_ADMIN_GROUP</code>) granting admin to any member of
@@ -7408,7 +7408,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         tree in each catalog; searching flattens to full-path results. A definition's folder
                         <em>location</em> (its file path) is separate from its <em>identity</em>
                         (<code>metadata.name</code>/id), so moving it never changes references or routes. See <a
-                            href="#scripts">§8.1</a>.
+                            href="#scripts">§6.1</a>.
                     </dd>
                     <dt>Forward-only migrations</dt>
                     <dd>Cronomicon applies up-migrations automatically on every boot. Down-migrations are dev/test only;
@@ -7454,7 +7454,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         columns; what was overridden is also recorded as an audit envelope
                         (<code>runs.override_json</code>) and shown in History as <em>“Ad-hoc overrides (this
                             run)”</em>. Override env is plaintext but is fed to the per-run log redactor. See <a
-                            href="#jobs">§6.5</a>.</dd>
+                            href="#jobs">§7.5</a>.</dd>
                     <dt>Per-instance Pause</dt>
                     <dd>The one workflow field the UI can change on any (including Git) workflow — labelled <em>Pause /
                             Resume</em>, <em>Enable / Disable</em> before it. Stops scheduled firing and blocks manual
@@ -7519,7 +7519,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         <code>promptWarnings</code> in the run's override envelope for History, alongside
                         <code>promptAnswers</code> (where each value came from) and <code>promptAcknowledged</code>.
                         Distinct from the inferred <em>Script variables</em> heuristic, which is only a Composer seed
-                        + drift lint and never part of the run path. See <a href="#jobs">§6</a>.
+                        + drift lint and never part of the run path. See <a href="#jobs">§7</a>.
                     </dd>
                     <dt>Runner / runner agent</dt>
                     <dd>The external <code>cronomicon-runner</code> binary on a separate host that registers, long-polls
@@ -7550,7 +7550,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         (bash/sh, perl, powershell, python; ansible/terraform not yet analyzed). Shown read-only as
                         status chips — ✓ provided, ● required &amp; missing, ○ optional (with default) — in Scripts, the
                         Run dialog and the Composer (advisory; the scope's Env Vars are not auto-injected). See <a
-                            href="#scripts">§8.4</a>.</dd>
+                            href="#scripts">§6.4</a>.</dd>
                     <dt>Scope</dt>
                     <dd>A named target environment = a host list plus its supported run types, optionally an <a
                             href="#scopes">Ansible inventory</a> and a bound <a href="#scopes">agency</a>. Managed on
@@ -7964,7 +7964,7 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                                 <td>Any run a person ended, whatever it was recorded as. Stopping asks what the stop
                                     meant, so a stopped run may carry <em>any</em> Result &mdash; the marker and the
                                     <strong>Stopped</strong> filter are how you still find it (<a
-                                        href="#stop-disposition">&sect;6.6</a>).
+                                        href="#stop-disposition">&sect;7.6</a>).
                                 </td>
                             </tr>
                             <tr>
