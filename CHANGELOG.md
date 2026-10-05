@@ -13,6 +13,89 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.1.0] - 2026-10-05
+
+Scopes get tags, and lose their "supported run types". The declared set was
+advisory from the day it shipped: nothing refused a run or a save on a type
+mismatch, and no claim, gate or dispatch path read it. What operators wanted
+from the column was a way to label and find scopes, which is what tags are.
+Schema v1170 (two migrations; the second has a lossy down). The runner
+protocol (13) is unchanged.
+
+**Upgrading.** Nothing to do first. An inventory that still carries a
+`# cronomicon:v1 types=…` pragma, or a sidecar with `spec.types`, keeps
+syncing; delete the directive when convenient. An API client that sent
+`supportedTypes` or read `capability` on a scope must stop: the request field
+is ignored and the response object is gone.
+
+### Added
+
+- **Scope tags.** A scope carries operator-owned tags, like jobs, scripts,
+  schedules, workflows, variables, secrets and SSH keys already do. The Scopes
+  table has a **Tags** column and a **Tag** filter (any / all), and the
+  expanded row holds the editor. Tags are stored in Cronomicon only
+  (`scopes.tags`, migration 1160) and never come from Git: the sync upsert does
+  not name the column, so a Git scope is taggable and a re-sync leaves its tags
+  alone (`TestSyncPreservesScopeTags`). A tag is a label; nothing dispatches,
+  gates or warns on one.
+- `PUT /api/v1/scope-tags/{scopeId}` replaces a scope's tag set, with the same
+  normalisation and caps as every other tag endpoint. It carries
+  **Configure app**, the permission every other scope write carries; everyone
+  who can read a scope sees its tags. The write audits the way a scope edit
+  does (change log and activity).
+- `Scope.tags`, `Scope.owner` and `Scope.pragmaErrors` in the API. The last two
+  are the Git metadata that used to sit inside `capability`.
+- `cronomicon validate` prints non-fatal warnings for a single file, as it
+  already did for a repository directory.
+
+### Removed
+
+- **Supported run types on a scope**: the "Supported Types" column, the
+  required "Supported run types" field in the scope editor, the bash floor,
+  the type suffix in the scope pickers, and the "Capability origin" row.
+- The type-mismatch warning in the Run dialog and the composer ("… does not
+  declare bash support … may stay queued waiting for a capable runner"). It
+  blamed runner capacity, which the declared set never predicted; a run that
+  cannot be claimed already says why on the run itself.
+- `supportedTypes` on scope create and update, and the `capability` object
+  (`ScopeCapability`: `types`, `origin`, `owner`, `errors`) on a scope.
+- The inventory inference heuristic (`inventory.InferTypes`), which marked a
+  scope PowerShell-capable when its inventory text contained `win-srv`.
+- `scopes.supported_types` and `scopes.capability_types` (migration 1170).
+  `scopes.capability_json` is renamed `git_meta_json` and keeps the owner, the
+  sidecar path and the pragma errors. The down migration restores the columns
+  with the bash default; the declared types themselves are not recoverable.
+
+### Changed
+
+- The `types` directive of the `# cronomicon:v1` inventory pragma is
+  **recognised and ignored**, with a warning in the sync log and in
+  `cronomicon validate` (exit code unchanged). It is deliberately not an
+  error: a pragma error marks the sync partial, and a partial scope parse
+  suppresses pruning, so rejecting the directive would have frozen pruning on
+  every repository that still declares it. Its value is no longer validated.
+  A sidecar's `spec.types` is ignored without a warning.
+- `POST /api/v1/scopes/resync` reports scopes added and removed in `deltas`.
+  It used to report capability changes.
+- A Git scope shows its **owner** whenever the sidecar or the pragma declares
+  one. The owner used to ride on the capability and was dropped when the same
+  source declared no types. The **sidecar path** is likewise shown whenever a
+  sidecar exists, not only when it declared types.
+- A pragma that does not parse is flagged with ⚠ beside the scope name. It was
+  in the Supported Types cell.
+- A filtered-empty Scopes list names the filters and clears search and tags
+  together.
+- The user and administrator manuals, the Bash, Ansible, PowerShell and Python
+  guides and the operator course no longer tell you to declare a run type on a
+  scope; the Scopes chapter documents tags. The manuals' Scopes screenshots
+  are re-captured.
+
+### Fixed
+
+- The capability origin of an inferred scope never matched its label or drew
+  its dashed badge: the server wrote `inferred`, the spec and the UI expected
+  `inference`. Gone with the feature.
+
 ## [2.0.5] - 2026-09-30
 
 The sidebar lists the building blocks in the order a job is built from them.
