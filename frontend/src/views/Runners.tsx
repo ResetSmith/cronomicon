@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, csrfHeader, errMsg, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
@@ -8,6 +8,7 @@ import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { TraceId } from "./history/shared";
 import { ReplaceRunnerDialog, type BindableScope } from "./scopes/ScopeRunners";
+import { HostKeysDialog, PendingKeysBanner, TrustedHostKeys, type KeyRunner } from "./runners/HostKeys";
 import type { components } from "../api/schema";
 import { c } from "../theme";
 import { clampPage, sliceForPage } from "../utils/pager";
@@ -282,6 +283,55 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
 function ScopesServed({ runner, scopes, canConfig, onSaved }: { runner: Runner; scopes: string[]; canConfig: boolean; onSaved: () => void }) {
   const [replacing, setReplacing] = useState(false);
   const [done, setDone] = useToast();
+  // The runner that just took over, until the operator has dealt with its host
+  // keys. It has the scopes now and none of this runner's trust: the copy is
+  // offered, never done for them, because the two runners sit at different
+  // places on the network and the list has to be read first.
+  const [successor, setSuccessor] = useState<KeyRunner | null>(null);
+  const [carrying, setCarrying] = useState(false);
+  const carried = useRef(false);
+  const handover = successor && (
+    <div style={{ marginTop: 8 }}>
+      <AlertBanner
+        type="info"
+        onDismiss={() => {
+          setSuccessor(null);
+          setCarrying(false);
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>
+            Host keys approved for {runner.name} are not handed over with its scopes. Copy them to {successor.name} after reviewing
+            the list, or scan the scopes from {successor.name}.
+          </span>
+          <Btn small onClick={() => setCarrying(true)}>
+            Copy host keys to {successor.name}…
+          </Btn>
+        </div>
+      </AlertBanner>
+      {carrying && runner.id != null && (
+        <HostKeysDialog
+          runner={successor}
+          initialSource="carry"
+          initialCarryFrom={String(runner.id)}
+          // The notice goes, and the page reloads, when the dialog is CLOSED
+          // after something was copied — not from onChanged, either of which
+          // would unmount the dialog while it is still reporting what it did.
+          onClose={() => {
+            setCarrying(false);
+            if (carried.current) {
+              setSuccessor(null);
+              onSaved();
+            }
+            carried.current = false;
+          }}
+          onChanged={() => {
+            carried.current = true;
+          }}
+        />
+      )}
+    </div>
+  );
   if (scopes.length === 0) {
     // The confirmation outlives the list it describes: after a hand-over this
     // runner serves nothing, and that is exactly when the message is wanted.
@@ -292,6 +342,7 @@ function ScopesServed({ runner, scopes, canConfig, onSaved }: { runner: Runner; 
           Scopes page
         </Link>
         .
+        {handover}
         <Toast message={done} />
       </span>
     );
@@ -318,13 +369,15 @@ function ScopesServed({ runner, scopes, canConfig, onSaved }: { runner: Runner; 
         <ReplaceRunnerDialog
           from={{ id: String(runner.id), name: runner.name }}
           onClose={() => setReplacing(false)}
-          onDone={(message) => {
+          onDone={(message, to) => {
             setReplacing(false);
             setDone(message);
+            setSuccessor(to);
             onSaved();
           }}
         />
       )}
+      {handover}
       <Toast message={done} />
     </div>
   );
@@ -858,6 +911,38 @@ function RunnerDetail({
           </Section>
         </div>
       </div>
+
+      {/* SB — what this runner trusts. Two lists that are deliberately not
+          one: what was approved here, and what the runner's own file holds.
+          Read behind ConfigureApp because the server gates it so — the
+          record names the hosts of the scopes this runner serves. Below the
+          two columns, at full width: these are tables of fingerprints, and a
+          fingerprint that wraps is one nobody compares. */}
+      {canConfig && runner.id != null && (
+        <Section
+          title="Trusted host keys"
+          info={
+            <>
+              A runner connects only to hosts whose SSH key is in its <code>known_hosts</code> file. Keys are added by approving them
+              here, after the runner scans a scope or hosts, or after you paste lines you already have. Every approval, rejection and
+              removal is recorded with who made it.
+            </>
+          }
+        >
+          <TrustedHostKeys
+            runner={{ id: String(runner.id), name: runner.name }}
+            canScan={isReachable(runner.status)}
+            // A runner that re-enrolled has a new id; what was approved for it
+            // before sits under the old one, and can be copied back on review.
+            previous={
+              runner.placementSuggestion?.previousRunnerId
+                ? { id: runner.placementSuggestion.previousRunnerId, name: `${runner.name}'s previous registration` }
+                : undefined
+            }
+            onChanged={onSaved}
+          />
+        </Section>
+      )}
     </div>
   );
 }
@@ -1549,7 +1634,7 @@ export function Runners() {
                                     small
                                     onClick={() => setScanTarget(r)}
                                     disabled={busy}
-                                    title="Scan a target's SSH host key so you can approve it (human-approved TOFU)"
+                                    title="Get SSH host keys onto this runner: scan a scope, scan hosts, or paste keys, then review every fingerprint"
                                   >
                                     Scan keys
                                   </Btn>
@@ -1587,7 +1672,7 @@ export function Runners() {
               </TableSurface>
           </div>
 
-          {canConfig && <PendingHostKeys refreshKey={refresh} />}
+          {canConfig && <PendingKeysBanner refreshKey={refresh} onChanged={refetchList} />}
         </>
       )}
 
@@ -2037,197 +2122,18 @@ export function Runners() {
           }}
         />
       )}
-      {scanTarget && (
-        <ScanHostKeysModal runner={scanTarget} onClose={() => setScanTarget(null)} />
+      {scanTarget && scanTarget.id != null && (
+        <HostKeysDialog
+          runner={{ id: String(scanTarget.id), name: scanTarget.name }}
+          onClose={() => {
+            setScanTarget(null);
+            refetchList();
+          }}
+          onChanged={refetchList}
+        />
       )}
     </div>
   );
-}
-
-// ScanHostKeysModal queues a host-key scan for a runner (Phase 5). The operator
-// enters the targets; the runner's next poll scans them and uploads what it saw
-// to the Pending host-key approvals section.
-function ScanHostKeysModal({ runner, onClose }: { runner: Runner; onClose: () => void }) {
-  const [hosts, setHosts] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-
-  const submit = async () => {
-    if (runner.id == null) return;
-    const list = hosts.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
-    if (list.length === 0) {
-      setErr("enter at least one host");
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    const { error } = await api.POST("/runners/{runnerId}/keyscan", {
-      params: { path: { runnerId: runner.id }, header: csrfHeader },
-      body: { hosts: list },
-    });
-    setBusy(false);
-    if (error) {
-      setErr(errMsg(error));
-      return;
-    }
-    setDone(true);
-  };
-
-  return (
-    <Modal
-      title={`Scan host keys — ${runner.name}`}
-      onClose={onClose}
-      /* FX-10 — the body is a two-branch ternary, so the footer is one too: each
-         state has its own action, and the error belongs with the button it
-         explains. The Done button was nested inside the prose block; pinning it
-         also takes it out of a paragraph it was never part of. */
-      footer={
-        done ? (
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <Btn primary onClick={onClose}>Done</Btn>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {err && <div style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <Btn onClick={onClose} disabled={busy}>Cancel</Btn>
-              <Btn primary onClick={submit} disabled={busy}>{busy ? "Queuing…" : "Queue scan"}</Btn>
-            </div>
-          </div>
-        )
-      }
-    >
-      {done ? (
-        <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-          Scan queued. On its next poll the runner scans these targets and uploads their keys to{" "}
-          <strong>Pending host-key approvals</strong> above. Compare each fingerprint out-of-band, then approve.
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-            Enter the targets to scan (one per line, or comma/space separated) as <code>host</code> or{" "}
-            <code>host:port</code>. The runner captures each host's SSH key from its own vantage — you approve
-            them next. This is <strong>human-approved TOFU</strong>: compare the SHA256 fingerprint out-of-band
-            before approving.
-          </div>
-          <textarea
-            style={{
-              width: "100%",
-              minHeight: 80,
-              padding: "8px 10px",
-              background: c.panel2,
-              border: `1px solid ${c.borderStrong}`,
-              borderRadius: c.radiusChip,
-              fontSize: c.fontSm,
-              fontFamily: c.mono,
-              color: c.text,
-              resize: "vertical",
-            }}
-            value={hosts}
-            onChange={(e) => setHosts(e.target.value)}
-            placeholder={"web01\ndb01:2222"}
-          />
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-// PendingHostKeys renders the scanned host keys awaiting approval (Phase 5),
-// with full SHA256 fingerprints for out-of-band comparison and approve/reject.
-function PendingHostKeys({ refreshKey }: { refreshKey: number }) {
-  const [rows, setRows] = useState<PendingHostKeyRow[]>([]);
-  const [v, setV] = useState(0);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    api.GET("/runners/host-keys/pending").then(({ data, error }) => {
-      if (!live) return;
-      if (error) setErr(errMsg(error));
-      else setRows((data as PendingHostKeyRow[]) ?? []);
-    });
-    return () => {
-      live = false;
-    };
-  }, [refreshKey, v]);
-
-  const resolve = async (id: string, action: "approve" | "reject") => {
-    setBusyId(id);
-    setErr(null);
-    const { error } = await api.POST("/runners/host-keys/{keyId}/resolve", {
-      params: { path: { keyId: id }, header: csrfHeader },
-      body: { action },
-    });
-    setBusyId(null);
-    if (error) setErr(errMsg(error));
-    else setV((n) => n + 1);
-  };
-
-  if (rows.length === 0) return null; // nothing pending — stay out of the way
-
-  return (
-    <div style={{ background: c.panel, border: `1px solid ${c.warning}`, borderRadius: c.radiusSurface, marginBottom: 16, overflow: "hidden" }}>
-      <div style={{ ...cardTitle(), display: "flex", alignItems: "center", gap: 8 }}>
-        <span>Pending host-key approvals</span>
-        <span style={{ fontSize: c.fontXs, color: c.warning }}>● {rows.length} awaiting review</span>
-      </div>
-      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-          These SSH host keys were scanned by a runner and are awaiting your approval. <strong>Compare the
-          SHA256 fingerprint out-of-band</strong> (against the host itself) before approving — approving without
-          that check is still trust-on-first-use. Approving appends the key to the runner's <code>known_hosts</code>{" "}
-          on its next poll; the failed SSH run can then be retried.
-        </div>
-        {err && <div style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
-        {/* One framing layer, not two (VU-5): inside an already-bordered panel the
-            per-key boxes were a nested frame, so the rows separate on a hairline
-            and their own leading instead. */}
-        {rows.map((k, i) => (
-          <Fragment key={k.id}>
-            {i > 0 && <Rule />}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              flexWrap: "wrap",
-              padding: "8px 0",
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 260 }}>
-              <div style={{ fontSize: c.fontSm, color: c.text }}>
-                <strong>{k.host}</strong> <span style={{ color: c.textSec }}>({k.keyType})</span>
-                <span style={{ color: c.textSec }}> · {k.runnerName}</span>
-              </div>
-              <div style={{ fontSize: c.fontXs, fontFamily: c.mono, color: c.textSec, wordBreak: "break-all" }}>
-                {k.fingerprint}
-              </div>
-            </div>
-            <Btn small primary disabled={busyId === k.id} onClick={() => resolve(k.id, "approve")}>
-              Approve
-            </Btn>
-            <Btn small dangerQuiet disabled={busyId === k.id} onClick={() => resolve(k.id, "reject")}>
-              Reject
-            </Btn>
-          </div>
-          </Fragment>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-interface PendingHostKeyRow {
-  id: string;
-  runnerId: string;
-  runnerName: string;
-  host: string;
-  keyType: string;
-  fingerprint: string;
-  scannedAt: string;
 }
 
 // RunnerSettingsDrawer edits a runner's server-managed operational overrides

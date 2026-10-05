@@ -245,9 +245,9 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		// mid-poll keeps grabbing work for up to pollTimeout (30s).
 		var curStatus string
 		var resyncPending int
-		if err := s.db.QueryRowContext(r.Context(),
-			`SELECT status, resync_requested FROM runners WHERE id = ?`, runnerID).
-			Scan(&curStatus, &resyncPending); err != nil {
+		var hostKeyWork bool
+		if err := s.db.QueryRowContext(r.Context(), hostKeyWorkProbe, runnerID).
+			Scan(&curStatus, &resyncPending, &hostKeyWork); err != nil {
 			// Runner vanished (deregistered/reaped) mid-poll: stop claiming.
 			break
 		}
@@ -281,6 +281,19 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 				PollAfterMs: 0,
 			}, settingsPayload, watches)
 			return
+		}
+
+		// Host-key work that lands while this long-poll is in-flight (SB): a scan
+		// an operator just asked for, keys they just approved, a report they
+		// asked to see. An operator is watching a review screen for the answer,
+		// so it is delivered within a pollInterval like a resync, not after the
+		// 30s timeout. The probe rides the status read above, so an idle loop
+		// pays nothing extra for it.
+		if hostKeyWork {
+			if more := s.appendHostKeyControl(r.Context(), runnerID, nil); len(more) > 0 {
+				writePoll(w, runnerproto.PollResponse{Control: more, PollAfterMs: 0}, settingsPayload, watches)
+				return
+			}
 		}
 
 		// Re-drain pending control each iteration: an operator kill enqueued while

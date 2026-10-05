@@ -192,6 +192,33 @@ func (c *Client) UploadHostKeys(ctx context.Context, id Identity, entries []scan
 	return nil
 }
 
+// UploadKnownHosts reports the agent's known_hosts entries (protocol 14).
+func (c *Client) UploadKnownHosts(ctx context.Context, id Identity, entries []knownHostsEntry, truncated bool) error {
+	if entries == nil {
+		entries = []knownHostsEntry{}
+	}
+	buf, err := json.Marshal(map[string]any{"entries": entries, "truncated": truncated})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/api/v1/runners/"+id.ID+"/known-hosts", bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+id.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("known-hosts report request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("known-hosts report: server returned %s: %s", resp.Status, readSnippet(resp.Body))
+	}
+	return nil
+}
+
 func (c *Client) Redeclare(ctx context.Context, id Identity, cfg Config, caps []string, tc Toolchains) error {
 	buf := declareBody(cfg, caps, tc)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/execspec"
+	"github.com/ResetSmith/cronomicon/internal/hostkeys"
 )
 
 // Scope↔runner bindings — the write side (the scope-bound-runners plan, SB band;
@@ -439,6 +440,11 @@ type PreviewRunner struct {
 	// AllowsSecretInjection is the operator grant a run that binds secrets or an
 	// SSH key needs; compare with ScopeRunnersPreview.JobsNeedingInjection.
 	AllowsSecretInjection bool `json:"allowsSecretInjection"`
+	// HostsWithoutKey is how many of the scope's hosts this runner does not
+	// trust: neither approved here nor reported in its own known_hosts file.
+	// A run on such a host fails at the first connection. Compare with
+	// ScopeRunnersPreview.ScopeHosts.
+	HostsWithoutKey int `json:"hostsWithoutKey"`
 }
 
 // ScopeRunnersPreview is what PUT /scopes/{id}/runners WOULD do, computed
@@ -468,9 +474,11 @@ type ScopeRunnersPreview struct {
 	QueuedSSHRuns int `json:"queuedSshRuns"`
 	// RunTypes are the run types the scope's jobs use; JobsNeedingInjection is
 	// how many of them need a secret-injection runner.
-	RunTypes             []string        `json:"runTypes"`
-	JobsNeedingInjection int             `json:"jobsNeedingInjection"`
-	Runners              []PreviewRunner `json:"runners"`
+	RunTypes             []string `json:"runTypes"`
+	JobsNeedingInjection int      `json:"jobsNeedingInjection"`
+	// ScopeHosts is how many hosts the scope has.
+	ScopeHosts int             `json:"scopeHosts"`
+	Runners    []PreviewRunner `json:"runners"`
 }
 
 // PreviewScopeRunners computes the effect of replacing a scope's bound-runner
@@ -586,12 +594,28 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 	for _, b := range sc.BoundRunners {
 		already[b.RunnerID] = b
 	}
+	// Moving a scope onto a runner moves the source of host-key trust with it:
+	// the server's pins stop mattering and the runner's known_hosts starts to.
+	scopeHosts, err := hostkeys.PlanScope(ctx, database, sc.Scope)
+	if err != nil {
+		return nil, fmt.Errorf("preview scope runners: %w", err)
+	}
+	out.ScopeHosts = len(scopeHosts)
 	for _, id := range ids {
 		pr := PreviewRunner{RunnerID: id, Name: id, Capabilities: []string{}, MissingRunTypes: []string{}}
+		trusted, err := hostkeys.LoadTrusted(ctx, database, id)
+		if err != nil {
+			return nil, fmt.Errorf("preview scope runners: %w", err)
+		}
+		for _, h := range scopeHosts {
+			if trusted.State(h) == hostkeys.StateNone {
+				pr.HostsWithoutKey++
+			}
+		}
 		var name, capsJSON string
 		var mask sql.NullString
 		var injection int
-		err := database.QueryRowContext(ctx, `
+		err = database.QueryRowContext(ctx, `
 			SELECT name, COALESCE(capabilities, '[]'),
 			       CASE WHEN json_valid(managed_settings)
 			            THEN json_extract(managed_settings, '$.capabilityMask') END,

@@ -951,6 +951,7 @@ export function Modal({
   title,
   onClose,
   wide,
+  table,
   footer,
   rail,
   children,
@@ -958,6 +959,11 @@ export function Modal({
   title: string;
   onClose: () => void;
   wide?: boolean;
+  /** The widest fixed size (960, the rail layout's width) for a dialog whose
+      body IS a table that must be read across — the host-key review, where a
+      status column pushed off-screen would hide the one thing being reviewed.
+      Not for forms: a form that wide is unreadable. */
+  table?: boolean;
   /** Pinned below the scrolling body: the action row, plus any error that explains a disabled action. */
   footer?: ReactNode;
   /** RU-13 — the wide two-pane layout. At ≥RAIL_BREAKPOINT the panel widens to
@@ -1020,7 +1026,7 @@ export function Modal({
     border: `1px solid ${c.border}`,
     borderRadius: c.radiusSurface,
     padding: 20,
-    width: railActive ? 960 : wide ? 640 : 480,
+    width: railActive || table ? 960 : wide ? 640 : 480,
     maxWidth: "92vw",
     maxHeight: "84vh",
     boxShadow: c.shadow,

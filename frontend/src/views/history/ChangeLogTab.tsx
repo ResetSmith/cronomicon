@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { HostKeyBatchLink } from "../runners/HostKeys";
 import { api } from "../../api/client";
 import { useGet, paged, useColumnWidths, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
@@ -169,7 +170,7 @@ export function ChangeLogTab() {
     { key: "category", label: "Category", sortKey: "category", width: COL_W.category, fixed: true, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (a) => a.category ?? "—" },
     { key: "action", label: "Action", sortKey: "action", width: COL_W.action, fixed: true, tdStyle: { color: c.textSec, fontSize: c.fontSm }, cell: (a) => a.action ?? "—" },
     { key: "target", label: "Target", sortKey: "target", width: COL_W.target, tdStyle: { fontWeight: 600, fontSize: c.fontSm }, cell: (a) => a.target ?? "—" },
-    { key: "details", label: "Details", width: COL_W.details, tdStyle: { color: c.textSec, fontSize: c.fontXs, maxWidth: 280 }, cell: (a) => a.details ?? "" },
+    { key: "details", label: "Details", width: COL_W.details, tdStyle: { color: c.textSec, fontSize: c.fontXs, maxWidth: 280 }, cell: (a) => (a.category === "Host Keys" && a.details ? <HostKeyBatchLink details={a.details} /> : (a.details ?? "")) },
   ]);
 
   return (

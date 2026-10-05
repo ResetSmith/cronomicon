@@ -23,6 +23,7 @@ const DEFAULT_DAYS: RetentionDays = {
   definitionRevisions: 365,
   runnerPlacementHistory: 30,
   archivedLogFiles: 0,
+  hostKeyLedger: 365,
 };
 
 // Ordered runs → audit → disk, which is roughly increasing blast radius.
@@ -66,6 +67,11 @@ const RETENTION_FIELDS: { k: keyof RetentionDays; label: string; hint: string }[
     k: "archivedLogFiles",
     label: "Archived Run Logs (S3)",
     hint: "How long a run log stays in the S3 archive after it was copied there. 0 keeps it forever, and Cronomicon never deletes from the bucket — use an S3 lifecycle rule if you want expiry without granting delete. A window here makes the archive sync delete expired logs itself, which needs s3:DeleteObject on the bucket. Local run log files follow Run Log Files, except that a log the sync has not copied yet is never deleted locally while the S3 backend is on.",
+  },
+  {
+    k: "hostKeyLedger",
+    label: "Host Key History",
+    hint: "How long a rejected, removed or replaced runner host key stays on record. A key a runner currently trusts is never pruned, whatever this is set to.",
   },
 ];
 
@@ -123,7 +129,7 @@ function RetentionCard() {
   );
 }
 
-type EventType = "executions" | "activity" | "configChanges" | "authEvents" | "schedulePushes";
+type EventType = "executions" | "activity" | "configChanges" | "authEvents" | "schedulePushes" | "hostKeys";
 
 const EVENT_TYPES: { k: EventType; l: string }[] = [
   { k: "executions", l: "Executions" },
@@ -131,6 +137,7 @@ const EVENT_TYPES: { k: EventType; l: string }[] = [
   { k: "configChanges", l: "Config Changes" },
   { k: "authEvents", l: "Auth Events" },
   { k: "schedulePushes", l: "Schedule Pushes" },
+  { k: "hostKeys", l: "Runner Host Keys" },
 ];
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);

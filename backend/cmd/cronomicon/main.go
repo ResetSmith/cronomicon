@@ -312,6 +312,7 @@ func run() error {
 			p.RecycleBinDays = ac.RetentionDays.RecycleBin
 			p.DefinitionRevisionsDays = ac.RetentionDays.DefinitionRevisions
 			p.RunnerPlacementHistoryDays = ac.RetentionDays.RunnerPlacementHistory
+			p.HostKeyLedgerDays = ac.RetentionDays.HostKeyLedger
 			// Resolved per sweep too: the operator can re-point the log dir, and
 			// the reaper must sweep the tree that is actually being written to.
 			p.LogDir = settings.ResolveLogDir(ctx, pool)

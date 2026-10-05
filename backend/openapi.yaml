@@ -2558,11 +2558,18 @@ paths:
             `details` as `reason=… remoteAddr=… clientIp=… userAgent=…` rather
             than widening the shared row shape (`AuditRow` is a union across four
             dissimilar tables and its CSV header is a stable contract).
+
+            **`hostKeys` returns the runner host-key ledger** (SB) — one row per
+            key decision (`approved`, `rejected`, `removed`), where the change log
+            carries one row per batch. The target is `runner:<name>`; `details`
+            folds in `host=… hostName=… scope=… keyType=… fingerprint=… source=…
+            replaced=… batch=…`; `status` on an approval is `in-force` or
+            `superseded` as of the export.
           schema:
             type: array
             items:
               type: string
-              enum: [executions, activity, configChanges, authEvents, schedulePushes]
+              enum: [executions, activity, configChanges, authEvents, schedulePushes, hostKeys]
           explode: false
         - name: format
           in: query
@@ -4514,6 +4521,17 @@ paths:
         Queues a host-key scan for the given targets; the runner's next poll
         delivers a `keyscan` control op and the agent scans each host from its
         own vantage, uploading what it saw for approval.
+
+        Give **either** `hosts` (a typed list) **or** `scopeId` (SB). A scope
+        scan is expanded to dial addresses on the server — the runner is told
+        addresses, never scope names — and is accepted only for a scope the
+        caller can read and the runner is eligible for by agency. Hosts it
+        cannot include come back in `skipped`, each with the reason: a host with
+        no SSH host record has no address to scan, and a host reached through a
+        bastion is not scannable (provide its key instead). The bastion itself
+        is dialled directly, so it IS scanned — the runner checks its key too on
+        the way to the host behind it. The keys that come back are filed under
+        the scope and the host's own name.
       parameters: [{ $ref: '#/components/parameters/runnerId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -4521,12 +4539,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [hosts]
               properties:
                 hosts:
                   type: array
                   items: { type: string }
-                  description: Targets to scan, as "host" (port 22) or "host:port".
+                  description: |
+                    Targets to scan, as "host" (port 22) or "host:port". Each must
+                    be one plain host: a comma, a wildcard, a negation or a hashed
+                    host is refused (422).
+                scopeId:
+                  type: string
+                  description: Scan every scannable host of this scope instead.
       responses:
         '202':
           description: Scan queued; delivered on the runner's next poll.
@@ -4534,12 +4557,33 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [hosts, skipped]
                 properties:
-                  hosts: { type: array, items: { type: string } }
-        '400': { description: No hosts given., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+                  hosts:
+                    type: array
+                    description: The targets this request queued. Empty when every host of the scope was skipped.
+                    items: { type: string }
+                  skipped:
+                    type: array
+                    description: Scope hosts left out of the scan. Always empty for a typed list.
+                    items:
+                      type: object
+                      required: [host, reason, pattern]
+                      properties:
+                        host: { type: string }
+                        reason: { type: string }
+                        pattern:
+                          type: string
+                          description: The known_hosts host the runner looks this host up under — what a pasted key line for it must start with.
+        '400': { description: Neither or both of hosts and scopeId given., content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: |
+            `validation_error` (a target that is not one host; a scope with no
+            hosts) or `runner_not_eligible` (the runner cannot serve that scope).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /runners/{runnerId}/hostkeys:
     post:
@@ -4551,6 +4595,12 @@ paths:
         it captured for the operator to approve. A re-scan of the same
         (host, keyType) replaces the prior pending row. Never trusts anything —
         approval is a separate operator step.
+
+        Since SB the server takes nothing but the line on trust: it parses
+        `knownHostsLine`, computes the key type and fingerprint itself, and
+        re-renders the line for the one host it was scanned as. `keyType` and
+        `fingerprint` in the body are ignored, and an entry whose line is for
+        another host, several hosts, a wildcard, or carries a marker is dropped.
       security:
         - runnerBearer: []
       parameters: [{ $ref: '#/components/parameters/runnerId' }]
@@ -4586,6 +4636,9 @@ paths:
         Operator. The scanned keys not yet approved or rejected, newest first,
         with runner names and full SHA256 fingerprints for out-of-band
         comparison (approving without out-of-band verification is still TOFU).
+        Since SB the list holds only the runners the caller has authority over
+        (configureApp on one of the runner's agencies; unrestricted for a
+        general-pool runner): the rows name hosts.
       responses:
         '200':
           description: Pending scanned keys.
@@ -4606,7 +4659,8 @@ paths:
         Operator action (CSRF required). Approving marks the key trusted — the
         runner's next poll delivers its known_hosts line as a `trust-hosts` op
         and the agent appends it. Rejecting marks it rejected; it is never
-        trusted. Both decisions are audited.
+        trusted. Both decisions are audited. A batch of one: see
+        POST /runners/{runnerId}/host-keys/resolve-batch for what is recorded.
       parameters:
         - name: keyId
           in: path
@@ -4633,6 +4687,342 @@ paths:
         '409':
           description: Already resolved.
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /runners/{runnerId}/host-keys:
+    get:
+      tags: [Runners]
+      operationId: getRunnerHostKeys
+      summary: What one runner trusts — approved keys, their history, and its own file (SB)
+      description: |
+        ConfigureApp, plus the runner's departmental gate (a general-pool or
+        deregistered runner is unrestricted-only). Three lists that are
+        deliberately never merged:
+
+        - `inForce` — keys approved in Cronomicon and currently trusted, from the
+          ledger. `presentInFile` is set once the runner has reported its file.
+        - `history` — every other ledger row: rejected, removed, and approvals a
+          later one replaced. Newest first, capped at 500.
+        - `knownHosts` — the runner's own report of its known_hosts file
+          (protocol 14). A line with `approvedHere: false` was put there by some
+          other means (seeded on the host by hand); hashed lines carry no host.
+      parameters: [{ $ref: '#/components/parameters/runnerId' }]
+      responses:
+        '200':
+          description: The runner's host-key trust.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunnerHostKeys' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /runners/{runnerId}/host-keys/pending:
+    get:
+      tags: [Runners]
+      operationId: listRunnerPendingHostKeys
+      summary: One runner's scanned keys awaiting review, classified (SB)
+      description: |
+        The review screen's rows. Each key is classified against what is already
+        trusted: `trusted` (this runner already trusts exactly this key),
+        `changed` (it differs from the key this runner trusts for the host, or
+        from the server's own pin — `previousSource` says which), `match` (it
+        equals the server's pin for the host), or `new`.
+      parameters: [{ $ref: '#/components/parameters/runnerId' }]
+      responses:
+        '200':
+          description: Pending keys for the runner.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HostKeyCandidate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /runners/{runnerId}/host-keys/resolve-batch:
+    post:
+      tags: [Runners]
+      operationId: resolveHostKeyBatch
+      summary: Approve and reject scanned keys of one runner in one batch (SB)
+      description: |
+        One transaction, one batch id, one ledger row per key, and one change-log
+        row for the lot that names the runner and the scope. Every id must be an
+        unresolved pending key of THIS runner or nothing is written (409).
+        Approving a key the runner already trusts records nothing new (counted
+        in `unchanged`); approving a changed key replaces the old one, and the
+        runner is told to remove the old line.
+      parameters: [{ $ref: '#/components/parameters/runnerId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approve: { type: array, items: { type: string } }
+                reject: { type: array, items: { type: string } }
+                acknowledgeChanged:
+                  type: array
+                  description: |
+                    The approved keys the operator saw marked `changed` and
+                    ticked anyway. A key that replaces a trusted one without
+                    being named here refuses the batch (409 `review_stale`).
+                  items: { type: string }
+      responses:
+        '200':
+          description: Resolved.
+          content: { application/json: { schema: { $ref: '#/components/schemas/HostKeyBatchResult' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: |
+            `conflict` (a key is no longer pending for this runner) or
+            `review_stale` (an approved key would replace a trusted one and was
+            not acknowledged). Nothing is written.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '422':
+          description: |
+            `validation_error` (nothing named, or a key in both lists) or
+            `host_key_unverifiable` (a key scanned before the upgrade whose
+            stored line does not match its fingerprint; reject it and rescan).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /runners/{runnerId}/host-keys/provide:
+    post:
+      tags: [Runners]
+      operationId: provideHostKeys
+      summary: Supply known_hosts lines directly (SB)
+      description: |
+        For keys an operator already has. With `dryRun` the lines are only parsed
+        and classified — that is the confirm screen, and nothing is written.
+        Without it each becomes an approved ledger row (source `pasted`) and is
+        delivered on the runner's next poll.
+
+        A line naming several hosts yields one candidate per host, and what is
+        delivered is one rendered line per host — never the pasted text. A
+        marker line (`@revoked`, `@cert-authority`), a wildcard or negated host,
+        a host the runner's verifier could not load (empty, an unbalanced
+        bracket, a malformed hash — one such line fails its whole file), a line
+        that is not a key, and a repeated host and key type are errors;
+        any error refuses the whole paste (422, with the candidates in
+        `details.candidates`). Blank lines and `#` comments are ignored. At most
+        500 lines.
+      parameters: [{ $ref: '#/components/parameters/runnerId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                lines:
+                  type: array
+                  description: known_hosts lines; an element may itself hold several lines.
+                  items: { type: string }
+                scopeId:
+                  type: string
+                  description: Record the keys against this scope.
+                dryRun: { type: boolean }
+                select: { $ref: '#/components/schemas/HostKeySelection' }
+      responses:
+        '200':
+          description: The candidates (dryRun) or the batch result.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/HostKeyCandidates' }
+                  - { $ref: '#/components/schemas/HostKeyBatchResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`review_stale` — what would be written is not what was reviewed. Nothing is written.'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /runners/{runnerId}/host-keys/carry:
+    post:
+      tags: [Runners]
+      operationId: carryHostKeys
+      summary: Copy another runner's trusted keys onto this one, on review (SB)
+      description: |
+        The cheap half of replacing a runner, and deliberately not automatic: a
+        replacement sits at a different network position, so the same address is
+        not guaranteed to be the same machine. `dryRun` returns the keys in force
+        for the source that this runner does not already trust; the commit
+        records them (source `carried`). The source may be deregistered — its
+        ledger outlives it. Needs the departmental gate for BOTH runners.
+      parameters:
+        - { $ref: '#/components/parameters/runnerId' }
+        - name: from
+          in: query
+          required: true
+          description: The runner to carry keys from.
+          schema: { type: string }
+        - { $ref: '#/components/parameters/csrf' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun: { type: boolean }
+                select: { $ref: '#/components/schemas/HostKeySelection' }
+      responses:
+        '200':
+          description: The candidates (dryRun) or the batch result.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/HostKeyCandidates' }
+                  - { $ref: '#/components/schemas/HostKeyBatchResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`review_stale` — a key changed at the source since the review. Nothing is written.'
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /runners/{runnerId}/host-keys/{ledgerId}/remove:
+    post:
+      tags: [Runners]
+      operationId: removeHostKey
+      summary: Take a trusted key away from a runner (SB)
+      description: |
+        The approved row stops being in force, a `removed` row records who did
+        it, and the runner's next poll tells it to delete the line.
+      parameters:
+        - { $ref: '#/components/parameters/runnerId' }
+        - { name: ledgerId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/csrf' }
+      responses:
+        '200':
+          description: Removed.
+          content: { application/json: { schema: { $ref: '#/components/schemas/HostKeyBatchResult' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: That key is not in force for this runner.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /runners/{runnerId}/host-keys/{ledgerId}/resend:
+    post:
+      tags: [Runners]
+      operationId: resendHostKey
+      summary: Deliver a trusted key to its runner again (SB)
+      description: The remedy for a key approved here that the runner's file does not hold.
+      parameters:
+        - { $ref: '#/components/parameters/runnerId' }
+        - { name: ledgerId, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/csrf' }
+      responses:
+        '202': { description: Queued for the runner's next poll. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: That key is not in force for this runner.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /runners/{runnerId}/known-hosts/refresh:
+    post:
+      tags: [Runners]
+      operationId: refreshRunnerKnownHosts
+      summary: Ask a runner to report its known_hosts file again (SB)
+      parameters: [{ $ref: '#/components/parameters/runnerId' }, { $ref: '#/components/parameters/csrf' }]
+      responses:
+        '202': { description: Requested; the report arrives after the runner's next poll. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /runners/{runnerId}/known-hosts:
+    post:
+      tags: [Runners]
+      operationId: uploadKnownHosts
+      summary: Report the runner's known_hosts entries (runner-only, protocol 14)
+      description: |
+        Runner-only (bearer, ownership-guarded). The agent reports what its
+        known_hosts file holds — per line: host patterns, hashed flag, marker,
+        key type, fingerprint; never the keys and never a host hash. Sent once
+        at startup and on every `known-hosts-report` control op. The report
+        REPLACES the previous one, and an approved key whose fingerprint appears
+        on a plain (unmarked) line is stamped confirmed.
+      security:
+        - runnerBearer: []
+      parameters: [{ $ref: '#/components/parameters/runnerId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                entries:
+                  type: array
+                  items: { $ref: '#/components/schemas/KnownHostsEntry' }
+                truncated:
+                  type: boolean
+                  description: The file held more than the 5000 entries one report carries.
+      responses:
+        '200':
+          description: Report stored.
+          content: { application/json: { schema: { type: object, properties: { accepted: { type: integer }, truncated: { type: boolean } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /host-key-batches/{batchId}:
+    get:
+      tags: [Runners]
+      operationId: getHostKeyBatch
+      summary: The keys of one host-key batch (SB)
+      description: |
+        What a "Host Keys" change-log row expands into: the ledger rows written
+        by one operator action. Gated by the runner the batch is about.
+      parameters:
+        - { name: batchId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The batch's ledger rows.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HostKeyLedgerRow' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /scopes/{scopeId}/host-key-coverage:
+    get:
+      tags: [Scopes]
+      operationId: getScopeHostKeyCoverage
+      summary: Which of a scope's hosts each bound runner trusts (SB)
+      description: |
+        ConfigureApp, and the scope must be readable by the caller (404
+        otherwise). For each BOUND runner, one state per scope host: `approved`
+        (approved here, and nothing says it is not on the runner), `queued`
+        (approved here, not yet sent), `in-file` (the runner reported it; nobody
+        approved it here), or `""` — not trusted, which is a run that fails at
+        the first connection. A host is judged by the address the runner would
+        dial, in known_hosts form (`pattern`), and by the runner's own file
+        over the ledger: an approved key that the runner's last complete report
+        does not hold reads as not trusted.
+      parameters: [{ $ref: '#/components/parameters/scopeId' }]
+      responses:
+        '200':
+          description: Coverage of the scope's hosts by its bound runners.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScopeHostKeyCoverage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /runners/{runnerId}/test:
     post:
@@ -8984,6 +9374,7 @@ components:
         - queuedSshRuns
         - runTypes
         - jobsNeedingInjection
+        - scopeHosts
         - runners
       properties:
         scope: { type: string }
@@ -9019,12 +9410,15 @@ components:
         jobsNeedingInjection:
           type: integer
           description: How many of those jobs bind secrets or an SSH key and so need a secret-injection runner.
+        scopeHosts:
+          type: integer
+          description: How many hosts the scope has; compare with each runner's `hostsWithoutKey`.
         runners:
           type: array
           description: One entry per proposed runner id, in the order given.
           items:
             type: object
-            required: [runnerId, name, registered, eligible, capabilities, missingRunTypes, allowsSecretInjection]
+            required: [runnerId, name, registered, eligible, capabilities, missingRunTypes, allowsSecretInjection, hostsWithoutKey]
             properties:
               runnerId: { type: string }
               name: { type: string }
@@ -9041,6 +9435,13 @@ components:
                 description: Run types in `runTypes` this runner cannot run.
                 items: { type: string }
               allowsSecretInjection: { type: boolean }
+              hostsWithoutKey:
+                type: integer
+                description: |
+                  How many of the scope's hosts this runner does not trust —
+                  neither approved in Cronomicon nor reported in its own
+                  known_hosts file. A run on such a host fails at the first
+                  connection.
 
     ScopeRunnersPreviewJob:
       type: object
@@ -9938,6 +10339,184 @@ components:
         fingerprint: { type: string, readOnly: true }
         scannedAt: { type: string, format: date-time, readOnly: true }
 
+    HostKeyCandidate:
+      type: object
+      description: |
+        One key on the review screen (SB): a scanned key awaiting approval, a
+        pasted line, or a key carried from another runner. `host` is in
+        known_hosts form — `host`, or `[host]:port` — which is what the runner
+        looks up when it connects.
+      required: [host, keyType, fingerprint, status, matchedServerPin]
+      properties:
+        id: { type: string, description: The pending key's id (scanned keys only). }
+        input: { type: string, description: The pasted line this came from (pasted keys only). }
+        host: { type: string }
+        hostName: { type: [string, 'null'], description: The scope's own name for the host, when the scan was for a scope. }
+        scopeName: { type: [string, 'null'] }
+        hashed: { type: boolean, description: The host is a hashed known_hosts entry and cannot be shown. }
+        keyType: { type: string }
+        fingerprint: { type: string, description: 'SHA256:…, computed by the server from the key.' }
+        scannedAt: { type: string, format: date-time }
+        status:
+          type: string
+          description: Empty only on a candidate that carries an `error`.
+          enum: [new, match, changed, trusted, '']
+        previousFingerprint: { type: string, description: The key this one differs from (status `changed`). }
+        previousSource:
+          type: string
+          enum: [runner, server]
+          description: Whose key `previousFingerprint` is — the one this runner trusts, or the server's own pin.
+        matchedServerPin: { type: boolean }
+        error: { type: string, description: Why this line cannot be accepted. Any error refuses the whole paste. }
+
+    HostKeyCandidates:
+      type: object
+      required: [candidates, acceptable, unverifiable]
+      properties:
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/HostKeyCandidate' }
+        acceptable: { type: boolean, description: False when any candidate carries an error. }
+        unverifiable:
+          type: integer
+          description: |
+            Source keys left out of a carry because their stored line predates
+            server-side rendering and does not verify. Always 0 for a paste.
+
+    HostKeySelection:
+      type: array
+      description: |
+        The rows ticked on the review screen, each named by what was shown: the
+        host, the key (type and fingerprint) and the status it had. Required on
+        a commit — there is no "trust whatever these turn out to be" — and an
+        empty list commits nothing. If a named key is no longer among the
+        candidates (its fingerprint changed at the source), or a key shown as
+        anything but `changed` would now replace a trusted one, the commit is
+        refused whole with 409 `review_stale`.
+      items:
+        type: object
+        required: [host, keyType, fingerprint, status]
+        properties:
+          host: { type: string }
+          keyType: { type: string }
+          fingerprint: { type: string }
+          status: { type: string, description: 'The status the row was shown with (`new`, `match`, `changed`, `trusted`).' }
+
+    HostKeyBatchResult:
+      type: object
+      required: [batchId, approved, rejected, unchanged]
+      properties:
+        batchId: { type: string, description: Empty when nothing was recorded. }
+        approved: { type: integer }
+        rejected: { type: integer }
+        unchanged: { type: integer, description: Approved keys the runner already trusted; nothing new was recorded. }
+
+    HostKeyLedgerRow:
+      type: object
+      description: One host-key decision. Decisions are append-only; only the delivery stamps move.
+      required: [id, batchId, runnerId, runnerName, host, keyType, fingerprint, decision, source, matchedServerPin, actor, decidedAt]
+      properties:
+        id: { type: integer }
+        batchId: { type: string }
+        runnerId: { type: string }
+        runnerName: { type: string, description: The runner's name when the decision was made. }
+        scopeName: { type: [string, 'null'] }
+        host: { type: string }
+        hostName: { type: [string, 'null'] }
+        keyType: { type: string }
+        fingerprint: { type: string }
+        decision: { type: string, enum: [approved, rejected, removed] }
+        source: { type: string, enum: [scan, pasted, carried] }
+        matchedServerPin: { type: boolean }
+        previousFingerprint: { type: [string, 'null'], description: The in-force key this approval replaced. }
+        actor: { type: string }
+        decidedAt: { type: string, format: date-time }
+        deliveredAt: { type: [string, 'null'], format: date-time, description: When the key was sent to the runner. }
+        confirmedAt: { type: [string, 'null'], format: date-time, description: When the runner first reported the key in its file. }
+        supersededAt: { type: [string, 'null'], format: date-time, description: Null while the key is in force. }
+        presentInFile:
+          type: boolean
+          description: On in-force rows, once the runner has reported its file — whether the key is in it. Absent before any report.
+
+    KnownHostsEntry:
+      type: object
+      required: [line, hosts, hashed, marker, keyType, fingerprint]
+      properties:
+        line: { type: integer, description: The line's number in the file. }
+        hosts: { type: string, description: 'Comma-joined host patterns; empty for a hashed entry.' }
+        hashed: { type: boolean }
+        marker: { type: string, enum: ['', revoked, cert-authority] }
+        keyType: { type: string }
+        fingerprint: { type: string }
+
+    RunnerHostKeys:
+      type: object
+      required: [inForce, history, knownHosts, pending]
+      properties:
+        inForce:
+          type: array
+          items: { $ref: '#/components/schemas/HostKeyLedgerRow' }
+        history:
+          type: array
+          items: { $ref: '#/components/schemas/HostKeyLedgerRow' }
+        pending: { type: integer, description: Scanned keys still awaiting review for this runner. }
+        knownHosts:
+          type: object
+          required: [reportedAt, truncated, entries]
+          properties:
+            reportedAt: { type: [string, 'null'], format: date-time, description: Null until the runner has reported. }
+            truncated: { type: boolean }
+            entries:
+              type: array
+              items:
+                allOf:
+                  - { $ref: '#/components/schemas/KnownHostsEntry' }
+                  - type: object
+                    required: [approvedHere]
+                    properties:
+                      approvedHere:
+                        type: boolean
+                        description: This line's key is one in force in the ledger for this runner.
+
+    ScopeHostKeyCoverage:
+      type: object
+      required: [scope, hosts, runners]
+      properties:
+        scope: { type: string }
+        hosts:
+          type: array
+          items:
+            type: object
+            required: [host, pattern, target]
+            properties:
+              host: { type: string, description: The scope's name for the host. }
+              pattern: { type: string, description: The known_hosts host the runner looks up when it connects. }
+              target: { type: string, description: What a scan dials; empty when the host cannot be scanned. }
+              notScannable: { type: string, description: Why a scope scan leaves this host out. }
+              via: { type: string, description: The bastion the host is reached through, as the runner is given it. }
+              viaPattern:
+                type: string
+                description: |
+                  The known_hosts host of the bastion hop. A runner verifies BOTH
+                  hops, so a host behind a bastion counts as trusted only when
+                  the bastion's key and its own key both are.
+        runners:
+          type: array
+          description: One entry per BOUND runner.
+          items:
+            type: object
+            required: [runnerId, name, registered, states, missing, reportedAt]
+            properties:
+              runnerId: { type: string }
+              name: { type: string }
+              registered: { type: boolean }
+              states:
+                type: array
+                description: One per host, in `hosts` order.
+                items: { type: string, enum: [approved, queued, in-file, ''] }
+              missing: { type: integer, description: Hosts in the not-trusted state. }
+              reportedAt: { type: [string, 'null'], format: date-time }
+
     AgencyMatrixRow:
       type: object
       required: [kind, id, name, scope, agencyIds]
@@ -10308,7 +10887,7 @@ components:
             properties:
               op:
                 type: string
-                enum: [kill, drain, re-register, keyscan, trust-hosts]
+                enum: [kill, drain, re-register, keyscan, trust-hosts, untrust-hosts, known-hosts-report]
                 description: |
                   re-register (added in protocol v4): the agent must re-declare
                   its current local config in place via
@@ -10318,6 +10897,12 @@ components:
                   entries. The per-op protocol gates these once carried went with
                   the server's protocol floor — every registered agent speaks the
                   current protocol.
+                  untrust-hosts / known-hosts-report (added in protocol v14):
+                  remove the listed known_hosts entries (a replaced or removed
+                  key) / upload what the known_hosts file holds to
+                  POST /runners/{runnerId}/known-hosts. The server sends
+                  untrust-hosts before trust-hosts and the report last, and the
+                  agent applies ops in order.
               traceId:
                 type: [string, 'null']
                 format: uuid
@@ -10329,7 +10914,7 @@ components:
               entries:
                 type: array
                 items: { type: string }
-                description: Approved known_hosts lines to append (trust-hosts op, v5).
+                description: known_hosts lines to append (trust-hosts op, v5) or remove (untrust-hosts op, v14).
         pollAfterMs:
           type: integer
           description: Suggested delay before the next poll.
@@ -10736,13 +11321,14 @@ components:
             retentionDays:
               type: object
               description: |
-                The eleven retention knobs (A4 defaults shown): five row windows
+                The twelve retention knobs (A4 defaults shown): five row windows
                 (`runs`, `activity`, `workflowRuns`, `changeLog`,
                 `schedulePushes`), two on-disk file windows (`logFiles`,
                 `auditLogFiles`), the two RH windows (`recycleBin`,
                 `definitionRevisions`), the DR-7 window
-                (`runnerPlacementHistory`), and the S3 archive window
-                (`archivedLogFiles`, SL-4). `0` on any of them means keep forever. This blob
+                (`runnerPlacementHistory`), the S3 archive window
+                (`archivedLogFiles`, SL-4), and the host-key history window
+                (`hostKeyLedger`, SB). `0` on any of them means keep forever. This blob
                 is authoritative — the `CRONOMICON_RETENTION_*` env vars only seed it
                 on the first boot that finds it unset (LU-2), and a change here
                 applies on the next nightly sweep rather than at the next restart.
@@ -10793,6 +11379,16 @@ components:
                     policy or use an S3 lifecycle rule. Independent of `logFiles`,
                     which governs LOCAL files and, while the archive backend is
                     on, never reaps a file the sync has not yet copied.
+                hostKeyLedger:
+                  type: integer
+                  default: 365
+                  description: |
+                    How long a runner host-key decision that is no longer in
+                    force stays in the ledger (SB): a rejected key, a removed
+                    key, or one a later approval replaced. A key a runner
+                    currently trusts is never pruned, whatever this is set to.
+                    Matches `changeLog` by default: a batch's change-log row and
+                    its ledger rows are two halves of one answer.
                 auditLogFiles:
                   type: integer
                   default: 730

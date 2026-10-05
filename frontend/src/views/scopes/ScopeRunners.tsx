@@ -306,6 +306,20 @@ function PreviewPanel({ preview, selectedCount }: { preview: Preview; selectedCo
         ),
       });
     }
+    // The move to a runner moves host-key trust with it: the server's own pins
+    // stop mattering and this runner's known_hosts starts to.
+    if (r.hostsWithoutKey > 0) {
+      lines.push({
+        tone: "warning",
+        node: (
+          <>
+            <strong>{r.name}</strong> does not yet trust {r.hostsWithoutKey} of this scope's {plural(preview.scopeHosts, "host")}. Its runs
+            on {r.hostsWithoutKey === 1 ? "that host" : "those hosts"} fail at the first connection until you scan the scope from
+            that runner and approve the keys.
+          </>
+        ),
+      });
+    }
   }
   if (preview.willBeBound && preview.runners.length === 1 && preview.runners[0].registered) {
     lines.push({
@@ -506,7 +520,8 @@ export function ReplaceRunnerDialog({
 }: {
   from: { id: string; name: string };
   onClose: () => void;
-  onDone: (message: string) => void;
+  /** `to` is the runner that took over, so the caller can offer the next step. */
+  onDone: (message: string, to: { id: string; name: string }) => void;
 }) {
   const runnersQ = useGet<unknown>(() => api.GET("/runners"), []);
   const candidates = rows<RunnerLite>(runnersQ.data).filter((r) => String(r.id) !== from.id);
@@ -528,7 +543,7 @@ export function ReplaceRunnerDialog({
     }
     const scopes = (data as { scopes?: string[] } | undefined)?.scopes ?? [];
     const toName = candidates.find((r) => String(r.id) === to)?.name ?? to;
-    onDone(`${toName} now serves ${scopes.length === 0 ? "the scopes" : scopes.join(", ")} in place of ${from.name}`);
+    onDone(`${toName} now serves ${scopes.length === 0 ? "the scopes" : scopes.join(", ")} in place of ${from.name}`, { id: to, name: toName });
   };
 
   return (

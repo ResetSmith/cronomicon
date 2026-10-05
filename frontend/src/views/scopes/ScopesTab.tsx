@@ -19,6 +19,7 @@ import {
   tdStyle,
   } from "../envvars/ui";
 import { BindingNotices, BoundRunnersCell, ScopeRunnersField, type BoundRunner } from "./ScopeRunners";
+import { ScopeKeyCoverage } from "../runners/HostKeys";
 
 
 export interface ScopeRow {
@@ -551,6 +552,16 @@ export function ScopesTab({
                               refetch();
                             }}
                           />
+                        )}
+                        {/* SB — a bound runner uses ITS OWN known_hosts, so a
+                            host it has never been told to trust is a run that
+                            fails at the first connection. Shown only where the
+                            server will answer: the route needs ConfigureApp. */}
+                        {s.id != null && canEdit && (s.boundRunners ?? []).length > 0 && (
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys on the bound runners</div>
+                            <ScopeKeyCoverage scopeId={String(s.id)} bound={(s.boundRunners ?? []).length} canConfig={canEdit} />
+                          </div>
                         )}
                         {/* Tags are shown to everyone who can see the scope and
                             edited only with ConfigureApp, like every other scope

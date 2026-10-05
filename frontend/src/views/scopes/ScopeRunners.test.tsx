@@ -70,6 +70,7 @@ const emptyPreview = (ids: string[], over: Partial<Preview> = {}): Preview => ({
   queuedSshRuns: 0,
   runTypes: [],
   jobsNeedingInjection: 0,
+  scopeHosts: 0,
   runners: [],
   ...over,
 });
@@ -219,6 +220,7 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
         jobsRefused: ids.length ? [{ uid: "u2", name: "legacy", source: "git", runType: "bash" }] : [],
         queuedSshRuns: ids.length ? 2 : 0,
         jobsNeedingInjection: ids.length ? 1 : 0,
+        scopeHosts: 12,
         runners: ids.map((id) => ({
           runnerId: id,
           name: "runner-fin-01",
@@ -227,6 +229,7 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
           capabilities: ["bash"],
           missingRunTypes: ["ansible"],
           allowsSecretInjection: false,
+          hostsWithoutKey: 3,
         })),
       });
     const { dialog, box, save } = await open();
@@ -240,6 +243,8 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     expect(text).toMatch(/2 runs already queued or scheduled for SSH will still run from the server/);
     expect(text).toMatch(/runner-fin-01 cannot run ansible jobs/);
     expect(text).toMatch(/runner-fin-01 may not receive secrets, and 1 job on this scope binds one/);
+    // Host-key trust moves with the executor: the runner's own file, not the server's pins.
+    expect(text).toMatch(/runner-fin-01 does not yet trust 3 of this scope's 12 hosts/);
     // One runner is a single point of failure, and the dialog says so.
     expect(dialog.getByText(/One runner serves this scope/)).toBeTruthy();
   });
