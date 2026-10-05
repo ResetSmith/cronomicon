@@ -1780,18 +1780,39 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 				"job", name, "value", warnDeadline)
 			warnDeadline = ""
 		}
-		// RT-2 — the declared runner pin, advisory-warned like the two above: an
-		// unusable value leaves the job unpinned rather than failing the repo's sync.
-		// Deliberately NOT validated against the live fleet (RT-Q4): git is often
-		// where a tag appears first, and a runner enrolled an hour later must find
-		// the job already asking for it.
-		declaredRunnerTag := NormalizeRunnerTag(j.Spec.RunnerTag)
-		if j.Spec.RunnerTag != "" && declaredRunnerTag == "" {
-			// logWarn, not s.log.Warn: s.log is nil in the upsert-level tests, and
-			// the neighbouring warns in this function are split between the two
-			// spellings. A diagnostic must never be the thing that panics a sync.
-			s.logWarn("git sync: job declares an unusable runner_tag; ignoring it (the job stays unpinned)",
-				"job", name, "value", j.Spec.RunnerTag)
+		// SB — spec.runner_tag is RETIRED. It used to confine the job to runners
+		// carrying that tag; where a job runs is now decided by its scope's runner
+		// binding (mig. 1180), and this key is read only to say so. It is still a
+		// recognised field on purpose: the YAML decode is not strict, so a key the
+		// struct forgot would vanish without a word, and the author of a job that
+		// says `runner_tag: vlan-dmz` would go on believing it is confined.
+		//
+		// Never an error (owner decision): the job syncs either way. What differs
+		// is how loud the warning is. On a bound scope the line is merely stale —
+		// the job runs on the scope's runners. On an unbound one, or with no scope,
+		// nothing confines the job any more, and that case also goes on the
+		// notice list below so it is seen somewhere other than this log.
+		leftoverPin := strings.TrimSpace(j.Spec.RunnerTag)
+		leftoverPinUnconfined := false
+		if leftoverPin != "" {
+			bound, berr := execspec.ScopeIsBound(ctx, tx, j.Spec.Scope)
+			switch {
+			case berr != nil:
+				// Unreadable: say only what is certain. No notice is written on a
+				// guess in either direction.
+				s.logWarn("git sync: job still declares runner_tag, which is no longer read; remove the line",
+					"job", name, "source_path", j.SourcePath, "runner_tag", leftoverPin)
+			case bound:
+				s.logWarn("git sync: job still declares runner_tag, which is no longer read; its scope is bound to "+
+					"runners and it runs on those — remove the line",
+					"job", name, "source_path", j.SourcePath, "scope", j.Spec.Scope, "runner_tag", leftoverPin)
+			default:
+				leftoverPinUnconfined = true
+				s.logWarn("git sync: job still declares runner_tag, which is no longer read; NOTHING CONFINES THIS JOB "+
+					"NOW — its scope is not bound to any runner, so it may run on any runner in its agency. Bind the "+
+					"scope's runners, or remove the line if that is intended",
+					"job", name, "source_path", j.SourcePath, "scope", j.Spec.Scope, "runner_tag", leftoverPin)
+			}
 		}
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO jobs(name, run_type, description, scope, target_host, schedule,
@@ -1802,8 +1823,8 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			                 source_path, synced_at, prompts_json, env_passthrough,
 			                 project_root, requires_json, prompt_enforcement,
 			                 ssh_user, ssh_credential, become_password_secret,
-			                 warn_after_seconds, must_finish_by, watch_json, runner_tag, uid)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			                 warn_after_seconds, must_finish_by, watch_json, uid)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
 				run_type=excluded.run_type,
 				description=excluded.description,
@@ -1834,12 +1855,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 				become_password_secret=excluded.become_password_secret,
 				warn_after_seconds=excluded.warn_after_seconds,
 				must_finish_by=excluded.must_finish_by,
-				watch_json=excluded.watch_json,
-				-- RT-2: the DECLARED pin is git-owned and sync-OVERWRITTEN, the
-				-- opposite of jobs.tags above. Omitting this line would make
-				-- spec.runner_tag parse and silently do nothing.
-				-- TestRunnerTagSyncsFromYAML guards this direction.
-				runner_tag=excluded.runner_tag`,
+				watch_json=excluded.watch_json`,
 			name, runType, j.Spec.Description, j.Spec.Scope, j.Spec.TargetHost,
 			nullStr(legacyMirror), enabled,
 			j.Spec.TimeoutSeconds, j.Spec.Retries, requestable,
@@ -1857,12 +1873,6 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			// than failing the sync, matching the become-password precedent above: a
 			// typo in one job's deadline must not stop the whole repo from syncing.
 			nullIfZero(j.Spec.WarnAfterSeconds), nullStr(warnDeadline), watchJSON,
-			// RT-2 — the declared runner pin. Normalized through the same tag rules
-			// the runner-tag editor uses, so a YAML tag and a fleet tag that differ
-			// only in case or whitespace still match at claim time. An unparseable
-			// value degrades to unpinned rather than failing the sync, matching the
-			// advisory-warn precedent set by must_finish_by and become_password above.
-			nullStr(declaredRunnerTag),
 			// AF-4a — see the schedules upsert: first-sight identity, preserved on
 			// conflict by omission from DO UPDATE.
 			db.NewID())
@@ -1881,6 +1891,31 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		if err := tx.QueryRowContext(ctx,
 			`SELECT uid FROM jobs WHERE source='git' AND name = ?`, name).Scan(&jobUID); err != nil {
 			return fmt.Errorf("resolve uid for job %q: %w", name, err)
+		}
+		// SB — the notice list's half of the runner_tag warning above. A job whose
+		// leftover pin confines nothing gets one row, so the Scopes view can show
+		// it; a job with a row already (from migration 1180, or an earlier sync)
+		// is left alone, including one an operator DISMISSED — re-raising that on
+		// every sync would make dismissal meaningless. And once the line is gone
+		// from the YAML, the notice this sync wrote for it goes too: removing the
+		// line is the fix, and nobody should have to dismiss what they fixed.
+		// The migration's own rows are never deleted here; they record a pin that
+		// existed, whatever the YAML says now.
+		if leftoverPinUnconfined {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO retired_runner_pins (job_uid, job_name, job_source, scope, runner_tag, reason, recorded_at)
+				SELECT ?, ?, 'git', ?, ?, 'leftover_git_key', ?
+				 WHERE NOT EXISTS (SELECT 1 FROM retired_runner_pins
+				                    WHERE job_source = 'git' AND job_name = ?)`,
+				jobUID, name, j.Spec.Scope, leftoverPin, now, name); err != nil {
+				return fmt.Errorf("record leftover runner_tag for job %q: %w", name, err)
+			}
+		} else if leftoverPin == "" {
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM retired_runner_pins
+				 WHERE job_source = 'git' AND job_name = ? AND reason = 'leftover_git_key'`, name); err != nil {
+				return fmt.Errorf("clear leftover runner_tag notice for job %q: %w", name, err)
+			}
 		}
 		// LU-6 §5.6.1 — a prune/return cycle mints a FRESH uid (first-sight, the
 		// tags rule) but must NOT mint a fresh log folder: re-point the surviving

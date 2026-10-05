@@ -112,11 +112,6 @@ export type RunSummaryInput = {
    * server ignores a stored one outright — see the fold in `where` below.
    */
   identityCapable: boolean;
-  /** "" when unpinned. Omitted entirely on an SSH run — see `pinApplies`. */
-  effectivePin: string;
-  jobPin: string;
-  pinApplies: boolean;
-  pinChanged: boolean;
   // When
   whenPhrase: string;
   deferred: boolean;
@@ -213,7 +208,7 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
   // This row previously read the per-run fields ALONE, so a job that declares
   // its own "connect as" ran under that identity while the rail said nothing:
   // the RS-2 contract is every setting the run will use, not just the ones
-  // changed here. That is the RT-3 pin bug one row over.
+  // changed here.
   //
   // Gated on identityCapable like the dialog's own section is: on a run type
   // that cannot carry an identity the server drops a stored one, and stating a
@@ -241,19 +236,6 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
       });
     }
   }
-  // RS-1's row, promoted out of the deviations list. Shown whenever a pin is in
-  // play at all — stating where a run goes is not the same as flagging that
-  // somebody moved it, and the accent carries the second meaning.
-  if (i.pinApplies && (i.effectivePin || i.pinChanged)) {
-    where.push({
-      key: "pin",
-      label: "Runner pin",
-      value: i.effectivePin || "unpinned",
-      accent: i.pinChanged ? "warning" : undefined,
-      note: i.pinChanged ? `job default: ${i.jobPin || "(none)"}` : undefined,
-    });
-  }
-
   // ── When ───────────────────────────────────────────────────────────────────
   // One row, always. `info` rather than `warning` for a deferred run: it is not a
   // deviation from how the job is configured, it is a fact about this run that
@@ -299,7 +281,7 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
   // RD5 — the rail's groups mirror the dialog's five sections by name, so the
   // section an operator opens and the group that restates it share one word.
   // "Where it runs" is split at the same seam as the dialog: Targets carries
-  // the scope + targets rows, Method the executor, identity and pin rows.
+  // the scope + targets rows, Method the executor and identity rows.
   const targets = where.filter((r) => r.key === "scope" || r.key === "targets");
   const method = where.filter((r) => r.key !== "scope" && r.key !== "targets");
   const groups: SummaryGroup[] = [

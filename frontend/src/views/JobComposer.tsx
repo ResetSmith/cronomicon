@@ -8,7 +8,6 @@ import { guideForRunType } from "../components/docLinks";
 import { EnvRowsEditor, Btn, ExecutorChoice, InfoBody, InfoToggle, Input, Select, SourceBadge, fieldLabelStyle, inputStyle, type EnvKV,
   DocLink,
 } from "../components/ui";
-import { RunnerPinInput, useRunnerTags } from "../components/RunnerPin";
 import { ComposeKeyPicker, ComposeReferencePicker, putBindings } from "../components/ReferenceBindings";
 import { ScriptVariablesPanel } from "../components/ScriptVariables";
 import { ScriptPicker } from "../components/ScriptPicker";
@@ -259,11 +258,6 @@ export function JobComposer() {
   const [sshCredential, setSshCredential] = useState("");
   const [becomePasswordSecret, setBecomePasswordSecret] = useState("");
   const [executor, setExecutor] = useState("");
-  // RT-3 — the DECLARED pin. The Composer edits the job SPEC, so this is the
-  // git-equivalent field only; the operator OVERRIDE is not settable here on
-  // purpose (RT-Q7) — this form is a full replace and would clobber it.
-  const [runnerTag, setRunnerTag] = useState("");
-  const { tags: runnerTags } = useRunnerTags();
   // EV-6 parity — the job's declared SSH-key bindings (labels only), promoted to
   // their own section beside Executor exactly as job detail promoted JobKeyField.
   // Draft-until-save like every other composer field: loaded from
@@ -353,7 +347,6 @@ export function JobComposer() {
       setSshCredential(j.sshCredential ?? "");
       setBecomePasswordSecret(j.becomePasswordSecret ?? "");
       setExecutor(j.executor ?? "");
-      setRunnerTag(j.runnerTag ?? "");
       // JC10 — prefill job-level env for an exact round-trip (full-state resend).
       setJobEnvRows(Object.entries(j.env ?? {}).map(([key, value]) => ({ key, value })));
       // UDV1 — prefill declared prompts for an exact round-trip (full-state resend).
@@ -705,10 +698,6 @@ export function JobComposer() {
       schedules: inlineEntries.map(inlineScheduleToWire),
       enabled,
       description: description.trim(),
-      // RT-3 — the declared pin rides the same full-replace PUT as every other
-      // spec field, so clearing the input clears the pin. This is one of the two
-      // places a pin is authored; the other is the Run dialog, for one run.
-      runnerTag: runnerTag.trim(),
       // JC-P1 — always re-send the advanced fields so the full-replace PUT preserves
       // them. On create these are the backend defaults, so it is behavior-neutral.
       timeoutSeconds: preserved.timeoutSeconds,
@@ -800,7 +789,6 @@ export function JobComposer() {
     setSshUser("");
     setSshCredential("");
     setExecutor("");
-    setRunnerTag("");
     setSshKeys([]);
     setLoadedKeys([]);
     setScheduleRefs([]);
@@ -1104,34 +1092,6 @@ export function JobComposer() {
             <>Resolved from the script at trigger time — shell run-types default to SSH.</>
           ) : (
             <>Will run via <strong>{executor === "ssh" ? "the in-app SSH executor" : "a runner agent"}</strong>.</>
-          )}
-        </div>
-      </Field>
-
-      {/* RT-3 — the DECLARED runner pin, directly after Executor: the two answer
-          adjacent halves of "where does this run" (which KIND of executor, then
-          WHICH runner). Only meaningful for runner-executor runs, so it disables
-          itself on a pinned-SSH job rather than silently accepting a value the
-          trigger would reject with a 422 (RT-Q5). */}
-      <Field label="Run on (optional)">
-        <RunnerPinInput
-          id="composer-runner-pin"
-          value={runnerTag}
-          onChange={setRunnerTag}
-          tags={runnerTags}
-          disabled={executor === "ssh"}
-          placeholder={executor === "ssh" ? "Not available for the SSH executor" : "Any eligible runner"}
-        />
-        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
-          {executor === "ssh" ? (
-            <>The in-app SSH executor has no runner to pin — switch to Runner or Auto to target one.</>
-          ) : runnerTag.trim() ? (
-            <>
-              Runs are claimed only by runners tagged <strong>{runnerTag.trim()}</strong>. Tags are edited on the
-              Runners page. A tag nothing carries yet is allowed — the run waits for one.
-            </>
-          ) : (
-            <>Any runner eligible for this job's department and run type may claim it.</>
           )}
         </div>
       </Field>

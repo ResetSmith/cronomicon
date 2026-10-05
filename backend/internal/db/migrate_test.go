@@ -31,8 +31,8 @@ func TestMigrateUpDown(t *testing.T) {
 	if dirty {
 		t.Fatal("schema is dirty after up")
 	}
-	if v != 1180 {
-		t.Fatalf("schema version = %d, want 1180", v)
+	if v != 1190 {
+		t.Fatalf("schema version = %d, want 1190", v)
 	}
 
 	// Core tables should exist.
@@ -41,7 +41,7 @@ func TestMigrateUpDown(t *testing.T) {
 		"reactions", "reaction_deliveries", "runner_placement_history",
 		"roles", "access_grants", "scope_agencies", "secret_agencies", "env_var_agencies", "ssh_credential_agencies", "run_agencies",
 		"service_accounts", "definition_revisions", "file_watch_sightings",
-		"annotations", "runner_tags"} {
+		"annotations", "scope_runners", "retired_runner_pins"} {
 		var name string
 		err := pool.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&name)
 		if err != nil {
@@ -3370,5 +3370,99 @@ func TestMigrate1180ScopeRunners(t *testing.T) {
 	}
 	if err := m.Steps(1); err != nil {
 		t.Fatalf("migrate up again 1170→1180: %v", err)
+	}
+}
+
+// TestMigrate1190DropRunnerPin pins the retirement of the runner-tag pin (the
+// scope-bound-runners plan, SB-3): the declared pin and the projection it was
+// matched against are gone, the runner's own tags are untouched, and the pin a
+// PAST run carried is still there to be shown. The down is lossy by design —
+// the declared pins do not come back — but must leave a schema a pre-1190
+// binary can run on, projection rebuilt.
+func TestMigrate1190DropRunnerPin(t *testing.T) {
+	pool, err := Open(filepath.Join(t.TempDir(), "droppin.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+
+	m, err := migrator(pool)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+	if err := m.Migrate(1180); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate to 1180: %v", err)
+	}
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	count := func(q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(q, args...).Scan(&n); err != nil {
+			t.Fatalf("count: %v\n%s", err, q)
+		}
+		return n
+	}
+	hasCol := func(table, col string) bool {
+		t.Helper()
+		return count(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, col) == 1
+	}
+	hasTable := func(name string) bool {
+		t.Helper()
+		return count(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name) == 1
+	}
+
+	exec(`INSERT INTO runners(id, name, status, registered_at, created_at, tags)
+	      VALUES('r1', 'runner-dmz-01', 'online', 't', 't', '["vlan-dmz","rack-4"]')`)
+	exec(`INSERT INTO runner_tags(runner_id, tag) VALUES('r1','vlan-dmz'), ('r1','rack-4')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, runner_tag, synced_at)
+	      VALUES('j1', 'deploy', 'cronomicon', 'bash', 'vlan-dmz', 't')`)
+	exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor, runner_tag, created_at)
+	      VALUES('run-old', 'deploy', 'bash', 'success', 'seed', 'manual', 'runner', 'vlan-dmz', 't')`)
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up 1180→1190: %v", err)
+	}
+	if hasCol("jobs", "runner_tag") {
+		t.Error("after 1190 the jobs table still has runner_tag")
+	}
+	if hasTable("runner_tags") {
+		t.Error("after 1190 the runner_tags projection still exists")
+	}
+	if count(`SELECT COUNT(*) FROM jobs WHERE uid='j1'`) != 1 {
+		t.Error("the job row did not survive the column drop")
+	}
+	var tags, pastPin string
+	if err := pool.QueryRow(`SELECT tags FROM runners WHERE id='r1'`).Scan(&tags); err != nil || tags != `["vlan-dmz","rack-4"]` {
+		t.Errorf("runner tags after 1190 = %q (err %v), want them untouched — they are labels now, not gone", tags, err)
+	}
+	if err := pool.QueryRow(`SELECT COALESCE(runner_tag,'') FROM runs WHERE id='run-old'`).Scan(&pastPin); err != nil || pastPin != "vlan-dmz" {
+		t.Errorf("a past run's pin after 1190 = %q (err %v), want vlan-dmz kept as history", pastPin, err)
+	}
+
+	// Down: the column returns empty and the projection is rebuilt from the tags.
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("migrate down 1190→1180: %v", err)
+	}
+	if !hasCol("jobs", "runner_tag") || !hasTable("runner_tags") {
+		t.Fatal("after the down the pin's storage is not back")
+	}
+	if n := count(`SELECT COUNT(*) FROM jobs WHERE uid='j1' AND runner_tag IS NULL`); n != 1 {
+		t.Errorf("after the down the job's pin is not NULL (lossy by design): %d", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM runner_tags WHERE runner_id='r1'`); n != 2 {
+		t.Errorf("projection rows after the down = %d, want 2 rebuilt from runners.tags", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM runner_tags WHERE runner_id='r1' AND tag='VLAN-DMZ'`); n != 1 {
+		t.Errorf("the rebuilt projection is not case-insensitive (matched %d rows for VLAN-DMZ)", n)
+	}
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up again 1180→1190: %v", err)
 	}
 }

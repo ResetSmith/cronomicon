@@ -7,54 +7,16 @@ import (
 	"testing"
 )
 
-// SB Phase 0 — characterization tests for defects the scope-bound-runners plan
-// (.aidata/20261005-runners-update.md) found by reading and needed proven before
-// it builds on them.
+// SB Phase 0 found two defects in how a scheduled fire identifies its job, both
+// invisible while job names were unique and both real once R2 let two agencies
+// hold same-named jobs. The tests here were written to pin each defect, and now
+// guard its fix: the run carries the job that was fired (9f7dfda), and the
+// executor is that job's own (execspec.ResolveExecutor).
 //
-// The pin test PASSES against its defect on purpose: it pins what the code does
-// today so the change that retires the pin (Phase C) has a test to delete rather
-// than a claim to take on trust. Its replacement — a scope bound to runners is
-// honoured on a scheduled fire — is in scope_executor_test.go. The identity
-// tests guard defects that are fixed.
-
-// TestScheduledPinnedShellJobQueuesForSSH proves the pin is not enforced on a
-// scheduled fire. RT-Q5 says a pinned run whose executor RESOLVES to ssh is
-// rejected, and sshexec's claim query omits the pin predicate because "a pinned
-// run never reaches this query". That holds for the manual and token triggers
-// only (api.runJob). fire() resolves the executor with ResolveExecutor, which
-// knows nothing of the pin, and the run-row writer inherits jobs.runner_tag in
-// SQL regardless of executor — so a pinned shell job with no explicit
-// `executor: runner` is queued for the control plane with its pin recorded and
-// unenforced. internal/sshexec's TestSSHPoolClaimsPinnedRun is the other half.
-func TestScheduledPinnedShellJobQueuesForSSH(t *testing.T) {
-	pool := mustPool(t)
-	ctx := context.Background()
-	if _, err := pool.ExecContext(ctx, `
-		INSERT INTO jobs (uid, name, run_type, concurrency_policy, enabled, runner_tag, synced_at)
-		VALUES ('uid-pinned', 'pinned', 'bash', 'Allow', 1, 'vlan-dmz', 't')`); err != nil {
-		t.Fatalf("seed pinned job: %v", err)
-	}
-
-	s := New(pool, quietLog(), nil)
-	s.fire("git", "pinned", "uid-pinned", "bash", "prod", "Allow", "", "default", "")
-
-	var status, executor string
-	var pin sql.NullString
-	if err := pool.QueryRowContext(ctx,
-		`SELECT status, executor, runner_tag FROM runs WHERE job_name='pinned'`).
-		Scan(&status, &executor, &pin); err != nil {
-		t.Fatalf("fetch run: %v", err)
-	}
-	if status != "queued" {
-		t.Errorf("status = %q, want queued (the fire is not refused or skipped today)", status)
-	}
-	if executor != "ssh" {
-		t.Errorf("executor = %q, want ssh (a shell job's run-type default)", executor)
-	}
-	if pin.String != "vlan-dmz" {
-		t.Errorf("runner_tag = %q, want vlan-dmz (inherited onto a run no runner will ever claim)", pin.String)
-	}
-}
+// A third characterization test lived here until the runner-tag pin was retired:
+// it showed a pinned shell job on a schedule being queued for ssh with its pin
+// recorded and unenforced. Its replacement — a scope bound to runners IS
+// honoured on a scheduled fire — is scope_executor_test.go.
 
 // seedTwins seeds two cronomicon jobs that share a name, which R2 allows across
 // agencies, differing in everything a run snapshots from its job. Each is fired

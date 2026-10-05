@@ -183,17 +183,11 @@ type jobComposeInput struct {
 	ConcurrencyKey    string            `json:"concurrencyKey"`
 	// JR-Q5 — per-job run-input enforcement: "warn" (default) | "block". Anything
 	// unrecognized normalizes to "warn" (gitlab.NormalizePromptEnforcement).
-	PromptEnforcement string   `json:"promptEnforcement,omitempty"`
-	Description       string   `json:"description"`
-	Tags              []string `json:"tags"`
-	// RT-2 — the DECLARED runner pin: runs of this job may be claimed only by a
-	// runner carrying this tag. Sibling of Executor, and git's equivalent field is
-	// spec.runner_tag. The operator's live override is NOT here — it is a separate
-	// column with its own PUT (RT-Q7), because this upsert is a full replace and
-	// would otherwise clobber an override every time the job is edited.
-	RunnerTag string              `json:"runnerTag,omitempty"`
-	Prompts   []gitlab.PromptSpec `json:"prompts,omitempty"`  // UDV1 — declared prompt variables surfaced in the Run dialog
-	Requires  []string            `json:"requires,omitempty"` // §5/RX.13 — requirement tokens (e.g. vault) that claim-gate this job to capable runners
+	PromptEnforcement string              `json:"promptEnforcement,omitempty"`
+	Description       string              `json:"description"`
+	Tags              []string            `json:"tags"`
+	Prompts           []gitlab.PromptSpec `json:"prompts,omitempty"`  // UDV1 — declared prompt variables surfaced in the Run dialog
+	Requires          []string            `json:"requires,omitempty"` // §5/RX.13 — requirement tokens (e.g. vault) that claim-gate this job to capable runners
 	// CA Phase B — declarative "connect as" identity (username + stored-credential
 	// LABEL, names only; CA-Q2). Setting or changing the credential needs
 	// ManageEnvVars (CA-Q1 — binding key material to a job is a grant, the same
@@ -727,8 +721,8 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		                 command, script, script_path, executor, script_ref, content_hash,
 		                 created_by, created_at, last_modified_by, last_modified_at, env_json, prompts_json,
 		                 requires_json, prompt_enforcement, ssh_user, ssh_credential, env_passthrough,
-		                 become_password_secret, runner_tag, uid)
-		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		                 become_password_secret, uid)
+		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET
 			run_type=excluded.run_type, description=excluded.description, scope=excluded.scope,
 			target_host=excluded.target_host, schedule=excluded.schedule, tags=excluded.tags,
@@ -745,8 +739,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 			requires_json=excluded.requires_json, prompt_enforcement=excluded.prompt_enforcement,
 			ssh_user=excluded.ssh_user, ssh_credential=excluded.ssh_credential,
 			become_password_secret=excluded.become_password_secret,
-			env_passthrough=excluded.env_passthrough,
-			runner_tag=excluded.runner_tag`,
+			env_passthrough=excluded.env_passthrough`,
 		in.Name, sc.runType, nullStrIf(in.Description), nullStrIf(in.scopeOf()), nullStrIf(in.TargetHost),
 		nullStrIf(legacyMirror), string(tagsJSON), enabled, in.TimeoutSeconds, in.Retries, in.BackoffSeconds, continueOnErr, requestable,
 		nullIfZeroInt(in.WarnAfterSeconds), nullStrIf(strings.TrimSpace(in.MustFinishBy)), watchspec.Marshal(watches),
@@ -756,11 +749,6 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		gitlab.MarshalRequires(in.Requires), gitlab.NormalizePromptEnforcement(in.PromptEnforcement),
 		nullStrIf(in.SSHUser), nullStrIf(in.SSHCredential), gitlab.MarshalEnvPassthrough(in.EnvPassthrough),
 		nullStrIf(in.BecomePasswordSecret),
-		// RT-2 — the declared pin. Since v1.3.5 (mig. 1090) it is the only
-		// job-level pin there is: the Composer and the YAML spec are the two
-		// places a durable pin is authored, and a per-run pin at trigger time is
-		// the only thing that outranks it.
-		nullStrIf(gitlab.NormalizeRunnerTag(in.RunnerTag)),
 		// R2-5 — the identity is the conflict target now: a create inserts a
 		// fresh uid, an edit collides on the existing one and lands in the DO
 		// UPDATE arm. (source, name) stopped being unique for cronomicon rows, so

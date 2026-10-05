@@ -75,7 +75,10 @@ import (
 // `runs.runner_tag IS NULL` short-circuits before the projection is touched.
 // That short-circuit is the reason the pin probes `runner_tags` rather than
 // `json_each(runners.tags)`: the JSON form cannot short-circuit cheaply and
-// would land in the +200–350% band mapped above. See RT-G1.
+// would land in the +200–350% band mapped above. See RT-G1. (The pin and its
+// projection were retired by the SB band — migration 1190 — and that predicate
+// is no longer in the query; the measurement stays as the record of why the
+// binding below was shaped the way it was NOT.)
 //
 // SB-1 RE-MEASUREMENT (mig. 1180, the scope binding). A sixth predicate, and the
 // first one this file's own lesson got wrong. Following the agency branch, it
@@ -242,7 +245,12 @@ func claimSQL(agencyClause string) string {
 			    SELECT 1 FROM json_each(COALESCE(runs.requires_json, '[]')) je
 			    WHERE je.value NOT IN (SELECT value FROM json_each(?)))
 			  AND (` + agencyClause + `)
-			  -- SB-1 (mig. 1180), carried for the same reason as the pin below.
+			  -- SB-1 (mig. 1180). Carried here because this harness is a hand-copy
+			  -- of claimRun and the header's promise — that everything outside the
+			  -- agency clause is byte-identical to production — is what makes the
+			  -- reported difference attributable to the agency clause alone. It is
+			  -- also what TestClaimQueryPlan asserts the plan of, so omitting it
+			  -- would leave the plan guard watching a query nobody runs.
 			  AND (runs.scope IS NULL
 			       OR NOT EXISTS (SELECT 1 FROM scope_runners sr
 			                        JOIN scopes sc ON sc.id = sr.scope_id
@@ -250,15 +258,6 @@ func claimSQL(agencyClause string) string {
 			       OR EXISTS (SELECT 1 FROM scope_runners sr
 			                    JOIN scopes sc ON sc.id = sr.scope_id
 			                   WHERE sc.name = runs.scope AND sr.runner_id = ?))
-			  -- RT-1 (mig. 1070). Carried here because this harness is a hand-copy
-			  -- of claimRun and the header's promise — that everything outside the
-			  -- agency clause is byte-identical to production — is what makes the
-			  -- reported difference attributable to the agency clause alone. It is
-			  -- also what TestClaimQueryPlan asserts the plan of, so omitting it
-			  -- would leave the plan guard watching a query nobody runs.
-			  AND (runs.runner_tag IS NULL OR runs.runner_tag = ''
-			       OR EXISTS (SELECT 1 FROM runner_tags rt
-			                  WHERE rt.runner_id = ? AND rt.tag = runs.runner_tag))
 			  AND (
 			    ? = 1
 			    OR NOT EXISTS (
@@ -377,7 +376,7 @@ func benchmarkClaimOn(b *testing.B, clause string, withBindings bool) {
 		rid := runnerIDs[i%len(runnerIDs)]
 		var claimed string
 		err := svc.db.QueryRowContext(ctx, stmt,
-			rid, "2026-01-01T00:00:00Z", string(caps), string(caps), rid, rid, rid, rid, 1).Scan(&claimed)
+			rid, "2026-01-01T00:00:00Z", string(caps), string(caps), rid, rid, rid, 1).Scan(&claimed)
 		if err == sql.ErrNoRows {
 			b.Fatalf("iteration %d claimed nothing — the fixture must always have a claimable run, "+
 				"or the benchmark is measuring the empty case", i)
@@ -483,7 +482,7 @@ func TestClaimPredicatesAgree(t *testing.T) {
 	claim := func(clause, runnerID string) string {
 		t.Helper()
 		var got string
-		err := pool.QueryRow(claimSQL(clause), runnerID, ts, string(caps), string(caps), runnerID, runnerID, runnerID, runnerID, 1).Scan(&got)
+		err := pool.QueryRow(claimSQL(clause), runnerID, ts, string(caps), string(caps), runnerID, runnerID, runnerID, 1).Scan(&got)
 		if err == sql.ErrNoRows {
 			return ""
 		}
@@ -531,7 +530,7 @@ func TestClaimQueryPlan(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	rows, err := pool.Query("EXPLAIN QUERY PLAN "+claimSQL(shippedAgencyClause),
-		"rn", "t", `["bash"]`, `["bash"]`, "rn", "rn", "rn", "rn", 1)
+		"rn", "t", `["bash"]`, `["bash"]`, "rn", "rn", "rn", 1)
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}

@@ -681,6 +681,11 @@ export interface paths {
          *     the sibling runner↔agency membership write. Tags are normalized
          *     server-side: trimmed, blanks dropped, de-duplicated case-insensitively,
          *     and capped (≤30 tags, ≤64 chars each) — a violation is 422.
+         *
+         *     Organisational only: no tag value feeds a warning, a gate or dispatch.
+         *     (Before 2.2.0 a job could pin itself to runners carrying a tag; where a
+         *     job runs is now decided by its scope's runner binding — see
+         *     PUT /scopes/{scopeId}/runners.)
          */
         put: operations["updateRunnerTags"];
         post?: never;
@@ -4255,23 +4260,6 @@ export interface components {
              */
             readonly executor?: "runner" | "ssh" | null;
             /**
-             * @description The DECLARED runner pin (RT): runs of this job may be claimed only by
-             *     a runner carrying this tag. Part of the job spec — for a Git-source
-             *     job it comes from `spec.runner_tag` and is overwritten on every sync,
-             *     like `description`. null ⇒ no declared pin. It is the ONLY durable
-             *     pin a job has: the operator override that could mask it was retired
-             *     in v1.3.5 (migration 1090), leaving the definition and the per-run
-             *     pin as the two places placement is decided.
-             */
-            readonly runnerTag?: string | null;
-            /**
-             * @description The resolved job-level pin. Equal to `runnerTag` today, and kept as a
-             *     distinct field because the resolution itself is server-side: this is
-             *     what a run inherits when its trigger says nothing, and what the Run
-             *     dialog prefills. Clients should read this rather than re-deriving it.
-             */
-            readonly runnerTagEffective?: string | null;
-            /**
              * @description What happens when this job fires while one of its own runs is still active. `Allow` overlaps. `Forbid` loses the fire, recorded as a skipped run. `Queue` (QP) parks it and promotes it when the gate clears, up to a small per-key cap; beyond the cap it falls back to Forbid's behaviour and says so in the run's reason.
              *
              *     `Replace` was removed in v0.57.29: it was accepted and stored for releases but no code ever branched on it, so a Replace job behaved exactly as Allow. Existing rows were coerced to Allow, which changes nothing about how they ran.
@@ -4400,13 +4388,6 @@ export interface components {
              * @enum {string}
              */
             executor?: "ssh" | "runner";
-            /**
-             * @description The DECLARED runner pin (RT) — the Git YAML `spec.runner_tag`
-             *     equivalent for an Cronomicon-composed job. Empty ⇒ unpinned. This is one
-             *     of only two places a pin is set; the other is the per-run `runnerTag`
-             *     on POST /jobs/{jobId}/run, which outranks it for that run alone.
-             */
-            runnerTag?: string;
             /** @description Names of first-class schedules to bind (A10a). */
             scheduleRefs?: string[];
             /** @description Inline named schedules (cron + optional env). */
@@ -5518,13 +5499,12 @@ export interface components {
             /** @description UUID of the runner that executed this run; null for in-app SSH runs or deregistered runners (runs.runner_id is ON DELETE SET NULL). */
             readonly runnerId?: string | null;
             /**
-             * @description RT — the runner pin this run was dispatched WITH, frozen at trigger
-             *     time from the four-rung precedence (per-run override → job operator
-             *     override → job declared pin → unpinned). null ⇒ unpinned.
-             *
-             *     Distinct from `runnerId`, and the pair is the point: this is INTENT
-             *     and `runnerId` is OUTCOME. A queued run has this and not that; a run
-             *     that waited a long time shows which tag it was waiting for.
+             * @description HISTORICAL. The runner-tag pin this run was dispatched with, for runs
+             *     produced before 2.2.0, when a job could pin itself to runners carrying
+             *     a tag. The pin was retired — a run is now placed by its scope's runner
+             *     binding (PUT /scopes/{scopeId}/runners) — and no run produced since
+             *     carries one: null for every run from 2.2.0 on, and for a run that was
+             *     never pinned. Kept because it stays true of the runs that have it.
              */
             readonly runnerTag?: string | null;
             /**
@@ -6514,6 +6494,7 @@ export interface components {
              *     set via PUT /runner-tags/{runnerId}. Runners are self-registered
              *     (not a Git catalog), so there is no sync concern; [] when none.
              *     WRITABLE (inline-editable from the runner's expanded row).
+             *     Organisational only — nothing dispatches on a runner tag.
              */
             tags?: string[];
             /**
@@ -8257,26 +8238,6 @@ export interface operations {
                      * @enum {string}
                      */
                     executor?: "runner" | "ssh";
-                    /**
-                     * @description RT — per-run runner pin override. Highest-precedence input,
-                     *     above the job's operator override and its declared pin. Three
-                     *     distinct cases: a tag pins THIS run to runners carrying it;
-                     *     `""` runs this one unpinned even though the job is pinned (the
-                     *     break-glass case when the tagged runners are all down); and
-                     *     omitting the field inherits the job's effective pin. `null` is
-                     *     treated as omitted.
-                     *
-                     *     Rejected (422, code=`invalid_runner_tag`) when the run
-                     *     RESOLVES to the ssh executor — the in-process SSH pool has no
-                     *     runner for a tag to select, so honouring the pin there is
-                     *     impossible and ignoring it would run the job from the control
-                     *     plane while the operator believed it was confined to a network
-                     *     segment. Note this tests the resolved executor, so a job with
-                     *     no explicit executor can hit it via the default chain. The same
-                     *     rule refuses a run that binds an SSH key and resolves to ssh
-                     *     (`key_binding_requires_runner`).
-                     */
-                    runnerTag?: string | null;
                     /** @description QP — claim priority for this run only. Higher is claimed first; ties break oldest-first. There is deliberately no job-spec default: a standing priority is how one job starves another permanently rather than merely going first today. */
                     priority?: number;
                     /**

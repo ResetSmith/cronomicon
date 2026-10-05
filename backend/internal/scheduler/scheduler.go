@@ -865,23 +865,6 @@ type EnqueueParams struct {
 	// originate as a parked scheduled fire, which is true of every immediate
 	// path. Only promoteOne sets it.
 	ScheduledFor string `json:",omitempty"`
-	// RunnerTag (RT-2) is the runner pin frozen onto the run — the value claimRun
-	// matches against runner_tags (mig. 1070/1080).
-	//
-	// A *string carrying the trigger-level tri-state (RT-Q6/RT-G8):
-	//
-	//	nil  → this producer has no opinion; the enqueue resolves the job's two
-	//	       layers itself (override, else declared) in SQL
-	//	""   → this run is explicitly UNPINNED, even if the job is pinned
-	//	"x"  → this run is pinned to x
-	//
-	// nil is the default, so every producer that predates RT-2 — scheduled fires,
-	// pending-run promotion, workflow steps, reactions — inherits the job's pin
-	// correctly without being touched. Only the manual trigger, which has a
-	// per-run override rung the others lack, passes a non-nil value. A plain
-	// string here would collapse nil and "" and make an operator's deliberate
-	// per-run unpin silently re-inherit the job's pin.
-	RunnerTag *string
 	// Priority reorders the runner claim: higher goes first, ties break oldest-
 	// first (QP). Per-TRIGGER only (PF-Q11) — there is deliberately no job-spec
 	// default, because a standing priority is how one job starves another
@@ -943,25 +926,6 @@ func resolveEnqueueUID(ctx context.Context, database *sql.DB, p EnqueueParams) s
 		`SELECT uid FROM jobs WHERE name = ? AND source = ?`,
 		p.JobName, p.jobSourceOrDefault()).Scan(&uid)
 	return uid.String
-}
-
-// runnerTagExplicit reports whether this producer set a pin at all (RT-2): 1 when
-// it did — including deliberately setting the empty string — and 0 when the
-// enqueue should resolve the job's own layers instead.
-func (p EnqueueParams) runnerTagExplicit() int {
-	if p.RunnerTag != nil {
-		return 1
-	}
-	return 0
-}
-
-// runnerTagValue is the bound value for the explicit arm. Meaningless (and
-// ignored by the CASE) when runnerTagExplicit is 0.
-func (p EnqueueParams) runnerTagValue() string {
-	if p.RunnerTag != nil {
-		return *p.RunnerTag
-	}
-	return ""
 }
 
 // EnqueueRun inserts a runs row with status='queued'.  This is the only write

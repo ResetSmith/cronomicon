@@ -21,7 +21,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode/utf8"
 )
 
 // Variable is one environment variable a script references. It is persisted as an
@@ -194,43 +193,6 @@ func MarshalEnvPassthrough(names []string) string {
 func MarshalRequires(tokens []string) string {
 	return marshalStringList(tokens)
 }
-
-// NormalizeRunnerTag cleans a single runner-pin tag (RT-2) to the same rules
-// tagutil.Normalize applies to a tag SET, so a pin written in YAML, typed into
-// the Composer, or sent on a trigger all reduce to the same string.
-//
-// Case is deliberately PRESERVED rather than folded: matching is case-insensitive
-// at the storage layer (runner_tags.tag is COLLATE NOCASE since mig. 1080,
-// RT-G9), so lower-casing here would only make the value display differently from
-// what the operator typed while changing nothing about what it matches.
-//
-// Returns "" for anything unusable — blank, over-long, or containing control
-// characters. Every caller treats "" as "no pin", which is why this cannot fail:
-// on the sync path a bad value must degrade to unpinned rather than take the
-// whole repo's sync down (the must_finish_by / become_password precedent), and on
-// the API paths the handler validates before calling.
-//
-// NOTE for callers holding a tri-state (the trigger body's runnerTag): "" from
-// this function means "unusable, treat as absent", which is NOT the same as a
-// caller's deliberate "" meaning force-unpinned. Decide the tri-state BEFORE
-// normalizing — see RT-G8.
-func NormalizeRunnerTag(v string) string {
-	t := strings.TrimSpace(v)
-	if t == "" || utf8.RuneCountInString(t) > runnerTagMaxLen {
-		return ""
-	}
-	for _, r := range t {
-		if r < 0x20 || r == 0x7f {
-			return ""
-		}
-	}
-	return t
-}
-
-// runnerTagMaxLen mirrors tagutil.MaxLen. Duplicated rather than imported because
-// gitlab must not depend on tagutil (leaf-package rule, CC.15); the drift risk is
-// covered by TestNormalizeRunnerTagMatchesTagutilCaps.
-const runnerTagMaxLen = 64
 
 // marshalStringList trims + drops blanks and JSON-encodes to a non-null array
 // ("[]" when empty or on error).

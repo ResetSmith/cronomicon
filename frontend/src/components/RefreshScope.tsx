@@ -4,8 +4,8 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 // button re-fetch every request inside an expanded panel.
 //
 // Why a context and not threaded callbacks. A panel is not one fetch: JobDetail
-// alone issues five, two of them inside nested components (useRunnerTags,
-// JobKeyField) that the button holds no reference to. Collecting each hook's
+// alone issues several, some of them inside nested components (JobKeyField,
+// for one) that the button holds no reference to. Collecting each hook's
 // refetch and wiring them to the button works on the day it is written and then
 // degrades silently — the next fetch someone adds to the panel is not wired, so
 // the button quietly stops covering part of its own panel, with no error and no

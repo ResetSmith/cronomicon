@@ -236,15 +236,18 @@ func (s *Service) claim(ctx context.Context) (*claimedRun, error) {
 			-- QP: see the note on runner/poll.go's twin. Both claim queries must
 			-- sort the same way or priority applies to some run types and not others.
 			--
-			-- RT-1: the runner-tag pin (mig. 1070) is deliberately NOT mirrored
-			-- here, and this is the one asymmetry the "both claim queries" rule
-			-- above does not cover. A pin names a runner; this pool IS the control
-			-- plane, so there is no runner to name and no tag that could match. The
-			-- pin is rejected upstream instead — RT-Q5 makes a pinned run whose
-			-- executor RESOLVES to 'ssh' a 422 at trigger time — so a pinned run
-			-- never reaches this query. Do not "fix" the asymmetry by adding the
-			-- predicate: with no runner_tags row able to match, it would strand
-			-- every pinned ssh run permanently instead of rejecting it visibly.
+			-- SB: the scope↔runner binding (mig. 1180) is deliberately NOT
+			-- mirrored here, and this is the one asymmetry the "both claim
+			-- queries" rule above does not cover. A binding names runners; this
+			-- pool IS the control plane, so there is nothing here it could match.
+			-- It is enforced upstream instead, where the executor is chosen:
+			-- execspec.ResolveExecutor sends a run on a bound scope to the runner
+			-- executor, and refuses one that asks for ssh, in every producer — so
+			-- a run produced on a bound scope never reaches this query. (The
+			-- runner-tag pin this replaced made the same promise and kept it only
+			-- on the manual trigger; SB Phase 0 has the test.) Do not "fix" the
+			-- asymmetry by adding a predicate here: it would strand, permanently
+			-- and silently, every run it matched.
 			ORDER BY priority DESC, created_at ASC
 			LIMIT 1
 		)

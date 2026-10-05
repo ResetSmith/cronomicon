@@ -224,32 +224,22 @@ type jobRow struct {
 	// whole YAML from this response, so every persisted field it must echo back
 	// is returned here to avoid silent data loss on publish (Gap B). schedules
 	// carries the multi-entry list with per-entry next-run projections.
-	Description *string `json:"description,omitempty"`
-	Enabled     *bool   `json:"enabled,omitempty"`   // raw enabled flag (detail-only); list rows leave nil. Exact composer prefill (JC9).
-	ScriptRef   *string `json:"scriptRef,omitempty"` // B-Git: name of the referenced Script (nil = legacy inline)
-	Command     *string `json:"command,omitempty"`
-	Script      *string `json:"script,omitempty"`
-	ScriptPath  *string `json:"scriptPath,omitempty"`
-	Executor    *string `json:"executor,omitempty"`
-	// RT-2 — the runner pin. RunnerTag is the declared pin (git-owned for git
-	// jobs, Composer-owned for cronomicon ones). RunnerTagEffective is the resolved
-	// job-level answer the Run dialog prefills from; it is computed server-side
-	// so clients cannot implement the precedence three ways, and it stays a
-	// separate field even though it now equals RunnerTag — the per-run rung above
-	// it is still resolved server-side, and collapsing the two would put the
-	// precedence back in the clients. (The operator override that used to sit
-	// between them was retired in v1.3.5 — migration 1090.)
-	RunnerTag          *string             `json:"runnerTag,omitempty"`
-	RunnerTagEffective *string             `json:"runnerTagEffective,omitempty"`
-	ConcurrencyPolicy  string              `json:"concurrencyPolicy,omitempty"`
-	ConcurrencyKey     *string             `json:"concurrencyKey,omitempty"`
-	TimeoutSeconds     *int64              `json:"timeoutSeconds,omitempty"`
-	Retries            int                 `json:"retries,omitempty"`
-	BackoffSeconds     int                 `json:"backoffSeconds,omitempty"`  // WB-R1 job-level default
-	ContinueOnError    bool                `json:"continueOnError,omitempty"` // WB-R1 job-level default
-	Schedules          []scheduleEntryResp `json:"schedules,omitempty"`
-	Env                map[string]string   `json:"env,omitempty"`     // job-level env (JC10); detail-only, mirrors JobComposeInput.env
-	Prompts            []gitlab.PromptSpec `json:"prompts,omitempty"` // declared prompt variables (UDV1); detail-only, mirrors JobComposeInput.prompts
+	Description       *string             `json:"description,omitempty"`
+	Enabled           *bool               `json:"enabled,omitempty"`   // raw enabled flag (detail-only); list rows leave nil. Exact composer prefill (JC9).
+	ScriptRef         *string             `json:"scriptRef,omitempty"` // B-Git: name of the referenced Script (nil = legacy inline)
+	Command           *string             `json:"command,omitempty"`
+	Script            *string             `json:"script,omitempty"`
+	ScriptPath        *string             `json:"scriptPath,omitempty"`
+	Executor          *string             `json:"executor,omitempty"`
+	ConcurrencyPolicy string              `json:"concurrencyPolicy,omitempty"`
+	ConcurrencyKey    *string             `json:"concurrencyKey,omitempty"`
+	TimeoutSeconds    *int64              `json:"timeoutSeconds,omitempty"`
+	Retries           int                 `json:"retries,omitempty"`
+	BackoffSeconds    int                 `json:"backoffSeconds,omitempty"`  // WB-R1 job-level default
+	ContinueOnError   bool                `json:"continueOnError,omitempty"` // WB-R1 job-level default
+	Schedules         []scheduleEntryResp `json:"schedules,omitempty"`
+	Env               map[string]string   `json:"env,omitempty"`     // job-level env (JC10); detail-only, mirrors JobComposeInput.env
+	Prompts           []gitlab.PromptSpec `json:"prompts,omitempty"` // declared prompt variables (UDV1); detail-only, mirrors JobComposeInput.prompts
 	// JR-Q5 — per-job run-input enforcement: "warn" (default) | "block". Detail-only.
 	// Drives the Run dialog's gate (a "block" job hides the "Run anyway" escape) and
 	// the server-side 422 in runJob.
@@ -688,7 +678,6 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		watchJSON                             sql.NullString
 		envPassthroughJSON                    sql.NullString
 		sshUser, sshCredential                sql.NullString
-		runnerTag                             sql.NullString
 		uid                                   sql.NullString
 	}
 	err := s.db.QueryRowContext(r.Context(), `
@@ -700,7 +689,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		       created_at, last_modified_at, env_json, source_path, prompts_json, requires_json,
 		       COALESCE(prompt_enforcement,'warn'), ssh_user, ssh_credential, env_passthrough,
 		       COALESCE(requestable,0), deleted_at, warn_after_seconds, must_finish_by, watch_json,
-		       runner_tag, uid
+		       uid
 		FROM jobs WHERE `+whereCol+` = ?
 	`, arg).Scan(&j.rowid, &j.name, &j.source, &j.runType, &j.description, &j.targetHost, &j.scope, &j.schedule,
 		&j.enabled, &j.concPolicy, &j.concKey, &j.tags,
@@ -710,7 +699,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		&j.createdAt, &j.lastModifiedAt, &j.envJSON, &j.sourcePath, &j.promptsJSON, &j.requiresJSON,
 		&j.promptEnforcement, &j.sshUser, &j.sshCredential, &j.envPassthroughJSON,
 		&j.requestable, &j.deletedAt, &j.warnAfterSeconds, &j.mustFinishBy, &j.watchJSON,
-		&j.runnerTag, &j.uid)
+		&j.uid)
 	if err != nil {
 		return nil
 	}
@@ -793,13 +782,6 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	}
 	if j.scriptRef.Valid {
 		jr.ScriptRef = &j.scriptRef.String
-	}
-	// RT-2 — the declared pin plus the resolved job-level answer.
-	if j.runnerTag.Valid && j.runnerTag.String != "" {
-		jr.RunnerTag = &j.runnerTag.String
-	}
-	if eff := resolveJobRunnerTag(j.runnerTag); eff != "" {
-		jr.RunnerTagEffective = &eff
 	}
 	if j.sshUser.Valid && j.sshUser.String != "" {
 		jr.SSHUser = &j.sshUser.String
@@ -957,18 +939,13 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 
 	// Parse optional scope / target-host / executor / env overrides (R5.1, F1).
 	var body struct {
-		Scope        string   `json:"scope"`
-		TargetHost   string   `json:"targetHost"`
-		TargetHosts  []string `json:"targetHosts"`  // F2 host subset within the bound scope
-		TargetGroups []string `json:"targetGroups"` // M3 group subset within the bound scope
-		AnsibleLimit string   `json:"ansibleLimit"` // M3 raw --limit passthrough (ansible/runner only)
-		Executor     string   `json:"executor"`     // per-trigger override: ssh|runner
-		// RT-2 — per-run pin override, tri-state (RT-Q6): absent/null inherits the
-		// job's effective pin, "" runs THIS run unpinned even if the job is pinned
-		// (the break-glass case when the tagged runners are all down), "x" pins to x.
-		// A *string, not a string, because those three states are not two.
-		RunnerTag *string           `json:"runnerTag"`
-		Env       map[string]string `json:"env"` // F1 per-run env overrides (plaintext k/v)
+		Scope        string            `json:"scope"`
+		TargetHost   string            `json:"targetHost"`
+		TargetHosts  []string          `json:"targetHosts"`  // F2 host subset within the bound scope
+		TargetGroups []string          `json:"targetGroups"` // M3 group subset within the bound scope
+		AnsibleLimit string            `json:"ansibleLimit"` // M3 raw --limit passthrough (ansible/runner only)
+		Executor     string            `json:"executor"`     // per-trigger override: ssh|runner
+		Env          map[string]string `json:"env"`          // F1 per-run env overrides (plaintext k/v)
 		// CA (the ssh-user plan) — per-run "connect as" identity:
 		// remote username and/or stored SSH credential LABEL (CA-Q2, names only —
 		// key bytes never ride the request). Applied over every resolved target's
@@ -1420,27 +1397,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	}
 	executor := resolved.Executor
 
-	// RT-2 — resolve the runner pin through the same four-rung precedence for
-	// every trigger kind, then enforce RT-Q5.
-	runnerTag, tagErr := resolveRunnerTag(r.Context(), s.db, jobSrc, jr.Name, body.RunnerTag)
-	if tagErr != "" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_runner_tag", tagErr)
-		return
-	}
-	// The one hard rejection in the band. It tests the RESOLVED executor, never the
-	// requested one: a job with executor unset resolves through resolveExecutor's
-	// default chain and can land on 'ssh', where the in-process pool claims it and
-	// no runner — hence no tag — is ever involved. Silently ignoring the pin there
-	// would run the job from the control plane while the operator believed they had
-	// confined it to a network segment, which is the failure this whole band exists
-	// to prevent. sshexec's claim query deliberately has no pin predicate; this is
-	// what keeps a pinned run from ever reaching it.
-	if runnerTag != "" && executor == "ssh" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_runner_tag",
-			"pinning a runner requires the runner executor; this run resolved to ssh")
-		return
-	}
-	// KB — the same rule for a bound SSH key: the ssh executor connects FROM
+	// KB — a bound SSH key: the ssh executor connects FROM
 	// cronomicon and cannot place a key file on the target, so a key-bound run that
 	// resolves to ssh is refused here rather than started with an input it will
 	// never receive (the executor used to warn and skip). Tests the RESOLVED
@@ -1652,14 +1609,6 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	if body.Executor != "" {
 		override["executor"] = body.Executor
 	}
-	// RT-2 — record the per-trigger pin override, including the empty string. ""
-	// here is not "nothing to record": it is the operator explicitly running a
-	// pinned job unpinned, which is exactly the decision an audit of a run wants
-	// to see. Only a nil (absent) field writes nothing, keeping an ordinary run's
-	// envelope byte-identical to a pre-RT-2 one.
-	if body.RunnerTag != nil {
-		override["runnerTag"] = *body.RunnerTag
-	}
 	if len(body.TargetHosts) > 0 {
 		override["hosts"] = body.TargetHosts
 	}
@@ -1845,11 +1794,6 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		SSHCredential:  effSSHCred,
 		AgenciesJSON:   execspec.MarshalAgencies(runAgencies),
 		Priority:       body.Priority,
-		// RT-2 — the manual trigger is the one producer with a per-run rung, so it
-		// always speaks explicitly, even to say "unpinned". &runnerTag, never
-		// nil: passing nil here would make the enqueue re-resolve the job's pin
-		// and quietly undo an operator's per-run unpin.
-		RunnerTag: &runnerTag,
 	}
 
 	// AR — park a deferred run instead of enqueueing it. The frozen params ARE
@@ -4832,65 +4776,6 @@ func (s *Server) deriveJobStatus(r *http.Request, source, jobName string, enable
 		return "idle"
 	}
 	return "idle"
-}
-
-// resolveJobRunnerTag reduces the job-level pin to the effective pin. Returns ""
-// for "this job is not pinned", which is what every caller and the claim
-// predicate treat as unpinned.
-//
-// One layer, as of v1.3.5 (migration 1090). RT-Q7 had two — a declared pin and
-// an operator override that could mask it, including masking it to nothing —
-// and this function existed to collapse them without a COALESCE, since NULL
-// ("no opinion") and ” ("force-unpinned") had to stay distinguishable. The
-// override layer is gone; a per-RUN pin still carries that tri-state, and it is
-// resolved one rung up in resolveRunnerTag.
-//
-// Kept as a function rather than inlined because it names the step: the caller
-// asks for the effective answer and does not decide what "effective" means.
-func resolveJobRunnerTag(declared sql.NullString) string {
-	if declared.Valid {
-		return declared.String
-	}
-	return ""
-}
-
-// resolveRunnerTag picks the runner pin frozen on a run (RT-2), applying the
-// full precedence (highest wins):
-//
-//	per-trigger override > jobs.runner_tag > unset
-//
-// triggerOverride carries RT-Q6's tri-state as a *string: nil = inherit the
-// job's declared pin, "" = run THIS run unpinned regardless, "x" = pin this run
-// to x. The middle state is why this is a *string and not a string: an empty
-// per-run pin is a decision to escape a pinned job for one run, and it is now
-// the ONLY way to do that — the operator override that could do it durably was
-// retired in v1.3.5 (migration 1090).
-//
-// Deliberately does NOT consult the fleet (RT-Q4): a pin naming a tag nothing
-// carries is legal and enqueues normally, because the runner may register a
-// minute later and because a scheduled job must not start failing nightly over a
-// transient fleet condition. execspec.UnclaimableReason explains the wait.
-//
-// Returns (tag, "") on success or ("", reason) to reject with 422.
-func resolveRunnerTag(ctx context.Context, db *sql.DB, jobSource, jobName string, triggerOverride *string) (string, string) {
-	if jobSource == "" {
-		jobSource = "git"
-	}
-	if triggerOverride != nil {
-		if *triggerOverride == "" {
-			return "", "" // explicit per-run unpin; never consult the job
-		}
-		tag := gitlab.NormalizeRunnerTag(*triggerOverride)
-		if tag == "" {
-			return "", fmt.Sprintf("invalid runner tag %q", *triggerOverride)
-		}
-		return tag, ""
-	}
-	var declared sql.NullString
-	_ = db.QueryRowContext(ctx,
-		`SELECT runner_tag FROM jobs WHERE name = ? AND source = ?`,
-		jobName, jobSource).Scan(&declared)
-	return resolveJobRunnerTag(declared), ""
 }
 
 func (s *Server) maxConcurrent(r *http.Request) int {

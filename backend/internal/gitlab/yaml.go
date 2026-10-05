@@ -283,14 +283,11 @@ type JobYAML struct {
 		ScriptPath string `yaml:"scriptPath"` // repo-relative file, read from the clone
 		// EX.3 — per-job executor default; empty → resolve from run_type.
 		Executor string `yaml:"executor"` // runner|ssh
-		// RT-2 — the DECLARED runner pin: this job's runs may be claimed only by a
-		// runner carrying this tag (the runner-targeting plan). A sibling
-		// of executor/target_host/ssh_credential in every sense — it is part of how
-		// the job runs, it belongs in review, and sync OVERWRITES it. For a
-		// git-source job this is the ONLY durable pin: the operator override that
-		// could mask it from inside the app was retired in v1.3.5 (mig. 1090), so a
-		// lasting change to where such a job runs is a change to this repository.
-		// A single run still escapes via the Run dialog's per-run pin.
+		// RETIRED (SB band). This used to pin the job's runs to runners carrying
+		// the tag; a job is now placed by its scope's runner binding. The field
+		// stays so that sync can WARN about a line still in someone's repository —
+		// the decode is not strict, and a key this struct did not know would be
+		// dropped in silence. Nothing reads it for dispatch, and it is not stored.
 		RunnerTag string `yaml:"runner_tag"`
 		// CA Phase B (the ssh-user plan) — declarative "connect as"
 		// identity: the SSH login and/or stored-credential LABEL every run of
@@ -547,7 +544,45 @@ func ValidateFile(path string) (errs []ValidationError, warnings []ValidationErr
 		return errs, warnings, nil
 	}
 	errs, err = validateYAMLBytes(path, data)
-	return errs, nil, err
+	return errs, retiredJobKeyWarnings(path, data), err
+}
+
+// jobRunnerTagRetired is the warning for a job that still carries the retired
+// `runner_tag` key (SB band). Reported, never failed — like the retired `types`
+// pragma, so a job-definitions repository written before the change keeps
+// passing its CI check, and for a second reason: the YAML decode is not strict,
+// so if this were not said out loud the key would simply be ignored and the
+// job's author would go on believing it is confined to one set of runners.
+//
+// It cannot say whether the job is STILL confined: that depends on whether its
+// scope is bound to runners, an operator's setting this command cannot see
+// (it validates a checkout, with no server). Git sync can, and does.
+const jobRunnerTagRetired = "`runner_tag` is no longer used and is ignored: a job now runs on the runners its scope " +
+	"is bound to (Scopes → Runners). Remove the line, and check that scope's binding if this job must stay " +
+	"on particular runners"
+
+// retiredJobKeyWarnings returns the non-fatal notes for a Job document that
+// still uses a key the product has retired. Anything that is not a parseable
+// Job yields nothing — its problems are validateYAMLBytes's to report.
+func retiredJobKeyWarnings(path string, data []byte) []ValidationError {
+	var j JobYAML
+	if err := yaml.Unmarshal(data, &j); err != nil || j.Kind != "Job" {
+		return nil
+	}
+	if strings.TrimSpace(j.Spec.RunnerTag) == "" {
+		return nil
+	}
+	// Point at the line. A plain scan is enough: the key is a scalar under spec,
+	// and a mapping key of that name anywhere else in a Job document is not a
+	// thing the format has.
+	line := 0
+	for i, l := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "runner_tag:") {
+			line = i + 1
+			break
+		}
+	}
+	return []ValidationError{{File: path, Line: line, Field: "spec.runner_tag", Message: jobRunnerTagRetired}}
 }
 
 func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
@@ -957,6 +992,7 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 		}
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
+		warnings = append(warnings, retiredJobKeyWarnings(path, data)...)
 		var j JobYAML
 		if yaml.Unmarshal(data, &j) == nil {
 			if n := j.Metadata.Name; n != "" {

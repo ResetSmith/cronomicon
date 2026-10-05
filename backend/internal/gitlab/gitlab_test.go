@@ -75,11 +75,24 @@ CREATE TABLE IF NOT EXISTS jobs (
     ssh_user           TEXT,
     ssh_credential     TEXT,
     become_password_secret TEXT,
-    -- RT-2 (migration 1070). Same fixture-drift caveat as the columns above.
-    -- The operator-override sibling that lived here until v1.3.5 is gone with
-    -- migration 1090; the declared pin is the whole of the job-level layer now.
-    runner_tag          TEXT,
     PRIMARY KEY (source, name)
+);
+
+-- SB: the job upsert clears a "leftover runner_tag" notice once the line is
+-- gone from the YAML, so this minimal schema needs the table it clears. Mirrors
+-- migration 1180. (The upsert also asks whether a scope is bound, for two
+-- advisory warnings; that read tolerates the tables being absent here.)
+CREATE TABLE IF NOT EXISTS retired_runner_pins (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_uid      TEXT,
+    job_name     TEXT NOT NULL,
+    job_source   TEXT NOT NULL,
+    scope        TEXT NOT NULL DEFAULT '',
+    runner_tag   TEXT NOT NULL,
+    reason       TEXT NOT NULL,
+    recorded_at  TEXT NOT NULL,
+    dismissed_at TEXT,
+    dismissed_by TEXT
 );
 
 -- LU-6: the sync path now allocates a log-folder code per definition, so this

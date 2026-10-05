@@ -27,10 +27,6 @@ interface JobDetail {
   scope?: string | null;
   host?: string | null;
   executor?: string | null;
-  // RT — the DECLARED pin, which is the only job-level pin there is since
-  // v1.3.5. It belongs in the YAML this builder publishes; the per-run pin does
-  // not, being one run's decision rather than the definition's.
-  runnerTag?: string | null;
   command?: string | null;
   script?: string | null;
   scriptPath?: string | null;
@@ -245,14 +241,6 @@ export function PublishBuilder() {
     if (detail?.scope) y += `  scope: ${yamlScalar(detail.scope)}\n`;
     if (detail?.host) y += `  target_host: ${yamlScalar(detail.host)}\n`;
     if (detail?.executor) y += `  executor: ${yamlScalar(detail.executor)}\n`;
-    // RT: the DECLARED pin, and the same Gap-B argument as every field around it —
-    // a field this builder cannot emit is a field a schedule edit silently strips,
-    // and stripping a runner pin sends the job back to running anywhere eligible.
-    // Deliberately detail.runnerTag, NOT runnerTagEffective: the two are equal
-    // today, but the effective value is a RESOLVED answer and this file emits a
-    // DECLARATION. Publishing a resolved value is how a transient decision gets
-    // frozen into the repository as if it were the author's intent.
-    if (detail?.runnerTag) y += `  runner_tag: ${yamlScalar(detail.runnerTag)}\n`;
     if (detail?.concurrencyPolicy) y += `  concurrency_policy: ${yamlScalar(detail.concurrencyPolicy)}\n`;
     if (detail?.concurrencyKey) y += `  concurrency_key: ${yamlScalar(detail.concurrencyKey)}\n`;
     if (detail?.timeoutSeconds) y += `  timeout_seconds: ${detail.timeoutSeconds}\n`;

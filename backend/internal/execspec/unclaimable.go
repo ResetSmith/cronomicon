@@ -37,12 +37,12 @@ import (
 // credentials, and a reason vague enough to leak nothing is a reason nobody can act
 // on — which is the entire failure being fixed.
 func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (string, error) {
-	var agenciesJSON, runType, requiresJSON, jobName, jobSource, jobUID, scriptRef, runnerTag, scope, executor sql.NullString
+	var agenciesJSON, runType, requiresJSON, jobName, jobSource, jobUID, scriptRef, scope, executor sql.NullString
 	err := database.QueryRowContext(ctx, `
-		SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, job_name, job_source, job_uid, script_ref, runner_tag,
+		SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, job_name, job_source, job_uid, script_ref,
 		       scope, executor
 		FROM runs WHERE id = ?`, runID).
-		Scan(&agenciesJSON, &runType, &requiresJSON, &jobName, &jobSource, &jobUID, &scriptRef, &runnerTag,
+		Scan(&agenciesJSON, &runType, &requiresJSON, &jobName, &jobSource, &jobUID, &scriptRef,
 			&scope, &executor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -117,8 +117,8 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 
 	// 3.4. The SB-1 scope binding (mig. 1180). Checked right after agency because
 	// it is the same question asked more narrowly — "which runners in this
-	// department can reach these hosts" — and before the pin and injection, which
-	// only matter among runners that can. An unrestricted scope passes on the NOT
+	// department can reach these hosts" — and before injection, which only
+	// matters among runners that can. An unrestricted scope passes on the NOT
 	// EXISTS arm. The arguments are kept in a slice so every later clause extends one
 	// list instead of re-spelling it.
 	bindClause := agencyClause + ` AND (
@@ -138,35 +138,6 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		return scopeBindingReason(scope.String, bound), nil
 	}
 
-	// 3.5. The RT-1 runner pin (mig. 1070). Checked AFTER agency and BEFORE
-	// injection because that is the order an operator checks them in: "is it even
-	// the right network" precedes "is it allowed to hold secrets". An unpinned run
-	// short-circuits on the '' arm and this gate costs it one cheap comparison.
-	pinClause := bindClause + ` AND (? = '' OR EXISTS (SELECT 1 FROM runner_tags rt
-	                                                   WHERE rt.runner_id = rn.id AND rt.tag = ?))`
-	pinArgs := append(append([]any{}, bindArgs...), runnerTag.String, runnerTag.String)
-	n, err = count(pinClause, pinArgs...)
-	if err != nil {
-		return "", err
-	}
-	if n == 0 {
-		// RT-G5 — two very different situations produce the same symptom, and
-		// conflating them sends the operator to the wrong place. "Nothing carries
-		// this tag" means a typo or an un-tagged runner: go edit tags. "Tagged
-		// runners exist but none is eligible" means they are offline, draining, in
-		// another agency, or cannot run this type: go look at those runners. The
-		// fleet-wide count deliberately ignores status, which is the whole point.
-		var tagged int
-		_ = database.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM runner_tags WHERE tag = ?`, runnerTag.String).Scan(&tagged)
-		if tagged == 0 {
-			return "this run is pinned to runners tagged " + runnerTag.String +
-				", and no runner in the fleet carries that tag", nil
-		}
-		return "this run is pinned to runners tagged " + runnerTag.String +
-			", and none of them is online and otherwise eligible", nil
-	}
-
 	// 4. Secret injection (P1.4): a run whose job/script declares bindings needs an
 	// injection-flagged runner. This is the gate most likely to be hit by a NEW
 	// runner — enrolling it in the agency is the obvious step, ticking the
@@ -183,8 +154,8 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 			                 ELSE rb.owner_source = COALESCE(NULLIF(?, ''), 'git') AND rb.owner_name = ? END)
 			   OR (rb.owner_kind = 'script' AND rb.owner_name = ?))`,
 		jobUID.String, jobUID.String, jobSource.String, jobName.String, scriptRef.String).Scan(&bindsSecrets)
-	injectionClause := pinClause + ` AND (? = 0 OR rn.allow_secret_injection = 1)`
-	injectionArgs := append(append([]any{}, pinArgs...), bindsSecrets)
+	injectionClause := bindClause + ` AND (? = 0 OR rn.allow_secret_injection = 1)`
+	injectionArgs := append(append([]any{}, bindArgs...), bindsSecrets)
 	n, err = count(injectionClause, injectionArgs...)
 	if err != nil {
 		return "", err

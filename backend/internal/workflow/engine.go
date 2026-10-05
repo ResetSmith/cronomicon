@@ -638,7 +638,7 @@ func (e *Engine) runJob(
 
 	// RR-2: one writer. This engine used to build its own child-run INSERT —
 	// "the recurring reason things get missed here" — and it missed
-	// requires_json, checkout_* and runner_tag (RR-0b/c). It now describes the
+	// requires_json and checkout_* (RR-0b/c). It now describes the
 	// row and scheduler.InsertRun writes it with the same column list every
 	// other producer uses. The pieces that were computed in SQL before are
 	// computed here from the same sources:
