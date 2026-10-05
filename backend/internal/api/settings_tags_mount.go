@@ -38,6 +38,10 @@ import (
 // statement keeps the SQLite pool deadlock-safe. Tags never touch the encrypted
 // envelope of a secret/credential, so the crypto/reveal/rotate paths are untouched.
 //
+// SCOPES (migration 1160, ST band) follow the same rule: every other scope write
+// is ConfigureApp, so the tag write is too, and its audit matches the scope edit
+// (settings.Audit — change_log + activity). See updateScopeTags.
+//
 // RUNNERS ARE THE ONE EXCEPTION to that last paragraph, since RT-1: their tags
 // are read by the runner claim query, so the write also maintains the
 // `runner_tags` projection and therefore needs a transaction. See
@@ -75,7 +79,7 @@ func tagsActor(r *http.Request) string {
 }
 
 // writeTagsUpdate is the shared decode→normalize→UPDATE→404 prefix of every
-// "update tags" handler (CC.12), across all seven tagged entities. It writes the
+// "update tags" handler (CC.12), across all eight tagged entities. It writes the
 // normalized set to <table> under <whereSQL>/<whereArgs> and maps
 // RowsAffected==0 to a 404 with notFound. On any error/validation/404 it writes
 // the response itself and returns ok=false; on success it returns the normalized
@@ -136,6 +140,39 @@ func (s *Server) updateEnvVarTags(w http.ResponseWriter, r *http.Request) {
 	// writes are change_log-only too — each tag write matches its own entity.
 	settings.Audit(r.Context(), s.db, tagsActor(r), "Env Vars", "updated", ev.Key, "")
 	httpx.JSON(w, http.StatusOK, ev)
+}
+
+// updateScopeTags sets a scope's operator-owned tags (full replace) — ST-4.
+//
+// Gate: ConfigureApp, applied by the route (requirePerm), which is exactly what
+// PATCH /scopes/{scopeId} and PUT /scopes/{scopeId}/inventory carry. There is
+// deliberately NO per-agency check here: of the scope writes only the agency
+// binding (handleSetScopeAgency) has one, because it moves the scope between
+// isolation zones. A tag moves nothing, and a rule stricter than the scope's own
+// edit would be a rule for tags alone. If the scope edit ever gains a per-agency
+// gate, this handler takes the same one.
+//
+// Works on both sources: a git-source scope is read-only in every other respect,
+// but its tags are operator-owned and never come from Git (the sync upsert omits
+// the column), the same model as the agency binding.
+func (s *Server) updateScopeTags(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("scopeId")
+	if _, ok := s.writeTagsUpdate(w, r, "scopes", "id = ?", "scope not found", id); !ok {
+		return
+	}
+	sc, err := settings.GetScope(r.Context(), s.db, id)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if sc == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
+		return
+	}
+	// settings.Audit (change_log + activity): the scope edit (settings.UpdateScope)
+	// emits both, so a tag edit surfaces in the feed the same way.
+	settings.Audit(r.Context(), s.db, tagsActor(r), "Scopes", "updated", sc.Scope, "Scope tags updated")
+	httpx.JSON(w, http.StatusOK, sc)
 }
 
 // updateSecretTags sets a secret's operator-authored tags (full replace). Tags are

@@ -368,6 +368,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/scopes/{scopeId}/inventory/import-hosts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleImportScopeHosts)))
 	mux.Handle("PATCH /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateScope)))
 	mux.Handle("DELETE /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteScope)))
+	// Operator-owned scope tags (ST band, migration 1160): same permission as every
+	// other scope write — see updateScopeTags in settings_tags_mount.go.
+	mux.Handle("PUT /api/v1/scope-tags/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.updateScopeTags)))
 
 	// ── Alerts (writes: ConfigureApp, PP-B1) ────────────────────────────────────
 	mux.Handle("GET /api/v1/alerts", s.auth.RequireSession(http.HandlerFunc(s.handleListAlerts)))

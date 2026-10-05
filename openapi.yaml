@@ -2919,6 +2919,45 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /scope-tags/{scopeId}:
+    put:
+      tags: [Scopes]
+      operationId: updateScopeTags
+      summary: Set a scope's tags (operator-owned)
+      description: |
+        Replaces the scope's operator-owned tag set (migration 1160). Works on
+        both git- and cronomicon-source scopes: the tags are SQLite-only, never
+        parsed from Git and absent from the sync upsert, so they survive a
+        re-sync. Carries the same ConfigureApp permission as the scope's other
+        writes. Tags are organisational only — nothing dispatches, gates or
+        warns on one. They are normalized server-side: trimmed, blanks dropped,
+        de-duplicated case-insensitively, and capped (≤30 tags, ≤64 chars
+        each) — a violation is 422. An explicit [] clears the set.
+      parameters:
+        - { $ref: '#/components/parameters/scopeId' }
+        - { $ref: '#/components/parameters/csrf' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: The updated scope (with its normalized tags).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Scope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   # ── Env Vars ───────────────────────────────────────────────────────────────
   # ── Agencies (network-isolation zones; writes: ConfigureApp) ─────────────────
   /analytics/runs:
@@ -8593,6 +8632,7 @@ components:
     Scope:
       allOf:
         - type: object
+          required: [tags]
           properties:
             id: { type: string, format: uuid, readOnly: true, description: UUIDv7. }
             source:
@@ -8657,6 +8697,15 @@ components:
                 properties:
                   id: { type: string }
                   name: { type: string }
+            tags:
+              type: array
+              description: |
+                Operator-owned tags (migration 1160), set via
+                PUT /scope-tags/{scopeId}; [] when none. SQLite-only and never
+                synced: a git sync does not write the column, so the tags survive
+                every pull. Organisational only — no tag value feeds a warning, a
+                gate or dispatch.
+              items: { type: string }
             lastChangedAt: { type: [string, 'null'], format: date-time, readOnly: true }
         - $ref: '#/components/schemas/AuditFields'
 

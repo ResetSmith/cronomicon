@@ -2084,6 +2084,12 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// scopes(name), it runs on every scope on every sync, so the damage would be
 		// total and immediate. There is deliberately no membership reconciliation
 		// anywhere in this file; TestSyncPreservesScopeAgencies pins that.
+		//
+		// And it covers scopes.tags (migration 1160, ST band): operator-owned labels
+		// written only by PUT /scope-tags/{scopeId}, never parsed from Git. Do NOT add
+		// `tags` to the INSERT column list or the ON CONFLICT DO UPDATE SET below —
+		// the column default covers a new row, and an existing row must keep what the
+		// operator set. TestSyncPreservesScopeTags pins that.
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO scopes(id, name, source, source_path, capability_types, capability_json, synced_at, description, created_by, created_at, supported_types)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?)

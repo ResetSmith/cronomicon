@@ -13,6 +13,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/tagutil"
 )
 
 // Scope is the wire representation of a scope (both local and git-source).
@@ -44,6 +45,11 @@ type Scope struct {
 	// belong to several. The scalar `agency` field it replaces was backed by
 	// scopes.agency_id, dropped in migration 700.
 	Agencies []AgencyRef `json:"agencies"`
+	// Tags are the operator-owned labels on this scope (migration 1160, ST band):
+	// SQLite-only, written by PUT /scope-tags/{scopeId}, never parsed from Git and
+	// absent from the sync upsert, so they survive a re-sync. Always non-nil.
+	// Organisational only — nothing dispatches, gates or warns on a scope tag.
+	Tags []string `json:"tags"`
 }
 
 // AgencyRef is the lightweight {id,name} of a scope's bound agency.
@@ -116,12 +122,12 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	var args []any
 	if sourceFilter != "" {
 		query = `SELECT id, name, source, description, supported_types, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory
+		                last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
 		         FROM scopes WHERE source=? ORDER BY name`
 		args = append(args, sourceFilter)
 	} else {
 		query = `SELECT id, name, source, description, supported_types, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory
+		                last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
 		         FROM scopes ORDER BY source DESC, name`
 	}
 
@@ -135,11 +141,11 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	for rows.Next() {
 		var sc Scope
 		var desc, createdBy, lastModBy, lastModAt, sourcePath, capTypes, capJSON, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-		var typesJSON string
+		var typesJSON, tagsRaw string
 		if err := rows.Scan(
 			&sc.ID, &sc.Scope, &sc.Source, &desc, &typesJSON,
 			&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
-			&sourcePath, &capTypes, &capJSON, &syncedAt, &invFmt, &projStatus, &hasInvStr,
+			&sourcePath, &capTypes, &capJSON, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
 		); err != nil {
 			return nil, err
 		}
@@ -157,6 +163,7 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 			sc.LastModifiedAt = lastModAt.String
 		}
 		applyInvSummary(&sc, invFmt, projStatus, hasInvStr)
+		sc.Tags = tagutil.Parse(tagsRaw)
 
 		if sc.Source == "git" {
 			if capJSON.Valid && capJSON.String != "" {
@@ -233,16 +240,16 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 
 	row := database.QueryRowContext(ctx,
 		`SELECT id, name, source, description, supported_types, created_by, created_at,
-		        last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory
+		        last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
 		 FROM scopes WHERE id=?`, id)
 
 	var sc Scope
 	var desc, createdBy, lastModBy, lastModAt, sourcePath, capTypes, capJSON, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-	var typesJSON string
+	var typesJSON, tagsRaw string
 	if err := row.Scan(
 		&sc.ID, &sc.Scope, &sc.Source, &desc, &typesJSON,
 		&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
-		&sourcePath, &capTypes, &capJSON, &syncedAt, &invFmt, &projStatus, &hasInvStr,
+		&sourcePath, &capTypes, &capJSON, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -263,6 +270,7 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 		sc.LastModifiedAt = lastModAt.String
 	}
 	applyInvSummary(&sc, invFmt, projStatus, hasInvStr)
+	sc.Tags = tagutil.Parse(tagsRaw)
 
 	if sc.Source == "git" {
 		if capJSON.Valid && capJSON.String != "" {

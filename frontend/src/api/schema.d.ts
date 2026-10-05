@@ -1630,6 +1630,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scope-tags/{scopeId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a scope's tags (operator-owned)
+         * @description Replaces the scope's operator-owned tag set (migration 1160). Works on
+         *     both git- and cronomicon-source scopes: the tags are SQLite-only, never
+         *     parsed from Git and absent from the sync upsert, so they survive a
+         *     re-sync. Carries the same ConfigureApp permission as the scope's other
+         *     writes. Tags are organisational only — nothing dispatches, gates or
+         *     warns on one. They are normalized server-side: trimmed, blanks dropped,
+         *     de-duplicated case-insensitively, and capped (≤30 tags, ≤64 chars
+         *     each) — a violation is 422. An explicit [] clears the set.
+         */
+        put: operations["updateScopeTags"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analytics/runs": {
         parameters: {
             query?: never;
@@ -5636,6 +5663,14 @@ export interface components {
                 id: string;
                 name: string;
             }[];
+            /**
+             * @description Operator-owned tags (migration 1160), set via
+             *     PUT /scope-tags/{scopeId}; [] when none. SQLite-only and never
+             *     synced: a git sync does not write the column, so the tags survive
+             *     every pull. Organisational only — no tag value feeds a warning, a
+             *     gate or dispatch.
+             */
+            tags: string[];
             /** Format: date-time */
             readonly lastChangedAt?: string | null;
         } & components["schemas"]["AuditFields"];
@@ -10686,6 +10721,41 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    updateScopeTags: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                scopeId: components["parameters"]["scopeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    tags: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The updated scope (with its normalized tags). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Scope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
         };
     };
     runAnalytics: {
