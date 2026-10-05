@@ -374,7 +374,20 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// KB — an arrival for a key-bound job that resolves to the ssh executor is
 	// refused with the reason recorded, like every other gate here: the executor
 	// cannot deliver the key, and nobody is watching a file land.
-	executor := scheduler.ResolveExecutor(ctx, s.db, spec.JobSource, spec.JobName, runType)
+	resolved := execspec.ResolveExecutor(ctx, s.db, execspec.ExecutorQuery{
+		JobUID: jobUID.String, JobSource: spec.JobSource, JobName: spec.JobName, RunType: runType, Scope: scope,
+	})
+	if resolved.Err != nil {
+		s.refuseSighting(ctx, sightingID, "could not resolve the executor: "+resolved.Err.Error())
+		return false, nil
+	}
+	// SB — an arrival for a job that asks for ssh on a scope bound to runners is
+	// refused with the reason recorded, like every other gate here.
+	if resolved.ScopeRefused() {
+		s.refuseSighting(ctx, sightingID, execspec.ReasonScopeRequiresRunner)
+		return false, nil
+	}
+	executor := resolved.Executor
 	keys, kerr := runref.KeyBindingsOnSSH(ctx, s.db, owners, executor)
 	if kerr != nil {
 		s.refuseSighting(ctx, sightingID, "could not check key bindings: "+kerr.Error())

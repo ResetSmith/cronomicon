@@ -28,7 +28,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sortparam"
-	"github.com/ResetSmith/cronomicon/internal/sshexec"
 	"github.com/ResetSmith/cronomicon/internal/sshkeys"
 	"github.com/ResetSmith/cronomicon/internal/tagutil"
 	"github.com/ResetSmith/cronomicon/internal/watchspec"
@@ -1400,12 +1399,26 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// and reject invalid combinations (ssh + ansible/terraform). With no capable
 	// runner registered, an ansible/terraform run still enqueues and sits queued
 	// (A6.3 waiting-for-capable-runner) — it is no longer a 422 (R4.3).
+	//
+	// SB — the scope is part of the decision: a scope bound to runners sends a
+	// job with no explicit executor to those runners, and an explicit ssh on one
+	// is refused (422 scope_requires_runner) instead of leaving from the server.
+	// It is the run's EFFECTIVE scope, so a per-run scope override is judged
+	// against the scope the run will actually use.
 	jobSrc := s.defSource(r, "jobs", jobID)
-	executor, execErr := resolveExecutor(r.Context(), s.db, jobSrc, jr.Name, jr.Type, body.Executor)
-	if execErr != "" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_executor", execErr)
+	resolved := execspec.ResolveExecutor(r.Context(), s.db, execspec.ExecutorQuery{
+		JobUID: jr.UID, JobSource: jobSrc, JobName: jr.Name, RunType: jr.Type,
+		Scope: scope, Override: body.Executor,
+	})
+	if resolved.Err != nil {
+		httpx.Fail500(w, s.log, "db_error", resolved.Err)
 		return
 	}
+	if resolved.Refusal != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, resolved.Refusal.Code, resolved.Refusal.Message)
+		return
+	}
+	executor := resolved.Executor
 
 	// RT-2 — resolve the runner pin through the same four-rung precedence for
 	// every trigger kind, then enforce RT-Q5.
@@ -1811,8 +1824,14 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// and it is frozen: re-homing the scope later cannot retarget a queued run. It is
 	// resolved once, above, where RF-4's reference check also needs it.
 	params := scheduler.EnqueueParams{
-		JobName:        jr.Name,
-		JobSource:      jobSrc,
+		JobName:   jr.Name,
+		JobSource: jobSrc,
+		// R2-5 — the identity of the job that was asked for. Without it the run
+		// row resolves its job by (name, source), and for two same-named jobs
+		// that is whichever row SQLite returns: the run, and everything the
+		// writer snapshots by uid (script, content hash), would be the sibling's.
+		// The cron path had the same omission (SB Phase 0).
+		JobUID:         jr.UID,
 		RunType:        jr.Type,
 		Scope:          scope,
 		TargetHost:     targetHost,
@@ -4872,64 +4891,6 @@ func resolveRunnerTag(ctx context.Context, db *sql.DB, jobSource, jobName string
 		`SELECT runner_tag FROM jobs WHERE name = ? AND source = ?`,
 		jobName, jobSource).Scan(&declared)
 	return resolveJobRunnerTag(declared), ""
-}
-
-// resolveExecutor picks the executor frozen on a run (R5.1), applying the
-// resolution precedence (highest wins):
-//
-//	per-trigger override > job spec.executor > global execution.defaultExecutor
-//	> run-type capability default (shell types ⇒ ssh, ansible/terraform ⇒ runner)
-//
-// It then enforces the capability matrix (R5.2): executor='ssh' is invalid for
-// ansible/terraform (SSH can't run them); executor='runner' is valid for any
-// run type. ansible/terraform routed to 'runner' enqueue normally and sit
-// queued until a capable runner registers (A6.3) — no longer a 422 (R4.3).
-//
-// Returns (executor, "") on success or ("", reason) to reject with 422.
-func resolveExecutor(ctx context.Context, db *sql.DB, jobSource, jobName, runType, triggerOverride string) (string, string) {
-	if jobSource == "" {
-		jobSource = "git"
-	}
-	// Validate the per-trigger override enum up front.
-	if triggerOverride != "" && triggerOverride != "ssh" && triggerOverride != "runner" {
-		return "", fmt.Sprintf("invalid executor %q (want ssh|runner)", triggerOverride)
-	}
-
-	executor := triggerOverride
-
-	// Job spec.executor (source-qualified — A9).
-	if executor == "" {
-		var jobExec sql.NullString
-		_ = db.QueryRowContext(ctx, `SELECT executor FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).Scan(&jobExec)
-		if jobExec.Valid && (jobExec.String == "ssh" || jobExec.String == "runner") {
-			executor = jobExec.String
-		}
-	}
-
-	// Global execution.defaultExecutor.
-	if executor == "" {
-		var def sql.NullString
-		_ = db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'defaultExecutor'`).Scan(&def)
-		if def.Valid && (def.String == "ssh" || def.String == "runner") {
-			executor = def.String
-		}
-	}
-
-	// Run-type capability default.
-	if executor == "" {
-		if sshexec.SupportedRunType(runType) {
-			executor = "ssh"
-		} else {
-			executor = "runner"
-		}
-	}
-
-	// Capability matrix (R5.2): SSH can't run ansible/terraform.
-	if executor == "ssh" && !sshexec.SupportedRunType(runType) {
-		return "", fmt.Sprintf("run-type %q cannot run over the SSH executor (it needs a local toolchain); choose the runner executor", runType)
-	}
-
-	return executor, ""
 }
 
 func (s *Server) maxConcurrent(r *http.Request) int {

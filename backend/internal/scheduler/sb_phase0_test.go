@@ -11,12 +11,11 @@ import (
 // (.aidata/20261005-runners-update.md) found by reading and needed proven before
 // it builds on them.
 //
-// The pin and executor tests PASS against their defect on purpose. They pin
-// what the code does today so the change that fixes each one has a test to turn
-// around rather than a claim to take on trust: Phase B (one executor resolver,
-// keyed by identity and scope) inverts the executor test and replaces the pin
-// test with its bound-scope equivalent; Phase C (the pin retired) deletes what
-// is left of the pin test. The two identity tests guard a defect that is fixed.
+// The pin test PASSES against its defect on purpose: it pins what the code does
+// today so the change that retires the pin (Phase C) has a test to delete rather
+// than a claim to take on trust. Its replacement — a scope bound to runners is
+// honoured on a scheduled fire — is in scope_executor_test.go. The identity
+// tests guard defects that are fixed.
 
 // TestScheduledPinnedShellJobQueuesForSSH proves the pin is not enforced on a
 // scheduled fire. RT-Q5 says a pinned run whose executor RESOLVES to ssh is
@@ -165,19 +164,17 @@ func TestQueuedFireCarriesItsOwnJobIdentity(t *testing.T) {
 	}
 }
 
-// TestResolveExecutorCannotTellSameNamedJobsApart proves the executor lookup
-// still crosses job identities. ResolveExecutor reads jobs.executor by (name,
-// source) and takes no uid at all, so two twins declaring different executors
-// get one answer between them and one of them runs on an executor its definition
-// did not ask for. Passing JobUID to the enqueue (above) does not fix this; the
-// resolver needs the identity too (plan Phase B).
-func TestResolveExecutorCannotTellSameNamedJobsApart(t *testing.T) {
+// TestScheduledFireUsesItsOwnJobsExecutor guards the second identity defect
+// Phase 0 found: the executor was read by (name, source), so two same-named
+// jobs declaring different executors got one answer between them and one ran on
+// an executor its definition did not ask for. The resolver now reads the job by
+// its uid (execspec.ResolveExecutor); fired by identity, each twin gets its own.
+func TestScheduledFireUsesItsOwnJobsExecutor(t *testing.T) {
 	pool := mustPool(t)
 	seedTwins(t, pool)
 
 	got := fireTwins(t, pool, "executor")
-	if got["scope-a"] != got["scope-b"] {
-		t.Fatalf("twins resolved to different executors (%v): the lookup is identity-aware now — "+
-			"invert this test to assert each run matches its own job's executor", got)
+	if got["scope-a"] != "runner" || got["scope-b"] != "ssh" {
+		t.Errorf("executors = %v, want scope-a:runner and scope-b:ssh (each twin's own)", got)
 	}
 }

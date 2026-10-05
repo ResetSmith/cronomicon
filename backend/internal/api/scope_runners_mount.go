@@ -18,6 +18,7 @@ import (
 // dispatch is documented in internal/execspec/scopebinding.go.
 //
 //	PUT  /api/v1/scopes/{scopeId}/runners          (ConfigureApp + CSRF) — 422 unknown_runner, runner_not_eligible; 409 bindings_changed
+//	POST /api/v1/scopes/{scopeId}/runners/preview  (ConfigureApp + CSRF) — what the PUT would change; writes nothing
 //	POST /api/v1/scope-runners/replace             (ConfigureApp + CSRF) — 409 no_bindings, 422 as above
 //	GET  /api/v1/scope-binding-notices             (ConfigureApp)
 //	POST /api/v1/scope-binding-notices/dismiss     (ConfigureApp + CSRF)
@@ -31,6 +32,7 @@ import (
 // runner and needs nothing more than the route gate.
 func (s *Server) mountScopeRunners(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/scopes/{scopeId}/runners", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetScopeRunners)))
+	mux.Handle("POST /api/v1/scopes/{scopeId}/runners/preview", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handlePreviewScopeRunners)))
 	mux.Handle("POST /api/v1/scope-runners/replace", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleReplaceScopeRunner)))
 	mux.Handle("GET /api/v1/scope-binding-notices", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleListScopeBindingNotices)))
 	mux.Handle("POST /api/v1/scope-binding-notices/dismiss", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDismissScopeBindingNotices)))
@@ -177,4 +179,50 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"dismissed": n})
+}
+
+// handlePreviewScopeRunners reports what replacing a scope's bound-runner set
+// would change — which jobs move between executors, which would be refused, and
+// whether the proposed runners can serve what runs on the scope — without
+// changing anything. POST because it takes the proposed set as a body; it is
+// read-only.
+//
+// It needs MORE than the write it previews. The write is a scope overlay, gated
+// on ConfigureApp alone; the preview names the scope's JOBS, which the job
+// routes show only to a caller who can read the scope. So the caller must be
+// able to read it too — which anyone entitled to ADD a runner here can, since
+// that takes configureApp on the scope's own agency.
+func (s *Server) handlePreviewScopeRunners(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	var inp struct {
+		RunnerIDs *[]string `json:"runnerIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	if inp.RunnerIDs == nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error",
+			"runnerIds is required; send [] to preview clearing the binding")
+		return
+	}
+	preview, err := settings.PreviewScopeRunners(r.Context(), s.db, r.PathValue("scopeId"), *inp.RunnerIDs)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if preview == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
+		return
+	}
+	if !auth.ScopeReadable(id, preview.Scope) {
+		httpx.Fail(w, http.StatusForbidden, "forbidden",
+			"you cannot read this scope's jobs, so its binding cannot be previewed for you")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, preview)
 }

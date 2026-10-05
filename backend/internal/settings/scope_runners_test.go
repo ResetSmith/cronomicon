@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -158,5 +159,167 @@ func TestBoundScopeWithWaitingRunsCannotBeRenamedOrDeleted(t *testing.T) {
 	}
 	if found, err := DeleteScope(ctx, pool, busy, "ops@example"); err != nil || !found {
 		t.Errorf("deleting once nothing is waiting = %v, %v; want it allowed", found, err)
+	}
+}
+
+// TestPreviewScopeRunners covers the three questions the bind form asks before
+// it saves: which jobs change executor, which would be refused, and whether the
+// runners being proposed can serve what runs on the scope. Each is asked in both
+// directions — binding an open scope and clearing a bound one — because clearing
+// is the direction that sends work back to the server.
+func TestPreviewScopeRunners(t *testing.T) {
+	pool, err := db.Open(filepath.Join(t.TempDir(), "preview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := db.Migrate(pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	ctx := context.Background()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-fin','Finance','t')`)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s-dmz','dmz-web','cronomicon','t')`)
+	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('s-dmz','ag-fin')`)
+	job := func(uid, name, runType string, executor any) {
+		exec(`INSERT INTO jobs(uid, name, source, run_type, scope, executor, synced_at)
+		      VALUES(?, ?, 'cronomicon', ?, 'dmz-web', ?, 't')`, uid, name, runType, executor)
+	}
+	job("u-shell", "restart", "bash", nil)        // defaults to ssh → moves
+	job("u-ssh", "legacy", "bash", "ssh")         // asks for ssh → refused once bound
+	job("u-runner", "pinned", "python", "runner") // already on a runner → unaffected
+	job("u-play", "deploy", "ansible", nil)       // already runner by run type → unaffected
+	// A binned job and a job on another scope play no part.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, synced_at, deleted_at)
+	      VALUES('u-binned','old','cronomicon','perl','dmz-web','t','t')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, synced_at) VALUES('u-else','elsewhere','cronomicon','powershell','other','t')`)
+	// restart binds a secret, so it needs an injection-flagged runner once it moves.
+	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+	      VALUES('job','cronomicon','restart','u-shell','secret','DB_PASSWORD','t')`)
+	exec(`INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
+	      VALUES('run-ssh','restart','bash','dmz-web','queued','seed','manual','ssh','t')`)
+	// Parked runs frozen onto ssh count too — they are promoted onto it later.
+	// One parked for the runner, one workflow row with no params, and one with an
+	// unreadable blob do not, and must not break the count.
+	park := func(id, kind string, params any) {
+		exec(`INSERT INTO pending_runs(id, kind, name, source, scope, run_at, scheduled_by, created_at, status, params_json)
+		      VALUES(?, ?, 'restart', 'cronomicon', 'dmz-web', 't', 'ops@example', 't', 'pending', ?)`, id, kind, params)
+	}
+	park("p-ssh", "job", `{"Executor":"ssh"}`)
+	park("p-runner", "job", `{"Executor":"runner"}`)
+	park("p-wf", "workflow", nil)
+	park("p-junk", "job", "not json")
+
+	// r-full can run everything and may hold secrets; r-thin declares ansible but
+	// the server-managed mask takes it away, and it may not hold secrets; r-out
+	// is in no agency, so it is not eligible for this scope.
+	exec(`INSERT INTO runners(id, name, status, capabilities, allow_secret_injection, registered_at, created_at)
+	      VALUES('r-full','runner-full','online','["bash","python","ansible"]',1,'t','t')`)
+	exec(`INSERT INTO runners(id, name, status, capabilities, managed_settings, registered_at, created_at)
+	      VALUES('r-thin','runner-thin','online','["bash","ansible"]','{"capabilityMask":["ansible"]}','t','t')`)
+	exec(`INSERT INTO runners(id, name, status, capabilities, registered_at, created_at)
+	      VALUES('r-out','runner-out','online','["bash"]','t','t')`)
+	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-full','ag-fin'), ('r-thin','ag-fin')`)
+	// A runner whose managed settings are not JSON (a hand-edited or restored
+	// row): the mask cannot be read, so it is treated as no mask — not as a
+	// reason to fail the preview for the whole scope.
+	exec(`INSERT INTO runners(id, name, status, capabilities, managed_settings, registered_at, created_at)
+	      VALUES('r-junk','runner-junk','online','["bash"]','not json','t','t')`)
+	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-junk','ag-fin')`)
+
+	names := func(js []PreviewJob) string {
+		out := ""
+		for _, j := range js {
+			out += j.Name + " "
+		}
+		return out
+	}
+
+	// Binding an open scope.
+	p, err := PreviewScopeRunners(ctx, pool, "s-dmz", []string{"r-full", "r-thin", "r-out", "r-nope", "r-junk"})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if p.CurrentlyBound || !p.WillBeBound {
+		t.Errorf("bound state = %v → %v, want false → true", p.CurrentlyBound, p.WillBeBound)
+	}
+	if got := names(p.JobsMovingToRunner); got != "restart " {
+		t.Errorf("moving to runner = %q, want only restart", got)
+	}
+	if got := names(p.JobsRefused); got != "legacy " {
+		t.Errorf("refused = %q, want only legacy", got)
+	}
+	if len(p.JobsMovingToSSH) != 0 {
+		t.Errorf("moving to ssh = %q, want none when binding", names(p.JobsMovingToSSH))
+	}
+	if p.QueuedSSHRuns != 2 {
+		t.Errorf("queued ssh runs = %d, want 2 (one queued, one parked)", p.QueuedSSHRuns)
+	}
+	// legacy is refused, so it sets no requirement: bash (restart), python
+	// (pinned) and ansible (deploy) are what the runners must cover.
+	if got := strings.Join(p.RunTypes, ","); got != "ansible,bash,python" {
+		t.Errorf("run types = %q, want ansible,bash,python", got)
+	}
+	if p.JobsNeedingInjection != 1 {
+		t.Errorf("jobs needing injection = %d, want 1", p.JobsNeedingInjection)
+	}
+	byID := map[string]PreviewRunner{}
+	for _, r := range p.Runners {
+		byID[r.RunnerID] = r
+	}
+	if r := byID["r-full"]; !r.Registered || !r.Eligible || len(r.MissingRunTypes) != 0 || !r.AllowsSecretInjection {
+		t.Errorf("r-full = %+v, want registered, eligible, nothing missing, injection allowed", r)
+	}
+	if r := byID["r-thin"]; strings.Join(r.MissingRunTypes, ",") != "ansible,python" || r.AllowsSecretInjection {
+		t.Errorf("r-thin = %+v, want ansible (masked) and python missing, no injection", r)
+	}
+	if r := byID["r-out"]; !r.Registered || r.Eligible {
+		t.Errorf("r-out = %+v, want registered but not eligible", r)
+	}
+	if r := byID["r-junk"]; !r.Registered || strings.Join(r.Capabilities, ",") != "bash" {
+		t.Errorf("r-junk = %+v, want registered with its declared capabilities", r)
+	}
+	if r := byID["r-nope"]; r.Registered || r.Eligible {
+		t.Errorf("r-nope = %+v, want unregistered", r)
+	}
+	var rows int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scope_runners`).Scan(&rows); err != nil || rows != 0 {
+		t.Errorf("binding rows after a preview = %d (err %v), want 0 — a preview writes nothing", rows, err)
+	}
+
+	// Clearing a bound scope: what the binding was holding on the runners goes
+	// back to the server, including the job that was being refused.
+	exec(`INSERT INTO scope_runners(scope_id, runner_id, runner_name, bound_at) VALUES('s-dmz','r-full','runner-full','t')`)
+	p, err = PreviewScopeRunners(ctx, pool, "s-dmz", []string{})
+	if err != nil {
+		t.Fatalf("preview clear: %v", err)
+	}
+	if !p.CurrentlyBound || p.WillBeBound {
+		t.Errorf("bound state = %v → %v, want true → false", p.CurrentlyBound, p.WillBeBound)
+	}
+	if got := names(p.JobsMovingToSSH); got != "legacy restart " {
+		t.Errorf("moving to ssh on clear = %q, want legacy and restart", got)
+	}
+	if len(p.JobsMovingToRunner) != 0 || len(p.JobsRefused) != 0 {
+		t.Errorf("on clear: to runner %q, refused %q; want neither", names(p.JobsMovingToRunner), names(p.JobsRefused))
+	}
+
+	// Swapping one runner for another on a bound scope moves nothing.
+	p, err = PreviewScopeRunners(ctx, pool, "s-dmz", []string{"r-thin"})
+	if err != nil {
+		t.Fatalf("preview swap: %v", err)
+	}
+	if len(p.JobsMovingToRunner) != 0 || len(p.JobsMovingToSSH) != 0 || names(p.JobsRefused) != "legacy " {
+		t.Errorf("on swap: to runner %q, to ssh %q, refused %q; want none, none, legacy",
+			names(p.JobsMovingToRunner), names(p.JobsMovingToSSH), names(p.JobsRefused))
+	}
+
+	if p, err := PreviewScopeRunners(ctx, pool, "no-such-scope", nil); err != nil || p != nil {
+		t.Errorf("unknown scope = %+v, %v; want nil, nil", p, err)
 	}
 }

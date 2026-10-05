@@ -243,6 +243,7 @@ func TestBindingARunnerIsDepartmental(t *testing.T) {
 	// The whole surface is ConfigureApp: a viewer reaches none of it.
 	for _, c := range []struct{ method, path, body string }{
 		{http.MethodPut, "/api/v1/scopes/sc:prod/runners", `{"runnerIds":[]}`},
+		{http.MethodPost, "/api/v1/scopes/sc:prod/runners/preview", `{"runnerIds":[]}`},
 		{http.MethodPost, "/api/v1/scope-runners/replace", `{"fromRunnerId":"a","toRunnerId":"b"}`},
 		{http.MethodGet, "/api/v1/scope-binding-notices", ""},
 		{http.MethodPost, "/api/v1/scope-binding-notices/dismiss", `{"ids":[1]}`},
@@ -452,5 +453,80 @@ func TestBoundScopeBusyIsAConflict(t *testing.T) {
 	var name string
 	if err := pool.QueryRow(`SELECT name FROM scopes WHERE id='s-dmz'`).Scan(&name); err != nil || name != "dmz" {
 		t.Errorf("after the refusals the scope is %q (err %v), want dmz", name, err)
+	}
+}
+
+// TestPreviewScopeRunnersRoute — the route's wiring: it answers with the
+// preview, changes nothing, and refuses the same malformed bodies the write
+// does. What the preview COMPUTES is pinned in internal/settings.
+func TestPreviewScopeRunnersRoute(t *testing.T) {
+	h, pool := secretRBACServer(t, nil)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('s-dmz','dmz-web','cronomicon','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('restart','git','bash','dmz-web',1)`)
+	seedBindingRunner(exec, "r-pool", "runner-pool-01", "")
+
+	post := func(scopeID, body string) (int, []byte) {
+		rec := reqAs(t, h, http.MethodPost, "/api/v1/scopes/"+scopeID+"/runners/preview", "sec-admins", body)
+		return rec.Code, rec.Body.Bytes()
+	}
+	code, body := post("s-dmz", `{"runnerIds":["r-pool"]}`)
+	if code != http.StatusOK {
+		t.Fatalf("preview = %d, want 200 (%s)", code, body)
+	}
+	var p struct {
+		Scope              string `json:"scope"`
+		WillBeBound        bool   `json:"willBeBound"`
+		JobsMovingToRunner []struct {
+			Name string `json:"name"`
+		} `json:"jobsMovingToRunner"`
+		Runners []struct {
+			RunnerID string `json:"runnerId"`
+			Eligible bool   `json:"eligible"`
+		} `json:"runners"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatalf("decode preview: %v\n%s", err, body)
+	}
+	if p.Scope != "dmz-web" || !p.WillBeBound || len(p.JobsMovingToRunner) != 1 || p.JobsMovingToRunner[0].Name != "restart" {
+		t.Errorf("preview = %+v, want dmz-web to become bound and move restart", p)
+	}
+	if len(p.Runners) != 1 || p.Runners[0].RunnerID != "r-pool" || !p.Runners[0].Eligible {
+		t.Errorf("runners = %+v, want the eligible general-pool runner", p.Runners)
+	}
+	// Arrays are always arrays: the form iterates them without a nil check.
+	for _, key := range []string{`"jobsMovingToSsh":[]`, `"jobsRefused":[]`} {
+		if !strings.Contains(string(body), key) {
+			t.Errorf("preview body lacks %s: %s", key, body)
+		}
+	}
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scope_runners`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("binding rows after a preview = %d (err %v), want 0", n, err)
+	}
+
+	if code, body := post("s-dmz", `{}`); code != http.StatusUnprocessableEntity || errCode(body) != "validation_error" {
+		t.Errorf("preview without runnerIds = %d %q, want 422 validation_error", code, errCode(body))
+	}
+
+	// The preview names the scope's jobs, so it needs what the job routes need:
+	// the caller must be able to read the scope. An admin of another department
+	// holds ConfigureApp — enough for the write, which names no jobs — but not
+	// that.
+	h2, pool2 := secretRBACServer(t, map[string]string{"admin": "prod"})
+	exec2 := mustExec(t, pool2)
+	exec2(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
+	exec2(`INSERT INTO scopes (id,name,source,created_at) VALUES ('s-fin','fin-hosts','cronomicon','2026-01-01T00:00:00Z')`)
+	exec2(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('s-fin','ag-fin')`)
+	exec2(`INSERT INTO jobs (name, source, run_type, scope, enabled) VALUES ('payroll','git','bash','fin-hosts',1)`)
+	rec := reqAs(t, h2, http.MethodPost, "/api/v1/scopes/s-fin/runners/preview", "sec-admins", `{"runnerIds":[]}`)
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "payroll") {
+		t.Errorf("preview of another department's scope = %d (%s), want 403 naming no job", rec.Code, rec.Body.String())
+	}
+	if rec := reqAs(t, h2, http.MethodPost, "/api/v1/scopes/sc:prod/runners/preview", "sec-admins", `{"runnerIds":[]}`); rec.Code != http.StatusOK {
+		t.Errorf("preview of the caller's own scope = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if code, _ := post("no-such-scope", `{"runnerIds":[]}`); code != http.StatusNotFound {
+		t.Errorf("preview of an unknown scope = %d, want 404", code)
 	}
 }

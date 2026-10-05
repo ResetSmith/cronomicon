@@ -581,7 +581,18 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 	}
 	// KB — same posture for a key-bound job that resolves to the ssh executor:
 	// the delivery row carries the refusal, no run row is invented.
-	executor := ResolveExecutor(ctx, s.db, source, jobName, runType.String)
+	resolved := execspec.ResolveExecutor(ctx, s.db, execspec.ExecutorQuery{
+		JobUID: jobUID.String, JobSource: source, JobName: jobName, RunType: runType.String, Scope: scope.String,
+	})
+	if resolved.Err != nil {
+		return nil, fmt.Errorf("resolve executor for %q: %w", jobName, resolved.Err)
+	}
+	// SB — a job that asks for ssh on a scope bound to runners: refused on the
+	// delivery row, like the two refusals around it.
+	if resolved.ScopeRefused() {
+		return nil, fmt.Errorf("reacting job %q: %s", jobName, resolved.Refusal.Message)
+	}
+	executor := resolved.Executor
 	keys, kerr := runref.KeyBindingsOnSSH(ctx, s.db, owners, executor)
 	if kerr != nil {
 		return nil, fmt.Errorf("check key bindings for %q: %w", jobName, kerr)

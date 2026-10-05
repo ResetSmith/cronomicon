@@ -2089,6 +2089,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scopes/{scopeId}/runners/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview what replacing a scope's bound runners would change
+         * @description Computes the effect of PUT /scopes/{scopeId}/runners with the same body,
+         *     and changes nothing. Binding a scope is not only a dispatch change: a job
+         *     with no executor of its own moves from the ssh executor (the control
+         *     plane, with the server's credentials and known_hosts) to the bound
+         *     runners (their own keys and known_hosts); a job that asks for ssh starts
+         *     being refused; and clearing a binding moves everything back.
+         *
+         *     Nothing is validated: an unregistered or ineligible runner is reported as
+         *     such rather than refused, since saying why a save would fail is part of
+         *     the preview. `runnerIds` is required ([] previews clearing the binding).
+         *
+         *     Because the answer names the scope's jobs, the caller must also be able
+         *     to read the scope (403 otherwise) — more than the write itself asks.
+         *     CSRF required.
+         */
+        post: operations["previewScopeRunners"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scope-runners/replace": {
         parameters: {
             query?: never;
@@ -5852,6 +5885,55 @@ export interface components {
              */
             eligible: boolean;
         };
+        /** @description What replacing a scope's bound-runner set would change. */
+        ScopeRunnersPreview: {
+            scope: string;
+            currentlyBound: boolean;
+            willBeBound: boolean;
+            /** @description Jobs that resolve to the ssh executor today and would resolve to the runner. */
+            jobsMovingToRunner: components["schemas"]["ScopeRunnersPreviewJob"][];
+            /**
+             * @description Jobs that would return to the ssh executor — to running from the
+             *     server: those the binding was sending to the runners, and those that
+             *     ask for ssh and were being refused.
+             */
+            jobsMovingToSsh: components["schemas"]["ScopeRunnersPreviewJob"][];
+            /**
+             * @description Jobs that ask for the ssh executor themselves and would be refused
+             *     (scope_requires_runner) while the scope is bound.
+             */
+            jobsRefused: components["schemas"]["ScopeRunnersPreviewJob"][];
+            /**
+             * @description Runs already queued on this scope, or parked for later (deferred, or
+             *     held behind a Queue gate), and frozen onto the ssh executor. They
+             *     keep it, and run from the server whatever is saved.
+             */
+            queuedSshRuns: number;
+            /** @description The run types of the jobs that would run on the bound runners. */
+            runTypes: string[];
+            /** @description How many of those jobs bind secrets or an SSH key and so need a secret-injection runner. */
+            jobsNeedingInjection: number;
+            /** @description One entry per proposed runner id, in the order given. */
+            runners: {
+                runnerId: string;
+                name: string;
+                registered: boolean;
+                /** @description Whether the runner passes the agency rule for this scope; a save refuses one that does not. */
+                eligible: boolean;
+                /** @description The runner's effective capability tokens (declared, minus the server-managed mask). */
+                capabilities: string[];
+                /** @description Run types in `runTypes` this runner cannot run. */
+                missingRunTypes: string[];
+                allowsSecretInjection: boolean;
+            }[];
+        };
+        ScopeRunnersPreviewJob: {
+            uid: string;
+            name: string;
+            /** @enum {string} */
+            source: "git" | "cronomicon";
+            runType: string;
+        };
         /** @description A runner-tag pin that could not be turned into a scope binding. */
         RetiredRunnerPin: {
             /** Format: int64 */
@@ -8387,7 +8469,17 @@ export interface operations {
             /**
              * @description Validation failed. `Error.code` distinguishes the cases:
              *     `invalid_executor` — executor=ssh cannot run ansible/terraform; use the
-             *     runner executor (R5.2). `scope_membership` / `group_membership` — a
+             *     runner executor (R5.2). This applies to an ssh the run or the job ASKS
+             *     for; a global default executor of ssh falls through to the runner for
+             *     those run types instead, as it always has for scheduled runs.
+             *     `scope_requires_runner` (SB) — the run's effective scope is bound to
+             *     runners (see PUT /scopes/{scopeId}/runners) and the run or the job asks
+             *     for the ssh executor, which would run it from the server instead; the
+             *     message names the scope and which of the two asked. A job with no
+             *     executor of its own on a bound scope is not refused — it runs on the
+             *     bound runners. Scheduled, workflow, reaction and file-arrival fires
+             *     record the same refusal as a skipped or failed run.
+             *     `scope_membership` / `group_membership` — a
              *     targetHosts/targetGroups entry that is not a member of the effective scope's
              *     inventory (F2/M3). `prompt_required` (JR-Q5) — the job is
              *     `promptEnforcement: block` and a declared REQUIRED run input has no value in
@@ -11681,6 +11773,50 @@ export interface operations {
              *     for this scope's agency (code=runner_not_eligible), or `runnerIds`
              *     is missing (code=validation_error).
              */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    previewScopeRunners: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                scopeId: components["parameters"]["scopeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The proposed complete set of runner ids. */
+                    runnerIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The effect of the proposed binding. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeRunnersPreview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The body is not JSON or `runnerIds` is missing (code=validation_error). */
             422: {
                 headers: {
                     [name: string]: unknown;

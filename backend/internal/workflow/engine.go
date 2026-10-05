@@ -533,7 +533,10 @@ func (e *Engine) runJob(
 	if jobSrc == "" {
 		jobSrc = "git"
 	}
-	executor := scheduler.ResolveExecutor(ctx, e.db, jobSrc, step.Name, jd.runType)
+	resolved := execspec.ResolveExecutor(ctx, e.db, execspec.ExecutorQuery{
+		JobUID: jd.uid, JobSource: jobSrc, JobName: step.Name, RunType: jd.runType, Scope: effectiveScope,
+	})
+	executor := resolved.Executor
 	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.uid, jobSrc, step.Name)
 	// M3/T3.6 — snapshot the effective scope's agency SET onto the child run (hard
 	// isolation). This path builds its own INSERT rather than going through
@@ -587,6 +590,21 @@ func (e *Engine) runJob(
 			stepStatus, stepQueuedReason = "failure", runref.QueuedReasonUnboundReferences
 			e.log.Warn("workflow: step consumes department-owned credentials on an unbound run",
 				"job", step.Name, "reference", blocked[0].Reference, "detail", runref.UnboundRefusal(blocked))
+		}
+	}
+	// SB — the step's executor could not be resolved, or the resolution refuses
+	// it: a job that asks for ssh on a scope bound to runners fails the step,
+	// terminal-and-recorded, rather than running from the control plane. An
+	// unreadable binding is not guessed at, for the same reason.
+	if stepStatus == "queued" {
+		if resolved.Err != nil {
+			e.log.Error("workflow: resolve executor", "job", step.Name, "err", resolved.Err)
+			return "danger"
+		}
+		if resolved.ScopeRefused() {
+			stepStatus, stepQueuedReason = "failure", execspec.ReasonScopeRequiresRunner
+			e.log.Warn("workflow: step asks for the ssh executor on a scope bound to runners",
+				"job", step.Name, "scope", effectiveScope, "detail", resolved.Refusal.Message)
 		}
 	}
 	// KB — a key-bound step whose run resolves to the ssh executor fails the

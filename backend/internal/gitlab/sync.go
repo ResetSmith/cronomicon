@@ -1756,6 +1756,24 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			watches = nil
 		}
 		watchJSON := watchspec.Marshal(watches)
+		// SB — advisory-warn, like the checks above: a job that asks for the ssh
+		// executor on a scope bound to runners is refused at every fire
+		// (execspec.CodeScopeRequiresRunner), and a cron fire has nobody watching
+		// it. Saying so at sync is the earliest the author can hear about it. Not
+		// an error: the definition is valid, and whether its scope is bound is an
+		// operator's overlay that can change without a commit. An unreadable
+		// binding says nothing here — the fire-time check is the one that counts.
+		//
+		// `executor` is the value about to be STORED, which for a script_ref job
+		// is the script's and not this file's — it is the stored one the fire
+		// reads, so it is the one to warn about.
+		if executor == execspec.ExecutorSSH {
+			if bound, berr := execspec.ScopeIsBound(ctx, tx, j.Spec.Scope); berr == nil && bound {
+				s.logWarn("git sync: job asks for the ssh executor on a scope bound to runners; its runs will be "+
+					"refused until the executor line is removed or the scope is unbound",
+					"job", name, "source_path", j.SourcePath, "scope", j.Spec.Scope)
+			}
+		}
 		warnDeadline := strings.TrimSpace(j.Spec.MustFinishBy)
 		if warnDeadline != "" && !cronutil.ValidDeadline(warnDeadline) {
 			s.log.Warn("job declares an unparseable must_finish_by; ignoring it",

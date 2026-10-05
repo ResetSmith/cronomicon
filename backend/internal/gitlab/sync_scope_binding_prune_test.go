@@ -1,7 +1,10 @@
 package gitlab
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -96,5 +99,93 @@ func TestSyncHoldsABoundScopeWithWaitingRuns(t *testing.T) {
 	}
 	if count(`SELECT COUNT(*) FROM scope_runners WHERE runner_id='r-dmz'`) != 0 {
 		t.Error("the pruned scope's binding was left behind")
+	}
+}
+
+// TestSyncWarnsWhenAJobAsksForSSHOnABoundScope: a git job with `executor: ssh`
+// on a scope bound to runners is refused at every fire, and nobody watches a
+// cron fire — so sync says it, by job and scope, as soon as it can see both
+// facts. The same job on a scope nobody bound draws no warning, and neither
+// does a job that sets no executor (it simply runs on the bound runners).
+func TestSyncWarnsWhenAJobAsksForSSHOnABoundScope(t *testing.T) {
+	svc, repo, remote := newSyncFixture(t)
+	ctx := context.Background()
+	var logs bytes.Buffer
+	svc.log = slog.New(slog.NewTextHandler(&logs, nil))
+
+	job := func(name, scope, executor string) string {
+		y := "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: " + name +
+			"\nspec:\n  run_type: bash\n  command: echo hi\n  scope: " + scope + "\n"
+		if executor != "" {
+			y += "  executor: " + executor + "\n"
+		}
+		return y
+	}
+	gitCommitFile(t, repo, remote, "inventory/dmz.ini", "[web]\nweb1\n", "add dmz")
+	gitCommitFile(t, repo, remote, "inventory/open.ini", "[app]\napp1\n", "add open")
+	gitCommitFile(t, repo, remote, "jobs/legacy.yaml", job("legacy", "dmz", "ssh"), "add legacy")
+	gitCommitFile(t, repo, remote, "jobs/plain.yaml", job("plain", "dmz", ""), "add plain")
+	gitCommitFile(t, repo, remote, "jobs/elsewhere.yaml", job("elsewhere", "open", "ssh"), "add elsewhere")
+	// A job that takes its body from a script takes its EXECUTOR from it too, so
+	// the stored executor — the one a fire reads — is the script's. `inherits`
+	// says nothing itself and is refused through its script; `overridden` says
+	// ssh itself, which is discarded in favour of a script that says nothing, so
+	// it simply runs on the bound runners and must not be warned about.
+	script := func(name, executor string) string {
+		y := "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: " + name +
+			"\nspec:\n  run_type: bash\n  command: echo hi\n"
+		if executor != "" {
+			y += "  executor: " + executor + "\n"
+		}
+		return y
+	}
+	refJob := func(name, ref, executor string) string {
+		y := "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: " + name +
+			"\nspec:\n  script_ref: " + ref + "\n  scope: dmz\n"
+		if executor != "" {
+			y += "  executor: " + executor + "\n"
+		}
+		return y
+	}
+	gitCommitFile(t, repo, remote, "scripts/over-ssh.yaml", script("over-ssh", "ssh"), "add over-ssh")
+	gitCommitFile(t, repo, remote, "scripts/no-opinion.yaml", script("no-opinion", ""), "add no-opinion")
+	gitCommitFile(t, repo, remote, "jobs/inherits.yaml", refJob("inherits", "over-ssh", ""), "add inherits")
+	gitCommitFile(t, repo, remote, "jobs/overridden.yaml", refJob("overridden", "no-opinion", "ssh"), "add overridden")
+
+	const warning = "asks for the ssh executor on a scope bound to runners"
+	if r := svc.SyncBlocking(ctx, "t"); r.Status == "failed" {
+		t.Fatalf("initial sync failed: %s", r.ErrorMessage)
+	}
+	if strings.Contains(logs.String(), warning) {
+		t.Fatalf("warned before any scope was bound:\n%s", logs.String())
+	}
+
+	if _, err := svc.db.Exec(`
+		INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_by, bound_at)
+		SELECT id, 'r-dmz', 'runner-dmz-01', 'ops@example', 'now' FROM scopes WHERE name='dmz'`); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	logs.Reset()
+	// A warning is advice: the sync must still be a clean success, not "partial"
+	// (which would also suppress pruning for the whole subsystem).
+	if r := svc.SyncBlocking(ctx, "t"); r.Status != "success" {
+		t.Fatalf("sync after binding = %q, want success (%s)", r.Status, r.ErrorMessage)
+	}
+	warned := map[string]bool{}
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if !strings.Contains(line, warning) {
+			continue
+		}
+		if !strings.Contains(line, "scope=dmz") {
+			t.Errorf("warning does not name the scope: %s", line)
+		}
+		for _, name := range []string{"legacy", "plain", "elsewhere", "inherits", "overridden"} {
+			if strings.Contains(line, "job="+name+" ") {
+				warned[name] = true
+			}
+		}
+	}
+	if len(warned) != 2 || !warned["legacy"] || !warned["inherits"] {
+		t.Errorf("warned jobs = %v, want exactly legacy (its own executor) and inherits (its script's)", warned)
 	}
 }

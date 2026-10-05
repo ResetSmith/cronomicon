@@ -394,6 +394,16 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// R5.1 — the executor this fire resolves to, decided once (execspec owns the
+	// precedence). Resolved up front because every skip record below is written
+	// against it; whether the resolution REFUSES the fire, or could not be made
+	// at all, is judged further down, after the gates that would suppress the
+	// fire anyway have had their say.
+	resolved := execspec.ResolveExecutor(ctx, s.db, execspec.ExecutorQuery{
+		JobUID: jobUID, JobSource: source, JobName: jobName, RunType: runType, Scope: scope,
+	})
+	executor := resolved.Executor
+
 	// Operator pause (migration 030; 170 made it source/owner_kind aware): a
 	// paused job's cron fires are skipped.
 	if s.isPaused(ctx, source, "job", jobName) {
@@ -406,7 +416,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		// visible to the key-based Forbid de-dupe.
 		if err := s.recordSuppression(ctx, EnqueueParams{
 			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
-			ScheduleName: scheduleName, Executor: ResolveExecutor(ctx, s.db, source, jobName, runType),
+			ScheduleName: scheduleName, Executor: executor,
 		}, skipRecord{Reason: reasonJobPaused, Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record paused skip", "job", jobName, "err", err)
 		}
@@ -431,7 +441,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 			// rather than the key precisely because most jobs carry neither.
 			if err := s.recordSuppression(ctx, EnqueueParams{
 				JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
-				ScheduleName: scheduleName, Executor: ResolveExecutor(ctx, s.db, source, jobName, runType),
+				ScheduleName: scheduleName, Executor: executor,
 			}, g.record()); err != nil {
 				s.log.Error("scheduler: record calendar suppression", "job", jobName, "err", err)
 			}
@@ -455,7 +465,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		// same day leave two.
 		if err := s.recordSuppression(ctx, EnqueueParams{
 			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
-			ScheduleName: scheduleName, Executor: ResolveExecutor(ctx, s.db, source, jobName, runType),
+			ScheduleName: scheduleName, Executor: executor,
 		}, skipRecord{Reason: reasonConcurrencyCap, Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record capped skip", "job", jobName, "err", err)
 		}
@@ -534,7 +544,6 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
 		jobUID, jobUID, jobName, source).Scan(&scriptRef)
 	owners := runref.RunOwners(source, jobName, jobUID, scriptRef.String)
-	executor := ResolveExecutor(ctx, s.db, source, jobName, runType)
 	blocked, berr := runref.UnboundRunBlocked(ctx, s.db, owners, scope, scopeAgencies)
 	if berr != nil {
 		s.log.Error("scheduler: check unbound references", "job", jobName, "err", berr)
@@ -549,6 +558,44 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 			ConcurrencyKey: effectiveConcKey, Executor: executor,
 		}, skipRecord{Reason: runref.QueuedReasonUnboundReferences, Mode: dedupeEpisode}); err != nil {
 			s.log.Error("scheduler: record unbound-reference skip", "job", jobName, "err", err)
+		}
+		return
+	}
+	// SB — the executor could not be resolved, or the resolution refuses the
+	// fire. An unreadable binding must not be guessed at: the one wrong guess
+	// available is "this scope is not bound", which sends a confined job out
+	// from the control plane. And a job that asks for ssh on a scope bound to
+	// runners is recorded as skipped rather than run from the server — the same
+	// shape as the refusals around it, and for the same reason: nobody is
+	// watching a cron fire, so the row in History is the only notice there is.
+	if resolved.Err != nil {
+		s.log.Error("scheduler: resolve executor", "job", jobName, "err", resolved.Err)
+		return
+	}
+	if resolved.ScopeRefused() {
+		s.log.Warn("scheduler: skip fire — job asks for the ssh executor on a scope bound to runners",
+			"job", jobName, "scope", scope, "detail", resolved.Refusal.Message)
+		// Two details of the record, both learned the hard way by its neighbours:
+		//
+		//   - no ConcurrencyKey. dedupeEpisodeReason must not be visible to the
+		//     key-based Forbid de-dupe (see the pause path above): carrying the key
+		//     makes this row "the latest run for that key", and another job sharing
+		//     a custom key then has its own Forbid skip swallowed in silence.
+		//   - a Day. Unlike a pause — which missed-run detection excludes outright
+		//     — this refusal STANDS, for as long as the job says ssh and the scope
+		//     is bound, and detection only accepts a skip row from the same day as
+		//     the fire it explains. One row for the whole episode would explain day
+		//     one and be reported as a missed run, with an alert, every day after.
+		//     Bounding the episode by the day writes one row a day instead.
+		loc := s.location()
+		if err := s.recordSuppression(ctx, EnqueueParams{
+			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
+			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
+		}, skipRecord{
+			Reason: execspec.ReasonScopeRequiresRunner, Mode: dedupeEpisodeReason,
+			Day: calendar.DayOf(time.Now(), loc), Loc: loc,
+		}); err != nil {
+			s.log.Error("scheduler: record scope-binding skip", "job", jobName, "err", err)
 		}
 		return
 	}
@@ -665,35 +712,6 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		}
 		s.log.Error("scheduler: enqueue run", "job", jobName, "err", err)
 	}
-}
-
-// ResolveExecutor picks the executor for an automatically-enqueued run (R5.1)
-// with the precedence: job spec.executor > global execution.defaultExecutor >
-// run-type capability default (shell ⇒ ssh, ansible/terraform ⇒ runner).
-// Scheduled/workflow runs have no per-trigger override; the manual-trigger path
-// layers that override on top of this same precedence (api.resolveExecutor).
-func ResolveExecutor(ctx context.Context, database *sql.DB, jobSource, jobName, runType string) string {
-	if jobSource == "" {
-		jobSource = "git"
-	}
-	var jobExec sql.NullString
-	_ = database.QueryRowContext(ctx, `SELECT executor FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).Scan(&jobExec)
-	if jobExec.Valid && (jobExec.String == "ssh" || jobExec.String == "runner") {
-		return jobExec.String
-	}
-	var def sql.NullString
-	_ = database.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'defaultExecutor'`).Scan(&def)
-	if def.Valid && (def.String == "ssh" || def.String == "runner") {
-		// A global ssh default cannot run ansible/terraform — fall through to the
-		// capability default for those rather than enqueue an unclaimable run.
-		if !(def.String == "ssh" && !execspec.SupportedRunType(runType)) {
-			return def.String
-		}
-	}
-	if execspec.SupportedRunType(runType) {
-		return "ssh"
-	}
-	return "runner"
 }
 
 // fireWorkflow dispatches a scheduled workflow via the injected firer, honoring
@@ -966,7 +984,8 @@ const (
 	// dedupeEpisodeReason is dedupeEpisode for suppressions that carry NO
 	// concurrency key: a no-op while the most recent non-calendar outcome for
 	// this (job/workflow, schedule entry) is already a skip carrying THIS SAME
-	// reason. Correct for pause and the global cap (SL-A).
+	// reason. Correct for pause and the global cap (SL-A). A record that sets
+	// Day additionally ends the episode at midnight (see skipAlreadyRecorded).
 	//
 	// dedupeEpisode cannot serve them. It keys on concurrency_key, which PP-L8
 	// assigns only to Forbid-policy runs — every Allow job carries NULL, and
@@ -1007,6 +1026,7 @@ type skipRecord struct {
 	// Day is the app-zone day the fire landed on ('YYYY-MM-DD'), used by
 	// dedupeDay. Empty disables day de-duping (every suppression records), which
 	// is the correct degradation for callers that do not use dedupeDay.
+	// Under dedupeEpisodeReason it is optional and bounds the episode by the day.
 	Day string
 	// Loc is the zone Day was rendered in, so stored UTC timestamps can be
 	// re-rendered the same way when comparing. Nil degrades to time.Local, never
@@ -1197,17 +1217,29 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 		// matched on the reason so each suppression kind de-dupes only against
 		// itself. Calendar rows are excluded for the same reason dedupeEpisode
 		// excludes them: they are a different reason with a different rule.
-		var status, reason string
+		//
+		// A record that carries a Day bounds its episode by it: yesterday's row
+		// does not stand for today's fires. That is for refusals that can stand
+		// indefinitely while missed-run detection is still watching the job —
+		// detection accepts a skip only from the same app-zone day as the fire.
+		// Records with no Day (pause, cap, queue-full) keep the unbounded episode.
+		var status, reason, createdAt string
 		err := database.QueryRowContext(ctx, `
-			SELECT status, COALESCE(queued_reason,'') FROM runs
+			SELECT status, COALESCE(queued_reason,''), created_at FROM runs
 			 WHERE job_name = ? AND job_source = ? AND COALESCE(schedule_name,'') = ?
 			   AND suppressed_by_calendar IS NULL
 			 ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-			p.JobName, p.jobSourceOrDefault(), p.ScheduleName).Scan(&status, &reason)
+			p.JobName, p.jobSourceOrDefault(), p.ScheduleName).Scan(&status, &reason, &createdAt)
 		if err != nil {
 			return false, nil // no prior run (or unreadable): record it
 		}
-		return status == "skipped" && reason == rec.Reason, nil
+		if status != "skipped" || reason != rec.Reason {
+			return false, nil
+		}
+		if rec.Day != "" && calendar.DayOf(parseStamp(createdAt), rec.Loc) != rec.Day {
+			return false, nil // same reason, but an earlier day: a new episode
+		}
+		return true, nil
 
 	default: // dedupeEpisode
 		// Ignore calendar-suppressed rows entirely: they are a different reason
