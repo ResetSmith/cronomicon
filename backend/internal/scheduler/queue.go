@@ -93,11 +93,13 @@ func TryQueue(ctx context.Context, database *sql.DB, p EnqueueParams) (queued bo
 			(id, kind, name, source, scope, run_at, scheduled_by, created_at,
 			 status, params_json, concurrency_key, gate_kind, owner_uid)
 		VALUES (?, 'job', ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 'concurrency',
-			(SELECT uid FROM jobs WHERE name = ? AND source = ?))`,
+			-- R2-5: the producer's own identity when it has one; the pair is the
+			-- same single-row fallback resolveEnqueueUID keeps for legacy callers.
+			COALESCE(NULLIF(?, ''), (SELECT uid FROM jobs WHERE name = ? AND source = ?)))`,
 		db.NewID(), p.JobName, p.jobSourceOrDefault(), nullStr(p.Scope),
 		now, // due immediately; the GATE is what holds it, not the clock
 		queuedBy(p), now, string(blob), key,
-		p.JobName, p.jobSourceOrDefault()); err != nil {
+		p.JobUID, p.JobName, p.jobSourceOrDefault()); err != nil {
 		return false, fmt.Errorf("queue: insert pending row: %w", err)
 	}
 	return true, nil

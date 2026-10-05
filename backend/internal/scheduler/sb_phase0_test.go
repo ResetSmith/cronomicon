@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 )
 
@@ -10,12 +11,12 @@ import (
 // (.aidata/20261005-runners-update.md) found by reading and needed proven before
 // it builds on them.
 //
-// Every test here PASSES against its defect on purpose. They pin what the code
-// does today so the change that fixes each one has a test to turn around rather
-// than a claim to take on trust: Phase B (one executor resolver, keyed by
-// identity and scope) inverts the executor test and replaces the pin test with
-// its bound-scope equivalent; Phase C (the pin retired) deletes what is left of
-// the pin test.
+// The pin and executor tests PASS against their defect on purpose. They pin
+// what the code does today so the change that fixes each one has a test to turn
+// around rather than a claim to take on trust: Phase B (one executor resolver,
+// keyed by identity and scope) inverts the executor test and replaces the pin
+// test with its bound-scope equivalent; Phase C (the pin retired) deletes what
+// is left of the pin test. The two identity tests guard a defect that is fixed.
 
 // TestScheduledPinnedShellJobQueuesForSSH proves the pin is not enforced on a
 // scheduled fire. RT-Q5 says a pinned run whose executor RESOLVES to ssh is
@@ -104,28 +105,28 @@ func fireTwins(t *testing.T, pool *sql.DB, column string) map[string]string {
 	return got
 }
 
-// TestScheduledFireStampsSiblingIdentityForSameNamedJob proves a scheduled run
-// of one same-named job is recorded as its sibling. fire() receives the job's
-// uid and passes it on every skip-record path, but the EnqueueParams for the run
-// that actually executes omits JobUID, so resolveEnqueueUID falls back to the
-// (name, source) pair — "whichever row SQLite returns", in that function's own
-// words, and its claim that every real producer passes the uid is not true of
-// this one. Everything the run-row writer snapshots by uid follows the wrong
-// job: the run fired for one twin on its scope carries the other twin's
-// identity, script reference and content hash.
-//
-// Found while writing the executor test below; it is not part of the plan and
-// is pinned here so it is not lost. Order-independent: it asserts the two runs
-// are indistinguishable, not which twin won.
-func TestScheduledFireStampsSiblingIdentityForSameNamedJob(t *testing.T) {
+// TestScheduledFireCarriesItsOwnJobIdentity guards the fix for a defect Phase 0
+// found: fire() passed the job's uid on every skip-record path but omitted it
+// from the EnqueueParams of the run that executes, so resolveEnqueueUID fell
+// back to the (name, source) pair and a scheduled run of one same-named job was
+// recorded as its sibling — the other job's identity, script reference and
+// content hash, on this job's scope. Everything the run-row writer snapshots by
+// uid must follow the job that was fired.
+func TestScheduledFireCarriesItsOwnJobIdentity(t *testing.T) {
 	pool := mustPool(t)
 	seedTwins(t, pool)
 
-	for _, column := range []string{"job_uid", "script_ref", "content_hash"} {
+	for column, want := range map[string]map[string]string{
+		"job_uid":      {"scope-a": "uid-twin-a", "scope-b": "uid-twin-b"},
+		"script_ref":   {"scope-a": "scripts/a.sh", "scope-b": "scripts/b.sh"},
+		"content_hash": {"scope-a": "hash-a", "scope-b": "hash-b"},
+	} {
 		got := fireTwins(t, pool, column)
-		if got["scope-a"] != got["scope-b"] {
-			t.Fatalf("%s differs between the twins' runs (%v): the fire is identity-aware now — "+
-				"invert this test to assert each run carries its own job's %s", column, got, column)
+		for scope, w := range want {
+			if got[scope] != w {
+				t.Errorf("%s on %s = %q, want %q (the run must carry its own job, not its sibling)",
+					column, scope, got[scope], w)
+			}
 		}
 		if _, err := pool.Exec(`DELETE FROM runs`); err != nil {
 			t.Fatalf("reset runs: %v", err)
@@ -133,12 +134,43 @@ func TestScheduledFireStampsSiblingIdentityForSameNamedJob(t *testing.T) {
 	}
 }
 
+// TestQueuedFireCarriesItsOwnJobIdentity is the same guard for a fire parked
+// behind a Queue-policy gate: the pending row's owner_uid, and the frozen params
+// promotion later enqueues from, must both name the job that was fired.
+func TestQueuedFireCarriesItsOwnJobIdentity(t *testing.T) {
+	pool := mustPool(t)
+	seedTwins(t, pool)
+
+	queued, err := TryQueue(context.Background(), pool, EnqueueParams{
+		JobName: "twin", JobSource: "cronomicon", JobUID: "uid-twin-b",
+		RunType: "bash", Scope: "scope-b", ConcurrencyKey: "uid-twin-b",
+	})
+	if err != nil || !queued {
+		t.Fatalf("TryQueue = %v, %v; want queued", queued, err)
+	}
+	var owner, params string
+	if err := pool.QueryRow(`SELECT COALESCE(owner_uid,''), params_json FROM pending_runs`).
+		Scan(&owner, &params); err != nil {
+		t.Fatalf("fetch pending row: %v", err)
+	}
+	if owner != "uid-twin-b" {
+		t.Errorf("owner_uid = %q, want uid-twin-b", owner)
+	}
+	var frozen EnqueueParams
+	if err := json.Unmarshal([]byte(params), &frozen); err != nil {
+		t.Fatalf("decode params: %v", err)
+	}
+	if frozen.JobUID != "uid-twin-b" {
+		t.Errorf("frozen JobUID = %q, want uid-twin-b", frozen.JobUID)
+	}
+}
+
 // TestResolveExecutorCannotTellSameNamedJobsApart proves the executor lookup
-// crosses job identities independently of the defect above. ResolveExecutor
-// reads jobs.executor by (name, source) and takes no uid at all, so two twins
-// declaring different executors get one answer between them and one of them runs
-// on an executor its definition did not ask for. Passing JobUID to the enqueue
-// does not fix this; the resolver needs the identity too (plan Phase B).
+// still crosses job identities. ResolveExecutor reads jobs.executor by (name,
+// source) and takes no uid at all, so two twins declaring different executors
+// get one answer between them and one of them runs on an executor its definition
+// did not ask for. Passing JobUID to the enqueue (above) does not fix this; the
+// resolver needs the identity too (plan Phase B).
 func TestResolveExecutorCannotTellSameNamedJobsApart(t *testing.T) {
 	pool := mustPool(t)
 	seedTwins(t, pool)

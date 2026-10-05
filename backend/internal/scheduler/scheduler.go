@@ -575,6 +575,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	params := EnqueueParams{
 		JobName:        jobName,
 		JobSource:      source,
+		JobUID:         jobUID,
 		RunType:        runType,
 		Scope:          scope,
 		TargetHost:     jobTargetHost.String,
