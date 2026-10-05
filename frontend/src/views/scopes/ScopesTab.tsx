@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { useColumnWidths, useGet, rows, useTableSort } from "../../hooks";
+import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, SkeletonRows, TypeBadge } from "../../components/ui";
+import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, TypeBadge, matchesTags } from "../../components/ui";
 import {
   Btn,
   ConfirmDialog,
@@ -41,6 +41,7 @@ export interface ScopeRow {
   inventoryFormat?: string | null;
   projectionStatus?: string | null; // ok | degraded | unavailable
   agencies?: { id: string; name: string }[]; // network-isolation zones (T3.8 — a SET; scopes.agency_id was dropped in migration 700)
+  tags?: string[]; // operator-owned (migration 1160); never synced from Git
   lastChangedAt?: string | null;
 }
 
@@ -83,6 +84,7 @@ const COL_W: Record<string, number> = {
   source: 100,
   description: 220,
   types: 160,
+  tags: 140,
   hosts: 100,
   agencies: 150,
   updated: 150,
@@ -106,14 +108,19 @@ export function ScopesTab({
   error,
   refetch,
   canEdit,
+  dep = 0,
 }: {
   scopes: ScopeRow[];
   loading: boolean;
   error: string | null;
   refetch: () => void;
   canEdit: boolean;
+  /** The parent's list-load counter. A fresh load drops the optimistic tag overrides. */
+  dep?: number;
 }) {
   const [search, setSearch] = useState("");
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ScopeRow | null>(null);
@@ -125,6 +132,17 @@ export function ScopesTab({
   const { data: agencyData } = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencies = rows<{ id: string; name: string }>(agencyData);
   const cw = useColumnWidths("envvars-scopes");
+
+  // Operator-owned scope tags (migration 1160) — optimistic edits via the
+  // dedicated PUT /scope-tags/{scopeId}; the override map resets on every list
+  // load (dep). They work on git-source scopes too: the tags never come from Git.
+  const tagState = useInlineTags<ScopeRow>(
+    dep,
+    (s) => String(s.id),
+    (s) => s.tags,
+    (s, next) =>
+      api.PUT("/scope-tags/{scopeId}", { params: { path: { scopeId: s.id! }, header: csrfHeader }, body: { tags: next } }),
+  );
 
   const resync = async () => {
     setResyncing(true);
@@ -146,10 +164,15 @@ export function ScopesTab({
 
   const filtered = scopes.filter(
     (s) =>
-      !search ||
-      s.scope.toLowerCase().includes(search.toLowerCase()) ||
-      (s.description || "").toLowerCase().includes(search.toLowerCase()),
+      (!search ||
+        s.scope.toLowerCase().includes(search.toLowerCase()) ||
+        (s.description || "").toLowerCase().includes(search.toLowerCase())) &&
+      matchesTags(tagState.tagsFor(s), tagFilter, tagMatch),
   );
+  const clearFilters = () => {
+    setSearch("");
+    setTagFilter([]);
+  };
 
   // Sort after the search filter (§3.1). The tableId reuses the column-width
   // id so the two per-table preferences share one identity.
@@ -217,6 +240,7 @@ export function ScopesTab({
         );
       },
     },
+    { key: "tags", label: "Tags", width: COL_W.tags, cell: (row) => <InlineTags tags={tagState.tagsFor(row)} max={2} /> },
     {
       key: "hosts",
       label: "Hosts",
@@ -330,6 +354,7 @@ export function ScopesTab({
         <div style={{ flex: 1 }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search scopes by name or description..." />
         </div>
+        <TagFilterSelect items={scopes} selected={tagFilter} onChange={setTagFilter} getTags={(s) => tagState.tagsFor(s)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
         {canEdit && (
           <>
@@ -348,7 +373,7 @@ export function ScopesTab({
       {/* VU-14 — "No scopes match" was shown whether or not anything was typed.
           An empty catalog offers Add Scope (the same handler as the toolbar, and
           hidden for a caller without ConfigureApp, who cannot create one); a
-          filtered-empty list offers the search back. */}
+          filtered-empty list offers the search and the tag filter back. */}
       {!loading && !error && filtered.length === 0 && (
         <div style={{ color: c.textSec }}>
           {scopes.length === 0 ? (
@@ -364,10 +389,10 @@ export function ScopesTab({
             </>
           ) : (
             <>
-              <div>No scopes match “{search.trim()}”.</div>
+              <div>{search.trim() && tagFilter.length === 0 ? `No scopes match “${search.trim()}”.` : "No scopes match the current filters."}</div>
               <div style={{ marginTop: 12 }}>
-                <Btn small onClick={() => setSearch("")}>
-                  Clear search
+                <Btn small onClick={clearFilters}>
+                  {tagFilter.length === 0 ? "Clear search" : "Clear filters"}
                 </Btn>
               </div>
             </>
@@ -506,6 +531,26 @@ export function ScopesTab({
                               Network-isolation zone — only a runner in this agency can execute this scope's jobs, and
                               only secrets and keys in it are injectable.
                             </span>
+                          </div>
+                        )}
+                        {/* Tags are shown to everyone who can see the scope and
+                            edited only with ConfigureApp, like every other scope
+                            write. A missing permission is not a precondition the
+                            reader can fix, so the editor goes read-only rather
+                            than disabled-with-a-reason. */}
+                        {s.id != null && (
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ ...labelStyle(), marginBottom: 6 }}>
+                              Tags{tagState.tagsFor(s).length ? ` (${tagState.tagsFor(s).length})` : ""}
+                            </div>
+                            {canEdit || tagState.tagsFor(s).length > 0 ? (
+                              <TagEditor tags={tagState.tagsFor(s)} onChange={(next) => tagState.save(s, next)} disabled={!canEdit} />
+                            ) : (
+                              <span style={{ color: c.textSec, fontSize: c.fontSm, fontStyle: "italic" }}>No tags</span>
+                            )}
+                            {tagState.errors[String(s.id)] && (
+                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(s.id)]}</div>
+                            )}
                           </div>
                         )}
                         {canEdit && s.id != null && <InventoryPanel scopeId={s.id} />}
