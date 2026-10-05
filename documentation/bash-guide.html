@@ -42,7 +42,7 @@
 
 <h2>3 · Targets: scopes, host records &amp; bastions</h2>
 
-<p>Every scope supports <code>bash</code> — it is the “bash floor”; the set can never exclude it. A bash run's blast radius is then decided in this order:</p>
+<p>Any scope can be the target of a bash job; a scope does not declare run types. A bash run's blast radius is decided in this order:</p>
 
 <ul>
 <li><strong>A pinned <code>target_host</code> on the job wins outright</strong> — over scope fan-out <em>and</em> over a per-run host subset. The pin is honored on <strong>every</strong> run path (manual, cron, workflow step); before that, scheduled fires of a pinned job fanned out across the whole scope. If you were relying on that fan-out, clear the pin deliberately.</li>

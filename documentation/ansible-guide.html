@@ -80,7 +80,7 @@ spec:
 <p>An Ansible run must target a <strong>scope that declares the <code>ansible</code> run type and carries an inventory</strong> — the server refuses to build a runner manifest without one (<code>409 no_inventory</code>). Two ways to get there:</p>
 
 <ul>
-<li><strong>Git-synced</strong>: files in <code>inventory/*.ini</code> (read <strong>flat</strong>, not recursively — flatten and namespace nested department trees). A <code># cronomicon:v1 types=bash,ansible</code> pragma at the top of the file (or a <code>.cronomicon.yaml</code> sidecar) declares the scope's run types.</li>
+<li><strong>Git-synced</strong>: files in <code>inventory/*.ini</code> (read <strong>flat</strong>, not recursively — flatten and namespace nested department trees). A <code># cronomicon:v1</code> pragma at the top of the file (or a <code>.cronomicon.yaml</code> sidecar) can declare the scope's <code>owner</code> and <code>description</code>. The former <code>types=…</code> directive is ignored since 2.1.0 — a scope no longer declares run types — and can be deleted; the sync log and <code>cronomicon validate</code> print a warning for it, never an error.</li>
 <li><strong>In-app</strong>: <strong>Scopes → + Add Scope</strong> and paste the full INI into the <em>Ansible INI Inventory</em> input — validated inline, projected atomically on save. See <a href="user-manual.html#scopes">User Manual §11.1</a>.</li>
 </ul>
 

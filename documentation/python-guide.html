@@ -37,10 +37,10 @@
 
 <h2>3 · Targets: what differs from Bash</h2>
 
-<p>Targeting follows the shared shell-family rules — a scope fans out to its member hosts, a pinned <code>target_host</code> wins outright on every run path, a per-run host subset is SSH-executor-only (<code>422 scope_membership</code> otherwise), host keys fail closed on both executors. One thing is Python-specific:</p>
+<p>Targeting follows the shared shell-family rules — a scope fans out to its member hosts, a pinned <code>target_host</code> wins outright on every run path, a per-run host subset is SSH-executor-only (<code>422 scope_membership</code> otherwise), host keys fail closed on both executors. One thing is worth saying for Python:</p>
 
 <ul>
-<li><strong>Declare <code>python</code> on the scope.</strong> The “bash floor” means every scope supports <code>bash</code>; any other run type is a declared chip on the scope, so add <span class="tag">python</span> to the scopes whose hosts carry an interpreter. A pragma does the same for a Git-synced inventory: <code># cronomicon:v1 types=bash,python</code>.</li>
+<li><strong>Nothing to declare on the scope.</strong> A scope does not list run types (the “supported run types” field was removed in 2.1.0), so there is no <code>python</code> entry to add. If only some of your scopes have hosts that carry an interpreter, a <strong>tag</strong> such as <span class="tag">python</span> on the Scopes page makes them easy to find. A tag is a label only; it does not decide where or whether a job runs. An old <code># cronomicon:v1 types=…</code> pragma in a Git-synced inventory is ignored and can be deleted.</li>
 </ul>
 
 <hr />

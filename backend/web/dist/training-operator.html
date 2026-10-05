@@ -2763,8 +2763,7 @@
         <summary><span class="tr-from">Agent Environment</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Scope</span><span></span></summary>
         <div class="tr-body">
             <p>A named set of hosts a job is allowed to run on. Closest thing to an agent environment, and
-                it does more: a scope also declares which run types it supports and can carry an Ansible
-                inventory.</p>
+                it does more: a scope can carry tags and an Ansible inventory.</p>
             <p>Crucially it is a <em>boundary</em>, not just a grouping — a run cannot reach a host that is
                 not in its scope. M5 covers this.</p>
         </div>
