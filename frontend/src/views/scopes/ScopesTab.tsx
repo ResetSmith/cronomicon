@@ -4,7 +4,7 @@ import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../.
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, TypeBadge, matchesTags } from "../../components/ui";
+import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   ConfirmDialog,
@@ -19,7 +19,6 @@ import {
   tdStyle,
   } from "../envvars/ui";
 
-import { RUN_TYPES, type RunType } from "../../runtypes";
 
 export interface ScopeRow {
   id?: string; // UUIDv7 (K-3)
@@ -31,12 +30,11 @@ export interface ScopeRow {
   gitlabUrl?: string | null;
   sidecarPath?: string | null;
   hosts?: string[];
-  capability?: {
-    types?: RunType[];
-    origin?: "local" | "sidecar" | "pragma" | "inference";
-    owner?: string | null;
-    errors?: { file?: string; line?: number; message: string }[];
-  };
+  // Git metadata of a git-source scope: the owner its sidecar or pragma declares
+  // and the line-numbered errors from the strict pragma parse. (Until 2.1.0 both
+  // rode on a `capability` object beside the scope's "supported run types".)
+  owner?: string | null;
+  pragmaErrors?: { file?: string; line?: number; message: string }[];
   hasInventory?: boolean;
   inventoryFormat?: string | null;
   projectionStatus?: string | null; // ok | degraded | unavailable
@@ -69,13 +67,6 @@ interface BrokenRef {
   name?: string;
 }
 
-const originLabel: Record<string, string> = {
-  local: "Local — set in scope editor",
-  sidecar: "Sidecar file",
-  pragma: "Pragma (top of inventory file)",
-  inference: "Inferred from inventory shape",
-};
-
 // Default column widths (px) so table-layout:fixed has a sensible starting point
 // before the user drags (V1.1-7). Stored overrides come from useColumnWidths.
 const COL_W: Record<string, number> = {
@@ -83,7 +74,6 @@ const COL_W: Record<string, number> = {
   scope: 200,
   source: 100,
   description: 220,
-  types: 160,
   tags: 140,
   hosts: 100,
   agencies: 150,
@@ -93,8 +83,8 @@ const COL_W: Record<string, number> = {
 
 // Sortable columns (Phase 2, the sorting-update plan §3.2), driven by
 // useTableSort. Source sorts by the rendered label (Cronomicon/Git) and Hosts by
-// the same count the cell shows; Description / Supported Types / expand /
-// actions stay unsortable.
+// the same count the cell shows; Description / Tags / expand / actions stay
+// unsortable.
 const SORT_COLS: SortColumn<ScopeRow>[] = [
   { key: "scope", get: (s) => s.scope, type: "text" },
   { key: "source", get: (s) => (s.source === "cronomicon" ? "Cronomicon" : "Git"), type: "text" },
@@ -156,7 +146,7 @@ export function ScopesTab({
     setNotice({
       kind: "info",
       text: r
-        ? `Re-synced ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} capability changes — ${r.errors?.length ?? 0} pragma errors`
+        ? `Re-synced ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
         : "Re-synced inventories from GitLab",
     });
     refetch();
@@ -190,7 +180,27 @@ export function ScopesTab({
       pin: "first",
       cell: (row) => <ExpandChevron open={expanded === row.id} />,
     },
-    { key: "scope", label: "Scope", sortKey: "scope", width: COL_W.scope, tdStyle: { fontWeight: 600 }, cell: (row) => row.scope },
+    {
+      key: "scope",
+      label: "Scope",
+      sortKey: "scope",
+      width: COL_W.scope,
+      tdStyle: { fontWeight: 600 },
+      cell: (row) => {
+        const n = row.pragmaErrors?.length ?? 0;
+        if (n === 0) return row.scope;
+        // The ⚠ flags a git inventory whose `# cronomicon:v1` pragma did not
+        // parse; the expanded row lists the errors line by line.
+        return (
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            {row.scope}
+            <span title={`${n} pragma parse error${n === 1 ? "" : "s"}`} aria-label={`${n} pragma parse error${n === 1 ? "" : "s"}`} style={{ color: c.warning, fontSize: c.fontSm }}>
+              ⚠
+            </span>
+          </span>
+        );
+      },
+    },
     {
       key: "source",
       label: "Source",
@@ -208,37 +218,6 @@ export function ScopesTab({
       width: COL_W.description,
       tdStyle: { color: c.textSec, fontSize: c.fontSm, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
       cell: (row) => row.description || <EmptyCell />,
-    },
-    {
-      key: "types",
-      label: "Supported Types",
-      width: COL_W.types,
-      cell: (row) => {
-        const cap = row.capability;
-        const capErrors = cap?.errors ?? [];
-        return (
-          <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-            {(cap?.types ?? []).length === 0 ? (
-              <span style={{ color: c.textSec, fontStyle: "italic", fontSize: c.fontSm }}>—</span>
-            ) : (
-              (cap?.types ?? []).map((t) => (
-                <TypeBadge
-                  key={t}
-                  type={t}
-                  withLabel
-                  dashed={cap?.origin === "inference"}
-                  title={`${t} — ${originLabel[cap?.origin ?? "inference"] ?? cap?.origin}`}
-                />
-              ))
-            )}
-            {capErrors.length > 0 && (
-              <span title={`${capErrors.length} pragma parse error(s)`} style={{ color: c.warning, fontSize: c.fontSm }}>
-                ⚠
-              </span>
-            )}
-          </span>
-        );
-      },
     },
     { key: "tags", label: "Tags", width: COL_W.tags, cell: (row) => <InlineTags tags={tagState.tagsFor(row)} max={2} /> },
     {
@@ -413,8 +392,7 @@ export function ScopesTab({
             {sort.sorted.map((s) => {
               const isExp = expanded === s.id;
               const isLocal = s.source === "cronomicon";
-              const cap = s.capability;
-              const capErrors = cap?.errors ?? [];
+              const pragmaErrors = s.pragmaErrors ?? [];
               return (
                 <Fragment key={s.id ?? s.scope}>
                   <HoverTr
@@ -433,7 +411,7 @@ export function ScopesTab({
                             Refresh drives the view's list reload. `refetch` here is a
                             pure dep bump in Scopes.tsx (it does not collapse the row). */}
                         <DetailPanel also={refetch}>
-                        {capErrors.length > 0 && (
+                        {pragmaErrors.length > 0 && (
                           <div
                             style={{
                               marginBottom: 12,
@@ -445,23 +423,20 @@ export function ScopesTab({
                               color: c.warning,
                             }}
                           >
-                            <strong>Pragma error{capErrors.length === 1 ? "" : "s"}:</strong>{" "}
-                            {capErrors.map((err, i) => (
+                            <strong>Pragma error{pragmaErrors.length === 1 ? "" : "s"}:</strong>{" "}
+                            {pragmaErrors.map((err, i) => (
                               <span key={i} style={{ marginRight: 12 }}>
                                 {err.line != null && <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>line {err.line}</code>}{" "}
                                 {err.message}
                               </span>
                             ))}
-                            <span style={{ color: c.textSec, marginLeft: 6 }}>Falling back to inferred types.</span>
                           </div>
                         )}
                         <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "6px 16px", fontSize: c.fontSm }}>
-                          <span style={{ color: c.textSec }}>Capability origin</span>
-                          <span>{originLabel[cap?.origin ?? ""] ?? "—"}</span>
-                          {cap?.owner && (
+                          {s.owner && (
                             <>
                               <span style={{ color: c.textSec }}>Owner</span>
-                              <span>{cap.owner}</span>
+                              <span>{s.owner}</span>
                             </>
                           )}
                           {s.name && (
@@ -937,9 +912,6 @@ function ScopeFormModal({
   const [name, setName] = useState(initial?.scope ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [hostsText, setHostsText] = useState((initial?.hosts ?? []).join("\n"));
-  const [types, setTypes] = useState<RunType[]>(
-    initial?.capability?.types && initial.capability.types.length > 0 ? [...initial.capability.types] : ["bash"],
-  );
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -961,17 +933,6 @@ function ScopeFormModal({
   }, [isEdit, initial]);
 
   const renameDiffers = isEdit && name.trim() !== initial.scope;
-
-  const toggleType = (t: RunType) => {
-    setTypes((cur) => {
-      if (cur.includes(t)) {
-        // bash floor (S10): bash is always declared; never allow an empty set.
-        if (t === "bash" || cur.length === 1) return cur;
-        return cur.filter((x) => x !== t);
-      }
-      return [...cur, t];
-    });
-  };
 
   const save = async () => {
     const scopeName = name.trim();
@@ -1001,7 +962,7 @@ function ScopeFormModal({
     setBusy(true);
     setFormError("");
     setLineErrs([]);
-    const body = { scope: scopeName, description, hosts, supportedTypes: types, rawInventory: rawInv };
+    const body = { scope: scopeName, description, hosts, rawInventory: rawInv };
     if (isEdit && initial.id != null) {
       const { data, error: e } = await api.PATCH("/scopes/{scopeId}", {
         params: { path: { scopeId: initial.id }, header: csrfHeader },
@@ -1089,40 +1050,6 @@ function ScopeFormModal({
             placeholder="Short description of what this scope targets"
             style={inputStyle()}
           />
-        </div>
-        <div>
-          <label style={labelStyle()}>Supported run types *</label>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {RUN_TYPES.map((t) => {
-              const selected = types.includes(t);
-              return (
-                <div
-                  key={t}
-                  onClick={() => toggleType(t)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "5px 11px",
-                    borderRadius: c.radiusChip,
-                    fontSize: c.fontSm,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    userSelect: "none",
-                    background: selected ? `${c.primary}2e` : "transparent",
-                    border: selected ? `1px solid ${c.primary}80` : `1px dashed ${c.border}`,
-                    color: selected ? c.primary : c.textSec,
-                  }}
-                >
-                  {selected ? "✓" : "✕"} {t}
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 5 }}>
-            Declared capability is advisory — jobs of other types may still run but are flagged. Bash is always included
-            (bash floor).
-          </div>
         </div>
         <div>
           <label style={labelStyle()}>Hosts Input Mode</label>

@@ -1579,9 +1579,6 @@ export function RunDialog({
   const credsQ = useGet<{ label?: string }[]>(() => api.GET("/ssh/credentials"), []);
   const credentialLabels = (credsQ.data ?? []).map((cr) => cr.label ?? "").filter(Boolean);
 
-  const chosen = scopes.find((s) => s.scope === scope);
-  const chosenTypes = chosen?.capability?.types;
-  const incompatible = chosen && job.type && chosenTypes && chosenTypes.length > 0 && !chosenTypes.includes(job.type);
 
   // Hosts come from the effective scope (the override, else the job's own scope).
   const effScope = scope || job.scope || "";
@@ -1928,16 +1925,11 @@ export function RunDialog({
   }, [advancedOpen]);
   const requireReview = declaredPrompts.length > 0;
   const reviewGate = requireReview && !targetsVisited;
-  // An incompatible scope is a warning the operator has to see, so it opens the
-  // fold for them — via an effect rather than by forcing `open`, which would leave
-  // the toggle dead.
-  useEffect(() => {
-    if (incompatible) setTargetsOpen(true);
-  }, [incompatible]);
   // T1.7 — the reference preflight. A reference that will not resolve in the
-  // EFFECTIVE scope fails the run closed at dispatch, so it earns exactly the same
-  // treatment as an incompatible scope: it shows in the collapsed summary and
-  // springs the fold open. The check is owned HERE, not inside the fold's panel,
+  // EFFECTIVE scope fails the run closed at dispatch, so it is a warning the
+  // operator has to see: it shows in the collapsed summary and springs the fold
+  // open — via an effect rather than by forcing `open`, which would leave the
+  // toggle dead. The check is owned HERE, not inside the fold's panel,
   // because Disclosure unmounts its children while collapsed — a check that only
   // runs once opened could never be what opens it.
   // V2-11 — the operator's per-run reference additions. State lives HERE (not in
@@ -2651,8 +2643,7 @@ export function RunDialog({
               paragraph explaining a checkbox they haven't touched.
             · what could GO WRONG or LEAK (both plaintext-secret caveats, the
               reserved-extra-var guard, the subset/group-subset and limit-conflict
-              verdicts, the RB-26 unscoped-run wording, the incompatible-scope
-              warning) → always. Suppressing a warning until someone engages with the
+              verdicts, the RB-26 unscoped-run wording) → always. Suppressing a warning until someone engages with the
               control is exactly backwards: the operator who most needs it is the one
               who isn't looking.
           Nothing is deleted; the same words appear the moment the field is engaged.
@@ -2696,16 +2687,10 @@ export function RunDialog({
           {scopes.map((s) => (
             <option key={s.id ?? s.scope} value={s.scope ?? ""}>
               {s.scope}
-              {s.capability?.types?.length ? ` — ${s.capability.types.join(", ")}` : ""}
             </option>
           ))}
         </select>
       </FormField>
-      {incompatible && (
-        <div style={{ fontSize: c.fontSm, color: c.warning, background: c.warningBg, border: `1px solid ${c.warning}30`, borderRadius: c.radiusSurface, padding: "8px 10px", marginBottom: 8 }}>
-          ⚠ {scope} does not declare <strong>{job.type}</strong> support. The run is allowed but may stay queued waiting for a capable runner.
-        </div>
-      )}
 
 
       {/* F2/RP-1 — host subset within the bound scope, offered for BOTH executors.

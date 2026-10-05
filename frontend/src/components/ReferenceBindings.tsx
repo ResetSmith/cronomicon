@@ -1256,8 +1256,8 @@ export function useRunReferencePreflight({
     loading,
     error,
     // The count the dialog folds into its collapsed summary and uses to spring the
-    // fold open — the same treatment an incompatible scope gets, so a collapsed
-    // fold can never hide a run that will fail closed at dispatch.
+    // fold open, so a collapsed fold can never hide a run that will fail closed
+    // at dispatch.
     unresolved: verdicts.filter((v) => !v.ok).length,
   };
 }

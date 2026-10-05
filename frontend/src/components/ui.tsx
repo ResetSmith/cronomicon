@@ -1873,20 +1873,17 @@ function typeTone(t: string): { bg: string; color: string } {
 }
 // TypeBadge renders a run-type as a colored chip. Two shapes from one component
 // (VC.7): icon-only (Jobs/History dense columns — the default) and `withLabel`
-// (Scopes supported-types, Runners capabilities — icon + lowercase mono name).
-// `dashed` draws a dashed accent border for Scopes' inferred-vs-declared origin
-// cue; `title` overrides the hover tooltip (e.g. to carry that origin).
+// (Runners capabilities — icon + lowercase mono name). `title` overrides the
+// hover tooltip.
 export function TypeBadge({
   type,
   size = 16,
   withLabel = false,
-  dashed = false,
   title,
 }: {
   type?: string | null;
   size?: number;
   withLabel?: boolean;
-  dashed?: boolean;
   title?: string;
 }) {
   const { mode } = useTheme();
@@ -1904,7 +1901,6 @@ export function TypeBadge({
     borderRadius: c.radiusChip,
     background: bg,
     color,
-    border: dashed ? `1px dashed ${color}` : undefined,
     boxSizing: "border-box",
   };
   const textStyle: CSSProperties = {

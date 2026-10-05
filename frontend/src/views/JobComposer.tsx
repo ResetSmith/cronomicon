@@ -456,9 +456,8 @@ export function JobComposer() {
   });
   const inlineHasEnv = inlineSchedules.some((e) => e.env.some((r) => r.key.trim() !== ""));
 
-  // JC-P5 — run-type / executor / scope-capability awareness from the selected script
-  // and scope. Capability is advisory (warn, never block); the SSH lock is hard
-  // (the backend 422s ssh × ansible/terraform at run time). selectedScript is
+  // JC-P5 — run-type / executor awareness from the selected script. The SSH lock
+  // is hard (the backend 422s ssh × ansible/terraform at run time). selectedScript is
   // resolved by the ScriptPicker (state above), so it works for off-page scripts too.
   const runType = selectedScript?.runType;
   const runnerOnly = isRunnerOnly(runType);
@@ -466,8 +465,6 @@ export function JobComposer() {
   // ansible may carry a declared "connect as"; terraform 422s.
   const identityCapable = isIdentityCapable(runType);
   const chosenScope = scopesList.find((s) => s.scope === scope);
-  const chosenTypes = chosenScope?.capability?.types;
-  const scopeIncompatible = !!(chosenScope && runType && chosenTypes && chosenTypes.length > 0 && !chosenTypes.includes(runType));
   const scopeHosts = chosenScope?.hosts ?? [];
 
   // JC-P4 — env context for the chosen scope. '*'/empty scope = a global (mirrors the
@@ -927,7 +924,6 @@ export function JobComposer() {
             value={scope}
             onChange={setScope}
             suggestions={scopeSuggestions}
-            scopes={scopesList}
             style={input()}
             allowAll={canComposeUnbound}
           />
@@ -1071,12 +1067,6 @@ export function JobComposer() {
           ) : (
             <>Bastion hops are unaffected.</>
           )}
-        </div>
-      )}
-
-      {scopeIncompatible && (
-        <div style={{ fontSize: c.fontSm, color: c.warning, background: c.warningBg, border: `1px solid ${c.warning}30`, borderRadius: c.radiusSurface, padding: "8px 10px" }}>
-          ⚠ Scope <strong>{scope}</strong> doesn't declare <strong>{runType}</strong> support. The job is allowed, but runs may stay queued waiting for a capable runner.
         </div>
       )}
 

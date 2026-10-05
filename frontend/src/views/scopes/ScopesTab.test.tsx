@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 
 const deletes: { path: string; params: unknown }[] = [];
 const puts: { path: string; params: unknown; body: unknown }[] = [];
+const posts: { path: string; body: unknown }[] = [];
 
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
@@ -24,6 +25,10 @@ vi.mock("../../api/client", async (importOriginal) => {
       ),
       DELETE: vi.fn(async (path: string, opts: { params?: unknown }) => {
         deletes.push({ path, params: opts.params });
+        return { data: {} };
+      }),
+      POST: vi.fn(async (path: string, opts: { body?: unknown }) => {
+        posts.push({ path, body: opts.body });
         return { data: {} };
       }),
       // The scope-tags write answers with the scope carrying its normalized tags.
@@ -43,7 +48,6 @@ const LOCAL: ScopeRow = {
   source: "cronomicon",
   description: "operator-authored",
   hosts: ["host1.internal"],
-  capability: { types: ["bash"], origin: "local" },
 };
 const GIT: ScopeRow = {
   id: "019fa189-0002-7000-8000-000000000002",
@@ -51,7 +55,6 @@ const GIT: ScopeRow = {
   source: "git",
   description: "from GitLab",
   gitlabUrl: "https://gitlab.example/inventories/prod-web",
-  capability: { types: ["ansible"], origin: "pragma" },
 };
 
 const renderTab = (scopes: ScopeRow[], canEdit: boolean) =>
@@ -65,6 +68,7 @@ const deleteButtons = (q: ReturnType<typeof within>) => q.queryAllByRole("button
 beforeEach(() => {
   deletes.length = 0;
   puts.length = 0;
+  posts.length = 0;
 });
 afterEach(cleanup);
 
@@ -196,5 +200,63 @@ describe("ScopesTab — tags", () => {
     expect(tagInput(q)).toBeNull();
     expect(q.queryByRole("button", { name: /Remove tag/ })).toBeNull();
     expect(puts).toHaveLength(0);
+  });
+});
+
+// ST band — "supported run types" are gone from a scope. They were advisory and
+// nothing acted on them; what a scope shows now is its tags and, for a git-source
+// scope, the Git metadata that used to ride along with the capability.
+describe("ScopesTab — no supported run types", () => {
+  const GIT_META: ScopeRow = {
+    ...GIT,
+    name: "prod-web.ini",
+    owner: "infra-platform",
+    sidecarPath: "inventory/prod-web.cronomicon.yaml",
+    pragmaErrors: [{ line: 2, message: 'unknown directive: "ownr"' }],
+  };
+
+  it("has no Supported Types column and no capability origin", async () => {
+    const { container } = renderTab([LOCAL, GIT_META], true);
+    const q = within(container);
+    expect(q.queryByText("Supported Types")).toBeNull();
+    expect(q.getByText("Tags")).toBeTruthy();
+    expand(q, "prod-web");
+    await waitFor(() => expect(q.getByText("Owner")).toBeTruthy());
+    expect(q.queryByText("Capability origin")).toBeNull();
+    expect(q.queryByText(/inferred types/i)).toBeNull();
+  });
+
+  it("keeps the Git metadata: owner, inventory file, sidecar and the pragma errors", async () => {
+    const { container } = renderTab([LOCAL, GIT_META], true);
+    const q = within(container);
+    // The row flags the unparsed pragma beside the scope name…
+    expect(q.getByLabelText("1 pragma parse error")).toBeTruthy();
+    expand(q, "prod-web");
+    // …and the expanded row says what and where.
+    await waitFor(() => expect(q.getByText("infra-platform")).toBeTruthy());
+    expect(q.getByText("prod-web.ini")).toBeTruthy();
+    expect(q.getByText("inventory/prod-web.cronomicon.yaml")).toBeTruthy();
+    expect(q.getByText(/unknown directive/)).toBeTruthy();
+    expect(q.getByText("line 2")).toBeTruthy();
+  });
+
+  it("creates a scope without asking for, or sending, run types", async () => {
+    const { container } = renderTab([LOCAL], true);
+    const q = within(container);
+    fireEvent.click(q.getByRole("button", { name: "+ Add Scope" }));
+    // The modal renders in a portal, so query the document.
+    const body = within(document.body);
+    await waitFor(() => expect(body.getByPlaceholderText("e.g. Edge-Lab")).toBeTruthy());
+    expect(body.queryByText(/Supported run types/)).toBeNull();
+    expect(body.queryByText(/bash floor/i)).toBeNull();
+
+    fireEvent.change(body.getByPlaceholderText("e.g. Edge-Lab"), { target: { value: "New-Scope" } });
+    fireEvent.change(body.getByPlaceholderText(/host1\.internal/), { target: { value: "h1.internal" } });
+    fireEvent.click(body.getByRole("button", { name: "Create Scope" }));
+    await waitFor(() => expect(posts.some((p) => p.path === "/scopes")).toBe(true));
+    const sent = posts.find((p) => p.path === "/scopes")!.body as Record<string, unknown>;
+    expect(sent.scope).toBe("New-Scope");
+    expect(sent.hosts).toEqual(["h1.internal"]);
+    expect("supportedTypes" in sent).toBe(false);
   });
 });
