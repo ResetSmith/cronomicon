@@ -82,19 +82,19 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 
 	// ── Scopes (operator-managed / cronomicon-source so they list in Settings) ────
 	type scopeSpec struct {
-		name, desc, types string
-		hosts             []string
-		raw               string // optional grouped inventory; empty ⇒ flat [all]
-		tags              string // operator-owned scope tags (JSON array, migration 1160)
+		name, desc string
+		hosts      []string
+		raw        string // optional grouped inventory; empty ⇒ flat [all]
+		tags       string // operator-owned scope tags (JSON array, migration 1160)
 	}
 	scopes := []scopeSpec{
-		{"Production", "Production fleet — change-controlled", `["bash","ansible","terraform","perl"]`, []string{"db-01", "lb-01", "vault-01", "app-01", "app-02"},
+		{"Production", "Production fleet — change-controlled", []string{"db-01", "lb-01", "vault-01", "app-01", "app-02"},
 			"[app]\napp-01 ansible_host=10.0.1.11\napp-02 ansible_host=10.0.1.12\n[db]\ndb-01 ansible_host=10.0.2.11 ansible_user=postgres\n[lb]\nlb-01\n[secrets]\nvault-01\n[prod:children]\napp\ndb\n[app:vars]\nansible_user=deploy\nansible_port=22\n",
 			`["prod","linux","change-controlled"]`},
-		{"Cluster-A", "Kubernetes cluster A worker pool", `["bash","ansible"]`, []string{"web-01", "web-02", "k8s-node-01", "k8s-node-02"}, "", `["prod","linux","kubernetes"]`},
-		{"Windows-Fleet", "Windows domain controllers + members", `["powershell","ansible"]`, []string{"win-dc-01", "win-app-01"}, "", `["prod","windows"]`},
-		{"Staging", "Pre-prod staging environment", `["bash","ansible","terraform"]`, []string{"stg-app-01", "stg-db-01"}, "", `["staging","linux"]`},
-		{"Reporting", "Reporting + analytics hosts", `["bash","perl","python"]`, []string{"report-01"}, "", `["linux","reporting"]`},
+		{"Cluster-A", "Kubernetes cluster A worker pool", []string{"web-01", "web-02", "k8s-node-01", "k8s-node-02"}, "", `["prod","linux","kubernetes"]`},
+		{"Windows-Fleet", "Windows domain controllers + members", []string{"win-dc-01", "win-app-01"}, "", `["prod","windows"]`},
+		{"Staging", "Pre-prod staging environment", []string{"stg-app-01", "stg-db-01"}, "", `["staging","linux"]`},
+		{"Reporting", "Reporting + analytics hosts", []string{"report-01"}, "", `["linux","reporting"]`},
 	}
 	scopeIDs := map[string]string{}
 	for _, sc := range scopes {
@@ -108,9 +108,9 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		if rawInv == "" {
 			rawInv = "[all]\n" + strings.Join(sc.hosts, "\n") + "\n"
 		}
-		exec(`INSERT INTO scopes (id, name, source, description, supported_types, raw_inventory, inventory_format, tags, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, 'cronomicon', ?, ?, ?, 'ini', ?, ?, ?, ?, ?)`,
-			id, sc.name, sc.desc, sc.types, rawInv, sc.tags, dev, ago(20*day), dev, ago(2*day))
+		exec(`INSERT INTO scopes (id, name, source, description, raw_inventory, inventory_format, tags, created_by, created_at, last_modified_by, last_modified_at)
+		      VALUES (?, ?, 'cronomicon', ?, ?, 'ini', ?, ?, ?, ?, ?)`,
+			id, sc.name, sc.desc, rawInv, sc.tags, dev, ago(20*day), dev, ago(2*day))
 		for _, h := range sc.hosts {
 			exec(`INSERT INTO scope_hosts (scope_id, host) VALUES (?, ?)`, id, h)
 		}

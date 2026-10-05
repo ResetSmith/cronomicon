@@ -246,10 +246,9 @@ func TestScopeCRUD(t *testing.T) {
 
 	desc := "production environment"
 	sc, err := CreateScope(ctx, pool, LocalScopeInput{
-		Scope:          "prod",
-		Description:    &desc,
-		Hosts:          []string{"host1.example.com", "host2.example.com"},
-		SupportedTypes: []string{"bash", "ansible"},
+		Scope:       "prod",
+		Description: &desc,
+		Hosts:       []string{"host1.example.com", "host2.example.com"},
 	}, "alice@example.com")
 	if err != nil {
 		t.Fatalf("CreateScope: %v", err)
@@ -257,15 +256,10 @@ func TestScopeCRUD(t *testing.T) {
 	if sc.Scope != "prod" || len(sc.Hosts) != 2 {
 		t.Fatalf("unexpected scope: %+v", sc)
 	}
-	// bash floor should always be present.
-	hasBash := false
-	for _, ty := range sc.Capability.Types {
-		if ty == "bash" {
-			hasBash = true
-		}
-	}
-	if !hasBash {
-		t.Error("bash floor should be in supported types")
+	// A new scope has no tags, and the field is a non-nil slice so the API
+	// serializes [] rather than null (the generated client marks it required).
+	if sc.Tags == nil || len(sc.Tags) != 0 {
+		t.Errorf("new scope tags = %#v, want an empty non-nil slice", sc.Tags)
 	}
 
 	// Get by ID.
@@ -374,25 +368,6 @@ func TestScopeRenameKeepsGrantsAndFlagsBrokenRefs(t *testing.T) {
 	}
 	if !foundEnvVarRef {
 		t.Errorf("expected MY_KEY in broken references, got: %+v", broken)
-	}
-}
-
-func TestScopeBashFloorEnforcement(t *testing.T) {
-	// Empty types → bash added.
-	result := enforceBashFloor([]string{})
-	if len(result) != 1 || result[0] != "bash" {
-		t.Errorf("empty types: expected [bash], got %v", result)
-	}
-	// Types without bash → bash prepended.
-	result = enforceBashFloor([]string{"ansible", "terraform"})
-	if result[0] != "bash" {
-		t.Errorf("expected bash first, got %v", result)
-	}
-	// Types that already have bash → unchanged.
-	orig := []string{"bash", "ansible"}
-	result = enforceBashFloor(orig)
-	if len(result) != 2 {
-		t.Errorf("expected 2, got %v", result)
 	}
 }
 
@@ -838,10 +813,9 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 	// 2. Insert a local scope.
 	descLocal := "Local environment"
 	localScope, err := CreateScope(ctx, pool, LocalScopeInput{
-		Scope:          "local-env",
-		Description:    &descLocal,
-		Hosts:          []string{"127.0.0.1"},
-		SupportedTypes: []string{"bash"},
+		Scope:       "local-env",
+		Description: &descLocal,
+		Hosts:       []string{"127.0.0.1"},
 	}, "alice@example.com")
 	if err != nil {
 		t.Fatalf("failed to create local scope: %v", err)
@@ -849,11 +823,15 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 
 	// 3. Insert a git-source scope (simulating gitlab sync).
 	gitScopeID := db.NewID()
-	capJSON := `{"types":["bash","ansible"],"origin":"git","owner":"plat-eng","sidecarPath":"inventory/dev.cronomicon.yaml","errors":[{"file":"inventory/dev.cronomicon.yaml","line":5,"field":"owner","message":"owner not found"}]}`
+	// The blob deliberately still carries `types` and `origin`: that is what a
+	// row written before migration 1170 and not yet re-synced can look like on a
+	// database the json_remove did not reach (an unparsable sibling row, a manual
+	// restore). The reader must ignore both keys, not trip on them.
+	metaJSON := `{"types":["bash","ansible"],"origin":"git","owner":"plat-eng","sidecarPath":"inventory/dev.cronomicon.yaml","errors":[{"file":"inventory/dev.cronomicon.yaml","line":5,"field":"owner","message":"owner not found"}]}`
 	_, err = pool.ExecContext(ctx, `
-		INSERT INTO scopes (id, name, source, description, supported_types, created_by, created_at, last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		gitScopeID, "dev-env", "git", "Dev inventory", `["bash","ansible"]`, "gitlab", "2026-06-12T16:00:00Z", "gitlab", "2026-06-12T16:00:00Z", "inventory/dev-env.ini", `["bash","ansible"]`, capJSON, "2026-06-12T16:05:00Z")
+		INSERT INTO scopes (id, name, source, description, created_by, created_at, last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, tags)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		gitScopeID, "dev-env", "git", "Dev inventory", "gitlab", "2026-06-12T16:00:00Z", "gitlab", "2026-06-12T16:00:00Z", "inventory/dev-env.ini", metaJSON, "2026-06-12T16:05:00Z", `["dev","linux"]`)
 	if err != nil {
 		t.Fatalf("failed to insert git scope: %v", err)
 	}
@@ -911,19 +889,24 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 	if len(gitScope.Hosts) != 1 || gitScope.Hosts[0] != "dev-host.example.com" {
 		t.Errorf("git scope hosts mismatch: %v", gitScope.Hosts)
 	}
-	if gitScope.Capability.Origin != "git" {
-		t.Errorf("git scope capability origin mismatch: %q", gitScope.Capability.Origin)
+	if gitScope.Owner == nil || *gitScope.Owner != "plat-eng" {
+		t.Errorf("git scope owner mismatch: %+v", gitScope.Owner)
 	}
-	if gitScope.Capability.Owner == nil || *gitScope.Capability.Owner != "plat-eng" {
-		t.Errorf("git scope capability owner mismatch: %+v", gitScope.Capability.Owner)
-	}
-	if len(gitScope.Capability.Errors) != 1 {
-		t.Errorf("git scope capability errors count mismatch: %d", len(gitScope.Capability.Errors))
+	if len(gitScope.PragmaErrors) != 1 {
+		t.Errorf("git scope pragma errors count mismatch: %d", len(gitScope.PragmaErrors))
 	} else {
-		le := gitScope.Capability.Errors[0]
+		le := gitScope.PragmaErrors[0]
 		if le.File != "inventory/dev.cronomicon.yaml" || le.Line != 5 || le.Field != "owner" || le.Message != "owner not found" {
-			t.Errorf("git scope capability line error mismatch: %+v", le)
+			t.Errorf("git scope pragma line error mismatch: %+v", le)
 		}
+	}
+	if len(gitScope.Tags) != 2 || gitScope.Tags[0] != "dev" || gitScope.Tags[1] != "linux" {
+		t.Errorf("git scope tags mismatch: %v", gitScope.Tags)
+	}
+	// Owner and pragma errors are Git metadata; a cronomicon-source scope has none.
+	if cronomiconScope.Owner != nil || cronomiconScope.SidecarPath != nil || len(cronomiconScope.PragmaErrors) != 0 {
+		t.Errorf("cronomicon scope carries git metadata: owner=%v sidecar=%v errors=%v",
+			cronomiconScope.Owner, cronomiconScope.SidecarPath, cronomiconScope.PragmaErrors)
 	}
 	if gitScope.LastChangedAt == nil || *gitScope.LastChangedAt != "2026-06-12T16:05:00Z" {
 		t.Errorf("git scope LastChangedAt mismatch: %+v", gitScope.LastChangedAt)

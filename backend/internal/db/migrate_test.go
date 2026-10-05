@@ -31,8 +31,8 @@ func TestMigrateUpDown(t *testing.T) {
 	if dirty {
 		t.Fatal("schema is dirty after up")
 	}
-	if v != 1160 {
-		t.Fatalf("schema version = %d, want 1160", v)
+	if v != 1170 {
+		t.Fatalf("schema version = %d, want 1170", v)
 	}
 
 	// Core tables should exist.
@@ -3050,5 +3050,138 @@ func TestMigrate1150AppriseObjectForm(t *testing.T) {
 	}
 	if got := get(); got != "not json" {
 		t.Errorf("invalid JSON column = %q, want it left untouched", got)
+	}
+}
+
+// TestMigrate1170ScopesDropRunTypes pins the removal of a scope's "supported
+// run types" (the scope-tags plan, ST-12): the two type columns are gone,
+// capability_json survives as git_meta_json with its non-capability keys
+// (owner, sidecarPath, errors) intact and `types`/`origin` stripped, and the
+// scope rows themselves — and the tags 1160 added — are untouched. The down is
+// lossy by design and must still leave a schema a pre-1170 binary can INSERT
+// into (supported_types NOT NULL needs its default back).
+func TestMigrate1170ScopesDropRunTypes(t *testing.T) {
+	pool, err := Open(filepath.Join(t.TempDir(), "scopetypes.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+
+	m, err := migrator(pool)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+	if err := m.Migrate(1160); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate to 1160: %v", err)
+	}
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	// A cronomicon-source scope with declared types and tags; a git-source scope
+	// with the full pre-1170 capability blob; a git-source scope whose blob is
+	// NULL; and one whose blob is not JSON at all (json_remove on it would abort
+	// the whole migration without the json_valid guard).
+	exec(`INSERT INTO scopes(id, name, source, supported_types, created_at, tags)
+	      VALUES('s-local','edge','cronomicon','["bash","ansible"]','t','["prod","linux"]')`)
+	exec(`INSERT INTO scopes(id, name, source, supported_types, capability_types, capability_json, created_at)
+	      VALUES('s-git','prod-web','git','["bash","ansible"]','["bash","ansible"]',
+	             '{"types":["bash","ansible"],"origin":"pragma","owner":"infra","sidecarPath":"inventory/prod-web.cronomicon.yaml","errors":[{"line":2,"message":"unknown directive: \"ownr\""}]}','t')`)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s-null','bare','git','t')`)
+	exec(`INSERT INTO scopes(id, name, source, capability_json, created_at) VALUES('s-junk','junk','git','not json','t')`)
+
+	hasCol := func(col string) bool {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('scopes') WHERE name = ?`, col).Scan(&n); err != nil {
+			t.Fatalf("table_info: %v", err)
+		}
+		return n == 1
+	}
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up 1160→1170: %v", err)
+	}
+	for _, gone := range []string{"supported_types", "capability_types", "capability_json"} {
+		if hasCol(gone) {
+			t.Errorf("after 1170 the scopes table still has %s", gone)
+		}
+	}
+	if !hasCol("git_meta_json") {
+		t.Fatal("after 1170 the scopes table has no git_meta_json")
+	}
+
+	var meta sql.NullString
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-git'`).Scan(&meta); err != nil {
+		t.Fatalf("read git_meta_json: %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(meta.String), &got); err != nil {
+		t.Fatalf("git_meta_json is not an object: %v\ngot: %s", err, meta.String)
+	}
+	for _, gone := range []string{"types", "origin"} {
+		if _, ok := got[gone]; ok {
+			t.Errorf("git_meta_json still carries %q: %s", gone, meta.String)
+		}
+	}
+	if string(got["owner"]) != `"infra"` || string(got["sidecarPath"]) != `"inventory/prod-web.cronomicon.yaml"` {
+		t.Errorf("owner/sidecarPath did not survive: %s", meta.String)
+	}
+	var errsOut []struct {
+		Line    int    `json:"line"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(got["errors"], &errsOut); err != nil || len(errsOut) != 1 || errsOut[0].Line != 2 {
+		t.Errorf("pragma errors did not survive: %s", meta.String)
+	}
+
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-null'`).Scan(&meta); err != nil || meta.Valid {
+		t.Errorf("a NULL blob must stay NULL, got %q (err %v)", meta.String, err)
+	}
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-junk'`).Scan(&meta); err != nil || meta.String != "not json" {
+		t.Errorf("an unparsable blob must be left as it was, got %q (err %v)", meta.String, err)
+	}
+
+	// The rows and the tags are untouched.
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scopes`).Scan(&n); err != nil || n != 4 {
+		t.Fatalf("scope rows after 1170 = %d (err %v), want 4", n, err)
+	}
+	var tags string
+	if err := pool.QueryRow(`SELECT tags FROM scopes WHERE id='s-local'`).Scan(&tags); err != nil || tags != `["prod","linux"]` {
+		t.Errorf("tags after 1170 = %q (err %v), want them untouched", tags, err)
+	}
+
+	// Down: the three columns come back; the declared types do not (lossy), and
+	// supported_types has its bash default so a pre-1170 INSERT that omits it works.
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("migrate down 1170→1160: %v", err)
+	}
+	for _, back := range []string{"supported_types", "capability_types", "capability_json"} {
+		if !hasCol(back) {
+			t.Errorf("after the down the scopes table has no %s", back)
+		}
+	}
+	if hasCol("git_meta_json") {
+		t.Error("after the down the scopes table still has git_meta_json")
+	}
+	var st string
+	if err := pool.QueryRow(`SELECT supported_types FROM scopes WHERE id='s-local'`).Scan(&st); err != nil || st != `["bash"]` {
+		t.Errorf("supported_types after the down = %q (err %v), want the bash default", st, err)
+	}
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s-new','later','cronomicon','t')`)
+
+	// And up again over the rolled-back shape.
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up again 1160→1170: %v", err)
+	}
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-git'`).Scan(&meta); err != nil {
+		t.Fatalf("read git_meta_json after re-up: %v", err)
+	}
+	if err := json.Unmarshal([]byte(meta.String), &got); err != nil || string(got["owner"]) != `"infra"` {
+		t.Errorf("owner lost across down+up: %s", meta.String)
 	}
 }

@@ -919,11 +919,10 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var inp struct {
-		Scope          string   `json:"scope"`
-		Description    *string  `json:"description"`
-		Hosts          []string `json:"hosts"`
-		SupportedTypes []string `json:"supportedTypes"`
-		RawInventory   *string  `json:"rawInventory"`
+		Scope        string   `json:"scope"`
+		Description  *string  `json:"description"`
+		Hosts        []string `json:"hosts"`
+		RawInventory *string  `json:"rawInventory"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -934,7 +933,7 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sc, err := settings.CreateScope(r.Context(), s.db, settings.LocalScopeInput{
-		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, SupportedTypes: inp.SupportedTypes, RawInventory: inp.RawInventory,
+		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
 	}, id.Email)
 	if err != nil {
 		if validationErr, ok := errors.AsType[settings.InventoryValidationError](err); ok {
@@ -1072,18 +1071,17 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 	var oldScopeName string
 	_ = s.db.QueryRowContext(r.Context(), `SELECT name FROM scopes WHERE id=?`, sid).Scan(&oldScopeName)
 	var inp struct {
-		Scope          string   `json:"scope"`
-		Description    *string  `json:"description"`
-		Hosts          []string `json:"hosts"`
-		SupportedTypes []string `json:"supportedTypes"`
-		RawInventory   *string  `json:"rawInventory"`
+		Scope        string   `json:"scope"`
+		Description  *string  `json:"description"`
+		Hosts        []string `json:"hosts"`
+		RawInventory *string  `json:"rawInventory"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
 	sc, broken, err := settings.UpdateScope(r.Context(), s.db, sid, settings.LocalScopeInput{
-		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, SupportedTypes: inp.SupportedTypes, RawInventory: inp.RawInventory,
+		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
 	}, id.Email)
 	if err != nil {
 		if validationErr, ok := errors.AsType[settings.InventoryValidationError](err); ok {

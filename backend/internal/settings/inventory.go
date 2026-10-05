@@ -245,10 +245,10 @@ func loadProjection(ctx context.Context, database *sql.DB, scopeID string) (*Inv
 
 // PutScopeInventory writes an operator-authored inventory to an cronomicon-source
 // scope (M5): validates secrets (Path A), parses the projection, and persists raw
-// + projection + scope_hosts membership + inferred capability, then audits. Reuses
-// the SAME inventory.ValidateSecrets / ParseProjection / WriteProjectionTables /
-// InferTypes the git-sync path uses, so authored and synced inventories behave
-// identically. Returns:
+// + projection + scope_hosts membership, then audits. Reuses the SAME
+// inventory.ValidateSecrets / ParseProjection / WriteProjectionTables the
+// git-sync path uses, so authored and synced inventories behave identically.
+// Returns:
 //   - (nil, nil, nil)          when no scope matches the id (handler → 404)
 //   - (nil, lineErrors, nil)   when secret-bearing vars are present (handler → 422;
 //     the scope is left unchanged)
@@ -297,34 +297,11 @@ func PutScopeInventory(ctx context.Context, database *sql.DB, id, raw, format, a
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Capability: union the operator's existing supported_types with the inferred
-	// types (so uploading an ansible inventory makes the scope ansible-capable
-	// without dropping the operator's choices), bash floor enforced (OD-19).
-	var curTypes string
-	_ = tx.QueryRowContext(ctx, `SELECT supported_types FROM scopes WHERE id=?`, id).Scan(&curTypes)
-	typeSet := map[string]bool{}
-	var existing []string
-	if curTypes != "" {
-		_ = json.Unmarshal([]byte(curTypes), &existing)
-	}
-	for _, t := range existing {
-		typeSet[t] = true
-	}
-	for _, t := range inventory.InferTypes(raw) {
-		typeSet[t] = true
-	}
-	merged := make([]string, 0, len(typeSet))
-	for t := range typeSet {
-		merged = append(merged, t)
-	}
-	sort.Strings(merged)
-	typesJSON, _ := json.Marshal(enforceBashFloor(merged))
-
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE scopes SET raw_inventory=?, inventory_format=?, projection_status=?, projection_json=?,
-		                  supported_types=?, last_modified_by=?, last_modified_at=? WHERE id=?`,
-		raw, format, status, projJSON, string(typesJSON), actor, now, id); err != nil {
+		                  last_modified_by=?, last_modified_at=? WHERE id=?`,
+		raw, format, status, projJSON, actor, now, id); err != nil {
 		return nil, nil, err
 	}
 	if err := inventory.WriteProjectionTables(ctx, tx, id, p); err != nil {

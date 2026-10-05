@@ -650,11 +650,15 @@ func validatePaths(args []string, out, errOut io.Writer) int {
 			}
 			continue
 		}
-		errs, err := gitlab.ValidateFile(path)
+		errs, warnings, err := gitlab.ValidateFile(path)
 		if err != nil {
 			fmt.Fprintf(errOut, "%s: %v\n", path, err)
 			exit = 1
 			continue
+		}
+		// Non-fatal, like ValidateRepo's: a warning never changes the exit code.
+		for _, w := range warnings {
+			fmt.Fprintf(errOut, "warning: %s\n", w.Error())
 		}
 		for _, e := range errs {
 			fmt.Fprintf(errOut, "%s:%d: %s\n", path, e.Line, e.Message)

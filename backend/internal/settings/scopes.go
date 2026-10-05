@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,16 +17,22 @@ import (
 
 // Scope is the wire representation of a scope (both local and git-source).
 type Scope struct {
-	ID          string          `json:"id"`
-	Source      string          `json:"source"`
-	Scope       string          `json:"scope"`
-	Name        *string         `json:"name,omitempty"`
-	Description *string         `json:"description"`
-	Hosts       []string        `json:"hosts,omitempty"`
-	HostCount   int             `json:"hostCount"`
-	GitLabURL   *string         `json:"gitlabUrl,omitempty"`
-	SidecarPath *string         `json:"sidecarPath,omitempty"`
-	Capability  ScopeCapability `json:"capability"`
+	ID          string   `json:"id"`
+	Source      string   `json:"source"`
+	Scope       string   `json:"scope"`
+	Name        *string  `json:"name,omitempty"`
+	Description *string  `json:"description"`
+	Hosts       []string `json:"hosts,omitempty"`
+	HostCount   int      `json:"hostCount"`
+	GitLabURL   *string  `json:"gitlabUrl,omitempty"`
+	SidecarPath *string  `json:"sidecarPath,omitempty"`
+	// Owner and PragmaErrors are the Git metadata of a git-source scope: the
+	// `owner` declared in the inventory's sidecar or pragma (sidecar wins), and
+	// the line-numbered errors from the strict pragma parse. Both come from
+	// scopes.git_meta_json, written by sync; both are absent on a
+	// cronomicon-source scope.
+	Owner        *string     `json:"owner,omitempty"`
+	PragmaErrors []LineError `json:"pragmaErrors,omitempty"`
 	// M2 inventory projection summary (populated for inventory scopes of either
 	// source). The full group/host-var tree is served by GET /scopes/{id}/inventory.
 	HasInventory     bool         `json:"hasInventory"`
@@ -66,14 +71,6 @@ type ScopeGroup struct {
 	HostCount int    `json:"hostCount"`
 }
 
-// ScopeCapability represents resolved run-type capability.
-type ScopeCapability struct {
-	Types  []string    `json:"types"`
-	Origin string      `json:"origin"`
-	Owner  *string     `json:"owner,omitempty"`
-	Errors []LineError `json:"errors,omitempty"`
-}
-
 // LineError represents a 1-based validation error from strict parsing (S10).
 type LineError struct {
 	File    string `json:"file,omitempty"`
@@ -94,11 +91,10 @@ func (e InventoryValidationError) Error() string {
 
 // LocalScopeInput is the caller-supplied payload for create/update.
 type LocalScopeInput struct {
-	Scope          string
-	Description    *string
-	Hosts          []string
-	SupportedTypes []string // bash floor enforced
-	RawInventory   *string
+	Scope        string
+	Description  *string
+	Hosts        []string
+	RawInventory *string
 }
 
 // BrokenReference describes a dangling scope reference after a rename.
@@ -121,13 +117,13 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	var query string
 	var args []any
 	if sourceFilter != "" {
-		query = `SELECT id, name, source, description, supported_types, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		query = `SELECT id, name, source, description, created_by, created_at,
+		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
 		         FROM scopes WHERE source=? ORDER BY name`
 		args = append(args, sourceFilter)
 	} else {
-		query = `SELECT id, name, source, description, supported_types, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		query = `SELECT id, name, source, description, created_by, created_at,
+		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
 		         FROM scopes ORDER BY source DESC, name`
 	}
 
@@ -140,12 +136,12 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	var out []Scope
 	for rows.Next() {
 		var sc Scope
-		var desc, createdBy, lastModBy, lastModAt, sourcePath, capTypes, capJSON, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-		var typesJSON, tagsRaw string
+		var desc, createdBy, lastModBy, lastModAt, sourcePath, gitMeta, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
+		var tagsRaw string
 		if err := rows.Scan(
-			&sc.ID, &sc.Scope, &sc.Source, &desc, &typesJSON,
+			&sc.ID, &sc.Scope, &sc.Source, &desc,
 			&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
-			&sourcePath, &capTypes, &capJSON, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
+			&sourcePath, &gitMeta, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
 		); err != nil {
 			return nil, err
 		}
@@ -166,25 +162,7 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 		sc.Tags = tagutil.Parse(tagsRaw)
 
 		if sc.Source == "git" {
-			if capJSON.Valid && capJSON.String != "" {
-				var capData struct {
-					Types       []string    `json:"types"`
-					Origin      string      `json:"origin"`
-					Owner       *string     `json:"owner"`
-					SidecarPath *string     `json:"sidecarPath"`
-					Errors      []LineError `json:"errors"`
-				}
-				if err := json.Unmarshal([]byte(capJSON.String), &capData); err == nil {
-					sc.Capability.Types = capData.Types
-					sc.Capability.Origin = capData.Origin
-					sc.Capability.Owner = capData.Owner
-					sc.Capability.Errors = capData.Errors
-					sc.SidecarPath = capData.SidecarPath
-				}
-			}
-			if sc.Capability.Types == nil {
-				sc.Capability.Types = []string{"bash"}
-			}
+			applyGitMeta(&sc, gitMeta)
 			if sourcePath.Valid && sourcePath.String != "" {
 				filename := filepath.Base(sourcePath.String)
 				sc.Name = &filename
@@ -202,10 +180,6 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 			}
 		} else {
 			// cronomicon source
-			if err := json.Unmarshal([]byte(typesJSON), &sc.Capability.Types); err != nil {
-				sc.Capability.Types = []string{"bash"}
-			}
-			sc.Capability.Origin = "local"
 			t := sc.LastModifiedAt
 			sc.LastChangedAt = &t
 		}
@@ -227,6 +201,32 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	return out, nil
 }
 
+// applyGitMeta unpacks scopes.git_meta_json — the Git metadata sync records
+// for a git-source scope: {owner, sidecarPath, errors}. It was capability_json
+// until migration 1170 removed the run-type half; `types` and `origin` keys in
+// a not-yet-re-synced row are simply not read. A missing or unparsable blob
+// leaves the scope with no owner, no sidecar and no pragma errors.
+func applyGitMeta(sc *Scope, raw sql.NullString) {
+	if !raw.Valid || raw.String == "" {
+		return
+	}
+	var meta struct {
+		Owner       string      `json:"owner"`
+		SidecarPath string      `json:"sidecarPath"`
+		Errors      []LineError `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(raw.String), &meta); err != nil {
+		return
+	}
+	if meta.Owner != "" {
+		sc.Owner = &meta.Owner
+	}
+	if meta.SidecarPath != "" {
+		sc.SidecarPath = &meta.SidecarPath
+	}
+	sc.PragmaErrors = meta.Errors
+}
+
 // GetScope fetches a single scope by ID (handles both git and cronomicon sources).
 func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) {
 	// Fetch GitLab config to resolve GitLabURL.
@@ -239,17 +239,17 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 	repoURL = strings.TrimSuffix(repoURL, ".git")
 
 	row := database.QueryRowContext(ctx,
-		`SELECT id, name, source, description, supported_types, created_by, created_at,
-		        last_modified_by, last_modified_at, source_path, capability_types, capability_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		`SELECT id, name, source, description, created_by, created_at,
+		        last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
 		 FROM scopes WHERE id=?`, id)
 
 	var sc Scope
-	var desc, createdBy, lastModBy, lastModAt, sourcePath, capTypes, capJSON, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-	var typesJSON, tagsRaw string
+	var desc, createdBy, lastModBy, lastModAt, sourcePath, gitMeta, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
+	var tagsRaw string
 	if err := row.Scan(
-		&sc.ID, &sc.Scope, &sc.Source, &desc, &typesJSON,
+		&sc.ID, &sc.Scope, &sc.Source, &desc,
 		&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
-		&sourcePath, &capTypes, &capJSON, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
+		&sourcePath, &gitMeta, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -273,25 +273,7 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 	sc.Tags = tagutil.Parse(tagsRaw)
 
 	if sc.Source == "git" {
-		if capJSON.Valid && capJSON.String != "" {
-			var capData struct {
-				Types       []string    `json:"types"`
-				Origin      string      `json:"origin"`
-				Owner       *string     `json:"owner"`
-				SidecarPath *string     `json:"sidecarPath"`
-				Errors      []LineError `json:"errors"`
-			}
-			if err := json.Unmarshal([]byte(capJSON.String), &capData); err == nil {
-				sc.Capability.Types = capData.Types
-				sc.Capability.Origin = capData.Origin
-				sc.Capability.Owner = capData.Owner
-				sc.Capability.Errors = capData.Errors
-				sc.SidecarPath = capData.SidecarPath
-			}
-		}
-		if sc.Capability.Types == nil {
-			sc.Capability.Types = []string{"bash"}
-		}
+		applyGitMeta(&sc, gitMeta)
 		if sourcePath.Valid && sourcePath.String != "" {
 			filename := filepath.Base(sourcePath.String)
 			sc.Name = &filename
@@ -309,10 +291,6 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 		}
 	} else {
 		// cronomicon source
-		if err := json.Unmarshal([]byte(typesJSON), &sc.Capability.Types); err != nil {
-			sc.Capability.Types = []string{"bash"}
-		}
-		sc.Capability.Origin = "local"
 		t := sc.LastModifiedAt
 		sc.LastChangedAt = &t
 	}
@@ -377,24 +355,8 @@ func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, act
 				projJSON = sql.NullString{String: string(b), Valid: true}
 			}
 		}
-
-		for _, t := range inventory.InferTypes(raw) {
-			inp.SupportedTypes = append(inp.SupportedTypes, t)
-		}
 	}
 
-	types := enforceBashFloor(inp.SupportedTypes)
-	typeSet := map[string]bool{}
-	for _, t := range types {
-		typeSet[t] = true
-	}
-	merged := make([]string, 0, len(typeSet))
-	for t := range typeSet {
-		merged = append(merged, t)
-	}
-	sort.Strings(merged)
-	types = enforceBashFloor(merged)
-	typesJSON, _ := json.Marshal(types)
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := db.NewID()
 
@@ -405,9 +367,9 @@ func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, act
 	defer tx.Rollback() //nolint:errcheck
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO scopes (id, name, source, description, supported_types, created_by, created_at, last_modified_by, last_modified_at, raw_inventory, inventory_format, projection_status, projection_json)
-		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, inp.Scope, inp.Description, string(typesJSON), actor, now, actor, now, rawInv, invFmt, projStatus, projJSON)
+		`INSERT INTO scopes (id, name, source, description, created_by, created_at, last_modified_by, last_modified_at, raw_inventory, inventory_format, projection_status, projection_json)
+		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, inp.Scope, inp.Description, actor, now, actor, now, rawInv, invFmt, projStatus, projJSON)
 	if err != nil {
 		return nil, fmt.Errorf("create scope: %w", err)
 	}
@@ -475,25 +437,9 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 					projJSON = sql.NullString{String: string(b), Valid: true}
 				}
 			}
-
-			for _, t := range inventory.InferTypes(raw) {
-				inp.SupportedTypes = append(inp.SupportedTypes, t)
-			}
 		}
 	}
 
-	types := enforceBashFloor(inp.SupportedTypes)
-	typeSet := map[string]bool{}
-	for _, t := range types {
-		typeSet[t] = true
-	}
-	merged := make([]string, 0, len(typeSet))
-	for t := range typeSet {
-		merged = append(merged, t)
-	}
-	sort.Strings(merged)
-	types = enforceBashFloor(merged)
-	typesJSON, _ := json.Marshal(types)
 	now := time.Now().UTC().Format(time.RFC3339)
 	oldName := existing.Scope
 	newName := inp.Scope
@@ -506,13 +452,13 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 
 	if updateInventoryCols {
 		_, err = tx.ExecContext(ctx,
-			`UPDATE scopes SET name=?, description=?, supported_types=?, last_modified_by=?, last_modified_at=?,
+			`UPDATE scopes SET name=?, description=?, last_modified_by=?, last_modified_at=?,
 			                  raw_inventory=?, inventory_format=?, projection_status=?, projection_json=? WHERE id=?`,
-			newName, inp.Description, string(typesJSON), actor, now, rawInv, invFmt, projStatus, projJSON, id)
+			newName, inp.Description, actor, now, rawInv, invFmt, projStatus, projJSON, id)
 	} else {
 		_, err = tx.ExecContext(ctx,
-			`UPDATE scopes SET name=?, description=?, supported_types=?, last_modified_by=?, last_modified_at=? WHERE id=?`,
-			newName, inp.Description, string(typesJSON), actor, now, id)
+			`UPDATE scopes SET name=?, description=?, last_modified_by=?, last_modified_at=? WHERE id=?`,
+			newName, inp.Description, actor, now, id)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("update scope: %w", err)
@@ -678,19 +624,6 @@ func insertScopeHosts(ctx context.Context, ex dbExecer, scopeID string, hosts []
 		}
 	}
 	return nil
-}
-
-// enforceBashFloor ensures "bash" is always present in supportedTypes (S10).
-func enforceBashFloor(types []string) []string {
-	if len(types) == 0 {
-		return []string{"bash"}
-	}
-	for _, t := range types {
-		if strings.EqualFold(t, "bash") {
-			return types
-		}
-	}
-	return append([]string{"bash"}, types...)
 }
 
 // dbQuerier is a minimal interface satisfied by *sql.DB and *sql.Tx.

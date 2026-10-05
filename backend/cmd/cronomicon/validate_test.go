@@ -64,6 +64,38 @@ func TestValidatePaths(t *testing.T) {
 		}
 	})
 
+	// ST-Q1 — an inventory that still carries the retired `types` pragma directive
+	// passes: exit 0, "ok" on stdout, and a line-numbered WARNING on stderr. A
+	// job-definitions repository written before 2.1.0 must keep clearing its CI
+	// check; the warning tells its owner what to delete.
+	t.Run("retired types pragma warns and passes", func(t *testing.T) {
+		ini := filepath.Join(t.TempDir(), "prod.ini")
+		writeFixture(t, ini, "# cronomicon:v1 types=bash,ansible\n# cronomicon:v1 owner=infra\n[web]\nweb-01\n")
+		var out, errOut bytes.Buffer
+		if code := validatePaths([]string{ini}, &out, &errOut); code != 0 {
+			t.Fatalf("want exit 0, got %d (stderr=%q)", code, errOut.String())
+		}
+		if !strings.Contains(out.String(), "ok") {
+			t.Fatalf("want ok on stdout, got %q", out.String())
+		}
+		if !strings.Contains(errOut.String(), "warning: "+ini+":1:") || !strings.Contains(errOut.String(), "no longer used") {
+			t.Fatalf("want a line-numbered warning for the types directive, got %q", errOut.String())
+		}
+	})
+
+	// An unknown pragma directive is still an error (the parser stays strict).
+	t.Run("unknown pragma directive fails", func(t *testing.T) {
+		ini := filepath.Join(t.TempDir(), "typo.ini")
+		writeFixture(t, ini, "# cronomicon:v1 ownr=infra\n[web]\nweb-01\n")
+		var out, errOut bytes.Buffer
+		if code := validatePaths([]string{ini}, &out, &errOut); code != 1 {
+			t.Fatalf("want exit 1, got %d (stderr=%q)", code, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), ini+":1:") {
+			t.Fatalf("want a line-numbered error, got %q", errOut.String())
+		}
+	})
+
 	// A repo dir with a dangling script_ref (B-Git) → exit 1; the offending job
 	// file is named in the error. Valid sibling job validates clean.
 	t.Run("repo dir cross-ref", func(t *testing.T) {

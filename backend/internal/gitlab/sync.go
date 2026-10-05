@@ -1131,11 +1131,14 @@ func (s *Service) parseWorkflows() ([]WorkflowYAML, []error) {
 
 // inventoryScope is the parsed representation of a single inventory file.
 type inventoryScope struct {
-	Name        string
-	SourcePath  string
-	Content     string // byte-exact raw inventory (the -i material; persisted to scopes.raw_inventory)
-	Format      string // "ini" (only .ini is parsed today)
-	Capability  ScopeCapability
+	Name       string
+	SourcePath string
+	Content    string // byte-exact raw inventory (the -i material; persisted to scopes.raw_inventory)
+	Format     string // "ini" (only .ini is parsed today)
+	// Meta is the Git-declared metadata (owner, sidecar path, pragma errors)
+	// persisted to scopes.git_meta_json. Before 2.1.0 this was the scope's
+	// run-type "capability"; the run types were removed (migration 1170).
+	Meta        InventoryMeta
 	SidecarPath string
 	Hosts       []string // EX.5 — parsed inventory host membership (for in-app SSH targeting)
 	Description string
@@ -1215,17 +1218,15 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 		sidecar := sidecars[base]
 		sidecarPath := sidecarPaths[base]
 
-		cap := resolveInventoryCapability(content, sidecar, sidecarPath)
-		for _, ce := range cap.Errors {
-			errs = append(errs, ce)
+		meta := resolveInventoryMeta(content, sidecar, sidecarPath)
+		for _, me := range meta.Errors {
+			errs = append(errs, me)
 		}
-
-		desc := ""
-		if sidecar != nil && sidecar.Spec.Description != "" {
-			desc = sidecar.Spec.Description
-		} else {
-			directives, _ := parseCronomiconPragma(content)
-			desc = directives.Description
+		// ST-Q1: warnings are logged and go NO further. Appending one to errs
+		// would mark the sync `partial` and suppress scope pruning (scopesOK) for
+		// every repository that still declares the retired `types` directive.
+		for _, w := range meta.Warnings {
+			s.logWarn("inventory pragma: "+w.Message, "file", "inventory/"+e.Name(), "line", w.Line)
 		}
 
 		scopes = append(scopes, inventoryScope{
@@ -1233,10 +1234,10 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 			SourcePath:    "inventory/" + e.Name(),
 			Content:       content,
 			Format:        "ini",
-			Capability:    cap,
+			Meta:          meta,
 			SidecarPath:   sidecarPath,
 			Hosts:         parseInventoryHosts(content),
-			Description:   desc,
+			Description:   meta.Description,
 			Projection:    inventory.ParseProjection(content),
 			AuthKeyEnvVar: sidecarAuthKeyEnvVar(sidecar),
 		})
@@ -2062,13 +2063,13 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 			s.logWarn("git inventory name collides with an cronomicon-authored scope — skipping (rename one)", "name", sc.Name)
 			continue
 		}
-		typesJSON, _ := json.Marshal(sc.Capability.Types)
-		capJSON, _ := json.Marshal(map[string]any{
-			"types":       sc.Capability.Types,
-			"origin":      string(sc.Capability.Origin),
-			"owner":       sc.Capability.Owner,
-			"sidecarPath": sc.Capability.SidecarPath,
-			"errors":      sc.Capability.Errors,
+		// git_meta_json — {owner, sidecarPath, errors}. settings.applyGitMeta is
+		// the one reader. (capability_json until migration 1170, when it also
+		// carried the run types and their origin.)
+		metaJSON, _ := json.Marshal(map[string]any{
+			"owner":       sc.Meta.Owner,
+			"sidecarPath": sc.Meta.SidecarPath,
+			"errors":      sc.Meta.Errors,
 		})
 		id := db.NewID()
 		// agency_id is OPERATOR-OWNED and intentionally absent from both the INSERT
@@ -2091,17 +2092,15 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// the column default covers a new row, and an existing row must keep what the
 		// operator set. TestSyncPreservesScopeTags pins that.
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO scopes(id, name, source, source_path, capability_types, capability_json, synced_at, description, created_by, created_at, supported_types)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?)
+			INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at)
+			VALUES(?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(name) DO UPDATE SET
 				source=excluded.source,
 				source_path=excluded.source_path,
-				capability_types=excluded.capability_types,
-				capability_json=excluded.capability_json,
+				git_meta_json=excluded.git_meta_json,
 				synced_at=excluded.synced_at,
-				description=excluded.description,
-				supported_types=excluded.supported_types`,
-			id, sc.Name, "git", sc.SourcePath, string(typesJSON), string(capJSON), now, sc.Description, "gitlab", now, string(typesJSON))
+				description=excluded.description`,
+			id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now)
 		if err != nil {
 			// Gracefully skip if columns don't exist yet (schema mismatch in parallel dev).
 			s.logWarn("upsert scope skipped", "name", sc.Name, "error", err)

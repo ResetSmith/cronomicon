@@ -1503,10 +1503,14 @@ export interface paths {
         /**
          * List scopes (inventories)
          * @description Git-source scopes are parsed fresh from the clone at sync time
-         *     (pragma + sidecar + inference, S10); Cronomicon-source (local) scopes are
-         *     DB-backed (S8). Capability resolution precedence is local field >
-         *     sidecar > pragma > inference (§9.1). Pragma parse errors are returned
-         *     line-numbered on each scope.
+         *     (pragma + sidecar, S10); Cronomicon-source (local) scopes are DB-backed
+         *     (S8). A git-source scope's `owner` and `description` resolve sidecar >
+         *     pragma. Pragma parse errors are returned line-numbered on each scope
+         *     (`pragmaErrors`). Every scope carries its operator-owned `tags`.
+         *
+         *     A scope no longer declares "supported run types": the advisory
+         *     capability set was removed in 2.1.0 (migration 1170), along with the
+         *     `capability` object and the inference that filled it.
          */
         get: operations["listScopes"];
         put?: never;
@@ -1543,7 +1547,8 @@ export interface paths {
          * @description Only Cronomicon-source scopes are editable (Git scopes are edited in
          *     GitLab). Rename does NOT cascade to job/workflow/env-var references in
          *     v1 (S9) — the response includes brokenReferences so the UI can warn.
-         *     supportedTypes enforces a bash floor (S10). CSRF required.
+         *     Tags are not part of this body; set them with PUT /scope-tags/{scopeId}.
+         *     CSRF required.
          */
         patch: operations["updateScope"];
         trace?: never;
@@ -1573,8 +1578,7 @@ export interface paths {
          * @description Writes a raw inventory to an CRONOMICON-source scope (in-app authoring), then
          *     validates + parses it exactly as git sync does: secret-bearing vars are
          *     rejected (422 inventory_secret_rejected, line-numbered; the scope is left
-         *     unchanged), the advisory projection + scope_hosts membership are replaced,
-         *     and the run-type capability is inferred (unioned into supportedTypes).
+         *     unchanged), and the advisory projection + scope_hosts membership are replaced.
          *     Git-source scopes are 409 (managed in GitLab). Only `ini` is supported.
          *     CSRF required.
          */
@@ -1621,7 +1625,11 @@ export interface paths {
         put?: never;
         /**
          * Re-parse inventories from the Git clone
-         * @description Triggers a re-parse of inventory files + pragmas and returns capability deltas; emits a gitsync activity entry. CSRF required.
+         * @description Triggers a re-parse of inventory files + pragmas and returns the scopes
+         *     that appeared or disappeared (`deltas`, each "added scope" or "removed
+         *     scope") plus any line-numbered parse errors; emits a gitsync activity
+         *     entry. The retired `types` pragma directive is ignored and is not an
+         *     error. CSRF required.
          */
         post: operations["resyncScopes"];
         delete?: never;
@@ -5623,14 +5631,25 @@ export interface components {
             description?: string;
             readonly hostCount?: number;
             readonly gitlabUrl?: string | null;
+            /** @description Path of the inventory's `.cronomicon.yaml` sidecar, for a git-source scope that has one. */
             readonly sidecarPath?: string | null;
+            /**
+             * @description The owner a git-source scope declares in its sidecar or pragma
+             *     (sidecar wins). Absent on a cronomicon-source scope.
+             */
+            readonly owner?: string | null;
+            /**
+             * @description Line-numbered errors from the strict parse of a git-source
+             *     inventory's `# cronomicon:v1` pragma (S10). Absent when clean.
+             *     The retired `types` directive is not an error.
+             */
+            readonly pragmaErrors?: components["schemas"]["LineError"][];
             /**
              * @description Host names belonging to this scope, populated for BOTH git- and
              *     cronomicon-source scopes (git scopes are materialized into scope_hosts
              *     during sync). Drives the per-run host-subset picker (F2).
              */
             hosts?: string[];
-            capability?: components["schemas"]["ScopeCapability"];
             /** @description True when this scope has a managed inventory file (M2). */
             readonly hasInventory?: boolean;
             /** @description Inventory format (ini | yaml). */
@@ -5748,27 +5767,11 @@ export interface components {
             /** @description Hosts that could not be imported. */
             rejected: string[];
         };
-        /** @description Resolved declared run-type capability (S10). Advisory only — never blocks execution (§9.2). */
-        ScopeCapability: {
-            types?: components["schemas"]["RunType"][];
-            /** @enum {string} */
-            origin?: "local" | "sidecar" | "pragma" | "inference";
-            owner?: string | null;
-            /** @description Line-numbered pragma parse errors (strict parsing per S10). */
-            errors?: components["schemas"]["LineError"][];
-        };
         LocalScopeInput: {
             scope: string;
             description?: string;
             /** @description Host names; may be empty for a scope whose membership comes from an authored inventory (M5). */
             hosts?: string[];
-            /**
-             * @description Declared capability with a bash floor (S10).
-             * @default [
-             *       "bash"
-             *     ]
-             */
-            supportedTypes: components["schemas"]["RunType"][];
             /** @description Optional raw Ansible inventory (INI format) provided during creation/update. */
             rawInventory?: string;
         };
@@ -10431,7 +10434,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description All scopes with resolved capability. */
+            /** @description All scopes. */
             200: {
                 headers: {
                     [name: string]: unknown;
