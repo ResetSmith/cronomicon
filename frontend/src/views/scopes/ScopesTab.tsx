@@ -18,6 +18,7 @@ import {
   labelStyle,
   tdStyle,
   } from "../envvars/ui";
+import { BindingNotices, BoundRunnersCell, ScopeRunnersField, type BoundRunner } from "./ScopeRunners";
 
 
 export interface ScopeRow {
@@ -40,6 +41,11 @@ export interface ScopeRow {
   projectionStatus?: string | null; // ok | degraded | unavailable
   agencies?: { id: string; name: string }[]; // network-isolation zones (T3.8 — a SET; scopes.agency_id was dropped in migration 700)
   tags?: string[]; // operator-owned (migration 1160); never synced from Git
+  // The runners this scope is restricted to (migration 1180, SB band). [] ⇒ any
+  // runner eligible for its agency. Operator-owned and never synced, like the
+  // agency. A binding whose runner was deregistered is still listed, and still
+  // restricts.
+  boundRunners?: BoundRunner[];
   lastChangedAt?: string | null;
 }
 
@@ -71,15 +77,19 @@ interface BrokenRef {
 // before the user drags (V1.1-7). Stored overrides come from useColumnWidths.
 const COL_W: Record<string, number> = {
   expand: 44,
-  scope: 200,
+  scope: 180,
   source: 100,
-  description: 220,
+  description: 190,
   tags: 140,
   hosts: 100,
   agencies: 150,
+  runners: 140,
   updated: 150,
   actions: 140,
 };
+// The defaults sum to 1334px, which is what fits beside the sidebar at 1600 —
+// Scope and Description gave up 50px between them when the Runners column
+// arrived (SB), so the actions cell does not slide off the right edge.
 
 // Sortable columns (Phase 2, the sorting-update plan §3.2), driven by
 // useTableSort. Source sorts by the rendered label (Cronomicon/Git) and Hosts by
@@ -235,13 +245,19 @@ export function ScopesTab({
       // RB-22 — a scope's agencies on the scope's own row. This was answered from
       // the Membership matrix until that grid was deleted; the question ("which
       // zones can run this scope's jobs?") belongs where the scope is.
+      //
+      // SB — the empty state says "general pool", not "unrestricted". A scope in
+      // no agency is NOT open to any runner: the claim rule is disjoint, and
+      // only a runner in no agency may take its work. The old label was wrong
+      // about that, and with a Runners column beside it "unrestricted" would
+      // now also mean two different things on one row.
       cell: (row) =>
         (row.agencies ?? []).length === 0 ? (
           <span
-            title="No agency restriction — any runner may execute this scope's jobs."
+            title="In no agency — only a general-pool runner (one in no agency) may run this scope's jobs."
             style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
           >
-            unrestricted
+            general pool
           </span>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -255,6 +271,15 @@ export function ScopesTab({
             ))}
           </div>
         ),
+    },
+    {
+      key: "runners",
+      label: "Runners",
+      width: COL_W.runners,
+      // SB — which runners this scope is bound to. Beside Agencies because the
+      // two answer the same question at different grain: which department's
+      // runners, then which of those can actually reach these hosts.
+      cell: (row) => <BoundRunnersCell bound={row.boundRunners} />,
     },
     {
       key: "updated",
@@ -329,6 +354,10 @@ export function ScopesTab({
           {notice.text}
         </Notice>
       )}
+      {/* SB — runner pins that could not become a scope binding. ConfigureApp
+          only, like the route behind it; and re-read on every list load, since
+          binding a scope is what resolves a group. */}
+      {canEdit && <BindingNotices dep={dep} onChanged={refetch} />}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <div style={{ flex: 1 }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search scopes by name or description..." />
@@ -507,6 +536,21 @@ export function ScopesTab({
                               only secrets and keys in it are injectable.
                             </span>
                           </div>
+                        )}
+                        {/* SB — the runners this scope is bound to, directly under
+                            its agency: department first, then which of that
+                            department's runners can reach these hosts. Shown to
+                            everyone who can see the scope; changed only with
+                            ConfigureApp. */}
+                        {s.id != null && (
+                          <ScopeRunnersField
+                            scope={s}
+                            canEdit={canEdit}
+                            onSaved={(text) => {
+                              setNotice({ kind: "info", text });
+                              refetch();
+                            }}
+                          />
                         )}
                         {/* Tags are shown to everyone who can see the scope and
                             edited only with ConfigureApp, like every other scope

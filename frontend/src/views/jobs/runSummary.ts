@@ -112,6 +112,12 @@ export type RunSummaryInput = {
    * server ignores a stored one outright — see the fold in `where` below.
    */
   identityCapable: boolean;
+  /**
+   * SB — names of the runners the run's scope is bound to, [] when the scope is
+   * not bound or the run is not going to a runner. A fact about the SCOPE, not a
+   * choice made in the dialog, so it is stated and never accented.
+   */
+  boundRunners: string[];
   // When
   whenPhrase: string;
   deferred: boolean;
@@ -236,6 +242,13 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
       });
     }
   }
+  // SB — where a runner run lands when its scope is bound. It replaces the row
+  // the runner-tag pin used to have here; unlike that row it is never a
+  // deviation, because nothing in this dialog can change it.
+  if (i.boundRunners.length > 0) {
+    where.push({ key: "runsOn", label: "Runs on", value: i.boundRunners.join(", "), note: "bound to the scope" });
+  }
+
   // ── When ───────────────────────────────────────────────────────────────────
   // One row, always. `info` rather than `warning` for a deferred run: it is not a
   // deviation from how the job is configured, it is a fact about this run that

@@ -35,6 +35,7 @@ const base = (over: Partial<RunSummaryInput> = {}): RunSummaryInput => ({
   jobSshUser: "",
   jobSshCredential: "",
   identityCapable: true,
+  boundRunners: [],
   whenPhrase: "now",
   deferred: false,
   ansCheck: false,
@@ -265,5 +266,20 @@ describe("buildRunSummary — label omission", () => {
     for (const k of ["targets", "method"]) {
       expect(group(base(), k)!.rows.every((r) => r.label !== "")).toBe(true);
     }
+  });
+});
+
+describe("buildRunSummary — where a bound scope's run lands (SB)", () => {
+  it("names the runners the scope is bound to, without accenting it", () => {
+    // A fact about the scope, not a choice made in this dialog: nothing here can
+    // change it, so it is stated and never flagged as a deviation.
+    const r = row(base({ boundRunners: ["runner-dmz-01", "runner-dmz-02"] }), "method", "runsOn")!;
+    expect(r.value).toBe("runner-dmz-01, runner-dmz-02");
+    expect(r.accent).toBeUndefined();
+    expect(r.note).toBe("bound to the scope");
+  });
+
+  it("is absent when the scope is not bound", () => {
+    expect(row(base(), "method", "runsOn")).toBeUndefined();
   });
 });

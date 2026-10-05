@@ -7,6 +7,7 @@ import { RefreshScope } from "../components/RefreshScope";
 import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { TraceId } from "./history/shared";
+import { ReplaceRunnerDialog, type BindableScope } from "./scopes/ScopeRunners";
 import type { components } from "../api/schema";
 import { c } from "../theme";
 import { clampPage, sliceForPage } from "../utils/pager";
@@ -64,6 +65,11 @@ interface Runner {
     previousRunnerId: string;
     agencies: { id: string; name: string }[];
     tags: string[];
+    // SB — scopes still bound to the PREVIOUS runner id. A binding outlives its
+    // runner, so these are closed until the placement is restored; accepting
+    // re-points them here. A general-pool runner has no agencies, so for one
+    // the offer may carry scopes and nothing else.
+    scopes?: string[];
     deregisteredAt: string;
     deregisteredVia: "operator" | "reaper";
     previousClientIp?: string | null;
@@ -218,10 +224,22 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       </div>
       <p style={{ margin: "0 0 8px", fontSize: c.fontSm, color: c.text }}>
         A runner named <strong>{runner.name}</strong> was removed {when ? <>on {when}</> : "previously"}
-        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"} while placed in{" "}
-        {sugg.agencies.map((a) => a.name).join(", ")}
+        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"} while{" "}
+        {sugg.agencies.length > 0 ? <>placed in {sugg.agencies.map((a) => a.name).join(", ")}</> : "in the general pool"}
         {sugg.tags.length > 0 ? <> with tags {sugg.tags.join(", ")}</> : null}.
       </p>
+      {/* SB — the scopes that runner was bound to are still bound to it, and
+          closed: nothing can claim their runs. That is the most urgent thing
+          this offer restores, so it is said on its own line, not folded into
+          the sentence above. */}
+      {(sugg.scopes ?? []).length > 0 && (
+        <p style={{ margin: "0 0 8px", fontSize: c.fontSm, color: c.warning }}>
+          {(sugg.scopes ?? []).length === 1 ? "Scope " : "Scopes "}
+          <strong>{(sugg.scopes ?? []).join(", ")}</strong> {(sugg.scopes ?? []).length === 1 ? "is" : "are"} still bound to it,
+          so {(sugg.scopes ?? []).length === 1 ? "its" : "their"} runs are waiting. Restoring re-points{" "}
+          {(sugg.scopes ?? []).length === 1 ? "it" : "them"} at this runner.
+        </p>
+      )}
       <div style={{ fontSize: c.fontXs, color: c.textSec, marginBottom: 8, lineHeight: 1.6 }}>
         <div>
           Name <code style={{ fontFamily: c.mono }}>{runner.name}</code> — matched,{" "}
@@ -255,6 +273,59 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
           Dismiss
         </Btn>
       </div>
+    </div>
+  );
+}
+
+// ScopesServed lists the scopes bound to a runner and offers the hand-over.
+// Read-only apart from Replace: a binding is edited on its scope.
+function ScopesServed({ runner, scopes, canConfig, onSaved }: { runner: Runner; scopes: string[]; canConfig: boolean; onSaved: () => void }) {
+  const [replacing, setReplacing] = useState(false);
+  const [done, setDone] = useToast();
+  if (scopes.length === 0) {
+    // The confirmation outlives the list it describes: after a hand-over this
+    // runner serves nothing, and that is exactly when the message is wanted.
+    return (
+      <span style={{ color: c.textMuted }}>
+        None — this runner serves whatever its groups allow. Bind it to a scope on the{" "}
+        <Link to="/scopes" style={{ color: c.primary }}>
+          Scopes page
+        </Link>
+        .
+        <Toast message={done} />
+      </span>
+    );
+  }
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        {scopes.map((name) => (
+          <span key={name} style={{ padding: "2px 8px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontFamily: c.mono, background: c.panel2, border: `1px solid ${c.border}`, color: c.text, whiteSpace: "nowrap" }}>
+            {name}
+          </span>
+        ))}
+        {canConfig && (
+          <Btn small onClick={() => setReplacing(true)} title="Hand these scopes to another runner in one step">
+            Replace this runner…
+          </Btn>
+        )}
+      </div>
+      <div style={{ marginTop: 6, fontSize: c.fontXs, color: c.textSec }}>
+        If this runner goes offline or is removed, {scopes.length === 1 ? "this scope's" : "these scopes'"} runs wait —
+        they do not move to another runner by themselves.
+      </div>
+      {replacing && (
+        <ReplaceRunnerDialog
+          from={{ id: String(runner.id), name: runner.name }}
+          onClose={() => setReplacing(false)}
+          onDone={(message) => {
+            setReplacing(false);
+            setDone(message);
+            onSaved();
+          }}
+        />
+      )}
+      <Toast message={done} />
     </div>
   );
 }
@@ -458,6 +529,7 @@ function RunnerDetail({
   runner,
   serverVersion,
   availableAgencies,
+  servedScopes,
   canConfig,
   actions,
   onEditSettings,
@@ -467,6 +539,8 @@ function RunnerDetail({
   runner: Runner;
   serverVersion?: string | null;
   availableAgencies: { id: string; name: string }[];
+  /** SB — the scopes bound to this runner, by name. */
+  servedScopes: string[];
   canConfig: boolean;
   actions?: React.ReactNode;
   onEditSettings: () => void;
@@ -687,10 +761,29 @@ function RunnerDetail({
             <GroupEditor runner={runner} available={availableAgencies} onSaved={onSaved} />
           </Section>
 
+          {/* SB — the scopes bound to this runner. Under Groups because it is the
+              same fact at finer grain: which department's work, then which
+              scopes' work within it. Bindings are edited on the scope (that is
+              where "these hosts are reached from here" belongs); what this
+              runner's row owes the operator is the consequence — what stops if
+              it goes away — and the one-step way to hand that over. */}
+          <Section
+            title={`Scopes served${servedScopes.length ? ` (${servedScopes.length})` : ""}`}
+            info={
+              <>
+                A scope can be bound to the runners that reach its hosts (Scopes page). Only bound runners run a bound
+                scope's jobs, and the binding is kept if the runner is removed — so those scopes wait until it is
+                replaced.
+              </>
+            }
+          >
+            <ScopesServed runner={runner} scopes={servedScopes} canConfig={canConfig} onSaved={onSaved} />
+          </Section>
+
           {/* Tags — operator-authored, editable inline like other catalog items */}
           <Section
             title={`Tags${(runner.tags ?? []).length ? ` (${(runner.tags ?? []).length})` : ""}`}
-            info="Tags are operator-authored and stored in Cronomicon only — free-form labels for grouping and filtering runners."
+            info="Tags are operator-authored and stored in Cronomicon only — free-form labels for grouping and filtering runners. Nothing is dispatched on a tag."
           >
             <RunnerTagsEditor runner={runner} onSaved={onSaved} />
           </Section>
@@ -1070,6 +1163,17 @@ export function Runners() {
   const agenciesQ = useGet<unknown>(() => api.GET("/agencies"), [refresh]);
   const availableAgencies = rows<{ id: string; name: string }>(agenciesQ.data);
 
+  // SB — the scope list, for "Scopes served" in each expanded row. The binding
+  // lives on the scope, so this is the one place to read it from; a runner's own
+  // row carries nothing about it.
+  const scopesQ = useGet<unknown>(() => api.GET("/scopes"), [refresh]);
+  const boundScopes = rows<BindableScope>(scopesQ.data);
+  const servedBy = (runnerId?: string) =>
+    boundScopes
+      .filter((s) => (s.boundRunners ?? []).some((b) => b.runnerId === String(runnerId)))
+      .map((s) => s.scope)
+      .sort();
+
   const tokList = useGet<unknown>(() => api.GET("/runners/registration-tokens"), [tokenV]);
   const regTokens = rows<RegTokenInfo>(tokList.data);
 
@@ -1411,6 +1515,7 @@ export function Runners() {
                                 runner={r}
                                 serverVersion={serverBuild?.version}
                                 availableAgencies={availableAgencies}
+                                servedScopes={servedBy(r.id)}
                                 canConfig={canConfig}
                                 onEditSettings={() => setSettingsTarget(r)}
                                 onScrollToToken={scrollToToken}

@@ -4,6 +4,7 @@ import { api, csrfHeader, fetchCapabilities } from "../api/client";
 import { useGet, rows, paged, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationBanner, AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
 import { c } from "../theme";
+import { RunsOn, useBoundRunners } from "./scopes/ScopeRunners";
 import { DOC_LINKS } from "../components/docLinks";
 import { agencySuffix, ambiguousNames } from "../utils/disambiguate";
 import type { components } from "../api/schema";
@@ -1005,6 +1006,10 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
   const { data } = useGet<Job>(() => api.GET("/jobs/{jobId}", { params: { path: { jobId: jobId! } } }), [jobId]);
   const j = data ?? fallback;
   const name = j.name ?? fallback.name ?? "";
+  // SB — which runners this job's scope is bound to. The job says nothing about
+  // it (that was the runner-tag pin, retired): where it runs is the scope's fact,
+  // shown here because "where will this run" is asked of the job.
+  const { bound: boundRunners } = useBoundRunners(j.scope);
   // RX-16 — the whole edge list in one fetch; both directions are derived from
   // it. Safe here because exactly one JobDetail is mounted at a time (`expanded`
   // is a single id, not a set).
@@ -1055,6 +1060,10 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
   // unrelated reasons and keep the enumeration, which is where it earns its keep.
   const overview: { label: string; value: React.ReactNode; mono?: boolean; present: boolean; runFact?: boolean }[] = [
     { label: "Executor", value: executorLabel(j), present: true },
+    // SB — "Run on" sits immediately after Executor: the two answer adjacent
+    // halves of where this runs. Always present, because "any eligible runner"
+    // is a real and useful answer rather than a missing value.
+    { label: "Run on", value: <RunsOn bound={boundRunners} scope={j.scope} />, present: true },
     { label: "Next run", value: j.status === "paused" ? "—" : fmtWhen(j.nextRunAt), present: j.status !== "paused" && j.nextRunAt != null, runFact: true },
     // AR — a parked ad-hoc run someone scheduled from the Run dialog; distinct
     // from Next run (the standing-schedule projection). Cancel lives on
@@ -1501,10 +1510,24 @@ export function RunDialog({
   // choice here (a run is always concrete), but the dialog SAYS so instead of
   // presenting the resolution as if the job had pinned it.
   const executorAuto = job.executor !== "ssh" && job.executor !== "runner";
-  // Default the picker: runner-only run-types force Runner; otherwise prefer the
-  // job's own executor when it's a concrete choice, else SSH (the shell default).
-  const defaultExecutor: Executor = runnerOnly ? "runner" : job.executor === "runner" ? "runner" : "ssh";
-  const [executor, setExecutor] = useState<Executor>(defaultExecutor);
+  // SB — the runners the run's EFFECTIVE scope is bound to (`scope` is this
+  // dialog's own state, so a per-run scope override is judged against the scope
+  // the run will actually use). A bound scope's work goes to those runners, and
+  // the server refuses a run that asks for SSH on one — so on a bound scope SSH
+  // is simply not on offer, exactly as it is not for a runner-only run type.
+  const { bound: boundRunners } = useBoundRunners(scope);
+  const scopeBound = boundRunners.length > 0;
+  const sshUnavailable = runnerOnly || scopeBound;
+  // Default the picker: runner-only run-types and bound scopes force Runner;
+  // otherwise prefer the job's own executor when it's a concrete choice, else
+  // SSH (the shell default).
+  const defaultExecutor: Executor = sshUnavailable ? "runner" : job.executor === "runner" ? "runner" : "ssh";
+  // The operator's own choice, null until they make one. Derived rather than
+  // seeded into state: the binding arrives after mount and changes with the
+  // scope field, and a state seeded from the first render would keep saying SSH
+  // for a run the server is about to refuse.
+  const [executorChoice, setExecutor] = useState<Executor | null>(null);
+  const executor: Executor = sshUnavailable ? "runner" : executorChoice ?? defaultExecutor;
   const [runErr, setRunErr] = useState<string | null>(null);
   // F1 per-run env overrides + F2 host subset within the bound scope.
   const [envRows, setEnvRows] = useState<{ key: string; value: string }[]>([]);
@@ -1777,10 +1800,13 @@ export function RunDialog({
     );
     if (res.ok) {
       onDone();
-    } else if (res.code === "invalid_executor") {
+    } else if (res.code === "invalid_executor" || res.code === "scope_requires_runner") {
       // Force the runner choice and keep the dialog open so the operator can retry.
+      // scope_requires_runner is the same remedy for a different reason: the
+      // run's scope is bound to runners. The dialog normally knows that before
+      // Run is pressed; this is the case where the binding was made in between.
       setExecutor("runner");
-      setRunErr(res.message ?? "SSH cannot run this job type — use the runner executor.");
+      setRunErr(res.message ?? "SSH cannot run this job — use the runner executor.");
     } else if (res.code === "key_binding_requires_runner") {
       // KB — the run RESOLVED to the ssh executor and the job binds an SSH key the
       // executor cannot deliver. Unlike invalid_executor this does NOT force the
@@ -1915,6 +1941,9 @@ export function RunDialog({
     executorAuto && executor === defaultExecutor ? `Auto → ${executorWord}` : executorWord,
     sshUser.trim() ? `as ${sshUser.trim()}` : "",
     sshCredential ? `key ${sshCredential}` : "",
+    // SB — the collapsed line names the bound runners: the section's job is that
+    // the facts which decide where a run goes stay visible while it is folded.
+    scopeBound ? `on ${boundRunners.map((b) => b.name).join(", ")}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -2096,6 +2125,7 @@ export function RunDialog({
     jobSshUser: jobDetail.sshUser ?? "",
     jobSshCredential: jobDetail.sshCredential ?? "",
     identityCapable,
+    boundRunners: executor === "runner" ? boundRunners.map((b) => b.name) : [],
     whenPhrase,
     deferred: !!runAt,
     ansCheck,
@@ -2737,11 +2767,17 @@ export function RunDialog({
       <FormField
         label="Executor"
         helperMode="engaged"
-        active={runnerOnly || executorAuto || executor !== defaultExecutor}
+        active={sshUnavailable || executorAuto || executor !== defaultExecutor}
         helper={
           runnerOnly ? (
             <>
               <strong>{job.type}</strong> requires a runner with the local toolchain — SSH is unavailable for this run-type.
+            </>
+          ) : scopeBound ? (
+            <>
+              Scope <strong>{scope}</strong> is bound to <strong>{boundRunners.map((b) => b.name).join(", ")}</strong>,
+              so this run goes to {boundRunners.length === 1 ? "that runner" : "those runners"} — SSH from the server is
+              unavailable for it.
             </>
           ) : (
             <>
@@ -2756,8 +2792,14 @@ export function RunDialog({
             label="SSH"
             sub={executorAuto && defaultExecutor === "ssh" ? "In-app SSH · job default (Auto)" : "In-app SSH"}
             selected={executor === "ssh"}
-            disabled={runnerOnly}
-            title={runnerOnly ? `SSH can't run ${job.type} — it needs a runner with the local ${job.type} toolchain.` : undefined}
+            disabled={sshUnavailable}
+            title={
+              runnerOnly
+                ? `SSH can't run ${job.type} — it needs a runner with the local ${job.type} toolchain.`
+                : scopeBound
+                  ? `Scope ${scope} is bound to runners, so its jobs run on those — unbind the scope to use SSH.`
+                  : undefined
+            }
             onClick={() => setExecutor("ssh")}
           />
           <ExecutorChoice

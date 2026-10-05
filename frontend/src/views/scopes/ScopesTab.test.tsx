@@ -11,6 +11,8 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 const deletes: { path: string; params: unknown }[] = [];
 const puts: { path: string; params: unknown; body: unknown }[] = [];
 const posts: { path: string; body: unknown }[] = [];
+// SB — the notice list the Scopes tab reads for callers who may configure the app.
+let bindingNotices: unknown[] = [];
 
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
@@ -21,7 +23,11 @@ vi.mock("../../api/client", async (importOriginal) => {
       // lazily fetches its inventory. Neither is under test — resolve both to
       // something inert so the panels render nothing of consequence.
       GET: vi.fn(async (path: string) =>
-        path === "/agencies" ? { data: [] } : { data: { editable: false, hasInventory: false } },
+        path === "/agencies"
+          ? { data: [] }
+          : path === "/scope-binding-notices"
+            ? { data: bindingNotices }
+            : { data: { editable: false, hasInventory: false } },
       ),
       DELETE: vi.fn(async (path: string, opts: { params?: unknown }) => {
         deletes.push({ path, params: opts.params });
@@ -69,6 +75,7 @@ beforeEach(() => {
   deletes.length = 0;
   puts.length = 0;
   posts.length = 0;
+  bindingNotices = [];
 });
 afterEach(cleanup);
 
@@ -258,5 +265,52 @@ describe("ScopesTab — no supported run types", () => {
     expect(sent.scope).toBe("New-Scope");
     expect(sent.hosts).toEqual(["h1.internal"]);
     expect("supportedTypes" in sent).toBe(false);
+  });
+});
+
+// SB — where a scope's runner binding shows up in this view. The components are
+// tested on their own (ScopeRunners.test.tsx); what is pinned here is the wiring:
+// the column, the expanded-row section, the notice banner and who sees it, and
+// the Agencies column no longer calling a general-pool scope "unrestricted".
+describe("ScopesTab — runner bindings (SB)", () => {
+  const BOUND: ScopeRow = {
+    ...GIT,
+    boundRunners: [{ runnerId: "r1", name: "runner-dmz-01", registered: false, status: "", eligible: false }],
+  };
+
+  it("shows the binding in the Runners column and the expanded row, on a Git scope too", async () => {
+    const { container } = renderTab([LOCAL, BOUND], true);
+    const q = within(container);
+    // Column: the unbound scope says so, the bound one names its runner and warns.
+    expect(q.getByText("any eligible")).toBeTruthy();
+    expect(q.getByLabelText("No bound runner can claim work")).toBeTruthy();
+
+    expand(q, "prod-web");
+    await waitFor(() => expect(container.textContent).toMatch(/No bound runner can claim work right now/));
+    // The binding is an operator overlay, so a Git-source scope is editable here.
+    expect(q.getByRole("button", { name: "Change…" })).toBeTruthy();
+    expect(q.getByRole("button", { name: "replace" })).toBeTruthy();
+  });
+
+  it("calls a scope in no agency the general pool — it is not open to every runner", () => {
+    const { container } = renderTab([LOCAL], true);
+    const q = within(container);
+    const cell = q.getByText("general pool");
+    expect(cell.getAttribute("title")).toMatch(/only a general-pool runner/);
+    expect(q.queryByText("unrestricted")).toBeNull();
+  });
+
+  it("shows the retired-pin notices to a caller who may configure the app, and to nobody else", async () => {
+    bindingNotices = [
+      { id: 1, jobUid: "u1", jobName: "deploy", jobSource: "git", scope: "prod-web", runnerTag: "vlan-dmz", reason: "partial_pins", recordedAt: "t" },
+    ];
+    const admin = renderTab([LOCAL, GIT], true);
+    await waitFor(() => expect(admin.container.textContent).toMatch(/1 job used to be confined to particular runners/));
+    cleanup();
+
+    const viewer = renderTab([LOCAL, GIT], false);
+    // Give a fetch the chance to land; there must be none to land.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(viewer.container.textContent).not.toMatch(/used to be confined/);
   });
 });
