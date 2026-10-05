@@ -575,26 +575,11 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	if resolved.ScopeRefused() {
 		s.log.Warn("scheduler: skip fire — job asks for the ssh executor on a scope bound to runners",
 			"job", jobName, "scope", scope, "detail", resolved.Refusal.Message)
-		// Two details of the record, both learned the hard way by its neighbours:
-		//
-		//   - no ConcurrencyKey. dedupeEpisodeReason must not be visible to the
-		//     key-based Forbid de-dupe (see the pause path above): carrying the key
-		//     makes this row "the latest run for that key", and another job sharing
-		//     a custom key then has its own Forbid skip swallowed in silence.
-		//   - a Day. Unlike a pause — which missed-run detection excludes outright
-		//     — this refusal STANDS, for as long as the job says ssh and the scope
-		//     is bound, and detection only accepts a skip row from the same day as
-		//     the fire it explains. One row for the whole episode would explain day
-		//     one and be reported as a missed run, with an alert, every day after.
-		//     Bounding the episode by the day writes one row a day instead.
-		loc := s.location()
+		// No ConcurrencyKey, and a day-bounded episode: see standingRefusal.
 		if err := s.recordSuppression(ctx, EnqueueParams{
 			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
 			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
-		}, skipRecord{
-			Reason: execspec.ReasonScopeRequiresRunner, Mode: dedupeEpisodeReason,
-			Day: calendar.DayOf(time.Now(), loc), Loc: loc,
-		}); err != nil {
+		}, s.standingRefusal(execspec.ReasonScopeRequiresRunner)); err != nil {
 			s.log.Error("scheduler: record scope-binding skip", "job", jobName, "err", err)
 		}
 		return
@@ -610,11 +595,13 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	if len(keys) > 0 {
 		s.log.Warn("scheduler: skip fire — key-bound job resolved to the ssh executor",
 			"job", jobName, "reference", keys[0].Reference, "detail", runref.KeyBindingRefusal(keys))
+		// No ConcurrencyKey, and a day-bounded episode: see standingRefusal. This
+		// record used to carry the key and one unbounded episode, and had both of
+		// the defects that function describes.
 		if err := s.recordSuppression(ctx, EnqueueParams{
 			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
-			TargetHost: jobTargetHost.String, ScheduleName: scheduleName,
-			ConcurrencyKey: effectiveConcKey, Executor: executor,
-		}, skipRecord{Reason: runref.ReasonKeyBindingOnSSH, Mode: dedupeEpisodeReason}); err != nil {
+			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
+		}, s.standingRefusal(runref.ReasonKeyBindingOnSSH)); err != nil {
 			s.log.Error("scheduler: record key-binding skip", "job", jobName, "err", err)
 		}
 		return
@@ -711,6 +698,32 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 			return
 		}
 		s.log.Error("scheduler: enqueue run", "job", jobName, "err", err)
+	}
+}
+
+// standingRefusal is the skip record for a fire refused because of how the JOB
+// is defined — it asks for ssh on a scope bound to runners, or binds a key the
+// ssh executor cannot deliver. Two things set such a refusal apart from the
+// pause and cap skips it shares dedupeEpisodeReason with, and both were learned
+// the hard way:
+//
+//   - It must carry NO concurrency key (the caller leaves it off the params).
+//     dedupeEpisodeReason must not be visible to the key-based Forbid de-dupe:
+//     carrying the key makes this row "the latest run for that key", and another
+//     job sharing a custom key then has its own Forbid skip swallowed in silence.
+//     The pause and cap paths drop the key for the same reason.
+//   - Its episode is bounded by the DAY. A pause is excluded from missed-run
+//     detection outright and a cap clears by itself; this refusal stands for as
+//     long as the definition does, with detection still watching the job, and
+//     detection accepts a skip row only from the same app-zone day as the fire it
+//     explains. One row for the whole episode explains day one and is then
+//     reported as a missed run, with an alert, every day after. One row a day
+//     keeps History honest and the pager quiet.
+func (s *Scheduler) standingRefusal(reason string) skipRecord {
+	loc := s.location()
+	return skipRecord{
+		Reason: reason, Mode: dedupeEpisodeReason,
+		Day: calendar.DayOf(time.Now(), loc), Loc: loc,
 	}
 }
 

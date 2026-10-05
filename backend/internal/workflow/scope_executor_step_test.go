@@ -68,3 +68,44 @@ func TestWorkflowStep_OnABoundScopeRunsOnItsRunners(t *testing.T) {
 			status, executor, reason)
 	}
 }
+
+// TestWorkflowStep_ARefusalIsNotRetried: a refused step fails once. A refusal is
+// the engine deciding the step must not run as defined, and nothing about that
+// changes between attempts — each retry used to sleep the backoff and insert
+// another identical failure row. Both refusals decided at enqueue are covered:
+// ssh on a bound scope, and a key the ssh executor cannot deliver.
+func TestWorkflowStep_ARefusalIsNotRetried(t *testing.T) {
+	retries, backoff := 3, 0
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, pool *sql.DB)
+	}{
+		{"ssh on a bound scope", func(t *testing.T, pool *sql.DB) { bindStepScope(t, pool, "tax") }},
+		{"a key-bound job on ssh", func(t *testing.T, pool *sql.DB) { bindStepKey(t, pool, "deploy") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := openPool(t)
+			seedScopedJob(t, pool, "deploy", "ssh")
+			tc.setup(t, pool)
+
+			eng := workflow.New(pool, discardLog())
+			res, err := eng.Trigger(context.Background(), workflow.TriggerParams{
+				WorkflowName: "parent", WorkflowID: 1, TriggeredBy: "t@example.com",
+				Steps: []workflow.Step{{Type: "job", Name: "deploy", Retries: &retries, BackoffSeconds: &backoff}},
+			})
+			if err != nil {
+				t.Fatalf("Trigger: %v", err)
+			}
+			if status, _ := waitWorkflowTerminal(t, pool, res.TraceID); status == "success" {
+				t.Error("the workflow succeeded on a refused step")
+			}
+			var n int
+			if err := pool.QueryRow(`SELECT COUNT(*) FROM runs WHERE job_name='deploy'`).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			if n != 1 {
+				t.Errorf("child runs for the refused step = %d, want 1 — a refusal must not be retried", n)
+			}
+		})
+	}
+}

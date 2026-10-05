@@ -474,8 +474,17 @@ func (e *Engine) runStep(
 	if traceID == "" {
 		traceID = db.NewTraceID()
 	}
-	status := e.runJob(ctx, wfTraceID, wfName, wfID, step, traceID, scope, actor, jobDefs, inputEnv)
-	for attempt := 1; attempt <= retries && status == "danger"; attempt++ {
+	status, refused := e.runJob(ctx, wfTraceID, wfName, wfID, step, traceID, scope, actor, jobDefs, inputEnv)
+	// A REFUSED step is not retried. A refusal is the engine deciding the step
+	// must not run as defined — the job is barred, it consumes credentials no
+	// scope binds, it asks for ssh on a scope bound to runners, it binds a key
+	// ssh cannot deliver — and nothing about that changes between attempts: each
+	// retry would sleep the backoff and insert another identical failure row.
+	// effectiveRetry already zeroes the retries for the one refusal known before
+	// the step is attempted (a barred job, FX-A1); the rest are only known here.
+	// Whether the WALK survives the failed step is continue_on_error's business,
+	// as it is there.
+	for attempt := 1; attempt <= retries && status == "danger" && !refused; attempt++ {
 		if ctx.Err() != nil {
 			break
 		}
@@ -490,13 +499,16 @@ func (e *Engine) runStep(
 		}
 		e.log.Info("workflow: retrying step", "job", step.Name, "attempt", attempt, "of", retries)
 		traceID = db.NewTraceID() // each attempt is its own child run
-		status = e.runJob(ctx, wfTraceID, wfName, wfID, step, traceID, scope, actor, jobDefs, inputEnv)
+		status, refused = e.runJob(ctx, wfTraceID, wfName, wfID, step, traceID, scope, actor, jobDefs, inputEnv)
 	}
 	return status, traceID
 }
 
 // runJob enqueues a child run with the given trace id and polls until it reaches a
-// terminal state.
+// terminal state. refused reports that the engine itself decided the step must
+// not run and inserted its child row already failed — as opposed to a step that
+// ran and failed, or could not be enqueued at all — which runStep reads as "do
+// not retry".
 func (e *Engine) runJob(
 	ctx context.Context,
 	wfTraceID, wfName string,
@@ -506,7 +518,7 @@ func (e *Engine) runJob(
 	scope, actor string,
 	jobDefs map[string]jobDef,
 	inputEnv map[string]string,
-) string {
+) (status string, refused bool) {
 	if traceID == "" {
 		// Defense-in-depth: every job node is pre-minted by assignNodeIDs, but a
 		// missing id must never become an empty-string PK (PP-H8 c).
@@ -584,7 +596,7 @@ func (e *Engine) runJob(
 		blocked, berr := runref.UnboundRunBlocked(ctx, e.db, stepOwners, effectiveScope, stepAgencies)
 		if berr != nil {
 			e.log.Error("workflow: check unbound references", "job", step.Name, "err", berr)
-			return "danger"
+			return "danger", false
 		}
 		if len(blocked) > 0 {
 			stepStatus, stepQueuedReason = "failure", runref.QueuedReasonUnboundReferences
@@ -599,7 +611,7 @@ func (e *Engine) runJob(
 	if stepStatus == "queued" {
 		if resolved.Err != nil {
 			e.log.Error("workflow: resolve executor", "job", step.Name, "err", resolved.Err)
-			return "danger"
+			return "danger", false
 		}
 		if resolved.ScopeRefused() {
 			stepStatus, stepQueuedReason = "failure", execspec.ReasonScopeRequiresRunner
@@ -615,7 +627,7 @@ func (e *Engine) runJob(
 		keys, kerr := runref.KeyBindingsOnSSH(ctx, e.db, stepOwners, executor)
 		if kerr != nil {
 			e.log.Error("workflow: check key bindings", "job", step.Name, "err", kerr)
-			return "danger"
+			return "danger", false
 		}
 		if len(keys) > 0 {
 			stepStatus, stepQueuedReason = "failure", runref.ReasonKeyBindingOnSSH
@@ -666,12 +678,12 @@ func (e *Engine) runJob(
 		QueuedReason: stepQueuedReason,
 	}); err != nil {
 		e.log.Error("workflow: insert child run", "job", step.Name, "err", err)
-		return "danger"
+		return "danger", false
 	}
 	if err := execspec.SyncRunAgencies(ctx, e.db, traceID, stepAgenciesJSON); err != nil {
 		// Fail the step rather than enqueue a run the claim predicate would mis-route.
 		e.log.Error("workflow: materialize child run agencies", "job", step.Name, "err", err)
-		return "danger"
+		return "danger", false
 	}
 	// RA-20(b) — same advisory hint the scheduler/trigger paths get from
 	// EnqueueRunWithID. This engine builds its own INSERT (the recurring reason
@@ -693,7 +705,7 @@ func (e *Engine) runJob(
 	if jd.timeout > 0 {
 		maxWait = time.Duration(jd.timeout)*time.Second + 60*time.Second
 	}
-	return e.waitForRun(ctx, traceID, maxWait)
+	return e.waitForRun(ctx, traceID, maxWait), stepStatus != "queued"
 }
 
 // effectiveRetry resolves a step's retry config (WB-R1, D3): the per-step value
