@@ -4181,10 +4181,17 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 				statusReason = "Waiting: no online general-pool runner (all runners are agency-bound)"
 			}
 		} else if eligible, requires, _ := execspec.EligibleOnlineRunnerForRun(context.Background(), s.db, rr.id); !eligible {
-			// A runner exists in the pool but none satisfies this run's
-			// requirement tokens (or run-type) — name the unmet requirements
-			// (§5 requirements-aware stuck-run hint).
-			if len(requires) > 0 {
+			// A runner exists in the pool but none can take this run. SB-1: ask
+			// first whether the scope's runner binding is what holds it — the
+			// case this hint exists for more than any other, since a run that was
+			// claimable when it was queued (so carries no stored reason) stops
+			// being so the moment its bound runner is deregistered or swapped.
+			// Without this the two branches below would blame the run type.
+			if why, _ := execspec.ScopeBindingBlock(context.Background(), s.db, rr.id); why != "" {
+				statusReason = "Waiting: " + why
+			} else if len(requires) > 0 {
+				// None satisfies this run's requirement tokens (or run-type) —
+				// name the unmet requirements (§5 requirements-aware stuck-run hint).
 				statusReason = "Waiting: no online runner satisfies this run's requirements [" + strings.Join(requires, ", ") + "]"
 			} else {
 				statusReason = "Waiting: no online runner supports run-type '" + rr.runType + "'"

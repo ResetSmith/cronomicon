@@ -344,6 +344,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountAccess(mux)               // LB3: /roles, /ad-group-mappings/*, /scope-restrictions
 	s.mountAccessGrants(mux)         // RB-18: /access-grants (INERT — nothing authorizes on it yet)
 	s.mountAgencies(mux)             // agency-support.md M1: /agencies/*, /scopes/{id}/agency (network-isolation zones)
+	s.mountScopeRunners(mux)         // SB-1: /scopes/{id}/runners, /scope-runners/replace, /scope-binding-notices (scope↔runner bindings)
 	// ET-A/B: /service-accounts (machine principals) + /trigger/* (the only
 	// token-authenticated, session-less route family). Shares mountExecution's
 	// engine so a workflow triggered by a token is cancellable like any other.

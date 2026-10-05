@@ -26,6 +26,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/watchspec"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 	gogit "github.com/go-git/go-git/v5"
@@ -231,6 +232,31 @@ func (s *Service) logError(msg string, args ...any) {
 	if s.log != nil {
 		s.log.Error(msg, args...)
 	}
+}
+
+// heldBoundScopes names the git scopes this sync would prune but must keep for
+// now: gone from Git (synced_at older than this pass), bound to runners, and
+// with runs still waiting under their name (settings.BoundScopeBusySQL). Purely
+// for the warning — the prune statements apply the same predicate themselves.
+// A read error yields nil: the predicate in the DELETE is what protects the
+// rows, and a missing log line must not fail a sync.
+func heldBoundScopes(ctx context.Context, tx *sql.Tx, nowStr string) []string {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT name FROM scopes
+		 WHERE synced_at < ? AND source = 'git' AND `+settings.BoundScopeBusySQL+`
+		 ORDER BY name`, nowStr)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // logWarn logs at Warn level, safely handling a nil logger.
@@ -700,10 +726,24 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if scopesOK {
+		// SB-1 — a git scope that is BOUND to runners and still has work waiting
+		// under its name is held back from this prune, hosts and all. A run
+		// carries its scope by name; delete the row and the run reads as
+		// unrestricted, so any runner in its agency may claim it — which is the
+		// in-app rename/delete refusal (settings.ErrBoundScopeBusy) reached
+		// through a commit instead. It is a deferral, not an override of Git: the
+		// scope goes on the first sync after its queue drains, and until then the
+		// warning below says which scopes are waiting and on what.
+		if held := heldBoundScopes(ctx, tx, nowStr); len(held) > 0 {
+			s.logWarn("git sync: scope removed from Git but kept this cycle — it is bound to runners and has runs "+
+				"waiting under its name; it will be pruned once they finish or are cancelled",
+				"scopes", strings.Join(held, ", "))
+		}
 		prune("scope hosts", `
 			DELETE FROM scope_hosts
 			WHERE scope_id IN (
 				SELECT id FROM scopes WHERE synced_at < ? AND source = 'git'
+				   AND NOT `+settings.BoundScopeBusySQL+`
 			)`)
 		// M4 — reap imported (git) ssh_hosts rows dropped from inventory this sync.
 		// Only source='git' rows; operator (cronomicon) overlays are never touched.
@@ -712,7 +752,8 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 			WHERE source = 'git' AND (synced_at IS NULL OR synced_at < ?)`)
 		prunedScopes = prune("scopes", `
 			DELETE FROM scopes
-			WHERE synced_at < ? AND source = 'git'`)
+			WHERE synced_at < ? AND source = 'git'
+			  AND NOT `+settings.BoundScopeBusySQL)
 	} else {
 		skipped = append(skipped, "scopes")
 	}
@@ -2091,6 +2132,13 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// `tags` to the INSERT column list or the ON CONFLICT DO UPDATE SET below —
 		// the column default covers a new row, and an existing row must keep what the
 		// operator set. TestSyncPreservesScopeTags pins that.
+		//
+		// And it covers scope_runners (migration 1180, SB band): the runners a scope
+		// is restricted to, written only by PUT /scopes/{scopeId}/runners. Those rows
+		// hang off the scope's ID, so what protects them is this statement staying an
+		// UPSERT that keeps the row. Do NOT turn it into a delete-and-insert or an
+		// INSERT OR REPLACE — a new id cascades the binding away and the scope reopens
+		// to its whole agency. TestSyncPreservesScopeRunners pins that.
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at)
 			VALUES(?,?,?,?,?,?,?,?,?)

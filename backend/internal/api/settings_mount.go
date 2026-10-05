@@ -1092,6 +1092,10 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 			}{"inventory_secret_rejected", "the inventory contains inline secret values; use env-var-NAME indirection", validationErr.Errors})
 			return
 		}
+		if busy, ok := errors.AsType[*settings.ErrBoundScopeBusy](err); ok {
+			httpx.Fail(w, http.StatusConflict, "scope_bound_busy", busy.Error())
+			return
+		}
 		if strings.Contains(err.Error(), "only cronomicon-source") {
 			httpx.Fail(w, http.StatusConflict, "conflict", err.Error())
 			return
@@ -1132,6 +1136,10 @@ func (s *Server) handleDeleteScope(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("scopeId")
 	found, err := settings.DeleteScope(r.Context(), s.db, sid, id.Email)
 	if err != nil {
+		if busy, ok := errors.AsType[*settings.ErrBoundScopeBusy](err); ok {
+			httpx.Fail(w, http.StatusConflict, "scope_bound_busy", busy.Error())
+			return
+		}
 		if strings.Contains(err.Error(), "only cronomicon-source") || strings.Contains(err.Error(), "referenced by") {
 			httpx.Fail(w, http.StatusConflict, "conflict", err.Error())
 			return

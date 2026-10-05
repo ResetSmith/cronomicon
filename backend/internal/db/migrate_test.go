@@ -31,8 +31,8 @@ func TestMigrateUpDown(t *testing.T) {
 	if dirty {
 		t.Fatal("schema is dirty after up")
 	}
-	if v != 1170 {
-		t.Fatalf("schema version = %d, want 1170", v)
+	if v != 1180 {
+		t.Fatalf("schema version = %d, want 1180", v)
 	}
 
 	// Core tables should exist.
@@ -3183,5 +3183,192 @@ func TestMigrate1170ScopesDropRunTypes(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(meta.String), &got); err != nil || string(got["owner"]) != `"infra"` {
 		t.Errorf("owner lost across down+up: %s", meta.String)
+	}
+}
+
+// TestMigrate1180ScopeRunners pins the scope↔runner bindings (the
+// scope-bound-runners plan, SB-1) and the conversion of the runner-tag pin into
+// them: a scope whose every live job agrees on one tag is bound to the runners
+// that carry it AND are eligible for the scope's agency; every other pinned job
+// is recorded, with its reason, so the pin is not lost when its column goes.
+func TestMigrate1180ScopeRunners(t *testing.T) {
+	pool, err := Open(filepath.Join(t.TempDir(), "scoperunners.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+
+	m, err := migrator(pool)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+	if err := m.Migrate(1170); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate to 1170: %v", err)
+	}
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-fin','Finance','t'), ('ag-tax','Tax','t')`)
+	scope := func(id, name, agency string) {
+		t.Helper()
+		exec(`INSERT INTO scopes(id, name, source, created_at) VALUES(?, ?, 'cronomicon', 't')`, id, name)
+		if agency != "" {
+			exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES(?, ?)`, id, agency)
+		}
+	}
+	runner := func(id, name, tag, agency string) {
+		t.Helper()
+		exec(`INSERT INTO runners(id, name, status, registered_at, created_at, tags)
+		      VALUES(?, ?, 'online', 't', 't', json_array(?))`, id, name, tag)
+		exec(`INSERT INTO runner_tags(runner_id, tag) VALUES(?, ?)`, id, tag)
+		if agency != "" {
+			exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES(?, ?)`, id, agency)
+		}
+	}
+	job := func(uid, name, scope string, tag any) {
+		t.Helper()
+		exec(`INSERT INTO jobs(uid, name, source, run_type, scope, runner_tag, synced_at)
+		      VALUES(?, ?, 'cronomicon', 'bash', NULLIF(?, ''), ?, 't')`, uid, name, scope, tag)
+	}
+
+	// dmz: unanimous, and the tag differs only in case between the two jobs and
+	// the runner (the projection is NOCASE). r-dmz is in Finance and carries it;
+	// r-tax carries the same tag from the wrong agency and must not be bound.
+	scope("s-dmz", "dmz-web", "ag-fin")
+	runner("r-dmz", "runner-dmz-01", "vlan-dmz", "ag-fin")
+	runner("r-tax", "runner-tax-01", "vlan-dmz", "ag-tax")
+	job("j-dmz-1", "deploy", "dmz-web", "vlan-dmz")
+	job("j-dmz-2", "restart", "dmz-web", "VLAN-DMZ")
+
+	// pool: a general-pool scope takes a general-pool runner, never a member one.
+	scope("s-pool", "shared", "")
+	runner("r-pool", "runner-pool-01", "edge", "")
+	runner("r-fin-edge", "runner-fin-02", "edge", "ag-fin")
+	job("j-pool", "sweep", "shared", "edge")
+
+	// Everything that cannot convert.
+	scope("s-mixed", "mixed", "ag-fin")
+	job("j-mixed-1", "a", "mixed", "vlan-dmz")
+	job("j-mixed-2", "b", "mixed", "edge")
+	scope("s-partial", "partial", "ag-fin")
+	job("j-partial-1", "c", "partial", "vlan-dmz")
+	job("j-partial-2", "d", "partial", nil)
+	scope("s-orphan", "orphan", "ag-fin")
+	job("j-orphan", "e", "orphan", "no-such-tag")
+	job("j-noscope", "f", "", "vlan-dmz")
+	job("j-ghost-scope", "g", "never-created", "vlan-dmz")
+
+	// A binned job is not a live definition: its missing pin must not stop the
+	// conversion of a scope whose live jobs agree, and on a scope that ends up
+	// bound it needs no notice (restored, the binding covers it) — even pinned
+	// to a different tag.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, synced_at, deleted_at)
+	      VALUES('j-binned', 'old', 'cronomicon', 'bash', 'dmz-web', 't', 't')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, runner_tag, synced_at, deleted_at)
+	      VALUES('j-binned-covered', 'older', 'cronomicon', 'bash', 'dmz-web', 'edge', 't', 't')`)
+	// A binned PINNED job on a scope that does not get bound is recorded: a
+	// restore clears deleted_at and nothing else, so it comes back unconfined.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, runner_tag, synced_at, deleted_at)
+	      VALUES('j-binned-pinned', 'retired', 'cronomicon', 'bash', 'plain', 'vlan-dmz', 't', 't')`)
+	// A scope nobody pinned stays unrestricted.
+	scope("s-plain", "plain", "ag-fin")
+	job("j-plain", "h", "plain", nil)
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up 1170→1180: %v", err)
+	}
+
+	bound := map[string][]string{}
+	rows, err := pool.Query(`SELECT sc.name, sr.runner_id, sr.runner_name, COALESCE(sr.bound_by,'')
+	                           FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+	                          ORDER BY sc.name, sr.runner_id`)
+	if err != nil {
+		t.Fatalf("read scope_runners: %v", err)
+	}
+	for rows.Next() {
+		var sc, rid, rname, by string
+		if err := rows.Scan(&sc, &rid, &rname, &by); err != nil {
+			t.Fatalf("scan scope_runners: %v", err)
+		}
+		bound[sc] = append(bound[sc], rid+"/"+rname)
+		if by != "migration:1180" {
+			t.Errorf("bound_by on %s = %q, want migration:1180", sc, by)
+		}
+	}
+	rows.Close()
+	wantBound := map[string][]string{
+		"dmz-web": {"r-dmz/runner-dmz-01"},
+		"shared":  {"r-pool/runner-pool-01"},
+	}
+	if len(bound) != len(wantBound) {
+		t.Errorf("bound scopes = %v, want %v", bound, wantBound)
+	}
+	for sc, want := range wantBound {
+		if got := bound[sc]; len(got) != len(want) || got[0] != want[0] {
+			t.Errorf("scope %s bound to %v, want %v", sc, got, want)
+		}
+	}
+
+	notices := map[string]string{}
+	rows, err = pool.Query(`SELECT job_uid, reason FROM retired_runner_pins`)
+	if err != nil {
+		t.Fatalf("read retired_runner_pins: %v", err)
+	}
+	for rows.Next() {
+		var uid, reason string
+		if err := rows.Scan(&uid, &reason); err != nil {
+			t.Fatalf("scan retired_runner_pins: %v", err)
+		}
+		notices[uid] = reason
+	}
+	rows.Close()
+	wantNotices := map[string]string{
+		"j-mixed-1":       "mixed_pins",
+		"j-mixed-2":       "mixed_pins",
+		"j-partial-1":     "partial_pins",
+		"j-orphan":        "no_eligible_runner",
+		"j-noscope":       "no_scope",
+		"j-ghost-scope":   "unknown_scope",
+		"j-binned-pinned": "binned_job",
+	}
+	if len(notices) != len(wantNotices) {
+		t.Errorf("notices = %v, want %v", notices, wantNotices)
+	}
+	for uid, want := range wantNotices {
+		if notices[uid] != want {
+			t.Errorf("notice for %s = %q, want %q", uid, notices[uid], want)
+		}
+	}
+
+	// The binding must outlive its runner — there is deliberately no FK. With
+	// foreign keys enforced, deleting the runner leaves the row (and the scope
+	// closed); deleting the SCOPE takes its rows with it.
+	exec(`PRAGMA foreign_keys = ON`)
+	exec(`DELETE FROM runner_tags WHERE runner_id = 'r-dmz'`)
+	exec(`DELETE FROM runners WHERE id = 'r-dmz'`)
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scope_runners WHERE runner_id = 'r-dmz'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("binding rows after deleting the runner = %d (err %v), want 1", n, err)
+	}
+	exec(`DELETE FROM scopes WHERE id = 's-pool'`)
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scope_runners WHERE scope_id = 's-pool'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("binding rows after deleting the scope = %d (err %v), want 0", n, err)
+	}
+
+	// Down drops both tables; up again converts from the pins that are still there.
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("migrate down 1180→1170: %v", err)
+	}
+	for _, tbl := range []string{"scope_runners", "retired_runner_pins"} {
+		if err := pool.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&n); err != nil || n != 0 {
+			t.Errorf("after the down, table %s present = %d (err %v), want 0", tbl, n, err)
+		}
+	}
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up again 1170→1180: %v", err)
 	}
 }

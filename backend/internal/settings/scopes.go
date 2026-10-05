@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
 	"github.com/ResetSmith/cronomicon/internal/tagutil"
 )
@@ -55,6 +56,12 @@ type Scope struct {
 	// absent from the sync upsert, so they survive a re-sync. Always non-nil.
 	// Organisational only — nothing dispatches, gates or warns on a scope tag.
 	Tags []string `json:"tags"`
+	// BoundRunners are the runners this scope is restricted to (migration 1180,
+	// SB band). Empty means unrestricted: any runner eligible by agency may serve
+	// it. Operator-owned overlay set via PUT /scopes/{id}/runners; never parsed
+	// from Git and untouched by sync. Always non-nil. A binding whose runner has
+	// been deregistered is still listed (registered=false) and still restricts.
+	BoundRunners []execspec.BoundRunner `json:"boundRunners"`
 }
 
 // AgencyRef is the lightweight {id,name} of a scope's bound agency.
@@ -197,6 +204,9 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 		out[i].HostCount = len(hosts)
 		out[i].Groups, _ = getScopeGroups(ctx, database, out[i].ID)
 		out[i].Agencies = resolveAgencyRefs(ctx, database, out[i].ID)
+		if out[i].BoundRunners, err = resolveBoundRunners(ctx, database, out[i].ID); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -300,6 +310,11 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 	sc.HostCount = len(hosts)
 	sc.Groups, _ = getScopeGroups(ctx, database, sc.ID)
 	sc.Agencies = resolveAgencyRefs(ctx, database, sc.ID)
+	bound, err := resolveBoundRunners(ctx, database, sc.ID)
+	if err != nil {
+		return nil, err
+	}
+	sc.BoundRunners = bound
 	return &sc, nil
 }
 
@@ -326,6 +341,24 @@ func resolveAgencyRefs(ctx context.Context, database *sql.DB, scopeID string) []
 		out = append(out, ref)
 	}
 	return out
+}
+
+// resolveBoundRunners resolves a scope's runner bindings (migration 1180). The
+// slice is always non-nil.
+//
+// Unlike resolveAgencyRefs it FAILS the read on an error. An empty list here
+// does not mean "unknown", it means "unrestricted" — and PUT /scopes/{id}/runners
+// is a full replace, so an editor opened on a scope that merely failed to load
+// its bindings would delete every one of them on save.
+func resolveBoundRunners(ctx context.Context, database *sql.DB, scopeID string) ([]execspec.BoundRunner, error) {
+	out, err := execspec.BoundRunners(ctx, database, scopeID)
+	if err != nil {
+		return nil, fmt.Errorf("load bound runners: %w", err)
+	}
+	if out == nil {
+		out = []execspec.BoundRunner{}
+	}
+	return out, nil
 }
 
 // CreateScope creates a new local scope.
@@ -450,6 +483,19 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 	}
 	defer tx.Rollback() //nolint:errcheck
 
+	// SB-1 — a rename must not strand work on a bound scope (see ErrBoundScopeBusy).
+	// Checked inside the transaction that renames, and only for a rename: editing
+	// the description or the hosts of a bound scope is unaffected.
+	if oldName != newName {
+		busy, berr := boundScopeBusy(ctx, tx, id, oldName)
+		if berr != nil {
+			return nil, nil, berr
+		}
+		if busy != nil {
+			return nil, nil, busy
+		}
+	}
+
 	if updateInventoryCols {
 		_, err = tx.ExecContext(ctx,
 			`UPDATE scopes SET name=?, description=?, last_modified_by=?, last_modified_at=?,
@@ -541,6 +587,16 @@ func DeleteScope(ctx context.Context, database *sql.DB, id, actor string) (bool,
 	_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE scope=? AND deleted_at IS NULL`, existing.Scope).Scan(&refCount)
 	if refCount > 0 {
 		return false, fmt.Errorf("scope is still referenced by %d job(s)", refCount)
+	}
+	// SB-1 — nor may a delete strand work on a bound scope (see ErrBoundScopeBusy).
+	// The job check above does not cover this: a run can outlive the job that
+	// queued it, and a per-run scope override names a scope no job references.
+	busy, err := boundScopeBusy(ctx, database, id, existing.Scope)
+	if err != nil {
+		return false, err
+	}
+	if busy != nil {
+		return false, busy
 	}
 
 	res, err := database.ExecContext(ctx, `DELETE FROM scopes WHERE id=?`, id)

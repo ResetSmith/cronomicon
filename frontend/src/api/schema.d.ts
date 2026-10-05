@@ -1537,7 +1537,9 @@ export interface paths {
          * Delete a local scope
          * @description Cronomicon-source only. Assumption (W11 open question): deletion is
          *     rejected with 409 while jobs reference the scope; in-flight runs keep
-         *     their trigger-time resolution. CSRF required.
+         *     their trigger-time resolution. Also rejected (409
+         *     code=scope_bound_busy) while the scope is bound to runners and has runs
+         *     queued or scheduled under its name. CSRF required.
          */
         delete: operations["deleteScope"];
         options?: never;
@@ -1547,6 +1549,11 @@ export interface paths {
          * @description Only Cronomicon-source scopes are editable (Git scopes are edited in
          *     GitLab). Rename does NOT cascade to job/workflow/env-var references in
          *     v1 (S9) — the response includes brokenReferences so the UI can warn.
+         *
+         *     A rename is refused (409 code=scope_bound_busy) while the scope is bound
+         *     to runners and has runs queued or scheduled under its current name: a run
+         *     carries its scope by name, so renaming would let any runner in the agency
+         *     claim them. Edits that keep the name are unaffected.
          *     Tags are not part of this body; set them with PUT /scope-tags/{scopeId}.
          *     CSRF required.
          */
@@ -2034,6 +2041,125 @@ export interface paths {
          */
         put: operations["setScopeAgency"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scopes/{scopeId}/runners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace the runners a scope is bound to
+         * @description Full replace of the scope's bound-runner set (migration 1180). A scope
+         *     with at least one bound runner is claimable only by those runners, on top
+         *     of the agency, capability and injection rules: the binding narrows and
+         *     never widens. An empty list clears it, returning the scope to any runner
+         *     eligible by agency.
+         *
+         *     Operator overlay valid for both git- and cronomicon-source scopes; never
+         *     parsed from Git and untouched by sync. The binding is read at claim time,
+         *     so runs already queued follow the change.
+         *
+         *     A runner being ADDED must be registered (422 code=unknown_runner) and
+         *     eligible for the scope's agency: a member of it, or a general-pool runner
+         *     for a scope in no agency (422 code=runner_not_eligible). It also needs the
+         *     caller's configureApp on an agency that runner belongs to (unrestricted
+         *     for a general-pool runner), else 403. A binding already present is kept
+         *     as it is, including one whose runner has since been deregistered.
+         *
+         *     `runnerIds` is required: because [] is the operation that removes the
+         *     restriction, a body without it is refused (422 code=validation_error)
+         *     rather than read as "clear". 409 (code=bindings_changed) when another
+         *     operator changed this scope's bindings while the request was in flight.
+         *
+         *     CSRF required.
+         */
+        put: operations["setScopeRunners"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scope-runners/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Swap one runner for another on every scope it is bound to
+         * @description The one-step form of "this host was replaced". Every binding naming
+         *     `fromRunnerId` is re-pointed at `toRunnerId` in one transaction.
+         *     `fromRunnerId` may be a runner that has been deregistered — that is the
+         *     common case.
+         *
+         *     All or nothing: the replacement must be registered (422
+         *     code=unknown_runner) and eligible for every affected scope (422
+         *     code=runner_not_eligible, naming the scopes it is not eligible for). 409
+         *     (code=no_bindings) when `fromRunnerId` is bound to nothing. The caller
+         *     needs configureApp on an agency the replacement belongs to (unrestricted
+         *     for a general-pool runner), else 403.
+         *
+         *     CSRF required.
+         */
+        post: operations["replaceScopeRunner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scope-binding-notices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List runner-tag pins that could not be turned into a scope binding
+         * @description The runner-tag pin was retired in favour of scope bindings. A pin that
+         *     could not be converted — at upgrade by migration 1180, or at git sync for
+         *     a job whose YAML still carries `runner_tag` on a scope with no binding —
+         *     is listed here until an operator binds its scope or dismisses it. A
+         *     notice drops out by itself once its scope has a binding.
+         */
+        get: operations["listScopeBindingNotices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scope-binding-notices/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss scope-binding notices
+         * @description Marks notices as seen and deliberately left alone. An id that is unknown
+         *     or already dismissed is not an error. CSRF required.
+         */
+        post: operations["dismissScopeBindingNotices"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5690,9 +5816,70 @@ export interface components {
              *     gate or dispatch.
              */
             tags: string[];
+            /**
+             * @description The runners this scope is restricted to (migration 1180), set via
+             *     PUT /scopes/{scopeId}/runners; [] when the scope is unrestricted
+             *     and any runner eligible by agency may serve it. Operator-owned and
+             *     never synced.
+             *
+             *     A binding outlives its runner: one whose runner has been
+             *     deregistered is still listed (`registered: false`) and still
+             *     restricts the scope, so nothing can claim its runs until the
+             *     binding is replaced or the runner's placement is restored.
+             */
+            readonly boundRunners?: components["schemas"]["BoundRunner"][];
             /** Format: date-time */
             readonly lastChangedAt?: string | null;
         } & components["schemas"]["AuditFields"];
+        /** @description One runner a scope is bound to. */
+        BoundRunner: {
+            runnerId: string;
+            /**
+             * @description The runner's current name while it is registered; the name recorded
+             *     when it was bound once it is not.
+             */
+            name: string;
+            /** @description False when the runner row is gone. The binding still restricts the scope. */
+            registered: boolean;
+            /** @description The runner's status; empty when it is not registered. */
+            status: string;
+            /**
+             * @description Whether the runner passes the agency rule for this scope today (a
+             *     member of one of the scope's agencies, or a general-pool runner for a
+             *     scope in none). Checked when the binding is made and reported here
+             *     because membership can drift afterwards; an ineligible bound runner
+             *     cannot claim the scope's runs.
+             */
+            eligible: boolean;
+        };
+        /** @description A runner-tag pin that could not be turned into a scope binding. */
+        RetiredRunnerPin: {
+            /** Format: int64 */
+            id: number;
+            /** @description The job's identity; empty when it was not recorded. */
+            jobUid: string;
+            jobName: string;
+            /** @enum {string} */
+            jobSource: "git" | "cronomicon";
+            /** @description The job's scope name; empty for a job with no scope. */
+            scope: string;
+            /** @description The tag the job was pinned to. */
+            runnerTag: string;
+            /**
+             * @description Why it could not be converted: the scope's jobs pinned different tags
+             *     (mixed_pins); only some of them were pinned (partial_pins); the job
+             *     has no scope (no_scope) or names one that does not exist
+             *     (unknown_scope); no runner both carried the tag and was eligible for
+             *     the scope's agency (no_eligible_runner); the job is in the recycle bin
+             *     and would come back unconfined if restored (binned_job); or the job's
+             *     Git YAML still carries `runner_tag` on a scope with no binding
+             *     (leftover_git_key).
+             * @enum {string}
+             */
+            reason: "mixed_pins" | "partial_pins" | "no_scope" | "unknown_scope" | "no_eligible_runner" | "binned_job" | "leftover_git_key";
+            /** Format: date-time */
+            recordedAt: string;
+        };
         /**
          * @description A scope's inventory and its ADVISORY parsed projection (M2). The projection
          *     is never authoritative — ansible reads the raw file via `-i`; it drives the
@@ -6189,6 +6376,16 @@ export interface components {
             }[];
             /** @description Operator tags that would be restored alongside the agencies. */
             tags?: string[];
+            /**
+             * @description Names of the scopes still bound to the previous runner id. A scope
+             *     binding outlives its runner, so these scopes are closed — nothing can
+             *     claim their runs — until the placement is restored; accepting the
+             *     offer re-points them at this runner. [] when there are none.
+             *
+             *     A general-pool runner has no agencies to restore, so for one the
+             *     offer may carry scopes and an empty `agencies` list.
+             */
+            scopes?: string[];
             /** Format: date-time */
             deregisteredAt?: string;
             /**
@@ -10533,7 +10730,10 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Scope is Git-source or still referenced by jobs/workflows. */
+            /**
+             * @description Scope is Git-source, still referenced by jobs/workflows, or bound to
+             *     runners with runs waiting under its name (code=scope_bound_busy).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10580,7 +10780,11 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Attempt to edit a Git-source scope, or rename collision. */
+            /**
+             * @description Attempt to edit a Git-source scope, a rename collision, or a rename of
+             *     a bound scope that has runs waiting under its name
+             *     (code=scope_bound_busy).
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -11436,6 +11640,160 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    setScopeRunners: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                scopeId: components["parameters"]["scopeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The complete set of runner ids to bind; [] clears the binding. */
+                    runnerIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Updated scope. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Scope"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /**
+             * @description A runner is not registered (code=unknown_runner) or is not eligible
+             *     for this scope's agency (code=runner_not_eligible), or `runnerIds`
+             *     is missing (code=validation_error).
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    replaceScopeRunner: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The runner being replaced; need not be registered. */
+                    fromRunnerId: string;
+                    /** @description The registered runner taking over its scopes. */
+                    toRunnerId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The names of the scopes that were re-pointed, sorted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        scopes: string[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            /**
+             * @description The replacement is not registered (code=unknown_runner), is not
+             *     eligible for one or more affected scopes (code=runner_not_eligible),
+             *     or the two ids are missing or equal (code=validation_error).
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listScopeBindingNotices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notices still needing an operator. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetiredRunnerPin"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    dismissScopeBindingNotices: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    ids: number[];
+                };
+            };
+        };
+        responses: {
+            /** @description How many notices were newly dismissed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        dismissed: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     listEnvVars: {

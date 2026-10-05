@@ -491,7 +491,7 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	// satisfied, agency-eligible, runner-tag-pinned, injection-gated run and
 	// transition it to running in a single UPDATE ... RETURNING (SQLite 3.35+).
 	// Placeholders in order: runner_id, started-at ts, caps (run_type), caps
-	// (requires⊆), agency runnerID ×2, pin runnerID, injectFlag.
+	// (requires⊆), agency runnerID ×2, binding runnerID, pin runnerID, injectFlag.
 	var (
 		traceID string
 		jobName string
@@ -540,6 +540,35 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			    OR (COALESCE(runs.agencies_json, '[]') = '[]'
 			        AND NOT EXISTS (SELECT 1 FROM runner_agencies WHERE runner_id = ?))
 			  )
+			  -- SB-1 scope binding (mig. 1180). A scope with rows in scope_runners
+			  -- is claimable only by a runner named there; a scope with none, and
+			  -- a run with no scope, behave exactly as before.
+			  --
+			  -- ANDed with the agency branch above for the reason the pin below
+			  -- is (RT-Q2): a binding NARROWS the eligible set and must never be
+			  -- a route to a runner agency isolation denies.
+			  --
+			  -- Evaluated live rather than snapshotted at enqueue, so a queued
+			  -- run follows a runner swap. And read through the rows, never
+			  -- through runners: a deregistered runner leaves its row behind
+			  -- (no FK), the scope still has a row, and nothing claims — closed,
+			  -- not silently widened to the whole agency.
+			  --
+			  -- Deliberately CORRELATED, which is the opposite of the lesson the
+			  -- agency branch records, and it was measured rather than assumed
+			  -- (poll_claim_bench_test.go, SB-1): the uncorrelated form — "scope
+			  -- NOT IN (scopes bound to somebody else)" — rebuilds three list
+			  -- subqueries and two bloom filters on every poll and cost +40%,
+			  -- with nothing bound at all. These two probes are keyed seeks
+			  -- (scopes.name is UNIQUE, scope_runners' PK leads with scope_id)
+			  -- that run only for candidate rows, and cost ~10%.
+			  AND (runs.scope IS NULL
+			       OR NOT EXISTS (SELECT 1 FROM scope_runners sr
+			                        JOIN scopes sc ON sc.id = sr.scope_id
+			                       WHERE sc.name = runs.scope)
+			       OR EXISTS (SELECT 1 FROM scope_runners sr
+			                    JOIN scopes sc ON sc.id = sr.scope_id
+			                   WHERE sc.name = runs.scope AND sr.runner_id = ?))
 			  -- RT-1 runner pin (mig. 1070). An unpinned run — NULL or '' — must
 			  -- behave exactly as it did pre-1070, so the short-circuit comes
 			  -- first and no pinned-run machinery is reachable for it.
@@ -589,7 +618,7 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			LIMIT 1
 		)
 		RETURNING id, job_name, run_type, scope`,
-		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, runnerID, injectFlag,
+		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, runnerID, runnerID, injectFlag,
 	).Scan(&traceID, &jobName, &runType, &scope)
 
 	if errors.Is(err, sql.ErrNoRows) {

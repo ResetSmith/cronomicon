@@ -19,8 +19,8 @@ import (
 // seedPinnedRun mirrors unclaimFixture.seedRun with a runner_tag pin.
 func (f *unclaimFixture) seedPinnedRun(id, runType, agenciesJSON, requiresJSON, pin string) {
 	f.exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind,
-	                         agencies_json, requires_json, runner_tag, created_at)
-	        VALUES(?, 'j', 'git', ?, 'queued', 'seed', 'manual', ?, ?, ?, 't')`,
+	                         executor, agencies_json, requires_json, runner_tag, created_at)
+	        VALUES(?, 'j', 'git', ?, 'queued', 'seed', 'manual', 'runner', ?, ?, ?, 't')`,
 		id, runType, agenciesJSON, requiresJSON, pin)
 }
 
