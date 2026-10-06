@@ -368,6 +368,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/scopes/{scopeId}/inventory/import-hosts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleImportScopeHosts)))
 	mux.Handle("PATCH /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateScope)))
 	mux.Handle("DELETE /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteScope)))
+	// Operator-owned scope tags (ST band, migration 1160): same permission as every
+	// other scope write — see updateScopeTags in settings_tags_mount.go.
+	mux.Handle("PUT /api/v1/scope-tags/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.updateScopeTags)))
 
 	// ── Alerts (writes: ConfigureApp, PP-B1) ────────────────────────────────────
 	mux.Handle("GET /api/v1/alerts", s.auth.RequireSession(http.HandlerFunc(s.handleListAlerts)))
@@ -916,11 +919,10 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var inp struct {
-		Scope          string   `json:"scope"`
-		Description    *string  `json:"description"`
-		Hosts          []string `json:"hosts"`
-		SupportedTypes []string `json:"supportedTypes"`
-		RawInventory   *string  `json:"rawInventory"`
+		Scope        string   `json:"scope"`
+		Description  *string  `json:"description"`
+		Hosts        []string `json:"hosts"`
+		RawInventory *string  `json:"rawInventory"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -931,7 +933,7 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sc, err := settings.CreateScope(r.Context(), s.db, settings.LocalScopeInput{
-		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, SupportedTypes: inp.SupportedTypes, RawInventory: inp.RawInventory,
+		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
 	}, id.Email)
 	if err != nil {
 		if validationErr, ok := errors.AsType[settings.InventoryValidationError](err); ok {
@@ -1069,18 +1071,17 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 	var oldScopeName string
 	_ = s.db.QueryRowContext(r.Context(), `SELECT name FROM scopes WHERE id=?`, sid).Scan(&oldScopeName)
 	var inp struct {
-		Scope          string   `json:"scope"`
-		Description    *string  `json:"description"`
-		Hosts          []string `json:"hosts"`
-		SupportedTypes []string `json:"supportedTypes"`
-		RawInventory   *string  `json:"rawInventory"`
+		Scope        string   `json:"scope"`
+		Description  *string  `json:"description"`
+		Hosts        []string `json:"hosts"`
+		RawInventory *string  `json:"rawInventory"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
 	sc, broken, err := settings.UpdateScope(r.Context(), s.db, sid, settings.LocalScopeInput{
-		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, SupportedTypes: inp.SupportedTypes, RawInventory: inp.RawInventory,
+		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
 	}, id.Email)
 	if err != nil {
 		if validationErr, ok := errors.AsType[settings.InventoryValidationError](err); ok {
@@ -1089,6 +1090,10 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 				Message string               `json:"message"`
 				Errors  []settings.LineError `json:"errors"`
 			}{"inventory_secret_rejected", "the inventory contains inline secret values; use env-var-NAME indirection", validationErr.Errors})
+			return
+		}
+		if busy, ok := errors.AsType[*settings.ErrBoundScopeBusy](err); ok {
+			httpx.Fail(w, http.StatusConflict, "scope_bound_busy", busy.Error())
 			return
 		}
 		if strings.Contains(err.Error(), "only cronomicon-source") {
@@ -1131,6 +1136,10 @@ func (s *Server) handleDeleteScope(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("scopeId")
 	found, err := settings.DeleteScope(r.Context(), s.db, sid, id.Email)
 	if err != nil {
+		if busy, ok := errors.AsType[*settings.ErrBoundScopeBusy](err); ok {
+			httpx.Fail(w, http.StatusConflict, "scope_bound_busy", busy.Error())
+			return
+		}
 		if strings.Contains(err.Error(), "only cronomicon-source") || strings.Contains(err.Error(), "referenced by") {
 			httpx.Fail(w, http.StatusConflict, "conflict", err.Error())
 			return

@@ -19,7 +19,7 @@ import (
 //
 // Companion to internal/scheduler/run_row_golden_test.go; same contract: the
 // COMPLETE row, every NULL, cut after RR-0 so it describes the fixed writer
-// (requires_json / checkout_* / runner_tag now present on child runs).
+// (requires_json / checkout_* now present on child runs).
 //
 // Regenerate with: ROWGOLDEN_UPDATE=1 go test ./internal/workflow -run RunRowGolden
 
@@ -60,11 +60,11 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 	mustExec(`
 		INSERT INTO jobs (name, source, uid, run_type, scope, target_host, concurrency_policy, synced_at,
 		                  script_ref, content_hash, project_root, script_path,
-		                  requires_json, become_password_secret, runner_tag, env_json,
+		                  requires_json, become_password_secret, env_json,
 		                  ssh_user, ssh_credential)
 		VALUES ('golden-job', 'git', 'uid-golden', 'bash', 'prod', 'db-1.internal', 'Forbid', '2026-01-01T00:00:00Z',
 		        'scripts/site.sh', 'sha256:0123', 'playbooks/site', 'site.yml',
-		        '["vault","collection:community.vmware"]', 'vault:become', 'gpu', '{"JOB_LEVEL":"1"}',
+		        '["vault","collection:community.vmware"]', 'vault:become', '{"JOB_LEVEL":"1"}',
 		        'deploy', 'cred-1')`)
 	mustExec(`INSERT INTO entity_codes (kind, source, name, uid, created_at) VALUES ('job', 'git', 'golden-job', 'uid-golden', '2026-01-01T00:00:00Z')`)
 }

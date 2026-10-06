@@ -1,0 +1,15 @@
+-- 1160_scope_tags — operator-owned tags on scopes (the scope-tags plan, ST-1).
+--
+-- Scopes were the one catalog without tags. Same storage shape as scripts
+-- (280), schedules/workflows (290) and env vars/secrets/SSH credentials (470):
+-- a JSON-array column on the entity's own table, written only by
+-- PUT /api/v1/scope-tags/{scopeId}.
+--
+-- The tags are SQLite-only and NEVER parsed from Git. The column is absent
+-- from both the INSERT column list and the ON CONFLICT DO UPDATE SET of the
+-- git scope upsert (internal/gitlab/sync.go), so a re-sync cannot touch them —
+-- the same operator-owned rule as the agency binding. DEFAULT '[]' covers
+-- existing rows; additive, no table rebuild.
+--
+-- A tag carries no semantics: nothing dispatches, gates or warns on it.
+ALTER TABLE scopes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';

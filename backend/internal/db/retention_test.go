@@ -842,3 +842,78 @@ func TestSweepHonoursArchiveTierOn(t *testing.T) {
 	}
 	mustExist(t, f, "ArchiveTierOn must keep an unarchived terminal run's log")
 }
+
+// TestSweepKeepsHostKeysInForce is the "kept while trusted" rule (SB). The
+// ledger window prunes history — rejected, removed and replaced keys — and has
+// no reach over a key a runner currently trusts, however old the approval. Nor
+// over a retired key whose removal has not yet reached its runner: that row is
+// the only thing that will tell an offline runner to drop the line.
+func TestSweepKeepsHostKeysInForce(t *testing.T) {
+	pool := migratedPool(t)
+	old := nowUTC().AddDate(0, 0, -400).Format(time.RFC3339)
+	recent := nowUTC().Add(-time.Hour).Format(time.RFC3339)
+	for _, r := range []struct {
+		fp, decision                         string
+		delivered, superseded, untrustedSent any
+	}{
+		{"in-force-old", "approved", old, nil, nil},       // trusted for 400 days: kept
+		{"replaced-old", "approved", old, old, old},       // replaced, removal sent: pruned
+		{"replaced-unsent", "approved", old, old, nil},    // replaced, removal NOT sent: kept
+		{"replaced-requeued", "approved", nil, old, nil},  // "send again" cleared delivered_at; the line may be in the file: kept
+		{"rejected-old", "rejected", nil, old, nil},       // pruned
+		{"removed-old", "removed", nil, old, nil},         // pruned
+		{"rejected-recent", "rejected", nil, recent, nil}, // inside the window: kept
+		{"gone-runner-unsent", "approved", old, old, nil}, // its runner no longer exists and will never poll: pruned
+	} {
+		runner := "r1"
+		if r.fp == "gone-runner-unsent" {
+			runner = "r-gone"
+		}
+		if _, err := pool.Exec(`
+			INSERT INTO host_key_ledger
+			    (batch_id, runner_id, runner_name, host, key_type, fingerprint, known_hosts_line,
+			     decision, source, actor, decided_at, delivered_at, superseded_at, untrusted_at)
+			VALUES ('b', ?, 'runner', 'web01', 'ssh-ed25519', ?, 'web01 ssh-ed25519 AAAA', ?, 'scan', 'op', ?, ?, ?, ?)`,
+			runner, r.fp, r.decision, old, r.delivered, r.superseded, r.untrustedSent); err != nil {
+			t.Fatalf("seed %s: %v", r.fp, err)
+		}
+	}
+	if _, err := pool.Exec(`
+		INSERT INTO runners (id, name, status, os, capabilities, load, max_concurrent, version, protocol_version, registered_at, created_at)
+		VALUES ('r1', 'runner', 'online', 'Linux', '[]', 0, 5, '1.0', 14, ?, ?)`, old, old); err != nil {
+		t.Fatalf("seed runner: %v", err)
+	}
+	if err := runSweep(context.Background(), pool, RetentionPolicy{
+		HostKeyLedgerDays: 1,
+		BackupDir:         t.TempDir(),
+	}, testLogger()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	kept := map[string]bool{}
+	rows, err := pool.Query(`SELECT fingerprint FROM host_key_ledger`)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fp string
+		_ = rows.Scan(&fp)
+		kept[fp] = true
+	}
+	for fp, want := range map[string]bool{
+		"in-force-old": true, "replaced-unsent": true, "replaced-requeued": true, "rejected-recent": true,
+		"replaced-old": false, "rejected-old": false, "removed-old": false, "gone-runner-unsent": false,
+	} {
+		if kept[fp] != want {
+			t.Errorf("%s kept = %v, want %v", fp, kept[fp], want)
+		}
+	}
+
+	// And 0 is keep-forever, like every other window.
+	if err := runSweep(context.Background(), pool, RetentionPolicy{BackupDir: t.TempDir()}, testLogger()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n := countRows(t, pool, "host_key_ledger"); n != 4 {
+		t.Errorf("a zero window pruned rows: %d left, want 4", n)
+	}
+}

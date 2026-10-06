@@ -23,8 +23,8 @@ import (
 //
 // The job is seeded with every column a writer can read from it, so the
 // goldens exercise every jobs-table subquery (entity_code, script_ref,
-// content_hash, checkout_sha/entry, requires_json + RA-20a arm, runner_tag
-// inherit). A golden cut against a bare job would pass on a writer that
+// content_hash, checkout_sha/entry, requires_json + RA-20a arm). A golden cut
+// against a bare job would pass on a writer that
 // dropped any of those.
 //
 // Regenerate with: ROWGOLDEN_UPDATE=1 go test ./internal/scheduler -run RunRowGolden
@@ -52,16 +52,16 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 	mustExec(`
 		INSERT INTO jobs (name, source, uid, run_type, scope, target_host, concurrency_policy, synced_at,
 		                  script_ref, content_hash, project_root, script_path,
-		                  requires_json, become_password_secret, runner_tag, env_json)
+		                  requires_json, become_password_secret, env_json)
 		VALUES ('golden-job', 'git', 'uid-golden', 'ansible', 'prod', 'db-1.internal', 'Forbid', '2026-01-01T00:00:00Z',
 		        'scripts/site.yml', 'sha256:0123', 'playbooks/site', 'site.yml',
-		        '["vault","collection:community.vmware"]', 'vault:become', 'gpu', '{"JOB_LEVEL":"1"}')`)
+		        '["vault","collection:community.vmware"]', 'vault:become', '{"JOB_LEVEL":"1"}')`)
 	// entity_codes row so the entity_code subquery resolves to a value, not NULL.
 	mustExec(`INSERT INTO entity_codes (kind, source, name, uid, created_at) VALUES ('job', 'git', 'golden-job', 'uid-golden', '2026-01-01T00:00:00Z')`)
 }
 
 // richParams populates EVERY EnqueueParams field so the golden proves each one
-// lands. RunnerTag is left nil here (inherit) and set explicitly in a variant.
+// lands.
 func richParams(triggerKind string) EnqueueParams {
 	return EnqueueParams{
 		JobName:        "golden-job",
@@ -106,23 +106,6 @@ func TestRunRowGolden_W2_EnqueueRunWithID(t *testing.T) {
 	}
 	row := rowgolden.Snapshot(t, pool, "runs", "id = ?", id)
 	rowgolden.Compare(t, "runrow_w2_enqueue_run_with_id", rowgolden.Normalize(row, goldenVolatile))
-}
-
-// W2 variant: the manual trigger's explicit-empty runner tag (RT-2 "run this
-// unpinned even though the job is pinned"). The only VALUES-level difference
-// between W1 and W2 today is that W2 can carry this rung; the golden pins that
-// an explicit "" wins over the job's 'gpu' and lands as NULL, not ”.
-func TestRunRowGolden_W2_ExplicitUnpin(t *testing.T) {
-	pool := mustPool(t)
-	seedGoldenJob(t, pool)
-	p := richParams("manual")
-	p.RunnerTag = new("")
-	id, err := EnqueueRunWithID(context.Background(), pool, p)
-	if err != nil {
-		t.Fatalf("EnqueueRunWithID: %v", err)
-	}
-	row := rowgolden.Snapshot(t, pool, "runs", "id = ?", id)
-	rowgolden.Compare(t, "runrow_w2_explicit_unpin", rowgolden.Normalize(row, goldenVolatile))
 }
 
 // W1 and W2 share a column list and are maintained by hand; RR-0a was the

@@ -53,6 +53,10 @@ func ExportAudit(ctx context.Context, database *sql.DB, w io.Writer, from, to st
 		// auth event was recorded anywhere. It now streams the table that actually
 		// holds them.
 		{all || typeSet["authEvents"], streamAuthEvents},
+		// SB: the host-key ledger. The change log carries one row per BATCH; this
+		// is the batch's contents, one row per key, so an export answers "which
+		// keys, for which hosts, on which runner" without a second lookup.
+		{all || typeSet["hostKeys"], streamHostKeyLedger},
 	}
 
 	if format == "csv" {
@@ -232,6 +236,47 @@ func streamAuthEvents(ctx context.Context, database *sql.DB, from, to string, em
 				kv("userAgent", userAgent.String),
 				details.String,
 			)
+			return r, nil
+		}, from, to, emit)
+}
+
+// streamHostKeyLedger exports every host-key decision (SB). Like the auth
+// trail, what is particular to it is folded into Details rather than widening
+// the shared row. Status says whether the key is in force NOW, which is what an
+// auditor reading an approval most wants to know and cannot tell from the
+// approval's own date.
+func streamHostKeyLedger(ctx context.Context, database *sql.DB, from, to string, emit func(AuditRow) error) error {
+	return streamTable(ctx, database, "host_key_ledger", "decided_at",
+		`decided_at, actor, decision, runner_name, host, host_name, scope_name, key_type, fingerprint,
+		 source, previous_fingerprint, batch_id, matched_server_pin, superseded_at`,
+		func(rows *sql.Rows) (AuditRow, error) {
+			var r AuditRow
+			var runner, host, keyType, fingerprint, source, batch string
+			var hostName, scope, previous, superseded sql.NullString
+			var matched bool
+			if err := rows.Scan(&r.At, &r.Actor, &r.Action, &runner, &host, &hostName, &scope, &keyType,
+				&fingerprint, &source, &previous, &batch, &matched, &superseded); err != nil {
+				return r, err
+			}
+			r.Source = "host_key_ledger"
+			r.Category = "hostKeys"
+			r.Target = "runner:" + runner
+			pin := ""
+			if matched {
+				pin = "matchedServerPin=true"
+			}
+			r.Details = joinDetails(
+				kv("host", host), kv("hostName", hostName.String), kv("scope", scope.String),
+				kv("keyType", keyType), kv("fingerprint", fingerprint), kv("source", source),
+				kv("replaced", previous.String), pin, kv("batch", batch),
+			)
+			switch {
+			case r.Action != "approved":
+			case superseded.Valid:
+				r.Status = "superseded"
+			default:
+				r.Status = "in-force"
+			}
 			return r, nil
 		}, from, to, emit)
 }

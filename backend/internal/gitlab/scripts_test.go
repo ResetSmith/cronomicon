@@ -391,13 +391,11 @@ func TestSync_GitOpsPruning(t *testing.T) {
 			name TEXT UNIQUE,
 			source TEXT,
 			source_path TEXT,
-			capability_types TEXT,
-			capability_json TEXT,
+			git_meta_json TEXT,
 			synced_at TEXT,
 			description TEXT,
 			created_by TEXT,
 			created_at TEXT,
-			supported_types TEXT,
 			raw_inventory TEXT,
 			inventory_format TEXT
 		);
@@ -460,9 +458,9 @@ func TestSync_GitOpsPruning(t *testing.T) {
 
 	// Insert old scope
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO scopes(id, name, source, source_path, capability_types, capability_json, synced_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		"old-scope-id", "old-scope", "git", "scopes/old-scope.yaml", "[]", "{}", oldTime)
+		INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at)
+		VALUES(?, ?, ?, ?, ?, ?)`,
+		"old-scope-id", "old-scope", "git", "scopes/old-scope.yaml", "{}", oldTime)
 	if err != nil {
 		t.Fatalf("insert scope: %v", err)
 	}

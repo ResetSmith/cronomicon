@@ -466,14 +466,14 @@ func AgenciesHaveOnlineRunner(ctx context.Context, db *sql.DB, agencies []string
 // shape, no Go-side set intersection): run_type ∈ the runner's capability tokens,
 // the run's requires ⊆ those tokens, the agency-eligibility split (a tagged
 // run needs a member of that agency; an untagged run needs a runner with no
-// agencies), and the RT-1 runner-tag pin. It also returns the run's requirement
+// agencies), and the SB-1 scope binding. It also returns the run's requirement
 // tokens so a caller can name the unmet requirements in a stuck-run hint. A run
 // that does not exist / is not a runner run returns (false, nil, nil).
 func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (ok bool, requires []string, err error) {
-	var agenciesJSON, runType, requiresJSON, jobName, jobSource, scriptRef, runnerTag sql.NullString
+	var agenciesJSON, runType, requiresJSON, jobName, jobSource, scriptRef, scope sql.NullString
 	err = db.QueryRowContext(ctx,
-		`SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, job_name, job_source, script_ref, runner_tag FROM runs WHERE id = ?`, runID).
-		Scan(&agenciesJSON, &runType, &requiresJSON, &jobName, &jobSource, &scriptRef, &runnerTag)
+		`SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, job_name, job_source, script_ref, scope FROM runs WHERE id = ?`, runID).
+		Scan(&agenciesJSON, &runType, &requiresJSON, &jobName, &jobSource, &scriptRef, &scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil, nil
 	}
@@ -520,15 +520,16 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 			                           WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?))))
 			    OR (? = '[]' AND NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = rn.id))
 			  )
-			  -- RT-1 pin parity (mig. 1070): an unpinned run short-circuits, a
-			  -- pinned one needs THIS runner to carry the tag. ANDed with the
-			  -- agency branch for the same reason claimRun ANDs it (RT-Q2) — a
-			  -- probe that ORed it would report a run claimable by a runner the
-			  -- claim query will never offer it to.
-			  AND (? = '' OR EXISTS (SELECT 1 FROM runner_tags rt
-			                         WHERE rt.runner_id = rn.id AND rt.tag = ?))
+			  -- SB-1 binding parity (mig. 1180): an unrestricted scope passes, a
+			  -- restricted one needs THIS runner named. Correlated here where
+			  -- claimRun's is not, because this probe walks runners for one run
+			  -- rather than runs for one runner — the rule is the same.
+			  AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+			                    WHERE sc.name = ?)
+			       OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+			                   WHERE sc.name = ? AND sr.runner_id = rn.id))
 			  AND (? = 0 OR rn.allow_secret_injection = 1)
-		)`, runType.String, reqJSON, ag, ag, ag, runnerTag.String, runnerTag.String, bindsSecrets).Scan(&ok)
+		)`, runType.String, reqJSON, ag, ag, ag, scope.String, scope.String, bindsSecrets).Scan(&ok)
 	if err != nil {
 		return false, requires, err
 	}

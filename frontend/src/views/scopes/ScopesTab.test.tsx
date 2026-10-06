@@ -9,6 +9,10 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 // a button whose only possible outcome was a 403 — the regression pinned below.
 
 const deletes: { path: string; params: unknown }[] = [];
+const puts: { path: string; params: unknown; body: unknown }[] = [];
+const posts: { path: string; body: unknown }[] = [];
+// SB — the notice list the Scopes tab reads for callers who may configure the app.
+let bindingNotices: unknown[] = [];
 
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
@@ -19,11 +23,24 @@ vi.mock("../../api/client", async (importOriginal) => {
       // lazily fetches its inventory. Neither is under test — resolve both to
       // something inert so the panels render nothing of consequence.
       GET: vi.fn(async (path: string) =>
-        path === "/agencies" ? { data: [] } : { data: { editable: false, hasInventory: false } },
+        path === "/agencies"
+          ? { data: [] }
+          : path === "/scope-binding-notices"
+            ? { data: bindingNotices }
+            : { data: { editable: false, hasInventory: false } },
       ),
       DELETE: vi.fn(async (path: string, opts: { params?: unknown }) => {
         deletes.push({ path, params: opts.params });
         return { data: {} };
+      }),
+      POST: vi.fn(async (path: string, opts: { body?: unknown }) => {
+        posts.push({ path, body: opts.body });
+        return { data: {} };
+      }),
+      // The scope-tags write answers with the scope carrying its normalized tags.
+      PUT: vi.fn(async (path: string, opts: { params?: unknown; body?: { tags?: string[] } }) => {
+        puts.push({ path, params: opts.params, body: opts.body });
+        return { data: { tags: opts.body?.tags ?? [] } };
       }),
     } as unknown as typeof actual.api,
   };
@@ -37,7 +54,6 @@ const LOCAL: ScopeRow = {
   source: "cronomicon",
   description: "operator-authored",
   hosts: ["host1.internal"],
-  capability: { types: ["bash"], origin: "local" },
 };
 const GIT: ScopeRow = {
   id: "019fa189-0002-7000-8000-000000000002",
@@ -45,7 +61,6 @@ const GIT: ScopeRow = {
   source: "git",
   description: "from GitLab",
   gitlabUrl: "https://gitlab.example/inventories/prod-web",
-  capability: { types: ["ansible"], origin: "pragma" },
 };
 
 const renderTab = (scopes: ScopeRow[], canEdit: boolean) =>
@@ -58,6 +73,9 @@ const deleteButtons = (q: ReturnType<typeof within>) => q.queryAllByRole("button
 
 beforeEach(() => {
   deletes.length = 0;
+  puts.length = 0;
+  posts.length = 0;
+  bindingNotices = [];
 });
 afterEach(cleanup);
 
@@ -114,5 +132,185 @@ describe("ScopesTab — Delete Scope gating", () => {
     // K-3 — a scope id is a UUIDv7 string, not a rowid. The spec claimed
     // `integer` until v0.52.24 and this fixture faithfully reproduced the lie.
     expect((deletes[0].params as { path: { scopeId: string } }).path.scopeId).toBe(LOCAL.id);
+  });
+});
+
+// ST band — scope tags. Operator-owned labels (migration 1160): shown to anyone
+// who can see the scope, edited only with ConfigureApp, and available on a
+// git-source scope too, because the tags never come from Git.
+describe("ScopesTab — tags", () => {
+  const TAGGED_LOCAL: ScopeRow = { ...LOCAL, tags: ["prod", "linux"] };
+  const TAGGED_GIT: ScopeRow = { ...GIT, tags: ["staging"] };
+  const tagInput = (q: ReturnType<typeof within>) => q.queryByPlaceholderText("Add a tag…");
+
+  it("shows each scope's tags in its row", () => {
+    const { container } = renderTab([TAGGED_LOCAL, TAGGED_GIT], true);
+    const q = within(container);
+    expect(q.getByText("prod")).toBeTruthy();
+    expect(q.getByText("linux")).toBeTruthy();
+    expect(q.getByText("staging")).toBeTruthy();
+  });
+
+  it("narrows the list to the scopes carrying a selected tag, and offers the filter back", async () => {
+    const { container } = renderTab([TAGGED_LOCAL, TAGGED_GIT], true);
+    const q = within(container);
+    fireEvent.click(q.getByRole("button", { name: /All/ }));
+    fireEvent.click(within(q.getByRole("listbox")).getByLabelText("staging"));
+    await waitFor(() => expect(q.queryByText("edge-lab")).toBeNull());
+    expect(q.getByText("prod-web")).toBeTruthy();
+
+    // "All" mode with a second tag no scope shares leaves nothing — the empty
+    // state must name filters (not a search that was never typed) and reset them.
+    fireEvent.click(within(q.getByRole("listbox")).getByRole("button", { name: "All" }));
+    fireEvent.click(within(q.getByRole("listbox")).getByLabelText("prod"));
+    await waitFor(() => expect(q.getByText("No scopes match the current filters.")).toBeTruthy());
+    fireEvent.click(q.getByRole("button", { name: "Clear filters" }));
+    await waitFor(() => expect(q.getByText("edge-lab")).toBeTruthy());
+    expect(q.getByText("prod-web")).toBeTruthy();
+  });
+
+  it("saves an added tag through PUT /scope-tags/{scopeId} and repaints the row", async () => {
+    const { container } = renderTab([TAGGED_LOCAL], true);
+    const q = within(container);
+    expand(q, "edge-lab");
+    await waitFor(() => expect(tagInput(q)).toBeTruthy());
+    fireEvent.change(tagInput(q)!, { target: { value: "dmz" } });
+    fireEvent.keyDown(tagInput(q)!, { key: "Enter" });
+
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0].path).toBe("/scope-tags/{scopeId}");
+    expect((puts[0].params as { path: { scopeId: string } }).path.scopeId).toBe(LOCAL.id);
+    expect(puts[0].body).toEqual({ tags: ["prod", "linux", "dmz"] });
+    // The editor chip appears at once; the row cell caps at two chips plus "+1".
+    await waitFor(() => expect(q.getAllByText("dmz").length).toBeGreaterThan(0));
+  });
+
+  it("lets a git-source scope be tagged — the tags are not part of the repository", async () => {
+    const { container } = renderTab([TAGGED_GIT], true);
+    const q = within(container);
+    expand(q, "prod-web");
+    await waitFor(() => expect(tagInput(q)).toBeTruthy());
+    fireEvent.click(q.getByRole("button", { name: "Remove tag staging" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect((puts[0].params as { path: { scopeId: string } }).path.scopeId).toBe(GIT.id);
+    expect(puts[0].body).toEqual({ tags: [] });
+  });
+
+  it("shows the tags read-only to a viewer without ConfigureApp", async () => {
+    const { container } = renderTab([TAGGED_LOCAL], false);
+    const q = within(container);
+    expand(q, "edge-lab");
+    await waitFor(() => expect(q.getByText("host1.internal")).toBeTruthy());
+    // Still visible (row cell + the read-only editor chips)…
+    expect(q.getAllByText("prod").length).toBeGreaterThan(1);
+    // …but with nothing to type into and nothing to remove.
+    expect(tagInput(q)).toBeNull();
+    expect(q.queryByRole("button", { name: /Remove tag/ })).toBeNull();
+    expect(puts).toHaveLength(0);
+  });
+});
+
+// ST band — "supported run types" are gone from a scope. They were advisory and
+// nothing acted on them; what a scope shows now is its tags and, for a git-source
+// scope, the Git metadata that used to ride along with the capability.
+describe("ScopesTab — no supported run types", () => {
+  const GIT_META: ScopeRow = {
+    ...GIT,
+    name: "prod-web.ini",
+    owner: "infra-platform",
+    sidecarPath: "inventory/prod-web.cronomicon.yaml",
+    pragmaErrors: [{ line: 2, message: 'unknown directive: "ownr"' }],
+  };
+
+  it("has no Supported Types column and no capability origin", async () => {
+    const { container } = renderTab([LOCAL, GIT_META], true);
+    const q = within(container);
+    expect(q.queryByText("Supported Types")).toBeNull();
+    expect(q.getByText("Tags")).toBeTruthy();
+    expand(q, "prod-web");
+    await waitFor(() => expect(q.getByText("Owner")).toBeTruthy());
+    expect(q.queryByText("Capability origin")).toBeNull();
+    expect(q.queryByText(/inferred types/i)).toBeNull();
+  });
+
+  it("keeps the Git metadata: owner, inventory file, sidecar and the pragma errors", async () => {
+    const { container } = renderTab([LOCAL, GIT_META], true);
+    const q = within(container);
+    // The row flags the unparsed pragma beside the scope name…
+    expect(q.getByLabelText("1 pragma parse error")).toBeTruthy();
+    expand(q, "prod-web");
+    // …and the expanded row says what and where.
+    await waitFor(() => expect(q.getByText("infra-platform")).toBeTruthy());
+    expect(q.getByText("prod-web.ini")).toBeTruthy();
+    expect(q.getByText("inventory/prod-web.cronomicon.yaml")).toBeTruthy();
+    expect(q.getByText(/unknown directive/)).toBeTruthy();
+    expect(q.getByText("line 2")).toBeTruthy();
+  });
+
+  it("creates a scope without asking for, or sending, run types", async () => {
+    const { container } = renderTab([LOCAL], true);
+    const q = within(container);
+    fireEvent.click(q.getByRole("button", { name: "+ Add Scope" }));
+    // The modal renders in a portal, so query the document.
+    const body = within(document.body);
+    await waitFor(() => expect(body.getByPlaceholderText("e.g. Edge-Lab")).toBeTruthy());
+    expect(body.queryByText(/Supported run types/)).toBeNull();
+    expect(body.queryByText(/bash floor/i)).toBeNull();
+
+    fireEvent.change(body.getByPlaceholderText("e.g. Edge-Lab"), { target: { value: "New-Scope" } });
+    fireEvent.change(body.getByPlaceholderText(/host1\.internal/), { target: { value: "h1.internal" } });
+    fireEvent.click(body.getByRole("button", { name: "Create Scope" }));
+    await waitFor(() => expect(posts.some((p) => p.path === "/scopes")).toBe(true));
+    const sent = posts.find((p) => p.path === "/scopes")!.body as Record<string, unknown>;
+    expect(sent.scope).toBe("New-Scope");
+    expect(sent.hosts).toEqual(["h1.internal"]);
+    expect("supportedTypes" in sent).toBe(false);
+  });
+});
+
+// SB — where a scope's runner binding shows up in this view. The components are
+// tested on their own (ScopeRunners.test.tsx); what is pinned here is the wiring:
+// the column, the expanded-row section, the notice banner and who sees it, and
+// the Agencies column no longer calling a general-pool scope "unrestricted".
+describe("ScopesTab — runner bindings (SB)", () => {
+  const BOUND: ScopeRow = {
+    ...GIT,
+    boundRunners: [{ runnerId: "r1", name: "runner-dmz-01", registered: false, status: "", eligible: false }],
+  };
+
+  it("shows the binding in the Runners column and the expanded row, on a Git scope too", async () => {
+    const { container } = renderTab([LOCAL, BOUND], true);
+    const q = within(container);
+    // Column: the unbound scope says so, the bound one names its runner and warns.
+    expect(q.getByText("any eligible")).toBeTruthy();
+    expect(q.getByLabelText("No bound runner can claim work")).toBeTruthy();
+
+    expand(q, "prod-web");
+    await waitFor(() => expect(container.textContent).toMatch(/No bound runner can claim work right now/));
+    // The binding is an operator overlay, so a Git-source scope is editable here.
+    expect(q.getByRole("button", { name: "Change…" })).toBeTruthy();
+    expect(q.getByRole("button", { name: "replace" })).toBeTruthy();
+  });
+
+  it("calls a scope in no agency the general pool — it is not open to every runner", () => {
+    const { container } = renderTab([LOCAL], true);
+    const q = within(container);
+    const cell = q.getByText("general pool");
+    expect(cell.getAttribute("title")).toMatch(/only a general-pool runner/);
+    expect(q.queryByText("unrestricted")).toBeNull();
+  });
+
+  it("shows the retired-pin notices to a caller who may configure the app, and to nobody else", async () => {
+    bindingNotices = [
+      { id: 1, jobUid: "u1", jobName: "deploy", jobSource: "git", scope: "prod-web", runnerTag: "vlan-dmz", reason: "partial_pins", recordedAt: "t" },
+    ];
+    const admin = renderTab([LOCAL, GIT], true);
+    await waitFor(() => expect(admin.container.textContent).toMatch(/1 job used to be confined to particular runners/));
+    cleanup();
+
+    const viewer = renderTab([LOCAL, GIT], false);
+    // Give a fetch the chance to land; there must be none to land.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(viewer.container.textContent).not.toMatch(/used to be confined/);
   });
 });

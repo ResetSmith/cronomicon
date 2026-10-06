@@ -11,9 +11,9 @@ import { MemoryRouter } from "react-router-dom";
 // re-asking (the value was already decided, even if by a legacy default).
 
 const SCOPES = [
-  { id: "sc1", scope: "Prod", hosts: ["db-01"], capability: { types: ["bash"] }, agencies: ["FIN"] },
+  { id: "sc1", scope: "Prod", hosts: ["db-01"], agencies: ["FIN"] },
   // Deliberately unmapped: drives the AF-Q3 advisory warning.
-  { id: "sc2", scope: "Orphan", hosts: [], capability: { types: [] }, agencies: [] },
+  { id: "sc2", scope: "Orphan", hosts: [], agencies: [] },
 ];
 
 const GLOBAL_JOB = {

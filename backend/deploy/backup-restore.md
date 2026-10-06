@@ -150,9 +150,9 @@ attended to. Per host.
 ### Re-registered runners come back unbound
 
 **This is the step most likely to be missed.** A runner that re-registers gets a
-**new id**, so it has no agency membership and no tags — those are keyed to the
-id that was just deleted, and they are operator-owned, never self-declared by
-the agent. The runner will:
+**new id**, so it has no agency membership, no tags, no scope bindings and no
+approved host keys — those are keyed to the id that was just deleted, and they
+are operator-owned, never self-declared by the agent. The runner will:
 
 - report itself **online**,
 - re-detect and advertise its capabilities correctly,
@@ -160,12 +160,20 @@ the agent. The runner will:
 - and **silently change which work it is eligible for**.
 
 That last point is the one to understand, because "unbound" is not "idle". The
-claim predicate is a **disjoint** two-branch rule: an agency-tagged run goes only
-to a member of one of its agencies, and an **untagged run goes ONLY to a runner
-with no agencies at all**. So a runner that lost its placement has not gone
+claim predicate is a **disjoint** two-branch rule: a run that carries agencies
+goes only to a member of one of them, and a **run with no agency goes ONLY to a
+runner with no agencies at all**. So a runner that lost its placement has not gone
 quiet — it has moved out of its department's pool and **into the shared general
-pool**, where it can now claim untagged work it was previously excluded from,
+pool**, where it can now claim general-pool work it was previously excluded from,
 while no longer claiming the departmental runs it existed to serve.
+
+**Scopes bound to that runner stay bound to the old id, and closed.** A scope's
+runner binding (Scopes → the scope → Runners) is keyed on the runner id and
+deliberately outlives the runner: it is not removed when the row is deleted, so
+the scope does not quietly reopen to every runner in its agency. Until the
+binding is re-pointed, nothing claims that scope's runs, and each waiting run
+says why (*scope … is bound to …, and no bound runner is registered any more*).
+The Scopes view shows the binding as *deregistered* with a warning.
 
 That is an isolation change, not just an availability one. Green status is not
 evidence that the right work can be dispatched. Before declaring the restore
@@ -178,8 +186,10 @@ sweeping it past `CRONOMICON_RUNNER_DEREGISTER_AFTER`, the server snapshots its
 agency membership and tags into `runner_placement_history`. When a runner
 re-registers unplaced and a snapshot matches, its row in **Runners** shows
 **Previous placement found**; expand the row to review the prior agencies and
-tags, then **Restore placement** to re-apply them in one step, or dismiss the
-suggestion. The match is offered for an operator to confirm, never applied
+tags, and the scopes still bound to the old registration, then **Restore
+placement** to re-apply them in one step — which also re-points those scopes at
+this runner — or dismiss the suggestion. A general-pool runner (no agencies in
+its snapshot) is offered the restore too when its old id still holds bindings. The match is offered for an operator to confirm, never applied
 automatically: the runner name is self-declared by the agent, so healing by name
 alone would let any agent inherit another runner's agency by claiming its name.
 The observed client IP of the runner's last contact is recorded beside the
@@ -189,8 +199,23 @@ pool).
 
 > The snapshot only exists in the database you restored: a runner reaped or
 > deregistered *after* the restore point has no history row, and comes back with
-> no suggestion. Those runners are re-bound by hand (agency, then tags). Either
-> way the check does not go away: an unreviewed runner is an unplaced runner.
+> no suggestion. Those runners are re-bound by hand (agency, then tags, then
+> their scopes: **replace** beside the deregistered binding on the Scopes view,
+> or **Replace this runner…** under *Scopes served* on the old row if it still
+> exists). Either way the check does not go away: an unreviewed runner is an
+> unplaced runner.
+
+**Host-key approvals do not follow the new id either.** The runner's own
+`known_hosts` file survives on its host (unless the state directory was wiped),
+so its runs keep verifying; but the approvals recorded in Cronomicon sit under
+the old registration, and the runner's **Trusted host keys** panel shows the
+file's lines as *Not approved here*. To restore the record, use **Copy from a
+runner…** on that panel. While the **Previous placement found** offer is on the
+runner's row, the previous registration is offered there as a source, so copy
+the keys before you restore or dismiss the placement; every key goes through
+the fingerprint review. If the state directory *was*
+wiped, the file is empty and those keys must be approved again (copied, pasted
+or re-scanned) before the runner can connect to anything.
 
 ### Verifying from the runner side
 

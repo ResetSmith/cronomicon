@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { useColumnWidths, useGet, rows, useTableSort } from "../../hooks";
+import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, SkeletonRows, TypeBadge } from "../../components/ui";
+import { DetailPanel, EmptyCell, ExpandChevron, HoverTr, InlineLoading, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
 import {
   Btn,
   ConfirmDialog,
@@ -18,8 +18,9 @@ import {
   labelStyle,
   tdStyle,
   } from "../envvars/ui";
+import { BindingNotices, BoundRunnersCell, ScopeRunnersField, type BoundRunner } from "./ScopeRunners";
+import { ScopeKeyCoverage } from "../runners/HostKeys";
 
-import { RUN_TYPES, type RunType } from "../../runtypes";
 
 export interface ScopeRow {
   id?: string; // UUIDv7 (K-3)
@@ -31,16 +32,21 @@ export interface ScopeRow {
   gitlabUrl?: string | null;
   sidecarPath?: string | null;
   hosts?: string[];
-  capability?: {
-    types?: RunType[];
-    origin?: "local" | "sidecar" | "pragma" | "inference";
-    owner?: string | null;
-    errors?: { file?: string; line?: number; message: string }[];
-  };
+  // Git metadata of a git-source scope: the owner its sidecar or pragma declares
+  // and the line-numbered errors from the strict pragma parse. (Until 2.1.0 both
+  // rode on a `capability` object beside the scope's "supported run types".)
+  owner?: string | null;
+  pragmaErrors?: { file?: string; line?: number; message: string }[];
   hasInventory?: boolean;
   inventoryFormat?: string | null;
   projectionStatus?: string | null; // ok | degraded | unavailable
   agencies?: { id: string; name: string }[]; // network-isolation zones (T3.8 — a SET; scopes.agency_id was dropped in migration 700)
+  tags?: string[]; // operator-owned (migration 1160); never synced from Git
+  // The runners this scope is restricted to (migration 1180, SB band). [] ⇒ any
+  // runner eligible for its agency. Operator-owned and never synced, like the
+  // agency. A binding whose runner was deregistered is still listed, and still
+  // restricts.
+  boundRunners?: BoundRunner[];
   lastChangedAt?: string | null;
 }
 
@@ -68,31 +74,28 @@ interface BrokenRef {
   name?: string;
 }
 
-const originLabel: Record<string, string> = {
-  local: "Local — set in scope editor",
-  sidecar: "Sidecar file",
-  pragma: "Pragma (top of inventory file)",
-  inference: "Inferred from inventory shape",
-};
-
 // Default column widths (px) so table-layout:fixed has a sensible starting point
 // before the user drags (V1.1-7). Stored overrides come from useColumnWidths.
 const COL_W: Record<string, number> = {
   expand: 44,
-  scope: 200,
+  scope: 180,
   source: 100,
-  description: 220,
-  types: 160,
+  description: 190,
+  tags: 140,
   hosts: 100,
   agencies: 150,
+  runners: 140,
   updated: 150,
   actions: 140,
 };
+// The defaults sum to 1334px, which is what fits beside the sidebar at 1600 —
+// Scope and Description gave up 50px between them when the Runners column
+// arrived (SB), so the actions cell does not slide off the right edge.
 
 // Sortable columns (Phase 2, the sorting-update plan §3.2), driven by
 // useTableSort. Source sorts by the rendered label (Cronomicon/Git) and Hosts by
-// the same count the cell shows; Description / Supported Types / expand /
-// actions stay unsortable.
+// the same count the cell shows; Description / Tags / expand / actions stay
+// unsortable.
 const SORT_COLS: SortColumn<ScopeRow>[] = [
   { key: "scope", get: (s) => s.scope, type: "text" },
   { key: "source", get: (s) => (s.source === "cronomicon" ? "Cronomicon" : "Git"), type: "text" },
@@ -106,14 +109,19 @@ export function ScopesTab({
   error,
   refetch,
   canEdit,
+  dep = 0,
 }: {
   scopes: ScopeRow[];
   loading: boolean;
   error: string | null;
   refetch: () => void;
   canEdit: boolean;
+  /** The parent's list-load counter. A fresh load drops the optimistic tag overrides. */
+  dep?: number;
 }) {
   const [search, setSearch] = useState("");
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ScopeRow | null>(null);
@@ -125,6 +133,17 @@ export function ScopesTab({
   const { data: agencyData } = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencies = rows<{ id: string; name: string }>(agencyData);
   const cw = useColumnWidths("envvars-scopes");
+
+  // Operator-owned scope tags (migration 1160) — optimistic edits via the
+  // dedicated PUT /scope-tags/{scopeId}; the override map resets on every list
+  // load (dep). They work on git-source scopes too: the tags never come from Git.
+  const tagState = useInlineTags<ScopeRow>(
+    dep,
+    (s) => String(s.id),
+    (s) => s.tags,
+    (s, next) =>
+      api.PUT("/scope-tags/{scopeId}", { params: { path: { scopeId: s.id! }, header: csrfHeader }, body: { tags: next } }),
+  );
 
   const resync = async () => {
     setResyncing(true);
@@ -138,7 +157,7 @@ export function ScopesTab({
     setNotice({
       kind: "info",
       text: r
-        ? `Re-synced ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} capability changes — ${r.errors?.length ?? 0} pragma errors`
+        ? `Re-synced ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
         : "Re-synced inventories from GitLab",
     });
     refetch();
@@ -146,10 +165,15 @@ export function ScopesTab({
 
   const filtered = scopes.filter(
     (s) =>
-      !search ||
-      s.scope.toLowerCase().includes(search.toLowerCase()) ||
-      (s.description || "").toLowerCase().includes(search.toLowerCase()),
+      (!search ||
+        s.scope.toLowerCase().includes(search.toLowerCase()) ||
+        (s.description || "").toLowerCase().includes(search.toLowerCase())) &&
+      matchesTags(tagState.tagsFor(s), tagFilter, tagMatch),
   );
+  const clearFilters = () => {
+    setSearch("");
+    setTagFilter([]);
+  };
 
   // Sort after the search filter (§3.1). The tableId reuses the column-width
   // id so the two per-table preferences share one identity.
@@ -167,7 +191,27 @@ export function ScopesTab({
       pin: "first",
       cell: (row) => <ExpandChevron open={expanded === row.id} />,
     },
-    { key: "scope", label: "Scope", sortKey: "scope", width: COL_W.scope, tdStyle: { fontWeight: 600 }, cell: (row) => row.scope },
+    {
+      key: "scope",
+      label: "Scope",
+      sortKey: "scope",
+      width: COL_W.scope,
+      tdStyle: { fontWeight: 600 },
+      cell: (row) => {
+        const n = row.pragmaErrors?.length ?? 0;
+        if (n === 0) return row.scope;
+        // The ⚠ flags a git inventory whose `# cronomicon:v1` pragma did not
+        // parse; the expanded row lists the errors line by line.
+        return (
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            {row.scope}
+            <span title={`${n} pragma parse error${n === 1 ? "" : "s"}`} aria-label={`${n} pragma parse error${n === 1 ? "" : "s"}`} style={{ color: c.warning, fontSize: c.fontSm }}>
+              ⚠
+            </span>
+          </span>
+        );
+      },
+    },
     {
       key: "source",
       label: "Source",
@@ -186,37 +230,7 @@ export function ScopesTab({
       tdStyle: { color: c.textSec, fontSize: c.fontSm, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
       cell: (row) => row.description || <EmptyCell />,
     },
-    {
-      key: "types",
-      label: "Supported Types",
-      width: COL_W.types,
-      cell: (row) => {
-        const cap = row.capability;
-        const capErrors = cap?.errors ?? [];
-        return (
-          <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-            {(cap?.types ?? []).length === 0 ? (
-              <span style={{ color: c.textSec, fontStyle: "italic", fontSize: c.fontSm }}>—</span>
-            ) : (
-              (cap?.types ?? []).map((t) => (
-                <TypeBadge
-                  key={t}
-                  type={t}
-                  withLabel
-                  dashed={cap?.origin === "inference"}
-                  title={`${t} — ${originLabel[cap?.origin ?? "inference"] ?? cap?.origin}`}
-                />
-              ))
-            )}
-            {capErrors.length > 0 && (
-              <span title={`${capErrors.length} pragma parse error(s)`} style={{ color: c.warning, fontSize: c.fontSm }}>
-                ⚠
-              </span>
-            )}
-          </span>
-        );
-      },
-    },
+    { key: "tags", label: "Tags", width: COL_W.tags, cell: (row) => <InlineTags tags={tagState.tagsFor(row)} max={2} /> },
     {
       key: "hosts",
       label: "Hosts",
@@ -232,13 +246,19 @@ export function ScopesTab({
       // RB-22 — a scope's agencies on the scope's own row. This was answered from
       // the Membership matrix until that grid was deleted; the question ("which
       // zones can run this scope's jobs?") belongs where the scope is.
+      //
+      // SB — the empty state says "general pool", not "unrestricted". A scope in
+      // no agency is NOT open to any runner: the claim rule is disjoint, and
+      // only a runner in no agency may take its work. The old label was wrong
+      // about that, and with a Runners column beside it "unrestricted" would
+      // now also mean two different things on one row.
       cell: (row) =>
         (row.agencies ?? []).length === 0 ? (
           <span
-            title="No agency restriction — any runner may execute this scope's jobs."
+            title="In no agency — only a general-pool runner (one in no agency) may run this scope's jobs."
             style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
           >
-            unrestricted
+            general pool
           </span>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -252,6 +272,15 @@ export function ScopesTab({
             ))}
           </div>
         ),
+    },
+    {
+      key: "runners",
+      label: "Runners",
+      width: COL_W.runners,
+      // SB — which runners this scope is bound to. Beside Agencies because the
+      // two answer the same question at different grain: which department's
+      // runners, then which of those can actually reach these hosts.
+      cell: (row) => <BoundRunnersCell bound={row.boundRunners} />,
     },
     {
       key: "updated",
@@ -326,10 +355,15 @@ export function ScopesTab({
           {notice.text}
         </Notice>
       )}
+      {/* SB — runner pins that could not become a scope binding. ConfigureApp
+          only, like the route behind it; and re-read on every list load, since
+          binding a scope is what resolves a group. */}
+      {canEdit && <BindingNotices dep={dep} onChanged={refetch} />}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <div style={{ flex: 1 }}>
           <SearchBar value={search} onChange={setSearch} placeholder="Search scopes by name or description..." />
         </div>
+        <TagFilterSelect items={scopes} selected={tagFilter} onChange={setTagFilter} getTags={(s) => tagState.tagsFor(s)} matchMode={tagMatch} onMatchModeChange={setTagMatch} />
         <ColumnsMenu cols={cols} cw={cw} />
         {canEdit && (
           <>
@@ -348,7 +382,7 @@ export function ScopesTab({
       {/* VU-14 — "No scopes match" was shown whether or not anything was typed.
           An empty catalog offers Add Scope (the same handler as the toolbar, and
           hidden for a caller without ConfigureApp, who cannot create one); a
-          filtered-empty list offers the search back. */}
+          filtered-empty list offers the search and the tag filter back. */}
       {!loading && !error && filtered.length === 0 && (
         <div style={{ color: c.textSec }}>
           {scopes.length === 0 ? (
@@ -364,10 +398,10 @@ export function ScopesTab({
             </>
           ) : (
             <>
-              <div>No scopes match “{search.trim()}”.</div>
+              <div>{search.trim() && tagFilter.length === 0 ? `No scopes match “${search.trim()}”.` : "No scopes match the current filters."}</div>
               <div style={{ marginTop: 12 }}>
-                <Btn small onClick={() => setSearch("")}>
-                  Clear search
+                <Btn small onClick={clearFilters}>
+                  {tagFilter.length === 0 ? "Clear search" : "Clear filters"}
                 </Btn>
               </div>
             </>
@@ -388,8 +422,7 @@ export function ScopesTab({
             {sort.sorted.map((s) => {
               const isExp = expanded === s.id;
               const isLocal = s.source === "cronomicon";
-              const cap = s.capability;
-              const capErrors = cap?.errors ?? [];
+              const pragmaErrors = s.pragmaErrors ?? [];
               return (
                 <Fragment key={s.id ?? s.scope}>
                   <HoverTr
@@ -408,7 +441,7 @@ export function ScopesTab({
                             Refresh drives the view's list reload. `refetch` here is a
                             pure dep bump in Scopes.tsx (it does not collapse the row). */}
                         <DetailPanel also={refetch}>
-                        {capErrors.length > 0 && (
+                        {pragmaErrors.length > 0 && (
                           <div
                             style={{
                               marginBottom: 12,
@@ -420,23 +453,20 @@ export function ScopesTab({
                               color: c.warning,
                             }}
                           >
-                            <strong>Pragma error{capErrors.length === 1 ? "" : "s"}:</strong>{" "}
-                            {capErrors.map((err, i) => (
+                            <strong>Pragma error{pragmaErrors.length === 1 ? "" : "s"}:</strong>{" "}
+                            {pragmaErrors.map((err, i) => (
                               <span key={i} style={{ marginRight: 12 }}>
                                 {err.line != null && <code style={{ fontFamily: c.mono, fontSize: c.fontXs }}>line {err.line}</code>}{" "}
                                 {err.message}
                               </span>
                             ))}
-                            <span style={{ color: c.textSec, marginLeft: 6 }}>Falling back to inferred types.</span>
                           </div>
                         )}
                         <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "6px 16px", fontSize: c.fontSm }}>
-                          <span style={{ color: c.textSec }}>Capability origin</span>
-                          <span>{originLabel[cap?.origin ?? ""] ?? "—"}</span>
-                          {cap?.owner && (
+                          {s.owner && (
                             <>
                               <span style={{ color: c.textSec }}>Owner</span>
-                              <span>{cap.owner}</span>
+                              <span>{s.owner}</span>
                             </>
                           )}
                           {s.name && (
@@ -506,6 +536,51 @@ export function ScopesTab({
                               Network-isolation zone — only a runner in this agency can execute this scope's jobs, and
                               only secrets and keys in it are injectable.
                             </span>
+                          </div>
+                        )}
+                        {/* SB — the runners this scope is bound to, directly under
+                            its agency: department first, then which of that
+                            department's runners can reach these hosts. Shown to
+                            everyone who can see the scope; changed only with
+                            ConfigureApp. */}
+                        {s.id != null && (
+                          <ScopeRunnersField
+                            scope={s}
+                            canEdit={canEdit}
+                            onSaved={(text) => {
+                              setNotice({ kind: "info", text });
+                              refetch();
+                            }}
+                          />
+                        )}
+                        {/* SB — a bound runner uses ITS OWN known_hosts, so a
+                            host it has never been told to trust is a run that
+                            fails at the first connection. Shown only where the
+                            server will answer: the route needs ConfigureApp. */}
+                        {s.id != null && canEdit && (s.boundRunners ?? []).length > 0 && (
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys on the bound runners</div>
+                            <ScopeKeyCoverage scopeId={String(s.id)} bound={(s.boundRunners ?? []).length} canConfig={canEdit} />
+                          </div>
+                        )}
+                        {/* Tags are shown to everyone who can see the scope and
+                            edited only with ConfigureApp, like every other scope
+                            write. A missing permission is not a precondition the
+                            reader can fix, so the editor goes read-only rather
+                            than disabled-with-a-reason. */}
+                        {s.id != null && (
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ ...labelStyle(), marginBottom: 6 }}>
+                              Tags{tagState.tagsFor(s).length ? ` (${tagState.tagsFor(s).length})` : ""}
+                            </div>
+                            {canEdit || tagState.tagsFor(s).length > 0 ? (
+                              <TagEditor tags={tagState.tagsFor(s)} onChange={(next) => tagState.save(s, next)} disabled={!canEdit} />
+                            ) : (
+                              <span style={{ color: c.textSec, fontSize: c.fontSm, fontStyle: "italic" }}>No tags</span>
+                            )}
+                            {tagState.errors[String(s.id)] && (
+                              <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{tagState.errors[String(s.id)]}</div>
+                            )}
                           </div>
                         )}
                         {canEdit && s.id != null && <InventoryPanel scopeId={s.id} />}
@@ -892,9 +967,6 @@ function ScopeFormModal({
   const [name, setName] = useState(initial?.scope ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [hostsText, setHostsText] = useState((initial?.hosts ?? []).join("\n"));
-  const [types, setTypes] = useState<RunType[]>(
-    initial?.capability?.types && initial.capability.types.length > 0 ? [...initial.capability.types] : ["bash"],
-  );
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -916,17 +988,6 @@ function ScopeFormModal({
   }, [isEdit, initial]);
 
   const renameDiffers = isEdit && name.trim() !== initial.scope;
-
-  const toggleType = (t: RunType) => {
-    setTypes((cur) => {
-      if (cur.includes(t)) {
-        // bash floor (S10): bash is always declared; never allow an empty set.
-        if (t === "bash" || cur.length === 1) return cur;
-        return cur.filter((x) => x !== t);
-      }
-      return [...cur, t];
-    });
-  };
 
   const save = async () => {
     const scopeName = name.trim();
@@ -956,7 +1017,7 @@ function ScopeFormModal({
     setBusy(true);
     setFormError("");
     setLineErrs([]);
-    const body = { scope: scopeName, description, hosts, supportedTypes: types, rawInventory: rawInv };
+    const body = { scope: scopeName, description, hosts, rawInventory: rawInv };
     if (isEdit && initial.id != null) {
       const { data, error: e } = await api.PATCH("/scopes/{scopeId}", {
         params: { path: { scopeId: initial.id }, header: csrfHeader },
@@ -1044,40 +1105,6 @@ function ScopeFormModal({
             placeholder="Short description of what this scope targets"
             style={inputStyle()}
           />
-        </div>
-        <div>
-          <label style={labelStyle()}>Supported run types *</label>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {RUN_TYPES.map((t) => {
-              const selected = types.includes(t);
-              return (
-                <div
-                  key={t}
-                  onClick={() => toggleType(t)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "5px 11px",
-                    borderRadius: c.radiusChip,
-                    fontSize: c.fontSm,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    userSelect: "none",
-                    background: selected ? `${c.primary}2e` : "transparent",
-                    border: selected ? `1px solid ${c.primary}80` : `1px dashed ${c.border}`,
-                    color: selected ? c.primary : c.textSec,
-                  }}
-                >
-                  {selected ? "✓" : "✕"} {t}
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 5 }}>
-            Declared capability is advisory — jobs of other types may still run but are flagged. Bash is always included
-            (bash floor).
-          </div>
         </div>
         <div>
           <label style={labelStyle()}>Hosts Input Mode</label>

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 )
@@ -104,18 +106,15 @@ func TestHostKeyScanApproveTrustRoundTrip(t *testing.T) {
 	bindRunnerToken(t, svc, tok, id)
 
 	// Agent uploads a scanned key.
-	line := "web01 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI"
-	body := `{"entries":[{"host":"web01","keyType":"ssh-ed25519","fingerprint":"SHA256:abc123","knownHostsLine":"` + line + `"}]}`
-	if code := uploadKeys(t, svc, as, id, tok, body); code != http.StatusOK {
+	key := testHostKey(t)
+	line := scanLine("web01", key)
+	if code := uploadKeys(t, svc, as, id, tok, scanBody("web01", line)); code != http.StatusOK {
 		t.Fatalf("upload: %d", code)
 	}
 
-	// It appears in the pending list.
-	lreq := httptest.NewRequest(http.MethodGet, "/api/v1/runners/host-keys/pending", nil)
-	lrec := httptest.NewRecorder()
-	svc.HandleListPendingHostKeys(lrec, lreq)
-	if lrec.Code != http.StatusOK || !strings.Contains(lrec.Body.String(), "SHA256:abc123") {
-		t.Fatalf("pending list missing the key: %d %s", lrec.Code, lrec.Body.String())
+	// It appears in the pending list, under the fingerprint the SERVER computed.
+	if all, err := svc.PendingHostKeys(context.Background()); err != nil || len(all) != 1 || all[0].Fingerprint != ssh.FingerprintSHA256(key) {
+		t.Fatalf("pending list missing the key: %v %+v", err, all)
 	}
 	var keyID string
 	_ = svc.db.QueryRow(`SELECT id FROM pending_host_keys WHERE runner_id = ?`, id).Scan(&keyID)
@@ -145,12 +144,12 @@ func TestHostKeyScanApproveTrustRoundTrip(t *testing.T) {
 	if trust == nil || len(trust.Entries) != 1 || trust.Entries[0] != line {
 		t.Fatalf("expected trust-hosts with the approved line, got %+v", pr.Control)
 	}
-	// ...once. It's marked trusted, so a later poll (with a claimable run) doesn't re-send.
+	// ...once. It's marked delivered, so a later poll (with a claimable run) doesn't re-send.
 	insertQueuedRun(t, svc, "q-rt", "rt-job", "bash", "")
 	pr2, _ := pollDecode(t, svc, as, id, tok, "settingsVersion=0")
 	for _, c := range pr2.Control {
 		if c.Op == "trust-hosts" {
-			t.Errorf("trust-hosts re-delivered after being marked trusted")
+			t.Errorf("trust-hosts re-delivered after being marked delivered")
 		}
 	}
 }
@@ -162,8 +161,7 @@ func TestHostKeyRejectNeverTrusts(t *testing.T) {
 	insertRunner(t, svc, id, "rj", "online", []string{"bash"})
 	bindRunnerToken(t, svc, tok, id)
 
-	body := `{"entries":[{"host":"evil","keyType":"ssh-rsa","fingerprint":"SHA256:bad","knownHostsLine":"evil ssh-rsa AAAA"}]}`
-	if code := uploadKeys(t, svc, as, id, tok, body); code != http.StatusOK {
+	if code := uploadKeys(t, svc, as, id, tok, scanBody("evil", scanLine("evil", testHostKey(t)))); code != http.StatusOK {
 		t.Fatalf("upload: %d", code)
 	}
 	var keyID string
@@ -199,7 +197,8 @@ func TestUploadRejectsNewlineInjection(t *testing.T) {
 
 	// A malicious runner tries to smuggle a second trusted host via an embedded
 	// newline in the known_hosts line — it must be dropped, not stored.
-	body := `{"entries":[{"host":"good","keyType":"ssh-ed25519","fingerprint":"SHA256:ok","knownHostsLine":"good ssh-ed25519 AAAA\nevil.example.com ssh-rsa BBBB"}]}`
+	good, evil := scanLine("good", testHostKey(t)), scanLine("evil.example.com", testHostKey(t))
+	body := `{"entries":[{"host":"good","knownHostsLine":"` + good + `\n` + evil + `"}]}`
 	if code := uploadKeys(t, svc, as, id, tok, body); code != http.StatusOK {
 		t.Fatalf("upload: %d", code)
 	}

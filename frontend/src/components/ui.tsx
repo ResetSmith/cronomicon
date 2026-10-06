@@ -951,6 +951,7 @@ export function Modal({
   title,
   onClose,
   wide,
+  table,
   footer,
   rail,
   children,
@@ -958,6 +959,11 @@ export function Modal({
   title: string;
   onClose: () => void;
   wide?: boolean;
+  /** The widest fixed size (960, the rail layout's width) for a dialog whose
+      body IS a table that must be read across — the host-key review, where a
+      status column pushed off-screen would hide the one thing being reviewed.
+      Not for forms: a form that wide is unreadable. */
+  table?: boolean;
   /** Pinned below the scrolling body: the action row, plus any error that explains a disabled action. */
   footer?: ReactNode;
   /** RU-13 — the wide two-pane layout. At ≥RAIL_BREAKPOINT the panel widens to
@@ -1020,7 +1026,7 @@ export function Modal({
     border: `1px solid ${c.border}`,
     borderRadius: c.radiusSurface,
     padding: 20,
-    width: railActive ? 960 : wide ? 640 : 480,
+    width: railActive || table ? 960 : wide ? 640 : 480,
     maxWidth: "92vw",
     maxHeight: "84vh",
     boxShadow: c.shadow,
@@ -1873,20 +1879,17 @@ function typeTone(t: string): { bg: string; color: string } {
 }
 // TypeBadge renders a run-type as a colored chip. Two shapes from one component
 // (VC.7): icon-only (Jobs/History dense columns — the default) and `withLabel`
-// (Scopes supported-types, Runners capabilities — icon + lowercase mono name).
-// `dashed` draws a dashed accent border for Scopes' inferred-vs-declared origin
-// cue; `title` overrides the hover tooltip (e.g. to carry that origin).
+// (Runners capabilities — icon + lowercase mono name). `title` overrides the
+// hover tooltip.
 export function TypeBadge({
   type,
   size = 16,
   withLabel = false,
-  dashed = false,
   title,
 }: {
   type?: string | null;
   size?: number;
   withLabel?: boolean;
-  dashed?: boolean;
   title?: string;
 }) {
   const { mode } = useTheme();
@@ -1904,7 +1907,6 @@ export function TypeBadge({
     borderRadius: c.radiusChip,
     background: bg,
     color,
-    border: dashed ? `1px dashed ${color}` : undefined,
     boxSizing: "border-box",
   };
   const textStyle: CSSProperties = {

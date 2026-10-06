@@ -152,7 +152,16 @@ import (
 //	      SHAPE changed; the bump exists so an agent built before the rename
 //	      is refused at registration (426) instead of assembling a run env
 //	      and scanning for a marker that no script emits any more.
-const ProtocolVersion = 13
+//	v14 — host-key trust becomes two-way (SB). Two new poll control ops:
+//	      "untrust-hosts" carries known_hosts Entries the agent REMOVES (a
+//	      replaced or operator-removed key; until now the file only ever grew),
+//	      and "known-hosts-report" asks the agent to upload what its file holds
+//	      to POST /runners/{id}/known-hosts — per line: host patterns, hashed
+//	      flag, marker, key type, fingerprint. The agent also reports once at
+//	      startup. An agent that silently dropped either op would leave a
+//	      replaced key trusted and every delivery unconfirmed, so this is a
+//	      real bump, not an additive field.
+const ProtocolVersion = 14
 
 // MinProtocolVersion is the oldest agent protocol this server accepts, checked
 // at registration and redeclare (426 protocol_too_old). It TRACKS
@@ -308,13 +317,14 @@ type PollAssignment struct {
 // v5 host-key ops). The extra payload fields are omitempty, so an op that
 // doesn't use them stays wire-clean.
 type PollControl struct {
-	Op      string  `json:"op"` // "kill" | "drain" | "re-register" (v4) | "keyscan" | "trust-hosts" (v5)
+	Op      string  `json:"op"` // "kill" | "drain" | "re-register" (v4) | "keyscan" | "trust-hosts" (v5) | "untrust-hosts" | "known-hosts-report" (v14)
 	TraceID *string `json:"traceId,omitempty"`
 	// Hosts is the target list for a "keyscan" op — the agent scans each from
 	// its own vantage and uploads the presented host keys (v5).
 	Hosts []string `json:"hosts,omitempty"`
-	// Entries is the list of approved known_hosts lines for a "trust-hosts" op —
-	// the agent appends each to its known_hosts file (v5).
+	// Entries is the list of known_hosts lines for a "trust-hosts" op (the agent
+	// appends each to its known_hosts file, v5) or an "untrust-hosts" op (the
+	// agent removes each, v14).
 	Entries []string `json:"entries,omitempty"`
 }
 

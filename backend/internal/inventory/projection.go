@@ -78,30 +78,6 @@ func Hosts(content string) []string {
 	return hosts
 }
 
-// InferTypes is the conservative heuristic that guesses a scope's run-type
-// capability from raw inventory content when no pragma/sidecar declares it. Shared
-// by git sync (gitlab.inferScopeTypes delegates here) and the in-app inventory
-// upload handler (M5) so both infer identically. Always includes the bash floor.
-func InferTypes(content string) []string {
-	types := map[string]bool{}
-	if strings.Contains(content, "[all:vars]") &&
-		(strings.Contains(content, "ansible_user") || strings.Contains(content, "ansible_become") || strings.Contains(content, "ansible_host")) {
-		types["ansible"] = true
-		types["bash"] = true
-	}
-	if strings.Contains(content, "win-srv") || strings.Contains(content, "[windows]") {
-		types["powershell"] = true
-	}
-	if len(types) == 0 {
-		types["bash"] = true
-	}
-	out := make([]string, 0, len(types))
-	for t := range types {
-		out = append(out, t)
-	}
-	return out
-}
-
 // ParseProjection parses the SUPPORTED static-INI subset into a Projection:
 //
 //  1. plain host lines;

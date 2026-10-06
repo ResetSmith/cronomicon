@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
@@ -73,11 +75,24 @@ CREATE TABLE IF NOT EXISTS jobs (
     ssh_user           TEXT,
     ssh_credential     TEXT,
     become_password_secret TEXT,
-    -- RT-2 (migration 1070). Same fixture-drift caveat as the columns above.
-    -- The operator-override sibling that lived here until v1.3.5 is gone with
-    -- migration 1090; the declared pin is the whole of the job-level layer now.
-    runner_tag          TEXT,
     PRIMARY KEY (source, name)
+);
+
+-- SB: the job upsert clears a "leftover runner_tag" notice once the line is
+-- gone from the YAML, so this minimal schema needs the table it clears. Mirrors
+-- migration 1180. (The upsert also asks whether a scope is bound, for two
+-- advisory warnings; that read tolerates the tables being absent here.)
+CREATE TABLE IF NOT EXISTS retired_runner_pins (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_uid      TEXT,
+    job_name     TEXT NOT NULL,
+    job_source   TEXT NOT NULL,
+    scope        TEXT NOT NULL DEFAULT '',
+    runner_tag   TEXT NOT NULL,
+    reason       TEXT NOT NULL,
+    recorded_at  TEXT NOT NULL,
+    dismissed_at TEXT,
+    dismissed_by TEXT
 );
 
 -- LU-6: the sync path now allocates a log-folder code per definition, so this
@@ -362,29 +377,46 @@ web-01.prod.internal
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
-	if len(dir.Types) != 3 {
-		t.Errorf("want 3 types, got %v", dir.Types)
-	}
 	if dir.Owner != "infra-platform" {
 		t.Errorf("want owner infra-platform, got %q", dir.Owner)
+	}
+	if dir.Description != "Production inventory" {
+		t.Errorf("want description %q, got %q", "Production inventory", dir.Description)
+	}
+	// ST-Q1: the retired `types` directive is recognised — no error — and
+	// reported as a line-numbered warning instead.
+	if len(dir.Warnings) != 1 || dir.Warnings[0].Line != 1 || dir.Warnings[0].Message != pragmaTypesIgnored {
+		t.Errorf("want one `types` warning on line 1, got %+v", dir.Warnings)
 	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// T2: pragma parsing — unknown run types produce line-numbered errors
+// T2: pragma parsing — the retired `types` directive is ignored, never an error
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestParseCronomiconPragma_UnknownRunType(t *testing.T) {
-	content := "# cronomicon:v1 types=bahs,ansibl\n[qa_hosts]\nqa-01\n"
-	_, errs := parseCronomiconPragma(content)
-	if len(errs) == 0 {
-		t.Fatal("expected errors for unknown run types, got none")
+// Until 2.1.0 `types=bahs` was a line-numbered "unknown run type" error. The
+// directive's value is no longer read at all: a repository that still carries
+// it — even with a value that was never valid — must not fail the strict parse,
+// because one pragma error marks the whole sync partial and suppresses scope
+// pruning (ST-Q1).
+func TestParseCronomiconPragma_TypesDirectiveIgnored(t *testing.T) {
+	content := "# cronomicon:v1 types=bahs,ansibl\n# cronomicon:v1 owner=qa\n[qa_hosts]\nqa-01\n"
+	dir, errs := parseCronomiconPragma(content)
+	if len(errs) != 0 {
+		t.Fatalf("the retired types directive must not be an error, got: %v", errs)
 	}
-	if errs[0].Line != 1 {
-		t.Errorf("want error on line 1, got line %d", errs[0].Line)
+	if len(dir.Warnings) != 1 {
+		t.Fatalf("want exactly one warning, got %+v", dir.Warnings)
 	}
-	if !strings.Contains(errs[0].Message, "bahs") {
-		t.Errorf("expected 'bahs' in error message, got: %s", errs[0].Message)
+	if dir.Warnings[0].Line != 1 {
+		t.Errorf("want the warning on line 1, got line %d", dir.Warnings[0].Line)
+	}
+	if !strings.Contains(dir.Warnings[0].Message, "no longer used") {
+		t.Errorf("warning should say the directive is no longer used, got: %s", dir.Warnings[0].Message)
+	}
+	// The directives around it still parse.
+	if dir.Owner != "qa" {
+		t.Errorf("want owner qa, got %q", dir.Owner)
 	}
 }
 
@@ -423,10 +455,10 @@ func TestParseCronomiconPragma_UnknownDirective(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func TestParseCronomiconPragma_StopsAtNonComment(t *testing.T) {
-	content := "[hosts]\n# cronomicon:v1 types=bash\nhost-01\n"
-	dir, _ := parseCronomiconPragma(content)
-	if len(dir.Types) != 0 {
-		t.Errorf("expected no types (pragma after section), got %v", dir.Types)
+	content := "[hosts]\n# cronomicon:v1 owner=late\nhost-01\n"
+	dir, errs := parseCronomiconPragma(content)
+	if dir.Owner != "" || len(errs) != 0 {
+		t.Errorf("expected the pragma after a section to be ignored, got owner=%q errs=%v", dir.Owner, errs)
 	}
 }
 
@@ -497,41 +529,65 @@ func TestValidateYAMLBytes_MissingFields(t *testing.T) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// T10: capability resolution
+// T10: inventory metadata resolution (owner / description / errors / warnings)
 // ──────────────────────────────────────────────────────────────────────────────
 
-func TestResolveInventoryCapability_PragmaPrecedence(t *testing.T) {
-	content := "# cronomicon:v1 types=bash,terraform\n[hosts]\nhost-01\n"
-	cap := resolveInventoryCapability(content, nil, "")
-	if cap.Origin != OriginPragma {
-		t.Errorf("want origin=pragma, got %q", cap.Origin)
+func TestResolveInventoryMeta_PragmaOnly(t *testing.T) {
+	// A bare owner= with no types= — before 2.1.0 this owner was dropped, because
+	// it rode on a capability that only existed when types were declared (ST-D4).
+	content := "# cronomicon:v1 owner=plat-eng\n# cronomicon:v1 description=Edge hosts\n[hosts]\nhost-01\n"
+	meta := resolveInventoryMeta(content, nil, "")
+	if meta.Owner != "plat-eng" {
+		t.Errorf("want owner plat-eng, got %q", meta.Owner)
 	}
-	if len(cap.Types) != 2 {
-		t.Errorf("want 2 types, got %v", cap.Types)
+	if meta.Description != "Edge hosts" {
+		t.Errorf("want description %q, got %q", "Edge hosts", meta.Description)
+	}
+	if meta.SidecarPath != "" || len(meta.Errors) != 0 || len(meta.Warnings) != 0 {
+		t.Errorf("unexpected sidecar/errors/warnings: %+v", meta)
 	}
 }
 
-func TestResolveInventoryCapability_SidecarWins(t *testing.T) {
-	content := "# cronomicon:v1 types=bash\n[hosts]\nhost-01\n"
+func TestResolveInventoryMeta_SidecarWins(t *testing.T) {
+	content := "# cronomicon:v1 owner=from-pragma\n# cronomicon:v1 description=from pragma\n[hosts]\nhost-01\n"
 	sc := &sidecarYAML{}
-	sc.Spec.Types = []string{"bash", "ansible", "terraform"}
-	cap := resolveInventoryCapability(content, sc, "inventory/foo.cronomicon.yaml")
-	if cap.Origin != OriginSidecar {
-		t.Errorf("want origin=sidecar, got %q", cap.Origin)
+	sc.Spec.Owner = "from-sidecar"
+	meta := resolveInventoryMeta(content, sc, "inventory/foo.cronomicon.yaml")
+	if meta.Owner != "from-sidecar" {
+		t.Errorf("sidecar owner should win, got %q", meta.Owner)
 	}
-	if len(cap.Types) != 3 {
-		t.Errorf("want 3 types from sidecar, got %v", cap.Types)
+	// Each field resolves on its own: the sidecar declares no description, so the
+	// pragma's stands.
+	if meta.Description != "from pragma" {
+		t.Errorf("want the pragma description to stand, got %q", meta.Description)
+	}
+	if meta.SidecarPath != "inventory/foo.cronomicon.yaml" {
+		t.Errorf("want the sidecar path recorded, got %q", meta.SidecarPath)
 	}
 }
 
-func TestResolveInventoryCapability_Inferred(t *testing.T) {
-	content := "[hosts]\nhost-01\n"
-	cap := resolveInventoryCapability(content, nil, "")
-	if cap.Origin != OriginInferred {
-		t.Errorf("want origin=inferred, got %q", cap.Origin)
+func TestResolveInventoryMeta_ErrorsAndWarningsStaySeparate(t *testing.T) {
+	// One retired directive (a warning) and one genuinely unknown one (an error).
+	content := "# cronomicon:v1 types=bash,ansible\n# cronomicon:v1 ownr=typo\n[hosts]\nhost-01\n"
+	meta := resolveInventoryMeta(content, nil, "")
+	if len(meta.Errors) != 1 || meta.Errors[0].Line != 2 || !strings.Contains(meta.Errors[0].Message, "ownr") {
+		t.Errorf("want one error for the unknown directive on line 2, got %+v", meta.Errors)
 	}
-	if len(cap.Types) == 0 {
-		t.Error("inferred types should not be empty")
+	if len(meta.Warnings) != 1 || meta.Warnings[0].Line != 1 {
+		t.Errorf("want one warning for `types` on line 1, got %+v", meta.Warnings)
+	}
+}
+
+// A sidecar written before 2.1.0 carries spec.types. The decode is non-strict,
+// so the key is ignored and everything beside it still loads (ST-D6).
+func TestSidecarWithRetiredTypesKeyStillParses(t *testing.T) {
+	var sc sidecarYAML
+	doc := "apiVersion: cronomicon.io/v1\nkind: InventoryMeta\nmetadata:\n  name: prod\nspec:\n  types: [bash, ansible]\n  owner: infra\n  description: Production\n  authKeyEnvVar: PROD_KEY\n"
+	if err := yaml.Unmarshal([]byte(doc), &sc); err != nil {
+		t.Fatalf("a sidecar with the retired types key must still parse: %v", err)
+	}
+	if sc.Spec.Owner != "infra" || sc.Spec.Description != "Production" || sc.Spec.AuthKeyEnvVar != "PROD_KEY" {
+		t.Errorf("sidecar fields lost beside the retired key: %+v", sc.Spec)
 	}
 }
 
@@ -882,7 +938,7 @@ func TestValidateFile_YAML(t *testing.T) {
 	// Valid.
 	valid := filepath.Join(dir, "valid.yaml")
 	_ = os.WriteFile(valid, []byte("apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: x\nspec:\n  run_type: bash\n  command: echo hi\n"), 0o644)
-	errs, err := ValidateFile(valid)
+	errs, _, err := ValidateFile(valid)
 	if err != nil {
 		t.Fatalf("ValidateFile error: %v", err)
 	}
@@ -893,7 +949,7 @@ func TestValidateFile_YAML(t *testing.T) {
 	// Invalid.
 	invalid := filepath.Join(dir, "invalid.yaml")
 	_ = os.WriteFile(invalid, []byte("apiVersion: cronomicon.io/v9\nkind: Garbage\n"), 0o644)
-	errs2, err2 := ValidateFile(invalid)
+	errs2, _, err2 := ValidateFile(invalid)
 	if err2 != nil {
 		t.Fatalf("ValidateFile error: %v", err2)
 	}
@@ -905,13 +961,31 @@ func TestValidateFile_YAML(t *testing.T) {
 func TestValidateFile_INI(t *testing.T) {
 	dir := t.TempDir()
 	ini := filepath.Join(dir, "prod.ini")
-	_ = os.WriteFile(ini, []byte("# cronomicon:v1 types=bahs\n[hosts]\nhost-01\n"), 0o644)
-	errs, err := ValidateFile(ini)
+	_ = os.WriteFile(ini, []byte("# cronomicon:v1 ownr=typo\n[hosts]\nhost-01\n"), 0o644)
+	errs, warnings, err := ValidateFile(ini)
 	if err != nil {
 		t.Fatalf("ValidateFile error: %v", err)
 	}
 	if len(errs) == 0 {
-		t.Error("invalid type in INI pragma should produce errors")
+		t.Error("an unknown directive in an INI pragma should produce errors")
+	}
+	if len(warnings) != 0 {
+		t.Errorf("an unknown directive is an error, not a warning: %v", warnings)
+	}
+
+	// ST-Q1: the retired `types` directive validates clean, with a warning that
+	// carries the file and line so `cronomicon validate` can print it.
+	legacy := filepath.Join(dir, "legacy.ini")
+	_ = os.WriteFile(legacy, []byte("# cronomicon:v1 types=bash,ansible\n[hosts]\nhost-01\n"), 0o644)
+	errs, warnings, err = ValidateFile(legacy)
+	if err != nil {
+		t.Fatalf("ValidateFile error: %v", err)
+	}
+	if len(errs) != 0 {
+		t.Errorf("the retired types directive must not fail validation, got: %v", errs)
+	}
+	if len(warnings) != 1 || warnings[0].File != legacy || warnings[0].Line != 1 {
+		t.Errorf("want one warning attributed to %s:1, got %+v", legacy, warnings)
 	}
 }
 

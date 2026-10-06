@@ -283,14 +283,11 @@ type JobYAML struct {
 		ScriptPath string `yaml:"scriptPath"` // repo-relative file, read from the clone
 		// EX.3 — per-job executor default; empty → resolve from run_type.
 		Executor string `yaml:"executor"` // runner|ssh
-		// RT-2 — the DECLARED runner pin: this job's runs may be claimed only by a
-		// runner carrying this tag (the runner-targeting plan). A sibling
-		// of executor/target_host/ssh_credential in every sense — it is part of how
-		// the job runs, it belongs in review, and sync OVERWRITES it. For a
-		// git-source job this is the ONLY durable pin: the operator override that
-		// could mask it from inside the app was retired in v1.3.5 (mig. 1090), so a
-		// lasting change to where such a job runs is a change to this repository.
-		// A single run still escapes via the Run dialog's per-run pin.
+		// RETIRED (SB band). This used to pin the job's runs to runners carrying
+		// the tag; a job is now placed by its scope's runner binding. The field
+		// stays so that sync can WARN about a line still in someone's repository —
+		// the decode is not strict, and a key this struct did not know would be
+		// dropped in silence. Nothing reads it for dispatch, and it is not stored.
 		RunnerTag string `yaml:"runner_tag"`
 		// CA Phase B (the ssh-user plan) — declarative "connect as"
 		// identity: the SSH login and/or stored-credential LABEL every run of
@@ -522,24 +519,70 @@ func NormalizeSchedules(legacy string, list []ScheduleEntry) ([]ScheduleEntry, [
 // ──────────────────────────────────────────────────────────────────────────────
 
 // ValidateFile parses and validates the YAML file at path, returning line-numbered
-// errors. The path is used only for error attribution; it is acceptable to call
-// this on a temp file. This is the entry point wired into `cronomicon validate`.
-func ValidateFile(path string) ([]ValidationError, error) {
+// errors and, like ValidateRepo, a separate list of non-fatal warnings. The path
+// is used only for error attribution; it is acceptable to call this on a temp
+// file. This is the entry point wired into `cronomicon validate`.
+//
+// Warnings exist for one case today: an inventory pragma that still carries the
+// retired `types` directive (ST-Q1). It is reported, never failed, so a
+// job-definitions repository written before 2.1.0 keeps passing its CI check.
+func ValidateFile(path string) (errs []ValidationError, warnings []ValidationError, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".ini" {
 		// Inventory file — validate pragma only.
-		_, errs := parseCronomiconPragma(string(data))
-		var out []ValidationError
-		for _, e := range errs {
-			out = append(out, ValidationError{File: path, Line: e.Line, Message: e.Message})
+		directives, pragmaErrs := parseCronomiconPragma(string(data))
+		for _, e := range pragmaErrs {
+			errs = append(errs, ValidationError{File: path, Line: e.Line, Message: e.Message})
 		}
-		return out, nil
+		for _, w := range directives.Warnings {
+			warnings = append(warnings, ValidationError{File: path, Line: w.Line, Message: w.Message})
+		}
+		return errs, warnings, nil
 	}
-	return validateYAMLBytes(path, data)
+	errs, err = validateYAMLBytes(path, data)
+	return errs, retiredJobKeyWarnings(path, data), err
+}
+
+// jobRunnerTagRetired is the warning for a job that still carries the retired
+// `runner_tag` key (SB band). Reported, never failed — like the retired `types`
+// pragma, so a job-definitions repository written before the change keeps
+// passing its CI check, and for a second reason: the YAML decode is not strict,
+// so if this were not said out loud the key would simply be ignored and the
+// job's author would go on believing it is confined to one set of runners.
+//
+// It cannot say whether the job is STILL confined: that depends on whether its
+// scope is bound to runners, an operator's setting this command cannot see
+// (it validates a checkout, with no server). Git sync can, and does.
+const jobRunnerTagRetired = "`runner_tag` is no longer used and is ignored: a job now runs on the runners its scope " +
+	"is bound to (Scopes → Runners). Remove the line, and check that scope's binding if this job must stay " +
+	"on particular runners"
+
+// retiredJobKeyWarnings returns the non-fatal notes for a Job document that
+// still uses a key the product has retired. Anything that is not a parseable
+// Job yields nothing — its problems are validateYAMLBytes's to report.
+func retiredJobKeyWarnings(path string, data []byte) []ValidationError {
+	var j JobYAML
+	if err := yaml.Unmarshal(data, &j); err != nil || j.Kind != "Job" {
+		return nil
+	}
+	if strings.TrimSpace(j.Spec.RunnerTag) == "" {
+		return nil
+	}
+	// Point at the line. A plain scan is enough: the key is a scalar under spec,
+	// and a mapping key of that name anywhere else in a Job document is not a
+	// thing the format has.
+	line := 0
+	for i, l := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "runner_tag:") {
+			line = i + 1
+			break
+		}
+	}
+	return []ValidationError{{File: path, Line: line, Field: "spec.runner_tag", Message: jobRunnerTagRetired}}
 }
 
 func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
@@ -949,6 +992,7 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 		}
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
+		warnings = append(warnings, retiredJobKeyWarnings(path, data)...)
 		var j JobYAML
 		if yaml.Unmarshal(data, &j) == nil {
 			if n := j.Metadata.Name; n != "" {
@@ -1056,7 +1100,10 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 // Inventory pragma parsing (S10)
 // ──────────────────────────────────────────────────────────────────────────────
 
-// validRunTypes is the allowed set of run-type strings (mirrors VALID_RUN_TYPES in prototype).
+// validRunTypes is the allowed set of run-type strings for a Script's
+// spec.runType (mirrors VALID_RUN_TYPES in prototype). It lives in this section
+// for history only: until 2.1.0 the inventory pragma's `types` directive was
+// validated against it too.
 var validRunTypes = map[string]bool{
 	"bash":       true,
 	"ansible":    true,
@@ -1068,10 +1115,24 @@ var validRunTypes = map[string]bool{
 
 // PragmaDirectives holds the decoded cronomicon:v1 pragma values from an inventory file.
 type PragmaDirectives struct {
-	Types       []string // declared run types (validated)
 	Owner       string
 	Description string
+	// Warnings are non-fatal, line-numbered notes about the pragma. They are
+	// deliberately NOT errors: an inventory error marks the whole sync `partial`
+	// and suppresses scope pruning, which is the wrong price for a directive that
+	// is merely obsolete. See pragmaTypesIgnored.
+	Warnings []pragmaError
 }
+
+// pragmaTypesIgnored is the warning for the retired `types` directive (ST-Q1).
+//
+// A scope's "supported run types" were removed in 2.1.0 (migration 1170): they
+// were advisory and nothing ever acted on them. The directive is still
+// RECOGNISED, so that the inventories already in users' repositories do not
+// start failing the strict parser — an unknown directive is a pragma error,
+// every pragma error makes the sync `partial`, and a partial scope parse
+// suppresses pruning (scopesOK in sync.go). Its value is not read or validated.
+const pragmaTypesIgnored = "`types` is no longer used and is ignored (supported run types were removed in 2.1.0); remove the directive"
 
 // pragmaError is a line-numbered error from pragma parsing.
 type pragmaError struct {
@@ -1085,8 +1146,9 @@ var kvRe = regexp.MustCompile(`^(\w+)=(.+)$`)
 
 // parseCronomiconPragma parses `# cronomicon:v1 key=value` directives from the top
 // of an inventory file. Parsing is strict per S10: unknown directives, unsupported
-// versions, malformed lines, and unknown run-type values all produce line-numbered
-// errors. Errors do not stop parsing of subsequent lines.
+// versions and malformed lines all produce line-numbered errors. Errors do not
+// stop parsing of subsequent lines. The recognised directives are `owner` and
+// `description`; the retired `types` is accepted and ignored with a warning.
 func parseCronomiconPragma(content string) (PragmaDirectives, []pragmaError) {
 	var out PragmaDirectives
 	var errs []pragmaError
@@ -1120,24 +1182,7 @@ func parseCronomiconPragma(content string) (PragmaDirectives, []pragmaError) {
 		key, rawVal := kv[1], kv[2]
 		switch key {
 		case "types":
-			requested := strings.Split(rawVal, ",")
-			var invalid []string
-			var valid []string
-			for _, t := range requested {
-				t = strings.TrimSpace(t)
-				if t == "" {
-					continue
-				}
-				if !validRunTypes[t] {
-					invalid = append(invalid, t)
-				} else {
-					valid = append(valid, t)
-				}
-			}
-			if len(invalid) > 0 {
-				errs = append(errs, pragmaError{Line: lineNum, Message: fmt.Sprintf("unknown run type(s): %s", strings.Join(invalid, ", "))})
-			}
-			out.Types = valid
+			out.Warnings = append(out.Warnings, pragmaError{Line: lineNum, Message: pragmaTypesIgnored})
 		case "owner":
 			out.Owner = strings.TrimSpace(rawVal)
 		case "description":
@@ -1160,9 +1205,10 @@ type sidecarYAML struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
-		Types       []string `yaml:"types"`
-		Owner       string   `yaml:"owner"`
-		Description string   `yaml:"description"`
+		// (No `types`: supported run types were removed in 2.1.0. The decode is
+		// non-strict, so a sidecar that still carries the key parses unchanged.)
+		Owner       string `yaml:"owner"`
+		Description string `yaml:"description"`
 		// AuthKeyEnvVar (M4 / §9.2) is the per-scope default env-var NAME the in-app
 		// SSH executor resolves to a key when importing this inventory's hosts into
 		// ssh_hosts. A NAME only (never a secret value, D1); per-host
@@ -1172,70 +1218,52 @@ type sidecarYAML struct {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Capability resolution (resolveScopeCapability semantics from prototype)
+// Inventory metadata resolution
 // ──────────────────────────────────────────────────────────────────────────────
 
-// CapabilityOrigin identifies how a scope's run-type capability was derived.
-type CapabilityOrigin string
-
-const (
-	OriginLocal    CapabilityOrigin = "local"
-	OriginSidecar  CapabilityOrigin = "sidecar"
-	OriginPragma   CapabilityOrigin = "pragma"
-	OriginInferred CapabilityOrigin = "inferred"
-)
-
-// ScopeCapability is the resolved declared run-type capability for a scope.
-type ScopeCapability struct {
-	Types       []string
-	Origin      CapabilityOrigin
+// InventoryMeta is the Git-declared metadata of an inventory file: who owns it,
+// how it describes itself, and what the strict pragma parse had to say. It is
+// what remains of the pre-2.1.0 "scope capability" once the run-type half was
+// removed (migration 1170).
+type InventoryMeta struct {
 	Owner       string
+	Description string
 	SidecarPath string
 	Errors      []ValidationError
+	// Warnings never reach the sync's error list — see PragmaDirectives.Warnings.
+	Warnings []ValidationError
 }
 
-// resolveInventoryCapability mirrors the prototype's resolveScopeCapability for git-source scopes.
-// content is the raw .ini text; sidecar is the parsed sidecar (nil if absent); sidecarPath
-// is used in error attribution.
-func resolveInventoryCapability(content string, sidecar *sidecarYAML, sidecarPath string) ScopeCapability {
+// resolveInventoryMeta reads the pragma at the top of an inventory and merges
+// it with the optional sidecar. content is the raw .ini text; sidecar is the
+// parsed sidecar (nil if absent); sidecarPath is used in error attribution.
+//
+// Owner and description resolve independently, sidecar over pragma. (Before
+// 2.1.0 the owner rode on the capability and so only surfaced when the same
+// source also declared `types`; an inventory with a bare `owner=` showed none.)
+func resolveInventoryMeta(content string, sidecar *sidecarYAML, sidecarPath string) InventoryMeta {
 	directives, pragmaErrs := parseCronomiconPragma(content)
 
-	var valErrs []ValidationError
+	meta := InventoryMeta{
+		Owner:       directives.Owner,
+		Description: directives.Description,
+		SidecarPath: sidecarPath,
+	}
 	for _, e := range pragmaErrs {
-		valErrs = append(valErrs, ValidationError{File: sidecarPath, Line: e.Line, Message: e.Message})
+		meta.Errors = append(meta.Errors, ValidationError{File: sidecarPath, Line: e.Line, Message: e.Message})
 	}
-
-	// Sidecar types win over pragma.
-	if sidecar != nil && len(sidecar.Spec.Types) > 0 {
-		return ScopeCapability{
-			Types:       sidecar.Spec.Types,
-			Origin:      OriginSidecar,
-			Owner:       sidecar.Spec.Owner,
-			SidecarPath: sidecarPath,
-			Errors:      valErrs,
+	for _, w := range directives.Warnings {
+		meta.Warnings = append(meta.Warnings, ValidationError{File: sidecarPath, Line: w.Line, Message: w.Message})
+	}
+	if sidecar != nil {
+		if sidecar.Spec.Owner != "" {
+			meta.Owner = sidecar.Spec.Owner
+		}
+		if sidecar.Spec.Description != "" {
+			meta.Description = sidecar.Spec.Description
 		}
 	}
-	if len(directives.Types) > 0 {
-		return ScopeCapability{
-			Types:  directives.Types,
-			Origin: OriginPragma,
-			Owner:  directives.Owner,
-			Errors: valErrs,
-		}
-	}
-	// Inferred fallback.
-	return ScopeCapability{
-		Types:  inferScopeTypes(content),
-		Origin: OriginInferred,
-		Errors: valErrs,
-	}
-}
-
-// inferScopeTypes is a conservative heuristic fallback when no pragma/sidecar
-// declares types. Delegates to inventory.InferTypes so git sync and the in-app
-// upload handler (M5) share ONE heuristic.
-func inferScopeTypes(content string) []string {
-	return inventory.InferTypes(content)
+	return meta
 }
 
 // projectClaim is a project_root directory claimed by a kind:Script wrapper

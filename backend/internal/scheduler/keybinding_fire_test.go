@@ -116,3 +116,40 @@ func TestReactionToKeyBoundJobOnSSHRecordsADeliveryErrorNotARun(t *testing.T) {
 		t.Errorf("delivery detail %q should name the key and the way out", d[0].Detail)
 	}
 }
+
+// TestKeyBindingSkipIsAStandingRefusal pins the two properties of the refusal's
+// skip row that its first version lacked (see Scheduler.standingRefusal). It
+// carries no concurrency key, so it cannot become "the latest run" for a key
+// another job shares and swallow that job's Forbid skip. And its episode ends at
+// midnight: a key-bound job on ssh is refused for as long as it stays that way,
+// missed-run detection accepts a skip only from the same day as the fire, and
+// one row for the whole episode was reported as a missed run, with an alert,
+// every day after the first.
+func TestKeyBindingSkipIsAStandingRefusal(t *testing.T) {
+	pool, _ := unboundFireDB(t)
+	setExecutor(t, pool, "unscoped-job", "ssh")
+	bindKey(t, pool, "unscoped-job")
+
+	s := New(pool, quietLog(), nil)
+	s.fire("git", "unscoped-job", "", "bash", "tax", "Forbid", "shared-key", "nightly", "")
+
+	var key sql.NullString
+	if err := pool.QueryRow(`SELECT concurrency_key FROM runs WHERE job_name='unscoped-job'`).Scan(&key); err != nil {
+		t.Fatalf("no skip row: %v", err)
+	}
+	if key.Valid && key.String != "" {
+		t.Errorf("the refusal's skip row carries concurrency_key %q, want none", key.String)
+	}
+
+	old := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339)
+	if _, err := pool.Exec(`UPDATE runs SET created_at = ?, started_at = ?, completed_at = ? WHERE job_name='unscoped-job'`,
+		old, old, old); err != nil {
+		t.Fatal(err)
+	}
+	s.fire("git", "unscoped-job", "", "bash", "tax", "Forbid", "shared-key", "nightly", "")
+	var n int
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM runs WHERE job_name='unscoped-job' AND status='skipped'`).Scan(&n)
+	if n != 2 {
+		t.Errorf("skip rows after a fire on a later day = %d, want 2 (one per day)", n)
+	}
+}

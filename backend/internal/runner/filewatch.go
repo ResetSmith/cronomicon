@@ -49,11 +49,13 @@ import (
 
 // watchesForRunner returns the specs this runner should poll.
 //
-// Eligibility is the AGENCY intersection, not the claim rules. A watch is about
-// where the file is, and the run it produces is dispatched afterwards by the
-// ordinary claim path — possibly to a different runner. What must not happen is
-// a runner in one department being told that a file landed in another's
-// directory, which is why the agency gate is here at all.
+// Eligibility is the AGENCY intersection plus the scope binding, not the full
+// claim rules. A watch is about where the file is, and the run it produces is
+// dispatched afterwards by the ordinary claim path — possibly to a different
+// runner. What must not happen is a runner in one department being told that a
+// file landed in another's directory, which is why the agency gate is here at
+// all; the binding narrows that to the runners placed where the scope's hosts
+// are (SB-1).
 func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, caps []string) []runnerproto.WatchSpec {
 	if !hasCap(caps, "watch") {
 		return nil
@@ -84,6 +86,15 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 	var out []runnerproto.WatchSpec
 	for _, c := range cands {
 		if !watchAgencyPermits(ctx, database, c.scope, runnerAgencies) {
+			continue
+		}
+		// SB-1 — a scope bound to named runners is watched only by them. The drop
+		// directory is on a host those runners were chosen to reach; telling the
+		// rest of the agency to poll for it wastes their scans at best and, where
+		// the same path exists on another segment, fires the job for the wrong
+		// file. An error reads as "not permitted": this list is also what a
+		// sighting is checked against, so it must fail closed.
+		if ok, err := execspec.ScopeBindingPermits(ctx, database, c.scope, runnerID); err != nil || !ok {
 			continue
 		}
 		ws, err := watchspec.Parse(c.raw)
@@ -363,7 +374,20 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// KB — an arrival for a key-bound job that resolves to the ssh executor is
 	// refused with the reason recorded, like every other gate here: the executor
 	// cannot deliver the key, and nobody is watching a file land.
-	executor := scheduler.ResolveExecutor(ctx, s.db, spec.JobSource, spec.JobName, runType)
+	resolved := execspec.ResolveExecutor(ctx, s.db, execspec.ExecutorQuery{
+		JobUID: jobUID.String, JobSource: spec.JobSource, JobName: spec.JobName, RunType: runType, Scope: scope,
+	})
+	if resolved.Err != nil {
+		s.refuseSighting(ctx, sightingID, "could not resolve the executor: "+resolved.Err.Error())
+		return false, nil
+	}
+	// SB — an arrival for a job that asks for ssh on a scope bound to runners is
+	// refused with the reason recorded, like every other gate here.
+	if resolved.ScopeRefused() {
+		s.refuseSighting(ctx, sightingID, execspec.ReasonScopeRequiresRunner)
+		return false, nil
+	}
+	executor := resolved.Executor
 	keys, kerr := runref.KeyBindingsOnSSH(ctx, s.db, owners, executor)
 	if kerr != nil {
 		s.refuseSighting(ctx, sightingID, "could not check key bindings: "+kerr.Error())

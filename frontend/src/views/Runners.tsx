@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, csrfHeader, errMsg, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
@@ -7,6 +7,8 @@ import { RefreshScope } from "../components/RefreshScope";
 import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { TraceId } from "./history/shared";
+import { ReplaceRunnerDialog, type BindableScope } from "./scopes/ScopeRunners";
+import { HostKeysDialog, PendingKeysBanner, TrustedHostKeys, type KeyRunner } from "./runners/HostKeys";
 import type { components } from "../api/schema";
 import { c } from "../theme";
 import { clampPage, sliceForPage } from "../utils/pager";
@@ -64,6 +66,11 @@ interface Runner {
     previousRunnerId: string;
     agencies: { id: string; name: string }[];
     tags: string[];
+    // SB — scopes still bound to the PREVIOUS runner id. A binding outlives its
+    // runner, so these are closed until the placement is restored; accepting
+    // re-points them here. A general-pool runner has no agencies, so for one
+    // the offer may carry scopes and nothing else.
+    scopes?: string[];
     deregisteredAt: string;
     deregisteredVia: "operator" | "reaper";
     previousClientIp?: string | null;
@@ -218,10 +225,22 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       </div>
       <p style={{ margin: "0 0 8px", fontSize: c.fontSm, color: c.text }}>
         A runner named <strong>{runner.name}</strong> was removed {when ? <>on {when}</> : "previously"}
-        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"} while placed in{" "}
-        {sugg.agencies.map((a) => a.name).join(", ")}
+        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"} while{" "}
+        {sugg.agencies.length > 0 ? <>placed in {sugg.agencies.map((a) => a.name).join(", ")}</> : "in the general pool"}
         {sugg.tags.length > 0 ? <> with tags {sugg.tags.join(", ")}</> : null}.
       </p>
+      {/* SB — the scopes that runner was bound to are still bound to it, and
+          closed: nothing can claim their runs. That is the most urgent thing
+          this offer restores, so it is said on its own line, not folded into
+          the sentence above. */}
+      {(sugg.scopes ?? []).length > 0 && (
+        <p style={{ margin: "0 0 8px", fontSize: c.fontSm, color: c.warning }}>
+          {(sugg.scopes ?? []).length === 1 ? "Scope " : "Scopes "}
+          <strong>{(sugg.scopes ?? []).join(", ")}</strong> {(sugg.scopes ?? []).length === 1 ? "is" : "are"} still bound to it,
+          so {(sugg.scopes ?? []).length === 1 ? "its" : "their"} runs are waiting. Restoring re-points{" "}
+          {(sugg.scopes ?? []).length === 1 ? "it" : "them"} at this runner.
+        </p>
+      )}
       <div style={{ fontSize: c.fontXs, color: c.textSec, marginBottom: 8, lineHeight: 1.6 }}>
         <div>
           Name <code style={{ fontFamily: c.mono }}>{runner.name}</code> — matched,{" "}
@@ -255,6 +274,131 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
           Dismiss
         </Btn>
       </div>
+    </div>
+  );
+}
+
+// ScopesServed lists the scopes bound to a runner and offers the hand-over.
+// Read-only apart from Replace: a binding is edited on its scope.
+function ScopesServed({
+  runner,
+  scopes,
+  canConfig,
+  successor,
+  onSuccessor,
+  onSaved,
+}: {
+  runner: Runner;
+  scopes: string[];
+  canConfig: boolean;
+  /**
+   * The runner that just took over, until the operator has dealt with its host
+   * keys. It has the scopes now and none of this runner's trust: the copy is
+   * offered, never done for them, because the two runners sit at different
+   * places on the network and the list has to be read first.
+   *
+   * Held by the VIEW, not here: a hand-over ends in `onSaved`, which reloads the
+   * runner list, and the registry unmounts its rows while it loads. State kept
+   * in this component would be gone before the notice was ever painted.
+   */
+  successor: KeyRunner | null;
+  onSuccessor: (to: KeyRunner | null) => void;
+  onSaved: () => void;
+}) {
+  const [replacing, setReplacing] = useState(false);
+  const [done, setDone] = useToast();
+  const setSuccessor = onSuccessor;
+  const [carrying, setCarrying] = useState(false);
+  const carried = useRef(false);
+  const handover = successor && (
+    <div style={{ marginTop: 8 }}>
+      <AlertBanner
+        type="info"
+        onDismiss={() => {
+          setSuccessor(null);
+          setCarrying(false);
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>
+            Host keys approved for {runner.name} are not handed over with its scopes. Copy them to {successor.name} after reviewing
+            the list, or scan the scopes from {successor.name}.
+          </span>
+          <Btn small onClick={() => setCarrying(true)}>
+            Copy host keys to {successor.name}…
+          </Btn>
+        </div>
+      </AlertBanner>
+      {carrying && runner.id != null && (
+        <HostKeysDialog
+          runner={successor}
+          initialSource="carry"
+          initialCarryFrom={String(runner.id)}
+          // The notice goes, and the page reloads, when the dialog is CLOSED
+          // after something was copied — not from onChanged, either of which
+          // would unmount the dialog while it is still reporting what it did.
+          onClose={() => {
+            setCarrying(false);
+            if (carried.current) {
+              setSuccessor(null);
+              onSaved();
+            }
+            carried.current = false;
+          }}
+          onChanged={() => {
+            carried.current = true;
+          }}
+        />
+      )}
+    </div>
+  );
+  if (scopes.length === 0) {
+    // The confirmation outlives the list it describes: after a hand-over this
+    // runner serves nothing, and that is exactly when the message is wanted.
+    return (
+      <span style={{ color: c.textMuted }}>
+        None — this runner serves whatever its groups allow. Bind it to a scope on the{" "}
+        <Link to="/scopes" style={{ color: c.primary }}>
+          Scopes page
+        </Link>
+        .
+        {handover}
+        <Toast message={done} />
+      </span>
+    );
+  }
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        {scopes.map((name) => (
+          <span key={name} style={{ padding: "2px 8px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontFamily: c.mono, background: c.panel2, border: `1px solid ${c.border}`, color: c.text, whiteSpace: "nowrap" }}>
+            {name}
+          </span>
+        ))}
+        {canConfig && (
+          <Btn small onClick={() => setReplacing(true)} title="Hand these scopes to another runner in one step">
+            Replace this runner…
+          </Btn>
+        )}
+      </div>
+      <div style={{ marginTop: 6, fontSize: c.fontXs, color: c.textSec }}>
+        If this runner goes offline or is removed, {scopes.length === 1 ? "this scope's" : "these scopes'"} runs wait —
+        they do not move to another runner by themselves.
+      </div>
+      {replacing && (
+        <ReplaceRunnerDialog
+          from={{ id: String(runner.id), name: runner.name }}
+          onClose={() => setReplacing(false)}
+          onDone={(message, to) => {
+            setReplacing(false);
+            setDone(message);
+            setSuccessor(to);
+            onSaved();
+          }}
+        />
+      )}
+      {handover}
+      <Toast message={done} />
     </div>
   );
 }
@@ -458,6 +602,9 @@ function RunnerDetail({
   runner,
   serverVersion,
   availableAgencies,
+  servedScopes,
+  successor,
+  onSuccessor,
   canConfig,
   actions,
   onEditSettings,
@@ -467,6 +614,11 @@ function RunnerDetail({
   runner: Runner;
   serverVersion?: string | null;
   availableAgencies: { id: string; name: string }[];
+  /** SB — the scopes bound to this runner, by name. */
+  servedScopes: string[];
+  /** SB — the runner this one's scopes were just handed to; see ScopesServed. */
+  successor: KeyRunner | null;
+  onSuccessor: (to: KeyRunner | null) => void;
   canConfig: boolean;
   actions?: React.ReactNode;
   onEditSettings: () => void;
@@ -687,10 +839,29 @@ function RunnerDetail({
             <GroupEditor runner={runner} available={availableAgencies} onSaved={onSaved} />
           </Section>
 
+          {/* SB — the scopes bound to this runner. Under Groups because it is the
+              same fact at finer grain: which department's work, then which
+              scopes' work within it. Bindings are edited on the scope (that is
+              where "these hosts are reached from here" belongs); what this
+              runner's row owes the operator is the consequence — what stops if
+              it goes away — and the one-step way to hand that over. */}
+          <Section
+            title={`Scopes served${servedScopes.length ? ` (${servedScopes.length})` : ""}`}
+            info={
+              <>
+                A scope can be bound to the runners that reach its hosts (Scopes page). Only bound runners run a bound
+                scope's jobs, and the binding is kept if the runner is removed — so those scopes wait until it is
+                replaced.
+              </>
+            }
+          >
+            <ScopesServed runner={runner} scopes={servedScopes} canConfig={canConfig} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
+          </Section>
+
           {/* Tags — operator-authored, editable inline like other catalog items */}
           <Section
             title={`Tags${(runner.tags ?? []).length ? ` (${(runner.tags ?? []).length})` : ""}`}
-            info="Tags are operator-authored and stored in Cronomicon only — free-form labels for grouping and filtering runners."
+            info="Tags are operator-authored and stored in Cronomicon only — free-form labels for grouping and filtering runners. Nothing is dispatched on a tag."
           >
             <RunnerTagsEditor runner={runner} onSaved={onSaved} />
           </Section>
@@ -765,6 +936,38 @@ function RunnerDetail({
           </Section>
         </div>
       </div>
+
+      {/* SB — what this runner trusts. Two lists that are deliberately not
+          one: what was approved here, and what the runner's own file holds.
+          Read behind ConfigureApp because the server gates it so — the
+          record names the hosts of the scopes this runner serves. Below the
+          two columns, at full width: these are tables of fingerprints, and a
+          fingerprint that wraps is one nobody compares. */}
+      {canConfig && runner.id != null && (
+        <Section
+          title="Trusted host keys"
+          info={
+            <>
+              A runner connects only to hosts whose SSH key is in its <code>known_hosts</code> file. Keys are added by approving them
+              here, after the runner scans a scope or hosts, or after you paste lines you already have. Every approval, rejection and
+              removal is recorded with who made it.
+            </>
+          }
+        >
+          <TrustedHostKeys
+            runner={{ id: String(runner.id), name: runner.name }}
+            canScan={isReachable(runner.status)}
+            // A runner that re-enrolled has a new id; what was approved for it
+            // before sits under the old one, and can be copied back on review.
+            previous={
+              runner.placementSuggestion?.previousRunnerId
+                ? { id: runner.placementSuggestion.previousRunnerId, name: `${runner.name}'s previous registration` }
+                : undefined
+            }
+            onChanged={onSaved}
+          />
+        </Section>
+      )}
     </div>
   );
 }
@@ -1070,6 +1273,17 @@ export function Runners() {
   const agenciesQ = useGet<unknown>(() => api.GET("/agencies"), [refresh]);
   const availableAgencies = rows<{ id: string; name: string }>(agenciesQ.data);
 
+  // SB — the scope list, for "Scopes served" in each expanded row. The binding
+  // lives on the scope, so this is the one place to read it from; a runner's own
+  // row carries nothing about it.
+  const scopesQ = useGet<unknown>(() => api.GET("/scopes"), [refresh]);
+  const boundScopes = rows<BindableScope>(scopesQ.data);
+  const servedBy = (runnerId?: string) =>
+    boundScopes
+      .filter((s) => (s.boundRunners ?? []).some((b) => b.runnerId === String(runnerId)))
+      .map((s) => s.scope)
+      .sort();
+
   const tokList = useGet<unknown>(() => api.GET("/runners/registration-tokens"), [tokenV]);
   const regTokens = rows<RegTokenInfo>(tokList.data);
 
@@ -1110,6 +1324,9 @@ export function Runners() {
   const [testingId, setTestingId] = useState<string | null>(null);
   // Which runner row is expanded to its detail sub-row (keyed by the UUID id).
   const [expandedRunner, setExpandedRunner] = useState<string | null>(null);
+  // SB — a completed "Replace this runner": who handed over, and to whom. It
+  // lives here because the hand-over reloads the list, which remounts the row.
+  const [handover, setHandover] = useState<{ from: string; to: KeyRunner } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // FX-16 — the shared toast + its timer, replacing a hand-rolled success
   // banner the operator had to dismiss by hand.
@@ -1411,6 +1628,9 @@ export function Runners() {
                                 runner={r}
                                 serverVersion={serverBuild?.version}
                                 availableAgencies={availableAgencies}
+                                servedScopes={servedBy(r.id)}
+                                successor={handover && handover.from === String(r.id) ? handover.to : null}
+                                onSuccessor={(to) => setHandover(to ? { from: String(r.id), to } : null)}
                                 canConfig={canConfig}
                                 onEditSettings={() => setSettingsTarget(r)}
                                 onScrollToToken={scrollToToken}
@@ -1444,7 +1664,7 @@ export function Runners() {
                                     small
                                     onClick={() => setScanTarget(r)}
                                     disabled={busy}
-                                    title="Scan a target's SSH host key so you can approve it (human-approved TOFU)"
+                                    title="Get SSH host keys onto this runner: scan a scope, scan hosts, or paste keys, then review every fingerprint"
                                   >
                                     Scan keys
                                   </Btn>
@@ -1482,7 +1702,7 @@ export function Runners() {
               </TableSurface>
           </div>
 
-          {canConfig && <PendingHostKeys refreshKey={refresh} />}
+          {canConfig && <PendingKeysBanner refreshKey={refresh} onChanged={refetchList} />}
         </>
       )}
 
@@ -1932,197 +2152,18 @@ export function Runners() {
           }}
         />
       )}
-      {scanTarget && (
-        <ScanHostKeysModal runner={scanTarget} onClose={() => setScanTarget(null)} />
+      {scanTarget && scanTarget.id != null && (
+        <HostKeysDialog
+          runner={{ id: String(scanTarget.id), name: scanTarget.name }}
+          onClose={() => {
+            setScanTarget(null);
+            refetchList();
+          }}
+          onChanged={refetchList}
+        />
       )}
     </div>
   );
-}
-
-// ScanHostKeysModal queues a host-key scan for a runner (Phase 5). The operator
-// enters the targets; the runner's next poll scans them and uploads what it saw
-// to the Pending host-key approvals section.
-function ScanHostKeysModal({ runner, onClose }: { runner: Runner; onClose: () => void }) {
-  const [hosts, setHosts] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-
-  const submit = async () => {
-    if (runner.id == null) return;
-    const list = hosts.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
-    if (list.length === 0) {
-      setErr("enter at least one host");
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    const { error } = await api.POST("/runners/{runnerId}/keyscan", {
-      params: { path: { runnerId: runner.id }, header: csrfHeader },
-      body: { hosts: list },
-    });
-    setBusy(false);
-    if (error) {
-      setErr(errMsg(error));
-      return;
-    }
-    setDone(true);
-  };
-
-  return (
-    <Modal
-      title={`Scan host keys — ${runner.name}`}
-      onClose={onClose}
-      /* FX-10 — the body is a two-branch ternary, so the footer is one too: each
-         state has its own action, and the error belongs with the button it
-         explains. The Done button was nested inside the prose block; pinning it
-         also takes it out of a paragraph it was never part of. */
-      footer={
-        done ? (
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <Btn primary onClick={onClose}>Done</Btn>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {err && <div style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <Btn onClick={onClose} disabled={busy}>Cancel</Btn>
-              <Btn primary onClick={submit} disabled={busy}>{busy ? "Queuing…" : "Queue scan"}</Btn>
-            </div>
-          </div>
-        )
-      }
-    >
-      {done ? (
-        <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-          Scan queued. On its next poll the runner scans these targets and uploads their keys to{" "}
-          <strong>Pending host-key approvals</strong> above. Compare each fingerprint out-of-band, then approve.
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-            Enter the targets to scan (one per line, or comma/space separated) as <code>host</code> or{" "}
-            <code>host:port</code>. The runner captures each host's SSH key from its own vantage — you approve
-            them next. This is <strong>human-approved TOFU</strong>: compare the SHA256 fingerprint out-of-band
-            before approving.
-          </div>
-          <textarea
-            style={{
-              width: "100%",
-              minHeight: 80,
-              padding: "8px 10px",
-              background: c.panel2,
-              border: `1px solid ${c.borderStrong}`,
-              borderRadius: c.radiusChip,
-              fontSize: c.fontSm,
-              fontFamily: c.mono,
-              color: c.text,
-              resize: "vertical",
-            }}
-            value={hosts}
-            onChange={(e) => setHosts(e.target.value)}
-            placeholder={"web01\ndb01:2222"}
-          />
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-// PendingHostKeys renders the scanned host keys awaiting approval (Phase 5),
-// with full SHA256 fingerprints for out-of-band comparison and approve/reject.
-function PendingHostKeys({ refreshKey }: { refreshKey: number }) {
-  const [rows, setRows] = useState<PendingHostKeyRow[]>([]);
-  const [v, setV] = useState(0);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    api.GET("/runners/host-keys/pending").then(({ data, error }) => {
-      if (!live) return;
-      if (error) setErr(errMsg(error));
-      else setRows((data as PendingHostKeyRow[]) ?? []);
-    });
-    return () => {
-      live = false;
-    };
-  }, [refreshKey, v]);
-
-  const resolve = async (id: string, action: "approve" | "reject") => {
-    setBusyId(id);
-    setErr(null);
-    const { error } = await api.POST("/runners/host-keys/{keyId}/resolve", {
-      params: { path: { keyId: id }, header: csrfHeader },
-      body: { action },
-    });
-    setBusyId(null);
-    if (error) setErr(errMsg(error));
-    else setV((n) => n + 1);
-  };
-
-  if (rows.length === 0) return null; // nothing pending — stay out of the way
-
-  return (
-    <div style={{ background: c.panel, border: `1px solid ${c.warning}`, borderRadius: c.radiusSurface, marginBottom: 16, overflow: "hidden" }}>
-      <div style={{ ...cardTitle(), display: "flex", alignItems: "center", gap: 8 }}>
-        <span>Pending host-key approvals</span>
-        <span style={{ fontSize: c.fontXs, color: c.warning }}>● {rows.length} awaiting review</span>
-      </div>
-      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-        <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
-          These SSH host keys were scanned by a runner and are awaiting your approval. <strong>Compare the
-          SHA256 fingerprint out-of-band</strong> (against the host itself) before approving — approving without
-          that check is still trust-on-first-use. Approving appends the key to the runner's <code>known_hosts</code>{" "}
-          on its next poll; the failed SSH run can then be retried.
-        </div>
-        {err && <div style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
-        {/* One framing layer, not two (VU-5): inside an already-bordered panel the
-            per-key boxes were a nested frame, so the rows separate on a hairline
-            and their own leading instead. */}
-        {rows.map((k, i) => (
-          <Fragment key={k.id}>
-            {i > 0 && <Rule />}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              flexWrap: "wrap",
-              padding: "8px 0",
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 260 }}>
-              <div style={{ fontSize: c.fontSm, color: c.text }}>
-                <strong>{k.host}</strong> <span style={{ color: c.textSec }}>({k.keyType})</span>
-                <span style={{ color: c.textSec }}> · {k.runnerName}</span>
-              </div>
-              <div style={{ fontSize: c.fontXs, fontFamily: c.mono, color: c.textSec, wordBreak: "break-all" }}>
-                {k.fingerprint}
-              </div>
-            </div>
-            <Btn small primary disabled={busyId === k.id} onClick={() => resolve(k.id, "approve")}>
-              Approve
-            </Btn>
-            <Btn small dangerQuiet disabled={busyId === k.id} onClick={() => resolve(k.id, "reject")}>
-              Reject
-            </Btn>
-          </div>
-          </Fragment>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-interface PendingHostKeyRow {
-  id: string;
-  runnerId: string;
-  runnerName: string;
-  host: string;
-  keyType: string;
-  fingerprint: string;
-  scannedAt: string;
 }
 
 // RunnerSettingsDrawer edits a runner's server-managed operational overrides

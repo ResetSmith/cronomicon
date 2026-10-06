@@ -2609,7 +2609,7 @@
 
 <h2 id="a1-scopes-inventory-and-hosts">A1 · Scopes, inventory and hosts</h2>
 
-<p>A <strong>scope</strong> is a named set of hosts plus the run types they support. It is the closest
+<p>A <strong>scope</strong> is a named set of hosts. It is the closest
     thing to an Automate Schedule agent environment, and it does more than group machines: it is the
     boundary a run cannot cross. Getting scopes right is most of getting targeting right.</p>
 
@@ -2680,8 +2680,10 @@
 <details class="tr-reveal">
     <summary>This scope's hosts sit behind a firewall the server cannot cross</summary>
     <div class="tr-body">
-        <p><span class="tr-answer">An agency, plus a runner — not a scope change</span></p>
-        <p>Reachability is not a property of the host list. That is A2, and it is the next module.</p>
+        <p><span class="tr-answer">A runner inside the firewall, bound to the scope — not a host-list change</span></p>
+        <p>Reachability is not a property of the host list. Which department's runners may take the work
+            is the agency (A2, the next module); which of those runners actually reaches these hosts is
+            the scope's runner binding (A3).</p>
     </div>
 </details>
 
@@ -2739,10 +2741,10 @@
     </details>
 
     <details class="tr-opt" data-verdict="right">
-        <summary>It stops. Untagged runs can only go to a runner with no agencies at all.</summary>
+        <summary>It stops. Runs with no agency can only go to a runner with no agencies at all.</summary>
         <div class="tr-body">
             <p>Correct. The moment that runner joined an agency it left the general pool, and every
-                untagged run now has nowhere to go — they queue rather than fail, which is why this can go
+                run with no agency now has nowhere to go — they queue rather than fail, which is why this can go
                 unnoticed for a while.</p>
             <p>The fix is a second runner. A runner is a small binary; needing two is the intended shape,
                 not a limitation.</p>
@@ -2875,21 +2877,66 @@
     <summary><strong>Secret injection</strong> — a flag with teeth</summary>
     <div class="tr-body">
         <p>A job that binds secret references may only be claimed by a runner you have flagged for secret
-            injection, and which speaks a recent enough protocol. An unflagged runner leaves such a run
-            queued for an eligible one rather than claiming it and failing.</p>
+            injection. An unflagged runner leaves such a run queued for an eligible one rather than
+            claiming it and failing.</p>
         <p>Same shape as agency isolation: eligibility filters dispatch, so the wrong runner never sees the
             work.</p>
     </div>
 </details>
 
 <details class="tr-reveal">
-    <summary>Protocol version, and why an old runner disables buttons rather than hiding them</summary>
+    <summary><strong>Scope binding</strong> — naming the runners that reach a scope's hosts</summary>
     <div class="tr-body">
-        <p>Agent and server negotiate a wire protocol version. Newer features need newer agents, so a
-            runner that is behind simply cannot do some things.</p>
-        <p>When that happens the control is <strong>disabled with a tooltip naming the fix</strong>, not
-            hidden. A missing button is a mystery; a disabled one that says "needs agent v10 or later" is
-            an instruction. That is a house rule across the whole app.</p>
+        <p>An agency says which department's runners may take a run; inside it, every runner is
+            interchangeable. When only some of them can reach a scope's hosts, you <strong>bind the scope
+                to those runners</strong>: Scopes, expand the scope, Runners, <em>Bind runners</em>. From
+            then on only the bound runners claim that scope's runs. The binding narrows on top of the
+            agency rule; it never widens it.</p>
+        <p>Two things follow, and the dialog previews both before it lets you save. A job on a bound scope
+            with no executor of its own runs on the bound runners, with <em>their</em> keys and
+            <em>their</em> trusted host keys rather than the server's. And a job that insists on SSH from
+            the server is refused, rather than run from the wrong place.</p>
+        <p><strong>A binding outlives its runner.</strong> Deregister a bound runner and the scope stays
+            bound to it by name: its runs wait, and each one says why. That is deliberate — the alternative
+            is a confined scope quietly reopening to its whole agency. You replace the runner, or restore
+            its placement when the host re-enrols.</p>
+        <p>Runner <strong>tags</strong> play no part in this. They are labels for finding runners; nothing
+            is dispatched on one. Before 2.2.0 a job could be pinned to a runner tag — that pin is gone,
+            and a <code>runner_tag</code> line left in a Git job file is ignored with a warning.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Host keys</strong> — what a runner trusts, and who said so</summary>
+    <div class="tr-body">
+        <p>A runner connects only to hosts whose SSH key is in its own <code>known_hosts</code> file. You
+            fill that file from the Runners view: <strong>Scan keys</strong> has the runner scan a whole
+            scope, or a list of hosts, from where it sits — or takes lines you paste, or copies what
+            another runner trusts — and then shows every fingerprint for review before anything is
+            trusted.</p>
+        <p>The review is the control. Compare each fingerprint with the host's own. A key that differs
+            from one already trusted is marked <strong>Changed</strong> and is never ticked by select-all;
+            approving it <em>replaces</em> the old key instead of leaving both trusted. A host behind a
+            bastion cannot be scanned, so its key is pasted.</p>
+        <p>Every approval, rejection and removal is recorded with the runner, the person and the source.
+            The runner also reports what its file really holds, so a key somebody put there by hand shows
+            up as <em>not approved here</em> instead of staying invisible.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Protocol version, and why an old runner is refused rather than half-served</summary>
+    <div class="tr-body">
+        <p>Agent and server share a wire protocol version, and the server accepts only the current one. A
+            runner that is behind is <strong>refused on its next poll</strong>, with an error naming the
+            version it needs, rather than being handed work whose newer fields it would silently drop. A
+            dry run that applies for real is the failure this prevents.</p>
+        <p>So a server upgrade that moves the protocol is a fleet upgrade. 2.2.0 moved it to 14: every
+            runner is upgraded with the server. A refused runner keeps its row and its identity, and
+            <strong>Copy upgrade command</strong> on its row is the fix.</p>
+        <p>The house rule for buttons still holds across the whole app: a precondition
+            <strong>disables with a tooltip naming the fix</strong>; only irrelevance hides. A missing
+            button is a mystery; a disabled one that says why is an instruction.</p>
     </div>
 </details>
 
@@ -3173,8 +3220,8 @@
     <summary>Git sync, and what it will not touch</summary>
     <div class="tr-body">
         <p>Sync brings definitions in from the repository. It deliberately leaves the app-owned sidecars
-            alone: <strong>tags, notes, a scope's agency binding and a workflow's canvas layout survive
-                every sync</strong>, because they are yours rather than the repository's.</p>
+            alone: <strong>tags, notes, a scope's agency and runner bindings and a workflow's canvas layout
+                survive every sync</strong>, because they are yours rather than the repository's.</p>
         <p>The Git Sync and Schedule Pushes tabs in History are where you look when a definition is not
             what you expected — before assuming the app is wrong.</p>
     </div>

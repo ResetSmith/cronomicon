@@ -38,10 +38,15 @@ import (
 // statement keeps the SQLite pool deadlock-safe. Tags never touch the encrypted
 // envelope of a secret/credential, so the crypto/reveal/rotate paths are untouched.
 //
-// RUNNERS ARE THE ONE EXCEPTION to that last paragraph, since RT-1: their tags
-// are read by the runner claim query, so the write also maintains the
-// `runner_tags` projection and therefore needs a transaction. See
-// writeRunnerTagsUpdate for why the two must move together.
+// SCOPES (migration 1160, ST band) follow the same rule: every other scope write
+// is ConfigureApp, so the tag write is too, and its audit matches the scope edit
+// (settings.Audit — change_log + activity). See updateScopeTags.
+//
+// RUNNERS were the one exception to that last paragraph between RT-1 and the SB
+// band: their tags were read by the runner claim query through a `runner_tags`
+// projection, so the write was a transaction that kept the two in step. Where a
+// job runs is decided by its scope's runner binding now, the projection is gone
+// (migration 1190), and a runner's tags are labels like everyone else's.
 
 // decodeTagsBody decodes + normalizes a {tags:[...]} full-replace body. On any
 // problem it writes the 422 and returns ok=false. Tags is a pointer so an
@@ -75,7 +80,7 @@ func tagsActor(r *http.Request) string {
 }
 
 // writeTagsUpdate is the shared decode→normalize→UPDATE→404 prefix of every
-// "update tags" handler (CC.12), across all seven tagged entities. It writes the
+// "update tags" handler (CC.12), across all eight tagged entities. It writes the
 // normalized set to <table> under <whereSQL>/<whereArgs> and maps
 // RowsAffected==0 to a 404 with notFound. On any error/validation/404 it writes
 // the response itself and returns ok=false; on success it returns the normalized
@@ -136,6 +141,39 @@ func (s *Server) updateEnvVarTags(w http.ResponseWriter, r *http.Request) {
 	// writes are change_log-only too — each tag write matches its own entity.
 	settings.Audit(r.Context(), s.db, tagsActor(r), "Env Vars", "updated", ev.Key, "")
 	httpx.JSON(w, http.StatusOK, ev)
+}
+
+// updateScopeTags sets a scope's operator-owned tags (full replace) — ST-4.
+//
+// Gate: ConfigureApp, applied by the route (requirePerm), which is exactly what
+// PATCH /scopes/{scopeId} and PUT /scopes/{scopeId}/inventory carry. There is
+// deliberately NO per-agency check here: of the scope writes only the agency
+// binding (handleSetScopeAgency) has one, because it moves the scope between
+// isolation zones. A tag moves nothing, and a rule stricter than the scope's own
+// edit would be a rule for tags alone. If the scope edit ever gains a per-agency
+// gate, this handler takes the same one.
+//
+// Works on both sources: a git-source scope is read-only in every other respect,
+// but its tags are operator-owned and never come from Git (the sync upsert omits
+// the column), the same model as the agency binding.
+func (s *Server) updateScopeTags(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("scopeId")
+	if _, ok := s.writeTagsUpdate(w, r, "scopes", "id = ?", "scope not found", id); !ok {
+		return
+	}
+	sc, err := settings.GetScope(r.Context(), s.db, id)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if sc == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
+		return
+	}
+	// settings.Audit (change_log + activity): the scope edit (settings.UpdateScope)
+	// emits both, so a tag edit surfaces in the feed the same way.
+	settings.Audit(r.Context(), s.db, tagsActor(r), "Scopes", "updated", sc.Scope, "Scope tags updated")
+	httpx.JSON(w, http.StatusOK, sc)
 }
 
 // updateSecretTags sets a secret's operator-authored tags (full replace). Tags are
@@ -202,78 +240,13 @@ func (s *Server) updateCredentialTags(w http.ResponseWriter, r *http.Request) {
 // UUID id. Gated ConfigureApp + CSRF at the route (mountRunners), matching the
 // sibling runner↔agency membership write. Change-log-only audit — a runner is
 // infrastructure, and its tag edit needn't flood the activity feed.
-// writeRunnerTagsUpdate is the runner-only transactional twin of
-// writeTagsUpdate. Runner tags are the ONE tagged entity whose tags are read by
-// dispatch (RT-1, mig. 1070): claimRun probes the `runner_tags` projection
-// rather than json_each(runners.tags), because a correlated JSON parse in the
-// hottest query in the system is the shape that measured +350% for the agency
-// predicate (mig. 690 header).
 //
-// That projection is why this handler cannot use the shared helper. The other
-// six tagged entities write one standalone UPDATE — deliberately, for the SQLite
-// pool's sake (see this file's header). Here the column and its projection must
-// move together or the fleet silently dispatches on stale tags: a half-applied
-// write would leave a runner claiming work for a tag it no longer carries, or
-// refusing work for one it does. One transaction, column first (it stays
-// authoritative), projection rebuilt from the same normalized set.
-//
-// Full replace, matching the endpoint's contract: DELETE then INSERT rather than
-// a diff. The row counts here are single digits.
-func (s *Server) writeRunnerTagsUpdate(w http.ResponseWriter, r *http.Request, runnerID string) ([]string, bool) {
-	tags, ok := decodeTagsBody(w, r)
-	if !ok {
-		return nil, false
-	}
-	tagsJSON, _ := json.Marshal(tags)
-
-	tx, err := s.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return nil, false
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	res, err := tx.ExecContext(r.Context(),
-		`UPDATE runners SET tags = ? WHERE id = ?`, string(tagsJSON), runnerID)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return nil, false
-	}
-	// No pre-UPDATE existence check, same as the shared helper: a runner
-	// deregistered between request and write is a clean 404 with no phantom audit
-	// row and — because we roll back — no orphaned projection rows either.
-	if n, _ := res.RowsAffected(); n == 0 {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "runner not found")
-		return nil, false
-	}
-	if _, err := tx.ExecContext(r.Context(),
-		`DELETE FROM runner_tags WHERE runner_id = ?`, runnerID); err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return nil, false
-	}
-	for _, t := range tags {
-		// tagutil.Normalize cannot emit "", but the claim predicate treats an empty
-		// runner_tag as "unpinned", so an empty row here would be a tag that matches
-		// nothing and confuses the RT-G5 fleet count. Cheap to exclude, so exclude it.
-		if t == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(r.Context(),
-			`INSERT OR IGNORE INTO runner_tags (runner_id, tag) VALUES (?, ?)`, runnerID, t); err != nil {
-			httpx.Fail500(w, s.log, "db_error", err)
-			return nil, false
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return nil, false
-	}
-	return tags, true
-}
-
+// Organisational only — nothing dispatches, gates or warns on a runner tag. That
+// was not always so (see this file's header); it is the rule the SB band exists
+// to make true of every tag in the product.
 func (s *Server) updateRunnerTags(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("runnerId")
-	tags, ok := s.writeRunnerTagsUpdate(w, r, id)
+	tags, ok := s.writeTagsUpdate(w, r, "runners", "id = ?", "runner not found", id)
 	if !ok {
 		return
 	}

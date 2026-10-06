@@ -155,7 +155,7 @@ func TestSeedAuditComplianceMatchesDefaultsExceptEnvKnobs(t *testing.T) {
 	if err := pool.QueryRow(`SELECT value FROM settings WHERE key = ?`, auditComplianceKey).Scan(&raw); err != nil {
 		t.Fatalf("read stored blob: %v", err)
 	}
-	for _, key := range []string{"recycleBin", "definitionRevisions", "auditLogFiles", "runnerPlacementHistory", "archivedLogFiles"} {
+	for _, key := range []string{"recycleBin", "definitionRevisions", "auditLogFiles", "runnerPlacementHistory", "archivedLogFiles", "hostKeyLedger"} {
 		if !strings.Contains(raw, `"`+key+`"`) {
 			t.Errorf("stored blob does not carry %q: %s", key, raw)
 		}
@@ -338,6 +338,7 @@ func TestUpdateAuditComplianceRoundTripsAllKnobs(t *testing.T) {
 		Runs: 1, Activity: 2, WorkflowRuns: 3, ChangeLog: 4, SchedulePushes: 5, LogFiles: 6,
 		RunnerPlacementHistory: 7, // DRF-7: the tenth knob round-trips like the rest
 		ArchivedLogFiles:       8, // SL-4: the eleventh
+		HostKeyLedger:          9, // SB: the twelfth
 	}}
 	out, err := UpdateAuditCompliance(ctx, pool, in, "operator")
 	if err != nil {

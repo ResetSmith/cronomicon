@@ -208,8 +208,21 @@ jobs:
           set -eu
           # docs/index.html is the site's own landing page for the manuals.
           rsync -a --delete --exclude index.html "$DIR/" site/docs/
+          # The site's analytics tag goes into these published copies only. It
+          # is never in documentation/: the manuals also ship inside the binary
+          # and the docs zip. The tag is whatever sits between the two
+          # analytics markers in the site's own docs/index.html.
+          tag="$RUNNER_TEMP/analytics.html"
+          sed -n '/<!-- analytics:start -->/,/<!-- analytics:end -->/p' site/docs/index.html > "$tag"
+          if [ -s "$tag" ]; then
+            for f in site/docs/*.html; do
+              [ "$f" = site/docs/index.html ] && continue
+              TAG="$tag" perl -0777 -pi -e 'BEGIN { open my $h, "<", $ENV{TAG} or die $!; local $/; $t = <$h> } s{</head>}{$t</head>}' "$f"
+            done
+          fi
+          bash site/scripts/bump-version.sh "$V"
           cd site
-          git add -A docs
+          git add -A docs index.html sitemap.xml
           if git diff --cached --quiet; then echo "docs already current"; exit 0; fi
           git -c user.name="${{ github.actor }}" \
               -c user.email="${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com" \

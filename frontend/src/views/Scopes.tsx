@@ -49,7 +49,7 @@ export function Scopes() {
   return (
     <div>
       <TabBar tabs={["Scopes", "Agencies"]} active={tab} onChange={select} />
-      {tab === 0 && <ScopesTab scopes={scopes} loading={loading} error={error} refetch={() => setScopesDep((n) => n + 1)} canEdit={canConfig} />}
+      {tab === 0 && <ScopesTab scopes={scopes} loading={loading} error={error} refetch={() => setScopesDep((n) => n + 1)} canEdit={canConfig} dep={scopesDep} />}
       {/* RB-22 — the Membership matrix tab is gone. It was rows × 24 agency
           columns with a non-sticky name cell: scrolled right, you were ticking
           anonymous checkboxes — the same horizontal wall as the deleted Scope

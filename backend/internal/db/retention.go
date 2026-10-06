@@ -54,6 +54,9 @@ type RetentionPolicy struct {
 	// RunnerPlacementHistoryDays bounds the DR-7 placement snapshots. The
 	// default and its reasoning live on the settings knob (DR-Q6).
 	RunnerPlacementHistoryDays int
+	// HostKeyLedgerDays bounds the host-key ledger's history (SB). In-force
+	// keys are out of its reach: see the row in runSweep.
+	HostKeyLedgerDays int
 	// PurgeDefinition hard-deletes one binned definition, wired to the API's
 	// purgeDefinition so the reaper and the manual "Purge now" button cannot
 	// disagree about what permanent deletion means (trigger cascades, the entity
@@ -284,6 +287,36 @@ func runSweep(ctx context.Context, pool *sql.DB, p RetentionPolicy, log *slog.Lo
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			log.Info("retention pruned rows", "table", "pending_runs", "deleted", n, "cutoff", cutoff)
+		}
+	}
+
+	// SB — host-key decisions that are no longer in force: rejections, removals,
+	// and approvals a later one replaced. Two things keep this from being a row
+	// in the table above.
+	//
+	// It prunes on superseded_at, which is NULL while a key is trusted, and
+	// `NULL < cutoff` is not true — so no window, however short, can delete a key
+	// a runner still trusts. That is the "kept while trusted" rule, and it lives
+	// in the column choice; do not swap in decided_at.
+	//
+	// And a replaced or removed key whose removal has not yet been sent to the
+	// runner is still WORK: it is the only thing that will tell an offline runner
+	// to drop the line when it comes back. Pruning it by age would leave a
+	// retired key trusted in that runner's file for good. That holds only while
+	// the runner exists — a deregistered runner never polls again under that id,
+	// so its unsent removals are history like the rest.
+	if p.HostKeyLedgerDays > 0 {
+		cutoff := nowUTC().AddDate(0, 0, -p.HostKeyLedgerDays).Format(time.RFC3339)
+		res, err := pool.ExecContext(ctx, `
+			DELETE FROM host_key_ledger
+			 WHERE superseded_at < ?
+			   AND NOT (decision = 'approved' AND untrusted_at IS NULL
+			            AND EXISTS (SELECT 1 FROM runners WHERE runners.id = host_key_ledger.runner_id))`, cutoff)
+		if err != nil {
+			return fmt.Errorf("prune host_key_ledger: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			log.Info("retention pruned rows", "table", "host_key_ledger", "deleted", n, "cutoff", cutoff)
 		}
 	}
 

@@ -26,9 +26,9 @@ func TestApiScopeInventoryAuthoring(t *testing.T) {
 		}
 	}
 	amID := db.NewID()
-	exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, amID)
+	exec(`INSERT INTO scopes(id,name,source,created_at) VALUES(?,'edge','cronomicon','t')`, amID)
 	gitID := db.NewID()
-	exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'gitscope','git','t','["bash"]')`, gitID)
+	exec(`INSERT INTO scopes(id,name,source,created_at) VALUES(?,'gitscope','git','t')`, gitID)
 
 	client, csrf := devLoginWithCSRF(t, ts)
 	req := func(method, path string, body map[string]any) (int, string) {
