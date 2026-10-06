@@ -14,6 +14,11 @@ export default defineConfig({
   build: {
     outDir: "../backend/web/dist",
     emptyOutDir: true,
+    // Vite 5's default target, written out. Vite 7's own default is a newer
+    // baseline (Chrome 107, Safari 16, Firefox 104); an operator's locked-down
+    // browser that loaded the app before the toolchain moved must still load it.
+    // Raise this deliberately, in a release that says so.
+    target: ["es2020", "edge88", "firefox78", "chrome87", "safari14"],
   },
   server: {
     // Least-privilege filesystem scope for the dev server: serve only the frontend
