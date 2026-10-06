@@ -280,14 +280,34 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
 
 // ScopesServed lists the scopes bound to a runner and offers the hand-over.
 // Read-only apart from Replace: a binding is edited on its scope.
-function ScopesServed({ runner, scopes, canConfig, onSaved }: { runner: Runner; scopes: string[]; canConfig: boolean; onSaved: () => void }) {
+function ScopesServed({
+  runner,
+  scopes,
+  canConfig,
+  successor,
+  onSuccessor,
+  onSaved,
+}: {
+  runner: Runner;
+  scopes: string[];
+  canConfig: boolean;
+  /**
+   * The runner that just took over, until the operator has dealt with its host
+   * keys. It has the scopes now and none of this runner's trust: the copy is
+   * offered, never done for them, because the two runners sit at different
+   * places on the network and the list has to be read first.
+   *
+   * Held by the VIEW, not here: a hand-over ends in `onSaved`, which reloads the
+   * runner list, and the registry unmounts its rows while it loads. State kept
+   * in this component would be gone before the notice was ever painted.
+   */
+  successor: KeyRunner | null;
+  onSuccessor: (to: KeyRunner | null) => void;
+  onSaved: () => void;
+}) {
   const [replacing, setReplacing] = useState(false);
   const [done, setDone] = useToast();
-  // The runner that just took over, until the operator has dealt with its host
-  // keys. It has the scopes now and none of this runner's trust: the copy is
-  // offered, never done for them, because the two runners sit at different
-  // places on the network and the list has to be read first.
-  const [successor, setSuccessor] = useState<KeyRunner | null>(null);
+  const setSuccessor = onSuccessor;
   const [carrying, setCarrying] = useState(false);
   const carried = useRef(false);
   const handover = successor && (
@@ -583,6 +603,8 @@ function RunnerDetail({
   serverVersion,
   availableAgencies,
   servedScopes,
+  successor,
+  onSuccessor,
   canConfig,
   actions,
   onEditSettings,
@@ -594,6 +616,9 @@ function RunnerDetail({
   availableAgencies: { id: string; name: string }[];
   /** SB — the scopes bound to this runner, by name. */
   servedScopes: string[];
+  /** SB — the runner this one's scopes were just handed to; see ScopesServed. */
+  successor: KeyRunner | null;
+  onSuccessor: (to: KeyRunner | null) => void;
   canConfig: boolean;
   actions?: React.ReactNode;
   onEditSettings: () => void;
@@ -830,7 +855,7 @@ function RunnerDetail({
               </>
             }
           >
-            <ScopesServed runner={runner} scopes={servedScopes} canConfig={canConfig} onSaved={onSaved} />
+            <ScopesServed runner={runner} scopes={servedScopes} canConfig={canConfig} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
           </Section>
 
           {/* Tags — operator-authored, editable inline like other catalog items */}
@@ -1299,6 +1324,9 @@ export function Runners() {
   const [testingId, setTestingId] = useState<string | null>(null);
   // Which runner row is expanded to its detail sub-row (keyed by the UUID id).
   const [expandedRunner, setExpandedRunner] = useState<string | null>(null);
+  // SB — a completed "Replace this runner": who handed over, and to whom. It
+  // lives here because the hand-over reloads the list, which remounts the row.
+  const [handover, setHandover] = useState<{ from: string; to: KeyRunner } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // FX-16 — the shared toast + its timer, replacing a hand-rolled success
   // banner the operator had to dismiss by hand.
@@ -1601,6 +1629,8 @@ export function Runners() {
                                 serverVersion={serverBuild?.version}
                                 availableAgencies={availableAgencies}
                                 servedScopes={servedBy(r.id)}
+                                successor={handover && handover.from === String(r.id) ? handover.to : null}
+                                onSuccessor={(to) => setHandover(to ? { from: String(r.id), to } : null)}
                                 canConfig={canConfig}
                                 onEditSettings={() => setSettingsTarget(r)}
                                 onScrollToToken={scrollToToken}

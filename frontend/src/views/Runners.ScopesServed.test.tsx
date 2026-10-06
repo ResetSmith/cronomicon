@@ -61,7 +61,14 @@ vi.mock("../api/client", async (importOriginal) => {
     ...actual,
     api: {
       GET: vi.fn(async (path: string) => {
-        if (path === "/runners") return { data: { items: [SERVING, IDLE, REENROLLED] } };
+        if (path === "/runners") {
+          // A real request takes a turn of the event loop, and the registry
+          // shows its skeleton (unmounting every row) for that long. An
+          // instantly-resolved mock would batch the two renders into one and
+          // hide exactly the remount the hand-over test is about.
+          await new Promise((r) => setTimeout(r, 5));
+          return { data: { items: [SERVING, IDLE, REENROLLED] } };
+        }
         if (path === "/scopes") return { data: SCOPES };
         if (path === "/runners/host-keys/pending") return { data: [] };
         return { data: { items: [] } };
@@ -104,6 +111,23 @@ describe("Runners — scopes served (SB)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Replace this runner…" }));
     expect(await screen.findByText("Replace runner-dmz-01")).toBeTruthy();
+  });
+
+  // A hand-over ends by reloading the runner list, and the registry unmounts its
+  // rows while it loads. The offer to copy host keys was state inside the row,
+  // so it was dropped before it was ever shown: the scopes moved and nothing
+  // said the replacement trusts none of their hosts.
+  it("after a hand-over, still offers to copy the host keys once the list has reloaded", async () => {
+    renderRunners();
+    await expand("runner-dmz-01");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Replace this runner…" }));
+    const dialog = within((await screen.findByText("Replace runner-dmz-01")).closest("[role=dialog]") ?? document.body);
+    fireEvent.change(await dialog.findByRole("combobox"), { target: { value: IDLE.id } });
+    fireEvent.click(dialog.getByRole("button", { name: "Replace" }));
+
+    expect(await screen.findByText(/Host keys approved for runner-dmz-01 are not handed over with its scopes/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy host keys to runner-fin-02…" })).toBeTruthy();
   });
 
   it("says so, and points at the Scopes page, for a runner bound to nothing", async () => {
