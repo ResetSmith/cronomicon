@@ -31,8 +31,8 @@ func TestMigrateUpDown(t *testing.T) {
 	if dirty {
 		t.Fatal("schema is dirty after up")
 	}
-	if v != 1150 {
-		t.Fatalf("schema version = %d, want 1150", v)
+	if v != 1210 {
+		t.Fatalf("schema version = %d, want 1210", v)
 	}
 
 	// Core tables should exist.
@@ -41,7 +41,7 @@ func TestMigrateUpDown(t *testing.T) {
 		"reactions", "reaction_deliveries", "runner_placement_history",
 		"roles", "access_grants", "scope_agencies", "secret_agencies", "env_var_agencies", "ssh_credential_agencies", "run_agencies",
 		"service_accounts", "definition_revisions", "file_watch_sightings",
-		"annotations", "runner_tags"} {
+		"annotations", "scope_runners", "retired_runner_pins", "host_key_ledger", "host_key_scan_targets", "runner_known_hosts"} {
 		var name string
 		err := pool.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&name)
 		if err != nil {
@@ -3050,5 +3050,419 @@ func TestMigrate1150AppriseObjectForm(t *testing.T) {
 	}
 	if got := get(); got != "not json" {
 		t.Errorf("invalid JSON column = %q, want it left untouched", got)
+	}
+}
+
+// TestMigrate1170ScopesDropRunTypes pins the removal of a scope's "supported
+// run types" (the scope-tags plan, ST-12): the two type columns are gone,
+// capability_json survives as git_meta_json with its non-capability keys
+// (owner, sidecarPath, errors) intact and `types`/`origin` stripped, and the
+// scope rows themselves — and the tags 1160 added — are untouched. The down is
+// lossy by design and must still leave a schema a pre-1170 binary can INSERT
+// into (supported_types NOT NULL needs its default back).
+func TestMigrate1170ScopesDropRunTypes(t *testing.T) {
+	pool, err := Open(filepath.Join(t.TempDir(), "scopetypes.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+
+	m, err := migrator(pool)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+	if err := m.Migrate(1160); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate to 1160: %v", err)
+	}
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	// A cronomicon-source scope with declared types and tags; a git-source scope
+	// with the full pre-1170 capability blob; a git-source scope whose blob is
+	// NULL; and one whose blob is not JSON at all (json_remove on it would abort
+	// the whole migration without the json_valid guard).
+	exec(`INSERT INTO scopes(id, name, source, supported_types, created_at, tags)
+	      VALUES('s-local','edge','cronomicon','["bash","ansible"]','t','["prod","linux"]')`)
+	exec(`INSERT INTO scopes(id, name, source, supported_types, capability_types, capability_json, created_at)
+	      VALUES('s-git','prod-web','git','["bash","ansible"]','["bash","ansible"]',
+	             '{"types":["bash","ansible"],"origin":"pragma","owner":"infra","sidecarPath":"inventory/prod-web.cronomicon.yaml","errors":[{"line":2,"message":"unknown directive: \"ownr\""}]}','t')`)
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s-null','bare','git','t')`)
+	exec(`INSERT INTO scopes(id, name, source, capability_json, created_at) VALUES('s-junk','junk','git','not json','t')`)
+
+	hasCol := func(col string) bool {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('scopes') WHERE name = ?`, col).Scan(&n); err != nil {
+			t.Fatalf("table_info: %v", err)
+		}
+		return n == 1
+	}
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up 1160→1170: %v", err)
+	}
+	for _, gone := range []string{"supported_types", "capability_types", "capability_json"} {
+		if hasCol(gone) {
+			t.Errorf("after 1170 the scopes table still has %s", gone)
+		}
+	}
+	if !hasCol("git_meta_json") {
+		t.Fatal("after 1170 the scopes table has no git_meta_json")
+	}
+
+	var meta sql.NullString
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-git'`).Scan(&meta); err != nil {
+		t.Fatalf("read git_meta_json: %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(meta.String), &got); err != nil {
+		t.Fatalf("git_meta_json is not an object: %v\ngot: %s", err, meta.String)
+	}
+	for _, gone := range []string{"types", "origin"} {
+		if _, ok := got[gone]; ok {
+			t.Errorf("git_meta_json still carries %q: %s", gone, meta.String)
+		}
+	}
+	if string(got["owner"]) != `"infra"` || string(got["sidecarPath"]) != `"inventory/prod-web.cronomicon.yaml"` {
+		t.Errorf("owner/sidecarPath did not survive: %s", meta.String)
+	}
+	var errsOut []struct {
+		Line    int    `json:"line"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(got["errors"], &errsOut); err != nil || len(errsOut) != 1 || errsOut[0].Line != 2 {
+		t.Errorf("pragma errors did not survive: %s", meta.String)
+	}
+
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-null'`).Scan(&meta); err != nil || meta.Valid {
+		t.Errorf("a NULL blob must stay NULL, got %q (err %v)", meta.String, err)
+	}
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-junk'`).Scan(&meta); err != nil || meta.String != "not json" {
+		t.Errorf("an unparsable blob must be left as it was, got %q (err %v)", meta.String, err)
+	}
+
+	// The rows and the tags are untouched.
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scopes`).Scan(&n); err != nil || n != 4 {
+		t.Fatalf("scope rows after 1170 = %d (err %v), want 4", n, err)
+	}
+	var tags string
+	if err := pool.QueryRow(`SELECT tags FROM scopes WHERE id='s-local'`).Scan(&tags); err != nil || tags != `["prod","linux"]` {
+		t.Errorf("tags after 1170 = %q (err %v), want them untouched", tags, err)
+	}
+
+	// Down: the three columns come back; the declared types do not (lossy), and
+	// supported_types has its bash default so a pre-1170 INSERT that omits it works.
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("migrate down 1170→1160: %v", err)
+	}
+	for _, back := range []string{"supported_types", "capability_types", "capability_json"} {
+		if !hasCol(back) {
+			t.Errorf("after the down the scopes table has no %s", back)
+		}
+	}
+	if hasCol("git_meta_json") {
+		t.Error("after the down the scopes table still has git_meta_json")
+	}
+	var st string
+	if err := pool.QueryRow(`SELECT supported_types FROM scopes WHERE id='s-local'`).Scan(&st); err != nil || st != `["bash"]` {
+		t.Errorf("supported_types after the down = %q (err %v), want the bash default", st, err)
+	}
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s-new','later','cronomicon','t')`)
+
+	// And up again over the rolled-back shape.
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up again 1160→1170: %v", err)
+	}
+	if err := pool.QueryRow(`SELECT git_meta_json FROM scopes WHERE id='s-git'`).Scan(&meta); err != nil {
+		t.Fatalf("read git_meta_json after re-up: %v", err)
+	}
+	if err := json.Unmarshal([]byte(meta.String), &got); err != nil || string(got["owner"]) != `"infra"` {
+		t.Errorf("owner lost across down+up: %s", meta.String)
+	}
+}
+
+// TestMigrate1180ScopeRunners pins the scope↔runner bindings (the
+// scope-bound-runners plan, SB-1) and the conversion of the runner-tag pin into
+// them: a scope whose every live job agrees on one tag is bound to the runners
+// that carry it AND are eligible for the scope's agency; every other pinned job
+// is recorded, with its reason, so the pin is not lost when its column goes.
+func TestMigrate1180ScopeRunners(t *testing.T) {
+	pool, err := Open(filepath.Join(t.TempDir(), "scoperunners.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+
+	m, err := migrator(pool)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+	if err := m.Migrate(1170); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate to 1170: %v", err)
+	}
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-fin','Finance','t'), ('ag-tax','Tax','t')`)
+	scope := func(id, name, agency string) {
+		t.Helper()
+		exec(`INSERT INTO scopes(id, name, source, created_at) VALUES(?, ?, 'cronomicon', 't')`, id, name)
+		if agency != "" {
+			exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES(?, ?)`, id, agency)
+		}
+	}
+	runner := func(id, name, tag, agency string) {
+		t.Helper()
+		exec(`INSERT INTO runners(id, name, status, registered_at, created_at, tags)
+		      VALUES(?, ?, 'online', 't', 't', json_array(?))`, id, name, tag)
+		exec(`INSERT INTO runner_tags(runner_id, tag) VALUES(?, ?)`, id, tag)
+		if agency != "" {
+			exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES(?, ?)`, id, agency)
+		}
+	}
+	job := func(uid, name, scope string, tag any) {
+		t.Helper()
+		exec(`INSERT INTO jobs(uid, name, source, run_type, scope, runner_tag, synced_at)
+		      VALUES(?, ?, 'cronomicon', 'bash', NULLIF(?, ''), ?, 't')`, uid, name, scope, tag)
+	}
+
+	// dmz: unanimous, and the tag differs only in case between the two jobs and
+	// the runner (the projection is NOCASE). r-dmz is in Finance and carries it;
+	// r-tax carries the same tag from the wrong agency and must not be bound.
+	scope("s-dmz", "dmz-web", "ag-fin")
+	runner("r-dmz", "runner-dmz-01", "vlan-dmz", "ag-fin")
+	runner("r-tax", "runner-tax-01", "vlan-dmz", "ag-tax")
+	job("j-dmz-1", "deploy", "dmz-web", "vlan-dmz")
+	job("j-dmz-2", "restart", "dmz-web", "VLAN-DMZ")
+
+	// pool: a general-pool scope takes a general-pool runner, never a member one.
+	scope("s-pool", "shared", "")
+	runner("r-pool", "runner-pool-01", "edge", "")
+	runner("r-fin-edge", "runner-fin-02", "edge", "ag-fin")
+	job("j-pool", "sweep", "shared", "edge")
+
+	// Everything that cannot convert.
+	scope("s-mixed", "mixed", "ag-fin")
+	job("j-mixed-1", "a", "mixed", "vlan-dmz")
+	job("j-mixed-2", "b", "mixed", "edge")
+	scope("s-partial", "partial", "ag-fin")
+	job("j-partial-1", "c", "partial", "vlan-dmz")
+	job("j-partial-2", "d", "partial", nil)
+	scope("s-orphan", "orphan", "ag-fin")
+	job("j-orphan", "e", "orphan", "no-such-tag")
+	job("j-noscope", "f", "", "vlan-dmz")
+	job("j-ghost-scope", "g", "never-created", "vlan-dmz")
+
+	// A binned job is not a live definition: its missing pin must not stop the
+	// conversion of a scope whose live jobs agree, and on a scope that ends up
+	// bound it needs no notice (restored, the binding covers it) — even pinned
+	// to a different tag.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, synced_at, deleted_at)
+	      VALUES('j-binned', 'old', 'cronomicon', 'bash', 'dmz-web', 't', 't')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, runner_tag, synced_at, deleted_at)
+	      VALUES('j-binned-covered', 'older', 'cronomicon', 'bash', 'dmz-web', 'edge', 't', 't')`)
+	// A binned PINNED job on a scope that does not get bound is recorded: a
+	// restore clears deleted_at and nothing else, so it comes back unconfined.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, scope, runner_tag, synced_at, deleted_at)
+	      VALUES('j-binned-pinned', 'retired', 'cronomicon', 'bash', 'plain', 'vlan-dmz', 't', 't')`)
+	// A scope nobody pinned stays unrestricted.
+	scope("s-plain", "plain", "ag-fin")
+	job("j-plain", "h", "plain", nil)
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up 1170→1180: %v", err)
+	}
+
+	bound := map[string][]string{}
+	rows, err := pool.Query(`SELECT sc.name, sr.runner_id, sr.runner_name, COALESCE(sr.bound_by,'')
+	                           FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+	                          ORDER BY sc.name, sr.runner_id`)
+	if err != nil {
+		t.Fatalf("read scope_runners: %v", err)
+	}
+	for rows.Next() {
+		var sc, rid, rname, by string
+		if err := rows.Scan(&sc, &rid, &rname, &by); err != nil {
+			t.Fatalf("scan scope_runners: %v", err)
+		}
+		bound[sc] = append(bound[sc], rid+"/"+rname)
+		if by != "migration:1180" {
+			t.Errorf("bound_by on %s = %q, want migration:1180", sc, by)
+		}
+	}
+	rows.Close()
+	wantBound := map[string][]string{
+		"dmz-web": {"r-dmz/runner-dmz-01"},
+		"shared":  {"r-pool/runner-pool-01"},
+	}
+	if len(bound) != len(wantBound) {
+		t.Errorf("bound scopes = %v, want %v", bound, wantBound)
+	}
+	for sc, want := range wantBound {
+		if got := bound[sc]; len(got) != len(want) || got[0] != want[0] {
+			t.Errorf("scope %s bound to %v, want %v", sc, got, want)
+		}
+	}
+
+	notices := map[string]string{}
+	rows, err = pool.Query(`SELECT job_uid, reason FROM retired_runner_pins`)
+	if err != nil {
+		t.Fatalf("read retired_runner_pins: %v", err)
+	}
+	for rows.Next() {
+		var uid, reason string
+		if err := rows.Scan(&uid, &reason); err != nil {
+			t.Fatalf("scan retired_runner_pins: %v", err)
+		}
+		notices[uid] = reason
+	}
+	rows.Close()
+	wantNotices := map[string]string{
+		"j-mixed-1":       "mixed_pins",
+		"j-mixed-2":       "mixed_pins",
+		"j-partial-1":     "partial_pins",
+		"j-orphan":        "no_eligible_runner",
+		"j-noscope":       "no_scope",
+		"j-ghost-scope":   "unknown_scope",
+		"j-binned-pinned": "binned_job",
+	}
+	if len(notices) != len(wantNotices) {
+		t.Errorf("notices = %v, want %v", notices, wantNotices)
+	}
+	for uid, want := range wantNotices {
+		if notices[uid] != want {
+			t.Errorf("notice for %s = %q, want %q", uid, notices[uid], want)
+		}
+	}
+
+	// The binding must outlive its runner — there is deliberately no FK. With
+	// foreign keys enforced, deleting the runner leaves the row (and the scope
+	// closed); deleting the SCOPE takes its rows with it.
+	exec(`PRAGMA foreign_keys = ON`)
+	exec(`DELETE FROM runner_tags WHERE runner_id = 'r-dmz'`)
+	exec(`DELETE FROM runners WHERE id = 'r-dmz'`)
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scope_runners WHERE runner_id = 'r-dmz'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("binding rows after deleting the runner = %d (err %v), want 1", n, err)
+	}
+	exec(`DELETE FROM scopes WHERE id = 's-pool'`)
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM scope_runners WHERE scope_id = 's-pool'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("binding rows after deleting the scope = %d (err %v), want 0", n, err)
+	}
+
+	// Down drops both tables; up again converts from the pins that are still there.
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("migrate down 1180→1170: %v", err)
+	}
+	for _, tbl := range []string{"scope_runners", "retired_runner_pins"} {
+		if err := pool.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&n); err != nil || n != 0 {
+			t.Errorf("after the down, table %s present = %d (err %v), want 0", tbl, n, err)
+		}
+	}
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up again 1170→1180: %v", err)
+	}
+}
+
+// TestMigrate1190DropRunnerPin pins the retirement of the runner-tag pin (the
+// scope-bound-runners plan, SB-3): the declared pin and the projection it was
+// matched against are gone, the runner's own tags are untouched, and the pin a
+// PAST run carried is still there to be shown. The down is lossy by design —
+// the declared pins do not come back — but must leave a schema a pre-1190
+// binary can run on, projection rebuilt.
+func TestMigrate1190DropRunnerPin(t *testing.T) {
+	pool, err := Open(filepath.Join(t.TempDir(), "droppin.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+
+	m, err := migrator(pool)
+	if err != nil {
+		t.Fatalf("migrator: %v", err)
+	}
+	if err := m.Migrate(1180); err != nil && err != migrate.ErrNoChange {
+		t.Fatalf("migrate to 1180: %v", err)
+	}
+
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, q)
+		}
+	}
+	count := func(q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(q, args...).Scan(&n); err != nil {
+			t.Fatalf("count: %v\n%s", err, q)
+		}
+		return n
+	}
+	hasCol := func(table, col string) bool {
+		t.Helper()
+		return count(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, col) == 1
+	}
+	hasTable := func(name string) bool {
+		t.Helper()
+		return count(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name) == 1
+	}
+
+	exec(`INSERT INTO runners(id, name, status, registered_at, created_at, tags)
+	      VALUES('r1', 'runner-dmz-01', 'online', 't', 't', '["vlan-dmz","rack-4"]')`)
+	exec(`INSERT INTO runner_tags(runner_id, tag) VALUES('r1','vlan-dmz'), ('r1','rack-4')`)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, runner_tag, synced_at)
+	      VALUES('j1', 'deploy', 'cronomicon', 'bash', 'vlan-dmz', 't')`)
+	exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor, runner_tag, created_at)
+	      VALUES('run-old', 'deploy', 'bash', 'success', 'seed', 'manual', 'runner', 'vlan-dmz', 't')`)
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up 1180→1190: %v", err)
+	}
+	if hasCol("jobs", "runner_tag") {
+		t.Error("after 1190 the jobs table still has runner_tag")
+	}
+	if hasTable("runner_tags") {
+		t.Error("after 1190 the runner_tags projection still exists")
+	}
+	if count(`SELECT COUNT(*) FROM jobs WHERE uid='j1'`) != 1 {
+		t.Error("the job row did not survive the column drop")
+	}
+	var tags, pastPin string
+	if err := pool.QueryRow(`SELECT tags FROM runners WHERE id='r1'`).Scan(&tags); err != nil || tags != `["vlan-dmz","rack-4"]` {
+		t.Errorf("runner tags after 1190 = %q (err %v), want them untouched — they are labels now, not gone", tags, err)
+	}
+	if err := pool.QueryRow(`SELECT COALESCE(runner_tag,'') FROM runs WHERE id='run-old'`).Scan(&pastPin); err != nil || pastPin != "vlan-dmz" {
+		t.Errorf("a past run's pin after 1190 = %q (err %v), want vlan-dmz kept as history", pastPin, err)
+	}
+
+	// Down: the column returns empty and the projection is rebuilt from the tags.
+	if err := m.Steps(-1); err != nil {
+		t.Fatalf("migrate down 1190→1180: %v", err)
+	}
+	if !hasCol("jobs", "runner_tag") || !hasTable("runner_tags") {
+		t.Fatal("after the down the pin's storage is not back")
+	}
+	if n := count(`SELECT COUNT(*) FROM jobs WHERE uid='j1' AND runner_tag IS NULL`); n != 1 {
+		t.Errorf("after the down the job's pin is not NULL (lossy by design): %d", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM runner_tags WHERE runner_id='r1'`); n != 2 {
+		t.Errorf("projection rows after the down = %d, want 2 rebuilt from runners.tags", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM runner_tags WHERE runner_id='r1' AND tag='VLAN-DMZ'`); n != 1 {
+		t.Errorf("the rebuilt projection is not case-insensitive (matched %d rows for VLAN-DMZ)", n)
+	}
+
+	if err := m.Steps(1); err != nil {
+		t.Fatalf("migrate up again 1180→1190: %v", err)
 	}
 }

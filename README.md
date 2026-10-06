@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.5-blue" alt="Version 2.0.5"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.2.0-blue" alt="Version 2.2.0"></a>
   <a href="https://cronomicon.io/docs/"><img src="https://img.shields.io/badge/docs-cronomicon.io-blue" alt="Documentation"></a>
   <a href="https://github.com/ResetSmith/cronomicon/pkgs/container/cronomicon"><img src="https://img.shields.io/badge/image-ghcr.io-blue" alt="Container image"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
@@ -57,7 +57,7 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e CRONOMICON_DEV_AUTH=true \
   -e CRONOMICON_DEV_SEED=true \
   -e CRONOMICON_COOKIE_SECURE=false \
-  ghcr.io/resetsmith/cronomicon:2.0.5
+  ghcr.io/resetsmith/cronomicon:2.2.0
 ```
 
 Open <http://localhost:8080> and choose **Developer login**. The data disappears when the container stops.
@@ -97,7 +97,7 @@ Every release publishes three images to the GitHub Container Registry. They are 
 | `ghcr.io/resetsmith/cronomicon-runner` | Runner agent for Bash, Perl, PowerShell and Python over SSH |
 | `ghcr.io/resetsmith/cronomicon-runner-fat` | Runner agent with Ansible, Terraform and Git installed |
 
-Each image is tagged with its full version (`2.0.5`), its minor version (`2.0`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
+Each image is tagged with its full version (`2.2.0`), its minor version (`2.2`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
 
 #### Step 1: Prepare the host
 
@@ -157,14 +157,14 @@ docker run -d --name cronomicon --restart unless-stopped \
   -v cronomicon-data:/var/lib/cronomicon \
   -v /etc/cronomicon/kek:/run/secrets/cronomicon_kek:ro \
   --env-file /etc/cronomicon/cronomicon.env \
-  ghcr.io/resetsmith/cronomicon:2.0.5
+  ghcr.io/resetsmith/cronomicon:2.2.0
 ```
 
 Database migrations run automatically at startup. Confirm the server is ready:
 
 ```bash
 curl -s http://localhost:8080/readyz     # 200 once the database is ready
-curl -s http://localhost:8080/version    # {"version":"2.0.5", ...}
+curl -s http://localhost:8080/version    # {"version":"2.2.0", ...}
 ```
 
 <details>
@@ -173,7 +173,7 @@ curl -s http://localhost:8080/version    # {"version":"2.0.5", ...}
 ```yaml
 services:
   cronomicon:
-    image: ghcr.io/resetsmith/cronomicon:2.0.5
+    image: ghcr.io/resetsmith/cronomicon:2.2.0
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -209,7 +209,7 @@ Cronomicon grants nothing by default, so the first step is to make someone an ad
 
 ```bash
 docker stop cronomicon
-docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.0.5 \
+docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.2.0 \
   grant-admin -db /var/lib/cronomicon/cronomicon.db cronomicon-admins
 docker start cronomicon
 ```
@@ -239,7 +239,7 @@ Check out the release you want to run:
 ```bash
 git clone https://github.com/ResetSmith/cronomicon.git
 cd cronomicon
-git checkout v2.0.5
+git checkout v2.2.0
 ```
 
 #### Step 2: Build the server image
@@ -248,10 +248,10 @@ Run the build from the repository root, since the Dockerfile uses both `frontend
 
 ```bash
 docker build -f backend/Dockerfile \
-  --build-arg VERSION=2.0.5 \
+  --build-arg VERSION=2.2.0 \
   --build-arg COMMIT=$(git rev-parse --short HEAD) \
   --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  -t cronomicon:2.0.5 .
+  -t cronomicon:2.2.0 .
 ```
 
 The version arguments are optional. They appear in the interface and at `/version`.
@@ -261,15 +261,15 @@ The version arguments are optional. They appear in the interface and at `/versio
 These are only needed if you run runners as containers:
 
 ```bash
-docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.0.5 -t cronomicon-runner:2.0.5 .
-docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.0.5 -t cronomicon-runner-fat:2.0.5 .
+docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.2.0 -t cronomicon-runner:2.2.0 .
+docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.2.0 -t cronomicon-runner-fat:2.2.0 .
 ```
 
 The fat image's Ansible and Terraform versions are build arguments (`ANSIBLE_VERSION`, `TERRAFORM_VERSION`). To add Ansible collections or other tools, build a derived image from it.
 
 #### Step 4: Deploy
 
-Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.0.5` with `cronomicon:2.0.5`. To run the image on another host, push it to your own registry first.
+Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.2.0` with `cronomicon:2.2.0`. To run the image on another host, push it to your own registry first.
 
 ### Adding runners
 
@@ -278,6 +278,8 @@ The server can run jobs over SSH on its own. **Runners** are small agents you in
 1. In Cronomicon, open **Runners** and choose **+ Add Runner**.
 2. Copy the generated command and run it on the target host. It carries a single-use registration token, downloads the agent from your server, verifies its checksum and installs it as a hardened systemd service.
 3. The runner appears in the registry within a minute. Assign it to a department on the same page.
+4. If only this runner can reach a group of hosts, bind their scope to it: open **Scopes**, expand the scope and choose **Bind runners…**. The scope's jobs then run on that runner and no other.
+5. A runner connects only to hosts whose SSH key it trusts. On the runner's row choose **Scan keys**, scan the scope, compare the fingerprints and approve them.
 
 To run a runner as a container instead, the same page generates a `docker run` command for the image that matches your server's version. Always run runners at the same version as the server, because the server refuses agents that speak an older protocol. The [runner install guide](https://cronomicon.io/docs/runner-install.html) covers every option.
 
@@ -342,7 +344,9 @@ Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized
 ### Execution
 
 - **Two executors.** Direct SSH from the server (including bastion hosts), and runner agents for isolated networks and local toolchains.
-- **Runner isolation by department.** A job runs only on a runner in its own department, and can be narrowed further to runners carrying a given tag.
+- **Runner isolation by department.** A job runs only on a runner in its own department.
+- **Runners bound to scopes.** A scope can name the runners that reach its hosts. Its jobs then run on those runners only, and wait, with a stated reason, if none is available. Tags on runners are labels and never route work.
+- **Reviewed host keys.** A runner's trusted SSH host keys are approved from the Runners page after a scan or a paste, fingerprint by fingerprint. Every approval, rejection and removal is recorded, and the page shows what the runner's own `known_hosts` file holds.
 - **Ansible projects.** Runners can check out a playbook repository at a pinned commit, with roles, templates, collections and Ansible Vault.
 - **Run inputs.** A job can declare values that the operator provides when starting a run, and can require them.
 - **Live logs.** Follow a run's output in History while it runs.
@@ -441,7 +445,7 @@ The other step types are `branch` (choose a path from an earlier step's result),
 **4. Validate before you push.** The `cronomicon` binary checks syntax and cross-references with the same parser the server uses. You can run it from the image without installing anything:
 
 ```bash
-docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.0.5 validate /repo
+docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.2.0 validate /repo
 ```
 
 **5. Push.** A GitLab webhook triggers a sync automatically, or choose **Resync** under **Settings → GitLab**. Definitions from Git are read-only in the app; change them in Git.
@@ -539,6 +543,8 @@ cd frontend && npm run build && npm test
 | A runner cannot register | The proxy may be redirecting runner traffic to a sign-in page; see [Step 4](#step-4-put-it-behind-your-reverse-proxy). Registration tokens are single-use and expire after 24 hours. |
 | A runner shows as offline | It has not contacted the server recently. Check the agent's log with `journalctl -u cronomicon-runner` or `docker logs`. |
 | A job fails over SSH | Check the target's host key and any bastion settings under **Settings → SSH Targets**. |
+| A job on a runner fails with a host-key error | The runner does not trust that host yet. Expand the runner under **Runners**, choose **Scan keys** and approve the key. |
+| A run stays queued on a scope bound to runners | Its bound runners are offline or were removed; the run's reason names them. Bring one back, or change the binding under **Scopes**. |
 
 Run logs are grouped by job under the log directory configured in **Settings → Execution → Log Storage**. The [administrator manual](https://cronomicon.io/docs/administrator-manual.html) has a full troubleshooting chapter.
 

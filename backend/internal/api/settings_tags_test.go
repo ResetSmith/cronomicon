@@ -13,7 +13,9 @@ import (
 
 // TestUpdateConfigTags exercises the operator-authored tag write endpoints added
 // in migration 470 for the three cronomicon-owned Env Vars entities — variables,
-// secrets, and SSH key credentials. Each mirrors the catalog tag contract
+// secrets, and SSH key credentials — and in migration 1160 for scopes (ST band,
+// ConfigureApp; works on git-source scopes too, since the tags are operator-owned).
+// Each mirrors the catalog tag contract
 // (normalize / 422 / 404 / clear) but is permission-gated (ManageEnvVars for
 // variables + secrets, ConfigureApp for credentials) and CSRF-guarded, and stores
 // a plaintext JSON array that never touches the encrypted material. The shared
@@ -38,6 +40,11 @@ func TestUpdateConfigTags(t *testing.T) {
 	      VALUES('s1','API_KEY','stored','tester','t','tester','t')`)
 	seed(`INSERT INTO ssh_credentials(id, label, source, created_by, created_at, last_modified_by, last_modified_at)
 	      VALUES('c1','deploy-key','stored','tester','t','tester','t')`)
+
+	// ST-4: scopes are the fourth permission-gated entity on this skeleton
+	// (ConfigureApp, like every other scope write).
+	seed(`INSERT INTO scopes(id, name, source, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES('sc1','prod-scope','cronomicon','tester','t','tester','t')`)
 
 	client, csrf := devLogin(t, ts.URL)
 
@@ -81,6 +88,7 @@ func TestUpdateConfigTags(t *testing.T) {
 		{"env-var", "/api/v1/env-var-tags/ev1", "/api/v1/env-var-tags/nope", "env_vars", "ev1", "/api/v1/env-vars", "Env Vars", "API_URL", true},
 		{"secret", "/api/v1/env-secret-tags/s1", "/api/v1/env-secret-tags/nope", "secrets", "s1", "/api/v1/env-secrets", "Secrets", "API_KEY", false},
 		{"ssh-credential", "/api/v1/ssh-credential-tags/c1", "/api/v1/ssh-credential-tags/nope", "ssh_credentials", "c1", "/api/v1/ssh/credentials", "SSH Keys", "deploy-key", false},
+		{"scope", "/api/v1/scope-tags/sc1", "/api/v1/scope-tags/nope", "scopes", "sc1", "/api/v1/scopes", "Scopes", "prod-scope", true},
 	}
 
 	for _, tc := range cases {
@@ -175,9 +183,9 @@ func TestUpdateConfigTags(t *testing.T) {
 }
 
 // TestUpdateConfigTagsPermGate pins the deliberate gating difference from the
-// read-only catalog tag endpoints: these three carry the entity's own write
+// read-only catalog tag endpoints: these four carry the entity's own write
 // permission — ManageEnvVars for variables + secrets, ConfigureApp for SSH key
-// credentials — not the any-logged-in-user gate. With a valid CSRF token (so the
+// credentials and scopes — not the any-logged-in-user gate. With a valid CSRF token (so the
 // shared CSRF check is satisfied and we isolate the perm gate), a viewer is 403
 // while an admin gets past the gate into the handler (a 404 on the unseeded id,
 // never 403). Mirrors TestRBACSshCredentialsWriteGate.
@@ -188,6 +196,7 @@ func TestUpdateConfigTagsPermGate(t *testing.T) {
 		"/api/v1/env-var-tags/ev1",
 		"/api/v1/env-secret-tags/s1",
 		"/api/v1/ssh-credential-tags/c1",
+		"/api/v1/scope-tags/sc1",
 	} {
 		for _, tc := range []struct {
 			group         string

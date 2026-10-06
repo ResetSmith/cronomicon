@@ -46,8 +46,8 @@ func newUnclaimFixture(t *testing.T) *unclaimFixture {
 // seedRun inserts a queued run. agenciesJSON "[]" is the general pool.
 func (f *unclaimFixture) seedRun(id, runType, agenciesJSON, requiresJSON string) {
 	f.exec(`INSERT INTO runs(id, job_name, job_source, run_type, status, triggered_by, trigger_kind,
-	                         agencies_json, requires_json, created_at)
-	        VALUES(?, 'j', 'git', ?, 'queued', 'seed', 'manual', ?, ?, 't')`, id, runType, agenciesJSON, requiresJSON)
+	                         executor, agencies_json, requires_json, created_at)
+	        VALUES(?, 'j', 'git', ?, 'queued', 'seed', 'manual', 'runner', ?, ?, 't')`, id, runType, agenciesJSON, requiresJSON)
 }
 
 func (f *unclaimFixture) runner(id, status string, caps string, agency string, injection int) {

@@ -4,13 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/metrics"
@@ -424,25 +422,14 @@ func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Req
 	}
 	var deltas []delta
 
+	// The deltas name scopes that appeared or disappeared in this sync. (Until
+	// 2.1.0 they also reported run-type capability changes; those are gone with
+	// the capability itself, migration 1170.)
 	afterMap := make(map[string]settings.Scope)
 	for _, sc := range afterScopes {
 		afterMap[sc.Scope] = sc
-		before, exists := beforeMap[sc.Scope]
-		if !exists {
-			typesStr := strings.Join(sc.Capability.Types, ", ")
-			deltas = append(deltas, delta{
-				Scope:  sc.Scope,
-				Change: fmt.Sprintf("added capability: [%s]", typesStr),
-			})
-		} else {
-			if !equalStrings(before.Capability.Types, sc.Capability.Types) {
-				oldTypes := strings.Join(before.Capability.Types, ", ")
-				newTypes := strings.Join(sc.Capability.Types, ", ")
-				deltas = append(deltas, delta{
-					Scope:  sc.Scope,
-					Change: fmt.Sprintf("changed capability: [%s] -> [%s]", oldTypes, newTypes),
-				})
-			}
+		if _, exists := beforeMap[sc.Scope]; !exists {
+			deltas = append(deltas, delta{Scope: sc.Scope, Change: "added scope"})
 		}
 	}
 
@@ -485,22 +472,6 @@ func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Req
 		"errors":       errs,
 		"deltas":       deltas,
 	})
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	ma := make(map[string]bool)
-	for _, x := range a {
-		ma[x] = true
-	}
-	for _, x := range b {
-		if !ma[x] {
-			return false
-		}
-	}
-	return true
 }
 
 // contextKey is a package-local context key type.

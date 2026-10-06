@@ -112,11 +112,12 @@ export type RunSummaryInput = {
    * server ignores a stored one outright — see the fold in `where` below.
    */
   identityCapable: boolean;
-  /** "" when unpinned. Omitted entirely on an SSH run — see `pinApplies`. */
-  effectivePin: string;
-  jobPin: string;
-  pinApplies: boolean;
-  pinChanged: boolean;
+  /**
+   * SB — names of the runners the run's scope is bound to, [] when the scope is
+   * not bound or the run is not going to a runner. A fact about the SCOPE, not a
+   * choice made in the dialog, so it is stated and never accented.
+   */
+  boundRunners: string[];
   // When
   whenPhrase: string;
   deferred: boolean;
@@ -213,7 +214,7 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
   // This row previously read the per-run fields ALONE, so a job that declares
   // its own "connect as" ran under that identity while the rail said nothing:
   // the RS-2 contract is every setting the run will use, not just the ones
-  // changed here. That is the RT-3 pin bug one row over.
+  // changed here.
   //
   // Gated on identityCapable like the dialog's own section is: on a run type
   // that cannot carry an identity the server drops a stored one, and stating a
@@ -241,17 +242,11 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
       });
     }
   }
-  // RS-1's row, promoted out of the deviations list. Shown whenever a pin is in
-  // play at all — stating where a run goes is not the same as flagging that
-  // somebody moved it, and the accent carries the second meaning.
-  if (i.pinApplies && (i.effectivePin || i.pinChanged)) {
-    where.push({
-      key: "pin",
-      label: "Runner pin",
-      value: i.effectivePin || "unpinned",
-      accent: i.pinChanged ? "warning" : undefined,
-      note: i.pinChanged ? `job default: ${i.jobPin || "(none)"}` : undefined,
-    });
+  // SB — where a runner run lands when its scope is bound. It replaces the row
+  // the runner-tag pin used to have here; unlike that row it is never a
+  // deviation, because nothing in this dialog can change it.
+  if (i.boundRunners.length > 0) {
+    where.push({ key: "runsOn", label: "Runs on", value: i.boundRunners.join(", "), note: "bound to the scope" });
   }
 
   // ── When ───────────────────────────────────────────────────────────────────
@@ -299,7 +294,7 @@ export function buildRunSummary(i: RunSummaryInput): SummaryGroup[] {
   // RD5 — the rail's groups mirror the dialog's five sections by name, so the
   // section an operator opens and the group that restates it share one word.
   // "Where it runs" is split at the same seam as the dialog: Targets carries
-  // the scope + targets rows, Method the executor, identity and pin rows.
+  // the scope + targets rows, Method the executor and identity rows.
   const targets = where.filter((r) => r.key === "scope" || r.key === "targets");
   const method = where.filter((r) => r.key !== "scope" && r.key !== "targets");
   const groups: SummaryGroup[] = [

@@ -16,6 +16,68 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
 )
 
+// requireHostKeyBatchRunnerAgency gates a batch read by the runner the batch is
+// about. An unknown batch passes through to the handler's 404.
+func (s *Server) requireHostKeyBatchRunnerAgency(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		var runnerID string
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT runner_id FROM host_key_ledger WHERE batch_id = ? LIMIT 1`, r.PathValue("batchId")).Scan(&runnerID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if err == nil && !s.requireEntityAgency(w, r, id, auth.PermConfigureApp,
+			"runner_agencies", "runner_id", runnerID, "runner") {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleListPendingHostKeys lists the scanned keys awaiting review across the
+// fleet, minus the runners the caller has no authority over. The rows name
+// hosts — since SB, the dial addresses of whole scopes — so this read carries
+// the same departmental gate as the per-runner ledger routes, applied per row:
+// a department's admin sees their own runners' keys and nobody else's, and a
+// general-pool runner's only with an unrestricted grant.
+func (s *Server) handleListPendingHostKeys(svc *runner.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		all, err := svc.PendingHostKeys(r.Context())
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		out := []runner.PendingHostKey{}
+		allowed := map[string]bool{}
+		for _, p := range all {
+			may, seen := allowed[p.RunnerID]
+			if !seen {
+				may, _, err = s.entityAgencyPermitted(r.Context(), id, auth.PermConfigureApp, "runner_agencies", "runner_id", p.RunnerID)
+				if err != nil {
+					httpx.Fail500(w, s.log, "db_error", err)
+					return
+				}
+				allowed[p.RunnerID] = may
+			}
+			if may {
+				out = append(out, p)
+			}
+		}
+		httpx.JSON(w, http.StatusOK, out)
+	}
+}
+
 // requireRunnerAgency wraps a state-changing OPERATOR runner route with the
 // RF-2/RF-Q3 departmental gate (the RBAC-fixes plan): the caller must
 // hold configureApp on an agency the runner belongs to. A runner with NO agency
@@ -210,9 +272,45 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/runners/{id}/keyscan",
 		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(svc.HandleKeyscan))))
 	mux.Handle("GET /api/v1/runners/host-keys/pending",
-		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(svc.HandleListPendingHostKeys)))
+		s.requirePerm("configureApp", permConfigureApp)(s.handleListPendingHostKeys(svc)))
 	mux.Handle("POST /api/v1/runners/host-keys/{keyId}/resolve",
 		s.requirePerm("configureApp", permConfigureApp)(s.requireHostKeyRunnerAgency(http.HandlerFunc(svc.HandleResolveHostKey))))
+
+	// ── Host-key ledger (SB band; migrations 1200/1210, protocol 14) ───────
+	// Everything that decides, or reveals, what ONE runner trusts carries that
+	// runner's departmental gate — reads included, unlike the rest of the
+	// runner surface: the ledger names the hosts of the scopes a runner serves.
+	// A deregistered runner has no agency left, so its record is
+	// unrestricted-only, like a general-pool runner's.
+	hk := func(h http.HandlerFunc) http.Handler {
+		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", h))
+	}
+	mux.Handle("GET /api/v1/runners/{id}/host-keys", hk(svc.HandleRunnerHostKeys))
+	mux.Handle("GET /api/v1/runners/{id}/host-keys/pending", hk(svc.HandleListRunnerPendingHostKeys))
+	mux.Handle("POST /api/v1/runners/{id}/host-keys/resolve-batch", hk(svc.HandleResolveHostKeyBatch))
+	mux.Handle("POST /api/v1/runners/{id}/host-keys/provide", hk(svc.HandleProvideHostKeys))
+	mux.Handle("POST /api/v1/runners/{id}/host-keys/{ledgerId}/remove", hk(svc.HandleRemoveHostKey))
+	mux.Handle("POST /api/v1/runners/{id}/host-keys/{ledgerId}/resend", hk(svc.HandleResendHostKey))
+	mux.Handle("POST /api/v1/runners/{id}/known-hosts/refresh", hk(svc.HandleRequestKnownHosts))
+	// Carrying keys reads one runner's record and writes another's trust, so it
+	// needs the gate for BOTH. The source rides the query (?from=) because a
+	// second path wildcard here cannot be told apart from the older
+	// /runners/host-keys/{keyId}/resolve.
+	mux.Handle("POST /api/v1/runners/{id}/host-keys/carry",
+		hk(func(w http.ResponseWriter, r *http.Request) {
+			id, _ := auth.IdentityFrom(r.Context())
+			if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp,
+				"runner_agencies", "runner_id", r.URL.Query().Get("from"), "runner") {
+				return
+			}
+			svc.HandleCarryHostKeys(w, r)
+		}))
+	mux.Handle("GET /api/v1/host-key-batches/{batchId}",
+		s.requirePerm("configureApp", permConfigureApp)(s.requireHostKeyBatchRunnerAgency(http.HandlerFunc(svc.HandleHostKeyBatch))))
+	// Which of a scope's hosts each bound runner trusts. The handler adds the
+	// scope read check: host names are the scope's contents.
+	mux.Handle("GET /api/v1/scopes/{scopeId}/host-key-coverage",
+		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(svc.HandleScopeHostKeyCoverage)))
 	// Runner: upload the keys it scanned (runner-key auth, ownership-guarded).
 	// ET-D: the agent reports what it OBSERVED; the server decides what that
 	// means and does the firing. Mirrors the host-key upload (v5) — same
@@ -222,6 +320,9 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 		s.auth.RequireRunner(http.HandlerFunc(svc.HandleFileSightings)))
 	mux.Handle("POST /api/v1/runners/{id}/hostkeys",
 		s.auth.RequireRunner(http.HandlerFunc(svc.HandleUploadHostKeys)))
+	// Runner: report its own known_hosts file (protocol 14).
+	mux.Handle("POST /api/v1/runners/{id}/known-hosts",
+		s.auth.RequireRunner(http.HandlerFunc(svc.HandleUploadKnownHosts)))
 
 	// ── Runner: id-preserving re-declare (protocol v4) ────────────────────
 	// Authenticated by the runner's own crn_run_* key (never a registration

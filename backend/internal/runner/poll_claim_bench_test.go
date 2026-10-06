@@ -75,7 +75,36 @@ import (
 // `runs.runner_tag IS NULL` short-circuits before the projection is touched.
 // That short-circuit is the reason the pin probes `runner_tags` rather than
 // `json_each(runners.tags)`: the JSON form cannot short-circuit cheaply and
-// would land in the +200–350% band mapped above. See RT-G1.
+// would land in the +200–350% band mapped above. See RT-G1. (The pin and its
+// projection were retired by the SB band — migration 1190 — and that predicate
+// is no longer in the query; the measurement stays as the record of why the
+// binding below was shaped the way it was NOT.)
+//
+// SB-1 RE-MEASUREMENT (mig. 1180, the scope binding). A sixth predicate, and the
+// first one this file's own lesson got wrong. Following the agency branch, it
+// was first written UNCORRELATED — `scope NOT IN (scopes bound to someone else)`
+// — on the theory that SQLite would materialize the set once per statement. It
+// does, on every poll, as three list subqueries and two bloom filters, whether
+// or not anything is bound. Measured back to back against the same statement
+// with the clause removed (medians, ns/op, 300–600 claims per sample; this host
+// is noisy to about ±10%):
+//
+//	                               nothing bound     a quarter of 200 scopes bound
+//	  no binding clause                 366,000              371,000
+//	  uncorrelated NOT IN               516,000  +41%        598,000  +61%
+//	  correlated EXISTS (shipped)       413,000   +7%        407,000  +10%
+//
+// The correlated pair are keyed seeks (scopes.name is UNIQUE; scope_runners' PK
+// leads with scope_id) that run only for candidate rows, so they cost nothing to
+// set up. A denormalized scope-name column on scope_runners measured the same as
+// the join and was not worth a second copy of the name to keep in step.
+//
+// The same runs showed where the time actually goes: executed through a
+// statement prepared ONCE, both the shipped form and the statement without the
+// clause drop to ~110,000 ns/op. Roughly two thirds of a claim is SQLite
+// re-planning this statement, because claimRun hands database/sql the text each
+// poll. That is a larger win than any predicate here
+// and is left alone only because it is not this change's to make.
 //
 //	go test ./internal/runner/ -run '^$' -bench BenchmarkClaimPredicate -benchtime 300x
 
@@ -83,12 +112,18 @@ const (
 	benchRuns     = 10000
 	benchRunners  = 50
 	benchAgencies = 20
+	benchScopes   = 200
 )
 
 // benchClaimDB seeds the fixture once per benchmark. Uses a real on-disk DB (not
 // :memory:) because the production hot path is on disk and page-cache behavior is
 // part of what is being measured.
-func benchClaimDB(b *testing.B) (*Service, []string) {
+//
+// withBindings additionally spreads the runs over benchScopes scopes and binds
+// every fourth one to two of its agency's runners (SB-1), so the binding
+// predicate has a non-empty set to materialize and real rows to exclude. Every
+// runner keeps claimable work: three scopes in four stay unrestricted.
+func benchClaimDB(b *testing.B, withBindings bool) (*Service, []string) {
 	b.Helper()
 	pool, err := db.Open(filepath.Join(b.TempDir(), "claimbench.db"))
 	if err != nil {
@@ -141,14 +176,39 @@ func benchClaimDB(b *testing.B) (*Service, []string) {
 			}
 		}
 	}
+	if withBindings {
+		// benchScopes is a multiple of benchAgencies, so scope s always carries
+		// runs of agency s%benchAgencies and can be bound to that agency's runners.
+		for sIdx := range benchScopes {
+			scopeID := fmt.Sprintf("sc-%03d", sIdx)
+			if _, err := tx.Exec(`INSERT INTO scopes(id, name, source, created_at) VALUES(?,?,'cronomicon',?)`,
+				scopeID, fmt.Sprintf("scope-%03d", sIdx), ts); err != nil {
+				b.Fatal(err)
+			}
+			if sIdx%4 != 0 {
+				continue
+			}
+			for _, r := range []int{sIdx % benchAgencies, sIdx%benchAgencies + benchAgencies} {
+				if _, err := tx.Exec(`
+					INSERT INTO scope_runners(scope_id, runner_id, runner_name, bound_at) VALUES(?,?,?,?)`,
+					scopeID, runnerIDs[r], fmt.Sprintf("runner-%03d", r), ts); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	}
 	for i := range benchRuns {
 		ag := agencyNames[i%benchAgencies]
 		aj, _ := json.Marshal([]string{ag})
+		var scope any
+		if withBindings {
+			scope = fmt.Sprintf("scope-%03d", i%benchScopes)
+		}
 		if _, err := tx.Exec(`
-			INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor,
+			INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor,
 			                 created_at, agency, agencies_json, requires_json)
-			VALUES (?, 'bench-job', 'bash', 'queued', 'bench', 'manual', 'runner', ?, ?, ?, '[]')`,
-			fmt.Sprintf("run-%06d", i), ts, ag, string(aj)); err != nil {
+			VALUES (?, 'bench-job', 'bash', ?, 'queued', 'bench', 'manual', 'runner', ?, ?, ?, '[]')`,
+			fmt.Sprintf("run-%06d", i), scope, ts, ag, string(aj)); err != nil {
 			b.Fatal(err)
 		}
 		// The migration-690 materialized index, written in lockstep with the snapshot
@@ -185,15 +245,19 @@ func claimSQL(agencyClause string) string {
 			    SELECT 1 FROM json_each(COALESCE(runs.requires_json, '[]')) je
 			    WHERE je.value NOT IN (SELECT value FROM json_each(?)))
 			  AND (` + agencyClause + `)
-			  -- RT-1 (mig. 1070). Carried here because this harness is a hand-copy
+			  -- SB-1 (mig. 1180). Carried here because this harness is a hand-copy
 			  -- of claimRun and the header's promise — that everything outside the
 			  -- agency clause is byte-identical to production — is what makes the
 			  -- reported difference attributable to the agency clause alone. It is
 			  -- also what TestClaimQueryPlan asserts the plan of, so omitting it
 			  -- would leave the plan guard watching a query nobody runs.
-			  AND (runs.runner_tag IS NULL OR runs.runner_tag = ''
-			       OR EXISTS (SELECT 1 FROM runner_tags rt
-			                  WHERE rt.runner_id = ? AND rt.tag = runs.runner_tag))
+			  AND (runs.scope IS NULL
+			       OR NOT EXISTS (SELECT 1 FROM scope_runners sr
+			                        JOIN scopes sc ON sc.id = sr.scope_id
+			                       WHERE sc.name = runs.scope)
+			       OR EXISTS (SELECT 1 FROM scope_runners sr
+			                    JOIN scopes sc ON sc.id = sr.scope_id
+			                   WHERE sc.name = runs.scope AND sr.runner_id = ?))
 			  AND (
 			    ? = 1
 			    OR NOT EXISTS (
@@ -297,8 +361,10 @@ const shippedAgencyClause = `
 			    OR (COALESCE(runs.agencies_json, '[]') = '[]'
 			        AND NOT EXISTS (SELECT 1 FROM runner_agencies WHERE runner_id = ?))`
 
-func benchmarkClaim(b *testing.B, clause string) {
-	svc, runnerIDs := benchClaimDB(b)
+func benchmarkClaim(b *testing.B, clause string) { benchmarkClaimOn(b, clause, false) }
+
+func benchmarkClaimOn(b *testing.B, clause string, withBindings bool) {
+	svc, runnerIDs := benchClaimDB(b, withBindings)
 	caps, _ := json.Marshal([]string{"bash", "ansible"})
 	stmt := claimSQL(clause)
 	ctx := context.Background()
@@ -356,6 +422,14 @@ func BenchmarkClaimPredicateInSet(b *testing.B) { benchmarkClaim(b, inSetAgencyC
 // BenchmarkClaimPredicateShipped is the predicate claimRun actually runs. THIS is
 // the number that must clear the ≤15% budget against LegacyScalar.
 func BenchmarkClaimPredicateShipped(b *testing.B) { benchmarkClaim(b, shippedAgencyClause) }
+
+// BenchmarkClaimPredicateShippedBoundScopes is Shipped over a fleet that actually
+// uses scope bindings (SB-1): 200 scopes, a quarter of them restricted. Shipped
+// above measures the binding predicate in the state most deployments will be in
+// — nothing bound, an empty set — and this one measures it doing its job.
+func BenchmarkClaimPredicateShippedBoundScopes(b *testing.B) {
+	benchmarkClaimOn(b, shippedAgencyClause, true)
+}
 
 // TestClaimPredicatesAgree is the correctness half of the gate: over the SAME
 // fixture, the two predicates must select the same run for the same runner. A

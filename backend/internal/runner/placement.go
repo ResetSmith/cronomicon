@@ -104,8 +104,12 @@ type placementSuggestion struct {
 	PreviousRunnerID string      `json:"previousRunnerId"`
 	Agencies         []agencyRef `json:"agencies"`
 	Tags             []string    `json:"tags"`
-	DeregisteredAt   string      `json:"deregisteredAt"`
-	DeregisteredVia  string      `json:"deregisteredVia"`
+	// Scopes are the names of the scopes still bound to the PREVIOUS runner id
+	// (SB-1). A binding outlives its runner, so these scopes are closed until
+	// the placement is restored — accepting re-points them at this runner.
+	Scopes          []string `json:"scopes"`
+	DeregisteredAt  string   `json:"deregisteredAt"`
+	DeregisteredVia string   `json:"deregisteredVia"`
 	// DR-Q7: the observed client IP is the ONE signal the agent cannot freely
 	// assert, so it carries the security weight. A mismatch does NOT suppress the
 	// offer — a host legitimately rebuilt during recovery lands on a new lease —
@@ -122,7 +126,8 @@ type placementSuggestion struct {
 //
 // Only runners with NO agency membership get an offer — a placed runner needs no
 // suggestion — and only history rows that actually recorded a placement are
-// candidates ([] agency set means there is nothing to restore).
+// candidates: an agency set, or scope bindings the old runner id still holds
+// (SB-1). With neither there is nothing to restore.
 func suggestionsFor(ctx context.Context, q queryer, unbound map[string]string) (map[string]*placementSuggestion, error) {
 	if len(unbound) == 0 {
 		return nil, nil
@@ -156,15 +161,40 @@ func suggestionsFor(ctx context.Context, q queryer, unbound map[string]string) (
 		rows.Close()
 	}
 
+	// SB-1 — scopes still bound to a runner id that no longer has a row, keyed
+	// by that id. Read up front for the same nested-cursor reason as the above.
+	orphanScopes := map[string][]string{}
+	if rows, err := q.QueryContext(ctx, `
+		SELECT sr.runner_id, sc.name
+		  FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+		 WHERE NOT EXISTS (SELECT 1 FROM runners rn WHERE rn.id = sr.runner_id)
+		 ORDER BY sc.name`); err == nil {
+		for rows.Next() {
+			var rid, name string
+			if err := rows.Scan(&rid, &name); err == nil {
+				orphanScopes[rid] = append(orphanScopes[rid], name)
+			}
+		}
+		rows.Close()
+	}
+
 	// Most recent placement-bearing snapshot per name. id is AUTOINCREMENT, so
 	// MAX(id) is "latest" without relying on timestamp formatting.
+	//
+	// SB-1 — "placement-bearing" now includes a snapshot with NO agencies whose
+	// runner id still holds scope bindings. A general-pool runner has no agency
+	// to restore, but the scopes bound to it are closed until its replacement
+	// takes them over, and this offer is the one-click way to do that.
 	rows, err := q.QueryContext(ctx, `
 		SELECT h.name, h.id, h.runner_id, h.agency_ids, h.tags, h.last_client_ip,
 		       h.deregistered_at, h.deregistered_via
 		  FROM runner_placement_history h
 		  JOIN (SELECT name, MAX(id) AS mx
 		          FROM runner_placement_history
-		         WHERE agency_ids <> '[]' AND dismissed_at IS NULL
+		         WHERE (agency_ids <> '[]'
+		                OR EXISTS (SELECT 1 FROM scope_runners sr
+		                            WHERE sr.runner_id = runner_placement_history.runner_id))
+		           AND dismissed_at IS NULL
 		         GROUP BY name) latest
 		    ON latest.name = h.name AND latest.mx = h.id`)
 	if err != nil {
@@ -193,8 +223,15 @@ func suggestionsFor(ctx context.Context, q queryer, unbound map[string]string) (
 			// than offered: applying it would fail the FK, and naming a department
 			// that no longer exists helps nobody decide.
 		}
-		if len(s.Agencies) == 0 {
-			continue
+		s.Scopes = orphanScopes[s.PreviousRunnerID]
+		if s.Scopes == nil {
+			s.Scopes = []string{}
+		}
+		if len(s.Agencies) == 0 && len(s.Scopes) == 0 {
+			continue // nothing left to restore
+		}
+		if s.Agencies == nil {
+			s.Agencies = []agencyRef{}
 		}
 		s.Tags = []string{}
 		_ = json.Unmarshal([]byte(tagsJSON), &s.Tags)
@@ -243,7 +280,8 @@ var ErrPlacementTags = errors.New("placement tags invalid")
 var ErrPlacementGone = errors.New("placement no longer applicable")
 
 // ApplyPlacement accepts a suggestion: it restores the recorded agency
-// membership and tags onto a currently-unbound runner.
+// membership and tags onto a currently-unbound runner, and re-points the scope
+// bindings the previous runner id left behind (SB-1).
 //
 // DR-Q7 authorisation — `permits` reports whether the caller may grant a given
 // agency, and EVERY agency in the snapshot must pass. Accepting must never be a
@@ -284,11 +322,11 @@ func (s *Service) ApplyPlacement(ctx context.Context, runnerID string, historyID
 		return ErrPlacementGone
 	}
 
-	var agencyJSON, tagsJSON, snapName string
+	var agencyJSON, tagsJSON, snapName, prevRunnerID string
 	var dismissed sql.NullString
 	if err := tx.QueryRowContext(ctx,
-		`SELECT agency_ids, tags, name, dismissed_at FROM runner_placement_history WHERE id = ?`, historyID,
-	).Scan(&agencyJSON, &tagsJSON, &snapName, &dismissed); err != nil {
+		`SELECT agency_ids, tags, name, runner_id, dismissed_at FROM runner_placement_history WHERE id = ?`, historyID,
+	).Scan(&agencyJSON, &tagsJSON, &snapName, &prevRunnerID, &dismissed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrPlacementGone
 		}
@@ -313,7 +351,16 @@ func (s *Service) ApplyPlacement(ctx context.Context, runnerID string, historyID
 	if err := json.Unmarshal([]byte(agencyJSON), &ids); err != nil {
 		return fmt.Errorf("decode snapshot agencies: %w", err)
 	}
-	if len(ids) == 0 {
+	// SB-1 — a snapshot with no agencies is still worth accepting when the old
+	// runner id holds scope bindings: that is a general-pool runner, and its
+	// bindings are the whole of its placement. With neither there is nothing to
+	// restore.
+	var orphanBindings int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM scope_runners WHERE runner_id = ?`, prevRunnerID).Scan(&orphanBindings); err != nil {
+		return err
+	}
+	if len(ids) == 0 && orphanBindings == 0 {
 		return ErrPlacementGone
 	}
 	for _, id := range ids {
@@ -343,6 +390,51 @@ func (s *Service) ApplyPlacement(ctx context.Context, runnerID string, historyID
 		return fmt.Errorf("restore tags: %w", err)
 	}
 
+	// SB-1 — the scope bindings. A binding names a runner ID and deliberately
+	// survives the row's deletion, so the scopes the old id served are still
+	// closed, waiting for exactly this. Re-pointing them here, in the same
+	// transaction as the agencies that make this runner eligible for them, is
+	// what makes a re-enrolled host whole in one click instead of one click per
+	// scope. The authority is the agencies' (checked above): a scope's runs are
+	// claimable only by a member, so this hands over no work the membership
+	// being restored would not already allow.
+	//
+	// OR IGNORE then sweep, as ReplaceScopeRunner does: a scope an operator has
+	// already bound to this runner by hand would collide on the primary key.
+	var scopeNames []string
+	if prevRunnerID != "" && prevRunnerID != runnerID {
+		srows, err := tx.QueryContext(ctx, `
+			SELECT sc.name FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+			 WHERE sr.runner_id = ? ORDER BY sc.name`, prevRunnerID)
+		if err != nil {
+			return fmt.Errorf("read scope bindings: %w", err)
+		}
+		for srows.Next() {
+			var n string
+			if err := srows.Scan(&n); err != nil {
+				srows.Close()
+				return fmt.Errorf("read scope bindings: %w", err)
+			}
+			scopeNames = append(scopeNames, n)
+		}
+		srows.Close()
+		if err := srows.Err(); err != nil {
+			return fmt.Errorf("read scope bindings: %w", err)
+		}
+		if len(scopeNames) > 0 {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE OR IGNORE scope_runners
+				   SET runner_id = ?, runner_name = ?, bound_by = ?, bound_at = ?
+				 WHERE runner_id = ?`, runnerID, curName, actor, now(), prevRunnerID); err != nil {
+				return fmt.Errorf("restore scope bindings: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM scope_runners WHERE runner_id = ?`, prevRunnerID); err != nil {
+				return fmt.Errorf("restore scope bindings: %w", err)
+			}
+		}
+	}
+
 	names := make([]string, 0, len(ids))
 	for _, id := range ids {
 		var n string
@@ -350,13 +442,17 @@ func (s *Service) ApplyPlacement(ctx context.Context, runnerID string, historyID
 			names = append(names, n)
 		}
 	}
+	summary := "placement restored: " + strings.Join(names, ", ") + " (tags: " + strings.Join(merged, ", ") + ")"
+	if len(scopeNames) > 0 {
+		summary += " (scopes: " + strings.Join(scopeNames, ", ") + ")"
+	}
 	if err := auditlog.WriteActivity(ctx, tx, auditlog.ActivityParams{
 		At:         now(),
 		Kind:       "config",
 		Actor:      actor,
 		Target:     "runner:" + curName,
 		RunnerName: curName,
-		Summary:    "placement restored: " + strings.Join(names, ", ") + " (tags: " + strings.Join(merged, ", ") + ")",
+		Summary:    summary,
 	}); err != nil {
 		return fmt.Errorf("record placement: %w", err)
 	}

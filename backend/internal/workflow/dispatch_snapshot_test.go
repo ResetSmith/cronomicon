@@ -12,18 +12,18 @@ import (
 
 // RR-0b / RR-0c — a workflow step's child run must carry the same dispatch-
 // policy snapshot every other producer writes: requires_json (with the RA-20a
-// become-file arm), checkout_sha / checkout_entry, and the job's runner_tag
-// pin. claimRun and the manifest read these from the RUN row, so a column this
-// INSERT omits is a policy the step does not have — before the fix a step whose
-// job required vault, a collection or a runner tag was handed to any runner in
-// the agency. Same shape as target_host_test.go, the v0.53.0 precedent for
+// become-file arm) and checkout_sha / checkout_entry. claimRun and the manifest
+// read these from the RUN row, so a column this INSERT omits is a policy the
+// step does not have — before the fix a step whose job required vault or a
+// collection was handed to any runner in the agency. (The runner-tag pin was a
+// third such column until the SB band retired it; a step is now placed by its
+// scope's runner binding, which the claim query reads live.) Same shape as target_host_test.go, the v0.53.0 precedent for
 // exactly this miss pattern.
 
 type dispatchJob struct {
 	name, uid    string
 	requires     string // jobs.requires_json ('[]' for none)
 	becomeSecret string
-	runnerTag    string
 	projectRoot  string
 	scriptPath   string
 }
@@ -38,16 +38,16 @@ func seedDispatchJob(t *testing.T, pool *sql.DB, j dispatchJob) {
 	}
 	_, err := pool.ExecContext(context.Background(), `
 		INSERT INTO jobs (name, source, uid, run_type, concurrency_policy, synced_at,
-		                  requires_json, become_password_secret, runner_tag, project_root, script_path)
-		VALUES (?, 'git', ?, 'ansible', 'Allow', '2026-01-01T00:00:00Z', ?, ?, ?, ?, ?)
-	`, j.name, j.uid, j.requires, nz(j.becomeSecret), nz(j.runnerTag), nz(j.projectRoot), nz(j.scriptPath))
+		                  requires_json, become_password_secret, project_root, script_path)
+		VALUES (?, 'git', ?, 'ansible', 'Allow', '2026-01-01T00:00:00Z', ?, ?, ?, ?)
+	`, j.name, j.uid, j.requires, nz(j.becomeSecret), nz(j.projectRoot), nz(j.scriptPath))
 	if err != nil {
 		t.Fatalf("seed job %q: %v", j.name, err)
 	}
 }
 
 type childRow struct {
-	requires, checkoutSHA, checkoutEntry, runnerTag sql.NullString
+	requires, checkoutSHA, checkoutEntry sql.NullString
 }
 
 func triggerAndReadChild(t *testing.T, pool *sql.DB, jobName string) childRow {
@@ -65,9 +65,9 @@ func triggerAndReadChild(t *testing.T, pool *sql.DB, jobName string) childRow {
 	time.Sleep(100 * time.Millisecond)
 	var r childRow
 	if err := pool.QueryRowContext(context.Background(), `
-		SELECT requires_json, checkout_sha, checkout_entry, runner_tag
+		SELECT requires_json, checkout_sha, checkout_entry
 		  FROM runs WHERE workflow_run_id = ? AND job_name = ?`, result.TraceID, jobName,
-	).Scan(&r.requires, &r.checkoutSHA, &r.checkoutEntry, &r.runnerTag); err != nil {
+	).Scan(&r.requires, &r.checkoutSHA, &r.checkoutEntry); err != nil {
 		t.Fatalf("fetch child run: %v", err)
 	}
 	return r
@@ -112,23 +112,5 @@ func TestRunJob_CheckoutPinned(t *testing.T) {
 	r := triggerAndReadChild(t, pool, "proj-job")
 	if r.checkoutSHA.String != "abc123" || r.checkoutEntry.String != "site.yml" {
 		t.Fatalf("checkout snapshot = sha:%v entry:%v, want abc123 / site.yml", r.checkoutSHA, r.checkoutEntry)
-	}
-}
-
-func TestRunJob_RunnerTagInherited(t *testing.T) {
-	pool := openPool(t)
-	seedDispatchJob(t, pool, dispatchJob{name: "gpu-job", uid: "u-gpu", requires: `[]`, runnerTag: "gpu"})
-	r := triggerAndReadChild(t, pool, "gpu-job")
-	if r.runnerTag.String != "gpu" {
-		t.Fatalf("runner_tag = %v, want gpu — a pinned job must stay pinned as a workflow step (RT)", r.runnerTag)
-	}
-}
-
-func TestRunJob_NoRunnerTagIsNull(t *testing.T) {
-	pool := openPool(t)
-	seedDispatchJob(t, pool, dispatchJob{name: "anywhere", uid: "u-any", requires: `[]`})
-	r := triggerAndReadChild(t, pool, "anywhere")
-	if r.runnerTag.Valid {
-		t.Fatalf("runner_tag = %q, want NULL for an unpinned job", r.runnerTag.String)
 	}
 }

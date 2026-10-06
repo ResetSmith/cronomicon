@@ -167,6 +167,10 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.log.Warn("-allow-watch is set but -watch-paths is empty; nothing will be watched")
 	}
 
+	// Report the trust store once at startup: a known_hosts seeded on this host
+	// by hand is otherwise invisible to the server until somebody asks.
+	go a.reportKnownHosts(ctx)
+
 	ticker := time.NewTicker(a.cfg.PollInterval)
 	defer ticker.Stop()
 
@@ -247,7 +251,11 @@ func (a *Agent) reregister(ctx context.Context, reason string) {
 	_ = discardIdentity(a.cfg.IdentityFile)
 	if rerr := a.register(ctx); rerr != nil {
 		a.log.Error("re-register failed", "error", rerr)
+		return
 	}
+	// A new id is a new runner as far as the server is concerned, and it knows
+	// nothing of this file until told.
+	go a.reportKnownHosts(ctx)
 }
 
 // pollOnce performs one poll and dispatches its assignment + control ops. It
@@ -336,8 +344,15 @@ func (a *Agent) handleControl(ctx context.Context, control []runnerproto.PollCon
 			// loop (dials can be slow / time out).
 			hosts := c.Hosts
 			go a.handleKeyscan(ctx, hosts)
+		case "untrust-hosts":
+			a.handleUntrustHosts(c.Entries)
 		case "trust-hosts":
 			a.handleTrustHosts(c.Entries)
+		case "known-hosts-report":
+			// The server sends this AFTER any untrust/trust ops in the same
+			// poll, and those two are applied synchronously above, so the file
+			// is read as they left it. Only the upload leaves the poll loop.
+			go a.reportKnownHosts(ctx)
 		}
 	}
 }

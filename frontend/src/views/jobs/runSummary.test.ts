@@ -35,10 +35,7 @@ const base = (over: Partial<RunSummaryInput> = {}): RunSummaryInput => ({
   jobSshUser: "",
   jobSshCredential: "",
   identityCapable: true,
-  effectivePin: "",
-  jobPin: "",
-  pinApplies: true,
-  pinChanged: false,
+  boundRunners: [],
   whenPhrase: "now",
   deferred: false,
   ansCheck: false,
@@ -225,38 +222,6 @@ describe("buildRunSummary — where it runs", () => {
   });
 });
 
-describe("buildRunSummary — the runner pin (RS-1's row, promoted)", () => {
-  it("states an inherited pin without accenting it", () => {
-    // Stating where a run goes is not the same as flagging that somebody moved
-    // it. The row is the fact; the accent is the change.
-    const r = row(base({ effectivePin: "vlan-dmz", jobPin: "vlan-dmz" }), "method", "pin")!;
-    expect(r.value).toBe("vlan-dmz");
-    expect(r.accent).toBeUndefined();
-    expect(r.note).toBeUndefined();
-  });
-
-  it("accents a re-pinned run and names the job's default", () => {
-    const r = row(base({ effectivePin: "vlan-lab", jobPin: "vlan-dmz", pinChanged: true }), "method", "pin")!;
-    expect(r.value).toBe("vlan-lab");
-    expect(r.accent).toBe("warning");
-    expect(r.note).toBe("job default: vlan-dmz");
-  });
-
-  it("reads 'unpinned' when a run is deliberately sent to the general pool", () => {
-    const r = row(base({ effectivePin: "", jobPin: "vlan-dmz", pinChanged: true }), "method", "pin")!;
-    expect(r.value).toBe("unpinned");
-    expect(r.accent).toBe("warning");
-  });
-
-  it("is absent on an SSH run, where a pin means nothing", () => {
-    expect(row(base({ effectivePin: "vlan-dmz", pinApplies: false }), "method", "pin")).toBeUndefined();
-  });
-
-  it("is absent when there is no pin anywhere", () => {
-    expect(row(base(), "method", "pin")).toBeUndefined();
-  });
-});
-
 describe("buildRunSummary — when & advanced", () => {
   it("reads 'now' quietly, and accents a deferred run as info", () => {
     expect(row(base(), "timing", "when")!.accent).toBeUndefined();
@@ -301,5 +266,20 @@ describe("buildRunSummary — label omission", () => {
     for (const k of ["targets", "method"]) {
       expect(group(base(), k)!.rows.every((r) => r.label !== "")).toBe(true);
     }
+  });
+});
+
+describe("buildRunSummary — where a bound scope's run lands (SB)", () => {
+  it("names the runners the scope is bound to, without accenting it", () => {
+    // A fact about the scope, not a choice made in this dialog: nothing here can
+    // change it, so it is stated and never flagged as a deviation.
+    const r = row(base({ boundRunners: ["runner-dmz-01", "runner-dmz-02"] }), "method", "runsOn")!;
+    expect(r.value).toBe("runner-dmz-01, runner-dmz-02");
+    expect(r.accent).toBeUndefined();
+    expect(r.note).toBe("bound to the scope");
+  });
+
+  it("is absent when the scope is not bound", () => {
+    expect(row(base(), "method", "runsOn")).toBeUndefined();
   });
 });

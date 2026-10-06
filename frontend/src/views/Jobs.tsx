@@ -4,6 +4,7 @@ import { api, csrfHeader, fetchCapabilities } from "../api/client";
 import { useGet, rows, paged, useClientPager, useColumnWidths, useInlineAnnotation, useInlineTags, useTableSort, useToast } from "../hooks";
 import { AnnotationBanner, AnnotationSection, CriticalChip, annotationOf, type Annotation } from "../components/Annotation";
 import { c } from "../theme";
+import { RunsOn, useBoundRunners } from "./scopes/ScopeRunners";
 import { DOC_LINKS } from "../components/docLinks";
 import { agencySuffix, ambiguousNames } from "../utils/disambiguate";
 import type { components } from "../api/schema";
@@ -16,7 +17,6 @@ import { type SortColumn } from "../utils/sort";
 import { RevisionHistory } from "./RevisionHistory";
 import { RunAnalytics } from "../components/RunAnalytics";
 import { JobEffectiveReferences, JobKeyField, ReferencePreflightPanel, useRunReferencePreflight } from "../components/ReferenceBindings";
-import { RunnerPinInput, RunnerPinValue, useRunnerTags } from "../components/RunnerPin";
 import { FolderBrowser } from "../components/FolderBrowser";
 import { isIdentityCapable, isRunnerOnly, type Executor } from "../runtypes";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
@@ -363,11 +363,6 @@ export function Jobs() {
       ansibleExtraVars?: Record<string, string>;
       // AR — "When to run": defer the run to an ISO instant (empty = now).
       runAt?: string;
-      // RT-3 — per-run runner pin. Tri-state, and the middle state is the point:
-      // undefined inherits the job's effective pin, "" runs THIS run unpinned
-      // even though the job is pinned, and a tag pins it. Not folded into the
-      // truthiness guards below for that reason — see the assignment.
-      runnerTag?: string;
     },
     // RX-4 — what a stop MEANT. Only read for verb "kill"; undefined sends no
     // body, which the server records as the unclassified `killed`.
@@ -399,13 +394,8 @@ export function Jobs() {
       ansibleBecomeUser?: string;
       ansibleExtraVars?: Record<string, string>;
       runAt?: string;
-      runnerTag?: string;
     } = {};
     if (runOpts?.scope) runBody.scope = runOpts.scope;
-    // RT-3 — `!== undefined`, never truthiness. "" is a decision (run unpinned),
-    // not an absent value, and a `if (runOpts?.runnerTag)` here would silently
-    // drop the break-glass case and let the job's pin apply after all.
-    if (runOpts?.runnerTag !== undefined) runBody.runnerTag = runOpts.runnerTag;
     if (runOpts?.executor) runBody.executor = runOpts.executor;
     if (runOpts?.env && Object.keys(runOpts.env).length > 0) runBody.env = runOpts.env;
     if (runOpts?.targetHosts && runOpts.targetHosts.length > 0) runBody.targetHosts = runOpts.targetHosts;
@@ -928,7 +918,7 @@ export function Jobs() {
           nameAmbiguous={ambiguousJobNames.has(runFor.name ?? "")}
           busy={busyId === runFor.id}
           onCancel={() => setRunFor(null)}
-          onRun={async (scope, executor, env, targetHosts, targetGroups, ansibleLimit, audit, references, identity, ansibleOpts, placement) => {
+          onRun={async (scope, executor, env, targetHosts, targetGroups, ansibleLimit, audit, references, identity, ansibleOpts) => {
             const res = await act(runFor, "run", {
               scope,
               executor,
@@ -940,10 +930,6 @@ export function Jobs() {
               references,
               ...audit,
               ...identity,
-              // RT-3 — spread, so an absent runnerTag stays absent rather than
-              // becoming an explicit undefined the body-builder would have to
-              // re-distinguish.
-              ...(placement ?? {}),
             });
             // Keep the dialog open on an invalid-executor rejection so the
             // operator can pick a different executor; close on success.
@@ -1017,12 +1003,13 @@ export function Jobs() {
 // stay in sync); onTagsSaved propagates an edit back up for the optimistic table
 // update. Tags are operator-owned and SQLite-only (tags-support.md D6).
 function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit, resolveAnnotation, onSaveAnnotation, annotationErr }: { jobId?: number; fallback: Job; tags: string[]; onSaveTags: (tags: string[]) => void; tagErr?: string; actions?: React.ReactNode; canEdit?: boolean; resolveAnnotation?: (base: Annotation) => Annotation; onSaveAnnotation?: (next: Annotation) => void; annotationErr?: string }) {
-  // RT-Q9 — what is displayed is the RESOLVED answer, straight from the server;
-  // the detail never re-implements the pin precedence locally.
-  const { tags: runnerTags } = useRunnerTags();
   const { data } = useGet<Job>(() => api.GET("/jobs/{jobId}", { params: { path: { jobId: jobId! } } }), [jobId]);
   const j = data ?? fallback;
   const name = j.name ?? fallback.name ?? "";
+  // SB — which runners this job's scope is bound to. The job says nothing about
+  // it (that was the runner-tag pin, retired): where it runs is the scope's fact,
+  // shown here because "where will this run" is asked of the job.
+  const { bound: boundRunners } = useBoundRunners(j.scope);
   // RX-16 — the whole edge list in one fetch; both directions are derived from
   // it. Safe here because exactly one JobDetail is mounted at a time (`expanded`
   // is a single id, not a set).
@@ -1073,14 +1060,10 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
   // unrelated reasons and keep the enumeration, which is where it earns its keep.
   const overview: { label: string; value: React.ReactNode; mono?: boolean; present: boolean; runFact?: boolean }[] = [
     { label: "Executor", value: executorLabel(j), present: true },
-    // RT-3 — "Run on" sits immediately after Executor: the two answer adjacent
+    // SB — "Run on" sits immediately after Executor: the two answer adjacent
     // halves of where this runs. Always present, because "any eligible runner"
     // is a real and useful answer rather than a missing value.
-    {
-      label: "Run on",
-      value: <RunnerPinValue declared={j.runnerTag} tags={runnerTags} />,
-      present: true,
-    },
+    { label: "Run on", value: <RunsOn bound={boundRunners} scope={j.scope} />, present: true },
     { label: "Next run", value: j.status === "paused" ? "—" : fmtWhen(j.nextRunAt), present: j.status !== "paused" && j.nextRunAt != null, runFact: true },
     // AR — a parked ad-hoc run someone scheduled from the Run dialog; distinct
     // from Next run (the standing-schedule projection). Cancel lives on
@@ -1514,12 +1497,6 @@ export function RunDialog({
       ansibleBecomeUser?: string;
       ansibleExtraVars?: Record<string, string>;
     },
-    // RT-3 — per-run placement. Grouped like `identity`, and appended AFTER
-    // ansibleOpts rather than beside it: every one of these trailing params is
-    // positional, so inserting in the middle silently re-binds the existing
-    // callers' arguments. runnerTag undefined ⇒ inherit the job's effective pin,
-    // "" ⇒ run this once unpinned, "x" ⇒ pin this run to x.
-    placement?: { runnerTag?: string },
   ) => Promise<{ ok: boolean; code?: string; message?: string }>;
   onDone: () => void;
 }) {
@@ -1533,10 +1510,24 @@ export function RunDialog({
   // choice here (a run is always concrete), but the dialog SAYS so instead of
   // presenting the resolution as if the job had pinned it.
   const executorAuto = job.executor !== "ssh" && job.executor !== "runner";
-  // Default the picker: runner-only run-types force Runner; otherwise prefer the
-  // job's own executor when it's a concrete choice, else SSH (the shell default).
-  const defaultExecutor: Executor = runnerOnly ? "runner" : job.executor === "runner" ? "runner" : "ssh";
-  const [executor, setExecutor] = useState<Executor>(defaultExecutor);
+  // SB — the runners the run's EFFECTIVE scope is bound to (`scope` is this
+  // dialog's own state, so a per-run scope override is judged against the scope
+  // the run will actually use). A bound scope's work goes to those runners, and
+  // the server refuses a run that asks for SSH on one — so on a bound scope SSH
+  // is simply not on offer, exactly as it is not for a runner-only run type.
+  const { bound: boundRunners } = useBoundRunners(scope);
+  const scopeBound = boundRunners.length > 0;
+  const sshUnavailable = runnerOnly || scopeBound;
+  // Default the picker: runner-only run-types and bound scopes force Runner;
+  // otherwise prefer the job's own executor when it's a concrete choice, else
+  // SSH (the shell default).
+  const defaultExecutor: Executor = sshUnavailable ? "runner" : job.executor === "runner" ? "runner" : "ssh";
+  // The operator's own choice, null until they make one. Derived rather than
+  // seeded into state: the binding arrives after mount and changes with the
+  // scope field, and a state seeded from the first render would keep saying SSH
+  // for a run the server is about to refuse.
+  const [executorChoice, setExecutor] = useState<Executor | null>(null);
+  const executor: Executor = sshUnavailable ? "runner" : executorChoice ?? defaultExecutor;
   const [runErr, setRunErr] = useState<string | null>(null);
   // F1 per-run env overrides + F2 host subset within the bound scope.
   const [envRows, setEnvRows] = useState<{ key: string; value: string }[]>([]);
@@ -1579,9 +1570,6 @@ export function RunDialog({
   const credsQ = useGet<{ label?: string }[]>(() => api.GET("/ssh/credentials"), []);
   const credentialLabels = (credsQ.data ?? []).map((cr) => cr.label ?? "").filter(Boolean);
 
-  const chosen = scopes.find((s) => s.scope === scope);
-  const chosenTypes = chosen?.capability?.types;
-  const incompatible = chosen && job.type && chosenTypes && chosenTypes.length > 0 && !chosenTypes.includes(job.type);
 
   // Hosts come from the effective scope (the override, else the job's own scope).
   const effScope = scope || job.scope || "";
@@ -1622,21 +1610,6 @@ export function RunDialog({
     [job.id],
   );
   const jobDetail = detailQ.data ?? job;
-
-  // RT-3 — the per-run pin. `null` means "inherit the job's effective pin" and
-  // is the untouched default; a string (including "") is an explicit per-run
-  // decision. The job-level answer is runnerTagEffective, resolved SERVER-side
-  // (RT-Q7) so the dialog never re-implements the precedence.
-  // RT-3 — from jobDetail, NEVER from `job`. Both pin fields are detail-only on
-  // the API, and `job` is the catalog LIST row the dialog was opened from, where
-  // they are undefined. Reading it there prefills "any
-  // runner" for a pinned job — the dialog would then say the run goes anywhere
-  // while the server correctly sends it to the pin. Caught on screen; tsc is
-  // happy either way because both shapes are the same optional type.
-  const jobPin = jobDetail.runnerTagEffective ?? "";
-  const [runnerTagOverride, setRunnerTagOverride] = useState<string | null>(null);
-  const { tags: runnerTags, loading: pinLoading } = useRunnerTags();
-  const effectivePin = runnerTagOverride ?? jobPin;
 
   // UDV1 — declared run inputs. Pre-fill each with its default so an untouched default
   // is still submitted (UDV8). Answers fold into the per-run env overrides.
@@ -1824,18 +1797,16 @@ export function RunDialog({
             ansibleExtraVars: Object.keys(ansExtraVarMap).length > 0 ? ansExtraVarMap : undefined,
           }
         : undefined,
-      // RT-3 — sent only when the operator actually touched the control, so an
-      // ordinary run's body is byte-identical to a pre-RT one and the job's own
-      // pin resolves server-side. When they DID touch it, "" is forwarded as-is:
-      // that is the per-run unpin, not an absent value.
-      runnerTagOverride !== null ? { runnerTag: runnerTagOverride } : undefined,
     );
     if (res.ok) {
       onDone();
-    } else if (res.code === "invalid_executor") {
+    } else if (res.code === "invalid_executor" || res.code === "scope_requires_runner") {
       // Force the runner choice and keep the dialog open so the operator can retry.
+      // scope_requires_runner is the same remedy for a different reason: the
+      // run's scope is bound to runners. The dialog normally knows that before
+      // Run is pressed; this is the case where the binding was made in between.
       setExecutor("runner");
-      setRunErr(res.message ?? "SSH cannot run this job type — use the runner executor.");
+      setRunErr(res.message ?? "SSH cannot run this job — use the runner executor.");
     } else if (res.code === "key_binding_requires_runner") {
       // KB — the run RESOLVED to the ssh executor and the job binds an SSH key the
       // executor cannot deliver. Unlike invalid_executor this does NOT force the
@@ -1928,16 +1899,11 @@ export function RunDialog({
   }, [advancedOpen]);
   const requireReview = declaredPrompts.length > 0;
   const reviewGate = requireReview && !targetsVisited;
-  // An incompatible scope is a warning the operator has to see, so it opens the
-  // fold for them — via an effect rather than by forcing `open`, which would leave
-  // the toggle dead.
-  useEffect(() => {
-    if (incompatible) setTargetsOpen(true);
-  }, [incompatible]);
   // T1.7 — the reference preflight. A reference that will not resolve in the
-  // EFFECTIVE scope fails the run closed at dispatch, so it earns exactly the same
-  // treatment as an incompatible scope: it shows in the collapsed summary and
-  // springs the fold open. The check is owned HERE, not inside the fold's panel,
+  // EFFECTIVE scope fails the run closed at dispatch, so it is a warning the
+  // operator has to see: it shows in the collapsed summary and springs the fold
+  // open — via an effect rather than by forcing `open`, which would leave the
+  // toggle dead. The check is owned HERE, not inside the fold's panel,
   // because Disclosure unmounts its children while collapsed — a check that only
   // runs once opened could never be what opens it.
   // V2-11 — the operator's per-run reference additions. State lives HERE (not in
@@ -1975,12 +1941,9 @@ export function RunDialog({
     executorAuto && executor === defaultExecutor ? `Auto → ${executorWord}` : executorWord,
     sshUser.trim() ? `as ${sshUser.trim()}` : "",
     sshCredential ? `key ${sshCredential}` : "",
-    // RT-3 — the collapsed line states the pin whenever there IS one, and states
-    // an explicit per-run unpin too. The section's whole job is that the facts
-    // which reinterpret a run stay visible while it is folded, and "this went
-    // somewhere other than where the job says" is exactly such a fact.
-    executor !== "ssh" && effectivePin ? `on ${effectivePin}` : "",
-    executor !== "ssh" && runnerTagOverride === "" && jobPin !== "" ? "unpinned for this run" : "",
+    // SB — the collapsed line names the bound runners: the section's job is that
+    // the facts which decide where a run goes stay visible while it is folded.
+    scopeBound ? `on ${boundRunners.map((b) => b.name).join(", ")}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -2067,22 +2030,6 @@ export function RunDialog({
     deviations.push({
       label: "Connect as",
       detail: [sshUser.trim() && `user ${sshUser.trim()}`, sshCredential && `key ${sshCredential}`].filter(Boolean).join(" · "),
-    });
-  }
-  // RS-1.1 — a per-run runner pin IS a deviation. RT-3 (v1.3.2) landed after this
-  // list was built and nobody extended it, so re-pinning a run to another tag —
-  // or explicitly unpinning it from the job's — produced no row, never forced the
-  // confirm window, and never disarmed the button. All three consumers of this
-  // array missed it. "This went somewhere other than where the job says" is
-  // exactly the class of fact the RT-3 collapsed-summary comment above says must
-  // stay visible.
-  //
-  // Guarded on executor like that summary is: a pin is meaningless on an SSH run,
-  // and the submit path only carries it for runner runs.
-  if (executor !== "ssh" && runnerTagOverride !== null) {
-    deviations.push({
-      label: "Runner pin",
-      detail: `${effectivePin || "unpinned"} — job default: ${jobPin || "(none)"}`,
     });
   }
   if (ansCheck) deviations.push({ label: "Check mode", detail: "dry run — applies nothing" });
@@ -2172,16 +2119,13 @@ export function RunDialog({
     executorChanged: recapExecutorChanged,
     sshUser,
     sshCredential,
-    // From `jobDetail`, never `job` — the identity fields are detail-only, the
-    // same reason `jobPin` above reads from it. Without these the rail showed a
-    // job-declared identity as nothing at all.
+    // From `jobDetail`, never `job` — the identity fields are detail-only on
+    // the API, and `job` is the catalog LIST row the dialog was opened from.
+    // Without these the rail showed a job-declared identity as nothing at all.
     jobSshUser: jobDetail.sshUser ?? "",
     jobSshCredential: jobDetail.sshCredential ?? "",
     identityCapable,
-    effectivePin,
-    jobPin,
-    pinApplies: executor !== "ssh",
-    pinChanged: runnerTagOverride !== null,
+    boundRunners: executor === "runner" ? boundRunners.map((b) => b.name) : [],
     whenPhrase,
     deferred: !!runAt,
     ansCheck,
@@ -2651,8 +2595,7 @@ export function RunDialog({
               paragraph explaining a checkbox they haven't touched.
             · what could GO WRONG or LEAK (both plaintext-secret caveats, the
               reserved-extra-var guard, the subset/group-subset and limit-conflict
-              verdicts, the RB-26 unscoped-run wording, the incompatible-scope
-              warning) → always. Suppressing a warning until someone engages with the
+              verdicts, the RB-26 unscoped-run wording) → always. Suppressing a warning until someone engages with the
               control is exactly backwards: the operator who most needs it is the one
               who isn't looking.
           Nothing is deleted; the same words appear the moment the field is engaged.
@@ -2696,16 +2639,10 @@ export function RunDialog({
           {scopes.map((s) => (
             <option key={s.id ?? s.scope} value={s.scope ?? ""}>
               {s.scope}
-              {s.capability?.types?.length ? ` — ${s.capability.types.join(", ")}` : ""}
             </option>
           ))}
         </select>
       </FormField>
-      {incompatible && (
-        <div style={{ fontSize: c.fontSm, color: c.warning, background: c.warningBg, border: `1px solid ${c.warning}30`, borderRadius: c.radiusSurface, padding: "8px 10px", marginBottom: 8 }}>
-          ⚠ {scope} does not declare <strong>{job.type}</strong> support. The run is allowed but may stay queued waiting for a capable runner.
-        </div>
-      )}
 
 
       {/* F2/RP-1 — host subset within the bound scope, offered for BOTH executors.
@@ -2830,11 +2767,17 @@ export function RunDialog({
       <FormField
         label="Executor"
         helperMode="engaged"
-        active={runnerOnly || executorAuto || executor !== defaultExecutor}
+        active={sshUnavailable || executorAuto || executor !== defaultExecutor}
         helper={
           runnerOnly ? (
             <>
               <strong>{job.type}</strong> requires a runner with the local toolchain — SSH is unavailable for this run-type.
+            </>
+          ) : scopeBound ? (
+            <>
+              Scope <strong>{scope}</strong> is bound to <strong>{boundRunners.map((b) => b.name).join(", ")}</strong>,
+              so this run goes to {boundRunners.length === 1 ? "that runner" : "those runners"} — SSH from the server is
+              unavailable for it.
             </>
           ) : (
             <>
@@ -2849,8 +2792,14 @@ export function RunDialog({
             label="SSH"
             sub={executorAuto && defaultExecutor === "ssh" ? "In-app SSH · job default (Auto)" : "In-app SSH"}
             selected={executor === "ssh"}
-            disabled={runnerOnly}
-            title={runnerOnly ? `SSH can't run ${job.type} — it needs a runner with the local ${job.type} toolchain.` : undefined}
+            disabled={sshUnavailable}
+            title={
+              runnerOnly
+                ? `SSH can't run ${job.type} — it needs a runner with the local ${job.type} toolchain.`
+                : scopeBound
+                  ? `Scope ${scope} is bound to runners, so its jobs run on those — unbind the scope to use SSH.`
+                  : undefined
+            }
             onClick={() => setExecutor("ssh")}
           />
           <ExecutorChoice
@@ -2861,83 +2810,6 @@ export function RunDialog({
           />
         </div>
       </FormField>
-
-      {/* RT-3 — the per-run runner pin, directly under Executor: the two answer
-          "which kind of executor" and "which runner" in that order.
-
-          Hidden on the SSH executor rather than disabled-with-a-caveat: there is
-          no runner to pin, and the server 422s the combination (RT-Q5), so
-          offering a control that can only produce a rejection is worse than not
-          offering one. The Connect-as field below is hidden on runner-only types
-          for the mirror-image reason.
-
-          helperMode="engaged" per RU-11's split: the prose describes what the
-          control DOES, so it appears on focus or when the value is non-default.
-          The exception is the 0-online case, which is a WARNING — the run will
-          queue — and warnings are never suppressed. */}
-      {executor !== "ssh" && (
-        <FormField
-          label="Run on"
-          helperMode="engaged"
-          active={runnerTagOverride !== null || jobPin !== ""}
-          helper={
-            effectivePin === "" ? (
-              runnerTagOverride === "" && jobPin !== "" ? (
-                <>
-                  This run ignores the job's pin (<span style={{ fontFamily: c.mono }}>{jobPin}</span>) and may be
-                  claimed by any eligible runner. The job itself is unchanged.
-                </>
-              ) : (
-                <>Any runner eligible for this job's department and run type may claim it.</>
-              )
-            ) : (
-              <>
-                {/* Deliberately NOT repeating the capacity here: the input prints
-                    it directly underneath, and the zero-online case gets its own
-                    warning block below. Saying it three times made the pinned
-                    state read as three separate problems. */}
-                Only runners tagged <strong>{effectivePin}</strong> may claim this run
-                {runnerTagOverride === null && jobPin !== "" ? " — the job's pin" : ""}.
-              </>
-            )
-          }
-        >
-          <RunnerPinInput
-            id={`run-pin-${job.id ?? "x"}`}
-            value={effectivePin}
-            onChange={(v) => setRunnerTagOverride(v)}
-            tags={runnerTags}
-          />
-          {/* RU-11 — a WARNING, so it is never suppressed by helperMode="engaged".
-              A pin with nothing online is legal (RT-Q4: the runner may be
-              enrolled in a minute) but the run WILL sit queued, and that is the
-              one thing an operator pressing Run needs to know before they do.
-              Guarded on the tag list having loaded, so a slow /runners fetch
-              cannot flash "no runner carries this" over a perfectly good pin. */}
-          {effectivePin !== "" && !pinLoading &&
-            !runnerTags.some((t) => t.tag.toLowerCase() === effectivePin.trim().toLowerCase() && t.online > 0) && (
-              <div style={{ fontSize: c.fontSm, color: c.warning, background: c.warningBg, border: `1px solid ${c.warning}30`, borderRadius: c.radiusSurface, padding: "8px 10px", marginTop: 8 }}>
-                ⚠ No runner tagged <strong>{effectivePin}</strong> is online. The run is accepted but stays queued until
-                one appears — or run it on any runner instead.
-              </div>
-            )}
-          <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-            {/* The break-glass control. Explicitly separate from clearing the
-                field, because clearing to "" IS the unpin — this button just
-                makes the decision reachable in one click and names it. */}
-            {effectivePin !== "" && (
-              <Btn small onClick={() => setRunnerTagOverride("")}>
-                Run on any runner
-              </Btn>
-            )}
-            {runnerTagOverride !== null && (
-              <Btn small onClick={() => setRunnerTagOverride(null)}>
-                Use the job's pin{jobPin ? ` (${jobPin})` : " (none)"}
-              </Btn>
-            )}
-          </div>
-        </FormField>
-      )}
 
       {/* CA — per-run "connect as" identity. Hidden for runner-only run types
           (ansible/terraform), where identity belongs to the inventory/toolchain

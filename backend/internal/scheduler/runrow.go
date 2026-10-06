@@ -18,9 +18,8 @@ import (
 // second appears.
 //
 // Why: five hand-rolled column lists drifted four times in eleven days (the
-// become-file token off the cron path; workflow children with no requires_json,
-// no checkout snapshot and no runner_tag; cron runs with no unclaimable
-// reason). claimRun and the manifest read dispatch policy from THIS row, so a
+// become-file token off the cron path; workflow children with no requires_json
+// and no checkout snapshot; cron runs with no unclaimable reason). claimRun and the manifest read dispatch policy from THIS row, so a
 // column a writer forgot was not a default — it was a policy the run did not
 // have. One writer, one column list, one place to add the next field.
 //
@@ -49,8 +48,8 @@ type RunRow struct {
 	// skipped step. Two consequences, both deliberate:
 	//   - started_at and completed_at are set to created_at, so History shows
 	//     a zero-length run rather than one that never started;
-	//   - the dispatch-policy snapshot (checkout_sha/entry, requires_json,
-	//     runner_tag) is NOT taken. Those columns are what claimRun and the
+	//   - the dispatch-policy snapshot (checkout_sha/entry, requires_json) is
+	//     NOT taken. Those columns are what claimRun and the
 	//     manifest read to dispatch; a row that cannot be dispatched carries
 	//     none, exactly as the skipped writers always wrote.
 	// script_ref, content_hash and entity_code ARE still snapshotted: they
@@ -154,7 +153,7 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			 entity_code, script_ref, content_hash,
 			 checkout_sha, checkout_entry, requires_json,
 			 reaction_depth, reacted_to_run_id, priority, scheduled_for,
-			 runner_tag, job_uid)
+			 job_uid)
 		VALUES (?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
@@ -209,17 +208,6 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 				        END
 				   FROM jobs WHERE uid = ?) END,
 			?, ?, ?, ?,
-			-- RT-2: the runner pin. When the producer expressed an opinion (?=1)
-			-- its value wins verbatim, INCLUDING the empty string, which is how a
-			-- manual trigger says "run this unpinned even though the job is
-			-- pinned". When it did not, a queued row inherits the job's declared
-			-- pin right here — doing it in SQL is what lets every producer inherit
-			-- without being modified. A terminal row inherits nothing. NULLIF
-			-- collapses both empties to NULL so the claim predicate keeps its
-			-- cheap IS-NULL short-circuit on the common path.
-			NULLIF(CASE WHEN ? = 1 THEN ?
-			            WHEN ? = 1 THEN (SELECT runner_tag FROM jobs WHERE uid = ?)
-			       END, ''),
 			-- R2-1/R2-5: the identity, resolved once by resolveEnqueueUID.
 			NULLIF(?, ''))
 	`,
@@ -231,7 +219,6 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 		r.EntityCode, uid, uid, uid,
 		snap, uid, snap, uid, snap, uid,
 		r.ReactionDepth, nullStr(r.ReactedToRunID), r.Priority, nullStr(r.ScheduledFor),
-		r.runnerTagExplicit(), r.runnerTagValue(), snap, uid,
 		uid)
 	if err != nil {
 		return "", fmt.Errorf("insert run: %w", err)

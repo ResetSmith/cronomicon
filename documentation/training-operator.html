@@ -752,8 +752,8 @@
         <summary><span class="tr-from">Agent Environment</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Scope</span><span></span></summary>
         <div class="tr-body">
             <p>A named set of hosts a job is allowed to run on. Closest thing to an agent environment, and
-                it does more: a scope also declares which run types it supports and can carry an Ansible
-                inventory.</p>
+                it does more: a scope can carry tags and an Ansible inventory, and an administrator can
+                bind it to the runners that reach its hosts.</p>
             <p>Crucially it is a <em>boundary</em>, not just a grouping — a run cannot reach a host that is
                 not in its scope. M5 covers this.</p>
         </div>
@@ -1215,6 +1215,9 @@
             <h4>Targeting and connection, in one place</h4>
             <p>The scope, then two ways to narrow within it — specific hosts, or inventory groups — then how
                 Cronomicon connects: which executor, and which identity to connect as.</p>
+            <p>On a scope an administrator has bound to runners, the executor is decided for you: SSH is
+                disabled, with the reason, and the run goes to the bound runners. There is nothing to pick
+                and no way to send it somewhere else.</p>
             <p>Both narrowing controls name the scope and count what is available (<em>5 available</em>), so
                 you are choosing from a known set rather than typing hostnames and hoping. Leave them alone
                 and the run uses the whole scope, which is M5's first lesson.</p>

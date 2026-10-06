@@ -3,7 +3,6 @@ package settings
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -13,7 +12,7 @@ func TestPutScopeInventory(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	id := db.NewID()
-	if _, err := pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, id); err != nil {
+	if _, err := pool.Exec(`INSERT INTO scopes(id,name,source,created_at) VALUES(?,'edge','cronomicon','t')`, id); err != nil {
 		t.Fatal(err)
 	}
 
@@ -37,13 +36,6 @@ func TestPutScopeInventory(t *testing.T) {
 	if hostCount != 1 {
 		t.Errorf("scope_hosts = %d, want 1 (web1)", hostCount)
 	}
-	// Capability unioned with the inferred ansible (from [all:vars] + ansible_user).
-	var types string
-	pool.QueryRow(`SELECT supported_types FROM scopes WHERE id=?`, id).Scan(&types)
-	if types == "" || !strings.Contains(types, "ansible") || !strings.Contains(types, "bash") {
-		t.Errorf("supported_types = %q, want bash + inferred ansible", types)
-	}
-
 	// Secret-bearing inventory → line errors, scope UNCHANGED.
 	_, lineErrs2, err2 := PutScopeInventory(ctx, pool, id, "[web]\nweb1 ansible_become_pass=hunter2\n", "ini", "op")
 	if err2 != nil {
@@ -75,7 +67,7 @@ func TestImportScopeHosts(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	id := db.NewID()
-	_, _ = pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, id)
+	_, _ = pool.Exec(`INSERT INTO scopes(id,name,source,created_at) VALUES(?,'edge','cronomicon','t')`, id)
 	raw := "[all:vars]\nansible_user=deploy\n[web]\nweb1 ansible_host=10.0.0.1\nweb2 ansible_host=10.0.0.2\n[web:vars]\ncronomicon_auth_key_env_var=EDGE_KEY\n"
 	if _, le, err := PutScopeInventory(ctx, pool, id, raw, "ini", "op"); err != nil || len(le) != 0 {
 		t.Fatalf("put: %v %v", err, le)
@@ -134,7 +126,7 @@ func TestPutScopeInventory_DegradeKeepsMembership(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 	id := db.NewID()
-	_, _ = pool.Exec(`INSERT INTO scopes(id,name,source,created_at,supported_types) VALUES(?,'edge','cronomicon','t','["bash"]')`, id)
+	_, _ = pool.Exec(`INSERT INTO scopes(id,name,source,created_at) VALUES(?,'edge','cronomicon','t')`, id)
 	// web[01:99] is an out-of-subset host range → degrades; web3 sits AFTER it.
 	doc, le, err := PutScopeInventory(ctx, pool, id, "[web]\nweb1\nweb2\nweb[01:99]\nweb3\n", "ini", "op")
 	if err != nil || len(le) != 0 {
@@ -157,9 +149,8 @@ func TestCreateScopeWithInventory(t *testing.T) {
 	// 1. Create with secret-bearing inventory -> should fail validation
 	secretInv := "[all:vars]\nansible_become_pass=hunter2\n"
 	_, err := CreateScope(ctx, pool, LocalScopeInput{
-		Scope:          "secscope",
-		SupportedTypes: []string{"bash"},
-		RawInventory:   &secretInv,
+		Scope:        "secscope",
+		RawInventory: &secretInv,
 	}, "op")
 	if err == nil {
 		t.Fatal("expected validation error for secret-bearing inventory")
@@ -171,9 +162,8 @@ func TestCreateScopeWithInventory(t *testing.T) {
 	// 2. Create with valid inventory
 	raw := "[web]\n10.0.0.1\n10.0.0.2\n[db]\n10.0.0.3\n"
 	sc, err := CreateScope(ctx, pool, LocalScopeInput{
-		Scope:          "invscope",
-		SupportedTypes: []string{"bash"},
-		RawInventory:   &raw,
+		Scope:        "invscope",
+		RawInventory: &raw,
 	}, "op")
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
@@ -201,9 +191,8 @@ func TestCreateScopeWithInventory(t *testing.T) {
 	// 3. Update scope with new inventory
 	updatedRaw := "[web]\n10.0.0.1\n"
 	_, _, err = UpdateScope(ctx, pool, sc.ID, LocalScopeInput{
-		Scope:          "invscope",
-		SupportedTypes: []string{"bash"},
-		RawInventory:   &updatedRaw,
+		Scope:        "invscope",
+		RawInventory: &updatedRaw,
 	}, "op")
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
@@ -216,10 +205,9 @@ func TestCreateScopeWithInventory(t *testing.T) {
 	// 4. Revert inventory to flat host list
 	emptyInv := ""
 	scFlat, _, err := UpdateScope(ctx, pool, sc.ID, LocalScopeInput{
-		Scope:          "invscope",
-		SupportedTypes: []string{"bash"},
-		Hosts:          []string{"192.168.1.1", "192.168.1.2"},
-		RawInventory:   &emptyInv,
+		Scope:        "invscope",
+		Hosts:        []string{"192.168.1.1", "192.168.1.2"},
+		RawInventory: &emptyInv,
 	}, "op")
 	if err != nil {
 		t.Fatalf("revert failed: %v", err)

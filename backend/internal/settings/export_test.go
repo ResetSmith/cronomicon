@@ -264,3 +264,69 @@ func TestExportAllIncludesAuthEvents(t *testing.T) {
 		t.Errorf("an unfiltered export omitted the auth trail: %+v", got)
 	}
 }
+
+// SB: the host-key ledger is its own export source, one row per key, and says
+// whether an approval is still in force.
+func TestExportHostKeyLedger(t *testing.T) {
+	pool := openTestPool(t)
+	seedAuditRows(t, pool)
+	for _, r := range []struct {
+		decision, fp string
+		superseded   any
+		prev         any
+	}{
+		{"approved", "SHA256:old", "2026-02-01T00:00:00Z", nil},
+		{"approved", "SHA256:new", nil, "SHA256:old"},
+		{"rejected", "SHA256:bad", "2026-01-15T00:00:00Z", nil},
+	} {
+		if _, err := pool.Exec(`
+			INSERT INTO host_key_ledger
+			    (batch_id, runner_id, runner_name, scope_name, host, host_name, key_type, fingerprint,
+			     known_hosts_line, decision, source, previous_fingerprint, actor, decided_at, superseded_at)
+			VALUES ('batch-1', 'r1', 'runner-dmz-01', 'dmz', '10.0.0.5', 'web01', 'ssh-ed25519', ?,
+			        '10.0.0.5 ssh-ed25519 AAAA', ?, 'scan', ?, 'alice', '2026-01-15T00:00:00Z', ?)`,
+			r.fp, r.decision, r.prev, r.superseded); err != nil {
+			t.Fatalf("seed ledger: %v", err)
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := ExportAudit(context.Background(), pool, &buf, "", "", []string{"hostKeys"}, "json"); err != nil {
+		t.Fatalf("ExportAudit hostKeys: %v", err)
+	}
+	var got []AuditRow
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("hostKeys export returned %d rows, want the 3 ledger rows only: %+v", len(got), got)
+	}
+	status := map[string]string{}
+	for _, r := range got {
+		if r.Source != "host_key_ledger" || r.Category != "hostKeys" || r.Target != "runner:runner-dmz-01" || r.Actor != "alice" {
+			t.Errorf("row lost its identity: %+v", r)
+		}
+		for _, want := range []string{"host=10.0.0.5", "hostName=web01", "scope=dmz", "keyType=ssh-ed25519", "source=scan", "batch=batch-1"} {
+			if !strings.Contains(r.Details, want) {
+				t.Errorf("details %q missing %q", r.Details, want)
+			}
+		}
+		switch {
+		case strings.Contains(r.Details, "fingerprint=SHA256:old"):
+			status["old"] = r.Action + "/" + r.Status
+		case strings.Contains(r.Details, "fingerprint=SHA256:new"):
+			status["new"] = r.Action + "/" + r.Status
+			if !strings.Contains(r.Details, "replaced=SHA256:old") {
+				t.Errorf("the replacement does not say what it replaced: %q", r.Details)
+			}
+		case strings.Contains(r.Details, "fingerprint=SHA256:bad"):
+			status["bad"] = r.Action + "/" + r.Status
+		}
+	}
+	want := map[string]string{"old": "approved/superseded", "new": "approved/in-force", "bad": "rejected/"}
+	for k, w := range want {
+		if status[k] != w {
+			t.Errorf("%s = %q, want %q", k, status[k], w)
+		}
+	}
+}

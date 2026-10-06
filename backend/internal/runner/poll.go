@@ -245,9 +245,9 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		// mid-poll keeps grabbing work for up to pollTimeout (30s).
 		var curStatus string
 		var resyncPending int
-		if err := s.db.QueryRowContext(r.Context(),
-			`SELECT status, resync_requested FROM runners WHERE id = ?`, runnerID).
-			Scan(&curStatus, &resyncPending); err != nil {
+		var hostKeyWork bool
+		if err := s.db.QueryRowContext(r.Context(), hostKeyWorkProbe, runnerID).
+			Scan(&curStatus, &resyncPending, &hostKeyWork); err != nil {
 			// Runner vanished (deregistered/reaped) mid-poll: stop claiming.
 			break
 		}
@@ -281,6 +281,19 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 				PollAfterMs: 0,
 			}, settingsPayload, watches)
 			return
+		}
+
+		// Host-key work that lands while this long-poll is in-flight (SB): a scan
+		// an operator just asked for, keys they just approved, a report they
+		// asked to see. An operator is watching a review screen for the answer,
+		// so it is delivered within a pollInterval like a resync, not after the
+		// 30s timeout. The probe rides the status read above, so an idle loop
+		// pays nothing extra for it.
+		if hostKeyWork {
+			if more := s.appendHostKeyControl(r.Context(), runnerID, nil); len(more) > 0 {
+				writePoll(w, runnerproto.PollResponse{Control: more, PollAfterMs: 0}, settingsPayload, watches)
+				return
+			}
 		}
 
 		// Re-drain pending control each iteration: an operator kill enqueued while
@@ -488,10 +501,10 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	ts := now()
 
 	// Atomic claim: find the oldest queued, capability-matched, requirement-
-	// satisfied, agency-eligible, runner-tag-pinned, injection-gated run and
+	// satisfied, agency-eligible, scope-bound, injection-gated run and
 	// transition it to running in a single UPDATE ... RETURNING (SQLite 3.35+).
 	// Placeholders in order: runner_id, started-at ts, caps (run_type), caps
-	// (requires⊆), agency runnerID ×2, pin runnerID, injectFlag.
+	// (requires⊆), agency runnerID ×2, binding runnerID, injectFlag.
 	var (
 		traceID string
 		jobName string
@@ -540,24 +553,38 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			    OR (COALESCE(runs.agencies_json, '[]') = '[]'
 			        AND NOT EXISTS (SELECT 1 FROM runner_agencies WHERE runner_id = ?))
 			  )
-			  -- RT-1 runner pin (mig. 1070). An unpinned run — NULL or '' — must
-			  -- behave exactly as it did pre-1070, so the short-circuit comes
-			  -- first and no pinned-run machinery is reachable for it.
+			  -- SB-1 scope binding (mig. 1180). A scope with rows in scope_runners
+			  -- is claimable only by a runner named there; a scope with none, and
+			  -- a run with no scope, behave exactly as before.
 			  --
-			  -- This is ANDed with the agency branch above, deliberately and
-			  -- permanently (RT-Q2): the pin NARROWS the eligible set and must
-			  -- never widen it. Written as an OR — or moved inside the agency
+			  -- ANDed with the agency branch above, deliberately and permanently
+			  -- (the RT-Q2 rule, inherited from the runner-tag pin this
+			  -- replaced): a binding NARROWS the eligible set and must never
+			  -- widen it. Written as an OR — or moved inside the agency
 			  -- parenthesis — it would become a route to a runner agency
-			  -- isolation denies, which is the one thing this feature must not be.
+			  -- isolation denies.
 			  --
-			  -- Probes runner_tags, not json_each(runners.tags): the JSON form
-			  -- re-parses an array per candidate row per poll, which is the
-			  -- shape that measured +350% when the agency predicate was written
-			  -- that way (mig. 690 header). The composite PK's leading column
-			  -- makes this a seek.
-			  AND (runs.runner_tag IS NULL OR runs.runner_tag = ''
-			       OR EXISTS (SELECT 1 FROM runner_tags rt
-			                  WHERE rt.runner_id = ? AND rt.tag = runs.runner_tag))
+			  -- Evaluated live rather than snapshotted at enqueue, so a queued
+			  -- run follows a runner swap. And read through the rows, never
+			  -- through runners: a deregistered runner leaves its row behind
+			  -- (no FK), the scope still has a row, and nothing claims — closed,
+			  -- not silently widened to the whole agency.
+			  --
+			  -- Deliberately CORRELATED, which is the opposite of the lesson the
+			  -- agency branch records, and it was measured rather than assumed
+			  -- (poll_claim_bench_test.go, SB-1): the uncorrelated form — "scope
+			  -- NOT IN (scopes bound to somebody else)" — rebuilds three list
+			  -- subqueries and two bloom filters on every poll and cost +40%,
+			  -- with nothing bound at all. These two probes are keyed seeks
+			  -- (scopes.name is UNIQUE, scope_runners' PK leads with scope_id)
+			  -- that run only for candidate rows, and cost ~10%.
+			  AND (runs.scope IS NULL
+			       OR NOT EXISTS (SELECT 1 FROM scope_runners sr
+			                        JOIN scopes sc ON sc.id = sr.scope_id
+			                       WHERE sc.name = runs.scope)
+			       OR EXISTS (SELECT 1 FROM scope_runners sr
+			                    JOIN scopes sc ON sc.id = sr.scope_id
+			                   WHERE sc.name = runs.scope AND sr.runner_id = ?))
 			  -- secret-injection gate: a run whose job/script declares reference
 			  -- bindings — or that carries a per-run ssh_credential (CA-3b, an
 			  -- implicit key binding whose material ships in the manifest) — is

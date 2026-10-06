@@ -2,35 +2,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ScopePicker } from "./ScopePicker";
-import type { components } from "../api/schema";
-
-type Scope = components["schemas"]["Scope"];
 
 afterEach(cleanup);
 
+// "envonly" stands for a scope that exists only as an env-var scope name — the
+// suggestion list is a union, and every entry renders the same way.
 const SUGGESTIONS = ["Dev", "Prod", "envonly"];
-// Prod has capability types; Dev has empty types; "envonly" is in the suggestion union
-// (e.g. an env-var-only scope) but absent from scopes[] → renders bare.
-const SCOPES = [
-  { scope: "Prod", capability: { types: ["bash", "ansible"] } },
-  { scope: "Dev", capability: { types: [] } },
-] as unknown as Scope[];
 
 function renderSP(props: Partial<React.ComponentProps<typeof ScopePicker>> = {}) {
   const onChange = props.onChange ?? vi.fn();
-  render(<ScopePicker value="" onChange={onChange} suggestions={SUGGESTIONS} scopes={SCOPES} {...props} />);
+  render(<ScopePicker value="" onChange={onChange} suggestions={SUGGESTIONS} {...props} />);
   return { onChange, combobox: screen.getByRole("combobox") };
 }
 const options = () => screen.getAllByRole("option");
 const optionFor = (scope: string) => options().find((o) => o.textContent?.startsWith(scope))!;
 
-describe("ScopePicker — capability labels", () => {
-  it("labels a scope with its capability types and renders typeless/env-var-only scopes bare", () => {
+describe("ScopePicker — option rows", () => {
+  // Until 2.1.0 a row carried the scope's "supported run types" after a dash.
+  // The feature is gone; an option is the scope name and nothing else.
+  it("renders every option as the bare scope name", () => {
     const { combobox } = renderSP();
     fireEvent.focus(combobox);
-    expect(optionFor("Prod").textContent).toContain("bash, ansible");
-    expect(optionFor("Dev").textContent).toBe("Dev"); // empty types → no dash
-    expect(optionFor("envonly").textContent).toBe("envonly"); // absent from scopes[] → bare
+    expect(optionFor("Prod").textContent).toBe("Prod");
+    expect(optionFor("Dev").textContent).toBe("Dev");
+    expect(optionFor("envonly").textContent).toBe("envonly");
   });
 });
 
@@ -62,7 +57,7 @@ describe("ScopePicker — selection & creation", () => {
 
 describe("ScopePicker — custom current value", () => {
   it("renders a custom value that isn't a known suggestion (closed label + pinned row)", () => {
-    const { combobox } = renderSP({ value: "weird-custom", suggestions: ["Prod"], scopes: [] });
+    const { combobox } = renderSP({ value: "weird-custom", suggestions: ["Prod"] });
     expect((combobox as HTMLInputElement).value).toBe("weird-custom");
     fireEvent.focus(combobox);
     expect(options().some((o) => o.textContent?.includes("weird-custom"))).toBe(true);

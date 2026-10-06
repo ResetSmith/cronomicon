@@ -13,6 +13,301 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.2.0] - 2026-10-06
+
+Where a job runs is recorded on its scope, not on the job (SB band). A scope
+can name the runners allowed to serve it, and the per-job runner-tag pin that
+used to carry that fact is retired; with it goes the last place in the product
+where a tag decided anything. Host-key trust for runners gets a review screen,
+a record and a view of the runner's own `known_hosts` file. Schema v1210 (four
+migrations; 1190 has a lossy down). Runner protocol **14**.
+
+**Upgrading.** Upgrade every runner with the server. Protocol 14 is the floor,
+so a protocol-13 runner is refused (426) on its next poll until it is upgraded
+(**Copy upgrade command** on the Runners view). Then open the Scopes view:
+
+- Migration 1180 converts the pins it can. A scope whose every live job was
+  pinned to the same tag is bound to the runners that carried that tag and are
+  eligible for the scope's agency. A disabled job counts as live; a job in the
+  recycle bin does not.
+- Every other pin is listed in a banner on the Scopes view, by scope, with the
+  reason: the scope's jobs pinned different tags, only some were pinned, the
+  job has no scope, its scope does not exist, no eligible runner carried the
+  tag, or the job is in the recycle bin. **Those jobs are no longer confined
+  to particular runners.** Bind the scope, or dismiss the ones that may run on
+  any eligible runner.
+- The same is true of a pinned run that was already waiting when the server
+  was upgraded: queued for a runner, deferred to a later time, or parked behind
+  another run. The banner lists jobs, not runs, so a pin chosen for one run in
+  the Run dialog is not in it. Unless its scope was bound by the migration, any
+  eligible runner in the agency may claim such a run, most likely when the
+  runner it was pinned to was offline during the upgrade. Before upgrading,
+  let waiting pinned runs finish or cancel them. Afterwards, bind the scope: a
+  binding is read when a run is claimed, so it confines runs already waiting.
+- A shell job on a converted scope that set no executor used to run over SSH
+  from the server whenever a schedule, reaction, workflow step or file arrival
+  started it, pin ignored (the defect this band began with). It now runs on
+  the bound runner, with the runner's SSH keys and the runner's `known_hosts`.
+  Scan the scope from that runner and approve the keys before its next fire;
+  the scope's row says how many hosts each bound runner does not yet trust.
+- A job that sets `executor: ssh` on a scope that is now bound is refused
+  until the line is removed (`scope_requires_runner`).
+- `runner_tag:` in a job's YAML is ignored, with a warning. The job syncs.
+  Delete the line when convenient.
+- An API client that sent `runnerTag` on a run or a composed job, or read
+  `runnerTagEffective`, must stop.
+
+### Added
+
+- **Scope bindings.** A scope may name the runners allowed to serve it
+  (`scope_runners`, migration 1180; `PUT /api/v1/scopes/{scopeId}/runners`,
+  `Scope.boundRunners`). A scope with any binding is claimable only by its
+  bound runners, on top of the agency, capability and secret-injection rules:
+  a binding narrows and never widens. The Scopes table has a **Runners**
+  column, and the expanded row lists the bound runners with the reason each is
+  not serving. Binding needs **Configure app**, plus authority over each
+  runner added. It is an operator overlay like the agency and the tags: never
+  parsed from Git, and absent from the sync upsert
+  (`TestSyncPreservesScopeRunners`).
+- **A binding outlives its runner.** `scope_runners.runner_id` has no foreign
+  key, so removing a runner (by hand or by the offline sweep) leaves the scope
+  bound to a runner that no longer exists. Nothing claims its runs and the
+  queued reason says so. A cascade would have reopened a confined scope to its
+  whole agency without a word. Restoring a re-enrolled runner's placement
+  re-points its scopes; **Replace this runner…** (`POST
+  /api/v1/scope-runners/replace`) hands every scope one runner served to
+  another in one step; unbinding is the third way out.
+- **Bind preview.** `POST /api/v1/scopes/{scopeId}/runners/preview` reports,
+  without writing, the jobs that would move from SSH to the runners, the jobs
+  that would go back to SSH, the jobs that would be refused, the SSH runs
+  already queued, and per runner whether it is registered and eligible, which
+  run types it lacks, whether it may receive secrets, and how many of the
+  scope's hosts it does not trust. The dialog's save button stays disabled
+  until the preview for the current selection has arrived.
+- **Binding notices.** `GET /api/v1/scope-binding-notices` and `POST
+  /api/v1/scope-binding-notices/dismiss` back the Scopes banner
+  (`retired_runner_pins`). A notice drops out by itself once its scope is
+  bound.
+- **One executor resolver.** `execspec.ResolveExecutor` replaces two copies of
+  the precedence that had drifted. The order is: per-run override, the job's
+  executor, runner if the scope is bound, the global default, the run type's
+  default. An explicit `ssh` on a bound scope is refused with
+  `scope_requires_runner`: 422 on a manual or token trigger, a `skipped` row
+  for a scheduled fire (one a day while it stands), a failed workflow step, a
+  reaction delivery error, a refused file sighting.
+- **Runners view.** **Scopes served** in the expanded row, with what stops if
+  the runner goes away. The restore offer names the scopes still bound to the
+  old registration, and is offered to a general-pool runner too.
+- **Jobs.** The job detail's **Run on** row is answered from the scope's
+  binding. The Run dialog disables SSH on a bound scope, with the reason, and
+  names the runners in the Method summary and the "This run" rail.
+- **Host keys: four sources.** **Scan keys** opens one dialog that can scan a
+  scope (`POST /api/v1/runners/{runnerId}/keyscan` with `scopeId`), scan typed
+  hosts, take pasted `known_hosts` lines (`…/host-keys/provide`), or copy the
+  keys another runner trusts (`…/host-keys/carry`). A host reached through a
+  bastion is listed as not scannable, with the name its pasted line must
+  carry; the bastion itself is scanned. A scope scan is offered only for
+  scopes the runner is eligible for.
+- **Host keys: review before trust.** Every source ends on one screen that
+  shows each fingerprint and classifies it: new, matches the server's own
+  record, changed, already trusted, or cannot be accepted. Select-all never
+  ticks a changed key, and a key that arrives while the list is open is left
+  unticked. Approval is one batch (`…/host-keys/resolve-batch`) and names
+  each row by its fingerprint: the server writes what was reviewed or nothing
+  (409 `review_stale`).
+- **Host keys: a record.** `host_key_ledger` (migration 1200) keeps every
+  approval, rejection and removal with runner, scope, host, actor, source and
+  batch. `GET /api/v1/runners/{runnerId}/host-keys` returns the keys in force
+  and the history; `GET /api/v1/host-key-batches/{batchId}` returns one
+  change, which the Change Log's **Show keys** opens. The audit export gains a
+  `hostKeys` event type.
+- **Host keys: the runner's own file.** The runner reports what its
+  `known_hosts` file holds (`runner_known_hosts`, migration 1210) at startup,
+  after every change and on request. The **Trusted host keys** panel shows
+  "Approved in Cronomicon" and "Present in the runner's known_hosts file" as
+  two lists, and marks a line that was not approved here. The report is what
+  confirms a delivery. An approved key the file lacks is flagged with **Send
+  again**.
+- **Host keys: replace and remove.** Approving a changed key replaces the old
+  one, and **Remove** takes a key out of the runner's file. The file only ever
+  grew before.
+- **Scope coverage.** `GET /api/v1/scopes/{scopeId}/host-key-coverage` and the
+  scope's expanded row show, per bound runner, which of the scope's hosts it
+  trusts (bastion hop included), with a scan button.
+- A twelfth Audit & Compliance retention window, **Host Key History**
+  (`hostKeyLedger`, 365 days). It prunes rejected, removed and replaced keys
+  only. A key a runner currently trusts never matches it.
+- Runner protocol 14: the `untrust-hosts` and `known-hosts-report` poll
+  control ops and `POST /api/v1/runners/{id}/known-hosts`.
+- A guard test, `runner/dispatch_reads_no_tags_test.go`, fails the build if a
+  file on the dispatch path reads a tags column.
+
+### Removed
+
+- **The runner-tag pin.** `jobs.runner_tag` and the `runner_tags` projection
+  (migration 1190), the pin clause in the claim query and its two mirrors, the
+  composer's and the Run dialog's **Run on** field, the `runner_tag` line in
+  the publish builder, `runnerTag` on the run body and the composed job,
+  `runnerTagEffective` on the job, and the 422 `invalid_runner_tag` refusal.
+  `runs.runner_tag` stays, unwritten: History still shows "Pinned to runner
+  tag" on runs made before the upgrade.
+- `api.resolveExecutor` and `scheduler.ResolveExecutor`.
+
+### Changed
+
+- **A tag is a label everywhere.** A runner's tags no longer decide which runs
+  it may claim. Adding or removing one changes no dispatch.
+- `spec.runner_tag` in a job's YAML is **recognised and ignored**, with a
+  warning in the sync log and in `cronomicon validate` (exit code unchanged).
+  When the job's scope is not bound the warning says that nothing confines the
+  job now, and sync adds it to the Scopes banner; removing the line clears the
+  notice sync wrote. The key stays in the parser on purpose: the decode is not
+  strict, so an unknown key would be dropped in silence.
+- A shell job with no executor of its own, on a bound scope, resolves to the
+  runner on every producer. So does a toolchain run type when the global
+  default is `ssh`; the manual trigger used to answer 422 there while a
+  scheduled fire fell through.
+- A bound scope that has runs waiting under its name cannot be renamed or
+  deleted (409 `scope_bound_busy`), and a Git scope in that state is held back
+  from the prune until its queue drains. A waiting run carries its scope by
+  name, and with no scope of that name it would read as unrestricted.
+- File-watch globs for a job on a bound scope are distributed to its bound
+  runners only.
+- The unclaimable reason is stamped only on runner-executor runs. A queued SSH
+  run used to read "no runner is online" when none was.
+- A standing refusal of a scheduled fire (the scope refusal above, and the
+  existing SSH-key-binding one) writes one `skipped` row a day and carries no
+  concurrency key. A refused workflow step is not retried.
+- The server no longer takes a runner's word for a host key. Uploaded and
+  pasted lines are parsed, the fingerprint is computed from the key, and the
+  line delivered to the runner is rendered by the server for one validated
+  host. Wildcard, negated and marker lines are refused, and a paste is
+  accepted whole or not at all.
+- Host-key work is delivered during an in-flight long-poll. A scan runs eight
+  hosts at a time and uploads each key as it arrives; before, it could take up
+  to 30 seconds to start and one unreachable host held every key back.
+- `GET /api/v1/runners/host-keys/pending` lists only the runners the caller
+  has authority over.
+- The Scopes table's empty **Agencies** cell reads "general pool", not
+  "unrestricted": only a runner in no agency takes that work.
+- The user and administrator manuals, the runner guides, the Ansible guide and
+  both training courses describe scope bindings and the host-key flow, and no
+  longer describe the pin. The manuals are stamped v2.2.0.
+
+### Fixed
+
+- **A pinned shell job ran from the server, pin ignored,** when a schedule
+  started it and it set no executor: the run was queued for SSH and the SSH
+  pool claimed it. Reaction, workflow-step and file-arrival runs took the same
+  path. Only the manual and token triggers refused. The binding that replaces
+  the pin is enforced on every producer.
+- **A scheduled or hand-started run of a same-named job was recorded as its
+  sibling.** Two Cronomicon jobs may share a name across agencies; the cron
+  and manual enqueues omitted the job's uid, so the run carried the other
+  job's identity, script reference and content hash. Both pass the uid.
+- The executor lookup read a same-named job's setting. It reads by uid.
+- A standing SSH-key-binding refusal was reported as a missed run, with an
+  alert, every day from the second day on.
+- A cron refusal's skip row could swallow the Forbid skip of another job that
+  shared its custom concurrency key.
+
+### Security
+
+- `golang.org/x/crypto` v0.55.0 → **v0.56.0**: GO-2026-6354 and GO-2026-6355,
+  two denial-of-service faults in `x/crypto/ssh` where a peer could leave a
+  channel deadlocked. Both were reachable from the runner's SSH client.
+  `govulncheck` reports zero reachable vulnerabilities. The module requires
+  `go 1.26.0`, so the `go` directive moves from `1.26` to `1.26.0`.
+- `react-router` and `react-router-dom` 6.30.4 → 6.30.6, and the frontend's
+  build and test tooling brought up to date (`npm audit fix`). GHSA-wrjc-x8rr-h8h6
+  (an open redirect through a backslash in a navigation target) has no fix in
+  the 6.x line. The app is not exposed: every `navigate` call and `<Link>`
+  goes to a route written in the source, never to one read from a URL. Moving
+  to React Router 7 is the fix and is not in this release.
+
+## [2.1.0] - 2026-10-05
+
+Scopes get tags, and lose their "supported run types". The declared set was
+advisory from the day it shipped: nothing refused a run or a save on a type
+mismatch, and no claim, gate or dispatch path read it. What operators wanted
+from the column was a way to label and find scopes, which is what tags are.
+Schema v1170 (two migrations; the second has a lossy down). The runner
+protocol (13) is unchanged.
+
+**Upgrading.** Nothing to do first. An inventory that still carries a
+`# cronomicon:v1 types=…` pragma, or a sidecar with `spec.types`, keeps
+syncing; delete the directive when convenient. An API client that sent
+`supportedTypes` or read `capability` on a scope must stop: the request field
+is ignored and the response object is gone.
+
+### Added
+
+- **Scope tags.** A scope carries operator-owned tags, like jobs, scripts,
+  schedules, workflows, variables, secrets and SSH keys already do. The Scopes
+  table has a **Tags** column and a **Tag** filter (any / all), and the
+  expanded row holds the editor. Tags are stored in Cronomicon only
+  (`scopes.tags`, migration 1160) and never come from Git: the sync upsert does
+  not name the column, so a Git scope is taggable and a re-sync leaves its tags
+  alone (`TestSyncPreservesScopeTags`). A tag is a label; nothing dispatches,
+  gates or warns on one.
+- `PUT /api/v1/scope-tags/{scopeId}` replaces a scope's tag set, with the same
+  normalisation and caps as every other tag endpoint. It carries
+  **Configure app**, the permission every other scope write carries; everyone
+  who can read a scope sees its tags. The write audits the way a scope edit
+  does (change log and activity).
+- `Scope.tags`, `Scope.owner` and `Scope.pragmaErrors` in the API. The last two
+  are the Git metadata that used to sit inside `capability`.
+- `cronomicon validate` prints non-fatal warnings for a single file, as it
+  already did for a repository directory.
+
+### Removed
+
+- **Supported run types on a scope**: the "Supported Types" column, the
+  required "Supported run types" field in the scope editor, the bash floor,
+  the type suffix in the scope pickers, and the "Capability origin" row.
+- The type-mismatch warning in the Run dialog and the composer ("… does not
+  declare bash support … may stay queued waiting for a capable runner"). It
+  blamed runner capacity, which the declared set never predicted; a run that
+  cannot be claimed already says why on the run itself.
+- `supportedTypes` on scope create and update, and the `capability` object
+  (`ScopeCapability`: `types`, `origin`, `owner`, `errors`) on a scope.
+- The inventory inference heuristic (`inventory.InferTypes`), which marked a
+  scope PowerShell-capable when its inventory text contained `win-srv`.
+- `scopes.supported_types` and `scopes.capability_types` (migration 1170).
+  `scopes.capability_json` is renamed `git_meta_json` and keeps the owner, the
+  sidecar path and the pragma errors. The down migration restores the columns
+  with the bash default; the declared types themselves are not recoverable.
+
+### Changed
+
+- The `types` directive of the `# cronomicon:v1` inventory pragma is
+  **recognised and ignored**, with a warning in the sync log and in
+  `cronomicon validate` (exit code unchanged). It is deliberately not an
+  error: a pragma error marks the sync partial, and a partial scope parse
+  suppresses pruning, so rejecting the directive would have frozen pruning on
+  every repository that still declares it. Its value is no longer validated.
+  A sidecar's `spec.types` is ignored without a warning.
+- `POST /api/v1/scopes/resync` reports scopes added and removed in `deltas`.
+  It used to report capability changes.
+- A Git scope shows its **owner** whenever the sidecar or the pragma declares
+  one. The owner used to ride on the capability and was dropped when the same
+  source declared no types. The **sidecar path** is likewise shown whenever a
+  sidecar exists, not only when it declared types.
+- A pragma that does not parse is flagged with ⚠ beside the scope name. It was
+  in the Supported Types cell.
+- A filtered-empty Scopes list names the filters and clears search and tags
+  together.
+- The user and administrator manuals, the Bash, Ansible, PowerShell and Python
+  guides and the operator course no longer tell you to declare a run type on a
+  scope; the Scopes chapter documents tags. The manuals' Scopes screenshots
+  are re-captured.
+
+### Fixed
+
+- The capability origin of an inferred scope never matched its label or drew
+  its dashed badge: the server wrote `inferred`, the spec and the UI expected
+  `inference`. Gone with the feature.
+
 ## [2.0.5] - 2026-09-30
 
 The sidebar lists the building blocks in the order a job is built from them.

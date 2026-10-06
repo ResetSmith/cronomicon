@@ -64,6 +64,14 @@ type RetentionDays struct {
 	// which, while the archive backend is on, never reaps a file the sweep has
 	// not yet copied.
 	ArchivedLogFiles int `json:"archivedLogFiles"`
+	// HostKeyLedger bounds the host-key ledger's HISTORY (SB): rejected keys,
+	// removed keys, and keys a later approval replaced. The twelfth knob, and
+	// the only one that cannot touch live state by construction — the sweep
+	// prunes on superseded_at, which is NULL for as long as a key is in force,
+	// so a key a runner currently trusts is kept whatever this says. A year by
+	// default, matching changeLog: the change-log row for a batch names the
+	// batch, and the ledger rows are what that name expands into.
+	HostKeyLedger int `json:"hostKeyLedger"`
 }
 
 const auditComplianceKey = "auditCompliance"
@@ -83,6 +91,8 @@ func defaultAuditCompliance() AuditCompliance {
 			RunnerPlacementHistory: 30,
 			// Keep forever — see the field comment.
 			ArchivedLogFiles: 0,
+			// Matches ChangeLog deliberately — see the field comment.
+			HostKeyLedger: 365,
 		},
 	}
 }
@@ -122,6 +132,7 @@ func (a AuditCompliance) validate() error {
 		{"retentionDays.definitionRevisions", a.RetentionDays.DefinitionRevisions},
 		{"retentionDays.runnerPlacementHistory", a.RetentionDays.RunnerPlacementHistory},
 		{"retentionDays.archivedLogFiles", a.RetentionDays.ArchivedLogFiles},
+		{"retentionDays.hostKeyLedger", a.RetentionDays.HostKeyLedger},
 	} {
 		if f.days < 0 {
 			return &ValidationError{Field: f.field, Message: f.field + " must be 0 (keep forever) or a positive number of days"}
