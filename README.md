@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.2.0-blue" alt="Version 2.2.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.2.1-blue" alt="Version 2.2.1"></a>
   <a href="https://cronomicon.io/docs/"><img src="https://img.shields.io/badge/docs-cronomicon.io-blue" alt="Documentation"></a>
   <a href="https://github.com/ResetSmith/cronomicon/pkgs/container/cronomicon"><img src="https://img.shields.io/badge/image-ghcr.io-blue" alt="Container image"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
@@ -57,7 +57,7 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e CRONOMICON_DEV_AUTH=true \
   -e CRONOMICON_DEV_SEED=true \
   -e CRONOMICON_COOKIE_SECURE=false \
-  ghcr.io/resetsmith/cronomicon:2.2.0
+  ghcr.io/resetsmith/cronomicon:2.2.1
 ```
 
 Open <http://localhost:8080> and choose **Developer login**. The data disappears when the container stops.
@@ -97,7 +97,7 @@ Every release publishes three images to the GitHub Container Registry. They are 
 | `ghcr.io/resetsmith/cronomicon-runner` | Runner agent for Bash, Perl, PowerShell and Python over SSH |
 | `ghcr.io/resetsmith/cronomicon-runner-fat` | Runner agent with Ansible, Terraform and Git installed |
 
-Each image is tagged with its full version (`2.2.0`), its minor version (`2.2`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
+Each image is tagged with its full version (`2.2.1`), its minor version (`2.2`) and `latest`. **Pin the full version** in production so that upgrades happen only when you choose.
 
 #### Step 1: Prepare the host
 
@@ -157,14 +157,14 @@ docker run -d --name cronomicon --restart unless-stopped \
   -v cronomicon-data:/var/lib/cronomicon \
   -v /etc/cronomicon/kek:/run/secrets/cronomicon_kek:ro \
   --env-file /etc/cronomicon/cronomicon.env \
-  ghcr.io/resetsmith/cronomicon:2.2.0
+  ghcr.io/resetsmith/cronomicon:2.2.1
 ```
 
 Database migrations run automatically at startup. Confirm the server is ready:
 
 ```bash
 curl -s http://localhost:8080/readyz     # 200 once the database is ready
-curl -s http://localhost:8080/version    # {"version":"2.2.0", ...}
+curl -s http://localhost:8080/version    # {"version":"2.2.1", ...}
 ```
 
 <details>
@@ -173,7 +173,7 @@ curl -s http://localhost:8080/version    # {"version":"2.2.0", ...}
 ```yaml
 services:
   cronomicon:
-    image: ghcr.io/resetsmith/cronomicon:2.2.0
+    image: ghcr.io/resetsmith/cronomicon:2.2.1
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -209,7 +209,7 @@ Cronomicon grants nothing by default, so the first step is to make someone an ad
 
 ```bash
 docker stop cronomicon
-docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.2.0 \
+docker run --rm -v cronomicon-data:/var/lib/cronomicon ghcr.io/resetsmith/cronomicon:2.2.1 \
   grant-admin -db /var/lib/cronomicon/cronomicon.db cronomicon-admins
 docker start cronomicon
 ```
@@ -239,7 +239,7 @@ Check out the release you want to run:
 ```bash
 git clone https://github.com/ResetSmith/cronomicon.git
 cd cronomicon
-git checkout v2.2.0
+git checkout v2.2.1
 ```
 
 #### Step 2: Build the server image
@@ -248,10 +248,10 @@ Run the build from the repository root, since the Dockerfile uses both `frontend
 
 ```bash
 docker build -f backend/Dockerfile \
-  --build-arg VERSION=2.2.0 \
+  --build-arg VERSION=2.2.1 \
   --build-arg COMMIT=$(git rev-parse --short HEAD) \
   --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  -t cronomicon:2.2.0 .
+  -t cronomicon:2.2.1 .
 ```
 
 The version arguments are optional. They appear in the interface and at `/version`.
@@ -261,15 +261,15 @@ The version arguments are optional. They appear in the interface and at `/versio
 These are only needed if you run runners as containers:
 
 ```bash
-docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.2.0 -t cronomicon-runner:2.2.0 .
-docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.2.0 -t cronomicon-runner-fat:2.2.0 .
+docker build -f backend/Dockerfile.runner     --build-arg VERSION=2.2.1 -t cronomicon-runner:2.2.1 .
+docker build -f backend/Dockerfile.runner.fat --build-arg VERSION=2.2.1 -t cronomicon-runner-fat:2.2.1 .
 ```
 
 The fat image's Ansible and Terraform versions are build arguments (`ANSIBLE_VERSION`, `TERRAFORM_VERSION`). To add Ansible collections or other tools, build a derived image from it.
 
 #### Step 4: Deploy
 
-Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.2.0` with `cronomicon:2.2.0`. To run the image on another host, push it to your own registry first.
+Follow [Option 1](#option-1-deploy-the-published-image) from Step 1, replacing `ghcr.io/resetsmith/cronomicon:2.2.1` with `cronomicon:2.2.1`. To run the image on another host, push it to your own registry first.
 
 ### Adding runners
 
@@ -445,7 +445,7 @@ The other step types are `branch` (choose a path from an earlier step's result),
 **4. Validate before you push.** The `cronomicon` binary checks syntax and cross-references with the same parser the server uses. You can run it from the image without installing anything:
 
 ```bash
-docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.2.0 validate /repo
+docker run --rm -v "$PWD":/repo:ro ghcr.io/resetsmith/cronomicon:2.2.1 validate /repo
 ```
 
 **5. Push.** A GitLab webhook triggers a sync automatically, or choose **Resync** under **Settings → GitLab**. Definitions from Git are read-only in the app; change them in Git.
