@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -63,11 +64,11 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 	}
 	rowID := r.PathValue("id")
 
-	var kind, name, runAt string
-	var scope sql.NullString
+	var kind, name, runAt, source string
+	var scope, ownerUID sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT kind, name, run_at, scope FROM pending_runs WHERE id = ?`, rowID).
-		Scan(&kind, &name, &runAt, &scope)
+		`SELECT kind, name, run_at, scope, source, owner_uid FROM pending_runs WHERE id = ?`, rowID).
+		Scan(&kind, &name, &runAt, &scope, &source, &ownerUID)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "pending run not found (it may have fired or been cancelled)")
 		return
@@ -80,6 +81,41 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 	// they can read — the same rule the upcoming listing applies.
 	if !auth.ScopeReadable(id, scope.String) {
 		s.denyScope(w, r, scope.String, "your scope grants do not cover this pending run's scope")
+		return
+	}
+	// GC-11: reading is not authority. The check above passes for every caller
+	// when the row's scope is empty — and a pending WORKFLOW run is always
+	// stored with an empty scope — so any signed-in user, a viewer included,
+	// could cancel another department's scheduled run. Cancelling one undoes a
+	// trigger, so it takes a run verb on what the run would touch: the job's
+	// scope, or for a workflow every scope its jobs (and its sub-workflows'
+	// jobs) are in. An unscoped target is a global operator's.
+	targets := []string{scope.String}
+	if kind == "workflow" {
+		wfScopes, found, err := s.pendingWorkflowScopes(r.Context(), ownerUID.String, source, name)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !found {
+			wfScopes = []string{""} // unresolvable: fail closed to the unbound rule
+		}
+		targets = wfScopes
+	}
+	for _, sc := range targets {
+		if pendingCancelPermitted(id, sc) {
+			continue
+		}
+		where := sc
+		if where == "" {
+			where = auth.AllScopes
+		}
+		if s.auth != nil {
+			s.auth.AuditDenied(r, id.Email, "insufficient_permission", auth.PermKillJobs,
+				auditDetails(r, "cancelling a pending run requires triggerJobs or killJobs on scope "+where))
+		}
+		httpx.Fail(w, http.StatusForbidden, "forbidden",
+			"insufficient permissions: triggerJobs or killJobs is required on scope "+where+" to cancel this scheduled run")
 		return
 	}
 
@@ -102,4 +138,48 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 	_ = workflow.InsertChangeLog(r.Context(), s.db, id.Email, category, "Cancelled", name,
 		"Scheduled ad-hoc run for "+runAt+" cancelled")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// pendingCancelPermitted reports whether the caller may cancel a pending run
+// that targets scope. Either run verb suffices: the run has not started, so
+// cancelling it is undoing a trigger (triggerJobs) as much as suppressing a run
+// (killJobs). An empty scope is the unbound case, unrestricted-only as on every
+// other execution route.
+func pendingCancelPermitted(id auth.Identity, scope string) bool {
+	if scope == "" {
+		return id.CanUnbound(auth.PermTriggerJobs) || id.CanUnbound(auth.PermKillJobs)
+	}
+	return id.Can(auth.PermTriggerJobs, scope) || id.Can(auth.PermKillJobs, scope)
+}
+
+// pendingWorkflowScopes resolves the scopes a pending workflow run would touch.
+// The identity is the uid when the row carries one, else (source, name).
+func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name string) ([]string, bool, error) {
+	var raw, wfSource string
+	var err error
+	if uid != "" {
+		err = s.db.QueryRowContext(ctx,
+			`SELECT steps, source FROM workflows WHERE uid = ?`, uid).Scan(&raw, &wfSource)
+	} else {
+		err = s.db.QueryRowContext(ctx,
+			`SELECT steps, source FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&raw, &wfSource)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	steps, perr := workflow.ParseSteps(raw)
+	if perr != nil {
+		return nil, false, nil
+	}
+	scopes, err := workflow.New(s.db, s.log).JobScopes(ctx, steps, wfSource)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(scopes) == 0 {
+		return nil, false, nil // no job resolves: nothing to authorize on
+	}
+	return scopes, true, nil
 }

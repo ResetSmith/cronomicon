@@ -1192,3 +1192,53 @@ func TestOrdinarySuppressionEmitsNoActivity(t *testing.T) {
 		t.Errorf("a disabled-reaction suppression wrote %d activity rows, want 0", n)
 	}
 }
+
+// GC-13 (v2.2.2) — a reaction watches a DEFINITION, not a name. Names are
+// per-agency since R2, so two departments may each hold a cronomicon job called
+// "nightly"; matching the upstream by name alone let one department's run fire
+// the reaction authored against the other's.
+func TestReactionMatchesTheUpstreamByIdentityNotName(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	seedJobRow(t, pool, "downstream", 1)
+	for _, uid := range []string{"uid-fin-nightly", "uid-tax-nightly"} {
+		if _, err := pool.ExecContext(ctxb(),
+			`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, created_at)
+			 VALUES (?, 'nightly', 'cronomicon', 'bash', 'Allow', 1, 't')`, uid); err != nil {
+			t.Fatalf("seed job %s: %v", uid, err)
+		}
+	}
+	// The reaction is authored against FIN's "nightly".
+	if _, err := pool.ExecContext(ctxb(), `
+		INSERT INTO reactions (owner_source, owner_kind, owner_name, name,
+		                       on_source, on_kind, on_name, on_outcome, on_uid,
+		                       delay_seconds, min_interval_seconds, include_workflow_children, enabled, owner_uid)
+		VALUES ('git','job','downstream','on-fin-nightly',
+		        'cronomicon','job','nightly','success','uid-fin-nightly',
+		        0,0,0,1,(SELECT uid FROM jobs WHERE name='downstream' AND source='git'))`); err != nil {
+		t.Fatalf("seed reaction: %v", err)
+	}
+	finish := func(id, uid string) {
+		ts := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+		if _, err := pool.ExecContext(ctxb(), `
+			INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by,
+			                  trigger_kind, completed_at, created_at)
+			VALUES (?, 'nightly', 'cronomicon', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`,
+			id, uid, ts, ts); err != nil {
+			t.Fatalf("seed run %s: %v", id, err)
+		}
+	}
+
+	primeCursor(t, s)
+	finish("r-tax", "uid-tax-nightly")
+	s.ScanReactions(ctxb())
+	if n := countPending(t, pool, "downstream"); n != 0 {
+		t.Fatalf("TAX's same-named job fired FIN's reaction: %d pending run(s)", n)
+	}
+
+	finish("r-fin", "uid-fin-nightly")
+	s.ScanReactions(ctxb())
+	if n := countPending(t, pool, "downstream"); n != 1 {
+		t.Fatalf("FIN's own run must still fire it: pending = %d, want 1", n)
+	}
+}

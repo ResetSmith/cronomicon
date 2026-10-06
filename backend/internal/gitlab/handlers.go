@@ -156,7 +156,7 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 // POST /api/v1/schedules/publish — schedule write-path (A2)
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) PublishSchedule(actor string, w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w http.ResponseWriter, r *http.Request) {
 	baseSHA := r.Header.Get("If-Match")
 	if baseSHA == "" {
 		writeError(w, http.StatusBadRequest, "missing_if_match", "If-Match header with base_sha is required")
@@ -180,6 +180,15 @@ func (h *Handlers) PublishSchedule(actor string, w http.ResponseWriter, r *http.
 			"errors":  []map[string]string{{"field": "filePath", "message": err.Error()}},
 		})
 		return
+	}
+	// GC-9: the route's permission says the caller may publish SOMEWHERE; this
+	// asks whether they may publish THIS file. Decided before Publish takes the
+	// sync mutex, and before anything is written.
+	if authorize != nil {
+		if msg := authorize(r, h.svc.publishTarget(req)); msg != "" {
+			writeError(w, http.StatusForbidden, "forbidden", msg)
+			return
+		}
 	}
 
 	result, err := h.svc.Publish(r.Context(), req, baseSHA, actor)
@@ -401,7 +410,11 @@ func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Req
 	}
 
 	// 2. Call h.svc.SyncBlocking(...)
-	res := h.svc.SyncBlocking(r.Context(), actor)
+	// "manual", not the actor: git_sync_events.triggered_by is CHECKed to
+	// poll/webhook/manual, and the insert error is discarded, so passing an
+	// email here left a scope resync with no history row at all.
+	_ = actor
+	res := h.svc.SyncBlocking(r.Context(), "manual")
 
 	// 3. Get scopes after sync
 	afterScopes, err := settings.ListScopes(r.Context(), h.svc.db, "git")

@@ -122,7 +122,10 @@ func (s *Server) runAnalytics(w http.ResponseWriter, r *http.Request) {
 	// no grant for.
 	scopeFrag, scopeArgs := s.scopeWhereFragment(r, "scope")
 	if scopeFrag != "" {
-		where += " AND " + scopeFrag
+		// scopeWhereFragment returns its own leading " AND " (see listJobs).
+		// Prepending a second one produced `… AND  AND (…)` — a syntax error,
+		// and so a 500, for every caller who is not unrestricted.
+		where += scopeFrag
 		args = append(args, scopeArgs...)
 	}
 

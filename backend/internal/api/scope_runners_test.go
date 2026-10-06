@@ -232,8 +232,18 @@ func TestBindingARunnerIsDepartmental(t *testing.T) {
 		t.Errorf("replace onto another department's runner = %d, want 403", rec.Code)
 	}
 
-	// ...and passes when the replacement is the caller's own.
+	// GC-6 (v2.2.2): the swap rewrites every scope the OLD runner is bound to,
+	// so an own-agency replacement is still refused while r-gone serves
+	// Finance's scope — it would re-point that scope at the caller's runner.
 	exec(`INSERT INTO scope_runners (scope_id,runner_id,runner_name,bound_at) VALUES ('sc:prod','r-gone','runner-gone','t')`)
+	rec = reqAs(t, h, http.MethodPost, "/api/v1/scope-runners/replace", "sec-admins",
+		`{"fromRunnerId":"r-gone","toRunnerId":"r-own"}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("replace that would rewrite another department's bound scope = %d, want 403", rec.Code)
+	}
+
+	// ...and passes when every scope the old runner serves is the caller's own.
+	exec(`DELETE FROM scope_runners WHERE scope_id='s-fin' AND runner_id='r-gone'`)
 	rec = reqAs(t, h, http.MethodPost, "/api/v1/scope-runners/replace", "sec-admins",
 		`{"fromRunnerId":"r-gone","toRunnerId":"r-own"}`)
 	if rec.Code == http.StatusForbidden {

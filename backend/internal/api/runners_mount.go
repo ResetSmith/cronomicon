@@ -110,20 +110,9 @@ func (s *Server) requireRunnerAgency(pathVar string, next http.Handler) http.Han
 // shared infrastructure, because "belongs to no department" and "belongs to all
 // of them" are the same row from opposite sides.
 func (s *Server) requireFleetWide(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := auth.IdentityFrom(r.Context())
-		if !ok {
-			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-			return
-		}
-		if !id.CanAgency(auth.PermConfigureApp, "") {
-			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-				"runner registration is fleet-wide — a new runner joins the general pool and "+
-					"serves every department, so only an unrestricted operator may mint or revoke its tokens")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return s.globalOnly(auth.PermConfigureApp,
+		"runner registration is fleet-wide — a new runner joins the general pool and "+
+			"serves every department, so only an unrestricted operator may mint or revoke its tokens", next)
 }
 
 // requireHostKeyRunnerAgency is requireRunnerAgency for the host-key resolve
@@ -407,7 +396,9 @@ func (s *Server) handleAcceptRunnerPlacement(w http.ResponseWriter, r *http.Requ
 	}
 
 	permits := func(agencyID string) bool {
-		return id.Unrestricted() || id.CanAgency(auth.PermConfigureApp, agencyID)
+		// GC-3: CanAgency alone — it already passes an unrestricted grant that
+		// carries configureApp, and the bare Unrestricted() passed one that did not.
+		return id.CanAgency(auth.PermConfigureApp, agencyID)
 	}
 	err := svc.ApplyPlacement(r.Context(), r.PathValue("id"), body.HistoryID, id.Email, permits)
 	switch {

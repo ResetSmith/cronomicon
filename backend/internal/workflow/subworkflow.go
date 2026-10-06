@@ -327,6 +327,33 @@ func (e *Engine) CancelTree(ctx context.Context, wfTraceID string) bool {
 	return cancelled
 }
 
+// DescendantRunScopes returns the distinct scopes of the job runs that belong to
+// the sub-workflow runs UNDER a workflow run — everything CancelTree would stop
+// beyond the addressed run's own children (GC-10). An unbound run yields "".
+func (e *Engine) DescendantRunScopes(ctx context.Context, wfTraceID string) ([]string, error) {
+	rows, err := e.db.QueryContext(ctx, `
+		WITH RECURSIVE tree(id) AS (
+			SELECT id FROM workflow_runs WHERE parent_workflow_run_id = ?
+			UNION
+			SELECT w.id FROM workflow_runs w JOIN tree t ON w.parent_workflow_run_id = t.id
+		)
+		SELECT DISTINCT COALESCE(r.scope,'') FROM runs r JOIN tree t ON r.workflow_run_id = t.id`,
+		wfTraceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sc string
+		if err := rows.Scan(&sc); err != nil {
+			return nil, err
+		}
+		out = append(out, sc)
+	}
+	return out, rows.Err()
+}
+
 // childWorkflowRuns returns the ids of a run's direct sub-workflow runs.
 func (e *Engine) childWorkflowRuns(ctx context.Context, parentTraceID string) []string {
 	rows, err := e.db.QueryContext(ctx,

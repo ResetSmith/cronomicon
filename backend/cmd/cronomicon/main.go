@@ -58,7 +58,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.2.1"
+	version   = "2.2.2"
 	commit    = "none"
 	buildDate = "unknown"
 )
@@ -92,6 +92,11 @@ func main() {
 			// CRONOMICON_BOOTSTRAP_ADMIN_GROUP floor does not apply, so this is the
 			// only supported way back in. Stop the server first.
 			os.Exit(runGrantAdmin(os.Args[2:]))
+		case "preflight":
+			// `cronomicon preflight` reports what this release changes for the
+			// installation — who loses which abilities, and whether a global
+			// administrator exists (GC-19). Read-only; run it BEFORE upgrading.
+			os.Exit(runPreflight(os.Args[2:]))
 		case "version":
 			fmt.Printf("cronomicon %s (commit %s, built %s)\n", version, commit, buildDate)
 			os.Exit(0)
@@ -178,6 +183,11 @@ func run() error {
 	// setting / env_var write (secrets.RedactionSourceChanged) and reports a
 	// degraded build once per outage as an `Audit / redactor-unavailable` row.
 	redactdict.Install(pool, cfg, logger)
+
+	// GC-19: say once, at the first boot of this release, what the upgrade
+	// changed for THIS installation — the same report `cronomicon preflight`
+	// prints, for the operator who upgraded without running it.
+	logUpgradeReport(context.Background(), pool, logger)
 
 	// RB-7: load the role→permission matrix into its process cache. requirePerm is
 	// mount-time middleware with no context and no DB handle, so authorization reads

@@ -3,6 +3,7 @@ package gitlab
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	gogitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	"gopkg.in/yaml.v3"
 )
 
 // PublishRequest carries the fields from POST /api/v1/schedules/publish.
@@ -45,6 +47,64 @@ func (e *PreconditionError) Error() string {
 //
 // Thread-safety: callers must serialize publishes using a DB row lock or external mutex;
 // the in-process single-instance invariant (§1) means a sync.Mutex in the service is enough.
+// PublishTarget describes what a publish would write, for the caller to
+// authorize (GC-9). The gitlab package knows how to read a definition file; it
+// does not know who the caller is, so it reports facts and the route decides.
+type PublishTarget struct {
+	// Kind is "job", "schedule" or "workflow", from the directory the path is in.
+	Kind string
+	// Name and NewScope come from the INCOMING content. NewParsed is false when
+	// the content is not a readable job document — the caller must then treat
+	// the scope as unknown, never as empty.
+	Name      string
+	NewScope  string
+	NewParsed bool
+	// OldExists reports a file already at that path in the clone; OldScope and
+	// OldParsed describe it the same way.
+	OldExists bool
+	OldScope  string
+	OldParsed bool
+}
+
+// PublishAuthorizer returns "" to allow a publish, or the refusal to send as a
+// 403. It is responsible for its own audit row.
+type PublishAuthorizer func(r *http.Request, t PublishTarget) string
+
+// publishTarget reads the facts a PublishAuthorizer needs. The path must already
+// have passed validatePublishPath.
+func (s *Service) publishTarget(req PublishRequest) PublishTarget {
+	cleaned := filepath.Clean(req.FilePath)
+	t := PublishTarget{Kind: "job"}
+	switch {
+	case strings.HasPrefix(cleaned, "schedules/"):
+		t.Kind = "schedule"
+	case strings.HasPrefix(cleaned, "workflows/"):
+		t.Kind = "workflow"
+	}
+	if t.Kind != "job" {
+		return t
+	}
+	t.Name, t.NewScope, t.NewParsed = jobNameAndScope([]byte(req.Content))
+	if old, err := os.ReadFile(filepath.Join(s.cloneDir, cleaned)); err == nil {
+		t.OldExists = true
+		_, t.OldScope, t.OldParsed = jobNameAndScope(old)
+	} else if !os.IsNotExist(err) {
+		// Unreadable is not "absent": report a file whose scope is unknown, so
+		// the caller fails closed instead of treating the path as free.
+		t.OldExists = true
+	}
+	return t
+}
+
+// jobNameAndScope reads metadata.name and spec.scope from a job document.
+func jobNameAndScope(content []byte) (name, scope string, ok bool) {
+	var doc JobYAML
+	if err := yaml.Unmarshal(content, &doc); err != nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(doc.Metadata.Name), strings.TrimSpace(doc.Spec.Scope), true
+}
+
 func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, actor string) (*PublishResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -99,6 +99,7 @@ func serviceAccountStatus(revokedAt, expiresAt sql.NullString, now time.Time) st
 }
 
 func (s *Server) listServiceAccounts(w http.ResponseWriter, r *http.Request) {
+	viewer, _ := auth.IdentityFrom(r.Context())
 	rows, err := s.db.QueryContext(r.Context(), `
 		SELECT sa.id, sa.name, sa.description, sa.role, sa.agency_id, a.name,
 		       sa.all_scopes, sa.created_by, sa.created_at, sa.expires_at, sa.revoked_at, sa.last_used_at
@@ -126,6 +127,12 @@ func (s *Server) listServiceAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		it.AllScopes = allScopes == 1
+		// GC-5: a delegate sees the accounts of the agencies they administer.
+		// CanAgency(perm, "") is the all-scopes case, so an all-scopes account —
+		// and every account — is listed only for a global administrator.
+		if !viewer.CanAgency(auth.PermManageRoles, agencyID.String) {
+			continue
+		}
 		it.Status = serviceAccountStatus(revoked, expires, now)
 		for _, p := range []struct {
 			src sql.NullString
@@ -221,6 +228,14 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// GC-5 — minting a service account IS granting a role (this file's own
+	// header says so), so it gets the grant's rules: own agencies only, never
+	// all-scopes, never a permission the caller does not hold there. Until
+	// v2.2.2 this handler applied none of them — a delegate for one agency
+	// minted an all-scopes `admin` token (reproduced 2026-10-06, HTTP 201).
+	if !s.requireGrantWritable(w, r, id, in.Role, in.AgencyID, in.AllScopes) {
+		return
+	}
 	var expires sql.NullString
 	if in.ExpiresAt != "" {
 		t, err := time.Parse(time.RFC3339, in.ExpiresAt)
@@ -293,14 +308,25 @@ func (s *Server) revokeServiceAccount(w http.ResponseWriter, r *http.Request) {
 
 	var name string
 	var revoked sql.NullString
+	var (
+		role      string
+		agencyID  sql.NullString
+		allScopes int
+	)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT name, revoked_at FROM service_accounts WHERE id = ?`, rowID).Scan(&name, &revoked)
+		`SELECT name, revoked_at, role, agency_id, all_scopes FROM service_accounts WHERE id = ?`, rowID).
+		Scan(&name, &revoked, &role, &agencyID, &allScopes)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "service account not found")
 		return
 	}
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	// GC-5 — revoking is administering: the same authority as minting the row,
+	// exactly as deleting an access grant is (AF-3).
+	if !s.requireGrantWritable(w, r, id, role, agencyID.String, allScopes == 1) {
 		return
 	}
 	if revoked.Valid {

@@ -123,6 +123,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// which would lock the creator out of the row they just made. RA-9: when they
 		// name none and hold the verb on exactly one department, it is inherited
 		// rather than refused, so the safe outcome is the default.
+		if inp.Source == "vault" && !s.requireVaultSourceGlobal(w, r, id) {
+			return
+		}
 		agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermManageEnvVars, inp.AgencyIDs, "secret")
 		if !ok {
 			return
@@ -200,7 +203,13 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// D3/H3: the actor must be able to WRITE the EXISTING secret (404 out-of-scope,
 		// 403 on a global row a restricted actor may not rewrite/capture) AND may not
 		// move it into a scope outside their grants (403 on the target).
-		if _, ok := s.loadSecretWritable(w, r, sec, sid, id); !ok {
+		existing, ok := s.loadSecretWritable(w, r, sec, sid, id)
+		if !ok {
+			return
+		}
+		// GC-8: both sides — a vault-source row may not be edited, and a stored
+		// row may not be turned into one, by anyone but a global administrator.
+		if (existing.Source == "vault" || inp.Source == "vault") && !s.requireVaultSourceGlobal(w, r, id) {
 			return
 		}
 		// The target scope must be writable too (blocks moving it out of reach OR
@@ -330,6 +339,10 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
 			return
 		}
+		// GC-8: migration WRITES to a caller-supplied Vault path.
+		if !s.requireVaultSourceGlobal(w, r, id) {
+			return
+		}
 		sc, err := sec.MigrateToVault(r.Context(), sid, inp.VaultPath, id.Email)
 		if err != nil {
 			if strings.Contains(err.Error(), "already vault-source") {
@@ -363,36 +376,36 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	// plain session: a git inventory can carry sensitive non-connection vars under
 	// arbitrary keys (outside the narrow secret reject-set), so the read surface is
 	// kept no broader than the privilege that guards scope mutation / hides git raw.
-	mux.Handle("GET /api/v1/scopes/{scopeId}/inventory", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleGetScopeInventory)))
-	mux.Handle("PUT /api/v1/scopes/{scopeId}/inventory", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handlePutScopeInventory)))
-	mux.Handle("POST /api/v1/scopes/{scopeId}/inventory/import-hosts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleImportScopeHosts)))
-	mux.Handle("PATCH /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateScope)))
-	mux.Handle("DELETE /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteScope)))
+	mux.Handle("GET /api/v1/scopes/{scopeId}/inventory", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handleGetScopeInventory))))
+	mux.Handle("PUT /api/v1/scopes/{scopeId}/inventory", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handlePutScopeInventory))))
+	mux.Handle("POST /api/v1/scopes/{scopeId}/inventory/import-hosts", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handleImportScopeHosts))))
+	mux.Handle("PATCH /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handleUpdateScope))))
+	mux.Handle("DELETE /api/v1/scopes/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handleDeleteScope))))
 	// Operator-owned scope tags (ST band, migration 1160): same permission as every
 	// other scope write — see updateScopeTags in settings_tags_mount.go.
-	mux.Handle("PUT /api/v1/scope-tags/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.updateScopeTags)))
+	mux.Handle("PUT /api/v1/scope-tags/{scopeId}", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.updateScopeTags))))
 
 	// ── Alerts (writes: ConfigureApp, PP-B1) ────────────────────────────────────
 	mux.Handle("GET /api/v1/alerts", s.auth.RequireSession(http.HandlerFunc(s.handleListAlerts)))
-	mux.Handle("POST /api/v1/alerts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateAlert)))
-	mux.Handle("PUT /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAlert)))
-	mux.Handle("DELETE /api/v1/alerts/{alertId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteAlert)))
+	mux.Handle("POST /api/v1/alerts", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateAlert)))
+	mux.Handle("PUT /api/v1/alerts/{alertId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAlert)))
+	mux.Handle("DELETE /api/v1/alerts/{alertId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteAlert)))
 
 	// ── SSH Hosts (writes + test: ConfigureApp, PP-B1) ──────────────────────────
 	mux.Handle("GET /api/v1/ssh/hosts", s.auth.RequireSession(http.HandlerFunc(s.handleListSshHosts)))
-	mux.Handle("POST /api/v1/ssh/hosts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateSshHost)))
-	mux.Handle("PUT /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateSshHost)))
-	mux.Handle("DELETE /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteSshHost)))
-	mux.Handle("POST /api/v1/ssh/hosts/{hostId}/test", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleTestSshHost)))
-	mux.Handle("DELETE /api/v1/ssh/hosts/{hostId}/host-key", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleClearSshHostKey)))
+	mux.Handle("POST /api/v1/ssh/hosts", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateSshHost)))
+	mux.Handle("PUT /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleUpdateSshHost))))
+	mux.Handle("DELETE /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleDeleteSshHost))))
+	mux.Handle("POST /api/v1/ssh/hosts/{hostId}/test", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleTestSshHost))))
+	mux.Handle("DELETE /api/v1/ssh/hosts/{hostId}/host-key", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleClearSshHostKey))))
 
 	// ── Bastions (writes + test: ConfigureApp, PP-B1) ───────────────────────────
 	mux.Handle("GET /api/v1/ssh/bastions", s.auth.RequireSession(http.HandlerFunc(s.handleListBastions)))
-	mux.Handle("POST /api/v1/ssh/bastions", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateBastion)))
-	mux.Handle("PUT /api/v1/ssh/bastions/{bastionId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateBastion)))
-	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteBastion)))
-	mux.Handle("POST /api/v1/ssh/bastions/{bastionId}/test", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleTestBastion)))
-	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}/host-key", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleClearBastionHostKey)))
+	mux.Handle("POST /api/v1/ssh/bastions", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateBastion)))
+	mux.Handle("PUT /api/v1/ssh/bastions/{bastionId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateBastion)))
+	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteBastion)))
+	mux.Handle("POST /api/v1/ssh/bastions/{bastionId}/test", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleTestBastion)))
+	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}/host-key", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleClearBastionHostKey)))
 
 	// ── SSH Key Credentials (writes: ConfigureApp, SK-D6; first-class system SSH
 	// keys — ssh-keys-update.md SK.8). Private key material is never returned. ────
@@ -596,29 +609,29 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	// serverTimezone for all operators). GET gitlab/vault are gated (Q2 — they
 	// expose connection config); other GETs stay session.
 	mux.Handle("GET /api/v1/settings/general", s.auth.RequireSession(http.HandlerFunc(s.handleGetGeneralSettings)))
-	mux.Handle("PUT /api/v1/settings/general", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateGeneralSettings)))
+	mux.Handle("PUT /api/v1/settings/general", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateGeneralSettings)))
 	mux.Handle("GET /api/v1/settings/notifications", s.auth.RequireSession(http.HandlerFunc(s.handleGetNotifications)))
-	mux.Handle("PUT /api/v1/settings/notifications", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateNotifications)))
+	mux.Handle("PUT /api/v1/settings/notifications", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateNotifications)))
 	// K-5: a test send. ConfigureApp because it delivers to real people using the
 	// stored SMTP/Apprise config — the same permission that set that config.
-	mux.Handle("POST /api/v1/settings/notifications/test", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleTestNotification)))
+	mux.Handle("POST /api/v1/settings/notifications/test", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleTestNotification)))
 	mux.Handle("GET /api/v1/settings/audit-compliance", s.auth.RequireSession(http.HandlerFunc(s.handleGetAuditCompliance)))
-	mux.Handle("PUT /api/v1/settings/audit-compliance", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAuditCompliance)))
-	mux.Handle("GET /api/v1/settings/gitlab", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleGetGitlabSettings)))
-	mux.Handle("PUT /api/v1/settings/gitlab", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateGitlabSettings)))
-	mux.Handle("POST /api/v1/settings/gitlab/webhook-secret/rotate", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleRotateGitlabWebhookSecret)))
-	mux.Handle("GET /api/v1/settings/vault", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleGetVaultSettings)))
-	mux.Handle("PUT /api/v1/settings/vault", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateVaultSettings)))
+	mux.Handle("PUT /api/v1/settings/audit-compliance", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAuditCompliance)))
+	mux.Handle("GET /api/v1/settings/gitlab", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetGitlabSettings)))
+	mux.Handle("PUT /api/v1/settings/gitlab", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateGitlabSettings)))
+	mux.Handle("POST /api/v1/settings/gitlab/webhook-secret/rotate", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleRotateGitlabWebhookSecret)))
+	mux.Handle("GET /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleGetVaultSettings)))
+	mux.Handle("PUT /api/v1/settings/vault", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateVaultSettings)))
 	mux.Handle("GET /api/v1/settings/log-storage", s.auth.RequireSession(http.HandlerFunc(s.handleGetLogStorageSettings)))
-	mux.Handle("PUT /api/v1/settings/log-storage", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateLogStorageSettings)))
+	mux.Handle("PUT /api/v1/settings/log-storage", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateLogStorageSettings)))
 	// SL-2 / SL-Q8: Sync now is configureApp, the same permission that set the
 	// bucket. 202 with the archive status; 409 while a tick runs; 422 on local.
-	mux.Handle("POST /api/v1/settings/log-storage/sync", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleLogStorageSyncNow)))
+	mux.Handle("POST /api/v1/settings/log-storage/sync", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleLogStorageSyncNow)))
 	mux.Handle("GET /api/v1/settings/observability", s.auth.RequireSession(http.HandlerFunc(s.handleGetObservabilitySettings)))
-	mux.Handle("PUT /api/v1/settings/observability", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateObservabilitySettings)))
+	mux.Handle("PUT /api/v1/settings/observability", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateObservabilitySettings)))
 
 	// ── Audit Export (ConfigureApp — full change/audit history, Q2/PP-B1) ────────
-	mux.Handle("GET /api/v1/audit/export", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleAuditExport)))
+	mux.Handle("GET /api/v1/audit/export", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleAuditExport)))
 }
 
 // mountWriteChangeLog writes a change_log row for mutations audited at the API layer
@@ -660,6 +673,27 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // genuinely out-of-scope non-global row (no existence oracle), so the only row
 // that reaches the writability gate and fails it is a global one, for which 403 is
 // correct (global existence is not scope-secret; it mirrors the create-side 403).
+// requireVaultSourceGlobal gates every write that names a Vault path (GC-8).
+//
+// There is ONE Vault connection for the installation and a secret's path is
+// checked only for being non-empty, so a vault-source secret can name any path
+// that connection's credential can read — another agency's included — and
+// migrate-to-Vault can write to any path it can write. A departmental
+// manageEnvVars holder could therefore read or overwrite another department's
+// Vault material by binding its path. Per-agency paths need a table that does
+// not exist yet, so until they do the interim is closed rather than open: a
+// Vault path is a global administrator's to name. Reading, revealing and
+// consuming an existing vault-source secret are unchanged.
+func (s *Server) requireVaultSourceGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
+	if id.CanAgency(auth.PermManageEnvVars, "") {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermManageEnvVars, auth.AllScopes,
+		"a Vault-backed secret names a path on the installation's one Vault connection, "+
+			"which is not divided by agency — only an administrator of every agency may create, edit or migrate one")
+	return false
+}
+
 func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec *secrets.Service, sid string, actor auth.Identity) (*secrets.Secret, bool) {
 	sc, ok := s.loadSecretInScope(w, r, sec, sid, actor)
 	if !ok {
@@ -923,6 +957,10 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		Description  *string  `json:"description"`
 		Hosts        []string `json:"hosts"`
 		RawInventory *string  `json:"rawInventory"`
+		// AgencyIDs places the new scope (GC-6). Optional for a global
+		// administrator, who may create a scope no agency owns; a departmental
+		// creator inherits their one agency or must name one they hold.
+		AgencyIDs []string `json:"agencyIds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -930,6 +968,14 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 	}
 	if inp.Scope == "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scope name is required")
+		return
+	}
+	// GC-6: a scope created by a departmental administrator must land in an
+	// agency they hold. Before this it landed in NO agency — visible to nobody
+	// but a global administrator, its creator included — and the route asked
+	// only for configureApp somewhere.
+	agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermConfigureApp, inp.AgencyIDs, "scope")
+	if !ok {
 		return
 	}
 	sc, err := settings.CreateScope(r.Context(), s.db, settings.LocalScopeInput{
@@ -950,6 +996,22 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.Fail500(w, s.log, "create_failed", err)
 		return
+	}
+	if len(agencyIDs) > 0 {
+		if err := settings.SetAgencyMembership(r.Context(), s.db, settings.MemberScope,
+			[]settings.AgencyMembership{{ID: sc.ID, AgencyIDs: agencyIDs}}, id.Email); err != nil {
+			// An unplaced scope is exactly the row this gate exists to prevent, so
+			// take it back rather than leave it for a global administrator to find.
+			_, _ = settings.DeleteScope(r.Context(), s.db, sc.ID, id.Email)
+			httpx.Fail500(w, s.log, "create_failed", err)
+			return
+		}
+		// Scope membership feeds login-time grant expansion (RB-Q10), like every
+		// other scope_agencies write.
+		s.auth.RevokeOtherSessions(w, r)
+		if placed, err := settings.GetScope(r.Context(), s.db, sc.ID); err == nil && placed != nil {
+			sc = placed
+		}
 	}
 	httpx.JSON(w, http.StatusCreated, sc)
 }
@@ -1733,9 +1795,20 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	var perms rolePermissions
 	var unrestricted bool
 	var composeUnbound bool
+	// GC-15 — the "…Global" flags answer "may this caller do this to the
+	// INSTALLATION", which is what requireGlobal asks. The flat flags above them
+	// answer "somewhere" and are true for an administrator of one agency, who
+	// since v2.2.2 is refused by every install-wide route; the SPA reads these
+	// to say so on the control instead of teaching the rule by 403.
+	var globalConfigureApp, globalManageRoles, globalManageEnvVars, globalPublish, composeAdmin bool
 	if id, ok := auth.IdentityFrom(r.Context()); ok {
 		perms = permsForRoles(id.Roles)
 		unrestricted = id.Unrestricted()
+		globalConfigureApp = id.CanAgency(auth.PermConfigureApp, "")
+		globalManageRoles = id.CanAgency(auth.PermManageRoles, "")
+		globalManageEnvVars = id.CanAgency(auth.PermManageEnvVars, "")
+		globalPublish = id.CanAgency(auth.PermPublishSchedule, "")
+		composeAdmin = isComposeAdmin(id)
 		// AF-2 — may this caller author an ALL-scoped (unscoped) definition? Only
 		// an unrestricted compose grant may, because a scheduled fire of an unbound
 		// job runs scope-unchecked (RB-30). The composer reads this to withhold the
@@ -1752,16 +1825,23 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	// delete outright in Phase 1 — a permission that cannot be enforced should not
 	// be advertised as if it were.
 	httpx.JSON(w, http.StatusOK, map[string]bool{
-		"vault":           vaultOK,
-		"apprise":         s.cfg.AppriseURL != "",
-		"compose":         compose,
-		"manageRoles":     perms.ManageRoles,
-		"configureApp":    perms.ConfigureApp,
-		"manageEnvVars":   perms.ManageEnvVars,
-		"publishSchedule": perms.PublishSchedule,
-		"triggerJobs":     perms.TriggerJobs,
-		"killJobs":        perms.KillJobs,
-		"composeUnbound":  composeUnbound,
+		"vault":                 vaultOK,
+		"apprise":               s.cfg.AppriseURL != "",
+		"compose":               compose,
+		"manageRoles":           perms.ManageRoles,
+		"configureApp":          perms.ConfigureApp,
+		"manageEnvVars":         perms.ManageEnvVars,
+		"publishSchedule":       perms.PublishSchedule,
+		"triggerJobs":           perms.TriggerJobs,
+		"killJobs":              perms.KillJobs,
+		"composeUnbound":        composeUnbound,
+		"configureAppGlobal":    globalConfigureApp,
+		"manageRolesGlobal":     globalManageRoles,
+		"manageEnvVarsGlobal":   globalManageEnvVars,
+		"publishScheduleGlobal": globalPublish,
+		// Reusable schedules, calendars, reactions, revisions and the recycle
+		// bin — see requireComposeAdmin.
+		"composeAdmin": composeAdmin,
 		// RB-29: not a permission — a fact about scope REACH. The Run dialog needs it
 		// to offer a compliance path for RB-26: an unscoped job must be bound to a
 		// scope by a restricted caller, while an unrestricted one may deliberately run
@@ -1776,6 +1856,20 @@ func (s *Server) handleGetNotifications(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
+	}
+	// GC-14: an Apprise target URL IS its credential (a Slack webhook, a
+	// PagerDuty key), and this read is open to every session so the alert
+	// editor can list targets by label. Only the administrator who may write
+	// the config gets the URLs back; everyone else gets the labels.
+	if nc != nil && nc.Apprise != nil && !isGlobal(r, auth.PermConfigureApp) {
+		masked := *nc.Apprise
+		masked.APIURL = ""
+		masked.Targets = make([]settings.AppriseTarget, len(nc.Apprise.Targets))
+		for i, t := range nc.Apprise.Targets {
+			t.URL = ""
+			masked.Targets[i] = t
+		}
+		nc.Apprise = &masked
 	}
 	httpx.JSON(w, http.StatusOK, nc)
 }

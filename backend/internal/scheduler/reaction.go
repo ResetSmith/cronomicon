@@ -91,9 +91,12 @@ func (s *Scheduler) reactionLoop(ctx context.Context) {
 
 // srcEvent is one observed terminal completion.
 type srcEvent struct {
-	kind        string // job | workflow
-	source      string
-	name        string
+	kind   string // job | workflow
+	source string
+	name   string
+	// uid is the finished definition's identity (runs.job_uid /
+	// workflow_runs.workflow_uid). Empty on a row written before 1010.
+	uid         string
 	runID       string
 	outcome     reaction.Outcome
 	completedAt time.Time
@@ -180,7 +183,7 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 
 	jobRows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(job_source,'git'), job_name, status, completed_at,
-		       reaction_depth, workflow_run_id
+		       reaction_depth, workflow_run_id, COALESCE(job_uid,'')
 		  FROM runs
 		 WHERE completed_at IS NOT NULL AND completed_at >= ?
 		   AND status IN ('success','warning','failure','killed')
@@ -194,10 +197,10 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 		s.log.Error("reactor: scan runs", "err", err)
 	} else {
 		for jobRows.Next() {
-			var id, source, name, status, completedAt string
+			var id, source, name, status, completedAt, uid string
 			var depth int
 			var wfRunID sql.NullString
-			if err := jobRows.Scan(&id, &source, &name, &status, &completedAt, &depth, &wfRunID); err != nil {
+			if err := jobRows.Scan(&id, &source, &name, &status, &completedAt, &depth, &wfRunID, &uid); err != nil {
 				continue
 			}
 			outcome, isEvent := reaction.NormalizeJob(status)
@@ -209,7 +212,7 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 				continue
 			}
 			out = append(out, srcEvent{
-				kind: "job", source: source, name: name, runID: id,
+				kind: "job", source: source, name: name, uid: uid, runID: id,
 				outcome: outcome, completedAt: ts.UTC(), depth: depth,
 				inWorkflow: wfRunID.Valid && wfRunID.String != "",
 			})
@@ -219,7 +222,7 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 
 	wfRows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(workflow_source,'git'), workflow_name, status, cancelled,
-		       completed_at, reaction_depth
+		       completed_at, reaction_depth, COALESCE(workflow_uid,'')
 		  FROM workflow_runs
 		 WHERE completed_at IS NOT NULL AND completed_at >= ?
 		   AND status IN ('success','warning','failure','killed')
@@ -229,9 +232,9 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 		return out
 	}
 	for wfRows.Next() {
-		var id, source, name, status, completedAt string
+		var id, source, name, status, completedAt, uid string
 		var cancelled, depth int
-		if err := wfRows.Scan(&id, &source, &name, &status, &cancelled, &completedAt, &depth); err != nil {
+		if err := wfRows.Scan(&id, &source, &name, &status, &cancelled, &completedAt, &depth, &uid); err != nil {
 			continue
 		}
 		outcome, isEvent := reaction.NormalizeWorkflow(status, cancelled == 1)
@@ -243,7 +246,7 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 			continue
 		}
 		out = append(out, srcEvent{
-			kind: "workflow", source: source, name: name, runID: id,
+			kind: "workflow", source: source, name: name, uid: uid, runID: id,
 			outcome: outcome, completedAt: ts.UTC(), depth: depth,
 		})
 	}
@@ -263,8 +266,15 @@ func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time
 		       delay_seconds, min_interval_seconds, include_workflow_children, enabled,
 		       COALESCE(owner_uid,'')
 		  FROM reactions
-		 WHERE on_kind = ? AND on_source = ? AND on_name = ?`,
-		ev.kind, ev.source, ev.name)
+		 WHERE on_kind = ? AND on_source = ? AND on_name = ?
+		   -- GC-13: names are per-agency since R2, so two departments may each
+		   -- hold a cronomicon job called "nightly-load". Matching on the name
+		   -- alone let one department's run fire the reaction authored against
+		   -- the other's. When both sides carry an identity it must agree; a
+		   -- reaction or a run from before the uid existed still matches by
+		   -- name, as it always did.
+		   AND (COALESCE(on_uid,'') = '' OR ? = '' OR on_uid = ?)`,
+		ev.kind, ev.source, ev.name, ev.uid, ev.uid)
 	if err != nil {
 		s.log.Error("reactor: match reactions", "kind", ev.kind, "name", ev.name, "err", err)
 		return

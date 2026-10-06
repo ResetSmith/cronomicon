@@ -175,12 +175,22 @@ func NewService(ctx context.Context, cfg *config.Config, db *sql.DB, log *slog.L
 		// an instance with legacy admin rows and no grants was genuinely locked out
 		// and this stayed silent. A lockout warning that reads the wrong table is
 		// worse than none, because it is trusted at exactly the moment it misleads.
-		var admins int
-		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_grants WHERE lower(role) = ?`, AdminRole).Scan(&admins)
-		if admins == 0 {
-			log.Warn("⚠️  NO ADMIN CONFIGURED — RBAC is enforced but no admin access grant exists " +
-				"and CRONOMICON_BOOTSTRAP_ADMIN_GROUP is unset. No operator can reach admin-gated routes. " +
-				"Set CRONOMICON_BOOTSTRAP_ADMIN_GROUP for the first login, then add an admin Access Grant in Settings.")
+		//
+		// GC-16 (v2.2.2): it counted grants of the role NAMED admin, on any
+		// agency. Install-wide routes now need a GLOBAL administrator — an
+		// all-agencies grant whose role carries the permission — so an
+		// installation run entirely by agency-scoped admins has grants, passes
+		// that count, and has nobody who can change a setting or repair access.
+		// Count what the gates actually ask for.
+		var globalAdmins int
+		_ = db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM access_grants g JOIN roles r ON lower(r.name) = lower(g.role)
+			 WHERE g.all_scopes = 1 AND r.configure_app = 1 AND r.manage_roles = 1`).Scan(&globalAdmins)
+		if globalAdmins == 0 {
+			log.Warn("⚠️  NO GLOBAL ADMINISTRATOR — no access grant gives configureApp and manageRoles on every " +
+				"agency, and CRONOMICON_BOOTSTRAP_ADMIN_GROUP is unset. Nobody can change install-wide settings " +
+				"or repair access. Run `cronomicon grant-admin <ad-group>` (server stopped), or set " +
+				"CRONOMICON_BOOTSTRAP_ADMIN_GROUP for the first login, then add an all-agencies admin grant in Settings.")
 		}
 	}
 
