@@ -2019,7 +2019,7 @@
 <section class="chap">
 <h2 id="1-how-a-powershell-run-reaches-its-target"><span class="secnum">1</span> How a PowerShell run reaches its target</h2>
 
-<p>Like Bash, a <code>powershell</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (default via the resolution chain; <strong>the pool is off until an operator sets <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell runs queue forever) or a <strong>runner</strong> inside the target's segment. On both, the actual mechanics are identical: the dialing side opens an SSH connection to each target and runs</p>
+<p>Like Bash, a <code>powershell</code> run can execute on <strong>either executor</strong> — the in-app SSH executor (default via the resolution chain; <strong>the pool is off until an operator sets <code>CRONOMICON_SSH_EXECUTOR_ENABLED=true</code></strong>, or shell runs queue forever) or a <strong>runner</strong> inside the target's segment. When an operator has <strong>bound the job's scope to runners</strong> (Scopes page), that choice is made for you: a job with no executor of its own runs on the bound runners, and one that asks for <code>ssh</code> is refused (<code>scope_requires_runner</code>) — see <a href="./bash-guide.html">Bash Guide</a> §1. On both, the actual mechanics are identical: the dialing side opens an SSH connection to each target and runs</p>
 
 <div class="codeblock"><pre><code>powershell -NonInteractive -Command &lt;your script&gt;</code></pre></div>
 
@@ -2052,7 +2052,7 @@
 <li><strong>Nothing to declare on the scope.</strong> A scope does not list run types, so a Windows scope needs no <code>powershell</code> entry (the “supported run types” field was removed in 2.1.0). To find your Windows scopes quickly, give them a <strong>tag</strong> on the Scopes page — e.g. <span class="tag">windows</span> on a <code>Windows-Fleet</code> scope. A tag is a label only; it does not decide where or whether a job runs. An old <code># cronomicon:v1 types=…</code> pragma in a Git-synced inventory is ignored and can be deleted.</li>
 <li><strong>Host records are OS-agnostic.</strong> Address, port (22 for Windows OpenSSH too), user, optional bastion <code>via</code>, and the auth key. The <strong>OS</strong> field on a host record is descriptive; execution behavior comes from the run type.</li>
 <li><strong>Key-based auth on Windows OpenSSH</strong> works like anywhere else, with one server-side gotcha worth knowing when <em>Test connection</em> says <span class="pill fail"><span class="dot"></span>cred_error</span> but the key is right: for members of the Administrators group, Windows OpenSSH reads authorized keys from <code>C:\ProgramData\ssh\administrators_authorized_keys</code> (with restrictive ACLs), not the user profile's <code>authorized_keys</code>.</li>
-<li><strong>Host keys fail closed</strong> on both executors — stored-key strict match or loud TOFU on the in-app executor; the runner's <code>known_hosts</code> + <strong>Scan &amp; approve</strong> on the agent path. Bastion hops are pinned too. Same rules, same fixes as <a href="./bash-guide.html">Bash Guide</a> §3.</li>
+<li><strong>Host keys fail closed</strong> on both executors — stored-key strict match or loud TOFU on the in-app executor; the runner's <code>known_hosts</code>, filled with <strong>Scan keys</strong> and a fingerprint review, on the agent path. Bastion hops are pinned too. Same rules, same fixes as <a href="./bash-guide.html">Bash Guide</a> §3.</li>
 </ul>
 
 <hr />

@@ -244,9 +244,10 @@ checked, but the file form is preferred for the reasons above.
 
 ## Retention
 
-Retention is **per-table** and lives in the DB: seven independent day knobs (`runs`,
+Retention is **per-table** and lives in the DB: twelve independent day knobs (`runs`,
 `activity`, `workflowRuns`, `changeLog`, `schedulePushes`, `logFiles`,
-`auditLogFiles`) stored in the `auditCompliance` settings blob and edited under
+`auditLogFiles`, `recycleBin`, `definitionRevisions`, `runnerPlacementHistory`,
+`archivedLogFiles`, `hostKeyLedger`) stored in the `auditCompliance` settings blob and edited under
 **Settings → Audit & Compliance**. The vars below are **bootstrap defaults only** — on the first boot
 that finds the blob unset they seed it (each var fanning out to the tables it
 covered before), and from then on the blob is authoritative. Editing these on an

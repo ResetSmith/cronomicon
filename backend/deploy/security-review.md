@@ -57,21 +57,80 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   the runner bearer on the `/api` paths, so the bypass skips only the SSO.
   The path list is in the administrator manual, section 8.3.
 - **Host-key trust is human-approved TOFU, never automatic.** A runner
-  refuses an unknown/changed target key (no fall-open). The scan → approve →
+  refuses an unknown/changed target key (no fall-open). The scan → review →
   trust flow lets an
   operator trust a key without hand-assembling `known_hosts`: the agent scans
-  the host from its own vantage and uploads the presented key; the operator
-  approves it (the UI shows the full SHA256 for out-of-band comparison); the
+  hosts (a typed list, or a whole scope expanded on the server) from its own
+  vantage and uploads the presented keys; an operator may instead paste lines
+  they already hold, or copy the keys another runner trusts. Every source ends
+  on one review screen (the UI shows the full SHA256 of every key for
+  out-of-band comparison, and classifies each as new, matching the server's own
+  pin, already trusted, or CHANGED); the
   next poll delivers a `trust-hosts` op and the agent appends it. The trust
   decision is ALWAYS a human approval — the server never auto-trusts a scanned
   key, and the scan carries no credential (it captures only the public host
   key). Approving without out-of-band verification is still TOFU, and the docs
-  say so plainly (approval dialog + security guide §8). Every registered agent
-  understands the keyscan/trust-hosts ops (the server's protocol floor tracks
-  the current protocol version, so an older agent is refused at registration);
-  the upload endpoint is runner-key-authed + ownership-guarded; scan requests and
-  approve/reject decisions are audited. The scanned key never bypasses
+  say so plainly (review screen + security guide §5). Every registered agent
+  understands the host-key ops (the server's protocol floor tracks
+  the current protocol version, 14 since 2.2.0, so an older agent is refused at
+  registration, at redeclare and on every poll);
+  the upload endpoints are runner-key-authed + ownership-guarded. The scanned key
+  never bypasses
   verification — it only becomes a candidate for a human to approve.
+  Since 2.2.0 (SB band) the flow is also hardened in five ways. (1) **The server
+  does not take a runner's or an operator's word for a key**: uploaded and
+  pasted lines are parsed server-side, the fingerprint is computed from the key,
+  and the line delivered to a runner is rendered by the server for one validated
+  host — wildcard, negated and marker (`@cert-authority`/`@revoked`) lines are
+  refused, as is any host the runner's verifier could not load, and a paste is
+  accepted whole or not at all. (2) **A commit is bound to the review**: it names
+  the reviewed rows by host, key type, fingerprint and shown status, and a key
+  that would replace a trusted one must be acknowledged as changed or the whole
+  commit is refused (409 `review_stale`). (3) **Trust is revocable**: approving a
+  changed key supersedes the old approval and an `untrust-hosts` op deletes the
+  old line from the runner's file; an operator can remove a key outright. Before
+  protocol 14 the file only ever grew. (4) **The record is a ledger, not a
+  change-log line**: `host_key_ledger` is append-only for decisions and keeps
+  runner (id and name, no FK — it outlives the runner), scope, host, source,
+  previous fingerprint, actor and batch; a row is never pruned while its key is
+  in force, and rejected/removed/replaced rows age out on the `hostKeyLedger`
+  retention knob (365 days by default). Each batch also writes one change-log
+  row naming the runner, and the audit export carries one row per key.
+  (5) **Delivery is confirmed, not assumed**: the agent reports what its
+  `known_hosts` holds (per line: host patterns, hashed flag, marker, key type,
+  fingerprint — never the file, never a hostname hash) at startup, after every
+  change and on request; the report is believed over the ledger's own stamps,
+  and lines the app did not approve are shown, separately, as such. Every
+  per-runner host-key route, reads included, needs `configureApp` on the runner's
+  agency (unrestricted for a general-pool runner). Residual: a line present in a
+  runner's file that Cronomicon did not approve is still trusted by that runner
+  — it is made visible, not governed; and a host behind a bastion cannot be
+  scanned (the scan dials directly), so its key is always operator-supplied.
+- **Runner placement within an agency is operator-set on the scope, and fails
+  closed** (SB band, 2.2.0). A scope may name the runners allowed to serve it
+  (`scope_runners`); a bound scope's runs are claimable only by those runners,
+  ANDed with the agency, capability and secret-injection rules — the binding
+  narrows and never widens. It replaced the runner-tag pin, which was free text
+  set by the job's author and enforced on the manual/token trigger only; a
+  leftover `runner_tag:` in Git YAML is ignored with a warning, and no dispatch,
+  gate or warning reads any tag (`runner/dispatch_reads_no_tags_test.go`). The
+  binding is keyed on the runner **id**, never the name (a name is
+  self-declared by the agent at registration), is never parsed from Git, and
+  needs `configureApp` plus the runner's agency gate for each runner added. It
+  has **no foreign key to `runners`**: deleting or reaping a bound runner leaves
+  the scope bound and its runs waiting with a stated reason, rather than
+  reopening the scope to its whole agency; only an operator unbinds, replaces,
+  or restores the placement. A bound scope implies the runner executor: an
+  explicit `ssh` on it is refused (`scope_requires_runner`) on every producer,
+  and an unreadable binding stops the producer rather than reading as unbound.
+  A bound scope with runs waiting cannot be renamed or deleted (409
+  `scope_bound_busy`), because a run carries its scope by name. Residual: runs
+  already queued for `ssh` when a binding is saved keep their frozen executor
+  and run from the server (the bind preview counts them); any `configureApp`
+  holder may unbind a scope, as they may already rebind its agency; and a
+  binding governs a **scope**, not a host — a run on no scope, or on another
+  scope, that reaches the same machine through its own host record is not
+  confined by it.
 - **Server manages a runner's operational settings — but never its secrets.**
   The operator can push
   `maxConcurrent`, the sandbox caps, the checkout policy (`allowCheckout` +

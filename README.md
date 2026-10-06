@@ -278,6 +278,8 @@ The server can run jobs over SSH on its own. **Runners** are small agents you in
 1. In Cronomicon, open **Runners** and choose **+ Add Runner**.
 2. Copy the generated command and run it on the target host. It carries a single-use registration token, downloads the agent from your server, verifies its checksum and installs it as a hardened systemd service.
 3. The runner appears in the registry within a minute. Assign it to a department on the same page.
+4. If only this runner can reach a group of hosts, bind their scope to it: open **Scopes**, expand the scope and choose **Bind runners…**. The scope's jobs then run on that runner and no other.
+5. A runner connects only to hosts whose SSH key it trusts. On the runner's row choose **Scan keys**, scan the scope, compare the fingerprints and approve them.
 
 To run a runner as a container instead, the same page generates a `docker run` command for the image that matches your server's version. Always run runners at the same version as the server, because the server refuses agents that speak an older protocol. The [runner install guide](https://cronomicon.io/docs/runner-install.html) covers every option.
 
@@ -342,7 +344,9 @@ Jobs, workflows, schedules and scopes can be **defined in Git** and synchronized
 ### Execution
 
 - **Two executors.** Direct SSH from the server (including bastion hosts), and runner agents for isolated networks and local toolchains.
-- **Runner isolation by department.** A job runs only on a runner in its own department, and can be narrowed further to runners carrying a given tag.
+- **Runner isolation by department.** A job runs only on a runner in its own department.
+- **Runners bound to scopes.** A scope can name the runners that reach its hosts. Its jobs then run on those runners only, and wait, with a stated reason, if none is available. Tags on runners are labels and never route work.
+- **Reviewed host keys.** A runner's trusted SSH host keys are approved from the Runners page after a scan or a paste, fingerprint by fingerprint. Every approval, rejection and removal is recorded, and the page shows what the runner's own `known_hosts` file holds.
 - **Ansible projects.** Runners can check out a playbook repository at a pinned commit, with roles, templates, collections and Ansible Vault.
 - **Run inputs.** A job can declare values that the operator provides when starting a run, and can require them.
 - **Live logs.** Follow a run's output in History while it runs.
@@ -539,6 +543,8 @@ cd frontend && npm run build && npm test
 | A runner cannot register | The proxy may be redirecting runner traffic to a sign-in page; see [Step 4](#step-4-put-it-behind-your-reverse-proxy). Registration tokens are single-use and expire after 24 hours. |
 | A runner shows as offline | It has not contacted the server recently. Check the agent's log with `journalctl -u cronomicon-runner` or `docker logs`. |
 | A job fails over SSH | Check the target's host key and any bastion settings under **Settings → SSH Targets**. |
+| A job on a runner fails with a host-key error | The runner does not trust that host yet. Expand the runner under **Runners**, choose **Scan keys** and approve the key. |
+| A run stays queued on a scope bound to runners | Its bound runners are offline or were removed; the run's reason names them. Bring one back, or change the binding under **Scopes**. |
 
 Run logs are grouped by job under the log directory configured in **Settings → Execution → Log Storage**. The [administrator manual](https://cronomicon.io/docs/administrator-manual.html) has a full troubleshooting chapter.
 
