@@ -58,7 +58,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.1.0"
+	version   = "2.2.0"
 	commit    = "none"
 	buildDate = "unknown"
 )

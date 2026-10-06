@@ -13,7 +13,7 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
-## [2.2.0] - Unreleased
+## [2.2.0] - 2026-10-06
 
 Where a job runs is recorded on its scope, not on the job (SB band). A scope
 can name the runners allowed to serve it, and the per-job runner-tag pin that
