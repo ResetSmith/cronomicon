@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api/client";
+import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
+import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
@@ -109,6 +111,7 @@ export function ScopesTab({
   error,
   refetch,
   canEdit,
+  globalAdmin,
   dep = 0,
 }: {
   scopes: ScopeRow[];
@@ -116,6 +119,11 @@ export function ScopesTab({
   error: string | null;
   refetch: () => void;
   canEdit: boolean;
+  /** GC (v2.2.2) — the caller is a global administrator for configureApp. Moving
+   *  a scope between agencies and the GitLab re-sync need it; every other scope
+   *  write is judged per scope by the server (the scope's agency), and a refusal
+   *  surfaces its message in this view's existing error lines. */
+  globalAdmin: boolean;
   /** The parent's list-load counter. A fresh load drops the optimistic tag overrides. */
   dep?: number;
 }) {
@@ -133,6 +141,7 @@ export function ScopesTab({
   const { data: agencyData } = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencies = rows<{ id: string; name: string }>(agencyData);
   const cw = useColumnWidths("envvars-scopes");
+  const globalWhy = globalOnly(globalAdmin);
 
   // Operator-owned scope tags (migration 1160) — optimistic edits via the
   // dedicated PUT /scope-tags/{scopeId}; the override map resets on every list
@@ -367,7 +376,7 @@ export function ScopesTab({
         <ColumnsMenu cols={cols} cw={cw} />
         {canEdit && (
           <>
-            <Btn onClick={resync} disabled={resyncing}>
+            <Btn onClick={resync} disabled={resyncing || !!globalWhy} title={globalWhy ? GLOBAL_ADMIN_SYNC_ONLY : undefined}>
               {resyncing ? "Re-syncing…" : "↻ Re-sync from GitLab"}
             </Btn>
             <Btn primary onClick={() => setAdding(true)}>
@@ -510,7 +519,12 @@ export function ScopesTab({
                           <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                             <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
                             <select
+                              aria-label={`Agency for ${s.scope}`}
                               value={s.agencies?.[0]?.id ?? ""}
+                              // GC — a scope's agency decides who can reach it,
+                              // so moving one is a global administrator's.
+                              disabled={!!globalWhy}
+                              title={globalWhy || undefined}
                               onChange={async (e) => {
                                 const agencyId = e.target.value || null;
                                 const { error: er } = await api.PUT("/scopes/{scopeId}/agency", {
@@ -523,7 +537,7 @@ export function ScopesTab({
                                   refetch();
                                 }
                               }}
-                              style={{ ...inputStyle(), cursor: "pointer", maxWidth: 260 }}
+                              style={{ ...inputStyle(), cursor: globalWhy ? "not-allowed" : "pointer", maxWidth: 260 }}
                             >
                               <option value="">— None (general pool) —</option>
                               {agencies.map((a) => (
@@ -534,7 +548,7 @@ export function ScopesTab({
                             </select>
                             <span style={{ color: c.textSec, fontSize: c.fontSm }}>
                               Network-isolation zone — only a runner in this agency can execute this scope's jobs, and
-                              only secrets and keys in it are injectable.
+                              only secrets and keys in it are injectable.{globalWhy ? ` ${globalWhy}` : ""}
                             </span>
                           </div>
                         )}
@@ -969,6 +983,12 @@ function ScopeFormModal({
   const [hostsText, setHostsText] = useState((initial?.hosts ?? []).join("\n"));
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
+  // GC-6 (v2.2.2) — a scope created by a departmental administrator must land in
+  // an agency they hold (before, it landed in none and its own creator could not
+  // see it). The same compliance path as secrets, variables and SSH keys: the
+  // picker appears for a caller who is not a global administrator for
+  // configureApp, on create only.
+  const agencyPick = useCreationAgencies(isEdit, "configureApp");
 
   const [mode, setMode] = useState<"hosts" | "inventory">(initial?.hasInventory ? "inventory" : "hosts");
   const [rawInventory, setRawInventory] = useState("");
@@ -1012,6 +1032,10 @@ function ScopeFormModal({
       setFormError(`A scope named '${scopeName}' already exists.`);
       return;
     }
+    if (agencyPick.blockedReason) {
+      setFormError(agencyPick.blockedReason);
+      return;
+    }
     // Hosts may be empty (M5): an inventory scope starts empty and its membership
     // comes from the inventory authored in the expanded row.
     setBusy(true);
@@ -1037,7 +1061,7 @@ function ScopeFormModal({
     } else {
       const { error: e } = await api.POST("/scopes", {
         params: { header: csrfHeader },
-        body,
+        body: { ...body, ...agencyPick.body },
       });
       setBusy(false);
       if (e) {
@@ -1067,8 +1091,8 @@ function ScopeFormModal({
             <Btn onClick={onClose} disabled={busy}>
               Cancel
             </Btn>
-            <Btn primary onClick={save} disabled={busy}>
-              {busy ? "Saving…" : isEdit ? "Save Changes" : "Create Scope"}
+            <Btn primary onClick={save} disabled={busy || !!agencyPick.blockedReason}>
+              {busy ? "Saving…" : agencyPick.blockedReason ? agencyPick.blockedReason : isEdit ? "Save Changes" : "Create Scope"}
             </Btn>
           </div>
         </div>
@@ -1202,6 +1226,13 @@ function ScopeFormModal({
             )}
           </div>
         )}
+        <CreationAgencyPicker
+          label="scope"
+          required={agencyPick.required}
+          agencies={agencyPick.agencies}
+          selected={agencyPick.selected}
+          setSelected={agencyPick.setSelected}
+        />
       </div>
     </Modal>
   );

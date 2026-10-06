@@ -16,6 +16,9 @@ let getResponses: Record<string, unknown> = {};
 // Whether the mocked capabilities grant ManageEnvVars — the editor's write
 // controls, including each row's remove button, hang off it.
 let manageEnvVars = false;
+// GC-3 (v2.2.2) — the SCRIPT editor asks for a global administrator for
+// manageEnvVars, reported separately from the flat flag the job editor reads.
+let manageEnvVarsGlobal = false;
 // Every /references/validate body the component posted, in order.
 const postedBodies: { scope?: string; references?: { kind: string; name: string }[] }[] = [];
 // Every binding-set PUT, in order — the promoted key field and the secrets/variables
@@ -48,7 +51,7 @@ vi.mock("../api/client", async (importOriginal) => {
         };
       }),
     } as unknown as typeof actual.api,
-    fetchCapabilities: vi.fn(async () => ({ manageEnvVars, configureApp: false })),
+    fetchCapabilities: vi.fn(async () => ({ manageEnvVars, manageEnvVarsGlobal, configureApp: false })),
   };
 });
 
@@ -99,6 +102,7 @@ beforeEach(() => {
   getResponses = {};
   verdicts = {};
   manageEnvVars = false;
+  manageEnvVarsGlobal = false;
   postedBodies.length = 0;
   putBodies.length = 0;
 });
@@ -576,5 +580,64 @@ describe("alias (RA-1)", () => {
     // The alias is a bare name but the injected key is prefixed; showing the derived
     // form removes the one guess an author would otherwise have to make.
     await waitFor(() => expect(q.getByText(/CRONOMICON_SECRET_BECOME_PASSWORD/)).toBeTruthy());
+  });
+});
+
+// GC-3 (v2.2.2, gate closing) — a SCRIPT has no scope: its reference bindings are
+// inherited by every job that runs it, in every agency. So PUT
+// /script-reference-bindings/{name} is taken only from a global administrator for
+// manageEnvVars (one grant covering every agency AND carrying the verb). A JOB's
+// bindings are judged against the job's scope, and the flat flag is still the
+// right question there — the job editor must not have narrowed with it.
+describe("script reference bindings need a global manager (GC-3)", () => {
+  const WHY = /A script's references are inherited by every job that runs it, in every agency\. Only a global administrator \(a role on every agency\) can change them\./;
+  const stub = () => {
+    getResponses["/script-reference-bindings/{name}"] = { bindings: [binding("secret", "DB_PASS")] };
+    getResponses["/job-reference-bindings/{jobId}"] = { bindings: [binding("secret", "DB_PASS")] };
+  };
+
+  it("is read-only, and says why, for a departmental manager", async () => {
+    manageEnvVars = true;
+    stub();
+    const { container } = render(<ReferenceBindingsEditor owner={{ script: "tools/backup.sh" }} scope="" />);
+    const q = within(container);
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASS")).toBeTruthy());
+    await waitFor(() => expect(q.getByRole("note").textContent).toMatch(WHY));
+    // The declared reference is still readable; every write control is gone.
+    expect(q.queryByRole("button", { name: /^Remove reference/ })).toBeNull();
+    expect(q.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(q.queryByRole("button", { name: "Suggest from body" })).toBeNull();
+  });
+
+  it("is editable for a global manager, with no note", async () => {
+    manageEnvVars = true;
+    manageEnvVarsGlobal = true;
+    stub();
+    const { container } = render(<ReferenceBindingsEditor owner={{ script: "tools/backup.sh" }} scope="" />);
+    const q = within(container);
+    await waitFor(() => expect(q.getByRole("button", { name: "Remove reference DB_PASS" })).toBeTruthy());
+    expect(q.getByRole("button", { name: "Add" })).toBeTruthy();
+    expect(q.getByRole("button", { name: "Suggest from body" })).toBeTruthy();
+    expect(q.queryByRole("note")).toBeNull();
+  });
+
+  it("says nothing to a caller who manages no variables at all — that is irrelevance, not a precondition", async () => {
+    stub();
+    const { container } = render(<ReferenceBindingsEditor owner={{ script: "tools/backup.sh" }} scope="" />);
+    const q = within(container);
+    await waitFor(() => expect(q.getByText("CRONOMICON_SECRET_DB_PASS")).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(q.queryByRole("note")).toBeNull();
+    expect(q.queryByRole("button", { name: "Add" })).toBeNull();
+  });
+
+  it("leaves a JOB's editor on the flat flag — a departmental manager still edits their own job", async () => {
+    manageEnvVars = true;
+    stub();
+    const { container } = render(<ReferenceBindingsEditor owner={{ job: 1 }} scope="prod" />);
+    const q = within(container);
+    await waitFor(() => expect(q.getByRole("button", { name: "Remove reference DB_PASS" })).toBeTruthy());
+    expect(q.getByRole("button", { name: "Add" })).toBeTruthy();
+    expect(q.queryByRole("note")).toBeNull();
   });
 });

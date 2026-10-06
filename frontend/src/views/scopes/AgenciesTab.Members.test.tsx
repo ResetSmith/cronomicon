@@ -62,8 +62,10 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-const openAgency = async (canEdit = true) => {
-  render(<AgenciesTab canEdit={canEdit} />);
+// `globalAdmin` defaults to canEdit: the pre-GC tests mean "an administrator" as
+// one fact. The GC block below passes the two apart.
+const openAgency = async (canEdit = true, globalAdmin = canEdit) => {
+  render(<AgenciesTab canEdit={canEdit} globalAdmin={globalAdmin} />);
   await waitFor(() => expect(screen.getByText("Tax")).toBeTruthy());
   fireEvent.click(screen.getByText("Tax").closest("tr")!);
   await waitFor(() => expect(screen.getByText("DB_PASS")).toBeTruthy());
@@ -128,5 +130,83 @@ describe("per-agency member editor (RB-22)", () => {
     // The trap the whole agencies plan came from: no online runner means every run
     // targeting this agency queues forever, and nothing alerts.
     expect(screen.getByText(/No online runner serves this agency/i)).toBeTruthy();
+  });
+});
+
+// GC (v2.2.2, gate closing) — the agency CATALOG is install-wide: creating,
+// renaming or deleting an agency, and moving a SCOPE into or out of one, need a
+// global administrator (one grant covering every agency AND carrying
+// configureApp). An administrator of one agency holds configureApp, so by FX-7
+// these are preconditions, not irrelevance: the controls stay and are disabled
+// with the reason. Secret, variable, key and runner membership is unchanged.
+describe("agency catalog — global-administrator controls (GC)", () => {
+  const WHY = "Only a global administrator (a role on every agency) can change this.";
+  // Both scopes are in the matrix (the PUT mock resolves every member through
+  // it): sc0 is already a member of Tax, sc1 is the candidate.
+  const MEMBER_ROW = { kind: "scope", id: "sc0", name: "prod-web", scope: "", agencyIds: ["ag-tax"] };
+  const SCOPE_ROW = { kind: "scope", id: "sc1", name: "edge-lab", scope: "", agencyIds: [] as string[] };
+  const withScopes = () => {
+    DETAIL = {
+      members: [
+        { kind: "secret", id: "s1", name: "DB_PASS", scope: "prod", status: "" },
+        { kind: "scope", id: "sc0", name: "prod-web", scope: "", status: "" },
+      ],
+      onlineRunners: 0,
+      queuedRuns: 0,
+    };
+    MATRIX.rows.push(MEMBER_ROW, SCOPE_ROW);
+  };
+  afterEach(() => {
+    for (const row of [MEMBER_ROW, SCOPE_ROW]) {
+      const i = MATRIX.rows.indexOf(row);
+      if (i >= 0) MATRIX.rows.splice(i, 1);
+    }
+  });
+
+  it("disables Add, Edit and Delete Agency for an administrator of one agency, with the reason", async () => {
+    await openAgency(true, false);
+    for (const name of ["+ Add Agency", "Edit", "Delete"]) {
+      const b = screen.getByRole("button", { name }) as HTMLButtonElement;
+      expect(b.disabled, name).toBe(true);
+      expect(b.title, name).toBe(WHY);
+    }
+  });
+
+  it("disables the scope membership controls, and only those", async () => {
+    withScopes();
+    await openAgency(true, false);
+
+    const removeScope = screen.getByLabelText(/Remove prod-web from this agency/i) as HTMLButtonElement;
+    expect(removeScope.disabled).toBe(true);
+    expect(removeScope.title).toBe(WHY);
+    const addScope = screen.getByLabelText(/Add a scope to this agency/i) as HTMLSelectElement;
+    expect(addScope.disabled).toBe(true);
+    expect(addScope.title).toBe(WHY);
+
+    // A click on the disabled control writes nothing.
+    fireEvent.click(removeScope);
+    expect(puts.length).toBe(0);
+
+    // The other kinds are judged per agency by the server and stay live here.
+    expect((screen.getByLabelText(/Remove DB_PASS from this agency/i) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText(/Add a secret to this agency/i) as HTMLSelectElement).disabled).toBe(false);
+  });
+
+  it("leaves all of it enabled for a global administrator", async () => {
+    withScopes();
+    await openAgency(true, true);
+    for (const name of ["+ Add Agency", "Edit", "Delete"]) {
+      const b = screen.getByRole("button", { name }) as HTMLButtonElement;
+      expect(b.disabled, name).toBe(false);
+      expect(b.title, name).toBe("");
+    }
+    expect((screen.getByLabelText(/Remove prod-web from this agency/i) as HTMLButtonElement).disabled).toBe(false);
+    const addScope = screen.getByLabelText(/Add a scope to this agency/i) as HTMLSelectElement;
+    expect(addScope.disabled).toBe(false);
+
+    fireEvent.change(addScope, { target: { value: "sc1" } });
+    await waitFor(() => expect(puts.length).toBe(1));
+    const sent = (puts[0].body as { members: { kind: string; id: string }[] }).members;
+    expect(sent).toContainEqual({ kind: "scope", id: "sc1" });
   });
 });

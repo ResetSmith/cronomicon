@@ -60,7 +60,7 @@ afterEach(() => {
 
 describe("ServiceAccounts (ET-C)", () => {
   it("lists accounts with their status and never shows token material", async () => {
-    render(<ServiceAccountsSection />);
+    render(<ServiceAccountsSection canGrantEverywhere />);
     await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
     expect(screen.getByText("retired-bot")).toBeTruthy();
     // A revoked account keeps its row (it is an audit actor) but loses Revoke.
@@ -69,7 +69,7 @@ describe("ServiceAccounts (ET-C)", () => {
   });
 
   it("shows the minted token once and hides it again when dismissed", async () => {
-    render(<ServiceAccountsSection />);
+    render(<ServiceAccountsSection canGrantEverywhere />);
     await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
 
     fireEvent.change(screen.getByPlaceholderText("nagios"), { target: { value: "fresh" } });
@@ -83,7 +83,7 @@ describe("ServiceAccounts (ET-C)", () => {
   });
 
   it("requires a name before the account can be created", async () => {
-    render(<ServiceAccountsSection />);
+    render(<ServiceAccountsSection canGrantEverywhere />);
     await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
     const create = screen.getByRole("button", { name: /Create service account/ }) as HTMLButtonElement;
     expect(create.disabled).toBe(true);
@@ -92,8 +92,65 @@ describe("ServiceAccounts (ET-C)", () => {
   });
 
   it("says a job must be requestable — the gate operators otherwise trip over", async () => {
-    render(<ServiceAccountsSection />);
+    render(<ServiceAccountsSection canGrantEverywhere />);
     await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
     expect(screen.getByText(/requestable/i)).toBeTruthy();
+  });
+});
+
+// GC-5 (v2.2.2, gate closing) — minting a service account IS granting a role, so
+// it follows the access-grant rules: a delegate (manageRoles for their own
+// agencies) mints for an agency and never for all of them. Until 2.2.2 a
+// delegate could mint an all-scopes `admin` token here. The "All scopes" option
+// is withheld from them — it is never theirs, so this is irrelevance, not a
+// precondition (FX-7) — and the form no longer DEFAULTS to it.
+describe("ServiceAccounts — the all-scopes option is a global administrator's (GC-5)", () => {
+  const lastBody = async () => {
+    const { api } = await import("../../api/client");
+    const calls = (api.POST as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    return (calls[calls.length - 1][1] as { body: Record<string, unknown> }).body;
+  };
+  beforeEach(async () => {
+    const { api } = await import("../../api/client");
+    (api.POST as unknown as ReturnType<typeof vi.fn>).mockClear();
+  });
+
+  it("withholds All scopes from a delegate and makes them name an agency", async () => {
+    render(<ServiceAccountsSection canGrantEverywhere={false} />);
+    await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
+
+    const where = screen.getByLabelText("Where") as HTMLSelectElement;
+    expect(Array.from(where.options).map((o) => o.textContent)).toEqual(["Choose an agency…", "Tax"]);
+    expect(screen.queryByRole("option", { name: "All scopes (*)" })).toBeNull();
+
+    // A name alone is not enough: with no agency chosen there is nothing this
+    // caller may send, and the button says what is missing.
+    fireEvent.change(screen.getByPlaceholderText("nagios"), { target: { value: "fresh" } });
+    const create = screen.getByRole("button", { name: /Create service account/ }) as HTMLButtonElement;
+    expect(create.disabled).toBe(true);
+    expect(create.title).toBe("Choose an agency first");
+
+    fireEvent.change(where, { target: { value: "ag-1" } });
+    expect((screen.getByRole("button", { name: /Create service account/ }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /Create service account/ }));
+    await waitFor(() => expect(screen.getByTestId("minted-token")).toBeTruthy());
+
+    const body = await lastBody();
+    expect(body.agencyId).toBe("ag-1");
+    expect("allScopes" in body).toBe(false);
+  });
+
+  it("offers All scopes to a global administrator, as the default", async () => {
+    render(<ServiceAccountsSection canGrantEverywhere />);
+    await waitFor(() => expect(screen.getByText("nagios")).toBeTruthy());
+    const where = screen.getByLabelText("Where") as HTMLSelectElement;
+    expect(Array.from(where.options).map((o) => o.textContent)).toEqual(["All scopes (*)", "Tax"]);
+
+    fireEvent.change(screen.getByPlaceholderText("nagios"), { target: { value: "fresh" } });
+    fireEvent.click(screen.getByRole("button", { name: /Create service account/ }));
+    await waitFor(() => expect(screen.getByTestId("minted-token")).toBeTruthy());
+    const body = await lastBody();
+    expect(body.allScopes).toBe(true);
+    expect("agencyId" in body).toBe(false);
   });
 });

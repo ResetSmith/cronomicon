@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, csrfHeader } from "../../api/client";
 import { c } from "../../theme";
+import { COMPOSE_ADMIN_ONLY } from "../../api/globalAdmin";
 import { Btn, Card, errMsg, fmtDateTime, tdStyle, thStyle } from "./ui";
 
 // Recycle Bin (RH-F, the prod-features plan §4).
@@ -31,7 +32,27 @@ function daysUntil(iso?: string | null): string {
   return days === 1 ? "tomorrow" : `in ${days} days`;
 }
 
-export function RecycleBinSection() {
+// GC (v2.2.2) — the bin is cross-agency (it holds every department's deleted
+// definitions), so its list, restore and purge all need `composeAdmin`: compose
+// AND configureApp on one all-agencies grant. GET /recycle-bin itself is refused
+// without it, so an administrator of one agency must not fetch and then read
+// "forbidden" — the section says who can use it instead, and the list (with its
+// hooks) mounts only when the read will be answered.
+export function RecycleBinSection({ canWrite }: { canWrite: boolean }) {
+  if (!canWrite) {
+    return (
+      <Card title="Recycle Bin">
+        <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+          {COMPOSE_ADMIN_ONLY} The bin holds every agency's deleted definitions, so it is not listed for an
+          administrator of one.
+        </div>
+      </Card>
+    );
+  }
+  return <RecycleBinList />;
+}
+
+function RecycleBinList() {
   const [items, setItems] = useState<RecycleBinEntry[] | null>(null);
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);

@@ -122,3 +122,50 @@ describe("RF-Q2(a) creation agency picker", () => {
     expect(opts).toContain("Finance");
   });
 });
+
+// GC-6 (v2.2.2) — scope creation passes the PERMISSION its route checks, because
+// "may omit the agency" is not the same question for it. `unrestricted` is
+// permission-blind: a viewer on all scopes who administers one agency reads as
+// unrestricted, and the server still requires an agency because no all-agencies
+// grant of theirs carries configureApp. So with a permission named, the hook
+// keys on that permission's GLOBAL flag instead.
+describe("creation agency picker — keyed on a permission's global flag (GC-6)", () => {
+  function ScopeHost() {
+    const pick = useCreationAgencies(false, "configureApp");
+    return (
+      <div>
+        <button disabled={!!pick.blockedReason}>{pick.blockedReason || "Save"}</button>
+        <CreationAgencyPicker
+          label="scope"
+          required={pick.required}
+          agencies={pick.agencies}
+          selected={pick.selected}
+          setSelected={pick.setSelected}
+        />
+      </div>
+    );
+  }
+
+  it("asks a caller who is unrestricted but NOT a global administrator for configureApp", async () => {
+    CAPS = { unrestricted: true, configureApp: true, configureAppGlobal: false };
+    render(<ScopeHost />);
+    await waitFor(() => expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true));
+    expect(screen.getByText(/this scope must belong to one of your\s+agencies/)).toBeTruthy();
+  });
+
+  it("stays out of a global administrator's way", async () => {
+    CAPS = { unrestricted: true, configureApp: true, configureAppGlobal: true };
+    render(<ScopeHost />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Agencies/)).toBeNull();
+  });
+
+  it("leaves the three original callers on `unrestricted` — no permission named, no change", async () => {
+    CAPS = { unrestricted: true, configureAppGlobal: false };
+    render(<Host isEdit={false} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Agencies/)).toBeNull();
+  });
+});

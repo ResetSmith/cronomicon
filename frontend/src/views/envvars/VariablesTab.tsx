@@ -430,7 +430,7 @@ function VarFormModal({
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
   // RF-Q2(a): the create-time agency binding, shown only to restricted callers.
-  const agencyPick = useCreationAgencies(isEdit);
+  const agencyPick = useCreationAgencies(isEdit, "manageEnvVars");
 
   const onKeyChange = (raw: string) => {
     const up = raw.toUpperCase().replace(/[^A-Z0-9_]/g, "");

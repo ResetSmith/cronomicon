@@ -5,7 +5,8 @@ import { useGet } from "../../hooks";
 import { c } from "../../theme";
 import { InlineLoading } from "../../components/ui";
 import { setAppZone } from "../../utils/datetime";
-import { Btn, Card, SettingRow, csrfHeader, errMsg, inputStyle } from "./ui";
+import { globalOnly } from "../../api/globalAdmin";
+import { Btn, Card, ReadOnlyFields, SettingRow, csrfHeader, errMsg, inputStyle } from "./ui";
 
 type GeneralSettings = components["schemas"]["GeneralSettings"];
 
@@ -29,7 +30,11 @@ const TIMEZONES = [
 // the right edge, and a right-aligned value sits flush against them.
 const numInput = (): React.CSSProperties => ({ ...inputStyle(), width: 80 });
 
-export function GeneralSection() {
+// `canWrite` — the caller is a global administrator for configureApp (GC,
+// v2.2.2: PUT /settings/general is install-wide). The read stays open to every
+// session, so a non-global administrator sees the values and a disabled Save.
+export function GeneralSection({ canWrite }: { canWrite: boolean }) {
+  const why = globalOnly(canWrite);
   const [bump, setBump] = useState(0);
   const { data, error, loading } = useGet<GeneralSettings>(() => api.GET("/settings/general"), [bump]);
   const [form, setForm] = useState<GeneralSettings | null>(null);
@@ -74,7 +79,7 @@ export function GeneralSection() {
       <Card
         title="General Settings"
         action={
-          <Btn primary onClick={save} disabled={!form || saving} style={saved ? { background: c.success, borderColor: c.success } : undefined}>
+          <Btn primary onClick={save} disabled={!form || saving || !!why} title={why || undefined} style={saved ? { background: c.success, borderColor: c.success } : undefined}>
             {saved ? "✓ Saved" : saving ? "Saving…" : "Save Changes"}
           </Btn>
         }
@@ -83,6 +88,7 @@ export function GeneralSection() {
         {error && <div style={{ color: c.danger }}>Error: {error}</div>}
         {saveErr && <div style={{ color: c.danger, marginBottom: 10, fontSize: c.fontSm }}>Save failed: {saveErr}</div>}
         {!loading && !error && form && (
+          <ReadOnlyFields readOnly={!canWrite}>
           <div style={{ fontSize: c.fontSm }}>
             <SettingRow label="App Name">
               <input
@@ -167,6 +173,7 @@ export function GeneralSection() {
               />
             </SettingRow>
           </div>
+          </ReadOnlyFields>
         )}
       </Card>
 

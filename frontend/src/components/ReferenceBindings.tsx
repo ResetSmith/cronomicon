@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState, type CSSProperties } from "react";
 import { api, csrfHeader, errMsg, fetchCapabilities } from "../api/client";
+import { globalAdminOnly } from "../api/globalAdmin";
 import { useGet, rows } from "../hooks";
 import { c } from "../theme";
 import { Btn, InlineLoading, Section } from "./ui";
@@ -435,10 +436,26 @@ export function ReferenceBindingsEditor({
   const isJob = "job" in owner;
   const ownsKind = (k: string) => kinds.includes(k as Kind);
   const [refresh, setRefresh] = useState(0);
+  // GC-3 (v2.2.2) — a JOB's bindings are judged against the job's scope, so the
+  // flat manageEnvVars flag is the right question there. A SCRIPT has no scope:
+  // its bindings are inherited by every job that runs it, in every agency, so
+  // the server takes that write only from a global administrator for
+  // manageEnvVars (one grant covering every agency AND carrying the verb — the
+  // permission-blind `unrestricted` it used to ask let a viewer-everywhere who
+  // manages one agency through). `scriptWhy` is the read-only explanation for a
+  // departmental manager, who would otherwise see the controls simply missing.
   const [canManage, setCanManage] = useState(false);
+  const [scriptWhy, setScriptWhy] = useState("");
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanManage(caps.manageEnvVars));
-  }, []);
+    fetchCapabilities().then((caps) => {
+      setCanManage(isJob ? caps.manageEnvVars : !!caps.manageEnvVarsGlobal);
+      setScriptWhy(
+        !isJob && caps.manageEnvVars && !caps.manageEnvVarsGlobal
+          ? `Read-only. A script's references are inherited by every job that runs it, in every agency. ${globalAdminOnly("change them")}`
+          : "",
+      );
+    });
+  }, [isJob]);
 
   const bindingsQ = useGet<{ bindings?: ReferenceBinding[] }>(
     () =>
@@ -645,6 +662,12 @@ export function ReferenceBindingsEditor({
               </Btn>
             </>
           )}
+        </div>
+      )}
+
+      {scriptWhy && (
+        <div role="note" style={{ fontSize: c.fontXs, color: c.textMuted }}>
+          {scriptWhy}
         </div>
       )}
 

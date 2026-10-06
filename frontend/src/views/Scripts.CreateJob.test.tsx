@@ -9,6 +9,9 @@ import { MemoryRouter } from "react-router-dom";
 // affordance (never offer a button that dead-ends on the composer's notice).
 
 let composeOn = true;
+// GC (v2.2.2) — POST /git/sync needs a global administrator for configureApp.
+let syncOn = true;
+let scripts: unknown = null;
 
 const SCRIPTS = {
   items: [
@@ -37,7 +40,7 @@ vi.mock("../api/client", async (importOriginal) => {
       GET: vi.fn(async (path: string) => {
         if (path === "/scripts") {
           await laterTick();
-          return { data: SCRIPTS };
+          return { data: scripts ?? SCRIPTS };
         }
         if (path === "/scripts/{name}") return { data: SCRIPTS.items[0] };
         if (path === "/script-content/{name}") return { data: { content: "echo hi", encoding: "utf-8" } };
@@ -56,6 +59,7 @@ vi.mock("../api/client", async (importOriginal) => {
       compose: composeOn,
       manageRoles: false,
       configureApp: false,
+      configureAppGlobal: syncOn,
       manageEnvVars: false,
       publishSchedule: false,
     })),
@@ -66,6 +70,8 @@ import { Scripts } from "./Scripts";
 
 beforeEach(() => {
   composeOn = true;
+  syncOn = true;
+  scripts = null;
 });
 afterEach(cleanup);
 
@@ -102,5 +108,55 @@ describe("Scripts — detail-pane Create Job", () => {
     // The detail pane rendered (Run type is on screen), so the absence is the
     // gate, not a loading race.
     expect(q.queryByRole("link", { name: "+ Create Job" })).toBeNull();
+  });
+});
+
+// GC (v2.2.2, gate closing) — the Git pull re-reads the WHOLE definitions repo,
+// every agency's files included, so POST /git/sync is a global administrator's
+// (configureApp on every agency). The button sits on a catalog everyone reads and
+// used to be live for all of them, 403ing on click. It stays — disabled, with
+// the reason (FX-7) — in the toolbar and in the empty catalog's call to action.
+describe("Scripts — Git Pull needs a global administrator (GC)", () => {
+  const WHY = "Only a global administrator (a role on every agency) can start a sync from GitLab.";
+  const renderScripts = () =>
+    within(
+      render(
+        <MemoryRouter>
+          <Scripts />
+        </MemoryRouter>,
+      ).container,
+    );
+
+  it("disables the toolbar pull with the reason for anyone who is not one", async () => {
+    syncOn = false;
+    const q = renderScripts();
+    const pull = q.getByRole("button", { name: /Git Pull/ }) as HTMLButtonElement;
+    await waitFor(() => expect(pull.title).toBe(WHY));
+    expect(pull.disabled).toBe(true);
+
+    const { api } = await import("../api/client");
+    vi.mocked(api.POST).mockClear();
+    fireEvent.click(pull);
+    expect(vi.mocked(api.POST)).not.toHaveBeenCalled();
+  });
+
+  it("disables the empty catalog's Pull from GitLab the same way", async () => {
+    syncOn = false;
+    scripts = { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 200 };
+    const q = renderScripts();
+    const pull = (await waitFor(() => q.getByRole("button", { name: "Pull from GitLab" }))) as HTMLButtonElement;
+    await waitFor(() => expect(pull.title).toBe(WHY));
+    expect(pull.disabled).toBe(true);
+  });
+
+  it("enables both for a global administrator", async () => {
+    scripts = { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 200 };
+    const q = renderScripts();
+    const empty = (await waitFor(() => q.getByRole("button", { name: "Pull from GitLab" }))) as HTMLButtonElement;
+    const toolbar = q.getByRole("button", { name: /Git Pull/ }) as HTMLButtonElement;
+    await waitFor(() => expect(toolbar.disabled).toBe(false));
+    expect(toolbar.title).toMatch(/Pulls the whole definitions repo/);
+    expect(empty.disabled).toBe(false);
+    expect(empty.title).toBe("");
   });
 });

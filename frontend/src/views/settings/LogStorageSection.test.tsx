@@ -83,7 +83,7 @@ afterEach(cleanup);
 
 describe("Log Storage archive controls", () => {
   it("names the S3 backend as local + archive and hides its fields on local", async () => {
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText("Local + S3 archive")).toBeTruthy());
     expect(q.queryByLabelText("Sync schedule")).toBeNull();
@@ -91,7 +91,7 @@ describe("Log Storage archive controls", () => {
   });
 
   it("disables Sync now with the reason on a local backend", async () => {
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText("Local volume")).toBeTruthy());
     // The status line (and its button) is irrelevant on local with nothing
@@ -108,7 +108,7 @@ describe("Log Storage archive controls", () => {
 
   it("shows the daily time input, labelled UTC, only in Daily mode", async () => {
     getData = S3;
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     const sel = (await q.findByLabelText("Sync schedule")) as HTMLSelectElement;
     expect(sel.value).toBe("300");
@@ -125,7 +125,7 @@ describe("Log Storage archive controls", () => {
 
   it("saves the timetable and useSsl with the S3 backend", async () => {
     getData = S3;
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     const sel = (await q.findByLabelText("Sync schedule")) as HTMLSelectElement;
     fireEvent.change(sel, { target: { value: "daily" } });
@@ -141,7 +141,7 @@ describe("Log Storage archive controls", () => {
 
   it("offers the CA bundle only with SSL on and saves it", async () => {
     getData = { ...S3, s3: { ...S3.s3, useSsl: true } };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     const ta = (await q.findByLabelText("CA bundle (PEM)")) as HTMLTextAreaElement;
     fireEvent.change(ta, { target: { value: "-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----" } });
@@ -152,7 +152,7 @@ describe("Log Storage archive controls", () => {
 
   it("hides the CA bundle with SSL off — it would be ignored", async () => {
     getData = S3; // useSsl: false
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await q.findByLabelText("Sync schedule");
     expect(q.queryByLabelText("CA bundle (PEM)")).toBeNull();
@@ -160,7 +160,7 @@ describe("Log Storage archive controls", () => {
 
   it("reports the archive status and runs Sync now against the endpoint", async () => {
     getData = S3;
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText(/2 pending/)).toBeTruthy());
     expect(q.getByText(/Last sync/)).toBeTruthy();
@@ -176,7 +176,7 @@ describe("Log Storage archive controls", () => {
 
   it("disables Sync now while a sync runs and explains a 409", async () => {
     getData = { ...S3, archive: { ...S3.archive, inProgress: true } };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     const btn = (await q.findByText("Sync now")).closest("button") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
@@ -186,16 +186,61 @@ describe("Log Storage archive controls", () => {
 
   it("surfaces the last sync error", async () => {
     getData = { ...S3, archive: { ...S3.archive, lastSyncError: "probe s3://logs: Access Denied." } };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText(/Last error: probe s3:\/\/logs: Access Denied\./)).toBeTruthy());
   });
 
   it("omits the archived tier line when nothing is archived", async () => {
     getData = { ...S3, archive: { ...S3.archive, count: 0, bytes: 0 } };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText("Sync now")).toBeTruthy());
     expect(q.queryByText(/Archived \(S3\)/)).toBeNull();
+  });
+});
+
+// GC (v2.2.2, gate closing) — PUT /settings/log-storage and POST
+// /settings/log-storage/sync need a global administrator. The read is open to
+// every session, so an administrator of one agency sees the backend, the archive
+// status and the usage; Save and Sync now are disabled with the reason. The
+// permission outranks the other Sync-now reasons because it is the one the
+// caller cannot clear by saving or waiting.
+describe("Log Storage — global-administrator gate (GC)", () => {
+  const WHY = "Only a global administrator (a role on every agency) can change this.";
+
+  it("disables Save and Sync now with the reason for a non-global administrator, and still shows the status", async () => {
+    getData = S3;
+    const { container } = render(<LogStorageSection canWrite={false} />);
+    const q = within(container);
+    await waitFor(() => expect(q.getByText(/2 pending/)).toBeTruthy());
+
+    const save = q.getByRole("button", { name: "Save Changes" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(save.title).toBe(WHY);
+    const sync = q.getByRole("button", { name: "Sync now" }) as HTMLButtonElement;
+    expect(sync.disabled).toBe(true);
+    expect(sync.title).toBe(WHY);
+    // The form is inert, not absent.
+    expect((q.getByLabelText("Sync schedule") as HTMLSelectElement).closest("fieldset")!.disabled).toBe(true);
+
+    fireEvent.click(save);
+    fireEvent.click(sync);
+    expect(puts.length).toBe(0);
+    expect(posts.length).toBe(0);
+  });
+
+  it("leaves both enabled for a global administrator", async () => {
+    getData = S3;
+    const { container } = render(<LogStorageSection canWrite />);
+    const q = within(container);
+    await waitFor(() => expect(q.getByText(/2 pending/)).toBeTruthy());
+    const save = q.getByRole("button", { name: "Save Changes" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    expect(save.title).toBe("");
+    const sync = q.getByRole("button", { name: "Sync now" }) as HTMLButtonElement;
+    expect(sync.disabled).toBe(false);
+    expect(sync.title).toBe("Run one archive sync now");
+    expect((q.getByLabelText("Sync schedule") as HTMLSelectElement).closest("fieldset")!.disabled).toBe(false);
   });
 });

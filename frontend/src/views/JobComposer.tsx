@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { fetchCapabilities } from "../api/client";
+import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows } from "../hooks";
 import { c } from "../theme";
 import { guideForRunType } from "../components/docLinks";
@@ -192,11 +193,17 @@ export function JobComposer() {
   // (RB-30). A departmental composer is offered named scopes only, rather than
   // being shown an option the server will refuse.
   const [canComposeUnbound, setCanComposeUnbound] = useState(false);
+  // GC (v2.2.2) — reactions are the one part of this form the server takes only
+  // from a compose ADMINISTRATOR (PUT /reactions/…): a reaction couples this job
+  // to another definition, whoever owns it. The job itself, and its inline
+  // schedules, stay per-scope compose.
+  const [composeAdmin, setComposeAdmin] = useState(false);
   useEffect(() => {
     fetchCapabilities().then((caps) => {
       setCanCompose(caps.compose);
       setCanManageEnv(caps.manageEnvVars);
       setCanComposeUnbound(caps.composeUnbound);
+      setComposeAdmin(!!caps.composeAdmin);
     });
   }, []);
 
@@ -1180,6 +1187,7 @@ export function JobComposer() {
           ownerKind="job"
           ownerName={isEdit ? name : ""}
           ownerSource="cronomicon"
+          disabledReason={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
           loadError={reactions.loadError}
         />
         {reactionsError({ kind: "job", name, source: "cronomicon" }, reactions.list) && (

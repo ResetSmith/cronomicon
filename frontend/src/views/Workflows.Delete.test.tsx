@@ -9,6 +9,8 @@ import { MemoryRouter } from "react-router-dom";
 // sentence rather than a status code.
 
 let composeOn = true;
+// GC (v2.2.2) — revision history is a compose ADMINISTRATOR's (see the last block).
+let composeAdminOn = false;
 let deleteStatus = 200;
 const deletes: { path: string; workflowId: unknown }[] = [];
 
@@ -49,6 +51,7 @@ vi.mock("../api/client", async (importOriginal) => {
       vault: false,
       apprise: false,
       compose: composeOn,
+      composeAdmin: composeAdminOn,
       manageRoles: false,
       configureApp: false,
       manageEnvVars: false,
@@ -61,6 +64,7 @@ import { Workflows } from "./Workflows";
 
 beforeEach(() => {
   composeOn = true;
+  composeAdminOn = false;
   deleteStatus = 200;
   deletes.length = 0;
 });
@@ -172,5 +176,34 @@ describe("Workflows — expanded-row Delete", () => {
     );
     expect(q.queryByText(/workflow is git-managed/)).toBeNull();
     expect(q.queryByText('Workflow "cronomicon-wf" deleted.')).toBeNull();
+  });
+});
+
+// GC (v2.2.2, gate closing) — a definition's revision history is listed and
+// restored only for a compose ADMINISTRATOR (compose and configureApp on one
+// all-agencies grant): GET /definitions/…/revisions is refused for a
+// departmental composer, who used to open the dialog and read "could not load
+// history". They keep the row's History button — they do compose — disabled
+// with the reason (FX-7). Edit and Delete are per-scope compose and unaffected.
+describe("Workflows — row History needs a compose administrator (GC)", () => {
+  const WHY = /only a global administrator \(a role on every agency\) can change them\./;
+  const history = (q: ReturnType<typeof within>) => q.getByRole("button", { name: "History" }) as HTMLButtonElement;
+
+  it("disables History with the reason for a departmental composer, and leaves Delete live", async () => {
+    const q = await renderWorkflows();
+    expandRow(q, "cronomicon-wf");
+    await waitFor(() => expect(history(q)).toBeTruthy());
+    expect(history(q).disabled).toBe(true);
+    expect(history(q).title).toMatch(WHY);
+    expect((deleteBtn(q) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("enables History for a compose administrator", async () => {
+    composeAdminOn = true;
+    const q = await renderWorkflows();
+    expandRow(q, "cronomicon-wf");
+    await waitFor(() => expect(history(q)).toBeTruthy());
+    expect(history(q).disabled).toBe(false);
+    expect(history(q).title).toBe("");
   });
 });

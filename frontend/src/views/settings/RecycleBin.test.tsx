@@ -44,7 +44,7 @@ afterEach(() => {
 
 describe("RecycleBin (RH-F)", () => {
   it("lists binned definitions of every kind with who deleted them", async () => {
-    render(<RecycleBinSection />);
+    render(<RecycleBinSection canWrite />);
     await waitFor(() => expect(screen.getByText("billing")).toBeTruthy());
     expect(screen.getByText("release")).toBeTruthy();
     expect(screen.getByText("Job")).toBeTruthy();
@@ -53,7 +53,7 @@ describe("RecycleBin (RH-F)", () => {
   });
 
   it("shows how long is left, not just that something is binned", async () => {
-    render(<RecycleBinSection />);
+    render(<RecycleBinSection canWrite />);
     await waitFor(() => expect(screen.getByText("billing")).toBeTruthy());
     expect(screen.getByText("in 3 days")).toBeTruthy();
     // A null purgeAt is "keep forever", which must read as never rather than blank.
@@ -63,7 +63,7 @@ describe("RecycleBin (RH-F)", () => {
 
   it("restores without a confirmation — it is reversible", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
-    render(<RecycleBinSection />);
+    render(<RecycleBinSection canWrite />);
     await waitFor(() => expect(screen.getByText("billing")).toBeTruthy());
     fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]);
     await waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
@@ -73,7 +73,7 @@ describe("RecycleBin (RH-F)", () => {
   it("asks before purging, and does nothing if the operator declines", async () => {
     const confirmSpy = vi.fn(() => false);
     vi.stubGlobal("confirm", confirmSpy);
-    render(<RecycleBinSection />);
+    render(<RecycleBinSection canWrite />);
     await waitFor(() => expect(screen.getByText("billing")).toBeTruthy());
     fireEvent.click(screen.getAllByRole("button", { name: "Delete forever" })[0]);
     expect(confirmSpy).toHaveBeenCalled();
@@ -82,7 +82,7 @@ describe("RecycleBin (RH-F)", () => {
 
   it("purges once confirmed", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
-    render(<RecycleBinSection />);
+    render(<RecycleBinSection canWrite />);
     await waitFor(() => expect(screen.getByText("billing")).toBeTruthy());
     fireEvent.click(screen.getAllByRole("button", { name: "Delete forever" })[0]);
     await waitFor(() => expect(purge).toHaveBeenCalledTimes(1));
@@ -92,10 +92,41 @@ describe("RecycleBin (RH-F)", () => {
     // The prose is split by <strong>, so assert on the container's text rather
     // than a single node — and on the consequence, which is the part an operator
     // hits when their "create a replacement" 409s.
-    const { container } = render(<RecycleBinSection />);
+    const { container } = render(<RecycleBinSection canWrite />);
     await waitFor(() => expect(screen.getByText("billing")).toBeTruthy());
     const text = container.textContent ?? "";
     expect(text).toMatch(/keeps its\s*name/i);
     expect(text).toMatch(/replacement cannot be created/i);
+  });
+});
+
+// GC (v2.2.2, gate closing) — the bin holds every agency's deleted definitions,
+// so its list, restore and purge need `composeAdmin` (compose AND configureApp on
+// one all-agencies grant). GET /recycle-bin itself is refused without it, so the
+// section must not fetch and then print "forbidden": it says who can use the bin.
+describe("RecycleBin — compose-administrator gate (GC)", () => {
+  it("does not fetch for a caller without composeAdmin, and says why instead", async () => {
+    const { api } = await import("../../api/client");
+    const get = api.GET as unknown as ReturnType<typeof vi.fn>;
+    get.mockClear();
+
+    render(<RecycleBinSection canWrite={false} />);
+    expect(screen.getByRole("note").textContent).toMatch(
+      /only a global administrator \(a role on every agency\) can change them/,
+    );
+    // Give a fetch the chance to land; there must be none to land.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(get).not.toHaveBeenCalled();
+    expect(screen.queryByText("billing")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  });
+
+  it("lists the bin with live Restore and Delete forever for a compose administrator", async () => {
+    render(<RecycleBinSection canWrite />);
+    await waitFor(() => expect(screen.getByText("billing")).toBeTruthy());
+    expect(screen.queryByRole("note")).toBeNull();
+    for (const b of screen.getAllByRole("button", { name: /Restore|Delete forever/ }) as HTMLButtonElement[]) {
+      expect(b.disabled).toBe(false);
+    }
   });
 });

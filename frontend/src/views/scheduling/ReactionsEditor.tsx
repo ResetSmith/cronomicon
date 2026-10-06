@@ -164,7 +164,8 @@ export function ReactionsEditor({
   ownerKind,
   ownerName,
   ownerSource,
-  disabled,
+  disabled: disabledProp,
+  disabledReason,
   loadError,
 }: {
   value: ReactionDraft[];
@@ -173,8 +174,16 @@ export function ReactionsEditor({
   ownerName: string;
   ownerSource?: string;
   disabled?: boolean;
+  /** GC (v2.2.2) — why this caller may not author reactions at all. A reaction
+   *  makes one definition run when ANOTHER finishes, so it crosses agencies by
+   *  construction and its writes need `composeAdmin`. Non-empty renders the
+   *  existing reactions read-only with this sentence above them (FX-7: a
+   *  precondition disables with an explanation), which also keeps the list from
+   *  ever going dirty — so the host never issues the PUT that would be refused. */
+  disabledReason?: string;
   loadError?: string | null;
 }) {
+  const disabled = disabledProp || !!disabledReason;
   const { targets } = useReactionTargets();
   // R2F-3 — the option list is the visible set. Jobs and workflows share it, so
   // a job and a workflow of the same name do NOT badge each other: the `kind ·`
@@ -221,6 +230,11 @@ export function ReactionsEditor({
 
   return (
     <div>
+      {disabledReason && (
+        <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted, lineHeight: 1.6, marginBottom: 10 }}>
+          {disabledReason}
+        </div>
+      )}
       {/* EP-7 — the static intro that used to sit here now lives in each host's
           Field ⓘ (Job Composer and Workflow Editor), because both hosts are
           composer surfaces with the same wall-of-prose problem and lifting it
@@ -347,7 +361,7 @@ export function ReactionsEditor({
         </div>
       ))}
 
-      <Btn small disabled={disabled} onClick={() => onChange([...value, emptyReaction(value.length + 1)])}>
+      <Btn small disabled={disabled} title={disabledReason || undefined} onClick={() => onChange([...value, emptyReaction(value.length + 1)])}>
         + Add reaction
       </Btn>
     </div>

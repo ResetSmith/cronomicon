@@ -6,6 +6,7 @@ import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../comp
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { SkeletonRows } from "../../components/ui";
+import { globalOnly } from "../../api/globalAdmin";
 import { Btn, Card, StatusBadge, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
 
 type SshHost = components["schemas"]["SshHost"];
@@ -223,7 +224,19 @@ const SSH_STATUS_RANK: Record<string, number> = { cred_error: 0, conn_error: 0, 
 // ExecutionsTab as the source), which is precisely the drift <TableHead> exists
 // to end.
 
-export function SshTargetsSection() {
+// `canWrite` — global administrator for configureApp (GC, v2.2.2). Two rules,
+// and they differ:
+//
+//   - A BASTION is shared by every agency's hosts, and a host registered by hand
+//     belongs to no scope, so creating a host here and every bastion write are a
+//     global administrator's. Those controls are disabled with the reason.
+//   - An existing HOST row is writable by whoever administers the scope it was
+//     imported for; a hand-made row is not. Nothing on the row says which, and
+//     this view does not guess: Test/Edit/Remove stay enabled for a configureApp
+//     holder and a refusal shows the server's own sentence in the error line
+//     above the tables.
+export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
+  const why = globalOnly(canWrite);
   const [bump, setBump] = useState(0);
   const hostsQ = useGet<unknown>(() => api.GET("/ssh/hosts"), [bump]);
   const bastionsQ = useGet<unknown>(() => api.GET("/ssh/bastions"), [bump]);
@@ -653,15 +666,17 @@ export function SshTargetsSection() {
               </>
             ) : (
               <>
-                <Btn onClick={() => testBastion(b)} disabled={testingId === b.id || busy}>
+                <Btn onClick={() => testBastion(b)} disabled={testingId === b.id || busy || !!why} title={why || undefined}>
                   {testingId === b.id ? "Testing…" : "Test"}
                 </Btn>
                 {b.hostKeyPinned && (
-                  <Btn onClick={() => clearBastionKey(b)} disabled={busy} title="Clear the pinned bastion host key so it re-captures on next connect (re-key)">
+                  <Btn onClick={() => clearBastionKey(b)} disabled={busy || !!why} title={why || "Clear the pinned bastion host key so it re-captures on next connect (re-key)"}>
                     Clear pin
                   </Btn>
                 )}
                 <Btn
+                  disabled={!!why}
+                  title={why || undefined}
                   onClick={() => {
                     setEditBastionId(b.id ?? null);
                     setEditBastionForm(bastionToForm(b));
@@ -670,7 +685,7 @@ export function SshTargetsSection() {
                 >
                   Edit
                 </Btn>
-                <Btn danger onClick={() => removeBastion(b)} disabled={busy}>
+                <Btn danger onClick={() => removeBastion(b)} disabled={busy || !!why} title={why || undefined}>
                   Remove
                 </Btn>
               </>
@@ -777,6 +792,8 @@ export function SshTargetsSection() {
             <ColumnsMenu cols={hostCols} cw={hostCw} />
             <Btn
               primary
+              disabled={!!why}
+              title={why || undefined}
               onClick={() => {
                 setShowAddHost((s) => !s);
                 setActionErr(null);
@@ -846,6 +863,8 @@ export function SshTargetsSection() {
             <ColumnsMenu cols={bastionCols} cw={bastionCw} />
             <Btn
               primary
+              disabled={!!why}
+              title={why || undefined}
               onClick={() => {
                 setShowAddBastion((s) => !s);
                 setActionErr(null);

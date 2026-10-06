@@ -4,7 +4,8 @@ import type { components } from "../../api/schema";
 import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
-import { Btn, Card, Chip, csrfHeader, errMsg, fmtDateTime, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
+import { globalOnly } from "../../api/globalAdmin";
+import { Btn, Card, Chip, ReadOnlyFields, csrfHeader, errMsg, fmtDateTime, inputStyle, lblStyle, tdStyle, thStyle } from "./ui";
 import { ConfirmDialog, InlineLoading, Rule, SkeletonRows, SortableLabel, statusLabel } from "../../components/ui";
 
 type NotificationConfig = components["schemas"]["NotificationConfig"];
@@ -14,11 +15,16 @@ type AlertRuleInput = components["schemas"]["AlertRuleInput"];
 type AlertChannel = AlertRuleInput["channels"][number];
 type TestReport = components["schemas"]["NotificationTestReport"];
 
-export function NotificationsSection() {
+// `canWrite` — global administrator for configureApp (GC, v2.2.2). Saving the
+// transports, sending a test (it delivers to real people over the stored
+// config) and creating, editing or deleting an alert rule are all install-wide.
+// Both reads stay open to every session, so an administrator of one agency sees
+// the cards with their writes disabled and the reason on each.
+export function NotificationsSection({ canWrite }: { canWrite: boolean }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <RunNotificationsCard />
-      <AlertRulesCard />
+      <RunNotificationsCard canWrite={canWrite} />
+      <AlertRulesCard canWrite={canWrite} />
     </div>
   );
 }
@@ -92,7 +98,8 @@ function TestReportLines({ report }: { report: TestReport | null }) {
 }
 
 // ── Run notifications (SMTP / Apprise) — GET/PUT /settings/notifications ──
-function RunNotificationsCard() {
+function RunNotificationsCard({ canWrite }: { canWrite: boolean }) {
+  const why = globalOnly(canWrite);
   const [bump, setBump] = useState(0);
   const { data, error, loading } = useGet<NotificationConfig>(() => api.GET("/settings/notifications"), [bump]);
   const [form, setForm] = useState<NotificationConfig | null>(null);
@@ -174,10 +181,10 @@ function RunNotificationsCard() {
           {/* K-5 — deliberately beside Save, not inside the form: it sends the
               SAVED config, so an operator who has edited without saving is
               testing the old settings. The helper text below says so. */}
-          <Btn onClick={sendTest} disabled={!form || testing || saving}>
+          <Btn onClick={sendTest} disabled={!form || testing || saving || !!why} title={why || undefined}>
             {testing ? "Sending…" : "Send test"}
           </Btn>
-          <Btn primary onClick={save} disabled={!form || saving} style={saved ? { background: c.success, borderColor: c.success } : undefined}>
+          <Btn primary onClick={save} disabled={!form || saving || !!why} title={why || undefined} style={saved ? { background: c.success, borderColor: c.success } : undefined}>
             {saved ? "✓ Saved" : saving ? "Saving…" : "Save Changes"}
           </Btn>
         </div>
@@ -187,7 +194,7 @@ function RunNotificationsCard() {
       {error && <div style={{ color: c.danger }}>Error: {error}</div>}
       {saveErr && <div style={{ color: c.danger, marginBottom: 10, fontSize: c.fontSm }}>Save failed: {saveErr}</div>}
       {!loading && !error && form && (
-        <>
+        <ReadOnlyFields readOnly={!canWrite}>
           <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 14, lineHeight: 1.6 }}>
             Pick how Cronomicon notifies people when a job or workflow is triggered, completed, or flagged. Apprise fans one
             event out to many services via URL DSNs; SMTP relays through a single mail server you control.
@@ -211,11 +218,13 @@ function RunNotificationsCard() {
               return (
                 <div
                   key={opt.key}
-                  onClick={() => setForm((f) => (f ? { ...f, provider: opt.key } : f))}
+                  // Not a form control, so the read-only fieldset cannot reach it.
+                  aria-disabled={!canWrite || undefined}
+                  onClick={canWrite ? () => setForm((f) => (f ? { ...f, provider: opt.key } : f)) : undefined}
                   style={{
                     padding: "12px 14px",
                     borderRadius: c.radiusSurface,
-                    cursor: "pointer",
+                    cursor: canWrite ? "pointer" : "default",
                     border: `2px solid ${active ? c.primary : c.border}`,
                     background: active ? `${c.primary}1a` : c.panel2,
                   }}
@@ -291,7 +300,7 @@ function RunNotificationsCard() {
                         onChange={(e) => setTargets((ts) => ts.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))}
                         style={{ ...inputStyle(), flex: 1, fontFamily: c.mono, fontSize: c.fontXs }}
                       />
-                      <Btn onClick={() => setTargets((ts) => ts.filter((_, j) => j !== i))}>Remove</Btn>
+                      <Btn onClick={() => setTargets((ts) => ts.filter((_, j) => j !== i))} disabled={!canWrite}>Remove</Btn>
                     </div>
                   </Fragment>
                 ))}
@@ -301,7 +310,7 @@ function RunNotificationsCard() {
                   </div>
                 )}
                 <div>
-                  <Btn onClick={() => setTargets((ts) => [...ts, { label: "", service: "email", url: "", enabled: true }])}>
+                  <Btn onClick={() => setTargets((ts) => [...ts, { label: "", service: "email", url: "", enabled: true }])} disabled={!canWrite}>
                     + Add target
                   </Btn>
                 </div>
@@ -378,7 +387,7 @@ function RunNotificationsCard() {
               </div>
             </div>
           )}
-        </>
+        </ReadOnlyFields>
       )}
     </Card>
   );
@@ -612,7 +621,11 @@ const RULE_SORT_COLS: SortColumn<AlertRule>[] = [
   { key: "status", get: (r) => (r.enabled ? "enabled" : "disabled"), type: "rank", rank: RULE_STATUS_RANK },
 ];
 
-function AlertRulesCard() {
+function AlertRulesCard({ canWrite }: { canWrite: boolean }) {
+  // GC (v2.2.2) — POST/PUT/DELETE /alerts need a global administrator; the list
+  // is open to every session. So the rules stay visible and Add/Edit — the only
+  // doors to Save and Delete — are disabled with the reason.
+  const why = globalOnly(canWrite);
   const [bump, setBump] = useState(0);
   const { data, error, loading } = useGet<unknown>(() => api.GET("/alerts"), [bump]);
   const items = rows<AlertRule>(data);
@@ -695,6 +708,8 @@ function AlertRulesCard() {
       action={
         <Btn
           primary
+          disabled={!!why}
+          title={why || undefined}
           onClick={() => {
             setShowAdd((s) => !s);
             setEditId(null);
@@ -807,6 +822,8 @@ function AlertRulesCard() {
                     <td style={tdStyle()}>
                       {r.id != null && (
                         <Btn
+                          disabled={!!why}
+                          title={why || undefined}
                           onClick={() => {
                             if (editing) {
                               setEditId(null);

@@ -340,10 +340,14 @@ function AccessGrantsCard() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<AccessGrant | null>(null);
-  // AF-3 — only an unrestricted administrator may grant "everywhere".
+  // AF-3 — only an unrestricted administrator may grant "everywhere". GC-3
+  // (v2.2.2): that means a grant covering every agency that itself CARRIES
+  // manageRoles. `unrestricted` is permission-blind — a viewer on all scopes who
+  // delegates for one agency read as unrestricted and was offered an option the
+  // server now refuses.
   const [canGrantEverywhere, setCanGrantEverywhere] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanGrantEverywhere(caps.unrestricted));
+    fetchCapabilities().then((caps) => setCanGrantEverywhere(!!caps.manageRolesGlobal));
   }, []);
 
   // RF-18 — find/filter/sort. Search matches the group AND the where, because
@@ -525,13 +529,16 @@ function AccessGrantsCard() {
 function RolesCard() {
   const [bump, setBump] = useState(0);
   const { roles, loading, error } = useRoles(bump);
-  // AF-3 — a role TEMPLATE is shared by every agency, so editing one is
-  // unrestricted-only (the server refuses otherwise, AF3-D1a). A departmental
-  // administrator still reads this list — it is how they know what the roles
-  // they grant actually carry — but is not offered writes that would 403.
+  // AF-3 — a role TEMPLATE is shared by every agency, so editing one is for a
+  // global administrator only (the server refuses otherwise, AF3-D1a). A
+  // departmental administrator still reads this list — it is how they know what
+  // the roles they grant actually carry — but is not offered writes that would
+  // 403. GC-3 (v2.2.2): the flag is `manageRolesGlobal` (one grant covering
+  // every agency AND carrying manageRoles), not the permission-blind
+  // `unrestricted` it used to read.
   const [canEditTemplates, setCanEditTemplates] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanEditTemplates(caps.unrestricted));
+    fetchCapabilities().then((caps) => setCanEditTemplates(!!caps.manageRolesGlobal));
   }, []);
   const [editing, setEditing] = useState<Role | null>(null);
   const [creating, setCreating] = useState(false);
@@ -585,9 +592,9 @@ function RolesCard() {
         {canEditTemplates ? (
           <Btn primary onClick={() => { setCreating(true); setEditing(blank); }}>+ New role</Btn>
         ) : (
-          <span style={{ fontSize: c.fontXs, color: c.textSec, maxWidth: "42ch" }}>
-            Roles are shared by every agency, so only an unrestricted administrator changes them. You can grant
-            and revoke these roles for your agencies below.
+          <span role="note" style={{ fontSize: c.fontXs, color: c.textSec, maxWidth: "42ch" }}>
+            Roles are shared by every agency, so only a global administrator (a role on every agency) changes
+            them. You can grant and revoke these roles for your agencies below.
           </span>
         )}
       </div>

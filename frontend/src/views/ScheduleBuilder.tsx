@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, fetchCapabilities } from "../api/client";
+import { COMPOSE_ADMIN_ONLY } from "../api/globalAdmin";
 import { c } from "../theme";
 import type { components } from "../api/schema";
 import {
@@ -33,9 +34,19 @@ export function ScheduleBuilder() {
   const editName = params.get("name");
   const isEdit = !!editName;
 
+  // GC (v2.2.2) — the gate is `composeAdmin`, not `compose`. A reusable schedule
+  // belongs to no agency (it retimes every definition that references it), so
+  // the server takes its writes only from compose AND configureApp on one
+  // all-agencies grant. `composes` is kept apart so the refusal below can tell a
+  // departmental composer WHY, rather than telling them they lack a permission
+  // they hold.
   const [canCompose, setCanCompose] = useState<boolean | null>(null);
+  const [composes, setComposes] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanCompose(caps.compose));
+    fetchCapabilities().then((caps) => {
+      setCanCompose(!!caps.composeAdmin);
+      setComposes(caps.compose);
+    });
   }, []);
 
   const [name, setName] = useState("");
@@ -144,9 +155,18 @@ export function ScheduleBuilder() {
 
   if (canCompose === false) {
     return (
-      <div style={{ color: c.textSec, maxWidth: 560 }}>
-        In-app schedule authoring requires the <strong>Compose</strong> capability (Admin-only in v20).
-        Git-defined schedules are authored through the GitLab publish flow.
+      <div role="note" style={{ color: c.textSec, maxWidth: 560 }}>
+        {composes ? (
+          <>
+            {COMPOSE_ADMIN_ONLY} A schedule you put directly on one of your own jobs or workflows, in its composer,
+            is yours to author.
+          </>
+        ) : (
+          <>
+            In-app schedule authoring requires the <strong>Compose</strong> capability on every agency. Git-defined
+            schedules are authored through the GitLab publish flow.
+          </>
+        )}
       </div>
     );
   }
