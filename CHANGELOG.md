@@ -36,6 +36,14 @@ so a protocol-13 runner is refused (426) on its next poll until it is upgraded
   tag, or the job is in the recycle bin. **Those jobs are no longer confined
   to particular runners.** Bind the scope, or dismiss the ones that may run on
   any eligible runner.
+- The same is true of a pinned run that was already waiting when the server
+  was upgraded: queued for a runner, deferred to a later time, or parked behind
+  another run. The banner lists jobs, not runs, so a pin chosen for one run in
+  the Run dialog is not in it. Unless its scope was bound by the migration, any
+  eligible runner in the agency may claim such a run, most likely when the
+  runner it was pinned to was offline during the upgrade. Before upgrading,
+  let waiting pinned runs finish or cancel them. Afterwards, bind the scope: a
+  binding is read when a run is claimed, so it confines runs already waiting.
 - A shell job on a converted scope that set no executor used to run over SSH
   from the server whenever a schedule, reaction, workflow step or file arrival
   started it, pin ignored (the defect this band began with). It now runs on
@@ -202,6 +210,20 @@ so a protocol-13 runner is refused (426) on its next poll until it is upgraded
   alert, every day from the second day on.
 - A cron refusal's skip row could swallow the Forbid skip of another job that
   shared its custom concurrency key.
+
+### Security
+
+- `golang.org/x/crypto` v0.55.0 → **v0.56.0**: GO-2026-6354 and GO-2026-6355,
+  two denial-of-service faults in `x/crypto/ssh` where a peer could leave a
+  channel deadlocked. Both were reachable from the runner's SSH client.
+  `govulncheck` reports zero reachable vulnerabilities. The module requires
+  `go 1.26.0`, so the `go` directive moves from `1.26` to `1.26.0`.
+- `react-router` and `react-router-dom` 6.30.4 → 6.30.6, and the frontend's
+  build and test tooling brought up to date (`npm audit fix`). GHSA-wrjc-x8rr-h8h6
+  (an open redirect through a backslash in a navigation target) has no fix in
+  the 6.x line. The app is not exposed: every `navigate` call and `<Link>`
+  goes to a route written in the source, never to one read from a URL. Moving
+  to React Router 7 is the fix and is not in this release.
 
 ## [2.1.0] - 2026-10-05
 
