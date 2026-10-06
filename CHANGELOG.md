@@ -13,6 +13,35 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.2.1] - 2026-10-06
+
+The frontend moves to React Router 7 and Vite 7, which clears the advisories
+2.2.0 left open in its dependencies. The application's behaviour, its API, its
+schema (v1210) and the runner protocol (14) are unchanged; a 2.2.0 runner
+works with a 2.2.1 server.
+
+### Security
+
+- `react-router-dom` 6.30.6 → **7.18.4**: GHSA-wrjc-x8rr-h8h6 (an open
+  redirect through a backslash in a navigation target) and GHSA-337j-9hxr-rhxg,
+  neither of which is fixed in the 6.x line. 2.2.0 was not exposed to the
+  first, since every navigation target is a route written in the source; the
+  second concerns server-side rendering, which the app does not do.
+- `vite` 5.4 → **7.3**, which brings a patched `esbuild`: GHSA-67mh-4wv8-2f99
+  let any website send requests to a running development server and read the
+  answers. It affected `npm run dev` only, never a built or deployed app.
+- `npm audit` reports no vulnerabilities.
+
+### Changed
+
+- The build's browser target is written out in `vite.config.ts` as Vite 5's
+  default (ES2020; Chrome 87, Edge 88, Firefox 78, Safari 14). Vite 7's own
+  default is newer (Chrome 107, Firefox 104, Safari 16), and a patch release
+  must not stop loading in a browser that loaded 2.2.0.
+- The tests and the build run on one Vite. Vitest 4 does not accept Vite 5,
+  so it had been carrying a private Vite 8 for the tests while the build used
+  Vite 5.
+
 ## [2.2.0] - 2026-10-06
 
 Where a job runs is recorded on its scope, not on the job (SB band). A scope
