@@ -57,7 +57,7 @@ a live database.`)
 		fmt.Fprintln(os.Stderr, "preflight: open database:", err)
 		return 1
 	}
-	defer pool.Close()
+	defer func() { _ = pool.Close() }()
 	ctx := context.Background()
 	// Belt and braces: nothing below writes, and this makes sure of it.
 	if _, err := pool.ExecContext(ctx, `PRAGMA query_only = ON`); err != nil {

@@ -17,7 +17,7 @@ func seeded(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { pool.Close() })
+	t.Cleanup(func() { _ = pool.Close() })
 	if err := db.Migrate(pool); err != nil {
 		t.Fatal(err)
 	}

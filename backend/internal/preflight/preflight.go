@@ -305,7 +305,7 @@ func vaultSecrets(ctx context.Context, db *sql.DB) ([]VaultSecret, error) {
 
 // Write renders the report as plain text.
 func (r Report) Write(w io.Writer) {
-	p := func(format string, a ...any) { fmt.Fprintf(w, format+"\n", a...) }
+	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format+"\n", a...) }
 	p("Cronomicon 2.2.2 — what this upgrade changes for this installation")
 	p("")
 	p("From 2.2.2, a change to the INSTALLATION needs a global administrator: a role")

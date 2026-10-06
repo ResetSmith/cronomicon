@@ -68,7 +68,7 @@ func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	t.Cleanup(func() { pool.Close() })
+	t.Cleanup(func() { _ = pool.Close() })
 	if err := db.Migrate(pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

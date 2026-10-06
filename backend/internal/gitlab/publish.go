@@ -75,6 +75,13 @@ type PublishAuthorizer func(r *http.Request, t PublishTarget) string
 func (s *Service) publishTarget(req PublishRequest) PublishTarget {
 	cleaned := filepath.Clean(req.FilePath)
 	t := PublishTarget{Kind: "job"}
+	if validatePublishPath(req.FilePath) != nil {
+		// Never join an unvalidated path into the clone, whoever the caller is:
+		// report a file whose scope is unknown, which no departmental caller
+		// can be authorized to replace.
+		t.OldExists = true
+		return t
+	}
 	switch {
 	case strings.HasPrefix(cleaned, "schedules/"):
 		t.Kind = "schedule"
@@ -85,7 +92,7 @@ func (s *Service) publishTarget(req PublishRequest) PublishTarget {
 		return t
 	}
 	t.Name, t.NewScope, t.NewParsed = jobNameAndScope([]byte(req.Content))
-	if old, err := os.ReadFile(filepath.Join(s.cloneDir, cleaned)); err == nil {
+	if old, err := os.ReadFile(filepath.Join(s.cloneDir, cleaned)); err == nil { //nolint:gosec // cleaned passed validatePublishPath above
 		t.OldExists = true
 		_, t.OldScope, t.OldParsed = jobNameAndScope(old)
 	} else if !os.IsNotExist(err) {
