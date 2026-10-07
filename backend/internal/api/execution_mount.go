@@ -1929,7 +1929,7 @@ func (s *Server) pauseJob(w http.ResponseWriter, r *http.Request) {
 	// going. The 404 above and the 403 here are deliberately different: 404 hides
 	// the existence of an out-of-scope job (no oracle), while a caller who can
 	// already SEE this job learns plainly that they lack the verb.
-	if !s.requireCan(w, r, id, auth.PermKillJobs, jobScope) {
+	if !s.requirePauseAuthority(w, r, id, jobScope) {
 		return
 	}
 
@@ -1982,7 +1982,7 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 	// going. The 404 above and the 403 here are deliberately different: 404 hides
 	// the existence of an out-of-scope job (no oracle), while a caller who can
 	// already SEE this job learns plainly that they lack the verb.
-	if !s.requireCan(w, r, id, auth.PermKillJobs, jobScope) {
+	if !s.requirePauseAuthority(w, r, id, jobScope) {
 		return
 	}
 
@@ -2006,6 +2006,32 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}())
 	httpx.JSON(w, http.StatusOK, jr)
+}
+
+// requirePauseAuthority is the verb gate of pauseJob and resumeJob: killJobs on
+// the job's own scope, and on a job with NO scope, killJobs unbound.
+//
+// The second half was missing until 2.2.3. requireCan(perm, "") is satisfied by
+// every grant that carries the verb — the empty scope is "covered" by all of
+// them (Q-F7) — so an operator of one agency could pause, and resume, a job
+// that belongs to no agency: stop the platform's own scheduled work, or restart
+// what a global administrator had paused. Every other execution route already
+// treated the empty scope as the unbound case (runJob, killJob, the workflow
+// gate, pending-run cancel); these two were the ones that did not.
+func (s *Server) requirePauseAuthority(w http.ResponseWriter, r *http.Request, id auth.Identity, jobScope string) bool {
+	if jobScope != "" {
+		return s.requireCan(w, r, id, auth.PermKillJobs, jobScope)
+	}
+	if id.CanUnbound(auth.PermKillJobs) {
+		return true
+	}
+	if s.auth != nil {
+		s.auth.AuditDenied(r, id.Email, "insufficient_scope", auth.AllScopes,
+			auditDetails(r, "pause or resume of an unscoped job ("+auth.PermKillJobs+" required unbound)"))
+	}
+	httpx.Fail(w, http.StatusForbidden, "forbidden",
+		"this job has no scope, so it belongs to no one agency; only an unrestricted operator may pause or resume it")
+	return false
 }
 
 func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {

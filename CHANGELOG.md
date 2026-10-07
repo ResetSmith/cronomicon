@@ -15,12 +15,13 @@ before 1.0.0 are kept in their original prose form.
 
 ## [2.2.3] - 2026-10-07
 
-Four ways an administrator or operator of one agency could still reach
-another's, found after 2.2.2 shipped while its code was being read for the
-next release. Each was reproduced against 2.2.2 before it was closed. No new
-feature. Schema (v1210) and runner protocol (14) are unchanged.
+Five ways an administrator or operator of one agency could still reach
+another's, or the installation's own jobs, found after 2.2.2 shipped while its
+code was being read for the next release. Each was reproduced against 2.2.2
+before it was closed. No new feature. Schema (v1210) and runner protocol (14)
+are unchanged.
 
-**Upgrading.** One of the four changes what the in-app SSH executor will
+**Upgrading.** One of the five changes what the in-app SSH executor will
 connect with, so if `CRONOMICON_SSH_EXECUTOR_ENABLED` is on, run the report
 first:
 
@@ -65,6 +66,16 @@ start on 2.2.3. Installations that do not use agencies see no change.
   only view another agency's job could empty its bindings, and its next run
   would execute without its declared secrets. One grant must now carry both;
   a job with no scope needs the permission on every agency.
+- **Pausing or resuming a job with no scope needs `killJobs` on every
+  agency.** A job with no scope belongs to no one agency, and every other
+  action on it already said so: running it unbound, stopping its unbound run
+  and cancelling its parked run are all an unrestricted operator's. Pause and
+  resume asked only for `killJobs` held somewhere, so an operator of one
+  agency could stop such a job's schedule, or restart one a global
+  administrator had paused. They now answer 403. A job in a scope is paused
+  by that scope's operators, as before. The Jobs list still offers the button
+  to an operator who will be refused; the next release corrects the flag
+  behind it.
 
 ### Changed
 
@@ -90,9 +101,14 @@ start on 2.2.3. Installations that do not use agencies see no change.
   unchecked and is for a record only a global administrator writes (a
   bastion, the probe of a hand-written host). `runref.KeyIDUsable` is the
   by-id form of the membership clause `lookupKeyID` applies by label.
-- Gates added: `requireVaultKeyGlobal`, `requireHostKeyUsable`. Tests: four
-  `TestGC_*` in `internal/api/gate_closing_test.go`, and
+- Gates added: `requireVaultKeyGlobal`, `requireHostKeyUsable`,
+  `requirePauseAuthority`. Tests: five `TestGC_*` in
+  `internal/api/gate_closing_test.go`, and
   `internal/sshexec/key_guard_test.go`.
+- `requireCan(perm, "")` is satisfied by every grant that carries the verb:
+  the empty scope is covered by all of them. A route that takes a job's or a
+  run's scope must treat the empty one as the unbound case and ask
+  `CanUnbound`; pause and resume were the two that did not.
 - Not closed here, by design: a job's own declared `target_host` is still not
   checked against its scope, and a scope still resolves a hand-written host
   record whatever agency wrote its key. Both need host records to have an

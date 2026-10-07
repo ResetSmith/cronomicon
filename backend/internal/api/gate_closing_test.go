@@ -857,3 +857,53 @@ func TestGC_ReferenceBindingsNeedThePermissionOnTheJobsScope(t *testing.T) {
 		}
 	}
 }
+
+// GC-24 (2.2.3) — pausing or resuming a job changes it for everyone, and a job
+// with no scope belongs to no one agency. The verb held on one agency is not
+// authority over it.
+func TestGC_PausingAJobWithNoScopeNeedsTheVerbUnbound(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled,created_at)
+	      VALUES ('platform-job','cronomicon','bash',NULL,1,'2026-01-01T00:00:00Z'),
+	             ('fin-job','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z')`)
+	platform := rowID(t, pool, `SELECT rowid FROM jobs WHERE name='platform-job'`)
+	fin := rowID(t, pool, `SELECT rowid FROM jobs WHERE name='fin-job'`)
+	paused := func(name string) int {
+		return count(t, pool, `SELECT COUNT(*) FROM paused_jobs WHERE owner_kind='job' AND name=?`, name)
+	}
+
+	// An operator of FIN, an administrator of FIN, and an all-agencies viewer who
+	// also administers FIN: none holds killJobs unbound.
+	for _, who := range []string{gFinOperator, gFinAdmin, gMixed} {
+		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", who, `{}`); rec.Code != http.StatusForbidden {
+			t.Errorf("%s pausing a job with no scope = %d, want 403 (%s)", who, rec.Code, rec.Body)
+		}
+	}
+	if paused("platform-job") != 0 {
+		t.Fatal("a refused pause paused the job")
+	}
+	// A global administrator pauses it, and then nobody else may undo that.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/pause", gRoot, `{}`); rec.Code != http.StatusOK {
+		t.Fatalf("root pausing it = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	for _, who := range []string{gFinOperator, gFinAdmin, gMixed} {
+		if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/resume", who, `{}`); rec.Code != http.StatusForbidden {
+			t.Errorf("%s resuming a job with no scope = %d, want 403 (%s)", who, rec.Code, rec.Body)
+		}
+	}
+	if paused("platform-job") != 1 {
+		t.Fatal("a refused resume resumed the job")
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+platform+"/resume", gRoot, `{}`); rec.Code != http.StatusOK {
+		t.Errorf("root resuming it = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+
+	// A job in an agency's own scope is that agency's to pause, as before.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+fin+"/pause", gFinOperator, `{}`); rec.Code != http.StatusOK {
+		t.Errorf("fin operator pausing a FIN job = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+fin+"/resume", gFinOperator, `{}`); rec.Code != http.StatusOK {
+		t.Errorf("fin operator resuming a FIN job = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+}
