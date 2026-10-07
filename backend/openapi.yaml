@@ -3840,6 +3840,77 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /notices:
+    get:
+      tags: [Agencies]
+      operationId: listNotices
+      summary: The open notices the caller administers (v2.3.0)
+      description: |
+        The one inbox for standing conditions an administrator has to act on:
+        what an upgrade could not decide by itself, what a check found, what a
+        sync left over. A notice is a CONDITION keyed by its kind and subject,
+        not an event: the check that finds it writes it, and resolves it when
+        the cause is gone. The checks run when this list is read, at most once
+        every 30 seconds.
+
+        Every notice belongs to an agency. An agency's administrators
+        (`configureApp` on it) see its notices; Global's are a global
+        administrator's, who therefore sees them all. The list is FILTERED, not
+        refused: a session that administers nothing gets `[]`.
+
+        The runner-tag pins of `GET /scope-binding-notices` are included, under
+        kind `retired_runner_pin` with an id of the form `pin:<n>`, for whoever
+        holds `configureApp` on the pin's scope.
+      responses:
+        '200':
+          description: The open notices, grouped by kind and oldest first within one.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Notice' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /notices/dismiss:
+    post:
+      tags: [Agencies]
+      operationId: dismissNotices
+      summary: Dismiss notices (v2.3.0)
+      description: |
+        Hides notices and records who dismissed them. Dismissing does not
+        resolve anything: the condition stands, and if it is later resolved and
+        then returns, the notice is open again. Needs `configureApp` on the
+        agency of EVERY notice named (a global administrator for Global's);
+        one that the caller does not administer refuses the whole request with
+        403 and dismisses nothing, as does a caller who holds `configureApp`
+        on no agency at all. An id that is unknown, resolved or already
+        dismissed is skipped. CSRF required.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200':
+          description: How many notices this request dismissed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dismissed]
+                properties:
+                  dismissed: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /env-vars:
     get:
       tags: [Env Vars]
@@ -9506,6 +9577,46 @@ components:
         name: { type: string }
         source: { type: string, enum: [git, cronomicon] }
         runType: { type: string }
+
+    Notice:
+      type: object
+      description: |
+        One standing condition in the notices inbox (v2.3.0, LR-85). Identified
+        by `kind` and `subject`; `detail` is a sentence for a person, saying
+        what is the case and what settles it.
+      required: [id, kind, agencyId, agencyName, subject, detail, firstSeenAt, lastSeenAt]
+      properties:
+        id:
+          type: string
+          description: Opaque. `pin:<n>` for a retired runner pin.
+        kind:
+          type: string
+          description: |
+            A stable identifier. This release writes:
+
+            - `agency_renamed` — the upgrade to 2.3.0 found an agency called
+              Global and renamed it; the subject is the agency's id. Resolved
+              when the agency is given a name of its own.
+            - `shared_ownership` — a secret, variable or SSH key that Global
+              owns and only some agencies may use: what several agencies shared
+              before 2.3.0, or a row the upgrade would not give to its one
+              agency because that would have changed what some run resolves.
+              It works as it did. Subject `<kind>:<id>`.
+            - `orphaned` — a scope, runner, secret, variable or SSH key that
+              belongs to no agency. Nothing can use it and only a global
+              administrator can re-home it. Subject `<kind>:<id>`.
+            - `retired_runner_pin` — a runner-tag pin that could not be turned
+              into a scope binding (see `GET /scope-binding-notices`). Subject:
+              the job's name.
+
+            Later releases add kinds; a client should show one it does not know
+            by its `detail`.
+        agencyId: { type: string, description: 'The agency the notice belongs to; `global` for one about the installation.' }
+        agencyName: { type: string }
+        subject: { type: string }
+        detail: { type: string }
+        firstSeenAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time, description: When a check last found the condition. }
 
     RetiredRunnerPin:
       type: object

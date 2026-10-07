@@ -23,6 +23,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/logarchive"
 	"github.com/ResetSmith/cronomicon/internal/metrics"
+	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
@@ -64,6 +65,9 @@ type Server struct {
 	// saves a changed timezone (timezone-update §4.2). Wired to
 	// scheduler.RebuildWithLocation in main.go.
 	scheduleTimezoneReload func(ctx context.Context, loc *time.Location) error
+	// noticeRefresh runs the notices checks when the inbox is opened, at most
+	// once per interval however many sessions ask (LR-85).
+	noticeRefresh notices.Refresher
 	// logDirChanged notifies main that the run-log directory moved (LU-5), so it
 	// can re-point the process log when that file is derived from this path.
 	logDirChanged func(ctx context.Context, dir string)
@@ -345,6 +349,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountAccessGrants(mux)         // RB-18: /access-grants (INERT — nothing authorizes on it yet)
 	s.mountAgencies(mux)             // agency-support.md M1: /agencies/*, /scopes/{id}/agency (network-isolation zones)
 	s.mountScopeRunners(mux)         // SB-1: /scopes/{id}/runners, /scope-runners/replace, /scope-binding-notices (scope↔runner bindings)
+	s.mountNotices(mux)              // LR-85: /notices, /notices/dismiss (the one inbox for standing conditions)
 	// ET-A/B: /service-accounts (machine principals) + /trigger/* (the only
 	// token-authenticated, session-less route family). Shares mountExecution's
 	// engine so a workflow triggered by a token is cancellable like any other.
