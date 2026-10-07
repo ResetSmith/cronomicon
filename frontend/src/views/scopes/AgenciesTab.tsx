@@ -1,5 +1,7 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api/client";
+import { GLOBAL_AGENCY } from "../../api/access";
 import { globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
@@ -58,7 +60,17 @@ const SORT_COLS: SortColumn<AgencyRow>[] = [
 // one, is not something an administrator of a single agency may do. Those
 // controls stay, disabled with the reason. Secret, variable, key and runner
 // membership is unchanged: still judged per agency by the server.
-export function AgenciesTab({ canEdit, globalAdmin }: { canEdit: boolean; globalAdmin: boolean }) {
+export function AgenciesTab({
+  canEdit,
+  globalAdmin,
+  envGlobal = globalAdmin,
+}: {
+  canEdit: boolean;
+  /** A global administrator for configureApp: the catalog, Vault paths, and taking a scope or key out of Global. */
+  globalAdmin: boolean;
+  /** A global administrator for manageEnvVars: taking a secret or variable out of Global. */
+  envGlobal?: boolean;
+}) {
   const globalWhy = globalOnly(globalAdmin);
   const [dep, setDep] = useState(0);
   const { data, error, loading } = useGet<unknown>(() => api.GET("/agencies"), [dep]);
@@ -233,7 +245,7 @@ export function AgenciesTab({ canEdit, globalAdmin }: { canEdit: boolean; global
                       <td style={{ borderBottom: "none" }} />
                       <td colSpan={5} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                         <RefreshScope>
-                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} onMembersChanged={() => setDep((n) => n + 1)} />
+                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} envGlobal={envGlobal} onMembersChanged={() => setDep((n) => n + 1)} />
                         </RefreshScope>
                       </td>
                     </tr>
@@ -371,11 +383,13 @@ function AgencyFormModal({
 // touches only this agency's rows, so two admins editing two different
 // departments cannot race on the same entity — the lost-update hazard a
 // read-modify-write through the entity-centric setters would reintroduce.
-function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }: {
+function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, envGlobal, onMembersChanged }: {
   agencyId: string;
   canEdit: boolean;
-  /** GC — moving a SCOPE into or out of an agency needs a global administrator
-   *  (a scope's agency decides who can reach it). The other four kinds do not. */
+  envGlobal: boolean;
+  /** A global administrator assigns an agency its Vault paths (LR-80). Moving a
+   *  scope is no longer theirs alone: since v2.3.0 it follows the same rule as
+   *  a secret or a key (authority over both agencies), which the server checks. */
   globalAdmin: boolean;
   onMembersChanged?: () => void;
 }) {
@@ -459,9 +473,14 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
       `add-${kind}`,
     );
 
+  // What can be ADDED here is what is Global's (one agency per row since
+  // v2.3.0): the add takes it out of Global. A row that is another agency's is
+  // moved on the row itself, not from this list, and would be refused.
   const candidates = (kind: string): MatrixRowT[] => {
     const mine = new Set(members.filter((m) => m.kind === kind).map((m) => m.id));
-    return (matrixData?.rows ?? []).filter((r) => r.kind === kind && !mine.has(r.id));
+    return (matrixData?.rows ?? []).filter(
+      (r) => r.kind === kind && !mine.has(r.id) && (r.agencyIds ?? []).every((a) => a === GLOBAL_AGENCY),
+    );
   };
 
   return (
@@ -496,7 +515,10 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
           ) : (
             <>Nothing is waiting yet.</>
           )}{" "}
-          Bring a runner online in this agency, or move the scope out of it.
+          <Link to="/runners" style={{ color: c.primary }}>
+            Enrol a runner for this agency
+          </Link>{" "}
+          (Runners → Add Runner, with this agency as its owner), or bring one of its runners back online.
         </div>
       )}
       {online > 0 && (
@@ -511,8 +533,23 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
         {groups.map((g) => {
           const mine = members.filter((m) => m.kind === g.kind);
           const avail = canEdit ? candidates(g.kind) : [];
-          // Non-empty only for the Scopes group of a non-global administrator.
-          const why = g.kind === "scope" ? globalOnly(globalAdmin) : "";
+          // Runners are not members to add or remove here (v2.3.0, MA-11): an
+          // agent serves the agency whose token it enrolled with. The list is
+          // shown, and the Runners page is where one is enrolled or removed.
+          const readOnly = g.kind === "runner";
+          // ADDING here takes one of Global's rows out of Global, and Global is
+          // a global administrator's on either side of a move (requireMove): for
+          // anyone else the add is always refused, so it is disabled with why.
+          const kindGlobal = g.kind === "secret" || g.kind === "env-var" ? envGlobal : globalAdmin;
+          const why = kindGlobal
+            ? ""
+            : "Adding one of Global's here takes it out of Global — only a global administrator (a role on every agency) can do that.";
+          // REMOVING is possible only for a row still in several agencies (from
+          // before 2.3.0): a row in one agency cannot be left in none, and one
+          // this agency owns is moved, not removed. So the control exists only
+          // where there is something it can do.
+          const removable = (m: Member) =>
+            ((matrixData?.rows ?? []).find((r) => r.kind === m.kind && r.id === m.id)?.agencyIds ?? []).length > 1;
           return (
             <div key={g.kind}>
               <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
@@ -540,17 +577,17 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
                     >
                       {m.name}
                       {m.scope && <span style={{ color: c.textSec }}>@{m.scope}</span>}
-                      {canEdit && (
+                      {canEdit && !readOnly && removable(m) && (
                         <button
                           onClick={() => remove(m)}
-                          disabled={busy != null || !!why}
+                          disabled={busy != null}
                           aria-label={`Remove ${m.name} from this agency`}
-                          title={why || `Remove ${m.name} from this agency`}
+                          title={`${m.name} is still in several agencies. Remove it from this one.`}
                           style={{
                             border: "none",
                             background: "transparent",
-                            color: busy === `${m.kind}-${m.id}` || why ? c.textMuted : c.textSec,
-                            cursor: why ? "not-allowed" : busy != null ? "default" : "pointer",
+                            color: busy === `${m.kind}-${m.id}` ? c.textMuted : c.textSec,
+                            cursor: busy != null ? "default" : "pointer",
                             padding: 0,
                             fontSize: c.fontXs,
                             lineHeight: 1,
@@ -563,7 +600,16 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
                   ))}
                 </div>
               )}
-              {canEdit && (
+              {readOnly && (
+                <div style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                  The runners that serve this agency.{" "}
+                  <Link to="/runners" style={{ color: c.primary }}>
+                    Enrol or remove one on Runners
+                  </Link>
+                  .
+                </div>
+              )}
+              {canEdit && !readOnly && (
                 <select
                   value=""
                   disabled={busy != null || avail.length === 0 || !!why}
@@ -581,7 +627,7 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
                     color: c.textSec,
                   }}
                 >
-                  <option value="">{avail.length === 0 ? "Nothing to add" : "+ Add…"}</option>
+                  <option value="">{avail.length === 0 ? "Nothing of Global's to add" : "+ Add one of Global's…"}</option>
                   {avail.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
@@ -595,10 +641,130 @@ function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }:
         })}
       </div>
       <div style={{ fontSize: c.fontXs, color: c.textMuted }}>
-        A scope, secret, variable or key that appears in NO agency is unrestricted, not orphaned — it stays
-        reachable from everywhere. Removing an entity from the agency that <em>owns</em> it is refused; transfer
-        ownership first.
+        A scope, secret, variable and key belongs to exactly one agency. A global administrator can add one of Global's
+        here, which makes this agency its owner. To move one between agencies, or back to Global, change its agency on
+        the row itself: the Agency select on a scope, and Move to another agency on a secret, variable or SSH key.
       </div>
+      {agencyId !== GLOBAL_AGENCY && <VaultPathsEditor agencyId={agencyId} globalAdmin={globalAdmin} />}
     </DetailPanel>
+  );
+}
+
+// VaultPathsEditor — the Vault path prefixes assigned to one agency (LR-80).
+//
+// The installation has one Vault connection. A global administrator divides it
+// here: an agency's administrators may then name, for the secrets and keys
+// their agency owns, any path inside one of these prefixes and none outside.
+// An agency with no prefix can hold no Vault-backed row. Global has no list:
+// its rows are a global administrator's and have no path limit.
+//
+// Read by whoever writes Vault-backed rows for the agency; edited by a global
+// administrator only. For anyone else the list is absent (the read is refused),
+// and that is irrelevance, not a precondition: nothing is shown.
+function VaultPathsEditor({ agencyId, globalAdmin }: { agencyId: string; globalAdmin: boolean }) {
+  const [dep, setDep] = useState(0);
+  const q = useGet<{ prefixes?: string[] }>(
+    () => api.GET("/agencies/{agencyId}/vault-prefixes", { params: { path: { agencyId } } }),
+    [agencyId, dep],
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const prefixes = q.data?.prefixes ?? [];
+  useEffect(() => {
+    setDraft(null);
+    setErr(null);
+  }, [agencyId]);
+  if (q.loading) return <InlineLoading what="Vault paths" />;
+  if (q.error) return null;
+  const why = globalOnly(globalAdmin, "Only a global administrator (a role on every agency) can assign an agency its Vault paths.");
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    const next = (draft ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const { error } = await api.PUT("/agencies/{agencyId}/vault-prefixes", {
+      params: { path: { agencyId }, header: csrfHeader },
+      body: { prefixes: next },
+    });
+    setBusy(false);
+    if (error) {
+      setErr(errMsg(error));
+      return;
+    }
+    setDraft(null);
+    setDep((n) => n + 1);
+  };
+
+  return (
+    <div style={{ borderTop: `1px solid ${c.borderLight}`, paddingTop: 10 }}>
+      <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
+        Vault paths ({prefixes.length})
+      </div>
+      {draft === null ? (
+        <>
+          {prefixes.length === 0 ? (
+            <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+              None assigned. This agency cannot create a Vault-backed secret or key, and any it already owns keep working but
+              cannot be edited until a path that covers them is assigned.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+              {prefixes.map((p) => (
+                <code key={p} style={{ fontFamily: c.mono, fontSize: c.fontXs, padding: "2px 8px", borderRadius: c.radiusChip, background: c.panel2, border: `1px solid ${c.border}`, color: c.text }}>
+                  {p}
+                </code>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, flexWrap: "wrap" }}>
+            <Btn small onClick={() => setDraft(prefixes.join("\n"))} disabled={!!why} title={why || undefined}>
+              Edit Vault paths
+            </Btn>
+            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+              {why ||
+                "The agency's administrators may name any path inside one of these, for the secrets and keys the agency owns."}
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={{ ...labelStyle(), display: "block" }}>
+            One path prefix per line
+            <textarea
+              aria-label="Vault path prefixes, one per line"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={Math.max(3, draft.split("\n").length + 1)}
+              spellCheck={false}
+              placeholder={"secret/data/tax\nkv/tax"}
+              style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm, marginTop: 4, resize: "vertical" }}
+            />
+          </label>
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4, lineHeight: 1.5 }}>
+            A prefix covers the paths whose first segments are its own: <code style={{ fontFamily: c.mono }}>secret/data/tax</code>{" "}
+            covers <code style={{ fontFamily: c.mono }}>secret/data/tax/db</code> and not{" "}
+            <code style={{ fontFamily: c.mono }}>secret/data/tax-audit/db</code>. Paths are case-sensitive. Saving replaces the list;
+            an empty list means this agency can name no Vault path.
+          </div>
+          {err && (
+            <div role="alert" style={{ fontSize: c.fontSm, color: c.danger, marginTop: 6 }}>
+              {err}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <Btn small primary onClick={save} disabled={busy}>
+              {busy ? "Saving…" : "Save Vault paths"}
+            </Btn>
+            <Btn small onClick={() => setDraft(null)} disabled={busy}>
+              Cancel
+            </Btn>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

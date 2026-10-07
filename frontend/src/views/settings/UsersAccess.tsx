@@ -333,6 +333,10 @@ function AccessGrantsCard() {
   const { roles } = useRoles();
   const grants = rows<AccessGrant>(grantsQ.data);
   const agencies = rows<Agency>(agenciesQ.data);
+  // LR-9 — Global is not separately grantable: a grant that reaches Global's
+  // rows is one on every agency. So it is not offered as an agency to grant on
+  // or to filter by.
+  const grantable = agencies.filter((a) => a.id !== "global");
 
   const [adGroup, setAdGroup] = useState("");
   const [role, setRole] = useState("");
@@ -423,7 +427,7 @@ function AccessGrantsCard() {
               filtering the list here would need the server to publish the
               caller's agency set for what a clear refusal already handles. */}
           {canGrantEverywhere && <option value="*">All scopes (unrestricted)</option>}
-          {agencies.map((a) => <option key={a.id} value={a.id ?? ""}>{a.name}</option>)}
+          {grantable.map((a) => <option key={a.id} value={a.id ?? ""}>{a.name}</option>)}
         </select>
         <Btn primary onClick={add} disabled={busy || !adGroup.trim() || !role || !where}>+ Add</Btn>
       </div>
@@ -442,7 +446,7 @@ function AccessGrantsCard() {
           <select value={agencyFilter} onChange={(e) => setAgencyFilter(e.target.value)} style={{ ...inputStyle(), width: 190, cursor: "pointer" }}>
             <option value="">All agencies</option>
             <option value="*">All scopes (unrestricted)</option>
-            {agencies.map((a) => <option key={a.id} value={a.id ?? ""}>{a.name}</option>)}
+            {grantable.map((a) => <option key={a.id} value={a.id ?? ""}>{a.name}</option>)}
           </select>
           {visible.length !== grants.length && (
             <span style={{ color: c.textSec, fontSize: c.fontSm }}>{visible.length} of {grants.length}</span>
@@ -674,7 +678,7 @@ function RolesCard() {
               Any access grant still using <strong style={{ fontFamily: c.mono }}>{deleting.name}</strong> blocks
               this delete — remove those grants first.
               <div style={{ marginTop: 10 }}>
-                Its scope grants are removed with it, and every other operator is <strong>signed out</strong>.
+                The change is in force on everyone's next request. Nobody is signed out.
               </div>
             </>
           }

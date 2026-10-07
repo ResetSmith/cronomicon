@@ -4,19 +4,25 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 
 // A runner that re-registered after losing its identity: new id, same
-// self-declared name, no agencies — and a snapshot of what it used to be.
+// self-declared name, enrolled for its agency again — and a snapshot of its
+// previous enrolment, whose id still holds one of the agency's scopes (MA-32).
 const MATCHED = {
   id: "019f0000-1111-2222-3333-aaaaaaaaaaaa",
   name: "ansible-rh8",
   status: "online",
-  protocolVersion: 13,
+  protocolVersion: 14,
   capabilities: ["ansible", "bash"],
-  agencies: [],
+  ownerAgency: { id: "ag-carson", name: "Carson" },
+  agencies: [{ id: "ag-carson", name: "Carson" }],
+  legacyPlacement: false,
+  canManage: true,
+  canReviewHostKeys: true,
   placementSuggestion: {
     historyId: 7,
     previousRunnerId: "019f6163-20a8-79e5-9a45-902a00ec1e28",
     agencies: [{ id: "ag-carson", name: "Carson" }],
     tags: ["rh8"],
+    scopes: ["carson-web"],
     deregisteredAt: "2026-08-26T08:36:03Z",
     deregisteredVia: "reaper",
     previousClientIp: "10.142.11.7",
@@ -85,9 +91,11 @@ describe("Runners — placement suggestion (DR-7)", () => {
     await expand("ansible-rh8");
 
     expect(await screen.findByText(/Previous placement found/i)).toBeTruthy();
-    // The agency it WOULD restore is named, so the operator knows what they are
-    // authorising rather than clicking a bare "restore".
-    expect(screen.getByText(/Carson/)).toBeTruthy();
+    // What it WOULD do is named — the scopes it re-points — so the operator
+    // knows what they are authorising rather than clicking a bare "restore".
+    // And it says what it will NOT do: the runner's agency does not change.
+    expect(screen.getByText("carson-web")).toBeTruthy();
+    expect(screen.getByText(/already serves\s+Carson; restoring changes nothing about that/)).toBeTruthy();
 
     // DR-Q2: nothing has been applied merely by looking.
     expect(POST).not.toHaveBeenCalled();

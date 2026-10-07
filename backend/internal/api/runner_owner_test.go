@@ -532,10 +532,49 @@ func TestG3_TheRunnerListCarriesTheOwner(t *testing.T) {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"ownerAgency"`
-		LegacyPlacement bool `json:"legacyPlacement"`
+		LegacyPlacement   bool `json:"legacyPlacement"`
+		CanManage         bool `json:"canManage"`
+		CanReviewHostKeys bool `json:"canReviewHostKeys"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body)
+	}
+	// A viewer manages nothing and reviews nothing.
+	for _, r := range rows {
+		if r.CanManage || r.CanReviewHostKeys {
+			t.Errorf("a FIN viewer is told they may manage %s (%v) or review its keys (%v)", r.ID, r.CanManage, r.CanReviewHostKeys)
+		}
+	}
+	// The per-row flags answer the routes' own two questions, per caller.
+	flags := func(who string) map[string][2]bool {
+		t.Helper()
+		rec := gateReq(t, h, http.MethodGet, "/api/v1/runners", who, ``)
+		var rs []struct {
+			ID                string `json:"id"`
+			CanManage         bool   `json:"canManage"`
+			CanReviewHostKeys bool   `json:"canReviewHostKeys"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &rs); err != nil {
+			t.Fatalf("decode: %v (%s)", err, rec.Body)
+		}
+		out := map[string][2]bool{}
+		for _, r := range rs {
+			out[r.ID] = [2]bool{r.CanManage, r.CanReviewHostKeys}
+		}
+		return out
+	}
+	for who, wantFlags := range map[string]map[string][2]bool{
+		gFinAdmin: {"r-fin": {true, true}, "r-tax": {false, false}, "r-global": {false, false}, "r-legacy": {false, true}},
+		gTaxAdmin: {"r-fin": {false, false}, "r-tax": {true, true}, "r-global": {false, false}, "r-legacy": {false, true}},
+		gMixed:    {"r-fin": {true, true}, "r-tax": {false, false}, "r-global": {false, false}, "r-legacy": {false, true}},
+		gRoot:     {"r-fin": {true, true}, "r-tax": {true, true}, "r-global": {true, true}, "r-legacy": {true, true}},
+	} {
+		got := flags(who)
+		for id, w := range wantFlags {
+			if got[id] != w {
+				t.Errorf("%s on %s: canManage/canReviewHostKeys = %v, want %v", who, id, got[id], w)
+			}
+		}
 	}
 	want := map[string][3]string{
 		"r-fin":    {"ag:FIN", "FIN", "false"},
@@ -931,5 +970,60 @@ func TestG3_RestoreIsTheOwnersAndNeverWidens(t *testing.T) {
 	}
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/r-new/placement", gFinAdmin, body); rec.Code != 409 {
 		t.Errorf("accepting twice = %d, want 409 placement_stale", rec.Code)
+	}
+}
+
+// The retired-pin list on the Scopes page is filtered like the inbox it now
+// points at: configureApp on the pin's scope, a global administrator for a job
+// with no scope. It listed every pin to every configureApp holder, so the
+// banner counted (and named) other agencies' jobs that "Review in Notices"
+// then did not show.
+func TestG4_TheRetiredPinListIsByAuthority(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	for _, p := range [][3]string{{"j-fin", "fin-deploy", "fin-hosts"}, {"j-tax", "tax-deploy", "tax-hosts"}, {"j-none", "sweep", ""}} {
+		exec(`INSERT INTO retired_runner_pins (job_uid,job_name,job_source,scope,runner_tag,reason,recorded_at)
+		      VALUES (?,?,'cronomicon',?,'vlan-dmz','mixed_pins','2026-10-05T00:00:00Z')`, p[0], p[1], p[2])
+	}
+	list := func(who string) []string {
+		t.Helper()
+		rec := gateReq(t, h, http.MethodGet, "/api/v1/scope-binding-notices", who, ``)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d (%s)", who, rec.Code, rec.Body)
+		}
+		var rows []struct {
+			JobName string `json:"jobName"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+			t.Fatalf("decode: %v (%s)", err, rec.Body)
+		}
+		out := []string{}
+		for _, r := range rows {
+			out = append(out, r.JobName)
+		}
+		slices.Sort(out)
+		return out
+	}
+	for who, want := range map[string][]string{
+		gFinAdmin: {"fin-deploy"},
+		gTaxAdmin: {"tax-deploy"},
+		gMixed:    {"fin-deploy"},
+		gRoot:     {"fin-deploy", "sweep", "tax-deploy"},
+	} {
+		if got := list(who); !slices.Equal(got, want) {
+			t.Errorf("%s sees retired pins %v, want %v", who, got, want)
+		}
+	}
+	// And the two lists agree, pin for pin: what the banner counts is what the inbox shows.
+	for _, who := range []string{gFinAdmin, gRoot} {
+		inbox := 0
+		for k := range listNotices(t, h, who) {
+			if strings.HasPrefix(k, "retired_runner_pin/") {
+				inbox++
+			}
+		}
+		if banner := len(list(who)); banner != inbox {
+			t.Errorf("%s: the Scopes banner counts %d pins and the inbox shows %d", who, banner, inbox)
+		}
 	}
 }

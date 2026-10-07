@@ -92,6 +92,19 @@ type runnerResponse struct {
 	// (MA-9): a runner that served several agencies before 2.3.0. It keeps
 	// working, can be narrowed and never widened.
 	LegacyPlacement bool `json:"legacyPlacement"`
+	// CanManage is the per-row authority flag (RB-24) for this runner: the caller
+	// holds configureApp on the agency that OWNS it (LR-59). Every operator write
+	// on the row is gated on exactly this, so the view reads it instead of the
+	// flat configureApp flag, which only says "somewhere".
+	//
+	// Both flags are absent, not false, when the server could not work them out
+	// (the owner read failed): "unknown" must not read as "not yours" to a
+	// client that would then disable every control for a global administrator.
+	CanManage *bool `json:"canManage,omitempty"`
+	// CanReviewHostKeys is true when the caller may review this runner's host
+	// keys: its owner, or (LR-63) an administrator of an agency it serves and
+	// does not own, who may scan and decide keys for their own agency's scopes.
+	CanReviewHostKeys *bool `json:"canReviewHostKeys,omitempty"`
 	// DR-7 / MA-32: present only on a runner for which a previous enrolment under
 	// the same name left scope bindings of its own agency behind. Absent means
 	// "no offer", never "no previous enrolment".
@@ -323,6 +336,7 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.log.Error("list runners: owners", "error", oerr)
 	}
+	caller, hasCaller := auth.IdentityFrom(r.Context())
 	for i := range out {
 		out[i].Agencies = byRunner[out[i].ID]
 		if o, ok := owners[out[i].ID]; ok {
@@ -332,6 +346,19 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 				serves = append(serves, a.ID)
 			}
 			out[i].LegacyPlacement = settings.IsLegacyPlacement(o.ID, serves)
+			// The same two questions the routes ask (api.requireRunnerOwner and
+			// requireRunnerOwnerOrHostKeyGuest), answered per row. A flag here
+			// only shapes the view; the routes decide.
+			if hasCaller {
+				manage := caller.CanAgency(auth.PermConfigureApp, o.ID)
+				review := manage
+				for _, a := range serves {
+					if a != o.ID && caller.CanAgency(auth.PermConfigureApp, a) {
+						review = true
+					}
+				}
+				out[i].CanManage, out[i].CanReviewHostKeys = &manage, &review
+			}
 		}
 	}
 

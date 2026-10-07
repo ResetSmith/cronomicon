@@ -168,11 +168,28 @@ func (s *Server) scopesBoundTo(ctx context.Context, runnerID string) ([]string, 
 
 // handleListScopeBindingNotices returns the runner-tag pins that could not be
 // turned into a scope binding and still need an operator.
+//
+// The list is filtered by the same rule as the inbox and the dismissal
+// (pinVisible): configureApp on the pin's scope, a global administrator for a
+// job with no scope. It was every pin for every configureApp holder, so the
+// Scopes banner counted jobs of other agencies that its own "Review in Notices"
+// link then did not show, and named their jobs and scopes on the way.
 func (s *Server) handleListScopeBindingNotices(w http.ResponseWriter, r *http.Request) {
-	list, err := settings.ListRetiredPins(r.Context(), s.db)
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	all, err := settings.ListRetiredPins(r.Context(), s.db)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
+	}
+	list := all[:0]
+	for _, p := range all {
+		if pinVisible(id, p.Scope) {
+			list = append(list, p)
+		}
 	}
 	httpx.JSON(w, http.StatusOK, list)
 }

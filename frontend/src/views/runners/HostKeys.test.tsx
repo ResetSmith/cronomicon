@@ -38,6 +38,12 @@ let batch: LedgerRow[] = [];
 let post: (path: string, body: Record<string, unknown>) => { data?: unknown; error?: unknown };
 let pendingError: unknown = undefined;
 
+let ACCESS: unknown = null;
+vi.mock("../../api/access", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/access")>();
+  return { ...actual, useMyAccess: () => ACCESS };
+});
+
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
   return {
@@ -103,12 +109,12 @@ const led = (over: Partial<LedgerRow> & { id: number; host: string }): LedgerRow
 beforeEach(() => {
   calls.length = 0;
   scopes = [
-    { id: "s-open", scope: "aaa-open", boundRunners: [] },
-    { id: "s-dmz", scope: "dmz-web", boundRunners: [{ runnerId: RUNNER.id }] },
+    { id: "s-open", scope: "aaa-open", agencies: [{ id: "global", name: "Global" }], boundRunners: [] },
+    { id: "s-dmz", scope: "dmz-web", agencies: [{ id: "global", name: "Global" }], boundRunners: [{ runnerId: RUNNER.id }] },
   ];
   fleet = [
-    { id: RUNNER.id, name: RUNNER.name, status: "online", agencies: [] },
-    { id: "r-old", name: "runner-old-01", status: "online", agencies: [] },
+    { id: RUNNER.id, name: RUNNER.name, status: "online", agencies: [{ id: "global", name: "Global" }] },
+    { id: "r-old", name: "runner-old-01", status: "online", agencies: [{ id: "global", name: "Global" }] },
   ];
   pending = [];
   allPending = [];
@@ -178,7 +184,7 @@ describe("the host keys dialog", () => {
   });
 
   it("offers only the scopes this runner may serve", async () => {
-    // A general-pool runner cannot serve a scope that belongs to an agency.
+    // A runner that serves Global cannot serve a scope that belongs to an agency.
     scopes = [...scopes, { id: "s-fin", scope: "finance-hosts", agencies: [{ id: "ag-fin" }], boundRunners: [] }];
     open();
     const select = (await screen.findByLabelText("Scope to scan")) as HTMLSelectElement;
@@ -186,8 +192,68 @@ describe("the host keys dialog", () => {
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).not.toContain("finance-hosts");
   });
 
+  // LR-63 — a caller who administers an agency this runner serves, and does
+  // not own the runner: one source (scan a scope of theirs), and never a key
+  // that would replace one the runner trusts.
+  it("in guest mode offers only a scope scan, and will not trust a key that replaces one", async () => {
+    post = (path) => {
+      if (path === "/runners/{runnerId}/keyscan") {
+        pending = [
+          cand({ id: "p1", host: "10.1.0.5", hostName: "web01", scopeName: "dmz-web", status: "new" }),
+          cand({ id: "p2", host: "10.1.0.6", hostName: "web02", scopeName: "dmz-web", status: "changed", previousFingerprint: FP("z"), previousSource: "runner" }),
+        ];
+        return { data: { hosts: ["10.1.0.5", "10.1.0.6"], skipped: [] } };
+      }
+      return { data: { batchId: "b9", approved: 1, rejected: 0, unchanged: 0 } };
+    };
+    open({ guest: true, initialSource: "paste" });
+    // Told why, and none of the owner's sources — whatever the caller asked to open on.
+    expect(screen.getByText(/is not your agency's runner, but it serves your agency/)).toBeTruthy();
+    for (const label of ["Scan hosts", "Paste keys", "Copy from a runner"]) expect(screen.queryByText(label)).toBeNull();
+    await waitFor(() => expect((screen.getByLabelText("Scope to scan") as HTMLSelectElement).value).toBe("s-dmz"));
+    fireEvent.click(button("Queue scan"));
+    expect(posted("/runners/{runnerId}/keyscan")[0].body).toEqual({ scopeId: "s-dmz" });
+
+    // Tick both: the changed one blocks the whole batch, with the reason.
+    await screen.findByText("web02");
+    for (const box of screen.getAllByRole("checkbox")) if (!(box as HTMLInputElement).checked && !(box as HTMLInputElement).disabled) fireEvent.click(box);
+    expect(await screen.findByText(/would replace a key runner-dmz-01 already trusts\. That is for the runner's owner/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /^Trust / }) as HTMLButtonElement).disabled).toBe(true);
+    expect(posted("/runners/{runnerId}/host-keys/resolve-batch")).toHaveLength(0);
+  });
+
+  // Guest mode is the server's answer about THIS runner (`canManage: false` on
+  // its row), so it holds wherever the dialog is opened from — the Scopes
+  // page's coverage panel opens it without knowing. And what a guest is offered
+  // is the scopes of an agency they ADMINISTER, which is the server's own list:
+  // being able to read a scope the runner serves is not enough.
+  it("works out guest mode from the runner's own row, and offers only the caller's agencies' scopes", async () => {
+    const FIN = { id: "ag-fin", name: "Finance" };
+    const TAX = { id: "ag-tax", name: "Tax" };
+    fleet = [{ id: RUNNER.id, name: RUNNER.name, status: "online", agencies: [FIN, TAX], ownerAgency: { id: "global", name: "Global" }, canManage: false }];
+    scopes = [
+      { id: "s-fin", scope: "fin-web", agencies: [FIN], boundRunners: [] },
+      { id: "s-tax", scope: "tax-web", agencies: [TAX], boundRunners: [] },
+    ];
+    ACCESS = { grants: [{ role: "admin", allScopes: false, agencyId: "ag-fin", agencyName: "Finance", scopes: [], permissions: ["configureApp"], groups: [], origin: "group" }] };
+    open(); // no `guest` prop
+    expect(await screen.findByText(/is not your agency's runner, but it serves your agency/)).toBeTruthy();
+    for (const label of ["Scan hosts", "Paste keys", "Copy from a runner"]) expect(screen.queryByText(label)).toBeNull();
+    const select = (await screen.findByLabelText("Scope to scan")) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("s-fin"));
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["fin-web"]);
+    ACCESS = null;
+  });
+
+  it("tells a guest an offline runner cannot scan without pointing at Paste, which is not theirs", async () => {
+    fleet = [{ id: RUNNER.id, name: RUNNER.name, status: "offline", agencies: [{ id: "global", name: "Global" }], canManage: false }];
+    open();
+    expect(await screen.findByText(/is not online, so it cannot scan\.\s+Try again when it is back, or ask its owner\./)).toBeTruthy();
+    expect(screen.queryByText(/Pasted keys do not need it/)).toBeNull();
+  });
+
   it("will not queue a scan on a runner that is not online, and says pasting still works", async () => {
-    fleet = [{ id: RUNNER.id, name: RUNNER.name, status: "offline", agencies: [] }];
+    fleet = [{ id: RUNNER.id, name: RUNNER.name, status: "offline", agencies: [{ id: "global", name: "Global" }] }];
     open();
     expect(await screen.findByText(/runner-dmz-01 is not online, so it cannot scan/)).toBeTruthy();
     expect(button("Queue scan").disabled).toBe(true);

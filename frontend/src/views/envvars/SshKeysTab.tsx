@@ -4,6 +4,7 @@ import type { components } from "../../api/schema";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
+import { MoveAgency } from "./MoveAgency";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { pubKeyFilename, toOpenSSH, toRFC4716 } from "../../utils/sshpubkey";
@@ -415,6 +416,20 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
                               <DetailRow label="Bound By" value={<UsageCell {...usage.usageFor("key", v.label)} />} />
                               <DetailRow label="Last Rotated" value={fmtDate(v.lastModifiedAt)} />
                               <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                              {canEdit && v.id && (
+                                <MoveAgency
+                                  kind="ssh-credential"
+                                  id={v.id}
+                                  name={v.label}
+                                  ownerName={v.ownerAgency}
+                                  permission="configureApp"
+                                  onMoved={(text) => {
+                                    setNotice({ kind: "info", text });
+                                    refetch();
+                                  }}
+                                  onError={(text) => setNotice({ kind: "error", text })}
+                                />
+                              )}
                             </div>
                           </div>
                         </DetailGrid>
@@ -629,13 +644,7 @@ function SshKeyFormModal({
             Validated on save and encrypted at rest; never echoed back. Paste the whole unencrypted PEM/OpenSSH key including the BEGIN/END lines. Passphrase-protected keys are not supported.
           </div>
         </div>
-        <CreationAgencyPicker
-          label="SSH key"
-          required={agencyPick.required}
-          agencies={agencyPick.agencies}
-          selected={agencyPick.selected}
-          setSelected={agencyPick.setSelected}
-        />
+        <CreationAgencyPicker label="SSH key" pick={agencyPick} />
       </div>
     </Modal>
   );

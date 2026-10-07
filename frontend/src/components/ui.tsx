@@ -363,14 +363,15 @@ function TagOverflowChip({ count, title }: { count: number; title?: string }) {
 // definition. An em dash reads as MISSING DATA, so the one state that used to be
 // reachable by simply not filling a field looked identical to a bug — and that is
 // precisely the state the band set out to make deliberate and visible. A global
-// definition now says "All", which is an answer.
+// definition now says "Global" (it said "All" until 2.3.0, when Global became a
+// real agency), which is an answer.
 //
 // Three distinct states, never collapsed:
-//   · no scope        → "All" (deliberate global; every agency sees it)
+//   · no scope        → "Global" (deliberate; every agency sees it)
 //   · scope, agencies → the agency chips
-//   · scope, none     → "—", titled: the scope maps to no agency, so only
-//                        unrestricted admins see it. Fail-closed, and almost
-//                        always an unfinished scope→agency mapping (AF-Q3).
+//   · scope, none     → "—", titled: the scope is in no agency, so only
+//                        global administrators see it. Fail-closed, and since
+//                        2.3.0 damage: every scope is born in Global.
 export function DerivedAgencies({
   agencies,
   scope,
@@ -402,10 +403,10 @@ export function DerivedAgencies({
   if (scope != null && scope === "") {
     return (
       <span
-        title="Global — no scope, so every agency can see this."
+        title="No scope (Global) — every agency can see this, and it runs on a runner that serves Global."
         style={{ fontSize: c.fontXs, padding: "1px 6px", borderRadius: c.radiusChip, border: `1px dashed ${c.borderStrong}`, color: c.textSec, whiteSpace: "nowrap" }}
       >
-        All
+        Global
       </span>
     );
   }
@@ -414,7 +415,7 @@ export function DerivedAgencies({
       style={{ color: c.textSec }}
       title={
         scope
-          ? `Scope "${scope}" is not mapped to any agency, so only unrestricted admins see this. Map it under Settings → Scopes.`
+          ? `Scope "${scope}" is in no agency, so only global administrators see this. Set its agency on the Scopes page.`
           : derivedFrom
       }
     >
@@ -433,7 +434,7 @@ export function DerivedAgencies({
 export function agencySortKey(agencies: string[] | undefined, scope?: string | null): string {
   const list = agencies ?? [];
   if (list.length > 0) return list.join(", ");
-  return scope != null && scope === "" ? "All" : "";
+  return scope != null && scope === "" ? "Global" : "";
 }
 
 // ── InlineTags (capped table cell) ───────────────────────────────────────────

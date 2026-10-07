@@ -74,7 +74,9 @@ export function ServiceAccountsSection({ canGrantEverywhere }: { canGrantEverywh
 
   useEffect(() => {
     load();
-    api.GET("/agencies").then(({ data }) => setAgencies((data as Agency[]) ?? []));
+    // LR-9 — Global is not separately grantable: a grant that reaches Global's
+    // rows is one on every agency. So it is not offered as an agency here.
+    api.GET("/agencies").then(({ data }) => setAgencies(((data as Agency[]) ?? []).filter((a) => a.id !== "global")));
     api.GET("/roles").then(({ data }) => setRoles((data as Role[]) ?? []));
   }, [load]);
 

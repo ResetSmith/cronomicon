@@ -936,7 +936,7 @@ export function JobComposer() {
           )}
           {scope === "" && (
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
-              Visible to every agency, and runnable by anyone who may trigger jobs.
+              No scope (Global). Visible to every agency, and runnable by anyone who may trigger jobs.
             </div>
           )}
           {/* AF-Q3 — advisory, never blocking: a scope that maps to no agency is
@@ -947,8 +947,8 @@ export function JobComposer() {
               to read agencies from, and warning about it would be guessing. */}
           {scope != null && scope !== "" && chosenScope && (chosenScope.agencies ?? []).length === 0 && (
             <div style={{ fontSize: c.fontXs, color: c.warning, marginTop: 4 }}>
-              ⚠ <code style={{ fontFamily: c.mono }}>{scope}</code> is not mapped to any agency, so only unrestricted
-              admins will see this job. Map it under Settings → Scopes to give a department access.
+              ⚠ <code style={{ fontFamily: c.mono }}>{scope}</code> is in no agency, so only global administrators will
+              see this job. A global administrator sets its agency on the Scopes page.
             </div>
           )}
         </Field>

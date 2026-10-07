@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import type { CSSProperties, ReactNode } from "react";
 import { c } from "../theme";
 import { useTheme } from "../theme-context";
 import { useAuth } from "../auth";
-import { logout, fetchVersion, type BuildInfo } from "../api/client";
+import { api, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
+import { UserMenu } from "./UserMenu";
 import { useSidebarCollapsed } from "../hooks";
 // ONE emblem asset, both themes (LG-Q2). The wordmark used to be baked into the
 // bitmap, which forced two assets — a white-lettered one for the dark rail and a
@@ -59,6 +60,8 @@ export const meta: Record<string, { label: string; subtitle: string; icon: React
   "/env-vars": { label: "Env Vars", subtitle: "Variables and secrets", icon: <IcKey /> },
   "/runners": { label: "Runners", subtitle: "Registered execution runners", icon: <IcServer /> },
   "/settings": { label: "Settings", subtitle: "Configuration and access", icon: <IcGear /> },
+  // Not in the sidebar: reached from the top bar's Notices control (LR-85).
+  "/notices": { label: "Notices", subtitle: "Conditions that need a person, for the agencies you administer", icon: <IcBell /> },
 };
 
 export const nav = [
@@ -144,33 +147,9 @@ export function Shell() {
             gap: 10,
           }}
         >
-          {!collapsed && (
-            <div style={{ fontSize: c.fontXs, color: c.sidebarText }}>
-              {me?.email}
-              {me?.roles?.length ? <div style={{ opacity: 0.7 }}>{me.roles.join(", ")}</div> : null}
-            </div>
-          )}
-          <button
-            onClick={() => void logout()}
-            title={collapsed ? `Sign out${me?.email ? ` (${me.email})` : ""}` : undefined}
-            style={{
-              alignSelf: collapsed ? "center" : "flex-start",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 7,
-              background: "transparent",
-              color: c.sidebarText,
-              border: `1px solid ${c.border}`,
-              borderRadius: c.radiusChip,
-              padding: collapsed ? "6px" : "5px 10px",
-              fontSize: c.fontSm,
-              cursor: "pointer",
-            }}
-          >
-            <IcSignOut />
-            {!collapsed && "Sign out"}
-          </button>
+          {/* LR-87 — the identity block is a menu: who you are here, My access,
+              and sign out. */}
+          <UserMenu email={me?.email} collapsed={collapsed} icon={<IcSignOut />} />
           <button
             onClick={toggleCollapsed}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -227,6 +206,7 @@ export function Shell() {
             {current.subtitle && <div style={{ fontSize: c.fontSm, color: c.textMuted, marginTop: 3 }}>{current.subtitle}</div>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <NoticesButton btnStyle={topBarBtn} pathname={pathname} />
             <HelpMenu btnStyle={topBarBtn} />
             {/* EP-Q2 — "Reload page", not "Refresh". Behaviour is unchanged (a
                 hard reload), but the word is not: since EP-3 every expanded
@@ -359,6 +339,69 @@ const HELP_LINKS: { group: string; items: { href: string; label: string }[] }[] 
   },
 ];
 
+// NoticesButton — the inbox's entry in the shell, with the number open (LR-85).
+//
+// Shown to whoever holds configureApp somewhere: a notice is read and dismissed
+// by an agency's administrators, so for anyone else the page would always be
+// empty, which is irrelevance and is hidden (FX-7). The count is re-read on
+// every navigation: the checks behind it run at most every thirty seconds on
+// the server, so asking again is cheap, and a notice put right on one page has
+// usually gone by the time the next one opens.
+export function NoticesButton({ btnStyle, pathname }: { btnStyle: CSSProperties; pathname: string }) {
+  const [relevant, setRelevant] = useState(false);
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCapabilities().then((caps) => !cancelled && setRelevant(!!caps.configureApp));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (!relevant) return;
+    let cancelled = false;
+    void api.GET("/notices").then((res) => {
+      if (!cancelled) setCount(Array.isArray(res.data) ? res.data.length : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [relevant, pathname]);
+  if (!relevant) return null;
+  const n = count ?? 0;
+  return (
+    <Link
+      to="/notices"
+      aria-label={n > 0 ? `Notices, ${n} open` : "Notices"}
+      title={n > 0 ? `${n} notice${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} attention` : "Nothing needs attention"}
+      style={{ ...btnStyle, textDecoration: "none", color: n > 0 ? c.text : btnStyle.color }}
+    >
+      <IcBell />
+      Notices
+      {n > 0 && (
+        <span
+          style={{
+            minWidth: 18,
+            padding: "0 5px",
+            borderRadius: c.radiusChip,
+            background: `${c.warning}22`,
+            border: `1px solid ${c.warning}55`,
+            color: c.warning,
+            fontSize: c.fontXs,
+            fontWeight: 700,
+            fontFamily: c.mono,
+            fontVariantNumeric: "tabular-nums",
+            textAlign: "center",
+            lineHeight: "18px",
+          }}
+        >
+          {n}
+        </span>
+      )}
+    </Link>
+  );
+}
+
 export function HelpMenu({ btnStyle }: { btnStyle: CSSProperties }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -463,4 +506,5 @@ export function HelpMenu({ btnStyle }: { btnStyle: CSSProperties }) {
 function IcBook() { return svg(<><path d="M9 4.5C7.4 3.6 5.2 3.4 3 3.8v9.7c2.2-0.4 4.4-0.2 6 0.7" /><path d="M9 4.5c1.6-0.9 3.8-1.1 6-0.7v9.7c-2.2-0.4-4.4-0.2-6 0.7" /></>); }
 function IcChevronLeft() { return svg(<path d="M11 3.5 5.5 9l5.5 5.5" />); }
 function IcChevronRight() { return svg(<path d="M7 3.5 12.5 9 7 14.5" />); }
+function IcBell() { return svg(<><path d="M4.5 13V8.5a4.5 4.5 0 0 1 9 0V13l1.5 1.5H3L4.5 13Z" /><path d="M7.5 15.5a1.6 1.6 0 0 0 3 0" /></>); }
 function IcSignOut() { return svg(<><path d="M7 15.5H4a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 4 2.5h3" /><path d="M11.5 12 15 9l-3.5-3M15 9H6.5" /></>); }

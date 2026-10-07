@@ -2200,6 +2200,10 @@ export interface paths {
          *     a job whose YAML still carries `runner_tag` on a scope with no binding —
          *     is listed here until an operator binds its scope or dismisses it. A
          *     notice drops out by itself once its scope has a binding.
+         *
+         *     Since v2.3.0 the list holds the pins the caller may act on, as the
+         *     notices inbox does: `configureApp` on the pin's scope, and a global
+         *     administrator for a job with no scope. It was every pin before.
          */
         get: operations["listScopeBindingNotices"];
         put?: never;
@@ -4481,7 +4485,7 @@ export interface paths {
         put?: never;
         /**
          * Sign out every other session
-         * @description LR-79. Signs out every cookie session except the caller's own, which is re-issued. A global administrator's action (`manageRoles` on every agency). No access change needs it: a grant, role or scope change reaches a live session on its next request. It exists for the one change Cronomicon cannot see — a person removed from a group at the identity provider keeps that group in their session until they sign in again (at most eight hours). In trusted-header mode the proxy asserts the groups on every request and this affects nothing but developer-login sessions.
+         * @description LR-79. Signs out every cookie session except the caller's own, which is re-issued. A global administrator's action (`manageRoles` on every agency). No access change needs it: a grant, role or scope change reaches a live session on its next request. It exists for the one change Cronomicon cannot see — a person removed from a group at the identity provider keeps that group in their session until they sign in again (at most eight hours). In trusted-header mode the proxy asserts the groups on every request and this affects nothing but developer-login sessions. CSRF required.
          */
         post: operations["revokeSessions"];
         delete?: never;
@@ -7264,6 +7268,22 @@ export interface components {
              *     `legacy_placement` notice in the inbox.
              */
             readonly legacyPlacement?: boolean;
+            /**
+             * @description Per-row authority (v2.3.0): the caller holds `configureApp` on
+             *     the agency that owns this runner, which is what every operator
+             *     write on it is gated on. Read this, not the flat `configureApp`
+             *     capability, to decide whether a control on the row is enabled.
+             *     Absent (never `false`) when the server could not work it out:
+             *     treat that as unknown and let the route decide.
+             */
+            readonly canManage?: boolean;
+            /**
+             * @description The caller may review this runner's host keys: its owner, or an
+             *     administrator of an agency it serves and does not own, who may
+             *     scan a scope of their own agency and decide the keys that scan
+             *     found (and nothing else on the runner).
+             */
+            readonly canReviewHostKeys?: boolean;
             /**
              * @description An offer to re-point the scope bindings a previous enrolment
              *     left behind (DR-7, MA-32). Present ONLY on a runner whose name
@@ -16530,7 +16550,10 @@ export interface operations {
     revokeSessions: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
             path?: never;
             cookie?: never;
         };
