@@ -12,8 +12,10 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 )
@@ -40,6 +42,13 @@ type registrationTokenInfo struct {
 	UsedAt           *string `json:"usedAt,omitempty"`
 	UsedByRunnerID   *string `json:"usedByRunnerId,omitempty"`
 	UsedByRunnerName *string `json:"usedByRunnerName,omitempty"` // resolved at list time; absent if the runner was since deregistered
+	// AgencyID is the agency that will OWN the agent this token enrols (LR-32,
+	// LR-61): the token is the operator's grant of a placement, held here and
+	// never declared by the agent. `global` for a Global-owned agent. AgencyName
+	// is resolved at list time and empty if the agency has since been deleted —
+	// in which case the token no longer enrols anything (LR-33).
+	AgencyID   string `json:"agencyId"`
+	AgencyName string `json:"agencyName"`
 	// Status is derived for display: active | revoked | expired | pending.
 	// Precedence active > revoked > expired — a consumed token stays "active"
 	// forever; that's the interesting audit fact.
@@ -67,9 +76,17 @@ func tokenStatus(usedAt, revokedAt *string, expiresAt, nowTS string) string {
 	}
 }
 
-// mintRequest is the optional JSON body for POST /runners/registration-tokens.
-type mintRequest struct {
-	Label string `json:"label"`
+// MintRequest is the optional JSON body for POST /runners/registration-tokens.
+// AgencyID is the owner of the agent the token will enrol; the API layer has
+// resolved and authorized it before this handler sees it (an omitted one is
+// Global there only for a global administrator). Empty here is Global.
+//
+// Exported so the API layer decodes the caller's body into THIS type and hands
+// the service a re-encoding of it: one reading of the body, so the agency that
+// was authorized is the agency that is stored.
+type MintRequest struct {
+	Label    string `json:"label"`
+	AgencyID string `json:"agencyId"`
 }
 
 // HandleMintRegistrationToken mints a single-use registration token (Phase 7).
@@ -84,7 +101,7 @@ func (s *Service) HandleMintRegistrationToken(w http.ResponseWriter, r *http.Req
 	// Body is optional (absent/empty ⇒ unlabeled), but a PRESENT-and-malformed
 	// body is rejected — silently dropping a mistyped label would mint a
 	// working token the operator can't tell apart in the list.
-	var req mintRequest
+	var req MintRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
 			"request body must be valid JSON (optional: {\"label\": \"...\"})")
@@ -93,6 +110,21 @@ func (s *Service) HandleMintRegistrationToken(w http.ResponseWriter, r *http.Req
 	if len(req.Label) > 120 {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
 			"label must be 120 characters or fewer")
+		return
+	}
+
+	agencyID := strings.TrimSpace(req.AgencyID)
+	if agencyID == "" {
+		agencyID = agencyid.Global
+	}
+	var agencyName string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT name FROM agencies WHERE id = ?`, agencyID).Scan(&agencyName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "agency "+agencyID+" does not exist")
+			return
+		}
+		s.log.Error("mint registration token: read agency", "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 		return
 	}
 
@@ -111,9 +143,9 @@ func (s *Service) HandleMintRegistrationToken(w http.ResponseWriter, r *http.Req
 	}
 
 	res, err := s.db.ExecContext(r.Context(), `
-		INSERT INTO registration_tokens(token_hash, created_by, created_at, expires_at, label)
-		VALUES (?, ?, ?, ?, ?)`,
-		hashToken(token), createdBy, ts, expiresAt, labelVal)
+		INSERT INTO registration_tokens(token_hash, created_by, created_at, expires_at, label, agency_id)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		hashToken(token), createdBy, ts, expiresAt, labelVal, agencyID)
 	if err != nil {
 		s.log.Error("insert registration token", "error", err)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
@@ -122,9 +154,11 @@ func (s *Service) HandleMintRegistrationToken(w http.ResponseWriter, r *http.Req
 	rowID, _ := res.LastInsertId()
 
 	// Audit entry (parity with drain/resync).
-	summary := "registration token minted"
+	// The audit row says whose agent the token enrols: minting one is granting a
+	// placement.
+	summary := "registration token minted for an agent owned by " + agencyName
 	if req.Label != "" {
-		summary = "registration token minted (" + req.Label + ")"
+		summary += " (" + req.Label + ")"
 	}
 	_ = auditlog.WriteActivity(r.Context(), s.db, auditlog.ActivityParams{
 		At:      ts,
@@ -135,11 +169,15 @@ func (s *Service) HandleMintRegistrationToken(w http.ResponseWriter, r *http.Req
 	})
 
 	info := registrationTokenInfo{
-		ID:        rowID,
-		CreatedBy: createdBy,
-		CreatedAt: ts,
-		ExpiresAt: expiresAt,
-		Status:    "active",
+		ID:         rowID,
+		CreatedBy:  createdBy,
+		CreatedAt:  ts,
+		ExpiresAt:  expiresAt,
+		AgencyID:   agencyID,
+		AgencyName: agencyName,
+		// What the list will call it a moment from now: unused, so pending. (It
+		// said "active" here, the list's word for a token that HAS been used.)
+		Status: tokenStatus(nil, nil, expiresAt, ts),
 	}
 	if req.Label != "" {
 		info.Label = &req.Label
@@ -147,21 +185,25 @@ func (s *Service) HandleMintRegistrationToken(w http.ResponseWriter, r *http.Req
 	httpx.JSON(w, http.StatusCreated, mintedTokenResponse{registrationTokenInfo: info, Token: token})
 }
 
-// HandleListRegistrationTokens lists registration tokens — label, created,
+// RegistrationTokens lists registration tokens — label, owner agency, created,
 // expires, revoked, and the used-by audit trail. Never plaintext (only hashes
-// are stored). Operator session. Newest first, capped at 100 rows.
-// GET /api/v1/runners/registration-tokens
-func (s *Service) HandleListRegistrationTokens(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(), `
+// are stored). Newest first, capped at 100 rows.
+//
+// It returns EVERY token. Who may see which is the caller's to decide, by the
+// token's agency (LR-36): the list was open to any session until 2.3.0, and a
+// token's label and creator are not everyone's to read once agencies enrol
+// their own agents. The route is the API layer's (api.handleListRegistrationTokens).
+func (s *Service) RegistrationTokens(ctx context.Context) ([]registrationTokenInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT rt.id, rt.label, rt.created_by, rt.created_at, rt.expires_at,
-		       rt.revoked_at, rt.used_at, rt.used_by_runner_id, ru.name
+		       rt.revoked_at, rt.used_at, rt.used_by_runner_id, ru.name,
+		       rt.agency_id, COALESCE(ag.name, '')
 		FROM registration_tokens rt
 		LEFT JOIN runners ru ON ru.id = rt.used_by_runner_id
+		LEFT JOIN agencies ag ON ag.id = rt.agency_id
 		ORDER BY rt.id DESC LIMIT 100`)
 	if err != nil {
-		s.log.Error("list registration tokens", "error", err)
-		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -170,17 +212,25 @@ func (s *Service) HandleListRegistrationTokens(w http.ResponseWriter, r *http.Re
 	for rows.Next() {
 		var t registrationTokenInfo
 		if err := rows.Scan(&t.ID, &t.Label, &t.CreatedBy, &t.CreatedAt, &t.ExpiresAt,
-			&t.RevokedAt, &t.UsedAt, &t.UsedByRunnerID, &t.UsedByRunnerName); err != nil {
-			s.log.Error("scan registration token row", "error", err)
-			continue
+			&t.RevokedAt, &t.UsedAt, &t.UsedByRunnerID, &t.UsedByRunnerName,
+			&t.AgencyID, &t.AgencyName); err != nil {
+			return nil, err
 		}
 		t.Status = tokenStatus(t.UsedAt, t.RevokedAt, t.ExpiresAt, nowTS)
 		out = append(out, t)
 	}
-	if err := rows.Err(); err != nil {
-		s.log.Error("list registration tokens rows", "error", err)
+	return out, rows.Err()
+}
+
+// RegistrationTokenAgency returns the agency a token will enrol an agent for,
+// so the API layer can authorize a revoke by it. found is false for an id that
+// matches nothing.
+func (s *Service) RegistrationTokenAgency(ctx context.Context, rowID int64) (agencyID string, found bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT agency_id FROM registration_tokens WHERE id = ?`, rowID).Scan(&agencyID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
-	httpx.JSON(w, http.StatusOK, out)
+	return agencyID, err == nil, err
 }
 
 // HandleRevokeRegistrationToken revokes an UNUSED registration token (Phase 7
@@ -253,6 +303,9 @@ type regTokenCheck struct {
 	// token, which has no row and is deliberately multi-use — Phase 7 leaves
 	// CRONOMICON_RUNNER_BOOTSTRAP_TOKEN unchanged).
 	RowID int64
+	// AgencyID is the agency that will own the agent this token enrols (LR-61):
+	// the row's, or Global for the bootstrap token. Set only when OK.
+	AgencyID string
 	// Code/Msg describe the failure when !OK. Codes are deliberately distinct
 	// (Phase 7): "token_used" (with the consuming runner's name) tells the
 	// operator a token was double-used; "token_expired" says mint a new one;
@@ -273,13 +326,16 @@ func (s *Service) checkRegistrationToken(ctx context.Context, token string) (reg
 		usedAt     *string
 		usedByName *string
 	)
+	var agencyID string
+	var agencyExists bool
 	err := s.db.QueryRowContext(ctx, `
-		SELECT rt.id, rt.expires_at, rt.revoked_at, rt.used_at, ru.name
+		SELECT rt.id, rt.expires_at, rt.revoked_at, rt.used_at, ru.name,
+		       rt.agency_id, EXISTS (SELECT 1 FROM agencies ag WHERE ag.id = rt.agency_id)
 		FROM registration_tokens rt
 		LEFT JOIN runners ru ON ru.id = rt.used_by_runner_id
 		WHERE rt.token_hash = ?
 		ORDER BY rt.id DESC LIMIT 1`,
-		hashToken(token)).Scan(&rowID, &expiresAt, &revokedAt, &usedAt, &usedByName)
+		hashToken(token)).Scan(&rowID, &expiresAt, &revokedAt, &usedAt, &usedByName, &agencyID, &agencyExists)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -296,15 +352,23 @@ func (s *Service) checkRegistrationToken(ctx context.Context, token string) (reg
 		return regTokenCheck{Code: "unauthorized", Msg: "registration token revoked"}, nil
 	case expiresAt <= now():
 		return regTokenCheck{Code: "token_expired", Msg: "registration token expired (24h) — mint a new one"}, nil
+	case !agencyExists:
+		// LR-33: the agency this token was minted for is gone. There is no
+		// fallback into Global, which would put a department's machine on shared
+		// work; the token enrols nothing and is not consumed.
+		return regTokenCheck{Code: "agency_gone", Msg: "the agency this registration token was minted for no longer exists — mint a new one"}, nil
 	default:
-		return regTokenCheck{OK: true, RowID: rowID}, nil
+		return regTokenCheck{OK: true, RowID: rowID, AgencyID: agencyID}, nil
 	}
 
 	// Bootstrap token from config (A6.1 seed) — constant-time comparison to
 	// prevent timing-based token enumeration. Multi-use by design; no row.
 	if s.cfg.RunnerBootstrapToken != "" &&
 		subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.RunnerBootstrapToken)) == 1 {
-		return regTokenCheck{OK: true}, nil
+		// The environment bootstrap token has no row, so it cannot name an
+		// agency: it enrols a Global-owned agent serving Global, as a global
+		// administrator's token for Global does (LR-61).
+		return regTokenCheck{OK: true, AgencyID: agencyid.Global}, nil
 	}
 	return regTokenCheck{Code: "unauthorized", Msg: "registration token invalid or expired"}, nil
 }

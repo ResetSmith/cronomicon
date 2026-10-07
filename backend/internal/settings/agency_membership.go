@@ -756,6 +756,37 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 		return nil, err
 	}
 	defer tx.Rollback() //nolint:errcheck
+	// MA-11: this route is a writer of a runner's serve list like any other.
+	// Adding a runner here would make an agent serve an agency that is not its
+	// owner; removing one narrows a legacy placement, or would empty an agent's
+	// list. Judged against each runner's list as it stands, before the writes.
+	for _, c := range []struct {
+		refs []AgencyMemberRef
+		add  bool
+	}{{delta.Added, true}, {delta.Removed, false}} {
+		for _, m := range c.refs {
+			if m.Kind != "runner" {
+				continue
+			}
+			owner, before, err := runnerPlacement(ctx, tx, m.ID)
+			if err != nil {
+				return nil, err
+			}
+			var after []string
+			if c.add {
+				after = append(slices.Clone(before), agencyID)
+			} else {
+				for _, a := range before {
+					if a != agencyID {
+						after = append(after, a)
+					}
+				}
+			}
+			if err := CheckRunnerPlacement(false, owner, before, after); err != nil {
+				return nil, fmt.Errorf("%w: runner %s", err, m.ID)
+			}
+		}
+	}
 	for _, m := range delta.Removed {
 		t, _ := agencyMemberTableFor(m.Kind)
 		if _, err := tx.ExecContext(ctx,

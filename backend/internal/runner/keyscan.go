@@ -77,6 +77,17 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusBadRequest, "bad_request", "give either hosts or scopeId")
 		return
 	}
+	// LR-63: a caller who is here for their own agency's scopes on a runner they
+	// do not own may scan such a scope and nothing else. A typed host has no
+	// scope to answer for it. (A scope's hosts are its agency's to choose, so a
+	// guest does decide which addresses are dialled; what they may do with the
+	// answer is bounded in resolveBatch, where a guest never replaces a key.)
+	if limit, limited := hostKeyScopes(r.Context()); limited && !limit[req.ScopeID] {
+		httpx.Fail(w, http.StatusForbidden, "forbidden",
+			"this runner is not your agency's: you may scan the hosts of a scope of your own agency with it, "+
+				"and nothing else. Scanning typed hosts, or another scope, takes the runner's owner")
+		return
+	}
 
 	var name string
 	if err := s.db.QueryRowContext(r.Context(),

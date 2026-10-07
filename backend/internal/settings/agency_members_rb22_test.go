@@ -15,9 +15,18 @@ import (
 func rb22DB(t *testing.T) *sql.DB {
 	t.Helper()
 	pool := membershipDB(t)
-	if _, err := pool.Exec(`INSERT INTO runners(id,name,status,capabilities,registered_at,created_at)
-		VALUES('r1','runner-one','online','["bash"]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatalf("seed runner: %v", err)
+	// r1 is a legacy placement (MA-9): Global's, serving DSS and a third agency
+	// since before 2.3.0. It is the only kind of runner this route can still
+	// change, and only by taking an agency away.
+	for _, q := range []string{
+		`INSERT INTO agencies(id, name, created_at) VALUES('ag-old','OLD','2026-01-01T00:00:00Z')`,
+		`INSERT INTO runners(id,name,status,capabilities,registered_at,created_at)
+		 VALUES('r1','runner-one','online','["bash"]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
+		`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r1','ag-dss'), ('r1','ag-old')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed runner: %v\n%s", err, q)
+		}
 	}
 	return pool
 }
@@ -44,8 +53,9 @@ func TestSetAgencyMembersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetAgencyMembers: %v", err)
 	}
-	if len(delta.Added) != 5 || len(delta.Removed) != 0 {
-		t.Fatalf("delta = +%d/-%d, want +5/-0", len(delta.Added), len(delta.Removed))
+	// The runner is already on DSS's serve list, so four are added.
+	if len(delta.Added) != 4 || len(delta.Removed) != 0 {
+		t.Fatalf("delta = +%d/-%d, want +4/-0", len(delta.Added), len(delta.Removed))
 	}
 	d, err := BuildAgencyDetail(ctx, pool, "ag-dss")
 	if err != nil || d == nil {
@@ -86,10 +96,11 @@ func TestSetAgencyMembersRoundTrip(t *testing.T) {
 	if second != 0 {
 		t.Fatalf("a refused add wrote %d rows into the second agency", second)
 	}
-	// A runner's serve list is not this rule's: it may be added to a second
-	// agency here, and then removed from the first. Only the difference goes.
-	if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", refs([2]string{"runner", "r1"}), "t@example.com"); err != nil {
-		t.Fatalf("a runner serving a second agency: %v", err)
+	// A runner's serve list has a rule of its own (MA-11): no agency can be
+	// added to it, here or anywhere, and one can be taken off a legacy
+	// placement. Only the difference goes.
+	if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", refs([2]string{"runner", "r1"}), "t@example.com"); !errors.Is(err, ErrServeListFixed) {
+		t.Fatalf("adding a runner to another agency = %v, want ErrServeListFixed", err)
 	}
 	delta, err = SetAgencyMembers(ctx, pool, "ag-dss", refs(
 		[2]string{"scope", "sc-prod"}, [2]string{"secret", "s1"}, [2]string{"env-var", "v1"}, [2]string{"ssh-credential", "k1"},

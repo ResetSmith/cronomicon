@@ -23,10 +23,15 @@ func TestRunnerAgenciesAPI(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('r1','runner-a','online','t','t')`)
-	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('r2','runner-b','online','t','t')`)
 	exec(`INSERT INTO agencies(id,name,created_at) VALUES('a1','alpha','t')`)
 	exec(`INSERT INTO agencies(id,name,created_at) VALUES('a2','beta','t')`)
+	exec(`INSERT INTO agencies(id,name,created_at) VALUES('a3','gamma','t')`)
+	// r1 is a legacy placement (Global's, serving three agencies since before
+	// 2.3.0): the one runner whose serve list this route can still change, by
+	// narrowing it (MA-11). r2 is alpha's own agent.
+	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('r1','runner-a','online','t','t')`)
+	exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES('r1','a1'),('r1','a2'),('r1','a3')`)
+	exec(`INSERT INTO runners(id,name,status,registered_at,created_at,owner_agency) VALUES('r2','runner-b','online','t','t','a1')`)
 
 	do := func(method, path string, body any, withCSRF bool) *http.Response {
 		t.Helper()
@@ -57,15 +62,26 @@ func TestRunnerAgenciesAPI(t *testing.T) {
 		t.Fatalf("PUT without CSRF = %d, want 403", resp.StatusCode)
 	}
 
-	// ── Assign r1→{a1,a2}, r2→{a1} ────────────────────────────────────────────────
+	// ── Narrow r1→{a1,a2}; re-post r2→{a1} unchanged ───────────────────────────────
 	resp = do(http.MethodPut, "/api/v1/runner-agencies", []map[string]any{
 		{"runnerId": "r1", "agencyIds": []string{"a1", "a2"}},
 		{"runnerId": "r2", "agencyIds": []string{"a1"}},
 	}, true)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("PUT assign = %d, want 200", resp.StatusCode)
+		t.Fatalf("PUT narrow = %d, want 200", resp.StatusCode)
 	}
 	resp.Body.Close()
+	// What was taken off cannot be put back, and an agent cannot be given a
+	// second agency: 422 serve_list_fixed, for a global administrator too.
+	for _, body := range [][]map[string]any{
+		{{"runnerId": "r1", "agencyIds": []string{"a1", "a2", "a3"}}},
+		{{"runnerId": "r2", "agencyIds": []string{"a1", "a2"}}},
+	} {
+		resp = do(http.MethodPut, "/api/v1/runner-agencies", body, true)
+		if code := decodeCode(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || code != "serve_list_fixed" {
+			t.Fatalf("widening a serve list = %d/%q, want 422/serve_list_fixed", resp.StatusCode, code)
+		}
+	}
 
 	// ── Membership surfaces on the runner list ────────────────────────────────────
 	resp = do(http.MethodGet, "/api/v1/runners", nil, false)

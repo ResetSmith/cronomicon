@@ -378,12 +378,14 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	// RF-1b, the runner half — see handleSetAgencyMembership for the reasoning.
-	// Without it, RF-2's gate is bypassable by moving another department's runner
-	// (or one of Global's) into your own agency and then draining it.
+	// The serve list is the runner's, so writing it takes the runner's OWNER
+	// (LR-59), and each agency named besides. What may be written at all is the
+	// invariant's to say (settings.CheckRunnerPlacement, MA-11): an agent's list
+	// is its owner and cannot be widened by anyone, so the only writes that get
+	// through are a no-op and the narrowing of a legacy placement — and that
+	// runner is Global's, a global administrator's.
 	for _, m := range body {
-		if !s.requireEntityAgencyOrRepair(w, r, id, auth.PermConfigureApp,
-			"runner_agencies", "runner_id", m.RunnerID, "runner") {
+		if !s.requireRunnerOwner(w, r, id, m.RunnerID) {
 			return
 		}
 		for _, aid := range m.AgencyIDs {
@@ -620,9 +622,13 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 // unrestricted-only, RB-Q14) and on THIS agency (you may only place things where
 // you have authority). REMOVING needs the permission on this agency alone — being
 // a member here is precisely what makes this one of the entity's owning agencies.
-// Scopes are exempt from the departmental axis (their membership DEFINES the grant
-// expansion; the global ConfigureApp gate on the route governs them), and runners
-// follow the same configureApp rule as the M2 matrix.
+// A scope follows the same rule as the other kinds since 2.3.0 (LR-7).
+//
+// A RUNNER does not (Phase G3). Its serve list is its owner's to write, so both
+// adding and removing one take configureApp on the runner's OWNER
+// (requireRunnerOwner), not on this agency; and the writer's invariant then
+// refuses every addition (MA-11), leaving one runner change this route makes:
+// taking a legacy placement off this agency's list.
 func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -658,6 +664,15 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	// a move INTO this agency, and needs authority on where the entity is today
 	// and on this agency.
 	for _, m := range delta.Added {
+		if m.Kind == "runner" {
+			// A runner is not moved between agencies (MA-11): the writer refuses
+			// the addition whoever asks. The gate still runs first, so a caller
+			// with no authority over the runner learns nothing from the refusal.
+			if !s.requireRunnerOwner(w, r, id, m.ID) {
+				return
+			}
+			continue
+		}
 		if !s.requireMove(w, r, id, settings.MemberKind(m.Kind), m.ID, []string{agencyID}) {
 			return
 		}
@@ -666,6 +681,15 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	for _, m := range delta.Removed {
+		if m.Kind == "runner" {
+			// Taking a runner off an agency's serve list narrows a legacy
+			// placement. It is a write on the runner, so it is the owner's
+			// (LR-59), not the agency's it stops serving.
+			if !s.requireRunnerOwner(w, r, id, m.ID) {
+				return
+			}
+			continue
+		}
 		perm, _, _, label := membershipAuthzFor(settings.MemberKind(m.Kind))
 		if !id.CanAgency(perm, agencyID) {
 			s.denyEntityAgency(w, r, id, perm, agencyID,
@@ -718,6 +742,10 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, settings.ErrOwnerConflict):
 		httpx.Fail(w, http.StatusConflict, "owner_conflict", err.Error()+
 			": rename or remove one of the two before moving this one")
+	case errors.Is(err, settings.ErrServeListFixed):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "serve_list_fixed", err.Error())
+	case errors.Is(err, settings.ErrOwnerChangeRefused):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "owner_change_refused", err.Error())
 	default:
 		return false
 	}

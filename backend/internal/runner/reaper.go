@@ -213,7 +213,8 @@ func (s *Service) offlineRunner(ctx context.Context, runnerID string) {
 // reasonable proxy; this avoids a schema migration for an offline_at column.
 // A runner with NULL last_seen_at falls back to registered_at (it never polled
 // and has been offline since registration). Mirrors HandleDeregisterRunner:
-// revoke runner_tokens by created_by='runner:'+name, then DELETE the row.
+// revoke the runner's API keys by runner id (revokeRunnerKeys), then DELETE
+// the row.
 func (s *Service) sweepDeregister(ctx context.Context) {
 	cutoff := reaperNow().Add(-s.cfg.RunnerDeregisterAfter)
 
@@ -269,11 +270,11 @@ func (s *Service) deregisterRunner(ctx context.Context, runnerID, name string) {
 	defer tx.Rollback() //nolint:errcheck
 
 	ts := now()
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE runner_tokens SET revoked_at = ?
-		WHERE created_by = ? AND revoked_at IS NULL`,
-		ts, "runner:"+name); err != nil {
+	// By runner id, never by name (see revokeRunnerKeys). Bailing leaves the
+	// runner in place for the next sweep.
+	if err := revokeRunnerKeys(ctx, tx, runnerID, ts); err != nil {
 		s.log.Error("reaper: revoke runner tokens", "runner_id", runnerID, "error", err)
+		return
 	}
 	// DR-7: capture placement BEFORE the delete cascades runner_agencies away.
 	// This path matters MORE than the operator one for disaster recovery: during

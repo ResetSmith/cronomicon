@@ -21,11 +21,14 @@ func TestSetRunnerAgenciesWritesAUsefulActivityRow(t *testing.T) {
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-carson','Carson','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-reno','Reno','2026-01-01T00:00:00Z')`)
+	// r1 is a legacy placement: Global's, serving two agencies since before
+	// 2.3.0. It is the one runner whose serve list a write can still change
+	// (MA-11: narrowed, never widened). r2 is Reno's own agent.
 	exec(`INSERT INTO runners (id,name,status,registered_at,created_at)
 	      VALUES ('r1','ansible-rh8','online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO runners (id,name,status,registered_at,created_at)
-	      VALUES ('r2','untouched','online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('r2','ag-reno')`)
+	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('r1','ag-carson'), ('r1','ag-reno')`)
+	exec(`INSERT INTO runners (id,name,status,registered_at,created_at,owner_agency)
+	      VALUES ('r2','untouched','online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','ag-reno')`)
 
 	rowsFor := func(name string) []string {
 		t.Helper()
@@ -44,19 +47,28 @@ func TestSetRunnerAgenciesWritesAUsefulActivityRow(t *testing.T) {
 		return out
 	}
 
-	// One request that moves r1 and re-posts r2 unchanged — the matrix UI's
+	// One request that narrows r1 and re-posts r2 unchanged — the matrix UI's
 	// shape. Only r1 may write a row.
 	if err := SetRunnerAgencies(ctx, database, []RunnerAgencies{
-		{RunnerID: "r1", AgencyIDs: []string{"ag-carson", "ag-reno"}},
+		{RunnerID: "r1", AgencyIDs: []string{"ag-carson"}},
 		{RunnerID: "r2", AgencyIDs: []string{"ag-reno"}},
 	}, "alice@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rowsFor("ansible-rh8"); len(got) != 1 || got[0] != "alice@example.com|agencies set: Carson, Reno" {
-		t.Errorf("placed runner: got %v", got)
+	if got := rowsFor("ansible-rh8"); len(got) != 1 || got[0] != "alice@example.com|agencies set: Carson" {
+		t.Errorf("narrowed runner: got %v", got)
 	}
 	if got := rowsFor("untouched"); len(got) != 0 {
 		t.Errorf("an unchanged runner must write nothing, got %v", got)
+	}
+	// What was taken away cannot be put back, and a refused write leaves no row.
+	if err := SetRunnerAgencies(ctx, database, []RunnerAgencies{
+		{RunnerID: "r1", AgencyIDs: []string{"ag-carson", "ag-reno"}},
+	}, "alice@example.com"); !errors.Is(err, ErrServeListFixed) {
+		t.Fatalf("widening a narrowed runner = %v, want ErrServeListFixed", err)
+	}
+	if got := rowsFor("ansible-rh8"); len(got) != 1 {
+		t.Errorf("a refused write left an activity row: %v", got)
 	}
 
 	// An empty set is refused (LR-26): a runner always serves an agency.

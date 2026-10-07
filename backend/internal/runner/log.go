@@ -44,7 +44,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the run exists and is running.
-	var jobName, scope, runnerID, jobSource, scriptRef string
+	var jobName, scope, runnerID, jobSource, scriptRef, runType string
 	var status string
 	// entity_code names this run's log folder (LU-7). It was stamped at enqueue,
 	// so it is a property of the run rather than something re-derived here — a
@@ -52,9 +52,10 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	var entityCode string
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT job_name, COALESCE(scope,''), COALESCE(runner_id,''), status,
-		       COALESCE(job_source,''), COALESCE(script_ref,''), COALESCE(entity_code,'')
+		       COALESCE(job_source,''), COALESCE(script_ref,''), COALESCE(entity_code,''),
+		       COALESCE(run_type,'')
 		FROM runs WHERE id = ?`, traceID).
-		Scan(&jobName, &scope, &runnerID, &status, &jobSource, &scriptRef, &entityCode)
+		Scan(&jobName, &scope, &runnerID, &status, &jobSource, &scriptRef, &entityCode, &runType)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -225,6 +226,7 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 	var ingestBytes int
 	var truncated bool
 	outputs := map[string]string{} // A12 captured inter-job outputs (raw values)
+	agentPrefixes := execspec.AgentPrefixesOutput(runType)
 	counter := &rawByteCounter{r: r.Body}
 	scanner := bufio.NewScanner(counter)
 	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1 MiB max line
@@ -237,7 +239,10 @@ func (s *Service) HandleIngestLog(w http.ResponseWriter, r *http.Request) {
 
 		// A12: parse output markers from the RAW line (before redaction) so the
 		// captured value is exact; the line is still persisted redacted below.
-		if k, v, ok := execspec.ParseOutputMarker(string(line)); ok {
+		// The agent's shell-over-SSH fan-out prefixes every remote line with
+		// "[host] ", so on those runs — and only those — the marker is looked
+		// for behind that prefix (see execspec.ParseRunnerOutputMarker).
+		if k, v, ok := execspec.ParseRunnerOutputMarker(string(line), agentPrefixes); ok {
 			outputs[k] = v
 		}
 

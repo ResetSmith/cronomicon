@@ -36,12 +36,15 @@ func mustExec(t *testing.T, pool *sql.DB) func(q string, args ...any) {
 	}
 }
 
+// seedBindingRunner inserts an agent the way registration does: owned by the
+// agency named (Global for none), and serving exactly it — the trigger of
+// migration 1250 writes the one serve row from the owner.
 func seedBindingRunner(exec func(string, ...any), id, name, agency string) {
-	exec(`INSERT INTO runners (id,name,status,registered_at,created_at)
-	      VALUES (?,?,'online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, id, name)
-	if agency != "" {
-		exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?,?)`, id, agency)
+	if agency == "" {
+		agency = "global"
 	}
+	exec(`INSERT INTO runners (id,name,status,registered_at,created_at,owner_agency)
+	      VALUES (?,?,'online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',?)`, id, name, agency)
 }
 
 func decodeScope(t *testing.T, body []byte) scopeJSON {
@@ -191,6 +194,10 @@ func TestSetScopeRunners(t *testing.T) {
 // so it carries the RF-2 runner gate: configureApp on an agency the runner
 // belongs to, unrestricted for the general pool. Removing a binding names no
 // runner and needs only the route's ConfigureApp gate.
+//
+// Since 2.3.0 (LR-62) the departmental gate is the SCOPE's alone: naming a
+// runner takes no authority over it, and the runner must serve the scope's
+// agency.
 func TestBindingARunnerIsDepartmental(t *testing.T) {
 	h, pool := secretRBACServer(t, map[string]string{"admin": "prod"})
 	exec := mustExec(t, pool)
@@ -202,34 +209,47 @@ func TestBindingARunnerIsDepartmental(t *testing.T) {
 	seedBindingRunner(exec, "r-fin", "runner-fin", "ag-fin")
 	seedBindingRunner(exec, "r-pool", "runner-pool", "")
 
-	put := func(scopeID, body string) int {
-		return reqAs(t, h, http.MethodPut, "/api/v1/scopes/"+scopeID+"/runners", "sec-admins", body).Code
+	put := func(scopeID, body string) (int, string) {
+		rec := reqAs(t, h, http.MethodPut, "/api/v1/scopes/"+scopeID+"/runners", "sec-admins", body)
+		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	// sc:prod is the scope the fixture put in the admin's own agency.
-	if code := put("sc:prod", `{"runnerIds":["r-own"]}`); code != http.StatusOK {
+	if code, _ := put("sc:prod", `{"runnerIds":["r-own"]}`); code != http.StatusOK {
 		t.Errorf("binding an own-agency runner = %d, want 200", code)
 	}
-	if code := put("s-fin", `{"runnerIds":["r-fin"]}`); code != http.StatusForbidden {
-		t.Errorf("binding another department's runner = %d, want 403", code)
+	// The gate is the SCOPE's (LR-62): another agency's scope and Global's are
+	// refused whatever runner is named.
+	if code, _ := put("s-fin", `{"runnerIds":["r-fin"]}`); code != http.StatusForbidden {
+		t.Errorf("binding another department's scope = %d, want 403", code)
 	}
-	if code := put("s-pool", `{"runnerIds":["r-pool"]}`); code != http.StatusForbidden {
-		t.Errorf("restricted binding of a GENERAL-POOL runner = %d, want 403 (RF-Q3)", code)
+	if code, _ := put("s-pool", `{"runnerIds":["r-pool"]}`); code != http.StatusForbidden {
+		t.Errorf("restricted binding of Global's scope = %d, want 403", code)
 	}
-	// An id that is not a runner must not become an oracle or a bypass: for a
-	// restricted caller it reads as unowned, which is unrestricted-only.
-	if code := put("sc:prod", `{"runnerIds":["r-own","nope"]}`); code != http.StatusForbidden {
-		t.Errorf("restricted binding of an unknown runner id = %d, want 403", code)
+	// On their own scope the caller needs no authority over the runner; the
+	// runner must serve the scope's agency. Another agency's agent and Global's
+	// do not, and an id that is not a runner is said to be one.
+	for _, r := range []string{"r-fin", "r-pool"} {
+		if code, ec := put("sc:prod", `{"runnerIds":["r-own","`+r+`"]}`); code != http.StatusUnprocessableEntity || ec != "runner_not_eligible" {
+			t.Errorf("binding own scope to %s = %d %s, want 422 runner_not_eligible", r, code, ec)
+		}
 	}
-	if code := put("sc:prod", `{"runnerIds":[]}`); code != http.StatusOK {
+	if code, ec := put("sc:prod", `{"runnerIds":["r-own","nope"]}`); code != http.StatusUnprocessableEntity || ec != "unknown_runner" {
+		t.Errorf("binding an unknown runner id = %d %s, want 422 unknown_runner", code, ec)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_runners WHERE scope_id = 'sc:prod'`); n != 1 {
+		t.Errorf("the refused writes left %d bindings on the scope, want the one from before", n)
+	}
+	if code, _ := put("sc:prod", `{"runnerIds":[]}`); code != http.StatusOK {
 		t.Errorf("clearing a binding = %d, want 200", code)
 	}
 
-	// Replace gates the REPLACEMENT: it is the runner being given work.
+	// Replace needs authority over every scope the old runner is bound to. It
+	// is bound to Finance's here, so the caller is refused whatever replaces it.
 	exec(`INSERT INTO scope_runners (scope_id,runner_id,runner_name,bound_at) VALUES ('s-fin','r-gone','runner-gone','t')`)
 	rec := reqAs(t, h, http.MethodPost, "/api/v1/scope-runners/replace", "sec-admins",
 		`{"fromRunnerId":"r-gone","toRunnerId":"r-fin"}`)
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("replace onto another department's runner = %d, want 403", rec.Code)
+		t.Errorf("replace on another department's bound scope = %d, want 403", rec.Code)
 	}
 
 	// GC-6 (v2.2.2): the swap rewrites every scope the OLD runner is bound to,

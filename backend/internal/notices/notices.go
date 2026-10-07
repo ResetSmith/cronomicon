@@ -57,6 +57,11 @@ const (
 	// agency (LR-81). It keeps resolving; it cannot be edited until the agency
 	// is assigned a prefix that covers it. Subject: "<kind>:<id>".
 	KindVaultPathOutsidePrefix = "vault_path_outside_prefix"
+	// KindLegacyPlacement — an agent whose serve list is not exactly its owner
+	// (MA-9, MA-28): one that served several agencies before 2.3.0, or what is
+	// left of one after narrowing. It works as it did; it is Global's, can be
+	// narrowed and never widened. Subject: the runner's id. Filed under Global.
+	KindLegacyPlacement = "legacy_placement"
 )
 
 // Notice is one row of the inbox.

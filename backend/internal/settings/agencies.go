@@ -705,8 +705,16 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 		// DRF-5: what was the set BEFORE, so an unchanged runner writes no row —
 		// the matrix UI posts every runner it shows, and a feed entry per
 		// untouched runner would drown the one that moved.
-		before, err := runnerAgencyIDs(ctx, tx, a.RunnerID)
+		owner, before, err := runnerPlacement(ctx, tx, a.RunnerID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrUnknownRunner // deregistered between the check above and here
+		}
 		if err != nil {
+			return err
+		}
+		// MA-11: an agent serves exactly its owner; a legacy placement only
+		// shrinks. Judged against the list as it stands NOW, before the delete.
+		if err := CheckRunnerPlacement(false, owner, before, a.AgencyIDs); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM runner_agencies WHERE runner_id=?`, a.RunnerID); err != nil {
