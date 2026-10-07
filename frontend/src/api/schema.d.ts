@@ -2221,6 +2221,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/notices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The open notices the caller administers (v2.3.0)
+         * @description The one inbox for standing conditions an administrator has to act on:
+         *     what an upgrade could not decide by itself, what a check found, what a
+         *     sync left over. A notice is a CONDITION keyed by its kind and subject,
+         *     not an event: the check that finds it writes it, and resolves it when
+         *     the cause is gone. The checks run when this list is read, at most once
+         *     every 30 seconds.
+         *
+         *     Every notice belongs to an agency. An agency's administrators
+         *     (`configureApp` on it) see its notices; Global's are a global
+         *     administrator's, who therefore sees them all. The list is FILTERED, not
+         *     refused: a session that administers nothing gets `[]`.
+         *
+         *     The runner-tag pins of `GET /scope-binding-notices` are included, under
+         *     kind `retired_runner_pin` with an id of the form `pin:<n>`, for whoever
+         *     holds `configureApp` on the pin's scope.
+         */
+        get: operations["listNotices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notices/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss notices (v2.3.0)
+         * @description Hides notices and records who dismissed them. Dismissing does not
+         *     resolve anything: the condition stands, and if it is later resolved and
+         *     then returns, the notice is open again. Needs `configureApp` on the
+         *     agency of EVERY notice named (a global administrator for Global's);
+         *     one that the caller does not administer refuses the whole request with
+         *     403 and dismisses nothing, as does a caller who holds `configureApp`
+         *     on no agency at all. An id that is unknown, resolved or already
+         *     dismissed is skipped. CSRF required.
+         */
+        post: operations["dismissNotices"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/env-vars": {
         parameters: {
             query?: never;
@@ -6247,6 +6308,49 @@ export interface components {
             /** @enum {string} */
             source: "git" | "cronomicon";
             runType: string;
+        };
+        /**
+         * @description One standing condition in the notices inbox (v2.3.0, LR-85). Identified
+         *     by `kind` and `subject`; `detail` is a sentence for a person, saying
+         *     what is the case and what settles it.
+         */
+        Notice: {
+            /** @description Opaque. `pin:<n>` for a retired runner pin. */
+            id: string;
+            /**
+             * @description A stable identifier. This release writes:
+             *
+             *     - `agency_renamed` — the upgrade to 2.3.0 found an agency called
+             *       Global and renamed it; the subject is the agency's id. Resolved
+             *       when the agency is given a name of its own.
+             *     - `shared_ownership` — a secret, variable or SSH key that Global
+             *       owns and only some agencies may use: what several agencies shared
+             *       before 2.3.0, or a row the upgrade would not give to its one
+             *       agency because that would have changed what some run resolves.
+             *       It works as it did. Subject `<kind>:<id>`.
+             *     - `orphaned` — a scope, runner, secret, variable or SSH key that
+             *       belongs to no agency. Nothing can use it and only a global
+             *       administrator can re-home it. Subject `<kind>:<id>`.
+             *     - `retired_runner_pin` — a runner-tag pin that could not be turned
+             *       into a scope binding (see `GET /scope-binding-notices`). Subject:
+             *       the job's name.
+             *
+             *     Later releases add kinds; a client should show one it does not know
+             *     by its `detail`.
+             */
+            kind: string;
+            /** @description The agency the notice belongs to; `global` for one about the installation. */
+            agencyId: string;
+            agencyName: string;
+            subject: string;
+            detail: string;
+            /** Format: date-time */
+            firstSeenAt: string;
+            /**
+             * Format: date-time
+             * @description When a check last found the condition.
+             */
+            lastSeenAt: string;
         };
         /** @description A runner-tag pin that could not be turned into a scope binding. */
         RetiredRunnerPin: {
@@ -12416,6 +12520,61 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listNotices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open notices, grouped by kind and oldest first within one. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Notice"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    dismissNotices: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    ids: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description How many notices this request dismissed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        dismissed: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
         };
     };
     listEnvVars: {

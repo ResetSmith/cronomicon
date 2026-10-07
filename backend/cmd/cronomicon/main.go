@@ -35,6 +35,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/logsink"
 	"github.com/ResetSmith/cronomicon/internal/logsync"
+	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/notify"
 	"github.com/ResetSmith/cronomicon/internal/redactdict"
 	"github.com/ResetSmith/cronomicon/internal/runner"
@@ -194,6 +195,18 @@ func run() error {
 	// changed for THIS installation — the same report `cronomicon preflight`
 	// prints, for the operator who upgraded without running it.
 	logUpgradeReport(context.Background(), pool, logger)
+
+	// LR-85: bring the notices inbox up to date before anything serves, so what
+	// an upgrade left for a person to settle is there on the first page load and
+	// in the log of the boot that created it. The same checks run again whenever
+	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
+	if err := notices.RunChecks(context.Background(), pool); err != nil {
+		logger.Warn("notices: boot checks failed", "err", err)
+	}
+	if open, err := notices.ListOpen(context.Background(), pool); err == nil && len(open) > 0 {
+		logger.Warn("there are open notices for an administrator: see Notices in the app",
+			"count", len(open))
+	}
 	logHostKeyReport(context.Background(), pool, logger, cfg.SSHExecutorEnabled)
 
 	// RB-7: load the role→permission matrix into its process cache. requirePerm is

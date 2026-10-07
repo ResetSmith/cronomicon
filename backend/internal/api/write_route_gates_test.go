@@ -142,6 +142,7 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/scopes/{scopeId}/runners":                          {clsObject, "requireScopeAgency, plus the runner gate for each runner added"},
 	"POST /api/v1/scopes/{scopeId}/runners/preview":                 {clsObject, "requireScopeAgency"},
 	"POST /api/v1/scope-runners/replace":                            {clsObject, "the replacement runner, and every scope the old one is bound to (GC-6)"},
+	"POST /api/v1/notices/dismiss":                                  {clsObject, "configureApp on each notice's agency (a global administrator for Global's); a retired pin by its scope"},
 	"POST /api/v1/scope-binding-notices/dismiss":                    {clsObject, "configureApp on each notice's scope; a notice with no scope is a global administrator's"},
 	"PUT /api/v1/script-tags/{name...}":                             {clsOpen, "any signed-in user; a script has no scope to read-check until it has an owner"},
 	"POST /api/v1/service-accounts":                                 {clsObject, "requireGrantWritable — minting is granting (GC-5)"},
