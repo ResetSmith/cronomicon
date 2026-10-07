@@ -1121,6 +1121,32 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		}
 	}
 
+	// GC follow-up (v2.2.3) — the per-run targetHost override is held to the
+	// scope's host list, as targetHosts[] always was. The contract calls the
+	// single-host form "a one-element targetHosts", but only the list was
+	// checked: the single host was copied onto the run as given, so anyone who
+	// may trigger a job in a scope could send its body to ANY manually authored
+	// host record by name, with that record's key. Same 422, same code.
+	//
+	// Narrow in the same two ways as the check above. It applies to the
+	// OVERRIDE, not to the host the job itself declares (that was authored
+	// against the scope; validating it here would refuse configurations that are
+	// already live, and is LR-71's to do in 2.3.0). And an actor who may run
+	// unbound already reaches every host, so there is nothing to enforce.
+	if body.TargetHost != "" && scope != "" && (jr.Host == nil || body.TargetHost != *jr.Host) &&
+		!id.CanUnbound(auth.PermTriggerJobs) {
+		members, err := execspec.ScopeHosts(r.Context(), s.db, scope)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !slices.Contains(members, body.TargetHost) {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "scope_membership",
+				"host "+body.TargetHost+" is not a member of scope "+scope)
+			return
+		}
+	}
+
 	// Per-run reference additions (V2-11, stored-reference additions only) —
 	// validated and gated BEFORE any enqueue work. A reference is a grant over
 	// stored secret/key material, so attaching one to a run needs the same

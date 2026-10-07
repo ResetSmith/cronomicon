@@ -397,6 +397,22 @@ func (s *Server) putJobBindings(w http.ResponseWriter, r *http.Request) {
 		s.denyScope(w, r, jobScope, "cannot modify bindings on a job outside your access")
 		return
 	}
+	// GC follow-up (v2.2.3) — ONE grant must carry both halves. The route's
+	// requirePerm is "manageEnvVars held somewhere" and ScopeWritable is reach,
+	// the union of every grant's scopes: an administrator of Finance who is only
+	// a viewer of Tax passed both, and could empty the bindings of Tax's job so
+	// its next run executed without its declared secrets. Ask the question the
+	// grants can answer: does a grant that carries manageEnvVars cover THIS
+	// job's scope (or every scope, for a job that has none)?
+	holds := actor.Can(auth.PermManageEnvVars, jobScope)
+	if jobScope == "" {
+		holds = actor.CanUnbound(auth.PermManageEnvVars)
+	}
+	if !holds {
+		s.denyScope(w, r, jobScope, "you may read this job, but you do not hold manageEnvVars on its scope, "+
+			"so you cannot change which secrets and keys it injects")
+		return
+	}
 	in, ok := decodeBindings(w, r)
 	if !ok {
 		return

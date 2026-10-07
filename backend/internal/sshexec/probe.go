@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"net"
 	"strconv"
 	"strings"
@@ -81,7 +82,11 @@ func (s *Service) ProbeHost(ctx context.Context, hostID string) (ProbeResult, er
 		status, msg := s.probeReachableHost(ctx, *t)
 		return result(status, msg, start), nil
 	}
-	signer, err := loadSigner(ctx, s.db, s.cfg, s.sec, t.AuthCredentialID, t.AuthKeyEnvVar)
+	guard, err := hostKeyGuard(ctx, s.db, hostID)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	signer, err := loadSigner(ctx, s.db, s.cfg, s.sec, t.AuthCredentialID, t.AuthKeyEnvVar, guard)
 	if err != nil {
 		return result(StatusCredError, credMsg(err), start), nil
 	}
@@ -124,7 +129,7 @@ func (s *Service) ProbeBastion(ctx context.Context, bastionID string) (ProbeResu
 		status, msg := s.probeReachableBastion(ctx, *b)
 		return result(status, msg, start), nil
 	}
-	signer, err := loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar)
+	signer, err := loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar, keyGuard{}) // a bastion is a global administrator's record
 	if err != nil {
 		return result(StatusCredError, credMsg(err), start), nil
 	}
@@ -246,7 +251,7 @@ func (s *Service) reachViaBastion(ctx context.Context, t target, cfg *ssh.Client
 	if b.AuthCredentialID == "" && b.AuthKeyEnvVar == "" {
 		return fmt.Errorf("bastion %q: %w", t.Via, errBastionNoKey)
 	}
-	bSigner, err := loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar)
+	bSigner, err := loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar, keyGuard{})
 	if err != nil {
 		return fmt.Errorf("dial bastion %s: %w", t.Via, err)
 	}
@@ -362,6 +367,28 @@ func credMsg(err error) string {
 
 // hostByID loads an ssh_hosts row as a dial target, keyed by id (the API works
 // in ids; execspec.HostByName is the executor's by-name path).
+// hostKeyGuard is the keyGuard for "Test connection" on a host record. A record
+// imported for a scope is edited and tested by that scope's agency, so its key
+// is checked against that agency exactly as a run's would be: the test must
+// not be a way to authenticate with a key a run could not use. A manually
+// authored record (no scope) is a global administrator's and is not checked.
+func hostKeyGuard(ctx context.Context, db *sql.DB, hostID string) (keyGuard, error) {
+	var scope sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT s.name FROM ssh_hosts h JOIN scopes s ON s.id = h.scope_id WHERE h.id = ?`, hostID).Scan(&scope)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && scope.String == "") {
+		return keyGuard{}, nil
+	}
+	if err != nil {
+		return keyGuard{}, err
+	}
+	agencies, err := execspec.ScopeAgencies(ctx, db, scope.String)
+	if err != nil {
+		return keyGuard{}, err // an unreadable membership must not read as "no agency"
+	}
+	return keyGuard{checked: true, scope: scope.String, agencies: agencies}, nil
+}
+
 func hostByID(ctx context.Context, db *sql.DB, id string) (*target, error) {
 	row := db.QueryRowContext(ctx, `
 		SELECT hostname, address, port, username, via, auth_key_env_var, auth_credential_id, host_key
