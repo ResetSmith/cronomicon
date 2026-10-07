@@ -111,8 +111,8 @@ func (s *Server) requireRunnerAgency(pathVar string, next http.Handler) http.Han
 // of them" are the same row from opposite sides.
 func (s *Server) requireFleetWide(next http.Handler) http.Handler {
 	return s.globalOnly(auth.PermConfigureApp,
-		"runner registration is fleet-wide — a new runner joins the general pool and "+
-			"serves every department, so only an unrestricted operator may mint or revoke its tokens", next)
+		"runner registration is fleet-wide — a new runner belongs to Global, the global "+
+			"administrators' agency, so only a global administrator may mint or revoke its tokens", next)
 }
 
 // requireHostKeyRunnerAgency is requireRunnerAgency for the host-key resolve

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"sort"
 )
 
@@ -86,12 +87,14 @@ type AmbiguityFinding struct {
 // there is no scope-exact-beats-global tier for a key label to be caught in.
 func ShadowFindings(ctx context.Context, database *sql.DB) ([]ShadowFinding, error) {
 	secretAgencies, err := loadStringSets(ctx, database, `
-		SELECT sa.secret_id, a.name FROM secret_agencies sa JOIN agencies a ON a.id = sa.agency_id`)
+		SELECT sa.secret_id, a.name FROM secret_agencies sa JOIN agencies a ON a.id = sa.agency_id
+		 WHERE a.id <> '`+agencyid.Global+`'`)
 	if err != nil {
 		return nil, err
 	}
 	varAgencies, err := loadStringSets(ctx, database, `
-		SELECT va.env_var_id, a.name FROM env_var_agencies va JOIN agencies a ON a.id = va.agency_id`)
+		SELECT va.env_var_id, a.name FROM env_var_agencies va JOIN agencies a ON a.id = va.agency_id
+		 WHERE a.id <> '`+agencyid.Global+`'`)
 	if err != nil {
 		return nil, err
 	}
@@ -134,10 +137,14 @@ func ShadowFindings(ctx context.Context, database *sql.DB) ([]ShadowFinding, err
 				Agencies:       orEmpty(spec.agencyMap[r.id]),
 				GlobalAgencies: orEmpty(spec.agencyMap[g.id]),
 			}
+			// The agency lists are the DEPARTMENTS a row belongs to: Global is left
+			// out of them (the loaders above), so "no department" — a row that is
+			// Global's — is still the empty list on the wire, and still the severe
+			// case.
 			f.Unrestricted = len(f.Agencies) == 0
 			if f.Unrestricted {
 				f.Reason = fmt.Sprintf(
-					"the %s in scope %q belongs to no department, so it shadows the global %s "+
+					"the %s in scope %q is Global's (it belongs to no department), so it shadows the global %s "+
 						"for EVERY department's runs in that scope — assign it to a department, "+
 						"or delete it if the global row was meant to win",
 					kindNoun(spec.kind), r.scope, kindNoun(spec.kind))
@@ -188,11 +195,11 @@ func Ambiguities(ctx context.Context, database *sql.DB) ([]AmbiguityFinding, err
 	}
 	for _, sp := range []spec{
 		{"secret", `SELECT s.key, COALESCE(s.scope,''), ag.name FROM secrets s
-		            JOIN agencies ag ON ag.id = s.owner_agency WHERE COALESCE(s.owner_agency,'') <> ''`},
+		            JOIN agencies ag ON ag.id = s.owner_agency WHERE s.owner_agency <> '` + agencyid.Global + `'`},
 		{"var", `SELECT e.key, COALESCE(e.scope,''), ag.name FROM env_vars e
-		         JOIN agencies ag ON ag.id = e.owner_agency WHERE COALESCE(e.owner_agency,'') <> ''`},
+		         JOIN agencies ag ON ag.id = e.owner_agency WHERE e.owner_agency <> '` + agencyid.Global + `'`},
 		{"key", `SELECT c.label, '', ag.name FROM ssh_credentials c
-		         JOIN agencies ag ON ag.id = c.owner_agency WHERE COALESCE(c.owner_agency,'') <> ''`},
+		         JOIN agencies ag ON ag.id = c.owner_agency WHERE c.owner_agency <> '` + agencyid.Global + `'`},
 	} {
 		rows, err := database.QueryContext(ctx, sp.query)
 		if err != nil {

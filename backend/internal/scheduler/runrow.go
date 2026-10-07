@@ -214,7 +214,7 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 		traceID, r.kindOrDefault(), r.JobName, src, r.RunType, nullStr(r.Scope), nullStr(r.TargetHost),
 		r.statusOrDefault(), nullStr(r.QueuedReason), r.TriggeredBy, r.TriggerKind,
 		nullStr(r.ConcurrencyKey), workflowRunID, r.executorOrDefault(), nullStr(r.ScheduleName),
-		nullStr(r.EnvJSON), nullStr(r.OverrideJSON), nullStr(r.SSHUser), nullStr(r.SSHCredential), r.agenciesJSONOrDefault(),
+		nullStr(r.EnvJSON), nullStr(r.OverrideJSON), nullStr(r.SSHUser), nullStr(r.SSHCredential), r.agenciesSnapshot(),
 		nullStr(r.SuppressedByCalendar), startedAt, completedAt, durationMs, now,
 		r.EntityCode, uid, uid, uid,
 		snap, uid, snap, uid, snap, uid,
@@ -224,4 +224,19 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 		return "", fmt.Errorf("insert run: %w", err)
 	}
 	return traceID, nil
+}
+
+// agenciesSnapshot is what the row's agencies_json holds. A row that will
+// execute always names an agency (agenciesJSONOrDefault). A TERMINAL row — a
+// suppressed fire, a skipped step — never reaches a claim or a resolver, and
+// keeps whatever its producer gave it, which for the suppression writers is
+// nothing: '[]'. That is history, not a decision, and it is left as it was.
+func (r RunRow) agenciesSnapshot() string {
+	if r.Terminal {
+		if r.AgenciesJSON == "" {
+			return "[]"
+		}
+		return r.AgenciesJSON
+	}
+	return r.agenciesJSONOrDefault()
 }

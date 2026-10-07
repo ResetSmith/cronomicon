@@ -39,7 +39,12 @@ func guardFixture(t *testing.T) (svc *Service, ids, pubs map[string]string) {
 		signer, pem := newKey(t)
 		// The store's uniqueness is (label, owner_agency): give the owner first.
 		id := createCred(t, svc, k.label+"_"+strings.ReplaceAll(k.name, "-", "_"), pem)
-		if _, err := pool.Exec(`UPDATE ssh_credentials SET label = ?, owner_agency = ? WHERE id = ?`, k.label, k.agency, id); err != nil {
+		// A shared key is Global's (migration 1220); an owner is never empty.
+		owner := k.agency
+		if owner == "" {
+			owner = "global"
+		}
+		if _, err := pool.Exec(`UPDATE ssh_credentials SET label = ?, owner_agency = ? WHERE id = ?`, k.label, owner, id); err != nil {
 			t.Fatal(err)
 		}
 		if k.agency != "" {
@@ -76,7 +81,8 @@ func TestKeyGuardChecksAKeyNamedByID(t *testing.T) {
 			t.Errorf("a finance run loading the %s key: err = %v", own, err)
 		}
 	}
-	// A run with no agency (a scope nobody owns, or no scope) may use shared keys only.
+	// A snapshot with no agency at all (a finished pre-2.3.0 row, never a new
+	// run) may use Global's keys only.
 	none := keyGuard{checked: true}
 	if _, err := load(none, ids["fin"]); !errors.Is(err, errKeyNotUsable) {
 		t.Errorf("a run with no agency loading FIN's key: err = %v, want errKeyNotUsable", err)
@@ -155,9 +161,10 @@ func TestHostKeyGuardFollowsTheRecordsScope(t *testing.T) {
 	if err != nil || !g.checked || g.scope != "fin-prod" || len(g.agencies) != 1 || g.agencies[0] != "finance" {
 		t.Errorf("guard for FIN's host = %+v, %v", g, err)
 	}
-	// A scope no agency owns: checked, with no agencies — shared keys only.
-	if g, err := hostKeyGuard(ctx, svc.db, "h-lone"); err != nil || !g.checked || len(g.agencies) != 0 {
-		t.Errorf("guard for an unowned scope's host = %+v, %v", g, err)
+	// A scope nobody assigned is Global's (migration 1220): checked, as Global —
+	// which may use Global's (shared) keys and no department's.
+	if g, err := hostKeyGuard(ctx, svc.db, "h-lone"); err != nil || !g.checked || len(g.agencies) != 1 || g.agencies[0] != "Global" {
+		t.Errorf("guard for a Global scope's host = %+v, %v", g, err)
 	}
 	if g, err := hostKeyGuard(ctx, svc.db, "h-manual"); err != nil || g.checked {
 		t.Errorf("guard for a manual record = %+v, %v; want unchecked", g, err)

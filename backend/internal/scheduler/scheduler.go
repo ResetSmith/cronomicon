@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"log/slog"
 	"strings"
 	"sync"
@@ -896,15 +897,22 @@ type EnqueueParams struct {
 	ReactedToRunID string `json:",omitempty"`
 }
 
-// agenciesJSONOrDefault keeps the snapshot well-formed even if a caller forgets to
-// set it: an empty string would violate the NOT NULL column and, worse, an empty
-// STRING is not an empty ARRAY to json_each.
+// agenciesJSONOrDefault is the snapshot of a run that WILL execute. A producer
+// that set none — or set the empty array — gets Global (LR-22, migration 1220):
+// a run with no agency is Global's, never nobody's and never "anyone's". Every
+// producer does set it (execspec.ScopeAgencies never returns an empty set), so
+// this is the backstop, and it agrees with the database's own (the birth
+// trigger on runs).
 func (p EnqueueParams) agenciesJSONOrDefault() string {
-	if p.AgenciesJSON == "" {
-		return "[]"
+	if p.AgenciesJSON == "" || p.AgenciesJSON == "[]" {
+		return globalAgenciesJSON
 	}
 	return p.AgenciesJSON
 }
+
+// globalAgenciesJSON is the snapshot of a Global run, in the compact form
+// execspec.MarshalAgencies produces.
+var globalAgenciesJSON = execspec.MarshalAgencies([]string{agencyid.GlobalName})
 
 func (p EnqueueParams) executorOrDefault() string {
 	if p.Executor == "" {

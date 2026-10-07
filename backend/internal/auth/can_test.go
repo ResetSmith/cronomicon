@@ -186,11 +186,17 @@ func TestCanAgencyMatchesAgencyShapedGrants(t *testing.T) {
 			{Role: "admin", Agency: "ag-tax", Scopes: []string{"tax"}}}}, "ag-tax", true},
 		{"agency-shaped grant does NOT match another agency", Identity{Grants: []RoleGrant{
 			{Role: "admin", Agency: "ag-tax", Scopes: []string{"tax"}}}}, "ag-fin", false},
-		{"agency-shaped grant is not enough for empty membership (RB-Q14)", Identity{Grants: []RoleGrant{
-			{Role: "admin", Agency: "ag-tax", Scopes: []string{"tax"}}}}, "", false},
-		{"unrestricted admin, empty membership", wide([]string{"admin"}, []string{AllScopes}), "", true},
+		{"agency-shaped grant is not enough for Global (RB-Q14)", Identity{Grants: []RoleGrant{
+			{Role: "admin", Agency: "ag-tax", Scopes: []string{"tax"}}}}, "global", false},
+		{"unrestricted admin, Global", wide([]string{"admin"}, []string{AllScopes}), "global", true},
+		// LR-9: a grant that NAMED Global (no route writes one) must not pass for it.
+		{"a grant that names Global is not authority on Global", Identity{Grants: []RoleGrant{
+			{Role: "admin", Agency: "global", Scopes: []string{"shared"}}}}, "global", false},
+		// "" is no agency at all since migration 1220: nobody holds it, a global
+		// administrator included. "Everywhere" is spelled GlobalAdmin(perm).
+		{"unrestricted admin, no agency", wide([]string{"admin"}, []string{AllScopes}), "", false},
 		{"restricted admin, named agency", wide([]string{"admin"}, []string{"tax"}), "ag-tax", false},
-		{"restricted admin, empty membership (RB-Q14)", wide([]string{"admin"}, []string{"tax"}), "", false},
+		{"restricted admin, Global (RB-Q14)", wide([]string{"admin"}, []string{"tax"}), "global", false},
 		{"unrestricted viewer lacks the verb", wide([]string{"viewer"}, []string{AllScopes}), "ag-tax", false},
 		{"no roles", Identity{}, "ag-tax", false},
 	}

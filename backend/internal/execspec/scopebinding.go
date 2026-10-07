@@ -48,8 +48,10 @@ type rowQueryer interface {
 }
 
 // boundRunnersSelect lists a scope's bindings with the live runner beside each.
-// The eligibility CASE is claimRun's disjoint agency split (AG-Q3a), restated
-// for one scope and one runner so the two cannot disagree about who may serve.
+// The eligibility test is claimRun's agency rule, restated for one scope and
+// one runner so the two cannot disagree about who may serve: the runner serves
+// one of the scope's agencies. (One arm since migration 1220: a scope with "no
+// agency" is Global's and a runner with none serves Global.)
 const boundRunnersSelect = `
 	SELECT sr.runner_id,
 	       COALESCE(rn.name, sr.runner_name),
@@ -57,11 +59,9 @@ const boundRunnersSelect = `
 	       COALESCE(rn.status, ''),
 	       CASE
 	         WHEN rn.id IS NULL THEN 0
-	         WHEN EXISTS (SELECT 1 FROM scope_agencies sa WHERE sa.scope_id = sr.scope_id)
-	           THEN EXISTS (SELECT 1 FROM scope_agencies sa
-	                          JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
-	                         WHERE sa.scope_id = sr.scope_id AND ra.runner_id = sr.runner_id)
-	         ELSE NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = sr.runner_id)
+	         ELSE EXISTS (SELECT 1 FROM scope_agencies sa
+	                        JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+	                       WHERE sa.scope_id = sr.scope_id AND ra.runner_id = sr.runner_id)
 	       END
 	  FROM scope_runners sr
 	  LEFT JOIN runners rn ON rn.id = sr.runner_id`
@@ -162,23 +162,19 @@ func scopeBindingReason(scope string, bound []BoundRunner) string {
 }
 
 // RunnerEligibleForScope reports whether a REGISTERED runner passes claimRun's
-// agency rule for a scope (by id): a member of one of the scope's agencies, or —
-// for a scope with none — a runner with no agencies. False for a runner that is
-// not registered. This is the bind-time check: binding a runner the claim query
+// agency rule for a scope (by id): it serves one of the scope's agencies (Global
+// among them, for a scope that is Global's). False for a runner that is not
+// registered. This is the bind-time check: binding a runner the claim query
 // would refuse produces a scope nothing can serve, which is better refused at
 // the form than discovered as a stuck run.
 func RunnerEligibleForScope(ctx context.Context, q rowQueryer, scopeID, runnerID string) (bool, error) {
 	var ok bool
 	err := q.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM runners rn WHERE rn.id = ?)
-		   AND CASE
-		         WHEN EXISTS (SELECT 1 FROM scope_agencies sa WHERE sa.scope_id = ?)
-		           THEN EXISTS (SELECT 1 FROM scope_agencies sa
-		                          JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
-		                         WHERE sa.scope_id = ? AND ra.runner_id = ?)
-		         ELSE NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = ?)
-		       END`,
-		runnerID, scopeID, scopeID, runnerID, runnerID).Scan(&ok)
+		   AND EXISTS (SELECT 1 FROM scope_agencies sa
+		                 JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+		                WHERE sa.scope_id = ? AND ra.runner_id = ?)`,
+		runnerID, scopeID, runnerID).Scan(&ok)
 	return ok, err
 }
 

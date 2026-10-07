@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -58,15 +59,21 @@ func TestSetRunnerAgenciesWritesAUsefulActivityRow(t *testing.T) {
 		t.Errorf("an unchanged runner must write nothing, got %v", got)
 	}
 
-	// Clearing to the general pool says so — RB-22's rule that the empty set is
-	// stated, not implied.
+	// An empty set is refused (LR-26): a runner always serves an agency.
 	if err := SetRunnerAgencies(ctx, database, []RunnerAgencies{
 		{RunnerID: "r1", AgencyIDs: nil},
+	}, "alice@example.com"); !errors.Is(err, ErrAgencyRequired) {
+		t.Fatalf("an empty set = %v, want ErrAgencyRequired", err)
+	}
+	// Moving it to Global says what that means — RB-22's rule that the move is
+	// stated, not implied.
+	if err := SetRunnerAgencies(ctx, database, []RunnerAgencies{
+		{RunnerID: "r1", AgencyIDs: []string{"global"}},
 	}, "alice@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rowsFor("ansible-rh8"); len(got) != 2 || got[1] != "alice@example.com|removed from all agencies (now general pool)" {
-		t.Errorf("clearing: got %v", got)
+	if got := rowsFor("ansible-rh8"); len(got) != 2 || got[1] != "alice@example.com|moved to Global (it now serves Global's runs, and no department's)" {
+		t.Errorf("moving to Global: got %v", got)
 	}
 
 	// The Change Log keeps its request-level row, now carrying details.

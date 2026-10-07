@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"log/slog"
 	"slices"
 
@@ -412,17 +413,11 @@ func lookupScoped(ctx context.Context, database *sql.DB, table, key, runScope st
 	}
 	agencyJSON := marshalNames(runAgencies)
 	rows, qerr := database.QueryContext(ctx,
-		`SELECT t.id, COALESCE(t.scope,''), COALESCE(ag.name,'') FROM `+table+` t
+		`SELECT t.id, COALESCE(t.scope,''), `+ownerNameSQL("t")+` FROM `+table+` t
 		 LEFT JOIN agencies ag ON ag.id = t.owner_agency
 		 WHERE t.key = ?
 		   AND (COALESCE(t.scope,'') = '' OR COALESCE(t.scope,'') = ?)
-		   AND (
-		     NOT EXISTS (SELECT 1 FROM `+memberTable+` m WHERE m.`+memberCol+` = t.id)
-		     OR EXISTS (
-		       SELECT 1 FROM `+memberTable+` m
-		       JOIN agencies a ON a.id = m.agency_id
-		       WHERE m.`+memberCol+` = t.id AND a.name IN (SELECT value FROM json_each(?)))
-		   )
+		   AND `+usableByRunSQL(memberTable, memberCol, "t.id")+`
 		 ORDER BY (COALESCE(t.scope,'') = ?) DESC, t.id`,
 		key, runScope, agencyJSON, runScope)
 	if qerr != nil {
@@ -523,9 +518,44 @@ func LookupEntityID(ctx context.Context, database *sql.DB, kind Kind, name, runS
 	return "", false, nil
 }
 
+// usableByRunSQL is THE visibility rule for a secret, a variable or an SSH key,
+// as one SQL fragment with one bound parameter (the run's agency names, JSON):
+// the row is in Global, or in one of the run's agencies.
+//
+// It replaced "the row has no membership rows, OR its membership intersects the
+// run's" when Global became a row (migration 1220). The first arm was the shared
+// tier spelled as an absence; it is a membership like any other now, and a row
+// with NO membership at all — which the database no longer lets exist — matches
+// nothing. Every reader goes through this function so the rule has one spelling.
+func usableByRunSQL(memberTable, memberCol, idExpr string) string {
+	return `EXISTS (
+		SELECT 1 FROM ` + memberTable + ` m
+		  LEFT JOIN agencies a ON a.id = m.agency_id
+		 WHERE m.` + memberCol + ` = ` + idExpr + `
+		   AND (m.agency_id = '` + agencyid.Global + `' OR a.name IN (SELECT value FROM json_each(?))))`
+}
+
+// ownerNameSQL renders a row's owner for pickOwned: the owning agency's NAME, or
+// ” for a row Global owns — the shared tier. (The tier was "owner_agency = ”"
+// until migration 1220 gave Global an id; keeping ” as its spelling HERE means
+// the tier logic below did not have to change with it.) The query must
+// LEFT JOIN agencies AS ag on the owner.
+//
+// An owner that names no agency — the agency is gone and the row is not — is
+// NOT the shared tier. It renders as danglingOwner, which is no run's agency, so
+// pickOwned drops the row: nobody's secret is nobody's to use, where reading it
+// as Global's would hand a deleted department's secret to every agency.
+func ownerNameSQL(alias string) string {
+	return `CASE WHEN ` + alias + `.owner_agency = '` + agencyid.Global + `' THEN ''
+	             ELSE COALESCE(ag.name, '` + danglingOwner + `') END`
+}
+
+// danglingOwner cannot be an agency's name: names are trimmed on write and this
+// begins with a space.
+const danglingOwner = " (no such agency)"
+
 // marshalNames renders an agency set for the json_each parameter above. Always a
-// well-formed array — an empty run set is "[]", which matches only rows with no
-// membership, exactly as intended for a general-pool run.
+// well-formed array — an empty run set is "[]", which matches only Global's rows.
 func marshalNames(names []string) string {
 	if len(names) == 0 {
 		return "[]"
@@ -591,17 +621,11 @@ func scopeOrMissing(ctx context.Context, database *sql.DB, table string, b Bindi
 // message (M2), and the caller does exactly that.
 func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencies []string) (id string, found bool, err error) {
 	rows, qerr := database.QueryContext(ctx, `
-		SELECT c.id, COALESCE(ag.name,'')
+		SELECT c.id, `+ownerNameSQL("c")+`
 		FROM ssh_credentials c
 		LEFT JOIN agencies ag ON ag.id = c.owner_agency
 		WHERE c.label = ?
-		  AND (
-		    NOT EXISTS (SELECT 1 FROM ssh_credential_agencies ca WHERE ca.credential_id = c.id)
-		    OR EXISTS (
-		      SELECT 1 FROM ssh_credential_agencies ca
-		      JOIN agencies a ON a.id = ca.agency_id
-		      WHERE ca.credential_id = c.id AND a.name IN (SELECT value FROM json_each(?)))
-		  )
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
 		ORDER BY c.id`, label, marshalNames(runAgencies))
 	if qerr != nil {
 		return "", false, fmt.Errorf("resolve key agencies %q: %w", label, qerr)
@@ -642,13 +666,8 @@ func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, run
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.id = ?
-		  AND (
-		    NOT EXISTS (SELECT 1 FROM ssh_credential_agencies ca WHERE ca.credential_id = c.id)
-		    OR EXISTS (
-		      SELECT 1 FROM ssh_credential_agencies ca
-		      JOIN agencies a ON a.id = ca.agency_id
-		      WHERE ca.credential_id = c.id AND a.name IN (SELECT value FROM json_each(?)))
-		  )`, credentialID, marshalNames(runAgencies)).Scan(&n)
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id"),
+		credentialID, marshalNames(runAgencies)).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", credentialID, err)
 	}
@@ -656,26 +675,11 @@ func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, run
 }
 
 func keyInAgencies(ctx context.Context, database *sql.DB, label string, runAgencies []string) (bool, error) {
-	var members int
-	err := database.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM ssh_credential_agencies ca
-		JOIN ssh_credentials c ON c.id = ca.credential_id
-		WHERE c.label = ?`, label).Scan(&members)
-	if err != nil {
-		return false, fmt.Errorf("resolve key agencies %q: %w", label, err)
-	}
-	if members == 0 {
-		return true, nil // unrestricted
-	}
-	if len(runAgencies) == 0 {
-		return false, nil // general-pool run intersects nothing
-	}
 	var hit int
-	err = database.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM ssh_credential_agencies ca
-		JOIN ssh_credentials c ON c.id = ca.credential_id
-		JOIN agencies a        ON a.id = ca.agency_id
-		WHERE c.label = ? AND a.name IN (SELECT value FROM json_each(?))`,
+	err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ssh_credentials c
+		WHERE c.label = ?
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id"),
 		label, marshalNames(runAgencies)).Scan(&hit)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", label, err)

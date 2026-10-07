@@ -427,3 +427,45 @@ func TestFileAndValueDeliveryAreDistinctBindings(t *testing.T) {
 		t.Errorf("aliasing the file form should resolve the collision: %v", err)
 	}
 }
+
+// An owner that names no agency — the agency is gone and the row is not — must
+// not read as the shared tier. "No agency owns it" used to be spelled as an
+// absent owner, and a join that finds nothing looks exactly like one: read that
+// way, a deleted department's secret would become every agency's to use. It is
+// nobody's, and no run resolves it. (The database refuses to delete an agency
+// that still owns a row, so this state is damage; this is what a reader does
+// with damage.)
+func TestAnOwnerThatNamesNoAgencyIsNobodysNotGlobals(t *testing.T) {
+	pool := openDB(t)
+	ctx := context.Background()
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax', 'Tax', 't')`)
+	exec(`INSERT INTO secrets (id, key, source, created_at) VALUES ('s1', 'TOKEN', 'stored', 't')`)
+	exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('k1', 'deploy', 'stored', 't')`)
+
+	runs := [][]string{{"Global"}, {"Tax"}, nil}
+	for _, run := range runs {
+		if _, found, err := LookupEntityID(ctx, pool, KindSecret, "TOKEN", "", run); err != nil || !found {
+			t.Fatalf("precondition: Global's secret resolves for a run in %v (found=%v, err=%v)", run, found, err)
+		}
+		if _, found, err := LookupEntityID(ctx, pool, KindKey, "deploy", "", run); err != nil || !found {
+			t.Fatalf("precondition: Global's key resolves for a run in %v (found=%v, err=%v)", run, found, err)
+		}
+	}
+
+	exec(`UPDATE secrets SET owner_agency = 'ag-gone' WHERE id = 's1'`)
+	exec(`UPDATE ssh_credentials SET owner_agency = 'ag-gone' WHERE id = 'k1'`)
+	for _, run := range runs {
+		if id, found, err := LookupEntityID(ctx, pool, KindSecret, "TOKEN", "", run); err != nil || found {
+			t.Errorf("a secret whose owner names no agency resolved for a run in %v (id=%q, err=%v)", run, id, err)
+		}
+		if id, found, err := LookupEntityID(ctx, pool, KindKey, "deploy", "", run); err != nil || found {
+			t.Errorf("a key whose owner names no agency resolved for a run in %v (id=%q, err=%v)", run, id, err)
+		}
+	}
+}

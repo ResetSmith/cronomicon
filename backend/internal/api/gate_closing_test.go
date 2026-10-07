@@ -220,13 +220,24 @@ func TestGC_ANewScopeLandsInItsCreatorsAgency(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM scopes WHERE name='fin-sneak'`); n != 0 {
 		t.Error("a refused scope was created anyway")
 	}
-	// A global administrator may still create one that no agency owns.
+	// A global administrator who names no agency creates it in Global — where a
+	// scope "no agency owns" has belonged since migration 1220 — and nowhere else.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/scopes", gRoot, `{"scope":"everyones"}`)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("root creating an unowned scope = %d (%s)", rec.Code, rec.Body)
+		t.Fatalf("root creating a Global scope = %d (%s)", rec.Code, rec.Body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id WHERE s.name='everyones'`); n != 0 {
-		t.Error("a global administrator's scope was placed without being asked")
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id
+	                         WHERE s.name='everyones' AND sa.agency_id <> 'global'`); n != 0 {
+		t.Error("a global administrator's scope was placed in an agency without being asked")
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id=sa.scope_id
+	                         WHERE s.name='everyones' AND sa.agency_id = 'global'`); n != 1 {
+		t.Error("a global administrator's scope is not Global's")
+	}
+	// An agency administrator may not create one there.
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/scopes", gFinAdmin, `{"scope":"fin-global","agencyIds":["global"]}`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("fin admin creating a scope in Global = %d, want 403 (%s)", rec.Code, rec.Body)
 	}
 }
 

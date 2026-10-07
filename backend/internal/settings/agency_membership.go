@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"slices"
 	"sort"
@@ -25,10 +26,12 @@ import (
 // why every write here is audited, and why the endpoints are ConfigureApp-gated
 // rather than sitting behind the weaker env-var permission.
 //
-// The governing convention throughout: an EMPTY membership set means "no agency
-// restriction", NOT "reachable from nowhere". That is what keeps every global row
-// global, what made migration 670's backfill behavior-preserving, and what keeps
-// AG-Q5's key tightening from being a cliff on upgrade.
+// The governing convention was, until v2.3.0: an EMPTY membership set means "no
+// agency restriction", NOT "reachable from nowhere". Global is an agency now
+// (migration 1220): "no restriction" is a row that names Global, every entity is
+// born with one, and an empty set is not a meaning but an error — the setters
+// here refuse to produce it (ValidateAgencySet), and naming Global beside
+// another agency is refused with it.
 
 // ErrUnknownMember is returned when membership references an entity id that is not
 // in the corresponding catalog — the write-time integrity guard, mirroring
@@ -158,7 +161,14 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 		// any other route and there is no reading of it that is what the operator meant.
 		// Ownership TRANSFER is a separate, deliberate action; this is the accidental
 		// case, and it is refused.
-		if owner := entityOwner(ctx, database, t.catalog, a.ID); owner != "" {
+		if err := ValidateAgencySet(a.AgencyIDs); err != nil {
+			return err
+		}
+		// Global as an owner is not held to RA-15: a Global-owned row with a
+		// narrowed member list is the state migration 1220 left the rows several
+		// agencies shared (and the two ownership edges) in, and re-homing it is
+		// how an administrator resolves that.
+		if owner := entityOwner(ctx, database, t.catalog, a.ID); owner != "" && owner != agencyid.Global {
 			if !containsID(a.AgencyIDs, owner) {
 				return fmt.Errorf("%w: %s %s is owned by that agency, so it cannot be removed from it — transfer ownership first",
 					ErrOwnerRemoval, t.label, a.ID)
@@ -222,12 +232,13 @@ func AgencyMemberCounts(ctx context.Context, database *sql.DB, agencyID string) 
 	for _, k := range []MemberKind{MemberScope, MemberSecret, MemberEnvVar, MemberSSHCredential} {
 		t, _ := memberTableFor(k)
 		var n int
-		// Best-effort per table: a pre-670 schema reports zero rather than failing the
-		// whole guard, which would make an agency undeletable on an old schema.
+		// A table that cannot be read fails the count. It used to report zero,
+		// which the delete guard read as "nothing here references this agency".
 		if err := database.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM `+t.join+` WHERE agency_id=?`, agencyID).Scan(&n); err == nil {
-			out[k] = n
+			`SELECT COUNT(*) FROM `+t.join+` WHERE agency_id=?`, agencyID).Scan(&n); err != nil {
+			return nil, fmt.Errorf("count %s members: %w", k, err)
 		}
+		out[k] = n
 	}
 	return out, nil
 }
@@ -577,9 +588,35 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 	}
 	for _, m := range delta.Removed {
 		t, _ := agencyMemberTableFor(m.Kind)
-		if entityOwner(ctx, database, t.catalog, m.ID) == agencyID {
+		// RA-15 first, because it is the more specific refusal: an entity this
+		// agency OWNS cannot leave it at all.
+		if agencyID != agencyid.Global && entityOwner(ctx, database, t.catalog, m.ID) == agencyID {
 			return nil, fmt.Errorf("%w: %s %s is owned by this agency, so it cannot be removed from it — transfer ownership first",
 				ErrOwnerRemoval, t.label, m.ID)
+		}
+		// LR-26: removing an entity from this agency must not leave it in none.
+		var others int
+		if err := database.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM `+t.join+` WHERE `+t.col+` = ? AND agency_id <> ?`, m.ID, agencyID).Scan(&others); err != nil {
+			return nil, err
+		}
+		if others == 0 {
+			return nil, fmt.Errorf("%w: %s %s is in no other agency", ErrAgencyRequired, t.label, m.ID)
+		}
+	}
+	if agencyID == agencyid.Global {
+		// LR-25: an entity joins Global only by leaving every other agency, and
+		// this route adds to one agency without touching the others.
+		for _, m := range delta.Added {
+			t, _ := agencyMemberTableFor(m.Kind)
+			var named int
+			if err := database.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM `+t.join+` WHERE `+t.col+` = ? AND agency_id <> ?`, m.ID, agencyid.Global).Scan(&named); err != nil {
+				return nil, err
+			}
+			if named > 0 {
+				return nil, fmt.Errorf("%w: %s %s belongs to another agency", ErrGlobalMixed, t.label, m.ID)
+			}
 		}
 	}
 
@@ -600,6 +637,21 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO `+t.join+` (`+t.col+`, agency_id) VALUES (?, ?)`, m.ID, agencyID); err != nil {
 			return nil, err
+		}
+	}
+	// LR-26 again, where it cannot be raced: the "is it in another agency" test
+	// above read outside this transaction, so two editors each removing an entity
+	// from a different agency could both pass it and leave the entity in none.
+	// Whatever else happened, nothing this save removed may end with no agency.
+	for _, m := range delta.Removed {
+		t, _ := agencyMemberTableFor(m.Kind)
+		var left int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM `+t.join+` WHERE `+t.col+` = ?`, m.ID).Scan(&left); err != nil {
+			return nil, err
+		}
+		if left == 0 {
+			return nil, fmt.Errorf("%w: %s %s is in no other agency", ErrAgencyRequired, t.label, m.ID)
 		}
 	}
 	if err := tx.Commit(); err != nil {

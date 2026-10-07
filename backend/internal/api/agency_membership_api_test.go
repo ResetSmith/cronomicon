@@ -59,41 +59,22 @@ func TestAgencyMembershipRoundTripAPI(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != secretID || len(got[0].AgencyIDs) != 1 {
+	// The grid lists every secret with its agencies; the others are Global's.
+	var mine *membershipRow
+	for i := range got {
+		if got[i].ID == secretID {
+			mine = &got[i]
+		} else if len(got[i].AgencyIDs) != 1 || got[i].AgencyIDs[0] != "global" {
+			t.Errorf("an untouched secret is not Global's: %+v", got[i])
+		}
+	}
+	if mine == nil || len(mine.AgencyIDs) != 1 || mine.AgencyIDs[0] != "ag-dss" {
 		t.Fatalf("membership = %+v", got)
 	}
 
 	bad := `[{"id":"nope","agencyIds":["ag-dss"]}]`
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/secret-agencies", "sec-admins", bad); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("PUT with an unknown secret = %d, want 422", rec.Code)
-	}
-}
-
-// TestAgencyPreflightEndpoint — the T2.12 report is ConfigureApp-gated and reports
-// the AG-Q1(b) and AG-Q5 halves separately so each can be accepted on its own.
-func TestAgencyPreflightEndpoint(t *testing.T) {
-	h, _ := secretRBACServer(t, nil)
-	if rec := reqAs(t, h, http.MethodGet, "/api/v1/agency-preflight", "sec-viewers", ""); rec.Code != http.StatusForbidden {
-		t.Errorf("viewer GET /agency-preflight = %d, want 403", rec.Code)
-	}
-	rec := reqAs(t, h, http.MethodGet, "/api/v1/agency-preflight", "sec-admins", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("admin GET /agency-preflight = %d (%s)", rec.Code, rec.Body.String())
-	}
-	var rep struct {
-		ReferenceFindings         []map[string]any `json:"referenceFindings"`
-		KeyFindings               []map[string]any `json:"keyFindings"`
-		JobBindingsChecked        int              `json:"jobBindingsChecked"`
-		ScriptBindingsUnevaluated int              `json:"scriptBindingsUnevaluated"`
-		MembershipAssigned        int              `json:"membershipAssigned"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	// Both arrays must serialize as [] rather than null — a client rendering "no
-	// findings" should not have to special-case a nil.
-	if rep.ReferenceFindings == nil || rep.KeyFindings == nil {
-		t.Errorf("findings serialized as null, want []: %s", rec.Body.String())
 	}
 }
 

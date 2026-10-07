@@ -598,7 +598,11 @@ func (e *Engine) runJob(
 		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
 		jd.uid, jd.uid, step.Name, jobSrc).Scan(&stepScriptRef)
 	stepOwners := runref.RunOwners(jobSrc, step.Name, jd.uid, stepScriptRef.String)
-	if stepStatus == "queued" && effectiveScope == "" && len(stepAgencies) == 0 {
+	// An unbound step is Global's run (migration 1220): its agency set is
+	// ["Global"], never empty, so the guard is the scope alone. (It also asked
+	// for an empty set until 2.3.0, which Global being a row made never true —
+	// and the refusal below silently stopped happening.)
+	if stepStatus == "queued" && effectiveScope == "" {
 		blocked, berr := runref.UnboundRunBlocked(ctx, e.db, stepOwners, effectiveScope, stepAgencies)
 		if berr != nil {
 			e.log.Error("workflow: check unbound references", "job", step.Name, "err", berr)

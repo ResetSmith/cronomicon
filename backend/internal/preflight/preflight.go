@@ -223,7 +223,7 @@ func hostKeys(ctx context.Context, db *sql.DB) ([]HostKey, error) {
 		  FROM ssh_hosts h
 		  JOIN ssh_credentials c ON c.id = h.auth_credential_id
 		  JOIN ssh_credential_agencies ca ON ca.credential_id = c.id
-		  JOIN agencies a ON a.id = ca.agency_id
+		  JOIN agencies a ON a.id = ca.agency_id AND a.id <> 'global'
 		  LEFT JOIN scopes s ON s.id = h.scope_id
 		 WHERE h.scope_id IS NULL
 		    OR NOT EXISTS (
@@ -352,6 +352,7 @@ func vaultSecrets(ctx context.Context, db *sql.DB) ([]VaultSecret, error) {
 		  JOIN secret_agencies sa ON sa.secret_id = s.id
 		  JOIN agencies a ON a.id = sa.agency_id
 		 WHERE s.source = 'vault'
+		   AND a.id <> 'global'
 		 ORDER BY s.key, s.scope, a.name`)
 	if err != nil {
 		return nil, err

@@ -50,7 +50,7 @@ interface EnvVarRow {
   scope?: string;
   description?: string;
   tags?: string[];
-  ownerAgency?: string; // RA-15 — the owning department's NAME; "" when shared.
+  ownerAgency?: string; // RA-15 — the owning agency's NAME; "Global" when shared (2.3.0).
   createdBy?: string;
   lastModifiedAt?: string;
 }

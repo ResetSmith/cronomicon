@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"strings"
 )
 
@@ -145,10 +146,9 @@ func Validate(ctx context.Context, database *sql.DB, kind Kind, name, runScope s
 			v.Reason = fmt.Sprintf("no %s named %q exists", kindNoun(kind), name)
 			return v, nil
 		}
-		// AG-Q5 (Phase 3): keys now carry agency membership. A key with NO membership
-		// stays reachable from everywhere — that is the state migration 670 leaves
-		// every existing key in, and it is what keeps the tightening from being a
-		// cliff on upgrade.
+		// AG-Q5 (Phase 3): keys carry agency membership. A key that is Global's is
+		// usable from every agency — the state an upgrade leaves every key nobody
+		// assigned in, which is what kept the tightening from being a cliff.
 		runAgencies, err := scopeAgencyNames(ctx, database, runScope)
 		if err != nil {
 			return v, err
@@ -386,35 +386,19 @@ func resolvedReason(kind Kind, rowScope, runScope string, nameScope bool) string
 	return fmt.Sprintf("resolves to the global %s (no row specific to scope %q)", kindNoun(kind), runScope)
 }
 
-// scopeAgencyNames resolves a scope name to the agency NAMES it belongs to
-// (migration 670). This is the run-side half of the AG-Q1(b)/AG-Q5 predicate at
-// AUTHORING time: dispatch reads the run's frozen snapshot (AG-Q8), but no run
-// exists yet here, so the live membership of the scope being previewed is the only
-// available — and the correct — answer. A scope with no membership yields an empty
-// set, which matches only rows that are themselves unrestricted.
+// scopeAgencyNames resolves a scope name to the agency NAMES a run in it would
+// carry. This is the run-side half of the visibility rule at AUTHORING time:
+// dispatch reads the run's frozen snapshot (AG-Q8), but no run exists yet here,
+// so the live membership of the scope being previewed is the only available —
+// and the correct — answer.
+//
+// It is execspec.ScopeAgencies, the reader every producer snapshots a run with,
+// so a preview and the run it predicts cannot disagree: no scope is Global, and
+// an unreadable membership is an error, not an empty set. (It was a private copy
+// that answered "no agencies" for both until 2.3.0, which the Global arm of the
+// visibility rule would have read as "resolves Global's rows".)
 func scopeAgencyNames(ctx context.Context, database *sql.DB, scope string) ([]string, error) {
-	out := []string{}
-	if scope == "" {
-		return out, nil
-	}
-	rows, err := database.QueryContext(ctx, `
-		SELECT a.name FROM scope_agencies sa
-		JOIN scopes   s ON s.id = sa.scope_id
-		JOIN agencies a ON a.id = sa.agency_id
-		WHERE s.name = ?
-		ORDER BY a.name`, scope)
-	if err != nil {
-		return out, nil // best-effort on a pre-670 schema
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
-			return out, err
-		}
-		out = append(out, n)
-	}
-	return out, rows.Err()
+	return execspec.ScopeAgencies(ctx, database, scope)
 }
 
 // keyAgencyNames lists the agencies an SSH-key label belongs to, for the

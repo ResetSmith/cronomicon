@@ -55,7 +55,20 @@ func TestSetAgencyMembersRoundTrip(t *testing.T) {
 		t.Fatalf("members = %+v, want all five kinds", d.Members)
 	}
 
-	// Shrink to two. Only the difference is removed.
+	// Shrinking it to two would leave the other three in NO agency, and that is
+	// refused (LR-26): removing a member from its only agency is not how it
+	// becomes Global's.
+	if _, err := SetAgencyMembers(ctx, pool, "ag-dss", refs(
+		[2]string{"secret", "s1"}, [2]string{"runner", "r1"},
+	), "t@example.com"); !errors.Is(err, ErrAgencyRequired) {
+		t.Fatalf("a save that strands three members = %v, want ErrAgencyRequired", err)
+	}
+	// Give them a second home, then shrink. Only the difference is removed.
+	if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", refs(
+		[2]string{"scope", "sc-prod"}, [2]string{"env-var", "v1"}, [2]string{"ssh-credential", "k1"},
+	), "t@example.com"); err != nil {
+		t.Fatalf("second home: %v", err)
+	}
 	delta, err = SetAgencyMembers(ctx, pool, "ag-dss", refs(
 		[2]string{"secret", "s1"}, [2]string{"runner", "r1"},
 	), "t@example.com")
@@ -142,7 +155,7 @@ func TestSetAgencyMembersValidation(t *testing.T) {
 		t.Errorf("unknown kind = %v, want ErrUnknownMember", err)
 	}
 	var n int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM secret_agencies`).Scan(&n)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM secret_agencies WHERE agency_id <> 'global'`).Scan(&n)
 	if n != 0 {
 		t.Error("a refused batch left a partial write — validation must complete before any row moves")
 	}

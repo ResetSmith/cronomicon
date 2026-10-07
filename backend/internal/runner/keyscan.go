@@ -109,7 +109,7 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 		}
 		if !eligible {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "runner_not_eligible",
-				"this runner cannot serve that scope (a scope in an agency takes a member runner; a scope in no agency takes a general-pool runner), so it cannot scan it")
+				"this runner cannot serve that scope (a scope takes a runner that serves its agency; a scope that is Global's takes a runner that serves Global), so it cannot scan it")
 			return
 		}
 		plan, err := hostkeys.PlanScope(r.Context(), s.db, scopeName)

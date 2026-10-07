@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -47,8 +48,9 @@ func TestLR0_AnAdminOfOneMemberAgencyAdministersASharedRunner(t *testing.T) {
 // drops the runner into the general pool where it serves unowned work and FIN's
 // administrator can no longer reach it.
 //
-// Phase G1 refuses the empty set (LR-26); Phase G3 makes the serve list a
-// global administrator's to edit (LR-60).
+// Phase G1 refused the empty set (LR-26) and an agency administrator placing a
+// runner in Global; those two are asserted below as they now stand. Phase G3
+// makes the rest of the serve list a global administrator's (MA-11).
 func TestLR0_TheRunnerMembershipSetterDoesNotCheckRemovals(t *testing.T) {
 	h, pool := gateServer(t)
 	lr0SharedRunner(t, mustExec(t, pool))
@@ -70,13 +72,24 @@ func TestLR0_TheRunnerMembershipSetterDoesNotCheckRemovals(t *testing.T) {
 		t.Errorf("TAX membership rows = %d, want 0 (removed without authority over TAX)", n)
 	}
 
+	// Emptying the list was how a runner dropped into the general pool, where it
+	// served unowned work and FIN's administrator could no longer reach it. An
+	// empty list is refused since G1 (LR-26), and so is the same move said
+	// outright: an agency administrator cannot place a runner in Global.
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gFinAdmin,
 		`[{"runnerId":"r-both","agencyIds":[]}]`)
-	if rec.Code/100 != 2 {
-		t.Fatalf("PIN: FIN's admin emptying a runner's agencies = %d, want 2xx (%s). "+
-			"If an empty serve list is now refused (LR-26), replace this pin with a 422.", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "agency_required") {
+		t.Errorf("FIN's admin emptying a runner's agencies = %d, want 422 agency_required (%s)", rec.Code, rec.Body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM runner_agencies WHERE runner_id='r-both'`); n != 0 {
-		t.Errorf("membership rows = %d, want 0 (the general pool)", n)
+	rec = gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gFinAdmin,
+		`[{"runnerId":"r-both","agencyIds":["global"]}]`)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("FIN's admin moving a runner to Global = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM runner_agencies WHERE runner_id='r-both' AND agency_id='ag:FIN'`); n != 1 {
+		t.Errorf("after two refused writes the runner's FIN row count = %d, want 1", n)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM runner_agencies WHERE runner_id='r-both' AND agency_id='global'`); n != 0 {
+		t.Errorf("a refused write put the runner in Global")
 	}
 }

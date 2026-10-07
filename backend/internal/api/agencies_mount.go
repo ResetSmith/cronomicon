@@ -67,12 +67,11 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 			})))
 	}
 
-	// T2.12 pre-flight report — read-only, ConfigureApp. What WOULD change if the
-	// Phase-3 predicates were switched on today. Ship and review before Phase 3.
-	mux.Handle("GET /api/v1/agency-preflight",
-		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleAgencyPreflight)))
+	// (GET /agency-preflight, the T2.12 report of what agency isolation would
+	// break once switched on, was removed in v2.3.0: the switch has been on
+	// since Phase 3, and nothing called it.)
 
-	// RA-10 — the shadow warnings, split out of the preflight for the Env Vars view.
+	// RA-10 — the shadow warnings, for the Env Vars view.
 	// Session-gated rather than ConfigureApp, and scope-filtered per caller, because
 	// the audience is whoever is editing the catalogue rather than whoever is
 	// planning a tightening: a warning only an admin can see is a warning the person
@@ -197,9 +196,10 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	// So the caller must hold the permission on BOTH sides of the move: on an
 	// agency that owns the entity today (you may only move what is yours) and on
 	// every agency they are moving it INTO (you may only place it where you have
-	// authority). An entity with no membership is shared infrastructure, so
-	// claiming one is unrestricted-only — the same RB-Q14 rule that governs
-	// writing it, for the same reason: absence of membership carries no authority.
+	// authority). An entity that is Global's is shared infrastructure, so claiming
+	// one is a global administrator's act — the same RB-Q14 rule that governs
+	// writing it — and so is the reverse: moving a row INTO Global makes it usable
+	// by every agency, and `CanAgency(perm, Global)` is the global-admin check.
 	//
 	// Scope membership is exempt: a scope's agencies define the grant expansion
 	// itself, so it is administered by the global configureApp gate above and not
@@ -211,7 +211,7 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	} else {
 		perm, joinTable, joinCol, label := membershipAuthzFor(kind)
 		for _, m := range body {
-			if !s.requireEntityAgency(w, r, id, perm, joinTable, joinCol, m.ID, label) {
+			if !s.requireEntityAgencyOrRepair(w, r, id, perm, joinTable, joinCol, m.ID, label) {
 				return
 			}
 			for _, aid := range m.AgencyIDs {
@@ -234,6 +234,7 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			// matrix posts many rows at once and "one of these is owned" is not enough
 			// to act on.
 			httpx.Fail(w, http.StatusUnprocessableEntity, "owner_removal", err.Error())
+		case failAgencyRule(w, err):
 		default:
 			httpx.Fail500(w, s.log, "update_failed", err)
 		}
@@ -251,23 +252,6 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	httpx.JSON(w, http.StatusOK, list)
-}
-
-// handleAgencyPreflight serves the T2.12 report: what would BREAK or CHANGE if the
-// Phase-3 predicates were switched on right now, computed against live data.
-//
-// This exists because Phase 2 and Phase 3 are deliberately not merged. Phase 2 is
-// reversible and observable — the tables are populated but nothing dispatches or
-// resolves against them — so this report can be read against REAL production data
-// before any predicate changes. Merging the phases would mean discovering AG-Q5's
-// tightening in production instead of here.
-func (s *Server) handleAgencyPreflight(w http.ResponseWriter, r *http.Request) {
-	rep, err := settings.AgencyPreflight(r.Context(), s.db)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, rep)
 }
 
 // handleEnvVarShadows serves the RA-10 shadow warnings for the Env Vars view: every
@@ -341,9 +325,9 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 	}
 	// RF-1b, the runner half — see handleSetAgencyMembership for the reasoning.
 	// Without it, RF-2's gate is bypassable by moving another department's runner
-	// (or a general-pool one) into your own agency and then draining it.
+	// (or one of Global's) into your own agency and then draining it.
 	for _, m := range body {
-		if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp,
+		if !s.requireEntityAgencyOrRepair(w, r, id, auth.PermConfigureApp,
 			"runner_agencies", "runner_id", m.RunnerID, "runner") {
 			return
 		}
@@ -361,6 +345,7 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "a referenced agency does not exist")
 		case errors.Is(err, settings.ErrUnknownRunner):
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_runner", "a referenced runner does not exist")
+		case failAgencyRule(w, err):
 		default:
 			httpx.Fail500(w, s.log, "update_failed", err)
 		}
@@ -405,6 +390,9 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := settings.CreateAgency(r.Context(), s.db, settings.AgencyInput{Name: inp.Name, Description: inp.Description}, id.Email)
 	if err != nil {
+		if failAgencyRule(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "UNIQUE") {
 			httpx.Fail(w, http.StatusConflict, "conflict", "an agency with this name already exists")
 			return
@@ -433,6 +421,9 @@ func (s *Server) handleUpdateAgency(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := settings.UpdateAgency(r.Context(), s.db, aid, settings.AgencyInput{Name: inp.Name, Description: inp.Description}, id.Email)
 	if err != nil {
+		if failAgencyRule(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "UNIQUE") {
 			httpx.Fail(w, http.StatusConflict, "conflict", "an agency with this name already exists")
 			return
@@ -487,6 +478,9 @@ func (s *Server) handleDeleteAgency(w http.ResponseWriter, r *http.Request) {
 	}
 	found, err := settings.DeleteAgency(r.Context(), s.db, aid, id.Email)
 	if err != nil {
+		if failAgencyRule(w, err) {
+			return
+		}
 		if errors.Is(err, settings.ErrAgencyInUse) {
 			// RA-Q22 (rev 7): name what actually blocks the delete. This message used
 			// to say "referenced by one or more scopes" unconditionally, which was
@@ -637,6 +631,7 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_member", err.Error())
 		case errors.Is(err, settings.ErrOwnerRemoval):
 			httpx.Fail(w, http.StatusUnprocessableEntity, "owner_removal", err.Error())
+		case failAgencyRule(w, err):
 		default:
 			httpx.Fail500(w, s.log, "update_failed", err)
 		}
@@ -652,4 +647,23 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, d)
+}
+
+// failAgencyRule answers the refusals that Global being a real agency introduced
+// (LR-21, LR-25, LR-26), for every route that writes membership or the catalog.
+// It reports whether err was one of them (and the response is written).
+func failAgencyRule(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, settings.ErrAgencyRequired):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "agency_required", err.Error())
+	case errors.Is(err, settings.ErrGlobalMixed):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "global_mixed", err.Error())
+	case errors.Is(err, settings.ErrBuiltinAgency):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
+	case errors.Is(err, settings.ErrAgencyNameReserved):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "name_reserved", err.Error())
+	default:
+		return false
+	}
+	return true
 }

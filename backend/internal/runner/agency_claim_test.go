@@ -45,11 +45,12 @@ func insertQueuedRunAgency(t *testing.T, svc *Service, traceID, runType, agency 
 	}
 }
 
-// TestClaimRunAgencyMatrix is the M3 keystone test (agency-support.md §4.2): the
-// disjoint hard-isolation matrix. A tagged run goes only to a runner in that
-// agency; an untagged run goes only to a runner with NO agencies (the general
-// pool). Backward-compat (no agencies anywhere) is already covered by the existing
-// TestClaimRunTransition / TestCapabilityGuard, which pass unchanged.
+// TestClaimRunAgencyMatrix is the isolation matrix (M3, agency-support.md §4.2;
+// one arm since migration 1220): a runner claims a run only when it serves one
+// of the run's agencies. Global is an agency like the others here — a runner
+// that serves Global claims Global's runs and no department's, and a
+// department's runner never claims Global's. (Until 2.3.0 the Global row was
+// "no row", on both sides, and the rule had a second arm for it.)
 func TestClaimRunAgencyMatrix(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -58,7 +59,7 @@ func TestClaimRunAgencyMatrix(t *testing.T) {
 	insertAgencyRow(t, svc, "a2", "beta")
 
 	insertRunner(t, svc, "r-member", "member", "online", []string{"bash"})
-	insertRunner(t, svc, "r-untagged", "untagged", "online", []string{"bash"})
+	insertRunner(t, svc, "r-global", "global", "online", []string{"bash"}) // born serving Global
 	insertRunner(t, svc, "r-other", "other", "online", []string{"bash"})
 	addRunnerAgency(t, svc, "r-member", "a1") // member of alpha
 	addRunnerAgency(t, svc, "r-other", "a2")  // member of beta only
@@ -81,11 +82,11 @@ func TestClaimRunAgencyMatrix(t *testing.T) {
 		name, agency, runner string
 		want                 bool
 	}{
-		{"tagged → member runner", "alpha", "r-member", true},
-		{"tagged → untagged runner", "alpha", "r-untagged", false},
-		{"tagged → other-agency runner", "alpha", "r-other", false},
-		{"untagged → untagged runner", "", "r-untagged", true},
-		{"untagged → tagged runner (disjoint)", "", "r-member", false},
+		{"alpha's run → alpha's runner", "alpha", "r-member", true},
+		{"alpha's run → Global's runner", "alpha", "r-global", false},
+		{"alpha's run → beta's runner", "alpha", "r-other", false},
+		{"Global's run → Global's runner", "", "r-global", true},
+		{"Global's run → alpha's runner", "", "r-member", false},
 	}
 	for _, c := range cases {
 		if got := try(c.agency, c.runner); got != c.want {

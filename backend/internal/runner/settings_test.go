@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 )
 
@@ -48,13 +49,13 @@ func pollDecode(t *testing.T, svc *Service, as interface {
 }
 
 func TestEffectiveClaimCaps(t *testing.T) {
-	got := effectiveClaimCaps([]string{"bash", "python", "ansible"}, []string{"python"})
+	got := execspec.EffectiveCaps([]string{"bash", "python", "ansible"}, []string{"python"})
 	want := map[string]bool{"bash": true, "ansible": true}
 	if len(got) != 2 || !want[got[0]] || !want[got[1]] {
 		t.Errorf("mask subtract: got %v, want bash+ansible", got)
 	}
 	// Empty mask is a no-op (same order).
-	if same := effectiveClaimCaps([]string{"bash", "python"}, nil); len(same) != 2 {
+	if same := execspec.EffectiveCaps([]string{"bash", "python"}, nil); len(same) != 2 {
 		t.Errorf("nil mask must not narrow: %v", same)
 	}
 }

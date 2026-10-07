@@ -538,14 +538,20 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// toolchains is the display-only detected-toolchain blob (RX.7/R6); "" ⇒
 		// NULL (a pre-Phase-4 agent, so the detail shows "—").
 		toolchains string
+		// agency is the agency the runner serves; "" leaves it where every runner
+		// is born, in Global (migration 1220). Every seeded scope belongs to an
+		// agency, so a fleet left entirely in Global — what this seed wrote until
+		// 2.3.0 — could claim none of the seeded work.
+		agency string
 	}{
 		{"runner-linux-01", "online", "Linux", `["bash","ansible","terraform","perl","python"]`, 2, 5, 20 * time.Second,
-			`{"ansibleCore":"2.16.3","collections":{"community.general":"8.5.0","ansible.posix":"1.5.4"},"checkout":true,"vault":true,"sandboxed":true,"keyNames":["ansible_rh8_key","bastion_key","prod_deploy"]}`},
+			`{"ansibleCore":"2.16.3","collections":{"community.general":"8.5.0","ansible.posix":"1.5.4"},"checkout":true,"vault":true,"sandboxed":true,"keyNames":["ansible_rh8_key","bastion_key","prod_deploy"]}`, agencies[0].id},
 		{"runner-linux-02", "online", "Linux", `["bash","ansible"]`, 0, 5, 15 * time.Second,
-			`{"ansibleCore":"2.15.9","sandboxed":true,"keyNames":["ansible_rh8_key"]}`},
-		{"runner-win-01", "online", "Windows", `["powershell"]`, 1, 3, 45 * time.Second, ""},
-		{"runner-linux-03", "draining", "Linux", `["bash","terraform"]`, 1, 5, 2 * minute, ""},
-		{"runner-linux-04", "offline", "Linux", `["bash"]`, 0, 5, 3 * hour, ""},
+			`{"ansibleCore":"2.15.9","sandboxed":true,"keyNames":["ansible_rh8_key"]}`, agencies[1].id},
+		{"runner-win-01", "online", "Windows", `["powershell"]`, 1, 3, 45 * time.Second, "", agencies[0].id},
+		// Global's own runner: it takes the jobs that have no scope.
+		{"runner-linux-03", "draining", "Linux", `["bash","terraform"]`, 1, 5, 2 * minute, "", ""},
+		{"runner-linux-04", "offline", "Linux", `["bash"]`, 0, 5, 3 * hour, "", agencies[1].id},
 	}
 	for _, r := range runners {
 		var drain any
@@ -556,9 +562,14 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		if r.toolchains != "" {
 			toolchains = r.toolchains
 		}
+		rid := db.NewID()
 		exec(`INSERT INTO runners (id, name, status, capabilities, load, last_seen_at, drain_deadline_at, registered_at, created_at, os, version, max_concurrent, toolchains)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.4.0', ?, ?)`,
-			db.NewID(), r.name, r.status, r.caps, r.load, ago(r.lastSeen), drain, ago(15*day), ago(15*day), r.os, r.maxConc, toolchains)
+			rid, r.name, r.status, r.caps, r.load, ago(r.lastSeen), drain, ago(15*day), ago(15*day), r.os, r.maxConc, toolchains)
+		if r.agency != "" {
+			// Naming an agency takes the runner out of Global (a trigger).
+			exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, ?)`, rid, r.agency)
+		}
 	}
 
 	// ── Env vars ───────────────────────────────────────────────────────────────
@@ -580,9 +591,13 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		if e.desc != "" {
 			desc = e.desc
 		}
+		// A scoped row belongs to its scope's agency, as owner and as member; a
+		// global one is born Global's on both counts (migration 1220). An agency
+		// member that Global still owned is the unresolved shape an upgrade can
+		// leave behind, not one a demo should start in.
 		vid := db.NewID()
-		exec(`INSERT INTO env_vars (id, key, scope, value, description, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, vid, e.key, scope, e.value, desc, dev, ago(18*day), dev, ago(2*day))
+		exec(`INSERT INTO env_vars (id, key, scope, value, description, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, vid, e.key, scope, e.value, desc, dev, ago(18*day), dev, ago(2*day), scopeAgency[e.scope])
 		if aid := scopeAgency[e.scope]; aid != "" {
 			exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES (?, ?)`, vid, aid)
 		}
@@ -602,12 +617,12 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			scope = s.scope
 		}
 		sid := db.NewID()
-		exec(`INSERT INTO secrets (id, key, scope, description, source, vault_ref, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, ?, 'vault', ?, ?, ?, ?, ?)`, sid, s.key, scope, s.desc, s.ref, dev, ago(18*day), dev, ago(5*day))
-		// T2.10 — membership mirroring exactly what migration 670's backfill computes
-		// for an existing database: a SCOPED secret inherits its scope's agency, an
-		// UNSCOPED (global) one gets no rows at all. Seeding global secrets into every
-		// agency would demo a narrower model than the one that actually ships.
+		exec(`INSERT INTO secrets (id, key, scope, description, source, vault_ref, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		      VALUES (?, ?, ?, ?, 'vault', ?, ?, ?, ?, ?, ?)`, sid, s.key, scope, s.desc, s.ref, dev, ago(18*day), dev, ago(5*day), scopeAgency[s.scope])
+		// A SCOPED secret is its scope's agency's, owner and member; an UNSCOPED
+		// (global) one is Global's, which every agency's runs may use. Seeding
+		// global secrets into every agency would demo a narrower model than the
+		// one that actually ships.
 		if aid := scopeAgency[s.scope]; aid != "" {
 			exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, ?)`, sid, aid)
 		}
@@ -623,26 +638,23 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	// The git-imported host further down stays on the legacy auth_key_env_var NAME
 	// path to demonstrate dual-read.
 	sshCredID := db.NewID()
-	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
+	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?, ?)`,
 		sshCredID, "prod_deploy_ed25519", "Primary deploy key for the Production fleet (demo).",
 		"SHA256:Jm6h0vQ2nC8x7yQk9rTfLwApZ3Bd1sEoUvHnMxRkY4w",
 		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINrQ2vJk8hPzXmC5dLwoYbApZ3Bd1sEoUvHnMxRkY4w cronomicon-deploy",
-		dev, ago(18*day), dev, ago(5*day))
+		dev, ago(18*day), dev, ago(5*day), agencies[0].id)
 
-	// T2.10 — a SECOND key so the membership matrix has one per agency. Note that
-	// migration 670 deliberately backfills NO key membership (ssh_credentials has no
-	// scope to infer from, and AG-Q5's tightening is Phase 3 behind the T2.12
-	// report), so these two rows are OPERATOR-ASSIGNED membership — exactly what an
-	// admin would create by hand, and the only way Phase 4's matrix has key data to
-	// render before the tightening lands.
+	// T2.10 — a SECOND key so the membership matrix has one per agency. A key has
+	// no scope to infer an agency from, so these two are OPERATOR-ASSIGNED: each
+	// is owned by, and a member of, the agency whose fleet it deploys to.
 	stagingCredID := db.NewID()
-	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?)`,
+	exec(`INSERT INTO ssh_credentials (id, label, description, source, key_type, fingerprint, public_key, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, 'stored', 'ssh-ed25519', ?, ?, ?, ?, ?, ?, ?)`,
 		stagingCredID, "staging_deploy_ed25519", "Deploy key for the Staging fleet (demo).",
 		"SHA256:Qw3rTy7uIoP2aSdFgHjKlZxCvBnM4eRt6YuIoP8aSdF",
 		"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKp7QwErTyUiOpAsDfGhJkLzXcVbNm4eRt6YuIoP8aSd cronomicon-staging",
-		dev, ago(16*day), dev, ago(4*day))
+		dev, ago(16*day), dev, ago(4*day), agencies[1].id)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, sshCredID, agencies[0].id)
 	exec(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES (?, ?)`, stagingCredID, agencies[1].id)
 
@@ -749,6 +761,26 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	for k, v := range settings {
 		exec(`INSERT INTO settings (key, value, last_modified_by, last_modified_at) VALUES (?, ?, ?, ?)`, k, v, dev, nowStr)
 	}
+
+	// ── Every run's agency snapshot (migration 680), in one pass ───────────────
+	// The run writers above insert history by hand and none of them names an
+	// agency. A real enqueue snapshots its scope's agencies onto the run, by
+	// NAME, and a run with no scope is Global's — so do that here for all of
+	// them, and index the ones still waiting (run_agencies is what the claim
+	// reads). Left alone, the birth trigger would have stamped every queued and
+	// running row Global, on scopes that belong to an agency: work no seeded
+	// runner could ever claim, which is the state this seed was in until 2.3.0.
+	exec(`UPDATE runs SET agencies_json = COALESCE((
+	          SELECT json_group_array(a.name)
+	            FROM scopes s
+	            JOIN scope_agencies sa ON sa.scope_id = s.id
+	            JOIN agencies a ON a.id = sa.agency_id
+	           WHERE s.name = runs.scope
+	          HAVING COUNT(*) > 0), '["Global"]')`)
+	exec(`DELETE FROM run_agencies`)
+	exec(`INSERT INTO run_agencies (run_id, agency)
+	      SELECT r.id, je.value FROM runs r, json_each(r.agencies_json) je
+	       WHERE r.status IN ('queued', 'running')`)
 
 	if execErr != nil {
 		return execErr

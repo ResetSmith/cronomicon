@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"slices"
 	"strings"
 )
 
@@ -70,8 +72,8 @@ func NamePoolConflict(ctx context.Context, db *sql.DB, table, source, name, scop
 	if err != nil {
 		return false, err
 	}
-	if len(mine) == 0 {
-		return true, nil // agency-less scope ⇒ All-pool for collision purposes
+	if isAllPool(mine) {
+		return true, nil // a Global scope ⇒ All-pool for collision purposes
 	}
 	mineSet := map[string]bool{}
 	for _, a := range mine {
@@ -85,7 +87,7 @@ func NamePoolConflict(ctx context.Context, db *sql.DB, table, source, name, scop
 		if err != nil {
 			return false, err
 		}
-		if len(theirs) == 0 {
+		if isAllPool(theirs) {
 			return true, nil
 		}
 		for _, a := range theirs {
@@ -179,7 +181,7 @@ func agenciesForScopes(ctx context.Context, db *sql.DB, scopes []string) (map[st
 		if err != nil {
 			return nil, false, err
 		}
-		if len(ags) == 0 {
+		if isAllPool(ags) {
 			return nil, true, nil
 		}
 		for _, a := range ags {
@@ -251,4 +253,13 @@ func workflowStepScopes(ctx context.Context, db *sql.DB, stepsJSON string) ([]st
 		return nil, nil
 	}
 	return scopes, nil
+}
+
+// isAllPool reports whether an agency set is the All pool for name collisions:
+// Global's. A definition in Global is visible to every agency, so its name
+// collides with every agency's, exactly as a definition with "no agency" did
+// before Global was a row (migration 1220). An empty set is treated the same
+// way — it cannot arise from ScopeAgencies, and colliding is the safe answer.
+func isAllPool(agencies []string) bool {
+	return len(agencies) == 0 || slices.Contains(agencies, agencyid.GlobalName)
 }
