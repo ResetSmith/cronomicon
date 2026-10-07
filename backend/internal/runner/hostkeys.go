@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net"
 	"net/http"
 	"slices"
@@ -151,25 +152,38 @@ type keyClass struct {
 }
 
 // serverPin returns the type and fingerprint of the key the SERVER pins for a
-// host (ssh_hosts.host_key, captured by the in-app SSH executor), or "" when it
-// pins none. The host is looked up by its scope name when the decision is for a
-// scope, and otherwise by address and port.
-func serverPin(ctx context.Context, q hostkeys.Queryer, hostName, scopeName, pattern string) (keyType, fingerprint string) {
+// host (ssh_hosts.host_key, captured when the server itself connected), or ""
+// when it pins none. The host is looked up by its scope name when the decision
+// is for a scope, and otherwise by address and port.
+//
+// Whose record it reads matters since records have owners (LR-69): the pin is
+// the "independent second opinion" that lets a key be approved by exception, so
+// a record another agency wrote for the same host name or address must not be
+// the one consulted — its administrator could pin any key they liked there.
+// For a scope, the record is the one that scope's runs would resolve
+// (execspec.HostRecordForScopeSQL). By address, it is a record the RUNNER's own
+// agencies could have written: imported for one of their scopes, hand-written
+// by one of them, or Global's.
+func serverPin(ctx context.Context, q hostkeys.Queryer, runnerID, hostName, scopeName, pattern string) (keyType, fingerprint string) {
 	var raw sql.NullString
 	if hostName != "" {
 		_ = q.QueryRowContext(ctx, `
-			SELECT host_key FROM ssh_hosts
-			 WHERE hostname = ? AND COALESCE(host_key, '') <> ''
-			   AND (scope_id IS NULL OR scope_id IN (SELECT id FROM scopes WHERE name = ?))
-			 ORDER BY (source='cronomicon') DESC, (scope_id IS NULL) DESC, last_modified_at DESC, id DESC
-			 LIMIT 1`, hostName, scopeName).Scan(&raw)
+			SELECT h.host_key FROM ssh_hosts h
+			 WHERE h.hostname = ? AND COALESCE(h.host_key, '') <> ''
+			   AND `+execspec.HostRecordForScopeSQL+`
+			 ORDER BY `+execspec.HostRecordOrderSQL+`
+			 LIMIT 1`, hostName, scopeName, scopeName).Scan(&raw)
 	} else {
 		bare, port := patternPort(pattern)
 		_ = q.QueryRowContext(ctx, `
-			SELECT host_key FROM ssh_hosts
-			 WHERE (address = ? OR (COALESCE(address, '') = '' AND hostname = ?))
-			   AND COALESCE(NULLIF(port, 0), 22) = ? AND COALESCE(host_key, '') <> ''
-			 ORDER BY last_modified_at DESC, id DESC LIMIT 1`, bare, bare, port).Scan(&raw)
+			SELECT h.host_key FROM ssh_hosts h
+			 WHERE (h.address = ? OR (COALESCE(h.address, '') = '' AND h.hostname = ?))
+			   AND COALESCE(NULLIF(h.port, 0), 22) = ? AND COALESCE(h.host_key, '') <> ''
+			   AND ((h.scope_id IS NULL AND (h.owner_agency = ? OR h.owner_agency IN (
+			            SELECT ra.agency_id FROM runner_agencies ra WHERE ra.runner_id = ?)))
+			        OR EXISTS (SELECT 1 FROM scope_agencies sa JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+			                    WHERE sa.scope_id = h.scope_id AND ra.runner_id = ?))
+			 ORDER BY h.last_modified_at DESC, h.id DESC LIMIT 1`, bare, bare, port, agencyid.Global, runnerID, runnerID).Scan(&raw)
 	}
 	if !raw.Valid || raw.String == "" {
 		return "", ""
@@ -195,7 +209,7 @@ func classifyKey(ctx context.Context, q hostkeys.Queryer, runnerID, pattern, hos
 		   AND decision = 'approved' AND superseded_at IS NULL
 		 ORDER BY id DESC LIMIT 1`, runnerID, pattern, keyType).Scan(&inForce)
 
-	pinType, pinFP := serverPin(ctx, q, hostName, scopeName, pattern)
+	pinType, pinFP := serverPin(ctx, q, runnerID, hostName, scopeName, pattern)
 	matched := pinType == keyType && pinFP == fingerprint
 
 	switch {

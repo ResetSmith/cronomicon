@@ -56,23 +56,41 @@ func TestSetAgencyMembershipAllKinds(t *testing.T) {
 		{MemberSSHCredential, "k1"},
 	} {
 		t.Run(string(tc.kind), func(t *testing.T) {
-			// Duplicates in the payload must not violate the composite PK.
-			err := SetAgencyMembership(ctx, pool, tc.kind,
-				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"ag-nwd", "ag-dss", "ag-dss"}}}, "alice")
-			if err != nil {
+			agencies := func() []string {
+				t.Helper()
+				got, err := ListAgencyMembership(ctx, pool, tc.kind)
+				if err != nil {
+					t.Fatalf("list: %v", err)
+				}
+				if len(got) != 1 || got[0].ID != tc.id {
+					t.Fatalf("membership = %+v, want one row for %s", got, tc.id)
+				}
+				return got[0].AgencyIDs
+			}
+			owner := func() string {
+				t.Helper()
+				if tc.kind == MemberScope {
+					return ""
+				}
+				mt, _ := memberTableFor(tc.kind)
+				return entityOwner(ctx, pool, mt.catalog, tc.id)
+			}
+			// One agency. A repeat of it in the payload is the same agency.
+			if err := SetAgencyMembership(ctx, pool, tc.kind,
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"ag-dss", "ag-dss"}}}, "alice"); err != nil {
 				t.Fatalf("set: %v", err)
 			}
-			got, err := ListAgencyMembership(ctx, pool, tc.kind)
-			if err != nil {
-				t.Fatalf("list: %v", err)
+			if got := agencies(); len(got) != 1 || got[0] != "ag-dss" {
+				t.Fatalf("agencies = %v, want ag-dss alone", got)
 			}
-			if len(got) != 1 || got[0].ID != tc.id || len(got[0].AgencyIDs) != 2 {
-				t.Fatalf("membership = %+v, want one row with 2 agencies", got)
+			// LR-54: for a secret, a variable and a key the agency is the owner.
+			if tc.kind != MemberScope && owner() != "ag-dss" {
+				t.Errorf("owner after moving to DSS = %q, want ag-dss", owner())
 			}
-			// Sorted, so a re-save produces an identical row and the audit detail is
-			// stable rather than depending on client ordering.
-			if got[0].AgencyIDs[0] != "ag-dss" || got[0].AgencyIDs[1] != "ag-nwd" {
-				t.Errorf("agency ids not sorted: %v", got[0].AgencyIDs)
+			// LR-7, LR-54: two agencies is refused, and changes nothing.
+			if err := SetAgencyMembership(ctx, pool, tc.kind,
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"ag-nwd", "ag-dss"}}}, "alice"); !errors.Is(err, ErrOneAgency) {
+				t.Fatalf("two agencies = %v, want ErrOneAgency", err)
 			}
 			// An empty set is REFUSED (LR-26). It used to clear the row to "no
 			// restriction" — for a secret, usable by every agency — which made a
@@ -86,18 +104,89 @@ func TestSetAgencyMembershipAllKinds(t *testing.T) {
 				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global", "ag-dss"}}}, "alice"); !errors.Is(err, ErrGlobalMixed) {
 				t.Fatalf("Global with another agency = %v, want ErrGlobalMixed", err)
 			}
-			if got, _ := ListAgencyMembership(ctx, pool, tc.kind); len(got) != 1 || len(got[0].AgencyIDs) != 2 {
-				t.Fatalf("a refused write changed membership: %+v", got)
+			if got := agencies(); len(got) != 1 || got[0] != "ag-dss" {
+				t.Fatalf("a refused write changed membership: %v", got)
+			}
+			// A move: the other agency, in one write, owner and all. Until 2.3.0
+			// an owned row could not leave its owner; it had to be re-created.
+			if err := SetAgencyMembership(ctx, pool, tc.kind,
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"ag-nwd"}}}, "alice"); err != nil {
+				t.Fatalf("move to NWD: %v", err)
+			}
+			if got := agencies(); len(got) != 1 || got[0] != "ag-nwd" {
+				t.Fatalf("agencies after the move = %v, want ag-nwd alone", got)
+			}
+			if tc.kind != MemberScope && owner() != "ag-nwd" {
+				t.Errorf("owner after the move = %q, want ag-nwd", owner())
 			}
 			// Naming Global is how a row becomes Global's.
 			if err := SetAgencyMembership(ctx, pool, tc.kind,
 				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global"}}}, "alice"); err != nil {
 				t.Fatalf("move to Global: %v", err)
 			}
-			if got, _ := ListAgencyMembership(ctx, pool, tc.kind); len(got) != 1 || len(got[0].AgencyIDs) != 1 || got[0].AgencyIDs[0] != "global" {
-				t.Errorf("membership after the move to Global: %+v", got)
+			if got := agencies(); len(got) != 1 || got[0] != "global" {
+				t.Errorf("membership after the move to Global: %v", got)
+			}
+			if tc.kind != MemberScope && owner() != "global" {
+				t.Errorf("owner after the move to Global = %q, want global", owner())
 			}
 		})
+	}
+}
+
+// LR-54 — a move must not land on a name the target agency already owns: two
+// rows of one agency with one name (and scope) is the ambiguity the resolver
+// refuses to pick between. That holds within a table and across the secret and
+// variable tables, which share one namespace per owner.
+func TestMovingARowOntoANameItsNewAgencyOwnsIsRefused(t *testing.T) {
+	pool := membershipDB(t)
+	ctx := context.Background()
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	const ts = "2026-01-01T00:00:00Z"
+	// DSS owns a secret, a variable and a key; Global holds one of each under
+	// the same names, and a secret named like DSS's variable.
+	exec(`INSERT INTO secrets (id, key, scope, source, created_at, owner_agency) VALUES ('dss-s', 'TOKEN', 'prod', 'stored', ?, 'ag-dss')`, ts)
+	exec(`INSERT INTO secret_agencies VALUES ('dss-s', 'ag-dss')`)
+	exec(`INSERT INTO env_vars (id, key, scope, value, created_at, owner_agency) VALUES ('dss-v', 'REGION', 'prod', 'v', ?, 'ag-dss')`, ts)
+	exec(`INSERT INTO env_var_agencies VALUES ('dss-v', 'ag-dss')`)
+	exec(`INSERT INTO ssh_credentials (id, label, source, created_at, owner_agency) VALUES ('dss-k', 'deploy', 'stored', ?, 'ag-dss')`, ts)
+	exec(`INSERT INTO ssh_credential_agencies VALUES ('dss-k', 'ag-dss')`)
+	exec(`INSERT INTO secrets (id, key, scope, source, created_at) VALUES ('g-s', 'TOKEN', 'prod', 'stored', ?), ('g-s2', 'REGION', 'prod', 'stored', ?), ('g-s3', 'TOKEN', 'staging', 'stored', ?)`, ts, ts, ts)
+	exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('g-k', 'deploy', 'stored', ?)`, ts)
+
+	for _, c := range []struct {
+		name string
+		kind MemberKind
+		id   string
+	}{
+		{"a secret onto DSS's secret of that key and scope", MemberSecret, "g-s"},
+		{"a secret onto DSS's VARIABLE of that key and scope", MemberSecret, "g-s2"},
+		{"a key onto DSS's key of that label", MemberSSHCredential, "g-k"},
+	} {
+		err := SetAgencyMembership(ctx, pool, c.kind, []AgencyMembership{{ID: c.id, AgencyIDs: []string{"ag-dss"}}}, "alice")
+		if !errors.Is(err, ErrOwnerConflict) {
+			t.Errorf("moving %s = %v, want ErrOwnerConflict", c.name, err)
+		}
+		mt, _ := memberTableFor(c.kind)
+		if got := entityOwner(ctx, pool, mt.catalog, c.id); got != "global" {
+			t.Errorf("%s: a refused move changed the owner to %q", c.name, got)
+		}
+	}
+	// The same key in ANOTHER scope is a different row to the resolver: it moves.
+	if err := SetAgencyMembership(ctx, pool, MemberSecret, []AgencyMembership{{ID: "g-s3", AgencyIDs: []string{"ag-dss"}}}, "alice"); err != nil {
+		t.Errorf("moving a secret of the same key in another scope: %v", err)
+	}
+	// And the agency-shaped editor refuses the same collision.
+	if _, err := SetAgencyMembers(ctx, pool, "ag-dss", []AgencyMemberRef{
+		{Kind: "secret", ID: "dss-s"}, {Kind: "secret", ID: "g-s3"}, {Kind: "env-var", ID: "dss-v"},
+		{Kind: "ssh-credential", ID: "dss-k"}, {Kind: "secret", ID: "g-s"},
+	}, "alice"); !errors.Is(err, ErrOwnerConflict) {
+		t.Errorf("adding a colliding secret through the agency editor = %v, want ErrOwnerConflict", err)
 	}
 }
 
@@ -170,14 +259,23 @@ func TestScopeAgencyBindingWritesTheJoinTable(t *testing.T) {
 		t.Fatalf("after clearing, membership = %v, want [global]", got)
 	}
 
-	// The N:M setter is the only way to express more than one, and it must not be
-	// truncated by anything the 1:1 endpoint left behind.
-	if err := SetAgencyMembership(ctx, pool, MemberScope,
-		[]AgencyMembership{{ID: "sc-prod", AgencyIDs: []string{"ag-nwd", "ag-dss"}}}, "alice"); err != nil {
-		t.Fatalf("SetAgencyMembership: %v", err)
+	// A scope from before 2.3.0 may still be in several agencies (LR-7: nothing
+	// removes them automatically). Setting its agency settles it on the one named.
+	if _, err := pool.Exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-prod'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-prod', 'ag-dss'), ('sc-prod', 'ag-nwd')`); err != nil {
+		t.Fatal(err)
 	}
 	if len(joined()) != 2 {
-		t.Errorf("scope membership = %v, want both agencies", joined())
+		t.Fatalf("fixture: scope membership = %v, want the two legacy agencies", joined())
+	}
+	nwd := "ag-nwd"
+	if _, err := SetScopeAgency(ctx, pool, "sc-prod", &nwd, "alice"); err != nil {
+		t.Fatalf("SetScopeAgency on a scope in two agencies: %v", err)
+	}
+	if got := joined(); len(got) != 1 || got[0] != "ag-nwd" {
+		t.Errorf("scope membership = %v, want ag-nwd alone", got)
 	}
 }
 

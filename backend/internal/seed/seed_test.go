@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/notices"
+	"github.com/ResetSmith/cronomicon/internal/sshexec"
 )
 
 func TestSeedPopulatesEveryView(t *testing.T) {
@@ -96,6 +98,23 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE agency_id = 'global'`).Scan(&globalRunners)
 	if globalRunners == 0 {
 		t.Error("no seeded runner serves Global, so no seeded job without a scope can ever run")
+	}
+
+	// A fresh demo starts with an empty inbox: every notice is a condition an
+	// upgrade can leave behind or that someone broke, and the seed must be in
+	// neither state — a scope in two agencies, a job aimed outside its scope, a
+	// record naming a key its owner may not use, a row in no agency.
+	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
+	t.Cleanup(func() { notices.SetRecordKeyNameCheck(nil) })
+	if err := notices.RunChecks(ctx, pool); err != nil {
+		t.Fatalf("notices checks on the seeded database: %v", err)
+	}
+	open, err := notices.ListOpen(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range open {
+		t.Errorf("the seed raises a %s notice: %s", n.Kind, n.Detail)
 	}
 
 	// Re-seeding is a no-op (idempotent guard).

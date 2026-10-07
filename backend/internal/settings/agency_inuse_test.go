@@ -79,13 +79,12 @@ func TestAgencyInUseNamesTheRealBlocker(t *testing.T) {
 	}
 }
 
-// TestAgencyInUseOwnershipStatesTheRemedyIsDestructive — ownership is the one
-// blocker with no clearing path while owner transfer is deferred (RA-Q22). The
-// other three classes name an edit; this one must warn that the row has to be
-// re-created, and that a stored secret's value dies with it. An operator who
-// deletes the secret to unblock the delete, having been told only "clear this
-// first", loses a credential nobody may hold a copy of.
-func TestAgencyInUseOwnershipStatesTheRemedyIsDestructive(t *testing.T) {
+// TestAgencyInUseOwnershipNamesTheMoveAndWarnsAgainstTheDelete — an owned row is
+// cleared by MOVING it (LR-54; until 2.3.0 there was no move, only a destructive
+// re-creation, RA-Q22). The refusal must name that, and must still say that
+// deleting a stored secret destroys its value: an operator who deletes it to get
+// past the refusal loses a credential nobody may hold a copy of.
+func TestAgencyInUseOwnershipNamesTheMoveAndWarnsAgainstTheDelete(t *testing.T) {
 	pool := membershipDB(t)
 	if _, err := pool.Exec(`UPDATE secrets SET owner_agency='ag-dss' WHERE id='s1'`); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -100,7 +99,7 @@ func TestAgencyInUseOwnershipStatesTheRemedyIsDestructive(t *testing.T) {
 		t.Errorf("Owned() = %d, want 1", inUse.Owned())
 	}
 	got := strings.Join(inUse.Blockers(), "; ")
-	for _, want := range []string{"transfer is not available", "REVEAL THE VALUE FIRST", "destroys it"} {
+	for _, want := range []string{"set its agency", "to Global", "do NOT delete it", "destroys its value"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("blockers = %q, want it to contain %q", got, want)
 		}

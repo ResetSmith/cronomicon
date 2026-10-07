@@ -32,7 +32,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
-	"github.com/ResetSmith/cronomicon/internal/sshkeys"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -394,14 +393,25 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	if r.sshUser != "" || r.sshCred != "" {
 		credID := ""
 		if r.sshCred != "" {
-			id, found, err := sshkeys.IDByLabel(runCtx, s.db, r.sshCred)
+			// LR-73: by the label AS THIS RUN'S AGENCY SEES IT — its own key of
+			// that label before Global's, and never another agency's. Labels are
+			// unique per owner, not across them, and this was `WHERE label = ?
+			// LIMIT 1` over every agency: whichever row the database returned
+			// first, with the agency checked only later, on the wrong row.
+			credAgencies, aerr := runref.RunAgencies(runCtx, s.db, r.traceID)
+			if aerr != nil {
+				sink.line("", "cronomicon: could not read this run's agencies: "+aerr.Error())
+				s.finalize(ctx, r, "failure", nil)
+				return
+			}
+			id, found, err := runref.LookupEntityID(runCtx, s.db, runref.KindKey, r.sshCred, "", credAgencies)
 			if err != nil {
 				sink.line("", "cronomicon: ssh credential lookup failed: "+err.Error())
 				s.finalize(ctx, r, "failure", nil)
 				return
 			}
 			if !found {
-				sink.line("", fmt.Sprintf("cronomicon: ssh credential %q no longer exists (deleted or renamed since this run was queued)", r.sshCred))
+				sink.line("", fmt.Sprintf("cronomicon: ssh credential %q is not one this run's agency may use (it was deleted or renamed since this run was queued, or belongs to another agency)", r.sshCred))
 				s.finalize(ctx, r, "failure", nil)
 				return
 			}

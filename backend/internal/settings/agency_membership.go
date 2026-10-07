@@ -123,14 +123,23 @@ func ListAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind
 	return out, nil
 }
 
-// SetAgencyMembership replaces the agency set of each POSTED entity. Every entity
-// and agency id is validated against its catalog FIRST — fail-closed, no partial
-// write — so a typo cannot leave half a matrix applied. Mirrors SetRunnerAgencies
-// exactly.
+// SetAgencyMembership sets the ONE agency of each posted entity (LR-7, LR-54).
+// Every entity and agency id is validated against its catalog FIRST — fail
+// closed, no partial write — so a typo cannot leave half a batch applied.
 //
-// The scopes.agency_id mirror this used to dual-write is gone with the column
-// (migration 700, T3.9): scope_agencies is the only binding now, and a scope may
-// hold several agencies without anything truncating the set.
+// The body is still a list of agency ids per entity, because that is the route's
+// shape and a row from before 2.3.0 may hold several. A write names exactly one:
+// an agency, or Global. Several is refused (ErrOneAgency), none is refused
+// (ErrAgencyRequired), and an entity that held several is narrowed to the one
+// named.
+//
+// For a secret, a variable or an SSH key the agency IS the owner, so setting it
+// moves the owner in the same transaction. That is the "transfer" RA-15 said
+// did not exist: until 2.3.0 an owned row could not leave its owner at all, and
+// the only way to move one was to delete and re-create it. A move that would
+// land on a name the target already owns is refused (ErrOwnerConflict), since
+// two rows of one agency with one name is the ambiguity the resolver refuses to
+// pick between.
 func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind, assignments []AgencyMembership, actor string) error {
 	// LR-78: this changes what an access grant reaches (or what it is shown as),
 	// so the grant snapshot is told on the way out — after the write, on every
@@ -140,62 +149,46 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	if !ok {
 		return fmt.Errorf("invalid membership kind %q", string(kind))
 	}
-	for _, a := range assignments {
+	targets := make([]string, len(assignments))
+	for i, a := range assignments {
 		var ec int
-		_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.catalog+` WHERE id=?`, a.ID).Scan(&ec)
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.catalog+` WHERE id=?`, a.ID).Scan(&ec); err != nil {
+			return err
+		}
 		if ec == 0 {
 			return ErrUnknownMember
 		}
-		for _, aid := range a.AgencyIDs {
-			var ac int
-			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM agencies WHERE id=?`, aid).Scan(&ac)
-			if ac == 0 {
-				return ErrUnknownAgency
-			}
-		}
-		// RA-15: an OWNED row must keep its owner in its visibility set. Membership is
-		// what the resolver intersects against, so dropping the owner would leave a row
-		// its owning department cannot reach — and, worse, that no longer resolves for
-		// the very runs it was created for, while still occupying the owner's slot in
-		// the (key, scope, owner) uniqueness key. That state is not expressible through
-		// any other route and there is no reading of it that is what the operator meant.
-		// Ownership TRANSFER is a separate, deliberate action; this is the accidental
-		// case, and it is refused.
-		if err := ValidateAgencySet(a.AgencyIDs); err != nil {
+		ids := dedupeIDs(a.AgencyIDs)
+		if err := ValidateAgencySet(ids); err != nil {
 			return err
 		}
-		// Global as an owner is not held to RA-15: a Global-owned row with a
-		// narrowed member list is the state migration 1220 left the rows several
-		// agencies shared (and the two ownership edges) in, and re-homing it is
-		// how an administrator resolves that.
-		if owner := entityOwner(ctx, database, t.catalog, a.ID); owner != "" && owner != agencyid.Global {
-			if !containsID(a.AgencyIDs, owner) {
-				return fmt.Errorf("%w: %s %s is owned by that agency, so it cannot be removed from it — transfer ownership first",
-					ErrOwnerRemoval, t.label, a.ID)
-			}
+		if len(ids) > 1 {
+			return fmt.Errorf("%w: %s %s was given %d", ErrOneAgency, t.label, a.ID, len(ids))
 		}
+		var ac int
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM agencies WHERE id=?`, ids[0]).Scan(&ac); err != nil {
+			return err
+		}
+		if ac == 0 {
+			return ErrUnknownAgency
+		}
+		targets[i] = ids[0]
 	}
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	for _, a := range assignments {
+	for i, a := range assignments {
+		if err := moveOwner(ctx, tx, t, a.ID, targets[i]); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t.join+` WHERE `+t.col+`=?`, a.ID); err != nil {
 			return err
 		}
-		seen := map[string]bool{}
-		ids := append([]string(nil), a.AgencyIDs...)
-		sort.Strings(ids)
-		for _, aid := range ids {
-			if seen[aid] {
-				continue
-			}
-			seen[aid] = true
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO `+t.join+` (`+t.col+`, agency_id) VALUES (?, ?)`, a.ID, aid); err != nil {
-				return err
-			}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO `+t.join+` (`+t.col+`, agency_id) VALUES (?, ?)`, a.ID, targets[i]); err != nil {
+			return err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -206,6 +199,81 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	// it sits beside. The detail names the entities touched, never a value.
 	audit(ctx, database, actor, "Agencies", "membership-updated",
 		t.label+" agencies", membershipAuditDetail(assignments))
+	return nil
+}
+
+// dedupeIDs drops repeats and blanks, keeping first-seen order.
+func dedupeIDs(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// ownedCatalog reports whether a membership table's entity has an owner (a
+// secret, a variable, an SSH key) and how its name is spelled: the column that
+// holds it, and whether a scope is part of its identity.
+func ownedCatalog(catalog string) (nameCol string, scoped, owned bool) {
+	switch catalog {
+	case "secrets", "env_vars":
+		return "key", true, true
+	case "ssh_credentials":
+		return "label", false, true
+	}
+	return "", false, false
+}
+
+// moveOwner makes agencyID the owner of an owned entity, inside the caller's
+// transaction, and refuses when the agency already owns a row of that name: in
+// the entity's own table (the UNIQUE would refuse a scoped one; a global-scoped
+// pair is the hole migration 830 left, and is refused here), and for a secret
+// or a variable in the other's table too, since the two share one namespace per
+// owner. A no-op for a scope, which has no owner, and for a row already owned
+// by agencyID.
+func moveOwner(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agencyID string) error {
+	nameCol, scoped, owned := ownedCatalog(t.catalog)
+	if !owned {
+		return nil
+	}
+	var name, scope, owner string
+	scopeExpr := "''"
+	if scoped {
+		scopeExpr = "COALESCE(scope, '')"
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT `+nameCol+`, `+scopeExpr+`, owner_agency FROM `+t.catalog+` WHERE id = ?`, entityID).
+		Scan(&name, &scope, &owner); err != nil {
+		return err
+	}
+	if owner == agencyID {
+		return nil
+	}
+	tables := []string{t.catalog}
+	if scoped {
+		tables = []string{"secrets", "env_vars"}
+	}
+	for _, table := range tables {
+		q := `SELECT COUNT(*) FROM ` + table + ` WHERE ` + nameCol + ` = ? AND owner_agency = ? AND id <> ?`
+		args := []any{name, agencyID, entityID}
+		if scoped {
+			q += ` AND COALESCE(scope, '') = ?`
+			args = append(args, scope)
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: %s %s", ErrOwnerConflict, t.label, name)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE `+t.catalog+` SET owner_agency = ? WHERE id = ?`, agencyID, entityID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -591,7 +659,7 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 		// RA-15 first, because it is the more specific refusal: an entity this
 		// agency OWNS cannot leave it at all.
 		if agencyID != agencyid.Global && entityOwner(ctx, database, t.catalog, m.ID) == agencyID {
-			return nil, fmt.Errorf("%w: %s %s is owned by this agency, so it cannot be removed from it — transfer ownership first",
+			return nil, fmt.Errorf("%w: %s %s is owned by this agency, so it cannot be removed from it — to move it, set its agency to the one it should belong to",
 				ErrOwnerRemoval, t.label, m.ID)
 		}
 		// LR-26: removing an entity from this agency must not leave it in none.
@@ -604,19 +672,35 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 			return nil, fmt.Errorf("%w: %s %s is in no other agency", ErrAgencyRequired, t.label, m.ID)
 		}
 	}
-	if agencyID == agencyid.Global {
-		// LR-25: an entity joins Global only by leaving every other agency, and
-		// this route adds to one agency without touching the others.
-		for _, m := range delta.Added {
-			t, _ := agencyMemberTableFor(m.Kind)
-			var named int
-			if err := database.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM `+t.join+` WHERE `+t.col+` = ? AND agency_id <> ?`, m.ID, agencyid.Global).Scan(&named); err != nil {
-				return nil, err
-			}
-			if named > 0 {
-				return nil, fmt.Errorf("%w: %s %s belongs to another agency", ErrGlobalMixed, t.label, m.ID)
-			}
+	// An ADD through this route puts an entity in this agency without touching
+	// its others, so it is only ever legal for an entity that has no other NAMED
+	// agency: one of Global's, which the add takes out of Global (a trigger) and,
+	// for a secret, variable or key, gives to this agency as its owner.
+	//
+	//   into Global            the entity is in a named agency → global_mixed (LR-25)
+	//   into a named agency    the entity is in ANOTHER named agency → one_agency
+	//                          (LR-7, LR-54): that is a move, and a move is made
+	//                          by setting the entity's agency, with authority on
+	//                          both sides
+	//
+	// A runner is not held to the second: what a runner may serve is a rule of
+	// its own, with its own writer.
+	for _, m := range delta.Added {
+		t, _ := agencyMemberTableFor(m.Kind)
+		var named int
+		if err := database.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM `+t.join+` WHERE `+t.col+` = ? AND agency_id NOT IN (?, ?)`,
+			m.ID, agencyid.Global, agencyID).Scan(&named); err != nil {
+			return nil, err
+		}
+		if named == 0 {
+			continue
+		}
+		if agencyID == agencyid.Global {
+			return nil, fmt.Errorf("%w: %s %s belongs to another agency", ErrGlobalMixed, t.label, m.ID)
+		}
+		if m.Kind != "runner" {
+			return nil, fmt.Errorf("%w: %s %s already belongs to another", ErrOneAgency, t.label, m.ID)
 		}
 	}
 
@@ -634,9 +718,36 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 	}
 	for _, m := range delta.Added {
 		t, _ := agencyMemberTableFor(m.Kind)
+		// The agency is the owner (LR-54): an entity that joins it from Global
+		// is its own from here on.
+		if err := moveOwner(ctx, tx, t, m.ID, agencyID); err != nil {
+			return nil, err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO `+t.join+` (`+t.col+`, agency_id) VALUES (?, ?)`, m.ID, agencyID); err != nil {
 			return nil, err
+		}
+	}
+	// LR-7 and LR-54 again, where they cannot be raced: the "is it in another
+	// named agency" test above read outside this transaction, so a concurrent
+	// move of the same row could land between it and these inserts and leave the
+	// row in two. Whatever else happened, nothing this save added may end up in
+	// this agency and another.
+	for _, m := range delta.Added {
+		if m.Kind == "runner" {
+			continue
+		}
+		t, _ := agencyMemberTableFor(m.Kind)
+		var others int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM `+t.join+` WHERE `+t.col+` = ? AND agency_id <> ?`, m.ID, agencyID).Scan(&others); err != nil {
+			return nil, err
+		}
+		if others > 0 {
+			if agencyID == agencyid.Global {
+				return nil, fmt.Errorf("%w: %s %s belongs to another agency", ErrGlobalMixed, t.label, m.ID)
+			}
+			return nil, fmt.Errorf("%w: %s %s already belongs to another", ErrOneAgency, t.label, m.ID)
 		}
 	}
 	// LR-26 again, where it cannot be raced: the "is it in another agency" test
@@ -652,6 +763,19 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 		}
 		if left == 0 {
 			return nil, fmt.Errorf("%w: %s %s is in no other agency", ErrAgencyRequired, t.label, m.ID)
+		}
+		// A row several agencies shared before 2.3.0 is Global-owned with each of
+		// them as a member. Removing it from all but one settles it: the one that
+		// is left is its agency, so it becomes the owner.
+		if _, _, owned := ownedCatalog(t.catalog); owned && left == 1 {
+			var last string
+			if err := tx.QueryRowContext(ctx,
+				`SELECT agency_id FROM `+t.join+` WHERE `+t.col+` = ?`, m.ID).Scan(&last); err != nil {
+				return nil, err
+			}
+			if err := moveOwner(ctx, tx, t, m.ID, last); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

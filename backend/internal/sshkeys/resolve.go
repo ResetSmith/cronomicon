@@ -28,22 +28,6 @@ func resolveSigner(ctx context.Context, database *sql.DB, sealer *secrets.Sealer
 	return parseSigner(material)
 }
 
-// IDByLabel resolves an ssh_credentials LABEL to its row id — the dispatch-time
-// half of the CA rule that authored surfaces carry labels (CA-Q2) while the
-// executor's signer path keys on id. found is false (nil error) when no
-// credential carries that label.
-func IDByLabel(ctx context.Context, database *sql.DB, label string) (id string, found bool, err error) {
-	scanErr := database.QueryRowContext(ctx,
-		`SELECT id FROM ssh_credentials WHERE label = ? LIMIT 1`, label).Scan(&id)
-	if errors.Is(scanErr, sql.ErrNoRows) {
-		return "", false, nil
-	}
-	if scanErr != nil {
-		return "", false, fmt.Errorf("lookup ssh credential %q: %w", label, scanErr)
-	}
-	return id, true, nil
-}
-
 // ResolveMaterialByName returns the decrypted private-key PEM for the SSH
 // credential whose label matches name — the raw material behind an
 // CRONOMICON_KEY_<label> reference, for callers that must write a key FILE for remote

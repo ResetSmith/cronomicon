@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -29,7 +30,7 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/agencies", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateAgency)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAgency)))
 	mux.Handle("DELETE /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteAgency)))
-	mux.Handle("PUT /api/v1/scopes/{scopeId}/agency", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetScopeAgency)))
+	mux.Handle("PUT /api/v1/scopes/{scopeId}/agency", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetScopeAgency)))
 	// RB-22: the agency-scoped member setter — replace ONE AGENCY's member list.
 	// The inverse of the per-kind matrices below; it touches only rows with this
 	// agency_id, so edits to two different agencies cannot race by construction.
@@ -133,10 +134,12 @@ func (s *Server) handleListAgencyMembership(w http.ResponseWriter, r *http.Reque
 // requireEntityAgency, kept in one place so the re-home guard and the write guard
 // can never drift into disagreeing about who owns what (RF-1b).
 //
-// MemberScope is not represented: scope membership defines the grant expansion
-// rather than being governed by it, and its caller skips this path entirely.
+// A scope is here since 2.3.0 (LR-7): it has one agency, and is moved under the
+// same two-sided rule as the rest.
 func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, label string) {
 	switch kind {
+	case settings.MemberScope:
+		return auth.PermConfigureApp, "scope_agencies", "scope_id", "scope"
 	case settings.MemberSecret:
 		return auth.PermManageEnvVars, "secret_agencies", "secret_id", "secret"
 	case settings.MemberEnvVar:
@@ -151,23 +154,84 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 	}
 }
 
-// requireScopeMove gates a change to which agency a SCOPE belongs to (GC-6).
+// requireMove authorizes giving an entity to an agency: the caller needs the
+// kind's permission on the agency that has it today AND on the agency it is
+// going to (RF-1b). It is one rule for a scope, a secret, a variable and a key.
 //
-// A scope's agencies decide who can reach it: every grant on an agency expands
-// to that agency's scopes. So moving a scope is not a departmental act — an
-// administrator of one agency who could do it would pull another agency's scope
-// into their own grant, or push theirs out from under its owners. The setters
-// always SAID this was "the global configureApp gate"; the route gate was only
-// ever "configureApp somewhere". Until a scope has a single owner and the move
-// can be authorized on both sides, it is for a global administrator alone.
-func (s *Server) requireScopeMove(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
-	if id.GlobalAdmin(auth.PermConfigureApp) {
-		return true
+// A scope was the exception until 2.3.0 (GC-6: a global administrator only),
+// because a scope's agency decides which grants reach it and a scope could be
+// in several agencies, so "the agency that has it" had no single answer. With
+// one agency per scope (LR-7) it has, and the same two-sided rule that stops a
+// department taking another's secret stops it taking another's scope — or
+// pushing its own into an agency that did not ask for it. Global is a side like
+// any other: moving a row into or out of Global takes a global administrator.
+//
+// An entity in NO agency may be placed by a global administrator (the repair
+// path; see requireEntityAgencyOrRepair).
+func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	kind settings.MemberKind, entityID string, targets []string) bool {
+
+	perm, joinTable, joinCol, label := membershipAuthzFor(kind)
+	// The source side is EVERY agency the entity is in today, not any one of
+	// them. For a row with one agency that is the same thing. For a row from
+	// before 2.3.0 that two agencies share it is the difference between settling
+	// it together and one of them taking it: a move replaces the whole list, so
+	// an administrator of FIN alone naming FIN would remove it from TAX — and for
+	// a secret or a key that TAX owns, make FIN its owner.
+	rows, err := s.db.QueryContext(r.Context(),
+		`SELECT agency_id FROM `+joinTable+` WHERE `+joinCol+` = ? ORDER BY agency_id`, entityID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
 	}
-	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-		"a scope's agency decides who can reach it, so moving a scope between agencies "+
-			"is for an administrator of every agency")
-	return false
+	var current []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			rows.Close()
+			httpx.Fail500(w, s.log, "db_error", err)
+			return false
+		}
+		current = append(current, a)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	rows.Close()
+	if len(current) == 0 {
+		// In no agency (damage: the repair path), or no such entity (the
+		// handler's 404 or 422, for a global administrator).
+		if !s.requireEntityAgencyOrRepair(w, r, id, perm, joinTable, joinCol, entityID, label) {
+			return false
+		}
+	}
+	for _, aid := range current {
+		if id.CanAgency(perm, aid) {
+			continue
+		}
+		if aid == agencyid.Global {
+			s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
+				"this "+label+" is Global's, so only a global administrator may move it")
+			return false
+		}
+		msg := "you do not have " + perm + " on the agency that has this " + label
+		if len(current) > 1 {
+			msg = "this " + label + " is shared by several agencies, and you do not have " + perm +
+				" on all of them; moving it takes every one of them, or a global administrator"
+		}
+		s.denyEntityAgency(w, r, id, perm, aid, msg)
+		return false
+	}
+	for _, aid := range targets {
+		if !id.CanAgency(perm, aid) {
+			s.denyEntityAgency(w, r, id, perm, aid,
+				"you do not have "+perm+" on agency "+aid+", so you cannot move this "+label+" into it")
+			return false
+		}
+	}
+	return true
 }
 
 // handleSetAgencyMembership replaces the agency set of each posted entity
@@ -183,44 +247,19 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	// 🔴 RF-1b (the RBAC-fixes plan): re-homing IS an authorization act,
-	// and without this check every departmental gate added in v0.56.7 is a no-op.
+	// 🔴 RF-1b (the RBAC-fixes plan): re-homing IS an authorization act, and
+	// without this check every departmental gate is a no-op.
 	//
 	// The bypass, in three requests: a Tax admin is refused
 	// `PUT /ssh/credentials/k-fin` by requireEntityAgency; they move `k-fin` into
-	// Tax through THIS endpoint (it asked only for configureApp, which they hold);
-	// they re-issue the write and it succeeds. Same shape for secrets — re-home,
-	// then reveal — which is exactly the cross-department credential read RB-32
-	// exists to prevent.
-	//
-	// So the caller must hold the permission on BOTH sides of the move: on an
-	// agency that owns the entity today (you may only move what is yours) and on
-	// every agency they are moving it INTO (you may only place it where you have
-	// authority). An entity that is Global's is shared infrastructure, so claiming
-	// one is a global administrator's act — the same RB-Q14 rule that governs
-	// writing it — and so is the reverse: moving a row INTO Global makes it usable
-	// by every agency, and `CanAgency(perm, Global)` is the global-admin check.
-	//
-	// Scope membership is exempt: a scope's agencies define the grant expansion
-	// itself, so it is administered by the global configureApp gate above and not
-	// by the departmental axis it produces.
-	if kind == settings.MemberScope {
-		if !s.requireScopeMove(w, r, id) {
+	// Tax through THIS endpoint (it asked only for the permission somewhere,
+	// which they hold); they re-issue the write and it succeeds. Same shape for
+	// secrets — re-home, then reveal — which is exactly the cross-department
+	// credential read RB-32 exists to prevent. So the caller must hold the
+	// permission on BOTH sides of the move (requireMove).
+	for _, m := range body {
+		if !s.requireMove(w, r, id, kind, m.ID, m.AgencyIDs) {
 			return
-		}
-	} else {
-		perm, joinTable, joinCol, label := membershipAuthzFor(kind)
-		for _, m := range body {
-			if !s.requireEntityAgencyOrRepair(w, r, id, perm, joinTable, joinCol, m.ID, label) {
-				return
-			}
-			for _, aid := range m.AgencyIDs {
-				if !id.CanAgency(perm, aid) {
-					s.denyEntityAgency(w, r, id, perm, aid,
-						"you do not have "+perm+" on agency "+aid+", so you cannot move this "+label+" into it")
-					return
-				}
-			}
 		}
 	}
 	if err := settings.SetAgencyMembership(r.Context(), s.db, kind, body, id.Email); err != nil {
@@ -524,6 +563,18 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	// LR-7: a scope's agency is changed by whoever administers it on BOTH sides —
+	// where it is and where it is going (a null agencyId means Global, which is a
+	// global administrator's on either side). An unknown scope id falls through
+	// to the 404 below for a global administrator and is refused for anyone else,
+	// which is requireEntityAgency's ordinary answer for a row that is not there.
+	target := agencyid.Global
+	if inp.AgencyID != nil && strings.TrimSpace(*inp.AgencyID) != "" {
+		target = strings.TrimSpace(*inp.AgencyID)
+	}
+	if !s.requireMove(w, r, id, settings.MemberScope, sid, []string{target}) {
+		return
+	}
 	sc, err := settings.SetScopeAgency(r.Context(), s.db, sid, inp.AgencyID, id.Email)
 	if err != nil {
 		if errors.Is(err, settings.ErrUnknownAgency) {
@@ -587,34 +638,15 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	for _, m := range append(append([]settings.AgencyMemberRef{}, delta.Added...), delta.Removed...) {
-		if m.Kind == "scope" {
-			// GC-6: adding or removing a scope re-homes it, whichever side of
-			// the delta it lands on.
-			if !s.requireScopeMove(w, r, id) {
-				return
-			}
-			break
-		}
-	}
+	// A scope is authorized like every other kind since 2.3.0 (LR-7): an add is
+	// a move INTO this agency, and needs authority on where the entity is today
+	// and on this agency.
 	for _, m := range delta.Added {
-		if m.Kind == "scope" {
-			continue
-		}
-		perm, joinTable, joinCol, label := membershipAuthzFor(settings.MemberKind(m.Kind))
-		if !s.requireEntityAgency(w, r, id, perm, joinTable, joinCol, m.ID, label) {
-			return
-		}
-		if !id.CanAgency(perm, agencyID) {
-			s.denyEntityAgency(w, r, id, perm, agencyID,
-				"you do not have "+perm+" on this agency, so you cannot move this "+label+" into it")
+		if !s.requireMove(w, r, id, settings.MemberKind(m.Kind), m.ID, []string{agencyID}) {
 			return
 		}
 	}
 	for _, m := range delta.Removed {
-		if m.Kind == "scope" {
-			continue
-		}
 		perm, _, _, label := membershipAuthzFor(settings.MemberKind(m.Kind))
 		if !id.CanAgency(perm, agencyID) {
 			s.denyEntityAgency(w, r, id, perm, agencyID,
@@ -662,6 +694,11 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
 	case errors.Is(err, settings.ErrAgencyNameReserved):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "name_reserved", err.Error())
+	case errors.Is(err, settings.ErrOneAgency):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency", err.Error())
+	case errors.Is(err, settings.ErrOwnerConflict):
+		httpx.Fail(w, http.StatusConflict, "owner_conflict", err.Error()+
+			": rename or remove one of the two before moving this one")
 	default:
 		return false
 	}

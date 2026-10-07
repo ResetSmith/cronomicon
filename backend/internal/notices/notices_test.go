@@ -276,3 +276,82 @@ func TestRefresherRunsAtMostOncePerInterval(t *testing.T) {
 		t.Fatalf("orphaned after a refresh past the interval = %v, want the runner", got)
 	}
 }
+
+// The conditions Phase G2 can find in an installation that predates it: a scope
+// in two agencies, a job aimed at a host that is not its scope's, and a record
+// that names a key its owner may not use. Each goes to the agency that can
+// settle it and resolves itself when that is done.
+func TestG2ChecksFindAndResolveTheirConditions(t *testing.T) {
+	pool := open(t)
+	ctx := context.Background()
+	const ts = "2026-01-01T00:00:00Z"
+	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', ?), ('ag-tax', 'Tax', ?)`, ts, ts)
+	mustExec(t, pool, `INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-prod', 'cronomicon', ?), ('sc-two', 'legacy', 'cronomicon', ?)`, ts, ts)
+	mustExec(t, pool, `INSERT INTO scope_agencies VALUES ('sc-fin', 'ag-fin'), ('sc-two', 'ag-fin'), ('sc-two', 'ag-tax')`)
+	mustExec(t, pool, `INSERT INTO scope_hosts (scope_id, host) VALUES ('sc-fin', 'web01'), ('sc-two', 'web01')`)
+	job := func(uid, name, scope, host string) {
+		mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, target_host, concurrency_policy, enabled, synced_at)
+		                   VALUES (?, ?, 'git', 'bash', NULLIF(?, ''), NULLIF(?, ''), 'Allow', 1, 't')`, uid, name, scope, host)
+	}
+	job("u-ok", "inside", "fin-prod", "web01")
+	job("u-out", "outside", "fin-prod", "db99")
+	job("u-two", "outside-legacy", "legacy", "db99")
+	job("u-none", "unscoped", "", "db99")            // no scope: no membership to ask about
+	job("u-ghost", "ghost-scope", "no-such", "db99") // a scope the catalog does not hold: the same
+	job("u-all", "whole-scope", "fin-prod", "")
+	mustExec(t, pool, `INSERT INTO ssh_credentials (id, label, source, created_at, owner_agency) VALUES ('k-fin', 'fin_key', 'stored', ?, 'ag-fin'), ('k-glob', 'shared_key', 'stored', ?, 'global')`, ts, ts)
+	mustExec(t, pool, `INSERT INTO ssh_credential_agencies VALUES ('k-fin', 'ag-fin')`)
+	mustExec(t, pool, `INSERT INTO ssh_hosts (id, source, hostname, port, created_at, auth_credential_id, owner_agency) VALUES
+	                   ('h-bad', 'cronomicon', 'legacy01', 22, ?, 'k-fin', 'global'),
+	                   ('h-ok1', 'cronomicon', 'fin01', 22, ?, 'k-fin', 'ag-fin'),
+	                   ('h-ok2', 'cronomicon', 'tax01', 22, ?, 'k-glob', 'ag-tax')`, ts, ts, ts)
+	// An imported record's key is its scope's business (checked at write and at
+	// connect against the scope's agencies), not this check's.
+	mustExec(t, pool, `INSERT INTO ssh_hosts (id, source, scope_id, hostname, port, created_at, auth_credential_id) VALUES ('h-imp', 'cronomicon', 'sc-fin', 'web01', 22, ?, 'k-fin')`, ts)
+	mustExec(t, pool, `INSERT INTO bastions (id, name, hostname, address, port, created_at, auth_credential_id, owner_agency) VALUES ('b-bad', 'jump-tax', 'jump-tax', '10.0.0.1', 22, ?, 'k-fin', 'ag-tax')`, ts)
+
+	if err := notices.RunChecks(ctx, pool); err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	several := openOf(t, pool, notices.KindScopeSeveralAgencies)
+	if len(several) != 1 || several["sc-two"].AgencyID != "global" || !strings.Contains(several["sc-two"].Detail, "Finance, Tax") {
+		t.Errorf("scope_several_agencies = %v, want the legacy scope, under Global, naming both agencies", several)
+	}
+	targets := openOf(t, pool, notices.KindTargetHostOutsideScope)
+	if len(targets) != 2 {
+		t.Fatalf("target_host_outside_scope = %v, want the two jobs aimed outside their scope", targets)
+	}
+	if n := targets["u-out"]; n.AgencyID != "ag-fin" || !strings.Contains(n.Detail, "db99") || !strings.Contains(n.Detail, "fin-prod") || !strings.Contains(n.Detail, "Git") {
+		t.Errorf("the notice for Finance's job = %+v, want it filed under Finance, naming the host, the scope and where to fix a Git job", n)
+	}
+	if n := targets["u-two"]; n.AgencyID != "global" {
+		t.Errorf("a job in a scope of several agencies is filed under %q, want global", n.AgencyID)
+	}
+	keys := openOf(t, pool, notices.KindRecordKeyOutsideOwner)
+	if len(keys) != 2 {
+		t.Fatalf("record_key_outside_owner = %v, want the Global record and Tax's bastion that name Finance's key", keys)
+	}
+	if n := keys["ssh-host:h-bad"]; n.AgencyID != "global" || !strings.Contains(n.Detail, "legacy01") || !strings.Contains(n.Detail, "fin_key") {
+		t.Errorf("the host record's notice = %+v", n)
+	}
+	if n := keys["bastion:b-bad"]; n.AgencyID != "ag-tax" || !strings.Contains(n.Detail, "jump-tax") {
+		t.Errorf("the bastion's notice = %+v, want it filed under Tax, its owner", n)
+	}
+
+	// Settle each: the scope's agency is set, one job's host joins the scope and
+	// the other job is re-aimed, the record goes to the agency whose key it
+	// names, and the bastion is given a key that is Global's.
+	mustExec(t, pool, `DELETE FROM scope_agencies WHERE scope_id = 'sc-two' AND agency_id = 'ag-tax'`)
+	mustExec(t, pool, `INSERT INTO scope_hosts (scope_id, host) VALUES ('sc-fin', 'db99')`)
+	mustExec(t, pool, `UPDATE jobs SET target_host = 'web01' WHERE uid = 'u-two'`)
+	mustExec(t, pool, `UPDATE ssh_hosts SET owner_agency = 'ag-fin' WHERE id = 'h-bad'`)
+	mustExec(t, pool, `UPDATE bastions SET auth_credential_id = 'k-glob' WHERE id = 'b-bad'`)
+	if err := notices.RunChecks(ctx, pool); err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	for _, kind := range []string{notices.KindScopeSeveralAgencies, notices.KindTargetHostOutsideScope, notices.KindRecordKeyOutsideOwner} {
+		if got := openOf(t, pool, kind); len(got) != 0 {
+			t.Errorf("%s after everything was settled = %v", kind, got)
+		}
+	}
+}

@@ -43,6 +43,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/seed"
 	"github.com/ResetSmith/cronomicon/internal/settings"
+	"github.com/ResetSmith/cronomicon/internal/sshexec"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 	"github.com/ResetSmith/cronomicon/web"
 )
@@ -200,6 +201,7 @@ func run() error {
 	// an upgrade left for a person to settle is there on the first page load and
 	// in the log of the boot that created it. The same checks run again whenever
 	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
+	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
 	if err := notices.RunChecks(context.Background(), pool); err != nil {
 		logger.Warn("notices: boot checks failed", "err", err)
 	}

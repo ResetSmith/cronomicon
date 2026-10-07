@@ -166,8 +166,17 @@ func TestHostKeyGuardFollowsTheRecordsScope(t *testing.T) {
 	if g, err := hostKeyGuard(ctx, svc.db, "h-lone"); err != nil || !g.checked || len(g.agencies) != 1 || g.agencies[0] != "Global" {
 		t.Errorf("guard for a Global scope's host = %+v, %v", g, err)
 	}
-	if g, err := hostKeyGuard(ctx, svc.db, "h-manual"); err != nil || g.checked {
-		t.Errorf("guard for a manual record = %+v, %v; want unchecked", g, err)
+	// A record written by hand has an owner since 2.3.0 (LR-69) — Global, for one
+	// that predates it — and its key is checked against that owner (LR-72). It was
+	// unchecked while such a record belonged to nobody.
+	if g, err := hostKeyGuard(ctx, svc.db, "h-manual"); err != nil || !g.checked || g.scope != "" || len(g.agencies) != 1 || g.agencies[0] != "Global" {
+		t.Errorf("guard for a Global hand-written record = %+v, %v; want checked as Global", g, err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO ssh_hosts (id, hostname, port, source, created_at, owner_agency) VALUES ('h-fin-manual','jump01',22,'cronomicon',?,'ag:fin')`, now); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := hostKeyGuard(ctx, svc.db, "h-fin-manual"); err != nil || !g.checked || len(g.agencies) != 1 || g.agencies[0] != "finance" {
+		t.Errorf("guard for FIN's hand-written record = %+v, %v; want checked as finance", g, err)
 	}
 }
 
@@ -181,6 +190,8 @@ func TestARunDoesNotConnectWithAnotherAgencysKey(t *testing.T) {
 		// A manually authored record that names TAX's key, reachable from every scope.
 		`INSERT INTO ssh_hosts (id, hostname, address, port, username, auth_credential_id, source, created_at)
 		 VALUES ('h-db01','db01','192.0.2.50',22,'deploy','` + ids["tax"] + `','cronomicon','` + now + `')`,
+		// db01 is one of the scope's hosts (LR-71: a fixed target is a member).
+		`INSERT INTO scope_hosts (scope_id, host) VALUES ('sc:fin','db01')`,
 		`INSERT INTO jobs (name, run_type, command, concurrency_policy, synced_at) VALUES ('ledger','bash','true','Allow','` + now + `')`,
 		`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, agencies_json, created_at)
 		 VALUES ('run-fin','ledger','bash','fin-prod','db01','queued','tester','manual','ssh','["finance"]','` + now + `')`,
@@ -202,7 +213,7 @@ func TestARunDoesNotConnectWithAnotherAgencysKey(t *testing.T) {
 		t.Errorf("run status = %q, want failure (it must not have connected with TAX's key)", status)
 	}
 	logBytes, _ := os.ReadFile(filepath.Join(*svc.logDir.Load(), "run-fin.log"))
-	if !strings.Contains(string(logBytes), "not one this run's agency may use") {
+	if !strings.Contains(string(logBytes), "not one its agency may use") {
 		t.Errorf("the run log does not say why:\n%s", logBytes)
 	}
 }

@@ -83,6 +83,10 @@ func TestEveryGrantWriterIsInForceOnTheNextRequest(t *testing.T) {
 	do("move (matrix)", http.MethodPut, "/api/v1/scope-agencies", gRoot, `[{"id":"`+made.ID+`","agencyIds":["ag:FIN"]}]`, http.StatusOK)
 	want("after a matrix move", gFinAdmin, "fin-hosts", "fin-renamed")
 	want("after a matrix move", gTaxAdmin, "tax-hosts")
+	// The agency editor adds what is Global's (a scope in another agency is
+	// moved on the scope itself, LR-7), so the scope goes by way of Global.
+	do("move (to Global)", http.MethodPut, "/api/v1/scopes/"+made.ID+"/agency", gRoot, `{"agencyId":null}`, http.StatusOK)
+	want("after a move to Global", gFinAdmin, "fin-hosts")
 	do("move (members)", http.MethodPut, "/api/v1/agencies/ag:TAX/members", gRoot,
 		`{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"`+made.ID+`"}]}`, http.StatusOK)
 	want("after a members move", gTaxAdmin, "fin-renamed", "tax-hosts")

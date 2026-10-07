@@ -2054,11 +2054,17 @@ export interface paths {
         /**
          * Bind (or clear) a scope's agency
          * @description Operator overlay valid for both git- and cronomicon-source scopes (agency is a
-         *     deployment fact the GitOps repo does not own); survives re-sync. A null
-         *     agencyId returns the scope to **Global** (v2.3.0): its jobs then run as
-         *     Global's work, on a runner that serves Global, and no department's runner
-         *     claims them. 422 (code=unknown_agency) if the id is not in the catalog.
-         *     CSRF required.
+         *     deployment fact the GitOps repo does not own); survives re-sync. A scope
+         *     belongs to exactly ONE agency (v2.3.0, LR-7), and this sets it. A null
+         *     agencyId returns the scope to **Global**: its jobs then run as Global's
+         *     work, on a runner that serves Global, and no department's runner claims
+         *     them. 422 (code=unknown_agency) if the id is not in the catalog.
+         *
+         *     Moving a scope takes `configureApp` on BOTH sides: on the agency the scope
+         *     is in and on the one it is going to (a global administrator for Global,
+         *     on either side). Until v2.3.0 it took a global administrator. A scope
+         *     that predates v2.3.0 and is in several agencies is settled on the one
+         *     named. CSRF required.
          */
         put: operations["setScopeAgency"];
         post?: never;
@@ -3451,7 +3457,18 @@ export interface paths {
         /** List SSH target hosts */
         get: operations["listSshHosts"];
         put?: never;
-        /** Create an SSH host */
+        /**
+         * Create an SSH host
+         * @description Writes a host record by hand. It belongs to ONE agency (v2.3.0, LR-69):
+         *     the `ownerAgency` named, which the caller must hold `configureApp` on; with
+         *     none named, the caller's only agency; and **Global** for a global
+         *     administrator who names none. Only that agency's scopes, and Global's
+         *     records for every scope, resolve it. Until v2.3.0 a hand-written record
+         *     belonged to nobody, applied to every scope, and was a global
+         *     administrator's alone. The SSH key it names must be its owner's or
+         *     Global's (422 `unknown_credential`). A caller who holds `configureApp` on
+         *     several agencies and names none is refused 422 `agency_required`.
+         */
         post: operations["createSshHost"];
         delete?: never;
         options?: never;
@@ -3469,13 +3486,18 @@ export interface paths {
         get?: never;
         /**
          * Update an SSH host
-         * @description A record imported for a scope is changed by that scope's agency; a manually
-         *     authored record is a global administrator's. The SSH key named by
-         *     `authCredentialId` must be one the record's own agency may use — a key of
-         *     that agency or a shared one — or the write is refused 422
-         *     `unknown_credential`, with the same answer for another agency's key and
-         *     for an id that matches nothing (v2.2.3). The in-app SSH executor makes the
-         *     same check when it connects, for a key named by id or by name.
+         * @description A record imported for a scope is changed by that scope's agency; one
+         *     written by hand by its owner agency's administrators (v2.3.0; Global's by
+         *     a global administrator). Naming another `ownerAgency` on a hand-written
+         *     record gives it to that agency and needs `configureApp` there too; on an
+         *     imported record it is ignored. The SSH key named by `authCredentialId`
+         *     must be one the record's own agency may use — a key of that agency or one
+         *     that is Global's — or the write is refused 422 `unknown_credential`, with
+         *     the same answer for another agency's key and for an id that matches
+         *     nothing. Since v2.3.0 that binds a global administrator too, and is asked
+         *     when the key or the owner changes: a record that already named a key is
+         *     not refused over it on an unrelated edit. The same check is made when the
+         *     key is loaded to connect, for a key named by id or by name.
          */
         put: operations["updateSshHost"];
         post?: never;
@@ -3536,7 +3558,15 @@ export interface paths {
         /** List SSH bastions */
         get: operations["listSshBastions"];
         put?: never;
-        /** Create a bastion */
+        /**
+         * Create a bastion
+         * @description A bastion belongs to ONE agency (v2.3.0, LR-69): the `ownerAgency` named,
+         *     which the caller must hold `configureApp` on; with none named, the
+         *     caller's only agency; and **Global** for a global administrator who names
+         *     none (422 `agency_required` for a caller who holds `configureApp` on
+         *     several and names none). Until v2.3.0 every bastion was a global
+         *     administrator's.
+         */
         post: operations["createSshBastion"];
         delete?: never;
         options?: never;
@@ -3552,7 +3582,13 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update a bastion */
+        /**
+         * Update a bastion
+         * @description `configureApp` on the bastion's owner agency (v2.3.0; a global
+         *     administrator for Global's, as every bastion was before). See
+         *     SshBastionInput.ownerAgency for giving it to another agency and for the
+         *     key rule (422 `unknown_credential`).
+         */
         put: operations["updateSshBastion"];
         post?: never;
         /** Delete a bastion */
@@ -3783,19 +3819,26 @@ export interface paths {
          *     promise from an agency-shaped editor.
          *
          *     Adding an entity is a re-homing act and carries the RF-1b guard per added
-         *     entity: the caller needs the kind's permission on an agency that owns the
-         *     entity today (unowned entities are unrestricted-only, RB-Q14) AND on this
-         *     agency. Removing needs the permission on this agency alone. Scopes are
-         *     governed by the route's ConfigureApp gate (their membership defines the
-         *     grant expansion); a scope moving in or out signs out all other operators.
+         *     entity: the caller needs the kind's permission on the agency that has the
+         *     entity today AND on this agency. Removing needs the permission on this
+         *     agency alone. A scope follows the same rule as the other kinds since
+         *     v2.3.0; no one is signed out.
+         *
+         *     A scope, secret, variable and SSH key belongs to exactly ONE agency
+         *     (v2.3.0, LR-7, LR-54), so this route adds only what is **Global's**: the
+         *     add takes it out of Global and, for a secret, variable or key, makes this
+         *     agency its owner. Adding one that is another agency's is a move, made on
+         *     the entity itself (`PUT /{kind}-agencies`, `PUT /scopes/{scopeId}/agency`),
+         *     and is refused here with 422 `one_agency`. A runner is not held to that.
          *
          *     Refuses removing an entity from the agency that OWNS it (422
-         *     `owner_removal`, RA-15) — transfer ownership first. Since v2.3.0 it also
-         *     refuses a removal that would leave an entity in no agency at all (422
-         *     `agency_required`: move it to another agency, or to Global, instead), and
-         *     adding to Global an entity that is in a named agency (422 `global_mixed`).
-         *     Adding to a named agency an entity that is Global's moves it out of Global.
-         *     A no-op save writes no audit row. Returns the resulting AgencyDetail.
+         *     `owner_removal`) — move it instead; a removal that would leave an entity
+         *     in no agency at all (422 `agency_required`); adding to Global an entity
+         *     that is in a named agency (422 `global_mixed`); and an add that would give
+         *     this agency two rows of one name (409 `owner_conflict`). A row from before
+         *     v2.3.0 that several agencies share may be removed from all but one, and
+         *     the one that is left becomes its owner. A no-op save writes no audit row.
+         *     Returns the resulting AgencyDetail.
          */
         put: operations["setAgencyMembers"];
         post?: never;
@@ -4705,6 +4748,7 @@ export interface components {
              *     being refused.
              */
             scope: string;
+            /** @description Pin the job to one host. It must be one of the hosts of the job's scope (422 `scope_membership`, v2.3.0, LR-71): a job runs only against hosts of its own scope. A scope that lists no hosts at all has no membership to check. A Git-source job that names a host outside its scope syncs with a warning and raises a `target_host_outside_scope` notice; it cannot be started by hand or by a token, and a scheduled run fails for that host wherever the server resolves the host itself. */
             targetHost?: string;
             /**
              * @description RP-14 — environment-variable NAMES (never values, D1) the runner agent
@@ -6334,6 +6378,18 @@ export interface components {
              *     - `retired_runner_pin` — a runner-tag pin that could not be turned
              *       into a scope binding (see `GET /scope-binding-notices`). Subject:
              *       the job's name.
+             *     - `scope_several_agencies` — a scope in more than one agency, from
+             *       before 2.3.0. Subject: the scope's id. Settled by setting its
+             *       agency.
+             *     - `target_host_outside_scope` — a job whose fixed target host is not
+             *       one of its scope's hosts. Subject: the job's uid. Filed under the
+             *       scope's agency.
+             *     - `record_key_outside_owner` — a hand-written host record or a
+             *       bastion that names an SSH key its owner may not use, by id or (a
+             *       bastion) by name. A bastion in that state fails every run routed
+             *       through it; a host record connects only for runs of the key's own
+             *       agency. Subject `ssh-host:<id>` or `bastion:<id>`. Filed under the
+             *       record's owner.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -6461,7 +6517,7 @@ export interface components {
             hosts?: string[];
             /** @description Optional raw Ansible inventory (INI format) provided during creation/update. */
             rawInventory?: string;
-            /** @description Create only (GC-6, 2.2.2): the agency the new scope belongs to. A caller whose configureApp grant is agency-scoped may omit it when they hold the permission on exactly one agency (the scope inherits it) and must name one they hold otherwise (422 `agency_required`, 403 for an agency that is not theirs). A global administrator may omit it to create a scope no agency owns. Ignored on update — moving a scope between agencies is a separate, global-administrator act. */
+            /** @description Create only (GC-6, 2.2.2): the ONE agency the new scope belongs to (more than one is 422 `one_agency`, v2.3.0). A caller whose configureApp grant is agency-scoped may omit it when they hold the permission on exactly one agency (the scope inherits it) and must name one they hold otherwise (422 `agency_required`, 403 for an agency that is not theirs). A global administrator may omit it to create a scope that is Global's. Ignored on update — a scope is moved with `PUT /scopes/{scopeId}/agency`. */
             agencyIds?: string[];
         };
         ReferenceBinding: {
@@ -6653,7 +6709,7 @@ export interface components {
             value: string;
             scope: string;
             description?: string;
-            /** @description Agencies to place the new variable in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /env-var-agencies. */
+            /** @description The ONE agency that owns the new variable, applied at CREATE only (a list for compatibility; more than one id is 422 `one_agency` since v2.3.0, LR-54). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure (it is Global's). The row is moved to another agency afterwards via PUT /env-var-agencies. */
             agencyIds?: string[];
         };
         /** @description Run aggregates over a window (SL-E). */
@@ -6857,7 +6913,7 @@ export interface components {
             value?: string;
             /** @description Required when source=vault. */
             vaultPath?: string;
-            /** @description Agencies to place the new secret in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /secret-agencies. */
+            /** @description The ONE agency that owns the new secret, applied at CREATE only (a list for compatibility; more than one id is 422 `one_agency` since v2.3.0, LR-54). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure (it is Global's). The row is moved to another agency afterwards via PUT /secret-agencies. */
             agencyIds?: string[];
         };
         /**
@@ -7279,12 +7335,19 @@ export interface components {
             id: string;
         };
         /**
-         * @description One entity's agency set (migration 670). `id` is the scope / secret /
-         *     env-var / ssh-credential id, depending on the endpoint. The set is never
-         *     empty since v2.3.0: a row that belongs to no department belongs to
-         *     **Global** (`global`), and Global is never listed beside another agency.
-         *     On a write, an empty set is refused (422 `agency_required`) and so is
-         *     Global mixed with a named agency (422 `global_mixed`).
+         * @description One entity's agency (migration 670). `id` is the scope / secret / env-var /
+         *     ssh-credential id, depending on the endpoint. Since v2.3.0 each belongs to
+         *     exactly ONE agency, or to **Global** (`global`); the list holds several
+         *     only for a row that predates v2.3.0 and has not been settled.
+         *
+         *     A write names exactly one id. It MOVES the entity: for a secret, a variable
+         *     or an SSH key the agency is the owner, and the owner moves with it. The
+         *     caller needs the kind's permission on the agency the entity is in and on
+         *     the one named (a global administrator for Global, on either side).
+         *     Refused: an empty list (422 `agency_required`), Global beside an agency
+         *     (422 `global_mixed`), more than one agency (422 `one_agency`), and a move
+         *     onto a name the target agency already owns in that scope (409
+         *     `owner_conflict`).
          */
         AgencyMembership: {
             id: string;
@@ -8048,6 +8111,10 @@ export interface components {
             readonly hostKeyFingerprint?: string;
             /** @description Algorithm of the pinned host key (e.g. ssh-ed25519). Absent when unpinned. */
             readonly hostKeyType?: string;
+            /** @description The scope a record was imported for; null on one written by hand (v2.3.0). */
+            readonly scopeId?: string | null;
+            /** @description The name of `ownerAgency`. */
+            readonly ownerAgencyName?: string;
         } & components["schemas"]["AuditFields"];
         SshHostInput: {
             hostname: string;
@@ -8063,6 +8130,8 @@ export interface components {
             /** @description First-class SSH key credential id; resolved before authKeyEnvVar. */
             authCredentialId?: string | null;
             user?: string;
+            /** @description The id of the agency the record belongs to (v2.3.0, LR-69). On a record written by hand it is settable: at create, and later to give the record to another agency. On a record imported for a scope it is READ-ONLY and reports that scope's agency. For a scope that predates v2.3.0 and is still in several agencies it reports `global`, though each of those agencies' administrators may edit the record, as they may the scope. A scope resolves a hand-written record only when the record is its own agency's or Global's, and a record routes only through a bastion of its own agency or Global's. */
+            ownerAgency?: string;
         };
         SshBastion: components["schemas"]["SshBastionInput"] & {
             /**
@@ -8083,6 +8152,8 @@ export interface components {
             readonly hostKeyFingerprint?: string;
             /** @description Algorithm of the pinned bastion host key. Absent when unpinned. */
             readonly hostKeyType?: string;
+            /** @description The name of `ownerAgency`. */
+            readonly ownerAgencyName?: string;
         } & components["schemas"]["AuditFields"];
         SshBastionInput: {
             name: string;
@@ -8094,6 +8165,8 @@ export interface components {
             /** @description First-class SSH key credential id; resolved before authKeyEnvVar. */
             authCredentialId?: string | null;
             zone?: string;
+            /** @description The id of the agency the bastion belongs to (v2.3.0, LR-69): the one named at create (the caller's only agency, or Global for a global administrator, when none is), changed later by naming another, with `configureApp` on both. Its administrators write it. A host routes through it only when the host record is the same agency's (any agency's, for a Global bastion), and the key it names must be its owner's or Global's. */
+            ownerAgency?: string;
         };
         /** @description Outcome of a "Test connection" probe (POST .../test). */
         SshTestResult: {
@@ -8127,7 +8200,7 @@ export interface components {
             material?: string;
             /** @description Vault path#field holding the key. Required when source=vault. */
             vaultRef?: string;
-            /** @description Agencies to place the new SSH key in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /ssh-credential-agencies. */
+            /** @description The ONE agency that owns the new SSH key, applied at CREATE only (a list for compatibility; more than one id is 422 `one_agency` since v2.3.0, LR-54). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure (it is Global's). The row is moved to another agency afterwards via PUT /ssh-credential-agencies. */
             agencyIds?: string[];
         };
         SshCredential: {
@@ -8816,9 +8889,15 @@ export interface operations {
                      * @description Target a single host instead of a scope fan-out (EX.5). Defaults to
                      *     the job's declared host. Legacy single-host form; prefer targetHosts
                      *     for one-or-many selection (equivalent to a one-element targetHosts).
-                     *     A host that differs from the job's own must be a member of the run's
-                     *     scope, or the request is refused 422 `scope_membership` (v2.2.3);
-                     *     a caller who may run unbound jobs is not held to that.
+                     *     The host a run ends up with — this one, or the job's own — must
+                     *     be a member of the run's scope, or the request is refused 422
+                     *     `scope_membership`, for every caller (v2.3.0, LR-71; v2.2.3 held
+                     *     only a restricted caller's override to it). Not asked when the
+                     *     run names `targetHosts` or `targetGroups`, which supersede it and
+                     *     are checked themselves. A job with no scope has no membership to
+                     *     check and resolves its host against Global's host records; nor
+                     *     has a scope that lists no hosts at all (they live in a runner's
+                     *     own inventory).
                      */
                     targetHost?: string;
                     /**

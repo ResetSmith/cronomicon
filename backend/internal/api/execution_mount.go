@@ -28,7 +28,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sortparam"
-	"github.com/ResetSmith/cronomicon/internal/sshkeys"
 	"github.com/ResetSmith/cronomicon/internal/tagutil"
 	"github.com/ResetSmith/cronomicon/internal/watchspec"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
@@ -1128,28 +1127,28 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		}
 	}
 
-	// GC follow-up (v2.2.3) — the per-run targetHost override is held to the
-	// scope's host list, as targetHosts[] always was. The contract calls the
-	// single-host form "a one-element targetHosts", but only the list was
-	// checked: the single host was copied onto the run as given, so anyone who
-	// may trigger a job in a scope could send its body to ANY manually authored
-	// host record by name, with that record's key. Same 422, same code.
-	//
-	// Narrow in the same two ways as the check above. It applies to the
-	// OVERRIDE, not to the host the job itself declares (that was authored
-	// against the scope; validating it here would refuse configurations that are
-	// already live, and is LR-71's to do in 2.3.0). And an actor who may run
-	// unbound already reaches every host, so there is nothing to enforce.
-	if body.TargetHost != "" && scope != "" && (jr.Host == nil || body.TargetHost != *jr.Host) &&
-		!id.CanUnbound(auth.PermTriggerJobs) {
-		members, err := execspec.ScopeHosts(r.Context(), s.db, scope)
+	// LR-71 — a run's single target host is a member of its scope, whoever asks
+	// and wherever the name came from: the per-run override, or the host the job
+	// itself declares. v2.2.3 held only the override to it, and only for a
+	// restricted actor; the job's own target_host was never checked anywhere, so
+	// a job in one agency's scope could be authored against any host record at
+	// all. The control is execspec.ResolveTargets, which every producer's run
+	// resolves through and which fails the host there. This is the same question
+	// asked early, so a click gets a 422 that says so instead of a run that is
+	// enqueued and then fails. A job with no scope, one whose scope the catalog
+	// does not hold, or one whose scope lists no hosts at all (they live in a
+	// runner's own inventory) has no membership to ask about. And a run that
+	// names a host subset or groups does not use the single host: the subset
+	// supersedes it below, and is checked there.
+	if targetHost != "" && len(body.TargetHosts) == 0 && len(body.TargetGroups) == 0 {
+		in, known, err := execspec.HostInScope(r.Context(), s.db, scope, targetHost)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if !slices.Contains(members, body.TargetHost) {
+		if known && !in {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "scope_membership",
-				"host "+body.TargetHost+" is not a member of scope "+scope)
+				"host "+targetHost+" is not a member of scope "+scope)
 			return
 		}
 	}
@@ -1298,19 +1297,23 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 					"selecting an SSH credential for a run requires the Manage Env Vars permission")
 				return
 			}
-			credID, found, err := sshkeys.IDByLabel(r.Context(), s.db, body.SSHCredential)
-			if err != nil {
+			// LR-73: the key of that label AS THIS RUN WILL SEE IT — its agency's
+			// own before Global's, never another agency's — which is the row the
+			// executor resolves. It was `LIMIT 1` over every agency's keys, so the
+			// gate below could be asked about a different row than the one used,
+			// and the answer told a caller whether another agency held the label.
+			credID, found, err := runref.LookupEntityID(r.Context(), s.db, runref.KindKey, body.SSHCredential, scope, runAgencies)
+			if err != nil && !errors.Is(err, runref.ErrAmbiguousReference) {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return
 			}
-			if !found {
+			if err != nil || !found {
 				httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
-					"no SSH credential with label "+body.SSHCredential)
+					"no SSH credential with label "+body.SSHCredential+" is usable by this run's agency")
 				return
 			}
-			// RB-32 (RF-4): departmental half — the key's owning agency, RB-Q14 for
-			// unmembered keys. This route already discloses label existence above, so
-			// unlike the reference loop there is no oracle to protect.
+			// RB-32 (RF-4): departmental half — the caller's own authority over
+			// the key's agency (a global administrator for one of Global's).
 			if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars,
 				"ssh_credential_agencies", "credential_id", credID, "SSH key") {
 				return

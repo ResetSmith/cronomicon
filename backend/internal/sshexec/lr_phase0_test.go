@@ -2,11 +2,8 @@ package sshexec
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
-
-	"github.com/ResetSmith/cronomicon/internal/execspec"
 )
 
 // LR Phase 0 — today's behaviour, pinned before Phase B changes it.
@@ -61,57 +58,5 @@ func TestLR0_TheSSHPoolClaimsAnAgencyTaggedRunWithNoAgencyCheck(t *testing.T) {
 	_ = pool.QueryRow(`SELECT status FROM runs WHERE id='run-fin'`).Scan(&status)
 	if status != "running" {
 		t.Errorf("status = %q, want running", status)
-	}
-}
-
-// A scope in one agency still RESOLVES a manually authored host record that
-// names another agency's key: execspec.HostByName filters imported rows by
-// scope and takes a manual row (scope_id NULL) for every scope, and never
-// reads the run's agency. This is the §2.4 item "Host records and keys".
-//
-// What it can no longer do is connect with that key. v2.2.3 closed that half:
-// the SSH executor loads every key through the agency-checked resolver with the
-// run's agencies (keyGuard), so the key below is refused for a finance run.
-//
-// Phase G2 inverts the half pinned here: host records gain an owner and
-// HostByName an owner filter (LR-69, LR-70), so a scope resolves only its own
-// agency's records and Global's.
-func TestLR0_AScopeResolvesAManualHostRecordThatNamesAnotherAgencysKey(t *testing.T) {
-	svc, pool := probeFixture(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	_, taxPEM := newKey(t)
-	credID := createCred(t, svc, "taxkey", taxPEM)
-	for _, q := range []string{
-		`INSERT INTO agencies (id,name,created_at) VALUES ('ag:fin','finance','` + now + `'), ('ag:tax','tax','` + now + `')`,
-		`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc:fin','fin-prod','cronomicon','` + now + `')`,
-		`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc:fin','ag:fin')`,
-		// The key is TAX's, by owner and by membership.
-		`UPDATE ssh_credentials SET owner_agency='ag:tax' WHERE id='` + credID + `'`,
-		`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('` + credID + `','ag:tax')`,
-		// A manual record: source cronomicon, no scope. It names TAX's key.
-		`INSERT INTO ssh_hosts (id, hostname, address, port, username, auth_credential_id, source, created_at)
-		 VALUES ('h-db01','db01','192.0.2.50',22,'deploy','` + credID + `','cronomicon','` + now + `')`,
-	} {
-		if _, err := pool.Exec(q); err != nil {
-			t.Fatalf("seed: %v\n%s", err, q)
-		}
-	}
-
-	// FIN's scope resolves the record and is handed TAX's credential id.
-	targets, err := execspec.ResolveTargets(ctx, pool, "fin-prod", "db01", nil)
-	if err != nil || len(targets) != 1 {
-		t.Fatalf("ResolveTargets = %v, %v; want one target", targets, err)
-	}
-	if targets[0].AuthCredentialID != credID {
-		t.Fatalf("PIN: FIN's scope did not resolve the record that names TAX's key (credential %q). "+
-			"If HostByName now filters by owner (LR-70), replace this pin with its inverse.", targets[0].AuthCredentialID)
-	}
-
-	// Since v2.2.3 a finance run cannot connect with it.
-	fin := keyGuard{checked: true, scope: "fin-prod", agencies: []string{"finance"}}
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, targets[0].AuthCredentialID, "", fin); !errors.Is(err, errKeyNotUsable) {
-		t.Errorf("a finance run loaded TAX's key through the record (err = %v); the v2.2.3 key guard is gone", err)
 	}
 }

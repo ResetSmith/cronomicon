@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"io"
 	"log/slog"
@@ -396,7 +395,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 
 	// ── SSH Hosts (writes + test: ConfigureApp, PP-B1) ──────────────────────────
 	mux.Handle("GET /api/v1/ssh/hosts", s.auth.RequireSession(http.HandlerFunc(s.handleListSshHosts)))
-	mux.Handle("POST /api/v1/ssh/hosts", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateSshHost)))
+	mux.Handle("POST /api/v1/ssh/hosts", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateSshHost)))
 	mux.Handle("PUT /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleUpdateSshHost))))
 	mux.Handle("DELETE /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleDeleteSshHost))))
 	mux.Handle("POST /api/v1/ssh/hosts/{hostId}/test", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleTestSshHost))))
@@ -404,11 +403,13 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 
 	// ── Bastions (writes + test: ConfigureApp, PP-B1) ───────────────────────────
 	mux.Handle("GET /api/v1/ssh/bastions", s.auth.RequireSession(http.HandlerFunc(s.handleListBastions)))
-	mux.Handle("POST /api/v1/ssh/bastions", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateBastion)))
-	mux.Handle("PUT /api/v1/ssh/bastions/{bastionId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateBastion)))
-	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteBastion)))
-	mux.Handle("POST /api/v1/ssh/bastions/{bastionId}/test", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleTestBastion)))
-	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}/host-key", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleClearBastionHostKey)))
+	// LR-69: a bastion belongs to an agency. Its administrators write it; Global's
+	// are a global administrator's, as every bastion was until 2.3.0.
+	mux.Handle("POST /api/v1/ssh/bastions", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateBastion)))
+	mux.Handle("PUT /api/v1/ssh/bastions/{bastionId}", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleUpdateBastion))))
+	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleDeleteBastion))))
+	mux.Handle("POST /api/v1/ssh/bastions/{bastionId}/test", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleTestBastion))))
+	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}/host-key", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleClearBastionHostKey))))
 
 	// ── SSH Key Credentials (writes: ConfigureApp, SK-D6; first-class system SSH
 	// keys — ssh-keys-update.md SK.8). Private key material is never returned. ────
@@ -1415,6 +1416,17 @@ func (s *Server) handleCreateSshHost(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	// LR-69: a hand-written record is born in an agency its author administers —
+	// the one named, their only one, or Global for a global administrator who
+	// names none — and names only a key that agency may use (LR-72).
+	owner, ok := s.requireRecordOwnerChoice(w, r, id, inp.OwnerAgency, "host record")
+	if !ok {
+		return
+	}
+	inp.OwnerAgency = owner
+	if !s.requireKeyUsableBy(w, r, inp.AuthCredentialID, []string{owner}, "host record") {
+		return
+	}
 	h, err := settings.CreateSshHost(r.Context(), s.db, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "create_failed", err)
@@ -1435,7 +1447,7 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	if !s.requireHostKeyUsable(w, r, id, hid, inp.AuthCredentialID) {
+	if !s.requireHostWriteAllowed(w, r, id, hid, inp) {
 		return
 	}
 	h, err := settings.UpdateSshHost(r.Context(), s.db, hid, *inp, id.Email)
@@ -1450,65 +1462,156 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, h)
 }
 
-// requireHostKeyUsable refuses a host-record write that names an SSH credential
-// the record's own agency may not use.
+// requireHostWriteAllowed is the in-handler half of a host-record update, after
+// requireHostOwner has established that the caller administers the record as it
+// stands. Two things remain (LR-69, LR-72):
 //
-// requireHostOwner lets the administrator of a scope's agency edit the host
-// records imported for that scope, and the write took any credential id — ids
-// are listed to every session — so an administrator of one agency could point
-// their host at another agency's key and connect with it. The rule is the one a
-// run is held to (runref.KeyIDUsable): the key is shared (it belongs to no
-// agency) or belongs to one of the scope's agencies. A global administrator is
-// not bound by it; nor is a record with no scope, which only they can write.
+//   - Giving a hand-written record to ANOTHER agency needs the permission there
+//     too, like every move. An imported record's owner is its scope's and cannot
+//     be set here.
+//   - The SSH key the record names must be one its owner may use: the owner's
+//     own, or Global's. Credential ids are listed to every session, so without
+//     this an administrator could point their host at another agency's key.
+//     Checked when the key or the owner CHANGES; a record whose key was already
+//     set is not refused over it on an unrelated edit (an upgraded installation
+//     may hold such records, and the connect-time check is what stops them).
 //
-// This is the authoring-time half. The key a host names by NAME, in its scope's
-// inventory, cannot be judged here — a name resolves at connect time — so the
-// control that actually closes the hole is the same check made by the SSH
-// executor when it loads the key (sshexec.keyGuard).
-//
-// An unknown credential id is a 422 here; it used to surface as a foreign-key
-// failure and a 500.
-func (s *Server) requireHostKeyUsable(w http.ResponseWriter, r *http.Request, id auth.Identity, hostID string, credentialID *string) bool {
+// The key a host names by NAME, in its scope's inventory, cannot be judged here
+// — a name resolves at connect time — so the control that closes the hole is the
+// same check made when the key is loaded (sshexec.keyGuard).
+func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request, id auth.Identity, hostID string, inp *settings.SshHostInput) bool {
+	// Read only what the decision needs: the record's scope, owner and key.
+	var cur struct {
+		ScopeID, AuthCredentialID *string
+		OwnerAgency               string
+	}
+	err := s.db.QueryRowContext(r.Context(),
+		`SELECT scope_id, owner_agency, auth_credential_id FROM ssh_hosts WHERE id = ?`, hostID).
+		Scan(&cur.ScopeID, &cur.OwnerAgency, &cur.AuthCredentialID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true // the handler's 404
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if cur.ScopeID != nil && *cur.ScopeID == "" {
+		cur.ScopeID = nil
+	}
+	owner, ownerChanged := cur.OwnerAgency, false
+	if cur.ScopeID != nil {
+		inp.OwnerAgency = "" // the scope decides
+	} else if inp.OwnerAgency != "" && inp.OwnerAgency != cur.OwnerAgency {
+		if !s.requireKnownAgency(w, r, inp.OwnerAgency) {
+			return false
+		}
+		if !id.CanAgency(auth.PermConfigureApp, inp.OwnerAgency) {
+			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, inp.OwnerAgency,
+				"you do not have configureApp on agency "+inp.OwnerAgency+", so you cannot give this host record to it")
+			return false
+		}
+		owner, ownerChanged = inp.OwnerAgency, true
+	}
+	keyChanged := derefStr(inp.AuthCredentialID) != derefStr(cur.AuthCredentialID)
+	if !keyChanged && !ownerChanged {
+		return true
+	}
+	// An imported record of a scope in several agencies (the state from before
+	// 2.3.0) may use a key of any of them, as its runs may.
+	owners := []string{owner}
+	if cur.ScopeID != nil {
+		if owners, err = s.scopeAgencyIDs(r.Context(), *cur.ScopeID); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return false
+		}
+	}
+	return s.requireKeyUsableBy(w, r, inp.AuthCredentialID, owners, "host record")
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+// scopeAgencyIDs returns the ids of the agencies a scope (by id) belongs to.
+func (s *Server) scopeAgencyIDs(ctx context.Context, scopeID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT agency_id FROM scope_agencies WHERE scope_id = ? ORDER BY agency_id`, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// requireKnownAgency answers 422 unknown_agency for an id that names no agency.
+func (s *Server) requireKnownAgency(w http.ResponseWriter, r *http.Request, agencyID string) bool {
+	var n int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, agencyID).Scan(&n); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if n == 0 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "agency "+agencyID+" does not exist")
+		return false
+	}
+	return true
+}
+
+// requireRecordOwnerChoice settles the owner of a NEW host record or bastion
+// (LR-69), by the rule every creation follows: the agency named if the caller
+// administers it; with none named, the caller's only agency; and Global for a
+// global administrator who names none.
+func (s *Server) requireRecordOwnerChoice(w http.ResponseWriter, r *http.Request, id auth.Identity, requested, label string) (string, bool) {
+	var named []string
+	if requested != "" {
+		named = []string{requested}
+	}
+	ids, ok := s.requireCreationAgencies(w, r, id, auth.PermConfigureApp, named, label)
+	if !ok {
+		return "", false
+	}
+	return ids[0], true
+}
+
+// requireKeyUsableBy refuses a record that names an SSH credential its owner
+// may not use (LR-72): the key must belong to one of ownerIDs, or to Global.
+// One answer for "no such key" and "another agency's key" — the refusal must
+// not confirm which keys another agency holds. It binds a global administrator
+// too: a Global record that named an agency's key would work for that agency's
+// runs and fail for every other's, which is not what a Global record is.
+func (s *Server) requireKeyUsableBy(w http.ResponseWriter, r *http.Request, credentialID *string, ownerIDs []string, label string) bool {
 	if credentialID == nil || *credentialID == "" {
 		return true
 	}
-	var exists int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM ssh_credentials WHERE id = ?`, *credentialID).Scan(&exists); err != nil {
+	names, err := s.agencyNames(r.Context())
+	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
-	if id.GlobalAdmin(auth.PermConfigureApp) {
-		if exists == 0 {
-			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_credential", "no SSH key has that id")
-			return false
+	var owners []string
+	for _, o := range ownerIDs {
+		if n := names[o]; n != "" {
+			owners = append(owners, n)
 		}
-		return true
 	}
-	var scope sql.NullString
-	err := s.db.QueryRowContext(r.Context(),
-		`SELECT s.name FROM ssh_hosts h JOIN scopes s ON s.id = h.scope_id WHERE h.id = ?`, hostID).Scan(&scope)
-	if errors.Is(err, sql.ErrNoRows) {
-		return true // no such host, or one with no scope: the handler's 404, or requireHostOwner's refusal
-	}
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return false
-	}
-	agencies, err := execspec.ScopeAgencies(r.Context(), s.db, scope.String)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return false
-	}
-	usable, err := runref.KeyIDUsable(r.Context(), s.db, *credentialID, agencies)
+	usable, err := runref.KeyIDUsable(r.Context(), s.db, *credentialID, owners)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
 	if !usable {
-		// One answer for "no such key" and "another agency's key": the refusal
-		// must not confirm which keys another agency holds.
 		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_credential",
-			"no SSH key with that id is usable by this host's agency — choose a key of the scope's own agency, or a shared one")
+			"no SSH key with that id is usable by this "+label+"'s agency — choose a key of its own agency, or one that is Global's")
 		return false
 	}
 	return true
@@ -1544,12 +1647,14 @@ func decodeSshHostInput(r *http.Request) (*settings.SshHostInput, error) {
 		AuthKeyEnvVar    *string `json:"authKeyEnvVar"`
 		AuthCredentialID *string `json:"authCredentialId"`
 		User             *string `json:"user"`
+		OwnerAgency      string  `json:"ownerAgency"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, err
 	}
 	return &settings.SshHostInput{
-		Hostname: body.Hostname, Address: body.Address, Port: body.Port,
+		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
+		Hostname:    body.Hostname, Address: body.Address, Port: body.Port,
 		OS: body.OS, Via: body.Via, AuthKeyEnvVar: body.AuthKeyEnvVar,
 		AuthCredentialID: body.AuthCredentialID, User: body.User,
 	}, nil
@@ -1657,6 +1762,14 @@ func (s *Server) handleCreateBastion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	owner, ok := s.requireRecordOwnerChoice(w, r, id, inp.OwnerAgency, "bastion")
+	if !ok {
+		return
+	}
+	inp.OwnerAgency = owner
+	if !s.requireKeyUsableBy(w, r, inp.AuthCredentialID, []string{owner}, "bastion") {
+		return
+	}
 	b, err := settings.CreateBastion(r.Context(), s.db, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "create_failed", err)
@@ -1676,6 +1789,38 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
+	}
+	// requireBastionOwner let the caller in on the bastion as it stands. Giving
+	// it to another agency needs the permission there too, and its key must be
+	// one its (new) owner may use — checked when either changes (LR-72).
+	var cur struct {
+		OwnerAgency      string
+		AuthCredentialID *string
+	}
+	gerr := s.db.QueryRowContext(r.Context(),
+		`SELECT owner_agency, auth_credential_id FROM bastions WHERE id = ?`, bid).Scan(&cur.OwnerAgency, &cur.AuthCredentialID)
+	if gerr != nil && !errors.Is(gerr, sql.ErrNoRows) {
+		httpx.Fail500(w, s.log, "db_error", gerr)
+		return
+	}
+	if gerr == nil {
+		owner, ownerChanged := cur.OwnerAgency, false
+		if inp.OwnerAgency != "" && inp.OwnerAgency != cur.OwnerAgency {
+			if !s.requireKnownAgency(w, r, inp.OwnerAgency) {
+				return
+			}
+			if !id.CanAgency(auth.PermConfigureApp, inp.OwnerAgency) {
+				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, inp.OwnerAgency,
+					"you do not have configureApp on agency "+inp.OwnerAgency+", so you cannot give this bastion to it")
+				return
+			}
+			owner, ownerChanged = inp.OwnerAgency, true
+		}
+		if ownerChanged || derefStr(inp.AuthCredentialID) != derefStr(cur.AuthCredentialID) {
+			if !s.requireKeyUsableBy(w, r, inp.AuthCredentialID, []string{owner}, "bastion") {
+				return
+			}
+		}
 	}
 	b, err := settings.UpdateBastion(r.Context(), s.db, bid, *inp, id.Email)
 	if err != nil {
@@ -1718,12 +1863,14 @@ func decodeBastionInput(r *http.Request) (*settings.SshBastionInput, error) {
 		AuthKeyEnvVar    *string `json:"authKeyEnvVar"`
 		AuthCredentialID *string `json:"authCredentialId"`
 		Zone             *string `json:"zone"`
+		OwnerAgency      string  `json:"ownerAgency"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return nil, err
 	}
 	return &settings.SshBastionInput{
-		Name: body.Name, Address: body.Address, Port: body.Port,
+		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
+		Name:        body.Name, Address: body.Address, Port: body.Port,
 		Username: body.Username, AuthKeyEnvVar: body.AuthKeyEnvVar,
 		AuthCredentialID: body.AuthCredentialID, Zone: body.Zone,
 	}, nil

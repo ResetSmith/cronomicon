@@ -70,6 +70,18 @@ var (
 	// restriction it is not. Mapped 422.
 	ErrGlobalMixed = errors.New("an entity is Global's or an agency's, never both")
 
+	// ErrOneAgency is returned when a write would put a scope, a secret, a
+	// variable or an SSH key in more than one agency (LR-7, LR-54). Each belongs
+	// to exactly one, or to Global; what two agencies both need is a copy in
+	// each, or a Global row. Mapped 422 `one_agency`. (A runner's serve list is
+	// a different rule and has its own writer.)
+	ErrOneAgency = errors.New("a scope, secret, variable or SSH key belongs to exactly one agency — to move it, set its agency; to share it, make it Global's or copy it")
+
+	// ErrOwnerConflict is returned when moving a secret, a variable or an SSH key
+	// to an agency would collide with a row that agency already owns under the
+	// same name (and scope). Mapped 409 `owner_conflict`.
+	ErrOwnerConflict = errors.New("the agency already has a row with this name")
+
 	// ErrBuiltinAgency is returned by an attempt to rename or delete Global
 	// (LR-21). Runs name their agency by NAME, and code and triggers name its id.
 	ErrBuiltinAgency = errors.New("the Global agency is built in: it cannot be renamed or deleted")
@@ -370,12 +382,12 @@ func renameAgencyInParams(params, oldName, newName string) (string, bool, error)
 // classes and used to collapse them into one undifferentiated sentinel, which the
 // API then rendered as "still referenced by one or more scopes" — actively WRONG
 // whenever the real blocker was a runner, a membership row, or ownership. Three of
-// the four classes have a UI path to clear them, so a vague refusal is merely
-// annoying. Ownership has none: with owner transfer deferred, an owned row can only
-// be cleared by DELETING it, and for a stored secret that destroys the value. An
-// operator retiring a department must be told that specifically, or they will clear
-// scopes, re-home runners, empty the membership matrix, and still be refused with no
-// idea what is left.
+// the four classes had a UI path to clear them, so a vague refusal was merely
+// annoying. Ownership had none until 2.3.0: an owned row could only be cleared by
+// DELETING it, and for a stored secret that destroys the value. It can be moved
+// now (LR-54), but an operator retiring a department must still be told which
+// rows are in the way, or they will clear scopes, re-home runners, and still be
+// refused with no idea what is left.
 // Scope references are NOT a field here: since migration 700 they are membership
 // rows like any other kind, counted in Members[MemberScope].
 type AgencyInUseError struct {
@@ -384,6 +396,11 @@ type AgencyInUseError struct {
 	Secrets int                // secrets.owner_agency         (RA-15)
 	EnvVars int                // env_vars.owner_agency        (RA-15)
 	Keys    int                // ssh_credentials.owner_agency (RA-19)
+	// Hosts and Bastions are the hand-written host records and the bastions the
+	// agency owns (LR-69). Unlike an owned secret they CAN be handed on: each is
+	// given another owner on its own form.
+	Hosts    int
+	Bastions int
 }
 
 func (e *AgencyInUseError) Error() string {
@@ -396,6 +413,9 @@ func (e *AgencyInUseError) Unwrap() error { return ErrAgencyInUse }
 // Owned reports whether an OWNERSHIP reference blocks the delete — the one class
 // with no clearing path short of destroying the row (RA-Q22).
 func (e *AgencyInUseError) Owned() int { return e.Secrets + e.EnvVars + e.Keys }
+
+// records is the host records and bastions the agency owns.
+func (e *AgencyInUseError) records() int { return e.Hosts + e.Bastions }
 
 // Blockers renders one actionable phrase per non-zero reference class, ordered
 // easiest-to-clear first so the operator's next action is the first thing read.
@@ -417,14 +437,18 @@ func (e *AgencyInUseError) Blockers() []string {
 	add(e.Members[MemberScope], "scope", "scopes", "rebind the scope to another agency")
 	for _, k := range []MemberKind{MemberSecret, MemberEnvVar, MemberSSHCredential} {
 		add(e.Members[k], string(k)+" membership", string(k)+" memberships",
-			"remove it on the Membership matrix")
+			"move it to another agency or to Global")
 	}
-	// Ownership last and phrased differently ON PURPOSE: the others name an edit,
-	// this one names a destructive re-creation, because owner transfer is not built.
-	const ownFix = "owner transfer is not available; the row must be re-created under another department"
-	add(e.Secrets, "owned secret", "owned secrets", ownFix+" — REVEAL THE VALUE FIRST, deleting a stored secret destroys it")
+	// Ownership. Since 2.3.0 an owned row can be MOVED (set its agency to another
+	// agency, or to Global: LR-54), so that is the remedy named first. Deleting
+	// is still what an operator in a hurry reaches for, and for a stored secret
+	// or a key it destroys the only copy, so the warning stays.
+	const ownFix = "set its agency to another agency or to Global to move it"
+	add(e.Secrets, "owned secret", "owned secrets", ownFix+"; do NOT delete it to get past this, deleting a stored secret destroys its value")
 	add(e.EnvVars, "owned variable", "owned variables", ownFix)
-	add(e.Keys, "owned SSH credential", "owned SSH credentials", ownFix+" — the key material is destroyed with the row")
+	add(e.Keys, "owned SSH credential", "owned SSH credentials", ownFix+"; deleting it destroys the key material")
+	add(e.Hosts, "host record", "host records", "give the record to another agency, or delete it")
+	add(e.Bastions, "bastion", "bastions", "give the bastion to another agency, or delete it")
 	return out
 }
 
@@ -497,14 +521,25 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 		owned[table] = n
 	}
 	ownerRefs := owned["secrets"] + owned["env_vars"] + owned["ssh_credentials"]
-	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 {
-		return false, &AgencyInUseError{
-			Runners: runnerRefs,
-			Members: members,
-			Secrets: owned["secrets"],
-			EnvVars: owned["env_vars"],
-			Keys:    owned["ssh_credentials"],
-		}
+	inUse := &AgencyInUseError{
+		Runners: runnerRefs,
+		Members: members,
+		Secrets: owned["secrets"],
+		EnvVars: owned["env_vars"],
+		Keys:    owned["ssh_credentials"],
+	}
+	// LR-69: hand-written host records and bastions the agency owns. An imported
+	// record is its scope's and is already counted with the scope.
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ssh_hosts WHERE owner_agency = ? AND scope_id IS NULL`, id).Scan(&inUse.Hosts); err != nil {
+		return false, fmt.Errorf("delete agency: count host records: %w", err)
+	}
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM bastions WHERE owner_agency = ?`, id).Scan(&inUse.Bastions); err != nil {
+		return false, fmt.Errorf("delete agency: count bastions: %w", err)
+	}
+	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 {
+		return false, inUse
 	}
 	res, err := database.ExecContext(ctx, `DELETE FROM agencies WHERE id=?`, id)
 	if err != nil {
@@ -522,6 +557,8 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM secrets WHERE owner_agency = ?`, id).Scan(&inUse.Secrets)
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM env_vars WHERE owner_agency = ?`, id).Scan(&inUse.EnvVars)
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM ssh_credentials WHERE owner_agency = ?`, id).Scan(&inUse.Keys)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM ssh_hosts WHERE owner_agency = ?`, id).Scan(&inUse.Hosts)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM bastions WHERE owner_agency = ?`, id).Scan(&inUse.Bastions)
 			return false, inUse
 		}
 		return false, fmt.Errorf("delete agency: %w", err)
