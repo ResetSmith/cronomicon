@@ -64,6 +64,13 @@ func TestSyncPreservesScopeAgencies(t *testing.T) {
 	if err := pool.QueryRow(`SELECT id FROM scopes WHERE name='prod'`).Scan(&scopeID); err != nil {
 		t.Fatal(err)
 	}
+	// LR-31: a scope that arrives from Git is Global's until a global
+	// administrator assigns it. (It had no agency row at all before 2.3.0, and
+	// the upsert still writes none: the row is the database's, at birth.)
+	var born string
+	if err := pool.QueryRow(`SELECT group_concat(agency_id, ',') FROM scope_agencies WHERE scope_id=?`, scopeID).Scan(&born); err != nil || born != "global" {
+		t.Fatalf("a newly synced scope is in %q (%v), want global alone", born, err)
+	}
 	for _, a := range []struct{ id, name string }{{"ag-dss", "DSS"}, {"ag-nwd", "NWD"}} {
 		if _, err := pool.Exec(`INSERT INTO agencies(id, name, created_at) VALUES(?,?,'t')`, a.id, a.name); err != nil {
 			t.Fatalf("seed agency %s: %v", a.name, err)

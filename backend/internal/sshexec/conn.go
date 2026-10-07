@@ -3,13 +3,16 @@ package sshexec
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/envref"
+	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/sshkeys"
@@ -131,8 +134,9 @@ func loadSigner(ctx context.Context, db *sql.DB, cfg *config.Config, sec *secret
 // had the hole — it resolves keys through runref with the run's agency
 // snapshot. checked makes this path ask the same question.
 //
-// The zero value is unchecked. It is for a record only a global administrator
-// can write: a bastion, and the probe of a manually authored host.
+// The zero value is unchecked and has no caller left in this package since
+// 2.3.0: a bastion and a hand-written host record have an owner now, and their
+// keys are checked against it (ownerKeyGuard).
 type keyGuard struct {
 	checked  bool
 	scope    string   // the run's scope (the secret and variable lookups are scoped)
@@ -142,8 +146,8 @@ type keyGuard struct {
 // errKeyNotUsable is deliberately the same sentence whether the key does not
 // exist or belongs to another agency: a host record must not be usable as a
 // probe for which keys another agency holds.
-var errKeyNotUsable = errors.New("the SSH key this host names is not one this run's agency may use " +
-	"(it belongs to another agency, or no longer exists) — use a key of the scope's own agency, or a shared one")
+var errKeyNotUsable = errors.New("the SSH key this record names is not one its agency may use " +
+	"(it belongs to another agency, or no longer exists) — use a key of the agency's own, or one that is Global's")
 
 // loadSignerChecked is loadSigner's name path under a checked guard: the same
 // routing by prefix, with each lookup made by runref.LookupEntityID — the row
@@ -221,6 +225,95 @@ func loadSignerChecked(ctx context.Context, db *sql.DB, cfg *config.Config, sec 
 		return signer, err
 	}
 	return nil, errKeyNotUsable
+}
+
+// keyNameResolves reports whether a key NAME resolves to a row under a checked
+// guard: loadSignerChecked's routing, without loading any material. It exists
+// so "would this record's key load" can be asked of every record at once (the
+// notices check below) by the same rule a connect applies.
+func keyNameResolves(ctx context.Context, db *sql.DB, key string, guard keyGuard) (bool, error) {
+	lookup := func(kind runref.Kind, name string) (bool, error) {
+		_, found, err := runref.LookupEntityID(ctx, db, kind, name, guard.scope, guard.agencies)
+		if errors.Is(err, runref.ErrAmbiguousReference) {
+			return false, nil // refused at connect too
+		}
+		return found, err
+	}
+	if section, bare, ok := envref.Split(key); ok {
+		switch section {
+		case envref.SectionKey:
+			return lookup(runref.KindKey, bare)
+		case envref.SectionSecret:
+			return lookup(runref.KindSecret, bare)
+		case envref.SectionVariable:
+			return lookup(runref.KindVar, bare)
+		default:
+			return false, nil
+		}
+	}
+	if found, err := lookup(runref.KindSecret, key); err != nil || found {
+		return found, err
+	}
+	return lookup(runref.KindVar, key)
+}
+
+// BastionKeyNameFindings is the by-name half of the notices check
+// record_key_outside_owner (installed with notices.SetRecordKeyNameCheck): the
+// bastions that name their key by NAME — a secret, a variable or a key label,
+// as records did before SSH keys were first-class — where that name resolves to
+// nothing the bastion's owner may use.
+//
+// Until 2.3.0 a bastion belonged to nobody and its key was looked up across
+// every agency and every scope. It is loaded for its owner now, so a bastion
+// that predates this and names a department's or a scoped row fails every run
+// routed through it, and nothing else would say so.
+func BastionKeyNameFindings(ctx context.Context, db *sql.DB) ([]notices.Finding, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT b.id, b.name, b.owner_agency, COALESCE((SELECT name FROM agencies WHERE id = b.owner_agency), b.owner_agency), b.auth_key_env_var
+		  FROM bastions b
+		 WHERE COALESCE(b.auth_credential_id, '') = '' AND COALESCE(b.auth_key_env_var, '') <> ''
+		 ORDER BY b.id`)
+	if err != nil {
+		return nil, err
+	}
+	type rec struct{ id, name, owner, ownerName, key string }
+	var recs []rec
+	for rows.Next() {
+		var r rec
+		if err := rows.Scan(&r.id, &r.name, &r.owner, &r.ownerName, &r.key); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		recs = append(recs, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close() // before the lookups: never a query inside an open cursor
+	var out []notices.Finding
+	for _, r := range recs {
+		guard, err := ownerKeyGuard(ctx, db, []string{r.owner})
+		if err != nil {
+			return nil, err
+		}
+		ok, err := keyNameResolves(ctx, db, r.key, guard)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			continue
+		}
+		out = append(out, notices.Finding{
+			AgencyID: r.owner,
+			Subject:  "bastion:" + r.id,
+			Detail: fmt.Sprintf("The bastion %s belongs to %s and names its SSH key as %s, which is not a key, secret or variable "+
+				"that %s may use (its own or Global's, with no scope). Every run that routes through it fails. "+
+				"Give the bastion a key of its own agency or one that is Global's, or give the bastion to the agency whose key it names.",
+				r.name, r.ownerName, r.key, r.ownerName),
+		})
+	}
+	return out, nil
 }
 
 // signerFromSecret resolves a private key stored in the secrets table by row key.
@@ -319,7 +412,7 @@ func (s *Service) dial(ctx context.Context, t target, signer ssh.Signer) (*ssh.C
 	}
 
 	// Bastion hop: dial the bastion, then dial the target through it.
-	b, err := s.bastionAddr(ctx, t.Via)
+	b, err := s.bastionAddr(ctx, t.Via, t.Owners)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -334,8 +427,13 @@ func (s *Service) dial(ctx context.Context, t target, signer ssh.Signer) (*ssh.C
 	// both failed auth for distinct-key bastions and leaked the target key.
 	bSigner := signer
 	if b.AuthKeyEnvVar != "" || b.AuthCredentialID != "" {
-		// Unguarded: a bastion record is a global administrator's to write (GC-7).
-		bSigner, err = loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar, keyGuard{})
+		// LR-72 at connect: a bastion's key is its owner's, or Global's. A
+		// bastion belonged to no one until 2.3.0 and this load asked nothing.
+		guard, gerr := ownerKeyGuard(ctx, s.db, b.Owners)
+		if gerr != nil {
+			return nil, nil, fmt.Errorf("dial bastion %s: %w", t.Via, gerr)
+		}
+		bSigner, err = loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar, guard)
 		if err != nil {
 			return nil, nil, fmt.Errorf("dial bastion %s: %w", t.Via, err)
 		}
@@ -387,16 +485,29 @@ func dialContext(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.
 // target (hostname can be a display name). The bastion's auth_key_env_var (when
 // set) lets dial() authenticate the hop with the BASTION's key rather than the
 // target's — matching ProbeBastion (PP-H4).
-func (s *Service) bastionAddr(ctx context.Context, ref string) (*target, error) {
+//
+// LR-70: a host routes only through a bastion that the host record's own agency
+// owns, or Global. `owners` is the record's (execspec.Target.Owners); a bastion
+// of any other agency does not exist as far as this lookup is concerned, so a
+// record cannot be pointed through another agency's jump host by naming it. Of
+// two bastions that answer to one reference, the agency's own is taken before
+// Global's.
+func (s *Service) bastionAddr(ctx context.Context, ref string, owners []string) (*target, error) {
+	ownersJSON, err := json.Marshal(append([]string{}, owners...))
+	if err != nil {
+		return nil, err
+	}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, hostname, address, port, username, auth_key_env_var, auth_credential_id, host_key FROM bastions
-		WHERE id = ? OR name = ? OR hostname = ? LIMIT 1`, ref, ref, ref)
-	var id, hostname string
+		SELECT id, hostname, address, port, username, auth_key_env_var, auth_credential_id, host_key, owner_agency FROM bastions
+		WHERE (id = ? OR name = ? OR hostname = ?)
+		  AND (owner_agency = ? OR owner_agency IN (SELECT value FROM json_each(?)))
+		ORDER BY (owner_agency = ?) ASC, id LIMIT 1`, ref, ref, ref, agencyid.Global, string(ownersJSON), agencyid.Global)
+	var id, hostname, owner string
 	var address, username, authKey, authCredID, hostKey sql.NullString
 	var port sql.NullInt64
-	if err := row.Scan(&id, &hostname, &address, &port, &username, &authKey, &authCredID, &hostKey); err != nil {
+	if err := row.Scan(&id, &hostname, &address, &port, &username, &authKey, &authCredID, &hostKey, &owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("bastion %q not found", ref)
+			return nil, fmt.Errorf("bastion %q not found among this host's agency's bastions or Global's", ref)
 		}
 		return nil, err
 	}
@@ -415,7 +526,28 @@ func (s *Service) bastionAddr(ctx context.Context, ref string) (*target, error) 
 		AuthKeyEnvVar:    authKey.String,
 		AuthCredentialID: authCredID.String,
 		HostKey:          hostKey.String,
+		Owners:           []string{owner},
 	}, nil
+}
+
+// ownerKeyGuard is the keyGuard for a key that a RECORD names for itself — a
+// bastion's, or a hand-written host record's under "Test connection": the key
+// must belong to one of the record's owning agencies, or to Global (LR-72). No
+// owner at all (a record that could not be resolved) leaves only Global's keys.
+func ownerKeyGuard(ctx context.Context, db *sql.DB, ownerIDs []string) (keyGuard, error) {
+	g := keyGuard{checked: true}
+	for _, id := range ownerIDs {
+		var name string
+		err := db.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, id).Scan(&name)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return keyGuard{}, err // an unreadable owner must not read as "Global's"
+		}
+		g.agencies = append(g.agencies, name)
+	}
+	return g, nil
 }
 
 // bastionHostKeyCallback mirrors hostKeyCallback for the BASTION hop (SU-4): strict

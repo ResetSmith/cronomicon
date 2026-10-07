@@ -1,6 +1,9 @@
 package execspec
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // CA (the ssh-user plan §2.2) — the per-run "connect as" overlay.
 
@@ -17,7 +20,7 @@ func TestApplyIdentityOverride(t *testing.T) {
 		in := base()
 		out := ApplyIdentityOverride(in, "", "", "")
 		for i := range in {
-			if out[i] != in[i] {
+			if !reflect.DeepEqual(out[i], in[i]) {
 				t.Errorf("target %d changed with empty override: %+v", i, out[i])
 			}
 		}
@@ -67,7 +70,7 @@ func TestApplyIdentityOverride(t *testing.T) {
 		if out[0].Via != "bastion-1" || out[0].HostKey != "hk" {
 			t.Errorf("routing fields must be untouched: %+v", out[0])
 		}
-		if out[2] != base()[2] {
+		if !reflect.DeepEqual(out[2], base()[2]) {
 			t.Errorf("ResolveErr target must pass through unchanged: %+v", out[2])
 		}
 	})

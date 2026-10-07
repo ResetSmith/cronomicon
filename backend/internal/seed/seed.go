@@ -662,30 +662,37 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	// Seeded as 'verified' with a recent last_checked_at so the SSH Targets UI is
 	// browsable in dev preview; a real "Test connection" only downgrades these if
 	// it fails (ssh-update.md TC.7). Both bastions reference the credential above.
+	//
+	// LR-69: a bastion and a hand-written host record belong to an agency, and
+	// name a key that agency may use (LR-72). Both bastions and the production
+	// hosts are agency-alpha's, with its key; the reporting host is agency-beta's,
+	// with beta's. Left unowned they would be Global's records naming an agency's
+	// key — what an upgrade can leave behind and the inbox reports, not a demo's
+	// starting state.
 	bastionID := db.NewID()
-	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?)`,
-		bastionID, "bastion-prod.corp.example", "prod-bastion", "bastion-prod.corp.example", "prod", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day))
-	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?)`,
-		db.NewID(), "bastion-dmz.corp.example", "dmz-bastion", "bastion-dmz.corp.example", "dmz", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day))
+	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?, ?)`,
+		bastionID, "bastion-prod.corp.example", "prod-bastion", "bastion-prod.corp.example", "prod", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day), agencies[0].id)
+	exec(`INSERT INTO bastions (id, hostname, name, address, port, username, zone, auth_credential_id, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+	      VALUES (?, ?, ?, ?, 22, 'jump', ?, ?, 'verified', ?, ?, ?, ?, ?, ?)`,
+		db.NewID(), "bastion-dmz.corp.example", "dmz-bastion", "bastion-dmz.corp.example", "dmz", sshCredID, ago(2*day), dev, ago(20*day), dev, ago(20*day), agencies[0].id)
 
-	sshHosts := []struct{ host, addr, os, via string }{
-		{"db-01", "10.0.1.10", "Linux", "prod-bastion"},
-		{"lb-01", "10.0.1.20", "Linux", "prod-bastion"},
-		{"vault-01", "10.0.1.30", "Linux", "prod-bastion"},
-		{"web-01", "10.0.2.10", "Linux", ""},
-		{"win-dc-01", "10.0.3.10", "Windows", "dmz-bastion"},
-		{"report-01", "10.0.4.10", "Linux", ""},
+	sshHosts := []struct{ host, addr, os, via, cred, owner string }{
+		{"db-01", "10.0.1.10", "Linux", "prod-bastion", sshCredID, agencies[0].id},
+		{"lb-01", "10.0.1.20", "Linux", "prod-bastion", sshCredID, agencies[0].id},
+		{"vault-01", "10.0.1.30", "Linux", "prod-bastion", sshCredID, agencies[0].id},
+		{"web-01", "10.0.2.10", "Linux", "", sshCredID, agencies[0].id},
+		{"win-dc-01", "10.0.3.10", "Windows", "dmz-bastion", sshCredID, agencies[0].id},
+		{"report-01", "10.0.4.10", "Linux", "", stagingCredID, agencies[1].id},
 	}
 	for _, h := range sshHosts {
 		var via any
 		if h.via != "" {
 			via = h.via
 		}
-		exec(`INSERT INTO ssh_hosts (id, hostname, address, port, os, via, auth_credential_id, username, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at)
-		      VALUES (?, ?, ?, 22, ?, ?, ?, 'cronomicon', 'verified', ?, ?, ?, ?, ?)`,
-			db.NewID(), h.host, h.addr, h.os, via, sshCredID, ago(2*day), dev, ago(16*day), dev, ago(3*day))
+		exec(`INSERT INTO ssh_hosts (id, hostname, address, port, os, via, auth_credential_id, username, status, last_checked_at, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		      VALUES (?, ?, ?, 22, ?, ?, ?, 'cronomicon', 'verified', ?, ?, ?, ?, ?, ?)`,
+			db.NewID(), h.host, h.addr, h.os, via, h.cred, ago(2*day), dev, ago(16*day), dev, ago(3*day), h.owner)
 	}
 	// One git-IMPORTED host (M4) so the demo shows the read-only "git" badge + the
 	// dual-source precedence in Settings → SSH Targets. Tied to Production; starts

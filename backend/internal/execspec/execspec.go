@@ -122,6 +122,11 @@ type Target struct {
 	AuthCredentialID string // first-class ssh_credentials id; resolved before AuthKeyEnvVar (SK.5)
 	HostKey          string // stored known host key (authorized-key form); empty ⇒ TOFU
 	ResolveErr       string // non-empty ⇒ this target could not be resolved; reported as a per-host failure
+	// Owners are the ids of the agencies this record answers to (LR-70): its
+	// own owner for a record written by hand, its scope's agencies for one
+	// imported from an inventory. A target routes only through a bastion that
+	// one of them — or Global — owns. Empty on an unresolved target.
+	Owners []string
 }
 
 // ApplyIdentityOverride returns targets with the run's frozen "connect as"
@@ -225,8 +230,23 @@ func (t Target) DialAddr() string {
 // up front with 422); else the whole scope fans out. A scope host with no matching
 // ssh_hosts record becomes a per-host failure (a Target with ResolveErr set), not a
 // silent skip.
+//
+// LR-71: a fixed targetHost must be a MEMBER of the run's scope, like every host
+// of a subset. It was resolved by name alone until 2.3.0, so a job in one
+// agency's scope could be pointed at any host record at all by naming it; this
+// is the one place all five producers resolve through, so it is the one place
+// the rule is enforced. A job with no scope (or one naming a scope the catalog
+// does not hold) is Global's work and resolves against Global's records only,
+// which HostByName does by itself; a scope that lists no hosts at all has no
+// membership to ask about (HostInScope).
 func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, hosts []string) ([]Target, error) {
 	if targetHost != "" {
+		if in, known, err := HostInScope(ctx, db, scope, targetHost); err != nil {
+			return nil, err
+		} else if known && !in {
+			return []Target{{Name: targetHost, ResolveErr: "target_host " + targetHost + " is not a member of scope " + scope +
+				" — a job runs only against hosts of its own scope"}}, nil
+		}
 		t, err := HostByName(ctx, db, scope, targetHost)
 		if err != nil {
 			return nil, err
@@ -288,6 +308,37 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 	return targets, nil
 }
 
+// HostInScope answers "is this host a member of that scope" (LR-71). known is
+// false when there is no membership to ask about, and the caller then treats
+// the run as it would one with no scope:
+//
+//   - the catalog holds no scope of that name (an empty name, or a job's
+//     free-text scope that matches nothing);
+//   - the scope lists NO hosts at all. A scope whose hosts live only in a
+//     runner's own inventory file (local-inventory mode) has none here, and a
+//     scope used purely as a label for jobs that each pin a host has none
+//     either. Nothing can be "outside" an empty list, and refusing every pinned
+//     host of such a scope would stop jobs that have always run. The owner
+//     filter of HostByName still applies to them: they reach their own agency's
+//     records and Global's, and no one else's.
+func HostInScope(ctx context.Context, db *sql.DB, scope, host string) (in, known bool, err error) {
+	if scope == "" {
+		return false, false, nil
+	}
+	var hosts int
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = s.id AND sh.host = ?),
+		       (SELECT COUNT(*) FROM scope_hosts sh WHERE sh.scope_id = s.id)
+		  FROM scopes s WHERE s.name = ?`, host, scope).Scan(&in, &hosts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return in, hosts > 0, nil
+}
+
 // ScopeHosts returns the host names belonging to a scope (scope_hosts → scopes) —
 // the single membership source shared by ResolveTargets' fan-out, the F2 subset
 // intersection, and the trigger-boundary membership check in runJob. Source-
@@ -347,17 +398,24 @@ func OverrideHosts(overrideJSON string) []string {
 // The TOFU host-key capture must write back to the SAME row id this resolves (see
 // sshexec hostKeyCallback) or the stored key and the dialed row drift.
 func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Target, error) {
+	// LR-70: a scope sees the records imported for it, the records its own
+	// agency wrote by hand, and Global's — never another agency's, which it
+	// could shadow or borrow until 2.3.0 by a matching hostname. A run with no
+	// scope (or an unknown one) sees Global's alone. The order among them is the
+	// one it always was, with Global first among the hand-written: a global
+	// administrator's record still wins everywhere, deliberately.
 	row := db.QueryRowContext(ctx, `
-		SELECT id, hostname, address, port, username, via, auth_key_env_var, auth_credential_id, host_key
-		FROM ssh_hosts
-		WHERE hostname = ?
-		  AND (scope_id IS NULL OR scope_id IN (SELECT id FROM scopes WHERE name = ?))
-		ORDER BY (source='cronomicon') DESC, (scope_id IS NULL) DESC, last_modified_at DESC, id DESC
-		LIMIT 1`, hostname, scope)
-	var id, name string
-	var address, user, via, authKeyEnvVar, authCredentialID, hostKey sql.NullString
+		SELECT h.id, h.hostname, h.address, h.port, h.username, h.via, h.auth_key_env_var, h.auth_credential_id, h.host_key,
+		       h.scope_id, h.owner_agency
+		FROM ssh_hosts h
+		WHERE h.hostname = ?
+		  AND `+HostRecordForScopeSQL+`
+		ORDER BY `+HostRecordOrderSQL+`
+		LIMIT 1`, hostname, scope, scope)
+	var id, name, owner string
+	var address, user, via, authKeyEnvVar, authCredentialID, hostKey, scopeID sql.NullString
 	var port sql.NullInt64
-	if err := row.Scan(&id, &name, &address, &port, &user, &via, &authKeyEnvVar, &authCredentialID, &hostKey); err != nil {
+	if err := row.Scan(&id, &name, &address, &port, &user, &via, &authKeyEnvVar, &authCredentialID, &hostKey, &scopeID, &owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -373,8 +431,51 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		AuthKeyEnvVar:    authKeyEnvVar.String,
 		AuthCredentialID: authCredentialID.String,
 		HostKey:          hostKey.String,
+		Owners:           []string{owner},
+	}
+	if scopeID.Valid && scopeID.String != "" {
+		// An imported record answers to its scope's agencies, not to the column.
+		owners, err := scopeAgencyIDs(ctx, db, scopeID.String)
+		if err != nil {
+			return nil, err
+		}
+		t.Owners = owners
 	}
 	return t, nil
+}
+
+// HostRecordForScopeSQL is THE rule for which ssh_hosts rows (alias h) a scope
+// may resolve (LR-70), as a predicate with two parameters, the scope's name
+// twice: the records imported for it, the hand-written records of its own
+// agency, and Global's. HostRecordOrderSQL is the order among several. They are
+// exported because the host-key review asks the same question for the same host
+// (runner.serverPin) and had a copy of the predicate from before records had
+// owners: it went on reading every agency's records after this one stopped.
+const (
+	HostRecordForScopeSQL = `(h.scope_id IN (SELECT id FROM scopes WHERE name = ?)
+		       OR (h.scope_id IS NULL AND (h.owner_agency = '` + agencyid.Global + `'
+		           OR h.owner_agency IN (SELECT sa.agency_id FROM scope_agencies sa
+		                                   JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?))))`
+	HostRecordOrderSQL = `(h.source='cronomicon') DESC, (h.scope_id IS NULL) DESC, (h.owner_agency = '` + agencyid.Global + `') DESC,
+		         h.last_modified_at DESC, h.id DESC`
+)
+
+// scopeAgencyIDs returns the ids of the agencies a scope (by id) belongs to.
+func scopeAgencyIDs(ctx context.Context, db *sql.DB, scopeID string) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT agency_id FROM scope_agencies WHERE scope_id = ? ORDER BY agency_id`, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 // ScopeAgencies resolves the FULL agency set a scope belongs to, from the

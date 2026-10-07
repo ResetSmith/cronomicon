@@ -1716,6 +1716,23 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			s.logWarn("git sync: job declares no scope, so it lands in All — visible to every agency; add `spec.scope` to place it with one department",
 				"job", j.Metadata.Name, "source_path", j.SourcePath)
 		}
+		// LR-71 — a fixed target_host must be one of the job's scope's hosts, or
+		// its runs fail for that host (execspec.ResolveTargets). A WARNING, never an
+		// error: a sync error would mark the sync partial and suppress pruning over
+		// one field, and the run-time refusal is the control. The standing record
+		// is the notice the inbox raises (target_host_outside_scope); this line is
+		// for whoever reads the sync log. Skipped when the scope is not in the
+		// catalog yet: there is no membership to ask about until it is.
+		if th := strings.TrimSpace(j.Spec.TargetHost); th != "" && strings.TrimSpace(j.Spec.Scope) != "" {
+			var member bool
+			if err := tx.QueryRowContext(ctx, `
+				SELECT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id AND sh.host = ?)
+				    OR NOT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id)
+				  FROM scopes sc WHERE sc.name = ?`, th, j.Spec.Scope).Scan(&member); err == nil && !member {
+				s.logWarn("git sync: job target_host is not a host of its scope; its runs will fail for that host until the host is added to the scope or the job names one of the scope's hosts",
+					"job", j.Metadata.Name, "source_path", j.SourcePath, "scope", j.Spec.Scope, "target_host", th)
+			}
+		}
 		// CA-8 — advisory warnings for the declarative "connect as" identity;
 		// like TG-4, a sync must never wedge a repo over one field, and both
 		// conditions fail loudly at the run boundary anyway (422 at trigger /

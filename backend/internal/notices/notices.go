@@ -39,6 +39,19 @@ const (
 	// to no agency at all, which no route but a global administrator's
 	// re-homing will touch. Subject: "<kind>:<id>".
 	KindOrphaned = "orphaned"
+	// KindScopeSeveralAgencies — a scope that is in more than one agency, which
+	// nothing has been able to create since 2.3.0 (LR-7). It works as it did;
+	// its agency is settled by setting it. Subject: the scope's id.
+	KindScopeSeveralAgencies = "scope_several_agencies"
+	// KindTargetHostOutsideScope — a job whose fixed target_host is not one of
+	// its scope's hosts (LR-71). Its runs fail for that host. Subject: the job's
+	// uid. Filed under the scope's agency.
+	KindTargetHostOutsideScope = "target_host_outside_scope"
+	// KindRecordKeyOutsideOwner — a hand-written host record or a bastion that
+	// names an SSH key its owner may not use (LR-72): one that predates 2.3.0,
+	// when such a record belonged to nobody. A run that reaches it fails for
+	// that host. Subject: "ssh-host:<id>" or "bastion:<id>".
+	KindRecordKeyOutsideOwner = "record_key_outside_owner"
 )
 
 // Notice is one row of the inbox.

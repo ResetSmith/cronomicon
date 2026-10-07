@@ -8,6 +8,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/auth"
@@ -261,10 +262,11 @@ func (s *Server) requireScopeAgency(pathVar string, next http.Handler) http.Hand
 	})
 }
 
-// requireHostOwner wraps a write on ONE ssh host record (GC-7). A record that
-// was imported for a scope follows that scope's gate. A manually authored
-// record has no owner and applies to every scope — it wins over an imported
-// one — so until host records carry an owner it is a global administrator's.
+// requireHostOwner wraps a write on ONE ssh host record (GC-7, LR-69). A record
+// that was imported for a scope follows that scope's gate. A record written by
+// hand belongs to its owner_agency: that agency's administrators change it, and
+// a global administrator changes Global's. (Until 2.3.0 a hand-written record
+// had no owner, applied to every scope, and was a global administrator's alone.)
 //
 // A host id that matches no row falls through to the handler's own 404.
 func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handler {
@@ -275,8 +277,9 @@ func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handle
 			return
 		}
 		var scopeID sql.NullString
+		var owner string
 		err := s.db.QueryRowContext(r.Context(),
-			`SELECT scope_id FROM ssh_hosts WHERE id = ?`, r.PathValue(pathVar)).Scan(&scopeID)
+			`SELECT scope_id, owner_agency FROM ssh_hosts WHERE id = ?`, r.PathValue(pathVar)).Scan(&scopeID, &owner)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			next.ServeHTTP(w, r)
@@ -293,14 +296,55 @@ func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handle
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !id.GlobalAdmin(auth.PermConfigureApp) {
-			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-				"a manually authored host record applies to every scope, so only an "+
-					"administrator of every agency may change it")
+		if !s.requireRecordOwner(w, r, id, owner, "host record") {
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireBastionOwner wraps a write on ONE bastion (LR-69): its owner agency's
+// administrators, and a global administrator for Global's. An id that matches
+// no row falls through to the handler's own 404.
+func (s *Server) requireBastionOwner(pathVar string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		var owner string
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT owner_agency FROM bastions WHERE id = ?`, r.PathValue(pathVar)).Scan(&owner)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			next.ServeHTTP(w, r)
+			return
+		case err != nil:
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !s.requireRecordOwner(w, r, id, owner, "bastion") {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireRecordOwner is the owner check both wrappers share: configureApp on the
+// owning agency, which for Global is the global-administrator check.
+func (s *Server) requireRecordOwner(w http.ResponseWriter, r *http.Request, id auth.Identity, owner, label string) bool {
+	if id.CanAgency(auth.PermConfigureApp, owner) {
+		return true
+	}
+	if owner == agencyid.Global {
+		s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+			"this "+label+" is Global's, so it applies to every agency; only a global administrator may change it")
+		return false
+	}
+	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, owner,
+		"you do not have "+auth.PermConfigureApp+" on the agency that owns this "+label)
+	return false
 }
 
 // requireJobVisible is the read gate for the routes any signed-in user may
@@ -561,13 +605,16 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 		if held := id.AgenciesFor(perm); len(held) == 1 {
 			agencyIDs = held
 		} else {
-			msg := "your access is department-scoped: assign this " + label +
-				" to at least one of your agencies (agencyIds) so your department keeps ownership of it"
+			// The body field differs by route (agencyIds for a scope, secret,
+			// variable or key; ownerAgency for a host record or bastion), so the
+			// sentence names the thing to do, not the field.
+			msg := "your access is department-scoped: name the agency that owns this " + label +
+				", one of yours, so your department keeps ownership of it"
 			if len(held) > 1 {
 				// Naming the departments makes this actionable — the actor holds the
 				// permission on all of them, so this reveals nothing they cannot list.
 				msg = "you hold " + perm + " on more than one department, so this " + label +
-					" cannot inherit one: name the owning agency explicitly in agencyIds (" +
+					" cannot inherit one: name the owning agency explicitly (" +
 					strings.Join(held, ", ") + ")"
 			}
 			httpx.Fail(w, http.StatusUnprocessableEntity, "agency_required", msg)
@@ -580,9 +627,17 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 	if len(agencyIDs) == 0 {
 		agencyIDs = []string{agencyid.Global}
 	}
+	// One agency, or Global (LR-7, LR-54). Repeats of one id are one id.
+	agencyIDs = slices.Compact(slices.Sorted(slices.Values(agencyIDs)))
 	if err := settings.ValidateAgencySet(agencyIDs); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "global_mixed",
-			"a new "+label+" is Global's or an agency's, never both: name Global alone, or the agencies")
+			"a new "+label+" is Global's or an agency's, never both: name Global alone, or the agency")
+		return nil, false
+	}
+	if len(agencyIDs) > 1 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency",
+			"a new "+label+" belongs to exactly one agency: name the one that owns it. "+
+				"What several agencies need is a copy in each, or one that is Global's")
 		return nil, false
 	}
 	for _, a := range agencyIDs {

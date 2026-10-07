@@ -21,7 +21,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/runref"
-	"github.com/ResetSmith/cronomicon/internal/sshkeys"
 	"github.com/ResetSmith/cronomicon/internal/watchspec"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
@@ -510,6 +509,23 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		return
 	}
 
+	// LR-71 — a job's fixed target host is one of its scope's hosts. The run-time
+	// control is execspec.ResolveTargets, which fails such a host for every
+	// producer; refusing it here is the same rule where the author can read it.
+	if in.TargetHost != "" && in.Scope != nil && *in.Scope != "" {
+		member, known, herr := execspec.HostInScope(r.Context(), s.db, *in.Scope, in.TargetHost)
+		if herr != nil {
+			httpx.Fail500(w, s.log, "db_error", herr)
+			return
+		}
+		if known && !member {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "scope_membership",
+				"target host "+in.TargetHost+" is not a member of scope "+*in.Scope+
+					" — a job runs only against hosts of its own scope; add the host to the scope, or choose one of its hosts")
+			return
+		}
+	}
+
 	// RP-14 — env_passthrough: NAMES only, POSIX env-name charset, and never an
 	// CRONOMICON_* name (those are Cronomicon's own injected references, not the
 	// runner's environment — the ValidateOperatorEnv rule, same rationale).
@@ -563,14 +579,26 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		}
 	}
 	if in.SSHCredential != "" {
-		credID, found, err := sshkeys.IDByLabel(r.Context(), s.db, in.SSHCredential)
-		if err != nil {
+		// LR-73: the key of that label as the JOB'S runs will see it — its scope's
+		// agency's own before Global's, never another agency's. (It was `LIMIT 1`
+		// over every agency's keys.)
+		jobScope := ""
+		if in.Scope != nil {
+			jobScope = *in.Scope
+		}
+		jobAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, jobScope)
+		if aerr != nil {
+			httpx.Fail500(w, s.log, "db_error", aerr)
+			return
+		}
+		credID, found, err := runref.LookupEntityID(r.Context(), s.db, runref.KindKey, in.SSHCredential, jobScope, jobAgencies)
+		if err != nil && !errors.Is(err, runref.ErrAmbiguousReference) {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if !found {
+		if err != nil || !found {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
-				"no SSH credential with label "+in.SSHCredential)
+				"no SSH credential with label "+in.SSHCredential+" is usable by this job's agency")
 			return
 		}
 		// CA-Q1 — binding a stored key to a job is a grant over key material.

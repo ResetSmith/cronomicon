@@ -28,6 +28,9 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindAgencyRenamed, checkAgencyRenamed},
 		{KindSharedOwnership, checkSharedOwnership},
 		{KindOrphaned, checkOrphaned},
+		{KindScopeSeveralAgencies, checkScopeSeveralAgencies},
+		{KindTargetHostOutsideScope, checkTargetHostOutsideScope},
+		{KindRecordKeyOutsideOwner, checkRecordKeyOutsideOwner},
 	} {
 		if err := c.run(ctx, database); err != nil {
 			errs = append(errs, c.name+": "+err.Error())
@@ -181,4 +184,167 @@ func checkOrphaned(ctx context.Context, database *sql.DB) error {
 		rows.Close()
 	}
 	return Reconcile(ctx, database, KindOrphaned, found)
+}
+
+// checkScopeSeveralAgencies lists scopes in more than one agency. A scope
+// belongs to exactly one since 2.3.0 (LR-7) and no route puts one in two; these
+// are from before, and nothing removed them automatically. Such a scope still
+// runs for each of its agencies. It is filed under Global because settling it —
+// choosing the one agency — takes authority over every agency it is in.
+func checkScopeSeveralAgencies(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `
+		SELECT sc.id, sc.name,
+		       (SELECT group_concat(name, ', ') FROM (
+		            SELECT a.name AS name FROM scope_agencies m JOIN agencies a ON a.id = m.agency_id
+		             WHERE m.scope_id = sc.id ORDER BY a.name))
+		  FROM scopes sc
+		 WHERE (SELECT COUNT(*) FROM scope_agencies m WHERE m.scope_id = sc.id) > 1
+		 ORDER BY sc.id`)
+	if err != nil {
+		return err
+	}
+	var found []Finding
+	for rows.Next() {
+		var id, name string
+		var agencies sql.NullString
+		if err := rows.Scan(&id, &name, &agencies); err != nil {
+			rows.Close()
+			return err
+		}
+		found = append(found, Finding{
+			AgencyID: agencyid.Global,
+			Subject:  id,
+			Detail: fmt.Sprintf("The scope %s is in several agencies (%s). A scope belongs to one agency since 2.3.0; "+
+				"this one still runs for each of them until its agency is set, except that a name both agencies hold "+
+				"(a secret, a variable, a key) is refused for its runs rather than picked between. Set its agency to "+
+				"the one that owns its hosts; if several agencies run against the same hosts, give each a scope of its own.",
+				name, agencies.String),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	return Reconcile(ctx, database, KindScopeSeveralAgencies, found)
+}
+
+// checkTargetHostOutsideScope lists jobs whose fixed target_host is not one of
+// their scope's hosts (LR-71). Until 2.3.0 the name was resolved against every
+// host record there was; now such a run fails for that host, at the one place
+// every producer resolves through. The notice goes to the scope's agency, whose
+// job and whose scope it is (Global for a scope in several, or in Global).
+func checkTargetHostOutsideScope(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `
+		SELECT COALESCE(NULLIF(j.uid, ''), j.source || ':' || j.name), j.name, j.source, j.scope, j.target_host,
+		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+		                   FROM scope_agencies sa WHERE sa.scope_id = sc.id), ?)
+		  FROM jobs j JOIN scopes sc ON sc.name = j.scope
+		 WHERE j.deleted_at IS NULL
+		   AND COALESCE(j.target_host, '') <> ''
+		   -- a scope that lists no hosts has no membership to be outside of
+		   AND EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id)
+		   AND NOT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id AND sh.host = j.target_host)
+		 ORDER BY j.name, j.source`, agencyid.Global)
+	if err != nil {
+		return err
+	}
+	var found []Finding
+	for rows.Next() {
+		var subject, name, source, scope, host, agency string
+		if err := rows.Scan(&subject, &name, &source, &scope, &host, &agency); err != nil {
+			rows.Close()
+			return err
+		}
+		where := "edit the job"
+		if source == "git" {
+			where = "change the job's file in Git"
+		}
+		found = append(found, Finding{
+			AgencyID: agency,
+			Subject:  subject,
+			Detail: fmt.Sprintf("The job %s targets the host %s, which is not one of the hosts of its scope %s. "+
+				"A job runs only against hosts of its own scope: it cannot be started by hand or by a token, and a "+
+				"scheduled run fails for that host wherever the server resolves the host itself. "+
+				"Add the host to the scope, or %s to name one of the scope's hosts.",
+				name, host, scope, where),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	return Reconcile(ctx, database, KindTargetHostOutsideScope, found)
+}
+
+// recordKeyNameCheck, when set, finds bastions whose key is named by NAME (a
+// secret, variable or key label) and does not resolve for the bastion's owner.
+// The resolution rules live with the code that loads keys (sshexec), which this
+// leaf package cannot import, so the server installs the function at boot.
+var recordKeyNameCheck func(ctx context.Context, database *sql.DB) ([]Finding, error)
+
+// SetRecordKeyNameCheck installs the by-name half of the record-key check. It
+// returns findings of kind KindRecordKeyOutsideOwner, which are reconciled
+// together with the by-id ones: one kind, one reconciliation.
+func SetRecordKeyNameCheck(fn func(ctx context.Context, database *sql.DB) ([]Finding, error)) {
+	recordKeyNameCheck = fn
+}
+
+// checkRecordKeyOutsideOwner lists hand-written host records and bastions whose
+// SSH key is neither their owner's nor Global's (LR-72). A write refuses that
+// now; a record from before 2.3.0, when it belonged to nobody, may still name
+// any key. What that costs differs by kind, and the notice says which:
+//
+//   - a BASTION's key is loaded for its owner on every run that routes through
+//     it, so such a bastion fails those runs;
+//   - a HOST RECORD's key is loaded for the run's own agency, so runs of the
+//     key's agency still connect, runs of any other fail for that host, and
+//     "Test connection" (which asks for the owner) fails.
+func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
+	var found []Finding
+	for _, k := range []struct{ kind, noun, table, nameCol, where, cost string }{
+		{"ssh-host", "host record", "ssh_hosts", "hostname", "t.scope_id IS NULL AND ",
+			"Only runs of the key's own agency can connect with it, and Test connection fails."},
+		{"bastion", "bastion", "bastions", "name", "",
+			"Every run that routes through it fails."},
+	} {
+		rows, err := database.QueryContext(ctx, `
+			SELECT t.id, t.`+k.nameCol+`, t.owner_agency, COALESCE((SELECT name FROM agencies WHERE id = t.owner_agency), t.owner_agency), c.label
+			  FROM `+k.table+` t JOIN ssh_credentials c ON c.id = t.auth_credential_id
+			 WHERE `+k.where+`NOT EXISTS (
+			         SELECT 1 FROM ssh_credential_agencies m
+			          WHERE m.credential_id = c.id AND m.agency_id IN (t.owner_agency, ?))
+			 ORDER BY t.id`, agencyid.Global)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id, name, owner, ownerName, label string
+			if err := rows.Scan(&id, &name, &owner, &ownerName, &label); err != nil {
+				rows.Close()
+				return err
+			}
+			found = append(found, Finding{
+				AgencyID: owner,
+				Subject:  k.kind + ":" + id,
+				Detail: fmt.Sprintf("The %s %s belongs to %s and names the SSH key %s, which is neither %s's nor Global's. %s "+
+					"Give the %s a key of its own agency or one that is Global's, or give the %s to the agency whose key it names.",
+					k.noun, name, ownerName, label, ownerName, k.cost, k.noun, k.noun),
+			})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	if recordKeyNameCheck != nil {
+		byName, err := recordKeyNameCheck(ctx, database)
+		if err != nil {
+			return err
+		}
+		found = append(found, byName...)
+	}
+	return Reconcile(ctx, database, KindRecordKeyOutsideOwner, found)
 }

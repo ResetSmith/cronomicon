@@ -1152,3 +1152,63 @@ func TestApprovalIsDeliveredDuringALongPoll(t *testing.T) {
 		t.Fatalf("the approval was not delivered during the in-flight poll")
 	}
 }
+
+// The server's pin is consulted from a record the host's own agency could have
+// written (LR-69): since host records have owners, another agency's
+// administrator can write one for the same name or address and pin any key
+// there. If the review read that record, they would decide what "matches the
+// server's pin" means for a host that is not theirs.
+func TestServerPinIsReadFromTheHostsOwnAgencysRecord(t *testing.T) {
+	f := newHKFixture(t, "pinowner")
+	ctx := context.Background()
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := f.svc.db.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	real, planted := testHostKey(t), testHostKey(t)
+	line := func(k ssh.PublicKey) string { return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(k))) }
+	fp := func(k ssh.PublicKey) string { return ssh.FingerprintSHA256(k) }
+
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', ?), ('ag-tax', 'Tax', ?)`, now(), now())
+	exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-prod', 'cronomicon', ?)`, now())
+	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin')`)
+	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, 'ag-fin')`, f.id)
+	// Finance's record for db01, with the key the server really saw; and Tax's
+	// record for the same name and address, newer, with a key Tax chose.
+	exec(`INSERT INTO ssh_hosts (id, source, hostname, address, port, host_key, created_at, last_modified_at, owner_agency)
+	      VALUES ('h-fin', 'cronomicon', 'db01', '10.0.0.9', 22, ?, ?, '2026-01-01T00:00:00Z', 'ag-fin')`, line(real), now())
+	exec(`INSERT INTO ssh_hosts (id, source, hostname, address, port, host_key, created_at, last_modified_at, owner_agency)
+	      VALUES ('h-tax', 'cronomicon', 'db01', '10.0.0.9', 22, ?, ?, '2026-09-01T00:00:00Z', 'ag-tax')`, line(planted), now())
+
+	// For a scope: the record Finance's scope resolves.
+	if _, got := serverPin(ctx, f.svc.db, f.id, "db01", "fin-prod", "db01"); got != fp(real) {
+		t.Errorf("the pin for Finance's scope host is %s, want Finance's record's (%s), not Tax's newer one (%s)", got, fp(real), fp(planted))
+	}
+	// By address, for a Finance runner: the same.
+	if _, got := serverPin(ctx, f.svc.db, f.id, "", "", "10.0.0.9"); got != fp(real) {
+		t.Errorf("the pin by address for a Finance runner is %s, want Finance's record's (%s)", got, fp(real))
+	}
+	// And the classification follows: the real key matches, Tax's does not.
+	if c := classifyKey(ctx, f.svc.db, f.id, "db01", "db01", "fin-prod", real.Type(), fp(real)); c.Status != keyStatusMatch {
+		t.Errorf("the real key classifies %q, want a match with the server's pin", c.Status)
+	}
+	if c := classifyKey(ctx, f.svc.db, f.id, "db01", "db01", "fin-prod", planted.Type(), fp(planted)); c.Status == keyStatusMatch || c.MatchedServerPin {
+		t.Errorf("a key pinned only in ANOTHER agency's record classifies %q (matched=%v)", c.Status, c.MatchedServerPin)
+	}
+
+	// With only Tax's record, Finance's review has no server pin for the host.
+	exec(`DELETE FROM ssh_hosts WHERE id = 'h-fin'`)
+	if kt, got := serverPin(ctx, f.svc.db, f.id, "db01", "fin-prod", "db01"); got != "" || kt != "" {
+		t.Errorf("Finance's scope was given Tax's pin: %s %s", kt, got)
+	}
+	if _, got := serverPin(ctx, f.svc.db, f.id, "", "", "10.0.0.9"); got != "" {
+		t.Errorf("a Finance runner was given Tax's pin by address: %s", got)
+	}
+	// Global's record answers for everyone.
+	exec(`UPDATE ssh_hosts SET owner_agency = 'global' WHERE id = 'h-tax'`)
+	if _, got := serverPin(ctx, f.svc.db, f.id, "", "", "10.0.0.9"); got != fp(planted) {
+		t.Errorf("a Global record's pin was not read by address: %s", got)
+	}
+}
