@@ -1201,93 +1201,65 @@ func (e *Engine) ownJobScopes(ctx context.Context, steps []Step, wfSource string
 // behalf that the graph itself never names (GC-10). An unscoped job yields ""
 // here exactly as it does in JobScopes, and for the same reason.
 //
-// Every workflow that carries the referenced NAME is walked, in either source
-// and whatever its state. That is deliberately wider than what the engine will
-// run (loadChildWorkflow picks one: the parent's source first, enabled, not
-// binned): the answer here is an authorization, and it must not change when
-// someone re-enables a child, restores one from the bin, or when two agencies
-// hold same-named workflows and the engine's pick is not ours to predict.
-// Over-asking fails closed. A name that matches nothing contributes nothing —
-// it will not run either. Descent stops at MaxWorkflowDepth, the engine's own
-// ceiling, and a workflow already visited is not walked twice, so a cycle the
-// validator missed cannot hang a request.
+// Each child is resolved by loadChildWorkflow, the function the engine itself
+// calls when the step runs, so the walk authorizes the workflow that would
+// actually run and nothing else. Authorizing against every workflow that merely
+// SHARES the name would be wrong in the other direction: names are per-agency,
+// so another department could veto this one's trigger, pause and cancel by
+// creating a workflow of the same name. A child that does not resolve
+// contributes nothing — it will not run either.
 //
-// wfSource is unused by the walk (every candidate is considered, see above) and
-// is kept in the signature so callers state which workflow they are asking about.
-func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, _ string) ([]string, error) {
+// The answer is true at the moment it is given. A child that is disabled now
+// and enabled before its step is reached runs on an authorization that did not
+// see it; closing that window needs the run to carry the resolution it was
+// authorized on, which it does not yet.
+//
+// Descent stops at MaxWorkflowDepth, the engine's own ceiling. A workflow is
+// walked again when it is reached at a SHALLOWER depth than before: its
+// subtree was cut off earlier at the ceiling, and from nearer the root more of
+// it is reachable — the engine would run that part.
+func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
-	visited := map[string]bool{}
-	var walk func(steps []Step, depth int) error
-	walk = func(steps []Step, depth int) error {
+	walkedAt := map[int64]int{} // workflow rowid → shallowest depth walked from
+	var walk func(steps []Step, source string, depth int) error
+	walk = func(steps []Step, source string, depth int) error {
 		if DepthExceeded(depth) {
 			return nil
 		}
+		if source == "" {
+			source = "git"
+		}
 		for _, name := range collectWorkflowRefs(steps) {
-			children, err := e.workflowsNamed(ctx, name)
+			childSource, childSteps, rowid, ok := e.loadChildWorkflow(ctx, name, source)
+			if !ok {
+				continue
+			}
+			if prev, done := walkedAt[rowid]; done && prev <= depth {
+				continue
+			}
+			walkedAt[rowid] = depth
+			scopes, err := e.ownJobScopes(ctx, childSteps, childSource)
 			if err != nil {
 				return err
 			}
-			for _, child := range children {
-				if visited[child.uid] {
-					continue
+			for _, sc := range scopes {
+				if !seen[sc] {
+					seen[sc] = true
+					out = append(out, sc)
 				}
-				visited[child.uid] = true
-				scopes, err := e.ownJobScopes(ctx, child.steps, child.source)
-				if err != nil {
-					return err
-				}
-				for _, sc := range scopes {
-					if !seen[sc] {
-						seen[sc] = true
-						out = append(out, sc)
-					}
-				}
-				if err := walk(child.steps, depth+1); err != nil {
-					return err
-				}
+			}
+			if err := walk(childSteps, childSource, depth+1); err != nil {
+				return err
 			}
 		}
 		return nil
 	}
 	// The children of the addressed workflow run at depth 1.
-	if err := walk(steps, 1); err != nil {
+	if err := walk(steps, wfSource, 1); err != nil {
 		return nil, err
 	}
 	return out, nil
-}
-
-// namedWorkflow is one workflow matched by name for the authorization walk.
-type namedWorkflow struct {
-	uid, source string
-	steps       []Step
-}
-
-// workflowsNamed returns every workflow carrying name — both sources, enabled
-// or not, binned or not. A row whose steps do not parse is skipped: it cannot
-// run.
-func (e *Engine) workflowsNamed(ctx context.Context, name string) ([]namedWorkflow, error) {
-	rows, err := e.db.QueryContext(ctx,
-		`SELECT COALESCE(uid, 'row:' || rowid), COALESCE(source,'git'), steps FROM workflows WHERE name = ?`, name)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []namedWorkflow
-	for rows.Next() {
-		var w namedWorkflow
-		var raw string
-		if err := rows.Scan(&w.uid, &w.source, &raw); err != nil {
-			return nil, err
-		}
-		steps, perr := ParseSteps(raw)
-		if perr != nil {
-			continue
-		}
-		w.steps = steps
-		out = append(out, w)
-	}
-	return out, rows.Err()
 }
 
 // collectWorkflowRefs lists the sub-workflow names a graph references, walking

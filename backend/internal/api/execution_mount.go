@@ -2841,6 +2841,13 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 			// was created under. Revoking the creator's grants does NOT cancel it;
 			// the recourse is cancelling the parked row.
 			pendingID, err := scheduler.InsertPendingRun(r.Context(), s.db, "workflow", wr.Name, wr.Source, "", runAt, id.Email, nil)
+			if err == nil && wr.UID != "" {
+				// InsertPendingRun derives owner_uid from (name, source), which is
+				// not an identity for a cronomicon workflow: two agencies may hold
+				// the same name. The handler knows exactly which workflow this is.
+				_, err = s.db.ExecContext(r.Context(),
+					`UPDATE pending_runs SET owner_uid = ? WHERE id = ?`, wr.UID, pendingID)
+			}
 			if err != nil {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return

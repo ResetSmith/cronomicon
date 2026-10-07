@@ -317,3 +317,45 @@ func TestWorkflowStepValidation(t *testing.T) {
 		})
 	}
 }
+
+// GC-10 — the authorization walk must cover everything the engine can reach
+// within its depth ceiling, whatever order the steps are in. Root runs A then
+// W; A also runs W; W runs C, C runs D. Reached through A, D sits past the
+// ceiling and the walk rightly stops; reached directly from root, W → C → D is
+// depths 1 to 3 and D's jobs run. A walk that remembers W as "done" from the
+// deeper visit never sees D.
+func TestSubWorkflowJobScopesReWalksAtAShallowerDepth(t *testing.T) {
+	pool := openPool(t)
+	e := workflow.New(pool, discardLog())
+	ctx := context.Background()
+	if _, err := pool.ExecContext(ctx,
+		`INSERT INTO jobs (uid, name, source, run_type, scope, concurrency_policy, enabled, synced_at)
+		 VALUES ('uid-deep','deep-job','git','bash','deep-scope','Allow',1,'t')`); err != nil {
+		t.Fatal(err)
+	}
+	seedWorkflow(t, pool, "A", `[{"type":"workflow","name":"s","workflow":"W"}]`)
+	seedWorkflow(t, pool, "W", `[{"type":"workflow","name":"s","workflow":"C"}]`)
+	seedWorkflow(t, pool, "C", `[{"type":"workflow","name":"s","workflow":"D"}]`)
+	seedWorkflow(t, pool, "D", `[{"type":"job","name":"deep-job"}]`)
+
+	for _, order := range []string{
+		`[{"type":"workflow","name":"a","workflow":"A"},{"type":"workflow","name":"w","workflow":"W"}]`,
+		`[{"type":"workflow","name":"w","workflow":"W"},{"type":"workflow","name":"a","workflow":"A"}]`,
+	} {
+		steps, err := workflow.ParseSteps(order)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scopes, err := e.JobScopes(ctx, steps, "git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, sc := range scopes {
+			found = found || sc == "deep-scope"
+		}
+		if !found {
+			t.Errorf("JobScopes(%s) = %v, want it to include deep-scope: root → W → C → D is within the depth ceiling", order, scopes)
+		}
+	}
+}

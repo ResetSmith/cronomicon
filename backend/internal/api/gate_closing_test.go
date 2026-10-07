@@ -563,3 +563,106 @@ func TestGC_CapabilitiesReportInstallWideAuthority(t *testing.T) {
 		t.Errorf("compose on every agency is composeUnbound and not composeAdmin, got %v", composer)
 	}
 }
+
+// Review findings on the first cut of the GC band. Each of these passed the
+// tests above and was still a way round the gate it sits behind.
+
+// The store treats every source that is not exactly "stored" as Vault, so the
+// gate may not look for the literal "vault".
+func TestGC_VaultGateCannotBeSidesteppedBySourceSpelling(t *testing.T) {
+	h, pool := gateServer(t)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gFinAdmin,
+		`{"key":"FIN_STORED","source":"stored","scope":"fin-hosts","value":"v"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("seed stored secret = %d (%s)", rec.Code, rec.Body)
+	}
+	var sec struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &sec)
+
+	for _, c := range []struct{ name, method, path, body string }{
+		{"PUT with source omitted and a vaultPath", http.MethodPut, "/api/v1/env-secrets/" + sec.ID,
+			`{"key":"FIN_STORED","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`},
+		{"PUT with a misspelled source", http.MethodPut, "/api/v1/env-secrets/" + sec.ID,
+			`{"key":"FIN_STORED","source":"Vault","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`},
+		{"POST with a misspelled source", http.MethodPost, "/api/v1/env-secrets",
+			`{"key":"FIN_SNEAK","source":"VAULT","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`},
+		{"POST with a stored source carrying a vaultPath", http.MethodPost, "/api/v1/env-secrets",
+			`{"key":"FIN_SNEAK2","source":"stored","scope":"fin-hosts","value":"v","vaultPath":"secret/data/tax/db#password"}`},
+	} {
+		if rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body); rec.Code != http.StatusForbidden {
+			t.Errorf("%s = %d, want 403 (%s)", c.name, rec.Code, rec.Body)
+		}
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE source='vault' OR vault_ref IS NOT NULL`); n != 0 {
+		t.Errorf("%d secret(s) now name a Vault path", n)
+	}
+}
+
+// Sync names a job with no metadata.name after the base name of its
+// spec.target_host, so a nameless file could be aimed at any job's row.
+func TestGC_PublishRefusesANamelessJob(t *testing.T) {
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", t.TempDir())
+	h, pool := gateServer(t)
+	mustExec(t, pool)(`INSERT INTO jobs (name,source,run_type,scope,enabled,created_at,source_path)
+	      VALUES ('tax-nightly','git','bash','tax-hosts',1,'2026-01-01T00:00:00Z','jobs/tax-nightly.yaml')`)
+	nameless := "apiVersion: cronomicon.io/v1\nkind: Job\nspec:\n  run_type: bash\n  command: echo hi\n  scope: fin-hosts\n  target_host: tax-nightly\n"
+	rec := gateReqWithHeader(t, h, http.MethodPost, "/api/v1/schedules/publish", gFinApprover,
+		publishBody("jobs/x.yaml", nameless), "If-Match", "deadbeef")
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("fin approver publishing a nameless job aimed at TAX's job = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+}
+
+// A notice says a job lost its runner confinement. Dismissing it is the
+// business of the scope it is about.
+func TestGC_DismissingANoticeNeedsItsScope(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO retired_runner_pins (job_name, job_source, scope, runner_tag, reason, recorded_at)
+	      VALUES ('tax-job','cronomicon','tax-hosts','gpu','no_scope','t'),
+	             ('fin-job','cronomicon','fin-hosts','gpu','no_scope','t')`)
+	taxID := rowID(t, pool, `SELECT id FROM retired_runner_pins WHERE job_name='tax-job'`)
+	finID := rowID(t, pool, `SELECT id FROM retired_runner_pins WHERE job_name='fin-job'`)
+
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/scope-binding-notices/dismiss", gFinAdmin, `{"ids":[`+taxID+`]}`); rec.Code != http.StatusForbidden {
+		t.Errorf("fin admin dismissing TAX's notice = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	// One foreign id poisons the batch: nothing in it is dismissed.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/scope-binding-notices/dismiss", gFinAdmin, `{"ids":[`+finID+`,`+taxID+`]}`); rec.Code != http.StatusForbidden {
+		t.Errorf("a batch naming TAX's notice = %d, want 403", rec.Code)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM retired_runner_pins WHERE dismissed_at IS NOT NULL`); n != 0 {
+		t.Errorf("%d notice(s) were dismissed by a refused request", n)
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/scope-binding-notices/dismiss", gFinAdmin, `{"ids":[`+finID+`]}`); rec.Code != http.StatusOK {
+		t.Errorf("fin admin dismissing FIN's notice = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+}
+
+// Two agencies may hold workflows of one name. A's parent must be authorized
+// on the child the ENGINE will run — not on every workflow that shares the
+// name, which would let B veto A's operations by creating one.
+func TestGC_AnotherAgencysSameNamedWorkflowIsNotAVeto(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,enabled,created_at)
+	      VALUES ('fin-job','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z'),
+	             ('tax-job','cronomicon','bash','tax-hosts',1,'2026-01-01T00:00:00Z')`)
+	// FIN's "cleanup" exists first; TAX then creates its own of the same name.
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
+	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"fin-job"}]',1,'2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
+	      VALUES ('fin-parent','cronomicon','[{"type":"workflow","name":"go","workflow":"cleanup"}]',1,'2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO workflows (name, source, steps, enabled, created_at)
+	      VALUES ('cleanup','cronomicon','[{"type":"job","name":"tax-job"}]',1,'2026-02-01T00:00:00Z')`)
+	parent := rowID(t, pool, `SELECT rowid FROM workflows WHERE name='fin-parent'`)
+
+	if rec := gateReq(t, h, http.MethodPatch, "/api/v1/workflows/"+parent, gFinOperator, `{"disabled":true}`); rec.Code/100 != 2 {
+		t.Errorf("fin operator pausing FIN's own parent = %d, want 2xx — TAX's same-named workflow is not what it runs (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflow-tags/"+parent, gFinViewer, `{"tags":["ours"]}`); rec.Code != http.StatusOK {
+		t.Errorf("fin viewer tagging FIN's own parent = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+}

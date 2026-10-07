@@ -60,7 +60,8 @@ that gives each of these an owning agency:
 Within their own agency they keep everything else: scopes, runners, stored
 secrets, variables, SSH keys, jobs, workflows and access grants. A scope they
 create now lands in their agency (it used to land in none, where its creator
-could not see it); in OIDC mode they see it after signing in again.
+could not see it), and their own session can use it at once. As with every
+change to which scopes an agency holds, other signed-in users are signed out.
 
 ### Security
 
@@ -104,6 +105,17 @@ could not see it); in OIDC mode they see it after signing in again.
   full row in reply.
 - **A reaction matches its upstream by identity.** Two agencies may hold
   same-named jobs; one's run fired the reaction authored against the other's.
+  A reaction with no usable identity still matches by name, but only while
+  exactly one definition carries that name. If two do, it does not fire until
+  it is saved again against the one it means.
+- **Dismissing a scope-binding notice needs the notice's scope.** Any
+  `configureApp` holder could hide the notice that told another agency its job
+  was no longer confined to a runner.
+- **A name is never resolved by guessing between two definitions.** Where the
+  server recorded a definition's identity from its name (reactions, deferred
+  runs), two same-named definitions now record none, and the paths that read
+  it fail closed. A sub-workflow step whose name matches two workflows runs the
+  oldest, always, and is authorized on that one.
 - **Notification target URLs are masked.** `GET /settings/notifications` returned
   every Apprise target's URL — a webhook or an API key — to any session.
 

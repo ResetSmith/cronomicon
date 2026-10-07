@@ -161,6 +161,17 @@ func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name st
 		err = s.db.QueryRowContext(ctx,
 			`SELECT steps, source FROM workflows WHERE uid = ?`, uid).Scan(&raw, &wfSource)
 	} else {
+		// No identity on the row (it predates 1020): the name is only usable
+		// when it is unambiguous. Two workflows of one name means we cannot say
+		// whose run this is, and the caller falls back to the unbound rule.
+		var n int
+		if err = s.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&n); err != nil {
+			return nil, false, err
+		}
+		if n != 1 {
+			return nil, false, nil
+		}
 		err = s.db.QueryRowContext(ctx,
 			`SELECT steps, source FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&raw, &wfSource)
 	}

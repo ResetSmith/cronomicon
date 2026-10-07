@@ -16,7 +16,9 @@ import (
 // runPreflight implements `cronomicon preflight` (GC-19): a read-only report of
 // what this release changes for the installation the database belongs to. Run
 // it with the NEW binary against the EXISTING database, before upgrading. It
-// runs no migration and writes nothing.
+// runs no migration and changes no row. It opens the database the way the
+// server does (WAL journal mode), which is the mode a server-managed database
+// is already in.
 //
 // Exit status: 0 when the report was produced, 3 when it found that no global
 // administrator exists (the one finding that makes the upgrade unsafe to take
@@ -59,7 +61,9 @@ a live database.`)
 	}
 	defer func() { _ = pool.Close() }()
 	ctx := context.Background()
-	// Belt and braces: nothing below writes, and this makes sure of it.
+	// Belt and braces: nothing below writes, and this makes sure of it. The
+	// pragma is per connection, so the pool is held to one.
+	pool.SetMaxOpenConns(1)
 	if _, err := pool.ExecContext(ctx, `PRAGMA query_only = ON`); err != nil {
 		fmt.Fprintln(os.Stderr, "preflight: set read-only:", err)
 		return 1

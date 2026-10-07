@@ -270,11 +270,34 @@ func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time
 		   -- GC-13: names are per-agency since R2, so two departments may each
 		   -- hold a cronomicon job called "nightly-load". Matching on the name
 		   -- alone let one department's run fire the reaction authored against
-		   -- the other's. When both sides carry an identity it must agree; a
-		   -- reaction or a run from before the uid existed still matches by
-		   -- name, as it always did.
-		   AND (COALESCE(on_uid,'') = '' OR ? = '' OR on_uid = ?)`,
-		ev.kind, ev.source, ev.name, ev.uid, ev.uid)
+		   -- the other's. Two ways to match, and no third:
+		   --   1. by IDENTITY — the reaction pins a definition that still
+		   --      exists, the run carries one, and they agree;
+		   --   2. by NAME — only when there is no usable identity to compare
+		   --      (the reaction has none, the run has none, or the pinned
+		   --      definition has been purged) AND exactly one live definition
+		   --      carries the name. The second half is what keeps this from
+		   --      being the old behaviour: with two "nightly-load" jobs the
+		   --      name says nothing, so nothing fires until the reaction is
+		   --      re-saved against the one it means. The first half is what
+		   --      lets a job that was purged and recreated keep its reactions.
+		   AND (
+		         (COALESCE(on_uid,'') <> '' AND ? <> '' AND on_uid = ?)
+		      OR (
+		            (COALESCE(on_uid,'') = '' OR ? = ''
+		              OR (NOT EXISTS (SELECT 1 FROM jobs      WHERE uid = reactions.on_uid)
+		              AND NOT EXISTS (SELECT 1 FROM workflows WHERE uid = reactions.on_uid)))
+		        AND CASE on_kind
+		              WHEN 'job' THEN (SELECT COUNT(*) FROM jobs
+		                                WHERE source = reactions.on_source AND name = reactions.on_name
+		                                  AND deleted_at IS NULL)
+		              ELSE            (SELECT COUNT(*) FROM workflows
+		                                WHERE source = reactions.on_source AND name = reactions.on_name
+		                                  AND deleted_at IS NULL)
+		            END <= 1
+		         )
+		       )`,
+		ev.kind, ev.source, ev.name, ev.uid, ev.uid, ev.uid)
 	if err != nil {
 		s.log.Error("reactor: match reactions", "kind", ev.kind, "name", ev.name, "err", err)
 		return

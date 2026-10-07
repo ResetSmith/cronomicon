@@ -26,7 +26,25 @@ import (
 
 // perms is one role's permission set, read from the roles table.
 type perms struct {
-	configureApp, manageRoles, manageEnvVars, publishSchedule, compose, builtinAdmin bool
+	triggerJobs, killJobs, configureApp, manageRoles, manageEnvVars, publishSchedule, compose, builtinAdmin bool
+}
+
+// union adds another grant's permissions.
+func (p perms) union(o perms) perms {
+	return perms{
+		p.triggerJobs || o.triggerJobs, p.killJobs || o.killJobs, p.configureApp || o.configureApp,
+		p.manageRoles || o.manageRoles, p.manageEnvVars || o.manageEnvVars,
+		p.publishSchedule || o.publishSchedule, p.compose || o.compose, false,
+	}
+}
+
+// exceeds reports whether p carries a permission that held does not — the
+// anti-amplification comparison, over all seven permissions.
+func (p perms) exceeds(held perms) bool {
+	return (p.triggerJobs && !held.triggerJobs) || (p.killJobs && !held.killJobs) ||
+		(p.configureApp && !held.configureApp) || (p.manageRoles && !held.manageRoles) ||
+		(p.manageEnvVars && !held.manageEnvVars) || (p.publishSchedule && !held.publishSchedule) ||
+		(p.compose && !held.compose)
 }
 
 // AgencyGrant is a departmental grant that loses an ability in 2.2.2.
@@ -68,7 +86,8 @@ func (r Report) Quiet() bool {
 
 func loadRoles(ctx context.Context, db *sql.DB) (map[string]perms, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT lower(name), configure_app, manage_roles, manage_env_vars, publish_schedule, compose, builtin
+		SELECT lower(name), trigger_jobs, kill_jobs, configure_app, manage_roles, manage_env_vars,
+		       publish_schedule, compose, builtin
 		  FROM roles`)
 	if err != nil {
 		return nil, err
@@ -77,11 +96,11 @@ func loadRoles(ctx context.Context, db *sql.DB) (map[string]perms, error) {
 	out := map[string]perms{}
 	for rows.Next() {
 		var name string
-		var ca, mr, me, ps, co, bi int
-		if err := rows.Scan(&name, &ca, &mr, &me, &ps, &co, &bi); err != nil {
+		var tj, kj, ca, mr, me, ps, co, bi int
+		if err := rows.Scan(&name, &tj, &kj, &ca, &mr, &me, &ps, &co, &bi); err != nil {
 			return nil, err
 		}
-		out[name] = perms{ca == 1, mr == 1, me == 1, ps == 1, co == 1, bi == 1 && name == "admin"}
+		out[name] = perms{tj == 1, kj == 1, ca == 1, mr == 1, me == 1, ps == 1, co == 1, bi == 1 && name == "admin"}
 	}
 	return out, rows.Err()
 }
@@ -252,11 +271,7 @@ func serviceAccounts(ctx context.Context, db *sql.DB, roles map[string]perms, gr
 				global = true
 			}
 			if g.all || g.agencyID == a.agencyID {
-				here.configureApp = here.configureApp || p.configureApp
-				here.manageRoles = here.manageRoles || p.manageRoles
-				here.manageEnvVars = here.manageEnvVars || p.manageEnvVars
-				here.publishSchedule = here.publishSchedule || p.publishSchedule
-				here.compose = here.compose || p.compose
+				here = here.union(p)
 			}
 		}
 		if global {
@@ -268,8 +283,7 @@ func serviceAccounts(ctx context.Context, db *sql.DB, roles map[string]perms, gr
 			flag("grants every agency; its creator administers access for one agency only")
 		case !here.manageRoles:
 			flag("its creator does not administer access for " + where)
-		case (want.configureApp && !here.configureApp) || (want.manageEnvVars && !here.manageEnvVars) ||
-			(want.publishSchedule && !here.publishSchedule) || (want.compose && !here.compose):
+		case want.exceeds(here):
 			flag("its role carries a permission its creator does not hold in " + where)
 		}
 	}

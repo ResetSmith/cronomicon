@@ -3095,6 +3095,13 @@
                     lookback behind its cursor and de-duplicates on a delivery key, which is correct under overlap,
                     restart and clock skew alike.</p>
 
+                <p><strong>A reaction watches a definition, not a name.</strong> The server records the identity of
+                    the upstream job or workflow when you save the reaction, and a run fires the reaction only if
+                    the run is of that definition (v2.2.2). This is important because two agencies can each have
+                    a job with the same name. If the reaction has no identity to compare &mdash; it is older than
+                    the identity column, or the upstream definition was purged and made again &mdash; the server
+                    uses the name, but only while exactly one definition has that name. If two definitions have
+                    the name, the reaction does not fire. Save it again to attach it to the correct one.</p>
                 <p><strong>Outcomes are normalised before matching.</strong> Jobs have five terminal states and
                     workflows are binary, so both are projected onto <code>success</code> / <code>failure</code> /
                     <code>stopped</code>. A job <code>warning</code> normalises to <strong>success</strong> &mdash; it

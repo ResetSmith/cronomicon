@@ -231,7 +231,12 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, name, parentSource strin
 		var rowid int64
 		err := e.db.QueryRowContext(ctx, `
 			SELECT rowid, steps FROM workflows
-			 WHERE name = ? AND source = ? AND enabled = 1 AND deleted_at IS NULL`,
+			 WHERE name = ? AND source = ? AND enabled = 1 AND deleted_at IS NULL
+			 -- Two agencies may hold cronomicon workflows of one name. The oldest
+			 -- wins, always: the authorization walk (SubWorkflowJobScopes) calls
+			 -- this same function, and it can only authorize what will run if
+			 -- the choice does not depend on the query plan.
+			 ORDER BY rowid LIMIT 1`,
 			name, src).Scan(&rowid, &raw)
 		if err != nil {
 			continue

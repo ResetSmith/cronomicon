@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -205,6 +206,33 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
+	}
+	// A notice says a job is no longer confined to the runner its tag named.
+	// Dismissing it hides that from the scope's own administrators, so it takes
+	// configureApp on the notice's scope; a notice with no scope is a global
+	// administrator's. A notice id that matches nothing is skipped by the writer.
+	for _, nid := range inp.IDs {
+		var scope sql.NullString
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT scope FROM retired_runner_pins WHERE id = ?`, nid).Scan(&scope)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if scope.String == "" {
+			if !id.CanAgency(auth.PermConfigureApp, "") {
+				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+					"this notice is about a job with no scope; only an administrator of every agency may dismiss it")
+				return
+			}
+			continue
+		}
+		if !s.requireCan(w, r, id, auth.PermConfigureApp, scope.String) {
+			return
+		}
 	}
 	n, err := settings.DismissRetiredPins(r.Context(), s.db, inp.IDs, id.Email)
 	if err != nil {

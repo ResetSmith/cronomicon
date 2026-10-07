@@ -124,3 +124,35 @@ func TestAnAllAgenciesViewerIsNotAGlobalAdmin(t *testing.T) {
 		t.Errorf("an all-agencies viewer counted as a global administrator: %v", rep.GlobalAdminGroups)
 	}
 }
+
+// The anti-amplification rule compares all seven permissions. A delegate whose
+// role can grant but cannot trigger or stop runs could not mint an operator
+// account, and the report must say so.
+func TestServiceAccountAboveItsCreatorsRunPermissionsIsFlagged(t *testing.T) {
+	pool := seeded(t)
+	for _, q := range []string{
+		`INSERT INTO roles (name, description, builtin, rank, trigger_jobs, kill_jobs, manage_env_vars,
+		                    publish_schedule, configure_app, manage_roles, compose)
+		 VALUES ('access-only','',0,2, 0,0,0, 0,0,1, 0)`,
+		`INSERT INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_at)
+		 VALUES ('g8','fin-access','access-only','ag:FIN',0,'t')`,
+		`INSERT INTO recent_logins (email, display_name, groups, first_seen_at, last_login_at)
+		 VALUES ('access@example.com','Access','["fin-access"]','t','t')`,
+		`INSERT INTO service_accounts (id, name, token_hash, role, agency_id, all_scopes, created_by, created_at)
+		 VALUES ('s9','ops-bot','h9','operator','ag:FIN',0,'access@example.com','t')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	rep, err := preflight.Build(context.Background(), pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range rep.ServiceAccounts {
+		if s.Name == "ops-bot" {
+			return
+		}
+	}
+	t.Errorf("ops-bot carries triggerJobs and killJobs, which its creator does not hold: flagged = %v", rep.ServiceAccounts)
+}

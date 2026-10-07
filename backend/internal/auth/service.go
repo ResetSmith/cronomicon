@@ -470,6 +470,36 @@ func (s *Service) BumpSessionEpoch(ctx context.Context) {
 	s.log.Info("session epoch bumped — prior OIDC sessions revoked", "epoch", e)
 }
 
+// RevokeOtherSessionsRefreshingOwn is RevokeOtherSessions for a change the ACTOR
+// must be able to use at once: it re-resolves the actor's own grants before
+// re-issuing their cookie, instead of carrying the old ones forward.
+//
+// Scope creation is the case (GC-6). A departmental administrator's new scope
+// lands in their agency, and their grant on that agency covers it — but the
+// scope list in a cookie is expanded at login, so a cookie re-issued unchanged
+// still could not read or compose in the scope its owner had just made, until
+// they signed out and in again. Every other session is revoked by the bump and
+// picks the scope up at its next login, as with any scope_agencies write.
+//
+// If the grants cannot be resolved the old identity is kept: a failed refresh
+// must not sign the actor out of the request that succeeded.
+func (s *Service) RevokeOtherSessionsRefreshingOwn(w http.ResponseWriter, r *http.Request) {
+	s.BumpSessionEpoch(r.Context())
+	id, ok := s.codec.read(r)
+	if !ok {
+		return // trusted-header mode: identity is resolved per request
+	}
+	if grants, err := ResolveGrants(r.Context(), s.db, id.Groups); err == nil {
+		id.Grants = grants
+		id.Roles = UnionGrantRoles(grants)
+		id.AllowedScopes = UnionGrantScopes(grants)
+	} else {
+		s.log.Error("refreshing the actor's grants failed; keeping the session as issued", "error", err, "email", id.Email)
+	}
+	id.Epoch = s.currentSessionEpoch()
+	_ = s.codec.write(w, id)
+}
+
 // RevokeOtherSessions bumps the epoch (revoking every session issued before now,
 // SU-5) but re-issues the ACTING operator's OWN cookie at the new epoch, so the
 // admin making an RBAC change is not logged out of their own session. The re-issued

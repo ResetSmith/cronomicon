@@ -51,3 +51,73 @@ func TestSessionEpochRevocation(t *testing.T) {
 		t.Error("re-login at the new epoch should be accepted")
 	}
 }
+
+// GC-6 — the creator of a scope must be able to use it in the session that made
+// it. A scope list is expanded at login and frozen in the cookie, so re-issuing
+// the actor's cookie unchanged (RevokeOtherSessions) left them unable to read
+// the scope they had just created until they signed in again.
+func TestRevokeOtherSessionsRefreshingOwnPicksUpANewScope(t *testing.T) {
+	s := testService(t)
+	ctx := context.Background()
+	s.loadSessionEpoch(ctx)
+	for _, q := range []string{
+		`INSERT INTO agencies (id,name,created_at) VALUES ('ag:FIN','FIN','t')`,
+		`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc:old','fin-old','cronomicon','t')`,
+		`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc:old','ag:FIN')`,
+		`INSERT INTO access_grants (id, ad_group, role, agency_id, all_scopes, created_at)
+		 VALUES ('g1','fin-admins','admin','ag:FIN',0,'t')`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	// The session as issued at login: one scope.
+	grants, err := ResolveGrants(ctx, s.db, []string{"fin-admins"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	atLogin := Identity{
+		Email: "fin@example.com", Groups: []string{"fin-admins"}, Grants: grants,
+		Roles: UnionGrantRoles(grants), AllowedScopes: UnionGrantScopes(grants), Epoch: s.currentSessionEpoch(),
+	}
+	if atLogin.Can(PermConfigureApp, "fin-new") {
+		t.Fatal("precondition: the scope does not exist yet")
+	}
+	rec := httptest.NewRecorder()
+	if err := s.codec.write(rec, atLogin); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	for _, c := range rec.Result().Cookies() {
+		req.AddCookie(c)
+	}
+
+	// The actor creates a scope in their agency...
+	for _, q := range []string{
+		`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc:new','fin-new','cronomicon','t')`,
+		`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc:new','ag:FIN')`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := httptest.NewRecorder()
+	s.RevokeOtherSessionsRefreshingOwn(out, req)
+
+	// ...and the cookie they get back can use it, at the new epoch.
+	next := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, c := range out.Result().Cookies() {
+		next.AddCookie(c)
+	}
+	got, ok := s.readSession(nil, next)
+	if !ok {
+		t.Fatal("the actor's own session must survive the bump")
+	}
+	if !got.Can(PermConfigureApp, "fin-new") || !ScopeReadable(got, "fin-new") {
+		t.Errorf("the re-issued session cannot use the new scope: scopes = %v", got.AllowedScopes)
+	}
+	// Everyone else is still revoked.
+	if _, ok := s.readSession(nil, req); ok {
+		t.Error("the cookie from before the bump must be revoked")
+	}
+}

@@ -123,7 +123,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// which would lock the creator out of the row they just made. RA-9: when they
 		// name none and hold the verb on exactly one department, it is inherited
 		// rather than refused, so the safe outcome is the default.
-		if inp.Source == "vault" && !s.requireVaultSourceGlobal(w, r, id) {
+		if secretNamesVault(inp.Source, inp.VaultPath) && !s.requireVaultSourceGlobal(w, r, id) {
 			return
 		}
 		agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermManageEnvVars, inp.AgencyIDs, "secret")
@@ -209,7 +209,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		// GC-8: both sides — a vault-source row may not be edited, and a stored
 		// row may not be turned into one, by anyone but a global administrator.
-		if (existing.Source == "vault" || inp.Source == "vault") && !s.requireVaultSourceGlobal(w, r, id) {
+		if (existing.Source == "vault" || secretNamesVault(inp.Source, inp.VaultPath)) && !s.requireVaultSourceGlobal(w, r, id) {
 			return
 		}
 		// The target scope must be writable too (blocks moving it out of reach OR
@@ -684,6 +684,16 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // not exist yet, so until they do the interim is closed rather than open: a
 // Vault path is a global administrator's to name. Reading, revealing and
 // consuming an existing vault-source secret are unchanged.
+// secretNamesVault reports whether a secret write would produce a vault-source
+// row. The store treats every source that is not exactly "stored" as Vault —
+// an omitted source and a misspelled one included — so the gate must ask the
+// same question, not look for the literal "vault": a PUT that left `source`
+// out and sent a `vaultPath` walked straight past an equality check. A path on
+// a stored write is refused too; it has no business being there.
+func secretNamesVault(source, vaultPath string) bool {
+	return source != "stored" || vaultPath != ""
+}
+
 func (s *Server) requireVaultSourceGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
 	if id.CanAgency(auth.PermManageEnvVars, "") {
 		return true
@@ -1007,8 +1017,9 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Scope membership feeds login-time grant expansion (RB-Q10), like every
-		// other scope_agencies write.
-		s.auth.RevokeOtherSessions(w, r)
+		// other scope_agencies write — and the creator's own cookie is refreshed,
+		// or they could not see the scope they just made.
+		s.auth.RevokeOtherSessionsRefreshingOwn(w, r)
 		if placed, err := settings.GetScope(r.Context(), s.db, sc.ID); err == nil && placed != nil {
 			sc = placed
 		}

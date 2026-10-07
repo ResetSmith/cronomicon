@@ -142,13 +142,20 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 	if !id.Can(perm, t.NewScope) {
 		return deny("scope "+t.NewScope, "insufficient permissions: publishSchedule is required on scope "+t.NewScope)
 	}
+	// The name check below is only as good as the name. Sync falls back to the
+	// base name of spec.target_host for a job that carries no metadata.name, so
+	// a nameless file could be aimed at any existing job's row and would skip
+	// the check entirely.
+	if t.Name == "" {
+		return deny("no name", "a job you publish must carry metadata.name")
+	}
 	// One sentence for every "it is someone else's" case, so the refusal does
 	// not say whether the path or the name was the one already taken.
 	const taken = "this would replace a definition outside your access — choose another file name and job name"
 	if t.OldExists && (!t.OldParsed || t.OldScope == "" || !id.Can(perm, t.OldScope)) {
 		return deny("replaces file", taken)
 	}
-	if t.Name != "" {
+	{
 		rows, err := s.db.QueryContext(r.Context(),
 			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ?`, t.Name)
 		if err != nil {

@@ -622,8 +622,8 @@ func InsertReactionPendingRun(ctx context.Context, database *sql.DB, p pendingRe
 			 origin_kind, origin_ref, reaction_depth, origin_env_json, owner_uid)
 		VALUES (?, ?, ?, ?, ?, ?, 'reactor', ?, 'pending', ?, 'reaction', ?, ?, ?,
 			CASE ?
-			  WHEN 'job'      THEN (SELECT uid FROM jobs      WHERE name = ? AND source = ?)
-			  WHEN 'workflow' THEN (SELECT uid FROM workflows WHERE name = ? AND source = ?)
+			  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
+			  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 			END)`,
 		id, p.Kind, p.Name, p.Source, scopeVal, p.RunAt,
 		time.Now().UTC().Format(time.RFC3339), paramsJSON,
@@ -656,8 +656,8 @@ func InsertPendingRun(ctx context.Context, database *sql.DB, kind, name, source,
 			owner_uid)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
 			CASE ?
-			  WHEN 'job'      THEN (SELECT uid FROM jobs      WHERE name = ? AND source = ?)
-			  WHEN 'workflow' THEN (SELECT uid FROM workflows WHERE name = ? AND source = ?)
+			  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
+			  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 			END)`,
 		id, kind, name, source, scopeVal, runAt, scheduledBy,
 		time.Now().UTC().Format(time.RFC3339), paramsJSON,
