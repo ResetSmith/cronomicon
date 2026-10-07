@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 	"slices"
 	"sort"
 	"strings"
@@ -211,6 +212,52 @@ func dedupeIDs(ids []string) []string {
 		}
 	}
 	return out
+}
+
+// vaultRowFits reports whether an entity may be OWNED by an agency as far as its
+// Vault path goes (LR-80): true for anything that is not a Vault-backed secret
+// or SSH key, for Global, and for a path inside one of the agency's prefixes.
+// "Vault-backed" is each store's own question (a secret: any source that is not
+// exactly "stored"; a key: a source that is exactly "vault"; either: a ref).
+func vaultRowFits(ctx context.Context, tx *sql.Tx, t memberTable, entityID, agencyID string) (bool, error) {
+	if agencyID == agencyid.Global || (t.catalog != "secrets" && t.catalog != "ssh_credentials") {
+		return true, nil
+	}
+	var source string
+	var ref sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(source, ''), vault_ref FROM `+t.catalog+` WHERE id = ?`, entityID).Scan(&source, &ref); err != nil {
+		return false, err
+	}
+	vault := ref.String != ""
+	if t.catalog == "secrets" {
+		vault = vault || source != "stored"
+	} else {
+		vault = vault || source == "vault"
+	}
+	if !vault {
+		return true, nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT prefix FROM agency_vault_prefixes WHERE agency_id = ?`, agencyID)
+	if err != nil {
+		return false, err
+	}
+	var prefixes []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return false, err
+		}
+		prefixes = append(prefixes, p)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, err
+	}
+	rows.Close()
+	ok, err := vaultpath.Allowed(ref.String, prefixes)
+	return err == nil && ok, nil
 }
 
 // ownedCatalog reports whether a membership table's entity has an owner (a
@@ -772,6 +819,18 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 			if err := tx.QueryRowContext(ctx,
 				`SELECT agency_id FROM `+t.join+` WHERE `+t.col+` = ?`, m.ID).Scan(&last); err != nil {
 				return nil, err
+			}
+			// ...unless the row is Vault-backed and its path is not one the
+			// remaining agency may name (LR-80): an agency owns a Vault path only
+			// inside its prefixes, and a removal by ANOTHER agency must not be a
+			// way round that. The row stays Global-owned with its one member,
+			// works as it did, and stays in the inbox until it is settled.
+			fits, err := vaultRowFits(ctx, tx, t, m.ID, last)
+			if err != nil {
+				return nil, err
+			}
+			if !fits {
+				continue
 			}
 			if err := moveOwner(ctx, tx, t, m.ID, last); err != nil {
 				return nil, err

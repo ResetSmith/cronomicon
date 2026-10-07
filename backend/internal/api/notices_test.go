@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -174,4 +175,15 @@ func TestNotices_IncludeRetiredRunnerPins(t *testing.T) {
 	if got := listNotices(t, h, gRoot); len(got) != 2 {
 		t.Errorf("open after FIN dismissed its pin: %v", got)
 	}
+}
+
+// listNoticesFresh is listNotices for a test that changes the world between
+// reads: the inbox runs its checks at most once in 30 seconds, so the checks
+// are run here first, as the next due refresh would.
+func listNoticesFresh(t *testing.T, h http.Handler, pool *sql.DB, who string) map[string]noticeRow {
+	t.Helper()
+	if err := notices.RunChecks(context.Background(), pool); err != nil {
+		t.Fatalf("notices checks: %v", err)
+	}
+	return listNotices(t, h, who)
 }

@@ -2361,7 +2361,26 @@ export interface paths {
         put?: never;
         /**
          * Create a secret
-         * @description stored-source values are encrypted at rest (AES-256-GCM, HKDF from CRONOMICON_SECRET_KEY per S14 recommendation). vault-source entries store the reference only.
+         * @description stored-source values are encrypted at rest (AES-256-GCM, HKDF from
+         *     CRONOMICON_SECRET_KEY per S14 recommendation). vault-source entries store
+         *     the reference only.
+         *
+         *     **Where a vault-source secret may point** (v2.3.0, LR-80). The installation
+         *     has one Vault connection, so the path is judged against the secret's OWNER:
+         *     a secret that is Global's is a global administrator's and may name any
+         *     path (403 for anyone else, as since v2.2.2); a secret an agency owns must
+         *     name a path inside one of the prefixes assigned to that agency
+         *     (`GET /agencies/{agencyId}/vault-prefixes`), for every caller. Outside
+         *     them, or for an agency with none, the answer is 422
+         *     `vault_path_not_allowed`; a malformed path (an empty, `.` or `..` segment,
+         *     a `%`, or a slash at either end: the path is stored and sent as written)
+         *     is 422 `validation_failed`. The same rule applies on update, to the path
+         *     the row will name, and on migrate-to-vault.
+         *
+         *     Naming the path also takes the permission on the OWNER agency itself. A
+         *     row from before v2.3.0 may be owned by one agency and shared with
+         *     another; the sharing agency's administrators may not say where it points
+         *     (403).
          */
         post: operations["createEnvSecret"];
         delete?: never;
@@ -2421,7 +2440,11 @@ export interface paths {
         put?: never;
         /**
          * Migrate a stored secret to Vault (H10/§8.3)
-         * @description Moves the value to Vault at the given path; the stored ciphertext is zeroed and deleted. No undo. CSRF required.
+         * @description Moves the value to Vault at the given path; the stored ciphertext is zeroed
+         *     and deleted. No undo. The path must be one the secret's owner may name
+         *     (v2.3.0, LR-80; see createEnvSecret): 422 `vault_path_not_allowed`
+         *     otherwise, 403 for a Global secret and a caller who is not a global
+         *     administrator. CSRF required.
          */
         post: operations["migrateSecretToVault"];
         delete?: never;
@@ -3651,9 +3674,13 @@ export interface paths {
         /**
          * Create an SSH key credential
          * @description A Vault-backed credential (`source: vault`, or any `vaultRef`) names a path
-         *     on the installation's one Vault connection, so creating one, or changing a
-         *     credential into one, needs `configureApp` on every agency (403 otherwise),
-         *     as a Vault-backed secret does (v2.2.3). The same holds on update.
+         *     on the installation's one Vault connection, and what Vault returns for it
+         *     is delivered to a runner as key material. So it follows the rule a
+         *     Vault-backed secret does (v2.3.0, LR-80): a key that is Global's is a
+         *     global administrator's and may name any path (403 otherwise); a key an
+         *     agency owns must name a path inside that agency's Vault path prefixes
+         *     (422 `vault_path_not_allowed`). The same holds on update. Until v2.3.0
+         *     every Vault-backed key was a global administrator's.
          */
         post: operations["createSshCredential"];
         delete?: never;
@@ -3796,6 +3823,58 @@ export interface paths {
          *     grants. Signs out every other session (SU-5).
          */
         delete: operations["deleteRole"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/vault-prefixes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Vault paths an agency may name (v2.3.0)
+         * @description The installation has one Vault connection: whatever its credential can
+         *     read, a secret or an SSH key that names the path can have delivered to a
+         *     run. An agency may therefore name Vault paths only inside the prefixes
+         *     listed here (LR-80). None means it can name no Vault path. Global has no
+         *     list: its Vault-backed secrets and keys are a global administrator's,
+         *     with no path limit.
+         *
+         *     A path is inside a prefix when the prefix's SEGMENTS are the path's
+         *     first segments: `secret/data/tax` contains `secret/data/tax/db` and not
+         *     `secret/data/tax-audit/db`. Paths are case-sensitive, as Vault's are.
+         *
+         *     Readable by a global administrator and by whoever writes Vault-backed
+         *     rows for the agency (`manageEnvVars` or `configureApp` on it); 403 for
+         *     anyone else.
+         */
+        get: operations["getAgencyVaultPrefixes"];
+        /**
+         * Assign an agency its Vault path prefixes (v2.3.0)
+         * @description Replaces the list. A global administrator's (`configureApp` on every
+         *     agency): which part of the one Vault an agency may point at is the
+         *     installation's decision, not the agency's.
+         *
+         *     Each prefix is stored normalised (no slash at either end) and refused
+         *     whole if its meaning to Vault would be in doubt: an empty, `.` or `..`
+         *     segment, or a `%`, `\`, `?`, `#` or control character (422
+         *     `validation_failed`; nothing is written). A repeat is one prefix, and a
+         *     prefix inside another of the same save is dropped. Global is refused
+         *     (422 `builtin_agency`).
+         *
+         *     The rule is applied when a secret or key is WRITTEN or MOVED, not when
+         *     a run resolves it (LR-81): removing a prefix does not revoke what was
+         *     already written under it. Such rows keep working, cannot be edited
+         *     until a prefix covers them again, and are listed in `GET /notices` as
+         *     `vault_path_outside_prefix`. CSRF required.
+         */
+        put: operations["setAgencyVaultPrefixes"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6390,6 +6469,12 @@ export interface components {
              *       through it; a host record connects only for runs of the key's own
              *       agency. Subject `ssh-host:<id>` or `bastion:<id>`. Filed under the
              *       record's owner.
+             *     - `vault_path_outside_prefix` — a Vault-backed secret or SSH key an
+             *       agency owns whose path is not inside the Vault path prefixes
+             *       assigned to that agency (every such row, until an upgraded
+             *       installation assigns prefixes). It keeps working and cannot be
+             *       edited until a prefix covers it. Subject `<kind>:<id>`. Filed
+             *       under Global.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -6697,7 +6782,7 @@ export interface components {
             configureAppGlobal?: boolean;
             /** @description Global administrator for manageRoles — may edit role templates and write all-agencies grants and service accounts. */
             manageRolesGlobal?: boolean;
-            /** @description Global administrator for manageEnvVars — may create, edit or migrate Vault-backed secrets and edit script reference bindings. */
+            /** @description Global administrator for manageEnvVars — may create, edit or migrate Vault-backed secrets that are Global's (an agency's own are its administrators', inside its Vault path prefixes, since v2.3.0) and edit script reference bindings. */
             manageEnvVarsGlobal?: boolean;
             /** @description Global publisher — may publish schedule and workflow files, unscoped jobs, and jobs in any scope. */
             publishScheduleGlobal?: boolean;
@@ -6911,7 +6996,7 @@ export interface components {
             description?: string;
             /** @description Required when source=stored; encrypted at rest (S14). Never echoed back. */
             value?: string;
-            /** @description Required when source=vault. */
+            /** @description Required when source=vault: `<path>#<field>`. For a secret an agency owns, the path must lie inside one of that agency's Vault path prefixes (v2.3.0; see createEnvSecret). */
             vaultPath?: string;
             /** @description The ONE agency that owns the new secret, applied at CREATE only (a list for compatibility; more than one id is 422 `one_agency` since v2.3.0, LR-54). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure (it is Global's). The row is moved to another agency afterwards via PUT /secret-agencies. */
             agencyIds?: string[];
@@ -7333,6 +7418,12 @@ export interface components {
             /** @enum {string} */
             kind: "scope" | "secret" | "env-var" | "ssh-credential" | "runner";
             id: string;
+        };
+        /** @description The Vault path prefixes assigned to one agency (v2.3.0, LR-80). */
+        AgencyVaultPrefixes: {
+            agencyId: string;
+            /** @description Normalised, sorted. Empty means the agency can name no Vault path. */
+            prefixes: string[];
         };
         /**
          * @description One entity's agency (migration 670). `id` is the scope / secret / env-var /
@@ -15635,6 +15726,72 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    getAgencyVaultPrefixes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The agency's prefixes, sorted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyVaultPrefixes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setAgencyVaultPrefixes: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: components["parameters"]["agencyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @example [
+                     *       "secret/data/tax",
+                     *       "kv/tax"
+                     *     ]
+                     */
+                    prefixes: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The stored list. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgencyVaultPrefixes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
         };
     };
     setAgencyMembers: {

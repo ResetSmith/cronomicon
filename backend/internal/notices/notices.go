@@ -52,6 +52,11 @@ const (
 	// when such a record belonged to nobody. A run that reaches it fails for
 	// that host. Subject: "ssh-host:<id>" or "bastion:<id>".
 	KindRecordKeyOutsideOwner = "record_key_outside_owner"
+	// KindVaultPathOutsidePrefix — a Vault-backed secret or SSH key that an
+	// agency owns and whose path is not inside the Vault paths assigned to that
+	// agency (LR-81). It keeps resolving; it cannot be edited until the agency
+	// is assigned a prefix that covers it. Subject: "<kind>:<id>".
+	KindVaultPathOutsidePrefix = "vault_path_outside_prefix"
 )
 
 // Notice is one row of the inbox.
