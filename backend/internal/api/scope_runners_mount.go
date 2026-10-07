@@ -25,13 +25,17 @@ import (
 //	GET  /api/v1/scope-binding-notices             (ConfigureApp)
 //	POST /api/v1/scope-binding-notices/dismiss     (ConfigureApp + CSRF)
 //
-// Authority. The routes carry the same coarse ConfigureApp gate as every other
-// scope overlay (scopes are exempt from the departmental axis — their membership
-// DEFINES the grant expansion). On top of it, NAMING a runner needs the RF-2
-// runner gate for that runner: configureApp on an agency it belongs to, and
-// unrestricted for a general-pool runner. Binding decides which work a runner
-// receives, which is the same act as placing it. Removing a binding names no
-// runner and needs nothing more than the route gate.
+// Authority (LR-62). Binding needs authority over the SCOPE (requireScopeAgency)
+// and a runner that already serves the scope's agency (the writer's eligibility
+// check, 422 runner_not_eligible). It does not need authority over the runner.
+//
+// Until 2.3.0 naming a runner needed the runner's own gate, because binding
+// decided which work a runner received and so counted as placing it. A runner's
+// placement is now made once, by whoever owns it: an agent serves its owner, and
+// the local runner serves the agencies a global administrator listed. A binding
+// only narrows which of the runners already serving the agency the scope uses.
+// Without this an agency could not bind its own scope to a runner that serves
+// it and belongs to Global.
 func (s *Server) mountScopeRunners(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/scopes/{scopeId}/runners", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handleSetScopeRunners))))
 	mux.Handle("POST /api/v1/scopes/{scopeId}/runners/preview", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handlePreviewScopeRunners))))
@@ -65,8 +69,8 @@ func (s *Server) failScopeRunners(w http.ResponseWriter, err error) bool {
 }
 
 // handleSetScopeRunners replaces a scope's bound-runner set. An empty list
-// clears the binding. Each runner being ADDED is authorized individually before
-// the write, so a denial names the runner.
+// clears the binding. A runner being ADDED must serve the scope's agency; the
+// writer checks that in its own transaction and names the runner if not.
 func (s *Server) handleSetScopeRunners(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -89,25 +93,7 @@ func (s *Server) handleSetScopeRunners(w http.ResponseWriter, r *http.Request) {
 			"runnerIds is required; send [] to clear the binding")
 		return
 	}
-	added, _, err := settings.ScopeRunnersDelta(r.Context(), s.db, sid, *inp.RunnerIDs)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	authorized := make(map[string]bool, len(added))
-	for _, rid := range added {
-		if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "runner_agencies", "runner_id", rid, "runner") {
-			return
-		}
-		authorized[rid] = true
-	}
-	// The writer re-derives the additions inside its own transaction and is handed
-	// the set that was just authorized: if another operator unbound a runner in
-	// between, that runner would now count as an addition nobody gated, and the
-	// write is refused instead (409) rather than letting the race stand in for
-	// the check.
-	sc, err := settings.SetScopeRunners(r.Context(), s.db, sid, *inp.RunnerIDs, id.Email,
-		func(runnerID string) bool { return authorized[runnerID] })
+	sc, err := settings.SetScopeRunners(r.Context(), s.db, sid, *inp.RunnerIDs, id.Email, nil)
 	if s.failScopeRunners(w, err) {
 		return
 	}
@@ -119,8 +105,9 @@ func (s *Server) handleSetScopeRunners(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleReplaceScopeRunner swaps one runner for another on every scope the first
-// is bound to. The runner being replaced is usually deregistered, so only the
-// REPLACEMENT is gated — it is the one being given work.
+// is bound to. The caller needs authority over each of those scopes, and the
+// replacement must serve each one's agency (the writer's check): all or nothing.
+// No authority over either runner is asked for (LR-62).
 func (s *Server) handleReplaceScopeRunner(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -140,12 +127,9 @@ func (s *Server) handleReplaceScopeRunner(w http.ResponseWriter, r *http.Request
 			"fromRunnerId and toRunnerId are required and must differ")
 		return
 	}
-	if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "runner_agencies", "runner_id", inp.ToRunnerID, "runner") {
-		return
-	}
 	// GC-6: the swap rewrites the binding of EVERY scope the old runner serves,
-	// so the caller needs authority over each of those scopes, not only over the
-	// replacement. Without this an administrator of one agency could re-point
+	// so the caller needs authority over each of those scopes. Without this an
+	// administrator of one agency could re-point
 	// another agency's confined scope at a runner of their own.
 	boundScopes, err := s.scopesBoundTo(r.Context(), inp.FromRunnerID)
 	if err != nil {

@@ -45,6 +45,47 @@ func ParseOutputMarker(line string) (key, value string, ok bool) {
 	return m[1], m[2], true
 }
 
+// AgentPrefixesOutput reports whether a runner agent prefixes every line of a
+// run of this type with "[host] ". It does for the types it runs over SSH on
+// the targets (every shell type), and does not for the two it runs with a local
+// toolchain on its own host. The agent's side of this is agent.localRunTypes;
+// the two lists must agree.
+func AgentPrefixesOutput(runType string) bool {
+	return runType != "ansible" && runType != "terraform"
+}
+
+// ParseRunnerOutputMarker is ParseOutputMarker for a line that came through a
+// runner agent's log upload. A shell job the agent runs over SSH reaches the
+// server as "[host] line" — the agent prefixes every remote line with the host
+// it came from, for one target as for several (agent/ssh.go) — so a marker on
+// that path never started the line and was never captured: inter-job outputs
+// from a shell job on an agent were silently empty. The in-app executor parses
+// each line before it adds the same prefix; this is the matching step for the
+// agent path, done on the server so the wire does not change.
+//
+// prefixed says the run is one whose lines the agent prefixes
+// (AgentPrefixesOutput). Only then is one leading "[…] " removed, once. On
+// such a run every line the job prints arrives behind the agent's prefix, so
+// removing one restores exactly "a marker starts the job's line": a job line
+// "[INFO] ::cronomicon-output…" arrives as "[host] [INFO] ::…" and is not a
+// marker, as it would not be on the in-app executor. On a run the agent does
+// NOT prefix (ansible, terraform) nothing is removed — there a leading "[…] "
+// is the tool's or the job's own text, and reading past it would let data a
+// job merely echoes after a bracketed tag set an output.
+func ParseRunnerOutputMarker(line string, prefixed bool) (key, value string, ok bool) {
+	if key, value, ok = ParseOutputMarker(line); ok {
+		return key, value, true
+	}
+	if !prefixed || !strings.HasPrefix(line, "[") {
+		return "", "", false
+	}
+	_, rest, found := strings.Cut(line, "] ")
+	if !found {
+		return "", "", false
+	}
+	return ParseOutputMarker(rest)
+}
+
 // FirstOutputLeakingSecret reports the name of the first captured output whose
 // value contains (or equals) one of the run's injected secret values, or "" when
 // none do (H2/DEC-2). injected is the per-run injected redaction dictionary

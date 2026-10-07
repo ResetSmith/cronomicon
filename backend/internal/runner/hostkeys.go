@@ -86,6 +86,44 @@ var ErrHostKeyUnverifiable = errors.New("stored host key does not match its fing
 // that would be written, so nothing is. Mapped 409 `review_stale`.
 var ErrReviewStale = errors.New("the keys changed after they were reviewed")
 
+// ErrHostKeyOwnersDecision is returned when a caller who does not own the
+// runner (LR-63) tries to approve a key that would REPLACE one the runner
+// already trusts, or that contradicts the server's own pin for the host. A
+// guest's limit is the scope a key was scanned for, but what an approval
+// writes is the runner's trust for that host, whoever else uses it: a host can
+// be in two agencies' scopes, and a bastion serves many. So a guest adds the
+// first key for a host and never changes one. Mapped 403 `owner_required`.
+var ErrHostKeyOwnersDecision = errors.New("this key would replace one the runner already trusts")
+
+// hostKeyScopesKey carries LR-63's limit through a request context.
+type hostKeyScopesKey struct{}
+
+// WithHostKeyScopes marks a request as made by someone who does NOT own the
+// runner and may act only for the scopes named (LR-63): an administrator of an
+// agency the runner serves, reviewing the keys of their own agency's hosts. The
+// API layer sets it (requireRunnerOwnerOrHostKeyGuest); the three handlers on
+// that path read it with hostKeyScopes and narrow what they do.
+//
+// A context WITHOUT it is the owner's and is not narrowed, so the API layer
+// must never route a non-owner to a handler that does not read it.
+func WithHostKeyScopes(ctx context.Context, scopeIDs []string) context.Context {
+	set := make(map[string]bool, len(scopeIDs))
+	for _, id := range scopeIDs {
+		if id != "" {
+			set[id] = true
+		}
+	}
+	return context.WithValue(ctx, hostKeyScopesKey{}, set)
+}
+
+// hostKeyScopes returns the scope ids a guest is limited to. limited is false
+// for the runner's owner. A key with no scope ("" — a typed-host scan) is in
+// nobody's limit.
+func hostKeyScopes(ctx context.Context) (scopes map[string]bool, limited bool) {
+	scopes, limited = ctx.Value(hostKeyScopesKey{}).(map[string]bool)
+	return scopes, limited
+}
+
 // failResolve maps a batch's errors. It reports whether it wrote a response.
 func (s *Service) failResolve(w http.ResponseWriter, err error) bool {
 	switch {
@@ -97,6 +135,10 @@ func (s *Service) failResolve(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, ErrHostKeyNotPending):
 		httpx.Fail(w, http.StatusConflict, "conflict",
 			"one or more of these keys is no longer pending for this runner; reload the list")
+	case errors.Is(err, ErrHostKeyOwnersDecision):
+		httpx.Fail(w, http.StatusForbidden, "owner_required",
+			err.Error()+"; nothing was trusted. This runner is not your agency's: you may approve the first key "+
+				"for a host of your own scope, and replacing a trusted key is for the runner's owner")
 	case errors.Is(err, ErrHostKeyUnverifiable):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "host_key_unverifiable",
 			err.Error()+"; reject it and scan the host again")
@@ -316,7 +358,7 @@ type pendingKeyRow struct {
 func (s *Service) HandleListRunnerPendingHostKeys(w http.ResponseWriter, r *http.Request) {
 	runnerID := r.PathValue("id")
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT id, host, host_name, scope_name, key_type, fingerprint, scanned_at
+		SELECT id, host, host_name, scope_name, key_type, fingerprint, scanned_at, COALESCE(scope_id, '')
 		  FROM pending_host_keys
 		 WHERE runner_id = ? AND approved_at IS NULL AND rejected_at IS NULL
 		 ORDER BY COALESCE(scope_name, ''), COALESCE(host_name, host), key_type`, runnerID)
@@ -325,14 +367,20 @@ func (s *Service) HandleListRunnerPendingHostKeys(w http.ResponseWriter, r *http
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 		return
 	}
+	// LR-63: a guest sees the keys scanned for their own agency's scopes only.
+	limit, limited := hostKeyScopes(r.Context())
 	out := []pendingKeyRow{}
 	for rows.Next() {
 		var p pendingKeyRow
 		var hostName, scopeName sql.NullString
-		if err := rows.Scan(&p.ID, &p.Host, &hostName, &scopeName, &p.KeyType, &p.Fingerprint, &p.ScannedAt); err != nil {
+		var scopeID string
+		if err := rows.Scan(&p.ID, &p.Host, &hostName, &scopeName, &p.KeyType, &p.Fingerprint, &p.ScannedAt, &scopeID); err != nil {
 			rows.Close()
 			httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 			return
+		}
+		if limited && !limit[scopeID] {
+			continue
 		}
 		if hostName.Valid {
 			p.HostName = &hostName.String
@@ -412,6 +460,11 @@ func (s *Service) resolveBatch(ctx context.Context, runnerID string, approve, re
 		return res, ErrHostKeyNotPending
 	}
 
+	// LR-63: for a guest, every key named must have been scanned for a scope of
+	// their own agency. One that was not reads as "not pending": it is not on
+	// the list they were shown, and the refusal must not confirm it exists.
+	limit, limited := hostKeyScopes(ctx)
+
 	ts := now()
 	var entries []ledgerEntry
 	scopes := map[string]bool{}
@@ -432,6 +485,9 @@ func (s *Service) resolveBatch(ctx context.Context, runnerID string, approve, re
 			}
 			if err != nil {
 				return res, err
+			}
+			if limited && !limit[scopeID.String] {
+				return res, ErrHostKeyNotPending
 			}
 			e.scopeID, e.scopeName, e.hostName = scopeID.String, scopeName.String, hostName.String
 			e.decision, e.source = group.decision, "scan"
@@ -462,6 +518,9 @@ func (s *Service) resolveBatch(ctx context.Context, runnerID string, approve, re
 					}
 					res.Unchanged++
 					continue
+				}
+				if limited && e.class.Status == keyStatusChanged {
+					return res, fmt.Errorf("%w (%s, %s)", ErrHostKeyOwnersDecision, e.host, e.keyType)
 				}
 				if e.class.Status == keyStatusChanged && !acknowledged[id] {
 					return res, fmt.Errorf("%w (%s, %s now replaces a trusted key)", ErrReviewStale, e.host, e.keyType)

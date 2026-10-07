@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -538,10 +539,11 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// toolchains is the display-only detected-toolchain blob (RX.7/R6); "" ⇒
 		// NULL (a pre-Phase-4 agent, so the detail shows "—").
 		toolchains string
-		// agency is the agency the runner serves; "" leaves it where every runner
-		// is born, in Global (migration 1220). Every seeded scope belongs to an
-		// agency, so a fleet left entirely in Global — what this seed wrote until
-		// 2.3.0 — could claim none of the seeded work.
+		// agency is the agency that OWNS the runner, and so the one it serves
+		// (migration 1250): what the registration token of a real agent names.
+		// "" is Global's own. Every seeded scope belongs to an agency, so a fleet
+		// left entirely in Global — what this seed wrote until 2.3.0 — could
+		// claim none of the seeded work.
 		agency string
 	}{
 		{"runner-linux-01", "online", "Linux", `["bash","ansible","terraform","perl","python"]`, 2, 5, 20 * time.Second,
@@ -563,13 +565,15 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			toolchains = r.toolchains
 		}
 		rid := db.NewID()
-		exec(`INSERT INTO runners (id, name, status, capabilities, load, last_seen_at, drain_deadline_at, registered_at, created_at, os, version, max_concurrent, toolchains)
-		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.4.0', ?, ?)`,
-			rid, r.name, r.status, r.caps, r.load, ago(r.lastSeen), drain, ago(15*day), ago(15*day), r.os, r.maxConc, toolchains)
-		if r.agency != "" {
-			// Naming an agency takes the runner out of Global (a trigger).
-			exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, ?)`, rid, r.agency)
+		owner := r.agency
+		if owner == "" {
+			owner = agencyid.Global
 		}
+		// The one serve row is written by the trigger that reads the owner, as it
+		// is for a registering agent.
+		exec(`INSERT INTO runners (id, name, status, capabilities, load, last_seen_at, drain_deadline_at, registered_at, created_at, os, version, max_concurrent, toolchains, owner_agency)
+		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.4.0', ?, ?, ?)`,
+			rid, r.name, r.status, r.caps, r.load, ago(r.lastSeen), drain, ago(15*day), ago(15*day), r.os, r.maxConc, toolchains, owner)
 	}
 
 	// ── Env vars ───────────────────────────────────────────────────────────────

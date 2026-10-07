@@ -2097,10 +2097,13 @@ export interface paths {
          *     A runner being ADDED must be registered (422 code=unknown_runner) and
          *     eligible for the scope's agency: a runner that serves it, which for a scope
          *     that is Global's means a runner that serves Global (422
-         *     code=runner_not_eligible). It also needs the caller's configureApp on an
-         *     agency that runner belongs to (a global administrator for one of
-         *     Global's), else 403. A binding already present is kept
-         *     as it is, including one whose runner has since been deregistered.
+         *     code=runner_not_eligible). A binding already present is kept as it is,
+         *     including one whose runner has since been deregistered.
+         *
+         *     The caller needs configureApp on the SCOPE's agency. Since v2.3.0 no
+         *     authority over the runner is asked for (LR-62): a runner's placement is
+         *     its owner's to make, and a binding only narrows which of the runners
+         *     already serving the agency this scope uses.
          *
          *     `runnerIds` is required: because [] is the operation that removes the
          *     restriction, a body without it is refused (422 code=validation_error)
@@ -2170,8 +2173,9 @@ export interface paths {
          *     code=unknown_runner) and eligible for every affected scope (422
          *     code=runner_not_eligible, naming the scopes it is not eligible for). 409
          *     (code=no_bindings) when `fromRunnerId` is bound to nothing. The caller
-         *     needs configureApp on an agency the replacement belongs to (a global
-         *     administrator for one of Global's), else 403.
+         *     needs configureApp on the agency of every scope the old runner is bound
+         *     to, else 403; no authority over either runner is asked for (v2.3.0,
+         *     LR-62).
          *
          *     CSRF required.
          */
@@ -2568,6 +2572,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runners/{runnerId}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand a Global-owned agent to the one agency it serves (v2.3.0)
+         * @description The only change of owner there is (MA-12). It applies to an agent that
+         *     Global owns and that serves exactly one other agency — what is left of a
+         *     legacy placement once it has been narrowed — and makes that agency its
+         *     owner, so the agency's administrators manage it from then on. Asking for
+         *     the owner a runner already has is a no-op 204.
+         *
+         *     Every other change is 422 `owner_change_refused`: agency to Global,
+         *     agency to agency, a Global agent to an agency it does not serve, and a
+         *     runner that still serves several. To move an agent any other way,
+         *     deregister it and enrol it again with a token for the agency it should
+         *     belong to.
+         *
+         *     Takes `configureApp` on the runner's present owner (a global
+         *     administrator, for the one case that is accepted) and on the agency
+         *     named. CSRF required.
+         */
+        post: operations["setRunnerOwner"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runners/{runnerId}/placement": {
         parameters: {
             query?: never;
@@ -2578,18 +2616,22 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Accept a placement suggestion for an unbound runner
-         * @description Restores the agency membership and tags recorded in a snapshot onto a
-         *     runner that currently serves only Global (DR-7): a re-enrolled runner is
-         *     born there.
+         * Accept a placement suggestion for a re-enrolled runner
+         * @description Re-points, at this runner, the scope bindings that a previous enrolment
+         *     under the same name still holds on scopes of this runner's OWN agency,
+         *     and merges the tags recorded in the snapshot (DR-7; re-keyed in v2.3.0,
+         *     MA-32).
+         *
+         *     It never changes what the runner serves. An agent's placement is the
+         *     agency its registration token named; until v2.3.0 this route restored
+         *     every agency a snapshot listed, and it no longer adds any. Bindings the
+         *     previous id holds on another agency's scopes are left where they are:
+         *     those scopes stay closed until their own agency re-points them.
          *
          *     This endpoint IS the human confirmation. The server never re-binds a
          *     re-registered runner on its own — see PlacementSuggestion for why.
          *
-         *     Authorization is `configureApp` PLUS the ability to grant EVERY agency
-         *     the snapshot names: an unrestricted operator passes everywhere, a
-         *     departmental one only for agencies they already administer. One refusal
-         *     fails the whole accept, because a partial placement looks placed.
+         *     Authorization is `configureApp` on the agency that owns the runner.
          */
         post: operations["acceptRunnerPlacement"];
         delete?: never;
@@ -2613,10 +2655,12 @@ export interface paths {
          *     is on the SNAPSHOT, so it is never offered again to any runner; the row
          *     is kept as history and still ages out on the retention window.
          *
-         *     Same authorization as accepting: dismissing is a decision about
-         *     placement, and a suggestion only ever targets a runner that serves only
-         *     Global — so it is `configureApp` and, per RF-Q3, a global
-         *     administrator's in practice.
+         *     Same authorization as accepting: `configureApp` on the agency that
+         *     owns the runner. And the snapshot must be on offer to THIS runner, and
+         *     hold nothing else: 409 `placement_stale` when nothing of this runner's
+         *     agency is restorable from it, 409 `placement_shared` when the previous
+         *     runner is also still bound to another agency's scopes (the offer is
+         *     theirs too; accept it or re-bind your own scopes instead).
          */
         post: operations["dismissRunnerPlacement"];
         delete?: never;
@@ -2744,6 +2788,11 @@ export interface paths {
          *     delivers a `keyscan` control op and the agent scans each host from its
          *     own vantage, uploading what it saw for approval.
          *
+         *     For the runner's owner. An administrator of an agency the runner serves
+         *     and does not own (v2.3.0, LR-63: a legacy placement) may scan a scope
+         *     of their own agency with it, by `scopeId`; typed `hosts` and any other
+         *     scope are 403.
+         *
          *     Give **either** `hosts` (a typed list) **or** `scopeId` (SB). A scope
          *     scan is expanded to dial addresses on the server — the runner is told
          *     addresses, never scope names — and is accepted only for a scope the
@@ -2804,8 +2853,8 @@ export interface paths {
          *     with runner names and full SHA256 fingerprints for out-of-band
          *     comparison (approving without out-of-band verification is still TOFU).
          *     Since SB the list holds only the runners the caller has authority over
-         *     (configureApp on one of the runner's agencies; a global administrator
-         *     for one of Global's): the rows name hosts.
+         *     (configureApp on the agency that OWNS the runner, since v2.3.0; a global
+         *     administrator for one of Global's): the rows name hosts.
          */
         get: operations["listPendingHostKeys"];
         put?: never;
@@ -2849,9 +2898,11 @@ export interface paths {
         };
         /**
          * What one runner trusts — approved keys, their history, and its own file (SB)
-         * @description ConfigureApp, plus the runner's departmental gate (a runner of Global's,
-         *     or a deregistered one, is a global administrator's). Three lists that are
-         *     deliberately never merged:
+         * @description ConfigureApp on the agency that owns the runner (a global administrator
+         *     for one of Global's). A deregistered runner's record stays its former
+         *     owner's for as long as its placement snapshot is kept, and is a global
+         *     administrator's after that. Three lists that are deliberately never
+         *     merged:
          *
          *     - `inForce` — keys approved in Cronomicon and currently trusted, from the
          *       ledger. `presentInFile` is set once the runner has reported its file.
@@ -2884,6 +2935,10 @@ export interface paths {
          *     `changed` (it differs from the key this runner trusts for the host, or
          *     from the server's own pin — `previousSource` says which), `match` (it
          *     equals the server's pin for the host), or `new`.
+         *
+         *     For the runner's owner. An administrator of an agency the runner serves
+         *     and does not own (v2.3.0, LR-63) sees the keys scanned for scopes of
+         *     their own agency, and no others.
          */
         get: operations["listRunnerPendingHostKeys"];
         put?: never;
@@ -2911,6 +2966,14 @@ export interface paths {
          *     Approving a key the runner already trusts records nothing new (counted
          *     in `unchanged`); approving a changed key replaces the old one, and the
          *     runner is told to remove the old line.
+         *
+         *     For the runner's owner. An administrator of an agency the runner serves
+         *     and does not own (v2.3.0, LR-63) may decide the keys scanned for scopes
+         *     of their own agency; a batch that names any other key is refused whole,
+         *     as if that key were not pending. Such a caller adds the first key for a
+         *     host and never changes one: approving a key classified `changed` (it
+         *     would replace one the runner trusts, or it contradicts the server's pin)
+         *     is 403 `owner_required`, and is the runner's owner's to decide.
          */
         post: operations["resolveHostKeyBatch"];
         delete?: never;
@@ -3168,10 +3231,15 @@ export interface paths {
         };
         /**
          * List registration tokens (single-use, Phase 7)
-         * @description Label, created/expires, revocation, and the used-by audit trail —
-         *     which runner consumed which token. Never returns plaintext (tokens
-         *     are hash-at-rest; the plaintext is returned exactly once by mint).
-         *     Newest first, capped at 100 rows.
+         * @description Label, owner agency, created/expires, revocation, and the used-by audit
+         *     trail — which runner consumed which token. Never returns plaintext
+         *     (tokens are hash-at-rest; the plaintext is returned exactly once by
+         *     mint). Newest first, from the 100 most recent.
+         *
+         *     Since v2.3.0 the list is by authority (LR-36): a caller sees the tokens
+         *     that enrol an agent for an agency they hold `configureApp` on, a global
+         *     administrator sees all of them, and anyone else gets an empty list. It
+         *     was open to every signed-in user before.
          */
         get: operations["listRegistrationTokens"];
         put?: never;
@@ -3182,6 +3250,19 @@ export interface paths {
          *     rotate, minting does NOT revoke other tokens — several installs can
          *     be in flight, each with its own token; each dies on its first
          *     successful registration. CSRF required.
+         *
+         *     **The token names the agency that will own the agent it enrols**
+         *     (v2.3.0, LR-61). The agent registers owned by that agency and serving
+         *     exactly it; it declares nothing about its own placement and cannot be
+         *     placed anywhere else afterwards. Minting therefore takes `configureApp`
+         *     on that agency (403 otherwise): an agency's administrators enrol their
+         *     own agents, and a global administrator enrols one for any agency or for
+         *     Global. With no `agencyId` the token is for the caller's one agency;
+         *     for Global when the caller is a global administrator; and refused (422
+         *     `agency_required`) when the caller administers several. 422
+         *     `unknown_agency` for an id that names no agency. If the agency is
+         *     deleted before the token is used, registration with it is refused
+         *     (`agency_gone`) and the token is not consumed.
          */
         post: operations["mintRegistrationToken"];
         delete?: never;
@@ -3208,6 +3289,9 @@ export interface paths {
          *     credential and its row is the audit record; to revoke the runner it
          *     registered, deregister that runner. Revoking an already-revoked
          *     token is a no-op 204. CSRF required.
+         *
+         *     Takes `configureApp` on the agency the token enrols an agent for
+         *     (v2.3.0, LR-36); a global administrator for one of Global's.
          */
         delete: operations["revokeRegistrationToken"];
         options?: never;
@@ -3908,7 +3992,15 @@ export interface paths {
          *     add takes it out of Global and, for a secret, variable or key, makes this
          *     agency its owner. Adding one that is another agency's is a move, made on
          *     the entity itself (`PUT /{kind}-agencies`, `PUT /scopes/{scopeId}/agency`),
-         *     and is refused here with 422 `one_agency`. A runner is not held to that.
+         *     and is refused here with 422 `one_agency`.
+         *
+         *     A runner has a rule of its own (v2.3.0, MA-11): an agent serves exactly
+         *     the agency that owns it, so a runner cannot be ADDED to an agency here
+         *     (422 `serve_list_fixed`, for a global administrator too), and an
+         *     agency's own agent cannot be removed from it (422 `owner_removal`). The
+         *     one runner change this route makes is taking a legacy placement off the
+         *     agency's list, and that is a write on the runner: it takes
+         *     `configureApp` on the runner's owner, not on this agency.
          *
          *     Refuses removing an entity from the agency that OWNS it (422
          *     `owner_removal`) — move it instead; a removal that would leave an entity
@@ -3944,7 +4036,15 @@ export interface paths {
          *     runner always serves at least one agency: an empty list is 422
          *     `agency_required`, and Global beside a named agency is 422 `global_mixed`
          *     (a runner that serves Global claims Global's runs and no department's).
-         *     CSRF required.
+         *
+         *     **An agent serves exactly the agency that owns it** (v2.3.0, MA-11), so
+         *     this route no longer places one: the list written must be exactly the
+         *     runner's owner, or the list it has with agencies taken away. Anything
+         *     else is 422 `serve_list_fixed`, for a global administrator too. In
+         *     practice the one change it makes is narrowing a legacy placement. To
+         *     have a runner serve another agency, enrol an agent for that agency.
+         *     The caller needs `configureApp` on the runner's OWNER and on each agency
+         *     named. CSRF required.
          */
         put: operations["setRunnerAgencies"];
         post?: never;
@@ -6475,6 +6575,11 @@ export interface components {
              *       installation assigns prefixes). It keeps working and cannot be
              *       edited until a prefix covers it. Subject `<kind>:<id>`. Filed
              *       under Global.
+             *     - `legacy_placement` — a runner whose serve list is not exactly its
+             *       owner: one that served several agencies before 2.3.0. It works as
+             *       it did, is Global's, and can be narrowed and never widened; the
+             *       detail gives the order that settles it. Subject: the runner's id.
+             *       Filed under Global.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -7002,16 +7107,13 @@ export interface components {
             agencyIds?: string[];
         };
         /**
-         * @description The placement a re-registered runner previously held, offered for an
-         *     operator to confirm (DR-7). A runner that loses its identity comes back
-         *     with a NEW id, so its agency membership and tags — both keyed to the id
-         *     that was deleted — are gone.
-         *
-         *     Losing placement is not "goes idle": a re-enrolled runner is born serving
-         *     Global, so it has silently moved from its department's work to Global's
-         *     (the runs of jobs with no scope, and of Global's own scopes). That is an
-         *     isolation change, which is why it is surfaced rather than left to be
-         *     noticed.
+         * @description What a re-registered runner's previous enrolment left behind, offered
+         *     for an operator to confirm (DR-7; MA-32 since v2.3.0). A runner that
+         *     loses its identity comes back with a NEW id. It is enrolled with a token
+         *     for its agency, so it serves the right agency from the start; what the
+         *     new id lacks is the scope bindings the old id still holds, and its tags.
+         *     A binding outlives its runner, so those scopes are closed until the
+         *     bindings are re-pointed.
          *
          *     Every match signal is carried here, labelled by whether it is OBSERVED or
          *     SELF-DECLARED, so the person confirming can see what the match rests on.
@@ -7022,20 +7124,23 @@ export interface components {
             /** @description The runner id that held this placement before it was deleted. */
             previousRunnerId?: string;
             /**
-             * @description The agencies that would be restored. An agency deleted since the
-             *     snapshot is omitted rather than offered.
+             * @description The one agency the offer is for: this runner's owner, whose scopes
+             *     are the ones re-pointed. Always exactly one entry since v2.3.0 (it
+             *     listed every agency a snapshot would restore before; nothing
+             *     restores an agency now).
              */
             agencies?: {
                 id?: string;
                 name?: string;
             }[];
-            /** @description Operator tags that would be restored alongside the agencies. */
+            /** @description Operator tags that would be merged into the runner's own. */
             tags?: string[];
             /**
-             * @description Names of the scopes still bound to the previous runner id. A scope
-             *     binding outlives its runner, so these scopes are closed — nothing can
-             *     claim their runs — until the placement is restored; accepting the
-             *     offer re-points them at this runner. [] when there are none.
+             * @description Names of the scopes of this runner's agency still bound to the
+             *     previous runner id. A scope binding outlives its runner, so these
+             *     scopes are closed — nothing can claim their runs — until accepting
+             *     the offer re-points them at this runner. Never empty: with none
+             *     there is no offer.
              *
              *     A runner that served only Global has no agencies to restore, so for
              *     one the offer may carry scopes and an empty `agencies` list.
@@ -7133,24 +7238,43 @@ export interface components {
             /** Format: date-time */
             readonly lastHeartbeatAt?: string | null;
             /**
-             * @description Agencies (network-isolation zones) this runner belongs to
-             *     (agency-support.md M2). Operator-assigned; never self-declared.
+             * @description The agency that OWNS the runner (v2.3.0): the one whose
+             *     administrators manage it. Set by the registration token the
+             *     agent enrolled with, never by the agent. `global` for one of
+             *     Global's, which a global administrator manages.
+             */
+            readonly ownerAgency?: {
+                id?: string;
+                name?: string;
+            };
+            /**
+             * @description What the runner SERVES: the agencies whose runs it claims. For an
+             *     agent this is exactly its owner. Anything else is a legacy
+             *     placement (`legacyPlacement`).
              */
             readonly agencies?: {
                 id?: string;
                 name?: string;
             }[];
             /**
-             * @description A prior placement offered for an operator to confirm (DR-7).
-             *     Present ONLY on a runner that currently serves only Global and
-             *     whose name matches a retained snapshot. Absent means "no offer",
-             *     never "no placement".
+             * @description True when the serve list is not exactly the owner: a runner that
+             *     served several agencies before v2.3.0, which the upgrade left
+             *     serving the same ones under Global's ownership. It works as it
+             *     did, can lose an agency and never gain one, and has a
+             *     `legacy_placement` notice in the inbox.
+             */
+            readonly legacyPlacement?: boolean;
+            /**
+             * @description An offer to re-point the scope bindings a previous enrolment
+             *     left behind (DR-7, MA-32). Present ONLY on a runner whose name
+             *     matches a retained snapshot whose runner id still holds a
+             *     binding on a scope of this runner's own agency. Absent means "no
+             *     offer", never "no previous enrolment".
              *
              *     NEVER applied automatically: the name it is matched on is
-             *     self-declared by the agent at registration, so an automatic
-             *     re-bind would let any agent inherit another runner's agency by
-             *     claiming its name — turning an enrollment credential into a
-             *     placement credential. Accept it via
+             *     self-declared by the agent at registration. What keeps that
+             *     safe is the reach of an accept: only scopes of the agency that
+             *     owns this runner. Accept it via
              *     POST /runners/{runnerId}/placement.
              */
             readonly placementSuggestion?: components["schemas"]["PlacementSuggestion"];
@@ -7578,6 +7702,16 @@ export interface components {
             readonly id: number;
             /** @description Operator-chosen label, e.g. the intended runner name. */
             label?: string;
+            /**
+             * @description The agency that will own the agent this token enrols (v2.3.0);
+             *     `global` for a Global-owned agent. Set at mint and never changed.
+             */
+            readonly agencyId: string;
+            /**
+             * @description That agency's name, resolved at read time. Empty when the agency has
+             *     since been deleted — such a token no longer enrols anything.
+             */
+            readonly agencyName: string;
             readonly createdBy: string;
             /** Format: date-time */
             readonly createdAt: string;
@@ -13373,6 +13507,40 @@ export interface operations {
             };
         };
     };
+    setRunnerOwner: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                runnerId: components["parameters"]["runnerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The agency the runner is handed to; the one it serves. */
+                    agencyId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The agency owns the runner. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+        };
+    };
     acceptRunnerPlacement: {
         parameters: {
             query?: never;
@@ -13412,10 +13580,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /**
-             * @description The caller cannot grant at least one agency this placement would
-             *     restore.
-             */
+            /** @description The caller does not administer the agency that owns this runner. */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -13423,8 +13588,9 @@ export interface operations {
                 content?: never;
             };
             /**
-             * @description The suggestion no longer applies — the runner has since been placed,
-             *     removed or renamed, or the snapshot aged out of its retention window.
+             * @description The suggestion no longer applies — the scopes have since been
+             *     re-bound, the runner removed or renamed, or the snapshot aged out of
+             *     its retention window.
              */
             409: {
                 headers: {
@@ -14369,6 +14535,12 @@ export interface operations {
                 "application/json": {
                     /** @description Optional operator label, e.g. the intended runner name. */
                     label?: string;
+                    /**
+                     * @description The agency that will own the agent this token enrols;
+                     *     `global` for a Global-owned agent. Optional: see above for
+                     *     what an omitted one means.
+                     */
+                    agencyId?: string;
                 };
             };
         };

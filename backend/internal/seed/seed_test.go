@@ -68,6 +68,10 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 			SELECT s.id FROM secrets s JOIN secret_agencies m ON m.secret_id = s.id WHERE m.agency_id <> s.owner_agency
 			UNION ALL SELECT v.id FROM env_vars v JOIN env_var_agencies m ON m.env_var_id = v.id WHERE m.agency_id <> v.owner_agency
 			UNION ALL SELECT c.id FROM ssh_credentials c JOIN ssh_credential_agencies m ON m.credential_id = c.id WHERE m.agency_id <> c.owner_agency`,
+		"a runner that does not serve exactly its owner (a legacy placement)": `
+			SELECT rn.id FROM runners rn
+			 WHERE (SELECT COUNT(*) FROM runner_agencies m WHERE m.runner_id = rn.id) <> 1
+			    OR NOT EXISTS (SELECT 1 FROM runner_agencies m WHERE m.runner_id = rn.id AND m.agency_id = rn.owner_agency)`,
 		"a run whose snapshot is not its scope's agencies (Global for none)": `
 			SELECT r.id FROM runs r
 			 WHERE r.agencies_json <> COALESCE((

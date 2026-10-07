@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -265,23 +266,24 @@ func TestDeregisterAndReaperLeaveBindingsInPlace(t *testing.T) {
 		if runners != 0 {
 			t.Errorf("%s: runner row still present", id)
 		}
-		if bindings != 1 {
-			t.Errorf("%s: %d binding rows after deletion, want 1 (the scope must stay closed)", id, bindings)
+		// The one bound above and the two seedPlacedRunner binds.
+		if bindings != 3 {
+			t.Errorf("%s: %d binding rows after deletion, want all 3 (each scope must stay closed)", id, bindings)
 		}
 	}
 }
 
 // TestApplyPlacementRepointsScopeBindings: a re-enrolled runner has a new id, so
 // the bindings its predecessor left behind name nobody. The offer says which
-// scopes are waiting, and accepting it re-points them in the same transaction
-// that restores the agencies making the runner eligible for them.
+// scopes are waiting, and accepting it re-points them.
 func TestApplyPlacementRepointsScopeBindings(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
-	seedPlacedRunner(t, svc, "old", "ansible-rh8")
-	insertScopeRow(t, svc, "s-a", "alpha-hosts")
+	seedPlacedRunner(t, svc, "old", "ansible-rh8") // binds one Carson scope already
 	insertScopeRow(t, svc, "s-b", "beta-hosts")
-	bindScope(t, svc, "s-a", "old", "ansible-rh8")
+	if _, err := svc.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-b', 'ag-carson')`); err != nil {
+		t.Fatal(err)
+	}
 	bindScope(t, svc, "s-b", "old", "ansible-rh8")
 	svc.deregisterRunner(ctx, "old", "ansible-rh8")
 	reRegister(t, svc, "new", "ansible-rh8", "10.142.11.7")
@@ -289,35 +291,27 @@ func TestApplyPlacementRepointsScopeBindings(t *testing.T) {
 	// re-point must absorb that rather than fail on the primary key.
 	bindScope(t, svc, "s-b", "new", "ansible-rh8")
 
-	got, err := suggestionsFor(ctx, svc.db, map[string]string{"new": "ansible-rh8"})
+	got, err := suggestionsFor(ctx, svc.db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := got["new"]; s == nil || len(s.Scopes) != 2 || s.Scopes[0] != "alpha-hosts" || s.Scopes[1] != "beta-hosts" {
-		t.Fatalf("suggestion scopes = %+v, want both scopes the old id still holds", got["new"])
+	if s := got["new"]; s == nil || len(s.Scopes) != 2 || s.Scopes[0] != "beta-hosts" || s.Scopes[1] != "carson-web-old" {
+		t.Fatalf("suggestion scopes = %+v, want both of Carson's scopes the old id still holds", got["new"])
 	}
 
-	var histID int64
-	if err := svc.db.QueryRow(`SELECT id FROM runner_placement_history WHERE runner_id='old'`).Scan(&histID); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.ApplyPlacement(ctx, "new", histID, "ops@example", func(string) bool { return true }); err != nil {
+	if err := svc.ApplyPlacement(ctx, "new", historyID(t, svc, "old"), "ops@example"); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-
-	var onOld, onNew int
-	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM scope_runners WHERE runner_id='old'`).Scan(&onOld); err != nil {
-		t.Fatal(err)
+	if got := boundTo(t, svc, "new"); len(got) != 2 {
+		t.Errorf("bindings on the new id = %v, want both of Carson's scopes", got)
 	}
-	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM scope_runners WHERE runner_id='new'`).Scan(&onNew); err != nil {
-		t.Fatal(err)
-	}
-	if onOld != 0 || onNew != 2 {
-		t.Errorf("bindings after restore: old=%d new=%d, want 0 and 2", onOld, onNew)
+	// Only Reno's is left on the old id.
+	if got := boundTo(t, svc, "old"); len(got) != 1 || got[0] != "sc-reno-old" {
+		t.Errorf("bindings left on the old id = %v, want Reno's only", got)
 	}
 	found := false
 	for _, row := range activityRows(t, svc, "ansible-rh8") {
-		if strings.Contains(row, "alpha-hosts") && strings.Contains(row, "beta-hosts") {
+		if strings.Contains(row, "carson-web-old") && strings.Contains(row, "beta-hosts") {
 			found = true
 		}
 	}
@@ -337,9 +331,9 @@ func TestApplyPlacementRestoresAGeneralPoolRunnersBindings(t *testing.T) {
 	insertScopeRow(t, svc, "s-shared", "shared-hosts")
 	bindScope(t, svc, "s-shared", "old", "pool-runner")
 	svc.deregisterRunner(ctx, "old", "pool-runner")
-	reRegister(t, svc, "new", "pool-runner", "10.142.11.9")
+	reRegisterFor(t, svc, "new", "pool-runner", "10.142.11.9", "global")
 
-	got, err := suggestionsFor(ctx, svc.db, map[string]string{"new": "pool-runner"})
+	got, err := suggestionsFor(ctx, svc.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,11 +341,11 @@ func TestApplyPlacementRestoresAGeneralPoolRunnersBindings(t *testing.T) {
 	if s == nil {
 		t.Fatal("no offer for a re-enrolled general-pool runner whose old id still holds a scope binding")
 	}
-	if len(s.Agencies) != 0 || len(s.Scopes) != 1 || s.Scopes[0] != "shared-hosts" {
-		t.Errorf("offer = agencies %v scopes %v, want no agencies and [shared-hosts]", s.Agencies, s.Scopes)
+	if len(s.Agencies) != 1 || s.Agencies[0].ID != "global" || len(s.Scopes) != 1 || s.Scopes[0] != "shared-hosts" {
+		t.Errorf("offer = agencies %v scopes %v, want Global and [shared-hosts]", s.Agencies, s.Scopes)
 	}
 
-	if err := svc.ApplyPlacement(ctx, "new", s.HistoryID, "ops@example", func(string) bool { return true }); err != nil {
+	if err := svc.ApplyPlacement(ctx, "new", s.HistoryID, "ops@example"); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var onNew int
@@ -368,15 +362,15 @@ func TestApplyPlacementRestoresAGeneralPoolRunnersBindings(t *testing.T) {
 	if _, err := svc.db.Exec(`DELETE FROM scope_runners`); err != nil {
 		t.Fatal(err)
 	}
-	reRegister(t, svc, "newer", "pool-runner", "10.142.11.9")
-	got, err = suggestionsFor(ctx, svc.db, map[string]string{"newer": "pool-runner"})
+	reRegisterFor(t, svc, "newer", "pool-runner", "10.142.11.9", "global")
+	got, err = suggestionsFor(ctx, svc.db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got["newer"] != nil {
 		t.Errorf("offer = %+v for a general-pool runner with nothing to restore, want none", got["newer"])
 	}
-	if err := svc.ApplyPlacement(ctx, "newer", s.HistoryID, "ops@example", func(string) bool { return true }); err != ErrPlacementGone {
+	if err := svc.ApplyPlacement(ctx, "newer", s.HistoryID, "ops@example"); !errors.Is(err, ErrPlacementGone) {
 		t.Errorf("apply with nothing to restore = %v, want ErrPlacementGone", err)
 	}
 }

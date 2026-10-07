@@ -138,10 +138,11 @@ func TestReaperDeregistersLongOfflineRunner(t *testing.T) {
 	// Offline runner last seen 15 days ago (> 14d) → deregistered.
 	oldSeen := base.Add(-15 * 24 * time.Hour).Format(time.RFC3339)
 	insertRunnerWithHeartbeat(t, svc, "old-offline", "ancient", "offline", oldSeen, oldSeen)
-	// Give it a token so we can assert revocation.
+	// Give it a key so we can assert revocation. A key belongs to a runner by
+	// ID (runner_tokens.runner_id), which is what the revoke goes by.
 	if _, err := svc.db.Exec(`
-		INSERT INTO runner_tokens(token_hash, created_by, created_at, expires_at)
-		VALUES ('hash-old', 'runner:ancient', ?, ?)`,
+		INSERT INTO runner_tokens(token_hash, created_by, created_at, expires_at, runner_id)
+		VALUES ('hash-old', 'runner:ancient', ?, ?, 'old-offline')`,
 		oldSeen, base.Add(365*24*time.Hour).Format(time.RFC3339)); err != nil {
 		t.Fatalf("insert token: %v", err)
 	}

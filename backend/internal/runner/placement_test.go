@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 	"net/http"
 	"net/http/httptest"
@@ -38,12 +39,72 @@ func seedPlacedRunner(t *testing.T, svc *Service, id, name string) {
 			t.Fatalf("seed membership: %v", err)
 		}
 	}
+	// A scope of each agency, bound to this runner: what a re-enrolled agent's
+	// new id will not hold. (Scope ids are per runner so two seeded runners in
+	// one test do not collide.)
+	for _, sc := range []struct{ id, name, agency string }{
+		{"sc-carson-" + id, "carson-web-" + id, "ag-carson"},
+		{"sc-reno-" + id, "reno-web-" + id, "ag-reno"},
+	} {
+		if _, err := svc.db.Exec(
+			`INSERT INTO scopes(id, name, source, created_at) VALUES(?, ?, 'cronomicon', '2026-08-26T00:00:00Z')`,
+			sc.id, sc.name); err != nil {
+			t.Fatalf("seed scope: %v", err)
+		}
+		if _, err := svc.db.Exec(
+			`INSERT INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, sc.id, sc.agency); err != nil {
+			t.Fatalf("seed scope agency: %v", err)
+		}
+		if _, err := svc.db.Exec(
+			`INSERT INTO scope_runners(scope_id, runner_id, runner_name, bound_by, bound_at)
+			 VALUES(?, ?, ?, 'test', '2026-08-26T00:00:00Z')`, sc.id, id, name); err != nil {
+			t.Fatalf("seed binding: %v", err)
+		}
+	}
+}
+
+// servedBy lists the agencies a runner serves, sorted.
+func servedBy(t *testing.T, svc *Service, runnerID string) []string {
+	t.Helper()
+	rows, err := svc.db.Query(`SELECT agency_id FROM runner_agencies WHERE runner_id = ? ORDER BY agency_id`, runnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// boundTo lists the scope ids bound to a runner id, sorted.
+func boundTo(t *testing.T, svc *Service, runnerID string) []string {
+	t.Helper()
+	rows, err := svc.db.Query(`SELECT scope_id FROM scope_runners WHERE runner_id = ? ORDER BY scope_id`, runnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 type placementRow struct {
-	name, tags, caps, via, by string
-	agencies                  []string
-	lastIP                    *string
+	name, tags, caps, via, by, owner string
+	agencies                         []string
+	lastIP                           *string
 }
 
 func readPlacement(t *testing.T, svc *Service, runnerID string) placementRow {
@@ -51,9 +112,9 @@ func readPlacement(t *testing.T, svc *Service, runnerID string) placementRow {
 	var p placementRow
 	var agencyJSON string
 	if err := svc.db.QueryRow(`
-		SELECT name, agency_ids, tags, capabilities, last_client_ip, deregistered_via, deregistered_by
+		SELECT name, agency_ids, tags, capabilities, last_client_ip, deregistered_via, deregistered_by, owner_agency
 		  FROM runner_placement_history WHERE runner_id = ?`, runnerID,
-	).Scan(&p.name, &agencyJSON, &p.tags, &p.caps, &p.lastIP, &p.via, &p.by); err != nil {
+	).Scan(&p.name, &agencyJSON, &p.tags, &p.caps, &p.lastIP, &p.via, &p.by, &p.owner); err != nil {
 		t.Fatalf("read placement history: %v", err)
 	}
 	if err := json.Unmarshal([]byte(agencyJSON), &p.agencies); err != nil {
@@ -106,6 +167,11 @@ func TestDeregisterCapturesPlacementBeforeTheCascade(t *testing.T) {
 	}
 	if p.via != deregisterViaOperator {
 		t.Errorf("deregistered_via = %q, want %q", p.via, deregisterViaOperator)
+	}
+	// The snapshot keeps who owned the runner (migration 1250): its record is
+	// still that agency's after the row is gone.
+	if p.owner != "global" {
+		t.Errorf("owner_agency = %q, want global (a runner that served two agencies is Global's)", p.owner)
 	}
 }
 
@@ -163,28 +229,43 @@ func TestCapturePlacementRecordsEmptyAgencySetAsJSONArray(t *testing.T) {
 	}
 }
 
-// ── DR-7 (c): suggestions and acceptance ─────────────────────────────────────
+// ── DR-7 (c), MA-32: suggestions and acceptance ─────────────────────────────
 
-// reRegister simulates what a runner does after losing its identity: a NEW id,
-// the same self-declared name, no agencies, no tags.
+// reRegister simulates what an agent does after losing its identity: a NEW id,
+// the same self-declared name, no tags — enrolled with a token for `owner`, so
+// it is owned by that agency and serves exactly it (the trigger writes the row).
 func reRegister(t *testing.T, svc *Service, newID, name, ip string) {
+	t.Helper()
+	reRegisterFor(t, svc, newID, name, ip, "ag-carson")
+}
+
+func reRegisterFor(t *testing.T, svc *Service, newID, name, ip, owner string) {
 	t.Helper()
 	if _, err := svc.db.Exec(`
 		INSERT INTO runners (id, name, status, os, capabilities, load, tags, last_client_ip,
-		                     registered_at, created_at)
+		                     registered_at, created_at, owner_agency)
 		VALUES (?, ?, 'online', 'Linux', '["ansible","bash"]', 0, '[]', ?,
-		        '2026-08-26T01:00:00Z','2026-08-26T01:00:00Z')`, newID, name, nullStrOrNil(ip)); err != nil {
+		        '2026-08-26T01:00:00Z','2026-08-26T01:00:00Z', ?)`, newID, name, nullStrOrNil(ip), owner); err != nil {
 		t.Fatalf("re-register: %v", err)
 	}
 }
 
-func TestSuggestionOfferedToAnUnboundRunner(t *testing.T) {
+func historyID(t *testing.T, svc *Service, runnerID string) int64 {
+	t.Helper()
+	var id int64
+	if err := svc.db.QueryRow(`SELECT id FROM runner_placement_history WHERE runner_id = ?`, runnerID).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestSuggestionOfferedToAReEnrolledRunner(t *testing.T) {
 	svc := newTestService(t)
 	seedPlacedRunner(t, svc, "old", "ansible-rh8")
 	svc.deregisterRunner(context.Background(), "old", "ansible-rh8")
-	reRegister(t, svc, "new", "ansible-rh8", "10.142.11.7") // same address
+	reRegister(t, svc, "new", "ansible-rh8", "10.142.11.7") // same address, Carson's agent
 
-	got, err := suggestionsFor(context.Background(), svc.db, map[string]string{"new": "ansible-rh8"})
+	got, err := suggestionsFor(context.Background(), svc.db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +273,13 @@ func TestSuggestionOfferedToAnUnboundRunner(t *testing.T) {
 	if s == nil {
 		t.Fatal("expected a suggestion for the re-registered runner")
 	}
-	if len(s.Agencies) != 2 {
-		t.Errorf("agencies = %v, want both", s.Agencies)
+	// The offer is for the runner's own agency and the scopes of that agency the
+	// old id still holds — not for everything the old runner served.
+	if len(s.Agencies) != 1 || s.Agencies[0].ID != "ag-carson" || s.Agencies[0].Name != "Carson" {
+		t.Errorf("agencies = %v, want exactly the runner's owner", s.Agencies)
+	}
+	if len(s.Scopes) != 1 || s.Scopes[0] != "carson-web-old" {
+		t.Errorf("scopes = %v, want only Carson's bound scope", s.Scopes)
 	}
 	if !s.ClientIPMatches {
 		t.Error("same observed address should register as a match")
@@ -211,7 +297,7 @@ func TestSuggestionSurvivesAnAddressChangeButFlagsIt(t *testing.T) {
 	svc.deregisterRunner(context.Background(), "old", "ansible-rh8")
 	reRegister(t, svc, "new", "ansible-rh8", "10.231.86.4") // rebuilt elsewhere
 
-	got, _ := suggestionsFor(context.Background(), svc.db, map[string]string{"new": "ansible-rh8"})
+	got, _ := suggestionsFor(context.Background(), svc.db)
 	s := got["new"]
 	if s == nil {
 		t.Fatal("an address change must not suppress the offer")
@@ -224,43 +310,52 @@ func TestSuggestionSurvivesAnAddressChangeButFlagsIt(t *testing.T) {
 	}
 }
 
-func TestNoSuggestionForAPlacedRunnerOrAnUnknownName(t *testing.T) {
+// No offer for a name with no history, and none for a same-named runner whose
+// own agency has nothing bound to the old id: Global's agent claiming the name
+// of a runner that served Carson and Reno is offered nothing of theirs.
+func TestNoSuggestionForAnUnknownNameOrAnotherOwner(t *testing.T) {
 	svc := newTestService(t)
 	seedPlacedRunner(t, svc, "old", "ansible-rh8")
 	svc.deregisterRunner(context.Background(), "old", "ansible-rh8")
-	reRegister(t, svc, "stranger", "never-seen", "")
+	reRegisterFor(t, svc, "stranger", "never-seen", "", "ag-carson")
+	reRegisterFor(t, svc, "globals", "ansible-rh8", "10.142.11.7", "global")
 
-	got, _ := suggestionsFor(context.Background(), svc.db, map[string]string{"stranger": "never-seen"})
+	got, err := suggestionsFor(context.Background(), svc.db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got["stranger"] != nil {
 		t.Error("a name with no history must get no offer")
 	}
-	// A placed runner is simply not in the unbound set the caller passes.
+	if got["globals"] != nil {
+		t.Errorf("a Global-owned runner was offered another agency's bindings: %+v", got["globals"])
+	}
 	if len(got) != 0 {
 		t.Errorf("unexpected offers: %v", got)
 	}
 }
 
-func TestApplyPlacementRestoresAgenciesAndTags(t *testing.T) {
+// MA-32: the accept re-points the bindings of the runner's own agency and
+// merges the tags. It writes no serve row, and it leaves the bindings the old
+// id holds on another agency's scopes exactly where they were.
+func TestApplyPlacementRepointsOwnBindingsAndNeverWidens(t *testing.T) {
 	svc := newTestService(t)
 	seedPlacedRunner(t, svc, "old", "ansible-rh8")
 	svc.deregisterRunner(context.Background(), "old", "ansible-rh8")
 	reRegister(t, svc, "new", "ansible-rh8", "10.142.11.7")
+	histID := historyID(t, svc, "old")
 
-	var histID int64
-	if err := svc.db.QueryRow(`SELECT id FROM runner_placement_history WHERE runner_id='old'`).Scan(&histID); err != nil {
-		t.Fatal(err)
-	}
-	allow := func(string) bool { return true }
-	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example", allow); err != nil {
+	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example"); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-
-	var n int
-	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id='new'`).Scan(&n); err != nil {
-		t.Fatal(err)
+	if got := servedBy(t, svc, "new"); len(got) != 1 || got[0] != "ag-carson" {
+		t.Errorf("after a restore the runner serves %v, want exactly its owner: a restore never adds a serve row", got)
 	}
-	if n != 2 {
-		t.Errorf("restored %d memberships, want 2", n)
+	if got := boundTo(t, svc, "new"); len(got) != 1 || got[0] != "sc-carson-old" {
+		t.Errorf("bound to the new id: %v, want Carson's scope only", got)
+	}
+	if got := boundTo(t, svc, "old"); len(got) != 1 || got[0] != "sc-reno-old" {
+		t.Errorf("left on the old id: %v, want Reno's binding untouched (its scope stays closed until Reno re-points it)", got)
 	}
 	var tags string
 	if err := svc.db.QueryRow(`SELECT tags FROM runners WHERE id='new'`).Scan(&tags); err != nil {
@@ -270,59 +365,88 @@ func TestApplyPlacementRestoresAgenciesAndTags(t *testing.T) {
 		t.Errorf("tags = %q", tags)
 	}
 
-	// Idempotence of a sort: the runner is now placed, so the same offer must not
-	// apply twice.
-	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example", allow); err != ErrPlacementGone {
+	// Nothing of Carson's is left to restore, so the same offer does not apply
+	// twice and is no longer made.
+	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example"); !errors.Is(err, ErrPlacementGone) {
 		t.Errorf("second apply should be ErrPlacementGone, got %v", err)
+	}
+	if got, _ := suggestionsFor(context.Background(), svc.db); got["new"] != nil {
+		t.Errorf("offer still made after it was accepted: %+v", got["new"])
 	}
 }
 
-// DR-Q7's anti-amplification rule: EVERY agency in the snapshot must be one the
-// caller could have granted by hand. One refusal fails the whole accept — a
-// partial placement would be worse than none, because it looks placed.
-func TestApplyPlacementRefusesAnAgencyTheCallerCannotGrant(t *testing.T) {
+// The same snapshot serves each agency's own re-enrolled agent, each for its
+// own scopes: Reno's agent takes Reno's binding and cannot reach Carson's.
+func TestApplyPlacementGivesEachAgencyItsOwnBindings(t *testing.T) {
 	svc := newTestService(t)
 	seedPlacedRunner(t, svc, "old", "ansible-rh8")
 	svc.deregisterRunner(context.Background(), "old", "ansible-rh8")
-	reRegister(t, svc, "new", "ansible-rh8", "10.142.11.7")
+	reRegisterFor(t, svc, "reno-new", "ansible-rh8", "", "ag-reno")
+	histID := historyID(t, svc, "old")
 
-	var histID int64
-	if err := svc.db.QueryRow(`SELECT id FROM runner_placement_history WHERE runner_id='old'`).Scan(&histID); err != nil {
+	got, err := suggestionsFor(context.Background(), svc.db)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// Carson yes, Reno no — a departmental operator.
-	permits := func(agencyID string) bool { return agencyID == "ag-carson" }
-	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example", permits); err != ErrPlacementForbidden {
-		t.Fatalf("expected ErrPlacementForbidden, got %v", err)
+	if s := got["reno-new"]; s == nil || len(s.Scopes) != 1 || s.Scopes[0] != "reno-web-old" {
+		t.Fatalf("Reno's agent offer = %+v, want Reno's scope only", got["reno-new"])
 	}
-	// The runner is where it was born: serving Global, and nothing else.
-	var n int
-	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id='new' AND agency_id <> 'global'`).Scan(&n); err != nil {
-		t.Fatal(err)
+	if err := svc.ApplyPlacement(context.Background(), "reno-new", histID, "ops@example"); err != nil {
+		t.Fatalf("apply: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("a refused accept must apply NOTHING, found %d membership(s)", n)
+	if got := boundTo(t, svc, "reno-new"); len(got) != 1 || got[0] != "sc-reno-old" {
+		t.Errorf("Reno's agent is bound to %v, want Reno's scope only", got)
 	}
-	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id='new' AND agency_id = 'global'`).Scan(&n); err != nil || n != 1 {
-		t.Errorf("a refused accept left the runner without its Global row (n=%d, err=%v)", n, err)
+	if got := boundTo(t, svc, "old"); len(got) != 1 || got[0] != "sc-carson-old" {
+		t.Errorf("Carson's binding moved or vanished: old id holds %v", got)
+	}
+	if got := servedBy(t, svc, "reno-new"); len(got) != 1 || got[0] != "ag-reno" {
+		t.Errorf("Reno's agent serves %v after the restore, want exactly ag-reno", got)
 	}
 }
 
-// A pasted historyId belonging to a different runner name must not place this
-// runner into an agency it was never associated with. The offer is honest; the
-// endpoint has to be too.
+// A runner that does not serve its owner (a legacy placement owned by Global
+// that serves two agencies and not Global) is offered nothing and can accept
+// nothing: a binding moved to it would name a runner that cannot claim the
+// scope's runs.
+func TestApplyPlacementSkipsARunnerThatDoesNotServeItsOwner(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	seedPlacedRunner(t, svc, "old", "ansible-rh8")
+	if _, err := svc.db.Exec(`
+		INSERT INTO scopes(id, name, source, created_at) VALUES('sc-global','global-web','cronomicon','2026-08-26T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	bindScope(t, svc, "sc-global", "old", "ansible-rh8")
+	svc.deregisterRunner(ctx, "old", "ansible-rh8")
+	seedPlacedRunner(t, svc, "legacy", "ansible-rh8") // Global's, serves Carson and Reno
+
+	got, err := suggestionsFor(ctx, svc.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["legacy"] != nil {
+		t.Errorf("a legacy placement was offered a restore: %+v", got["legacy"])
+	}
+	if err := svc.ApplyPlacement(ctx, "legacy", historyID(t, svc, "old"), "ops@example"); !errors.Is(err, ErrPlacementGone) {
+		t.Errorf("apply onto a legacy placement = %v, want ErrPlacementGone", err)
+	}
+}
+
+// A pasted historyId belonging to a different runner name must not hand this
+// runner another runner's bindings. The offer is honest; the endpoint has to be
+// too.
 func TestApplyPlacementRefusesASnapshotForAnotherName(t *testing.T) {
 	svc := newTestService(t)
 	seedPlacedRunner(t, svc, "old", "ansible-rh8")
 	svc.deregisterRunner(context.Background(), "old", "ansible-rh8")
 	reRegister(t, svc, "other", "totally-different", "")
 
-	var histID int64
-	if err := svc.db.QueryRow(`SELECT id FROM runner_placement_history WHERE runner_id='old'`).Scan(&histID); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.ApplyPlacement(context.Background(), "other", histID, "ops@example", func(string) bool { return true }); err != ErrPlacementGone {
+	if err := svc.ApplyPlacement(context.Background(), "other", historyID(t, svc, "old"), "ops@example"); !errors.Is(err, ErrPlacementGone) {
 		t.Fatalf("expected ErrPlacementGone for a mismatched name, got %v", err)
+	}
+	if got := boundTo(t, svc, "other"); len(got) != 0 {
+		t.Errorf("a refused accept moved bindings: %v", got)
 	}
 }
 
@@ -387,7 +511,7 @@ func TestAcceptIsAudited(t *testing.T) {
 	histID := seedHistory(t, svc)
 	reRegister(t, svc, "new", "ansible-rh8", "10.142.11.7")
 
-	if err := svc.ApplyPlacement(context.Background(), "new", histID, "alice@example", func(string) bool { return true }); err != nil {
+	if err := svc.ApplyPlacement(context.Background(), "new", histID, "alice@example"); err != nil {
 		t.Fatal(err)
 	}
 	got := activityRows(t, svc, "ansible-rh8")
@@ -395,8 +519,8 @@ func TestAcceptIsAudited(t *testing.T) {
 	if len(got) != 2 || !strings.HasPrefix(got[1], "alice@example|placement restored: ") {
 		t.Errorf("accept should append one row with the session actor, got %v", got)
 	}
-	if !strings.Contains(got[1], "Carson") || !strings.Contains(got[1], "Reno") {
-		t.Errorf("the row should name the restored agencies, got %q", got[1])
+	if !strings.Contains(got[1], "carson-web-old") || strings.Contains(got[1], "reno-web-old") {
+		t.Errorf("the row should name the scopes it re-pointed, and only those, got %q", got[1])
 	}
 }
 
@@ -410,7 +534,7 @@ func TestAcceptUnionsTagsCurrentFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example", func(string) bool { return true }); err != nil {
+	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example"); err != nil {
 		t.Fatal(err)
 	}
 	var tags string
@@ -428,23 +552,86 @@ func TestDismissWithdrawsTheSnapshot(t *testing.T) {
 	svc := newTestService(t)
 	histID := seedHistory(t, svc)
 	reRegister(t, svc, "new", "ansible-rh8", "10.142.11.7")
+	// Reno has re-pointed its own scope by hand, so what the snapshot still
+	// holds is Carson's alone, and Carson's to dismiss.
+	if _, err := svc.db.Exec(`DELETE FROM scope_runners WHERE scope_id = 'sc-reno-old'`); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := svc.DismissPlacement(context.Background(), "new", histID, "alice@example"); err != nil {
 		t.Fatalf("dismiss: %v", err)
 	}
-	got, _ := suggestionsFor(context.Background(), svc.db, map[string]string{"new": "ansible-rh8"})
+	got, _ := suggestionsFor(context.Background(), svc.db)
 	if got["new"] != nil {
 		t.Error("a dismissed snapshot must not be offered")
 	}
 	// Nor accepted by a stale client that still holds the id.
-	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example", func(string) bool { return true }); err != ErrPlacementGone {
+	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example"); !errors.Is(err, ErrPlacementGone) {
 		t.Errorf("accept of a dismissed snapshot should be ErrPlacementGone, got %v", err)
 	}
-	if err := svc.DismissPlacement(context.Background(), "new", histID, "alice@example"); err != ErrPlacementGone {
+	if err := svc.DismissPlacement(context.Background(), "new", histID, "alice@example"); !errors.Is(err, ErrPlacementGone) {
 		t.Errorf("second dismiss should be ErrPlacementGone, got %v", err)
 	}
 	rows := activityRows(t, svc, "ansible-rh8")
 	if len(rows) != 2 || rows[1] != "alice@example|placement suggestion dismissed" {
 		t.Errorf("exactly one dismissal row expected, got %v", rows)
+	}
+}
+
+// A dismissal marks the SNAPSHOT, so it must not be something any runner of the
+// same name can do: the name is the agent's own word, and any agency can enrol
+// an agent under any name. It is accepted only for a snapshot on offer to this
+// runner, and only when that offer is nobody else's as well.
+func TestDismissIsOnlyForAnOfferThatIsThisRunnersAlone(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	histID := seedHistory(t, svc) // the old runner still holds a Carson and a Reno binding
+	insertAgencyRow(t, svc, "ag-elko", "Elko")
+	reRegisterFor(t, svc, "elko-same-name", "ansible-rh8", "", "ag-elko")
+	reRegister(t, svc, "carson-new", "ansible-rh8", "10.142.11.7")
+
+	dismissed := func() bool {
+		t.Helper()
+		var at *string
+		if err := svc.db.QueryRow(`SELECT dismissed_at FROM runner_placement_history WHERE id = ?`, histID).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		return at != nil
+	}
+	// Another agency's agent that merely carries the name: nothing of Elko's is
+	// restorable from this snapshot, so it is not Elko's to dismiss.
+	if err := svc.DismissPlacement(ctx, "elko-same-name", histID, "mallory@example"); !errors.Is(err, ErrPlacementGone) {
+		t.Errorf("an unrelated agency's same-named agent dismissing the snapshot = %v, want ErrPlacementGone", err)
+	}
+	// Carson's own agent, while Reno's binding is still on the old id: the
+	// offer is Reno's too.
+	if err := svc.DismissPlacement(ctx, "carson-new", histID, "carol@example"); !errors.Is(err, ErrPlacementShared) {
+		t.Errorf("dismissing an offer another agency shares = %v, want ErrPlacementShared", err)
+	}
+	if dismissed() {
+		t.Fatal("a refused dismissal marked the snapshot")
+	}
+	if got, _ := suggestionsFor(ctx, svc.db); got["carson-new"] == nil {
+		t.Error("a refused dismissal withdrew the offer")
+	}
+	// Carson accepts: its binding moves, the offer is gone for Carson, and
+	// Reno's is untouched and still on offer to a Reno agent.
+	if err := svc.ApplyPlacement(ctx, "carson-new", histID, "carol@example"); err != nil {
+		t.Fatal(err)
+	}
+	reRegisterFor(t, svc, "reno-new", "ansible-rh8", "", "ag-reno")
+	got, _ := suggestionsFor(ctx, svc.db)
+	if got["carson-new"] != nil || got["reno-new"] == nil {
+		t.Errorf("after Carson's accept: Carson offered %v, Reno offered %v; want none and one", got["carson-new"], got["reno-new"])
+	}
+	// What is left is Reno's alone, so Reno may dismiss it; Carson may not.
+	if err := svc.DismissPlacement(ctx, "carson-new", histID, "carol@example"); !errors.Is(err, ErrPlacementGone) {
+		t.Errorf("Carson dismissing what is now only Reno's = %v, want ErrPlacementGone", err)
+	}
+	if err := svc.DismissPlacement(ctx, "reno-new", histID, "rita@example"); err != nil {
+		t.Errorf("Reno dismissing its own offer: %v", err)
+	}
+	if !dismissed() {
+		t.Error("Reno's dismissal was not recorded")
 	}
 }

@@ -104,6 +104,9 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 		{"scope", "/api/v1/scope-agencies", "sc:shared", "scope_agencies", "scope_id"},
 		{"runner", "/api/v1/runner-agencies", "r1", "runner_agencies", "runner_id"},
 	}
+	// A runner obeys the same two rules and one more (MA-11, Phase G3): it is
+	// not moved between agencies at all, so the move below is asserted for the
+	// secret and the scope, and refused for the runner.
 	body := func(kind, id, agencies string) string {
 		if kind == "runner" {
 			return `[{"runnerId":"` + id + `","agencyIds":` + agencies + `}]`
@@ -129,6 +132,15 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 		}
 		// Naming a department moves it out of Global.
 		rec = gateReq(t, h, http.MethodPut, rt.path, gRoot, body(rt.kind, rt.id, `["ag:FIN"]`))
+		if rt.kind == "runner" {
+			if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "serve_list_fixed" {
+				t.Errorf("runner: moving Global's agent to FIN = %d %s, want 422 serve_list_fixed (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+			}
+			if got := agenciesOf(rt.table, rt.col, rt.id); got != "global" {
+				t.Errorf("runner: a refused move changed the row to %q", got)
+			}
+			continue
+		}
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: moving to FIN = %d (%s)", rt.kind, rec.Code, rec.Body)
 		}
@@ -375,16 +387,28 @@ func TestGlobalAgency_AGlobalAdministratorCanReHomeARowInNoAgency(t *testing.T) 
 	exec(`DELETE FROM runner_agencies WHERE runner_id = 'r1'`)
 
 	secretBody := `[{"id":"` + sec.ID + `","agencyIds":["ag:FIN"]}]`
-	runnerBody := `[{"runnerId":"r1","agencyIds":["ag:FIN"]}]`
+	// A runner with no serve row still has an OWNER (Global here), and the one
+	// list it can be given is that owner (MA-11): the repair puts it back where
+	// it belongs and cannot be used to place it somewhere new.
+	runnerBody := `[{"runnerId":"r1","agencyIds":["global"]}]`
 	// FIN's administrator holds the permission on the TARGET agency, and that is
-	// not enough: the row is not shown to be theirs.
-	for path, body := range map[string]string{"/api/v1/secret-agencies": secretBody, "/api/v1/runner-agencies": runnerBody} {
-		if rec := gateReq(t, h, http.MethodPut, path, gFinAdmin, body); rec.Code != http.StatusInternalServerError {
-			t.Errorf("fin admin claiming an orphan through %s = %d, want 500 (%s)", path, rec.Code, rec.Body)
+	// not enough: the row is not shown to be theirs. (A secret in no agency is
+	// damage and answers 500 to anyone but a global administrator; a runner
+	// always has an owner to ask, so it is a plain 403.)
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", gFinAdmin, secretBody); rec.Code != http.StatusInternalServerError {
+		t.Errorf("fin admin claiming an orphaned secret = %d, want 500 (%s)", rec.Code, rec.Body)
+	}
+	for _, body := range []string{runnerBody, `[{"runnerId":"r1","agencyIds":["ag:FIN"]}]`} {
+		if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gFinAdmin, body); rec.Code != http.StatusForbidden {
+			t.Errorf("fin admin claiming an orphaned runner with %s = %d, want 403 (%s)", body, rec.Code, rec.Body)
 		}
 	}
 	if n := count(t, pool, `SELECT (SELECT COUNT(*) FROM secret_agencies WHERE secret_id = ?) + (SELECT COUNT(*) FROM runner_agencies WHERE runner_id = 'r1')`, sec.ID); n != 0 {
 		t.Fatalf("a refused claim wrote %d membership rows", n)
+	}
+	// Nor can a global administrator use the repair to move it.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, `[{"runnerId":"r1","agencyIds":["ag:FIN"]}]`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "serve_list_fixed" {
+		t.Errorf("root giving an orphaned Global runner to FIN = %d %s, want 422 serve_list_fixed (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
 	for path, body := range map[string]string{"/api/v1/secret-agencies": secretBody, "/api/v1/runner-agencies": runnerBody} {
 		if rec := gateReq(t, h, http.MethodPut, path, gRoot, body); rec.Code != http.StatusOK {
@@ -392,7 +416,7 @@ func TestGlobalAgency_AGlobalAdministratorCanReHomeARowInNoAgency(t *testing.T) 
 		}
 	}
 	if n := count(t, pool, `SELECT (SELECT COUNT(*) FROM secret_agencies WHERE secret_id = ? AND agency_id = 'ag:FIN')
-	                             + (SELECT COUNT(*) FROM runner_agencies WHERE runner_id = 'r1' AND agency_id = 'ag:FIN')`, sec.ID); n != 2 {
+	                             + (SELECT COUNT(*) FROM runner_agencies WHERE runner_id = 'r1' AND agency_id = 'global')`, sec.ID); n != 2 {
 		t.Fatalf("%d of 2 orphans were re-homed", n)
 	}
 	// And the row works again: its agency's administrator may delete it.

@@ -1,14 +1,15 @@
 package runner
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -79,11 +80,21 @@ type runnerResponse struct {
 	LastHeartbeatAt     *string `json:"lastHeartbeatAt"`
 	DrainDeadlineAt     *string `json:"drainDeadlineAt,omitempty"`
 	RegistrationTokenID *int64  `json:"registrationTokenId,omitempty"`
-	// Agencies is the runner's network-isolation membership (agency-support.md M2),
-	// operator-assigned (never self-declared). Populated by the list serializer.
+	// OwnerAgency is the agency that OWNS the runner (LR-58): the one whose
+	// administrators manage it. Set by the registration token, never by the
+	// agent. Populated by the list serializer.
+	OwnerAgency *agencyRef `json:"ownerAgency,omitempty"`
+	// Agencies is what the runner SERVES: the agencies whose runs it claims. For
+	// an agent that is exactly its owner. More than that, or anything else, is a
+	// legacy placement (LegacyPlacement). Populated by the list serializer.
 	Agencies []agencyRef `json:"agencies,omitempty"`
-	// DR-7: present only on an UNBOUND runner for which a prior placement was
-	// captured. Absent means "no offer", never "no placement".
+	// LegacyPlacement is true when the serve list is not exactly the owner
+	// (MA-9): a runner that served several agencies before 2.3.0. It keeps
+	// working, can be narrowed and never widened.
+	LegacyPlacement bool `json:"legacyPlacement"`
+	// DR-7 / MA-32: present only on a runner for which a previous enrolment under
+	// the same name left scope bindings of its own agency behind. Absent means
+	// "no offer", never "no previous enrolment".
 	PlacementSuggestion *placementSuggestion `json:"placementSuggestion,omitempty"`
 	// Toolchains is the detected-toolchain display detail (RX.7): ansible-core
 	// version, installed collections + versions, checkout/vault flags. Raw JSON
@@ -296,23 +307,38 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		}
 		arows.Close()
 	}
+	// The owner, the same way: one grouped read, attached by id.
+	owners := map[string]agencyRef{}
+	if orows, oerr := s.db.QueryContext(r.Context(), `
+		SELECT rn.id, rn.owner_agency, COALESCE(a.name, '')
+		  FROM runners rn LEFT JOIN agencies a ON a.id = rn.owner_agency`); oerr == nil {
+		for orows.Next() {
+			var rid string
+			var ar agencyRef
+			if err := orows.Scan(&rid, &ar.ID, &ar.Name); err == nil {
+				owners[rid] = ar
+			}
+		}
+		orows.Close()
+	} else {
+		s.log.Error("list runners: owners", "error", oerr)
+	}
 	for i := range out {
 		out[i].Agencies = byRunner[out[i].ID]
-	}
-
-	// DR-7 (c): offer a prior placement to every runner that serves Global and
-	// nothing else — where a re-enrolled runner lands. That is not "idle": it
-	// claims Global's runs (poll.go), so a runner that lost its placement has
-	// silently moved from its department's pool into Global's. That is an
-	// isolation change, which is why it is surfaced rather than left to be
-	// noticed.
-	unbound := map[string]string{}
-	for i := range out {
-		if len(out[i].Agencies) == 1 && out[i].Agencies[0].ID == agencyid.Global {
-			unbound[out[i].ID] = out[i].Name
+		if o, ok := owners[out[i].ID]; ok {
+			out[i].OwnerAgency = &o
+			serves := make([]string, 0, len(out[i].Agencies))
+			for _, a := range out[i].Agencies {
+				serves = append(serves, a.ID)
+			}
+			out[i].LegacyPlacement = settings.IsLegacyPlacement(o.ID, serves)
 		}
 	}
-	if sugg, serr := suggestionsFor(r.Context(), s.db, unbound); serr != nil {
+
+	// DR-7 (c), re-keyed by MA-32: offer to re-point the scope bindings a
+	// previous enrolment under the same name still holds, for the scopes of each
+	// runner's own agency. Those scopes are closed until someone does.
+	if sugg, serr := suggestionsFor(r.Context(), s.db); serr != nil {
 		// Best-effort: a suggestion is an aid, and losing it must not cost an
 		// operator the runner list itself.
 		s.log.Error("resolve placement suggestions", "error", serr)
@@ -474,14 +500,26 @@ func (s *Service) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
 	configDigest := runnerproto.ConfigDigest(req.Name, req.OS, req.Capabilities,
 		req.MaxConcurrent, req.Inventory, req.Version, req.ProtocolVersion)
 
+	// LR-61: the token names the OWNER, and that is the whole of an agent's
+	// placement. The owner is written here and the one serve row with it, by the
+	// trigger that reads it (runners_born_serving_owner), in this transaction —
+	// so an agent an agency enrols never serves Global, even for an instant, and
+	// an owner that names no agency fails the insert on the serve row's foreign
+	// key rather than landing somewhere else (LR-33). The agent declared none of
+	// it.
+	owner := chk.AgencyID
+	if owner == "" {
+		owner = agencyid.Global
+	}
+
 	// Insert runners row.
 	if _, err := tx.ExecContext(r.Context(), `
 		INSERT INTO runners(id, name, status, os, capabilities, load,
 		                    max_concurrent, version, inventory, toolchains, protocol_version, config_digest,
-		                    registered_at, created_at, registration_token_id, last_client_ip)
-		VALUES (?, ?, 'online', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                    registered_at, created_at, registration_token_id, owner_agency, last_client_ip)
+		VALUES (?, ?, 'online', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		runnerID, req.Name, req.OS, string(capsJSON),
-		req.MaxConcurrent, req.Version, req.Inventory, toolchainsVal, req.ProtocolVersion, configDigest, ts, ts, regTokID,
+		req.MaxConcurrent, req.Version, req.Inventory, toolchainsVal, req.ProtocolVersion, configDigest, ts, ts, regTokID, owner,
 		// DR-Q7: the one signal a re-registering agent cannot freely assert.
 		// Resolved through the trusted-proxy allowlist — NEVER r.RemoteAddr,
 		// which behind a reverse proxy is the proxy for every runner.
@@ -557,6 +595,17 @@ func (s *Service) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// revokeRunnerKeys revokes every live API key of ONE runner, by runner id.
+// Both deregistration paths call it, in the transaction that deletes the row: a
+// failure aborts the deregistration, because a runner that is gone from the
+// table and still holds a working key is the outcome to avoid.
+func revokeRunnerKeys(ctx context.Context, tx *sql.Tx, runnerID, ts string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE runner_tokens SET revoked_at = ?
+		 WHERE runner_id = ? AND revoked_at IS NULL`, ts, runnerID)
+	return err
+}
+
 // HandleDeregisterRunner revokes a runner's registration (operator, CSRF required).
 // DELETE /api/v1/runners/{id}
 func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request) {
@@ -578,15 +627,17 @@ func (s *Service) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Revoke all runner_tokens associated with this runner by name pattern.
-	// This approach is defensive: we revoke tokens whose created_by matches
-	// the runner name pattern set at registration.
+	// Revoke this runner's API keys, by its ID (runner_tokens.runner_id, set at
+	// registration). They were revoked by NAME until 2.3.0, and a name is
+	// self-declared and not unique: deregistering one of two same-named runners
+	// cut off the other, and a runner renamed by a re-declare kept a live key
+	// after its row was gone. With agencies enrolling their own agents, the
+	// first of those is one agency disabling another's runner.
 	ts := now()
-	if _, err := tx.ExecContext(r.Context(), `
-		UPDATE runner_tokens SET revoked_at = ?
-		WHERE created_by = ? AND revoked_at IS NULL`,
-		ts, "runner:"+name); err != nil {
-		s.log.Error("revoke runner tokens", "error", err)
+	if err := revokeRunnerKeys(r.Context(), tx, runnerID, ts); err != nil {
+		s.log.Error("revoke runner tokens", "runner_id", runnerID, "error", err)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
 	}
 
 	// DR-7: snapshot the operator-owned placement BEFORE the delete — the

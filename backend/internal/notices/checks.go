@@ -33,6 +33,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindTargetHostOutsideScope, checkTargetHostOutsideScope},
 		{KindRecordKeyOutsideOwner, checkRecordKeyOutsideOwner},
 		{KindVaultPathOutsidePrefix, checkVaultPathOutsidePrefix},
+		{KindLegacyPlacement, checkLegacyPlacement},
 	} {
 		if err := c.run(ctx, database); err != nil {
 			errs = append(errs, c.name+": "+err.Error())
@@ -432,4 +433,64 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 		rows.Close()
 	}
 	return Reconcile(ctx, database, KindVaultPathOutsidePrefix, found)
+}
+
+// checkLegacyPlacement lists the agents whose serve list is not exactly their
+// owner (MA-9, MA-28). An agent serves the one agency that owns it since 2.3.0
+// and no route makes another shape; these served several agencies in 2.2, and
+// the upgrade left them serving the same ones under Global's ownership (LR-64).
+//
+// Nothing about how such a runner works changes (MA-10), so the notice is a
+// warning with a remedy and not a fault. It resolves itself when the list has
+// been narrowed to one agency and the runner handed to it, or the row is gone.
+// The remedy is given in the order that keeps a bound scope from closing:
+// re-bind before narrowing.
+//
+// A runner with NO serve row is not this: it is damage, and checkOrphaned's.
+func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `
+		SELECT rn.id, rn.name, COALESCE(oa.name, rn.owner_agency),
+		       (SELECT group_concat(name, ', ') FROM (
+		            SELECT a.name AS name FROM runner_agencies m JOIN agencies a ON a.id = m.agency_id
+		             WHERE m.runner_id = rn.id ORDER BY a.name)),
+		       (SELECT COUNT(*) FROM runner_agencies m WHERE m.runner_id = rn.id)
+		  FROM runners rn LEFT JOIN agencies oa ON oa.id = rn.owner_agency
+		 WHERE EXISTS (SELECT 1 FROM runner_agencies m WHERE m.runner_id = rn.id)
+		   AND NOT ((SELECT COUNT(*) FROM runner_agencies m WHERE m.runner_id = rn.id) = 1
+		            AND EXISTS (SELECT 1 FROM runner_agencies m
+		                         WHERE m.runner_id = rn.id AND m.agency_id = rn.owner_agency))
+		 ORDER BY rn.id`)
+	if err != nil {
+		return err
+	}
+	var found []Finding
+	for rows.Next() {
+		var id, name, owner string
+		var serves sql.NullString
+		var n int
+		if err := rows.Scan(&id, &name, &owner, &serves, &n); err != nil {
+			rows.Close()
+			return err
+		}
+		detail := fmt.Sprintf("The runner %s serves %s and is owned by %s. Since 2.3.0 an agent serves exactly the agency "+
+			"that owns it; this one predates that and keeps working as it did, with the same toolchains and keys on a "+
+			"machine these agencies share. It can be narrowed and never widened, and only a global administrator manages it. ",
+			name, serves.String, owner)
+		if n == 1 {
+			detail += "It serves one agency now: hand it to that agency (Hand to an agency) and this is settled."
+		} else {
+			detail += "To settle it, in this order: enrol an agent for each agency it serves; re-bind each of that agency's " +
+				"scopes that is bound to this runner to the new agent, scope by scope; copy the approved host keys for " +
+				"that agency's hosts to the new agent; then take the agency off this runner, or deregister it. An agent " +
+				"per agency means a machine or container per agency in this release; from 2.3.1 a second agent can run " +
+				"on the same machine (--instance)."
+		}
+		found = append(found, Finding{AgencyID: agencyid.Global, Subject: id, Detail: detail})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	return Reconcile(ctx, database, KindLegacyPlacement, found)
 }

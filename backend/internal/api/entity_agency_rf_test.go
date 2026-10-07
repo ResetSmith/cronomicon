@@ -276,15 +276,15 @@ func TestRunnerWritesAreDepartmental(t *testing.T) {
 		}
 	}
 	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag-fin','Finance','2026-01-01T00:00:00Z')`)
-	seedRunner := func(id, name string) {
-		exec(`INSERT INTO runners (id,name,status,registered_at,created_at)
-		      VALUES (?,?,'online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`, id, name)
+	// A runner belongs to its OWNER since 2.3.0 (LR-59); the serve row follows
+	// from it (migration 1250's trigger).
+	seedRunner := func(id, name, owner string) {
+		exec(`INSERT INTO runners (id,name,status,registered_at,created_at,owner_agency)
+		      VALUES (?,?,'online','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',?)`, id, name, owner)
 	}
-	seedRunner("r-own", "runner-own")
-	seedRunner("r-fin", "runner-fin")
-	seedRunner("r-pool", "runner-pool") // deliberately unmembered: the general pool
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('r-own','ag:prod')`)
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('r-fin','ag-fin')`)
+	seedRunner("r-own", "runner-own", "ag:prod")
+	seedRunner("r-fin", "runner-fin", "ag-fin")
+	seedRunner("r-pool", "runner-pool", "global") // Global's own: what the general pool became
 
 	// Own agency: the gate lets the request through to the handler. Any non-403 is
 	// a pass — the handler's own outcome (200/404/409) is not what this test is about.
