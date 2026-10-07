@@ -557,7 +557,13 @@ func (e *Engine) runJob(
 	// be refused by every runner in its actual agency. TG-2 was the same class of
 	// miss for target_host — the column was simply absent from the list below, so
 	// every workflow step fanned out across its job's whole scope.
-	stepAgencies, _ := execspec.ScopeAgencies(ctx, e.db, effectiveScope)
+	stepAgencies, aerr := execspec.ScopeAgencies(ctx, e.db, effectiveScope)
+	if aerr != nil {
+		// As for an unreadable binding or executor: the step fails, recorded, and
+		// no child run is written with a guessed agency set.
+		e.log.Error("workflow: read the scope's agencies", "job", step.Name, "scope", effectiveScope, "err", aerr)
+		return "danger", false
+	}
 	stepAgenciesJSON := execspec.MarshalAgencies(stepAgencies)
 
 	// RA-24 — the WORKFLOW half, and the one with no escape hatch. §13.3: a workflow

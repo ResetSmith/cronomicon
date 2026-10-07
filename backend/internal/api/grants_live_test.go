@@ -219,3 +219,54 @@ func TestMyAccess(t *testing.T) {
 		t.Errorf("GET /me/access with no session = %d, want 401", anon.Code)
 	}
 }
+
+// Deleting an agency must not silently delete its tokens. service_accounts
+// cascades from agencies exactly as access_grants does, and only the grants
+// were counted: an agency with one active service account and nothing else was
+// deleted, and its integration stopped authenticating with nothing said.
+func TestDeletingAnAgencyIsRefusedWhileItHasAnActiveServiceAccount(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO agencies (id,name,created_at) VALUES ('ag:OPS','OPS','2026-01-01T00:00:00Z')`)
+	exec(`INSERT INTO service_accounts (id, name, token_hash, role, agency_id, all_scopes, created_by, created_at)
+	      VALUES ('s-live','ops-bot','h-live','operator','ag:OPS',0,'root','2026-01-01T00:00:00Z'),
+	             ('s-dead','old-bot','h-dead','operator','ag:OPS',0,'root','2026-01-01T00:00:00Z')`)
+	exec(`UPDATE service_accounts SET revoked_at = '2026-02-01T00:00:00Z' WHERE id = 's-dead'`)
+
+	rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/ag:OPS", gRoot, "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "service account") {
+		t.Fatalf("deleting an agency with an active service account = %d, want 409 naming it (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM service_accounts WHERE id = 's-live'`); n != 1 {
+		t.Fatal("the refused delete took the service account with it")
+	}
+	// Revoked, it no longer holds the agency.
+	exec(`UPDATE service_accounts SET revoked_at = '2026-02-01T00:00:00Z' WHERE id = 's-live'`)
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/ag:OPS", gRoot, ""); rec.Code != http.StatusNoContent {
+		t.Errorf("deleting the agency once its accounts are revoked = %d, want 204 (%s)", rec.Code, rec.Body)
+	}
+}
+
+// A run is not enqueued when its scope's agencies cannot be read. The lookup
+// used to swallow its error and answer "none", so the run was written as
+// belonging to no agency.
+func TestARunIsNotEnqueuedWhenItsAgenciesCannotBeRead(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO jobs (name,source,run_type,scope,command,enabled,created_at)
+	      VALUES ('fin-job','cronomicon','bash','fin-hosts','true',1,'2026-01-01T00:00:00Z')`)
+	job := rowID(t, pool, `SELECT rowid FROM jobs WHERE name='fin-job'`)
+	// Warm the grant snapshot, then make the membership table unreadable.
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/me", gRoot, ""); rec.Code != http.StatusOK {
+		t.Fatalf("GET /me = %d", rec.Code)
+	}
+	exec(`ALTER TABLE scope_agencies RENAME TO scope_agencies_gone`)
+
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs/"+job+"/run", gRoot, `{}`)
+	if rec.Code/100 == 2 {
+		t.Errorf("the run was accepted (%d) although its agencies could not be read (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM runs`); n != 0 {
+		t.Errorf("a run was enqueued with a guessed agency set (%d rows)", n)
+	}
+}

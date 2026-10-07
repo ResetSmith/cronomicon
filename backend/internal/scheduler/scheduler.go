@@ -518,7 +518,14 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// frozen at enqueue and intersected against runner membership at claim time
 	// (hard isolation). The scalar ScopeAgency is gone: a scope may now belong to
 	// several agencies, so there is no single answer to snapshot.
-	scopeAgencies, _ := execspec.ScopeAgencies(ctx, s.db, scope)
+	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, scope)
+	if aerr != nil {
+		// Not enqueued: a run written with a guessed agency set would be dispatched
+		// to the wrong runners. Missed-run detection reports the fire that did not
+		// happen, and the next fire tries again.
+		s.log.Error("scheduler: read the scope's agencies — fire not enqueued", "job", jobName, "scope", scope, "err", aerr)
+		return
+	}
 	// M4 — advisory: a scheduled run whose agencies have no online runner will sit
 	// queued until one comes online. Log it (no human is watching an automated fire).
 	if ok, _ := execspec.AgenciesHaveOnlineRunner(ctx, s.db, scopeAgencies); !ok && len(scopeAgencies) > 0 {

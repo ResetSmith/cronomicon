@@ -82,7 +82,13 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 		return nil
 	}
 
-	runnerAgencies := runnerAgencyNames(ctx, database, runnerID)
+	runnerAgencies, err := runnerAgencyNames(ctx, database, runnerID)
+	if err != nil {
+		// Fail closed: an unreadable membership used to read as "no agencies",
+		// which is the general pool — a department's runner would have been told
+		// to watch (and been believed about) the unowned jobs' directories.
+		return nil
+	}
 	var out []runnerproto.WatchSpec
 	for _, c := range cands {
 		if !watchAgencyPermits(ctx, database, c.scope, runnerAgencies) {
@@ -134,23 +140,24 @@ func watchAgencyPermits(ctx context.Context, database *sql.DB, scope string, run
 	return false
 }
 
-func runnerAgencyNames(ctx context.Context, database *sql.DB, runnerID string) []string {
+func runnerAgencyNames(ctx context.Context, database *sql.DB, runnerID string) ([]string, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT a.name FROM runner_agencies ra
 		  JOIN agencies a ON a.id = ra.agency_id
 		 WHERE ra.runner_id = ?`, runnerID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	var out []string
 	for rows.Next() {
 		var n string
-		if err := rows.Scan(&n); err == nil {
-			out = append(out, n)
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
 		}
+		out = append(out, n)
 	}
-	return out
+	return out, rows.Err()
 }
 
 func hasCap(caps []string, want string) bool {
@@ -342,7 +349,10 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 		"CRONOMICON_WATCH_SIZE": fmt.Sprintf("%d", sg.SizeBytes),
 	})
 
-	scopeAgencies, _ := execspec.ScopeAgencies(ctx, s.db, scope)
+	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, scope)
+	if aerr != nil {
+		return false, fmt.Errorf("read the agencies of scope %q: %w", scope, aerr)
+	}
 
 	// RA-24 — the file-arrival half, and the last producer that was missing it.
 	// Cron, reactions, the manual trigger and the workflow engine all refuse an

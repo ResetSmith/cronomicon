@@ -399,15 +399,19 @@ func ScopeAgencies(ctx context.Context, db *sql.DB, scope string) ([]string, err
 		WHERE s.name = ?
 		ORDER BY a.name`, scope)
 	if err != nil {
-		// Best-effort on a pre-670 schema: an enqueue must never fail because the
-		// membership table is absent. The scalar snapshot still carries the truth.
-		return out, nil
+		// The error is the caller's to act on. This used to answer "no agencies"
+		// — written for a pre-670 schema that cannot exist at run time, since
+		// migrations run before anything serves — and a producer that got it
+		// stamped the run as belonging to no agency: claimable by the wrong
+		// runners, and resolving none of its own agency's secrets. An unreadable
+		// membership is not an empty one; every producer refuses to enqueue on it.
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
-			return out, err
+			return nil, err
 		}
 		out = append(out, name)
 	}

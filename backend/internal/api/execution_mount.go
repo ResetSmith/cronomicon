@@ -1161,7 +1161,11 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// dispatch resolver will (runref.lookupScoped takes the run's agencies), and
 	// checking a different row than the one that gets injected is a check in name
 	// only. Reused verbatim for the run snapshot below — one query, two consumers.
-	runAgencies, _ := execspec.ScopeAgencies(r.Context(), s.db, scope)
+	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, scope)
+	if aerr != nil {
+		httpx.Fail500(w, s.log, "db_error", aerr)
+		return
+	}
 
 	// RA-24 — refuse an UNBOUND run whose declared credentials resolve for nobody.
 	//
