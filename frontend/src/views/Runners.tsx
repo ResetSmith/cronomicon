@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, csrfHeader, errMsg, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
+import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../api/access";
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../components/table";
 import { RefreshScope } from "../components/RefreshScope";
@@ -56,20 +57,32 @@ interface Runner {
   protocolVersion?: number;
   lastHeartbeatAt?: string | null;
   registeredAt?: string;
-  agencies?: { id: string; name: string }[]; // network-isolation membership (M2)
-  // DR-7 — a prior placement offered for confirmation, present ONLY on a runner
-  // in no agency whose name matches a retained snapshot. NEVER auto-applied: the
-  // name is self-declared by the agent, so healing on it alone would let any
-  // agent inherit another runner's placement by claiming its name.
+  // What the runner SERVES: the agencies whose runs it claims. For an agent this
+  // is exactly its owner (v2.3.0).
+  agencies?: { id: string; name: string }[];
+  // Who OWNS it: the agency whose administrators manage it. Set by the
+  // registration token, never by the agent.
+  ownerAgency?: { id: string; name: string };
+  // The serve list is not exactly the owner: a runner that served several
+  // agencies before 2.3.0. It works as it did and can only be narrowed.
+  legacyPlacement?: boolean;
+  // Per-row authority, computed by the server: may this caller manage the
+  // runner (its owner's administrators), and may they review its host keys
+  // (the owner, or an administrator of an agency it serves and does not own).
+  canManage?: boolean;
+  canReviewHostKeys?: boolean;
+  // DR-7 / MA-32 — an offer to re-point the scope bindings a previous enrolment
+  // under the same name left behind, for this runner's own agency. NEVER
+  // auto-applied: the name is self-declared by the agent.
   placementSuggestion?: {
     historyId: number;
     previousRunnerId: string;
+    // The one agency the offer is for: this runner's owner.
     agencies: { id: string; name: string }[];
     tags: string[];
-    // SB — scopes still bound to the PREVIOUS runner id. A binding outlives its
-    // runner, so these are closed until the placement is restored; accepting
-    // re-points them here. A general-pool runner has no agencies, so for one
-    // the offer may carry scopes and nothing else.
+    // SB — the scopes of this runner's agency still bound to the PREVIOUS
+    // runner id. A binding outlives its runner, so these are closed until
+    // accepting re-points them here.
     scopes?: string[];
     deregisteredAt: string;
     deregisteredVia: "operator" | "reaper";
@@ -225,9 +238,9 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       </div>
       <p style={{ margin: "0 0 8px", fontSize: c.fontSm, color: c.text }}>
         A runner named <strong>{runner.name}</strong> was removed {when ? <>on {when}</> : "previously"}
-        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"} while{" "}
-        {sugg.agencies.length > 0 ? <>placed in {sugg.agencies.map((a) => a.name).join(", ")}</> : "in the general pool"}
-        {sugg.tags.length > 0 ? <> with tags {sugg.tags.join(", ")}</> : null}.
+        {sugg.deregisteredVia === "reaper" ? " by the offline sweep" : " by an operator"}
+        {sugg.tags.length > 0 ? <>, with tags {sugg.tags.join(", ")}</> : null}. This runner already serves{" "}
+        {sugg.agencies.map((a) => a.name).join(", ") || "its agency"}; restoring changes nothing about that.
       </p>
       {/* SB — the scopes that runner was bound to are still bound to it, and
           closed: nothing can claim their runs. That is the most urgent thing
@@ -283,14 +296,17 @@ function PlacementOffer({ runner, onSaved }: { runner: Runner; onSaved: () => vo
 function ScopesServed({
   runner,
   scopes,
-  canConfig,
+  canReplace,
   successor,
   onSuccessor,
   onSaved,
 }: {
   runner: Runner;
   scopes: string[];
-  canConfig: boolean;
+  /** The caller holds configureApp somewhere. Replace is judged by the server on the
+   *  SCOPES this runner is bound to (LR-62), not on who owns the runner, so the
+   *  button follows the flat permission and the server decides. */
+  canReplace: boolean;
   /**
    * The runner that just took over, until the operator has dealt with its host
    * keys. It has the scopes now and none of this runner's trust: the copy is
@@ -357,7 +373,7 @@ function ScopesServed({
     // runner serves nothing, and that is exactly when the message is wanted.
     return (
       <span style={{ color: c.textMuted }}>
-        None — this runner serves whatever its groups allow. Bind it to a scope on the{" "}
+        None — this runner takes any run of the agency it serves. Bind it to a scope on the{" "}
         <Link to="/scopes" style={{ color: c.primary }}>
           Scopes page
         </Link>
@@ -375,7 +391,7 @@ function ScopesServed({
             {name}
           </span>
         ))}
-        {canConfig && (
+        {canReplace && (
           <Btn small onClick={() => setReplacing(true)} title="Hand these scopes to another runner in one step">
             Replace this runner…
           </Btn>
@@ -403,87 +419,158 @@ function ScopesServed({
   );
 }
 
-// GroupEditor edits a runner's agency ("group") membership inline (0..many),
-// relocated from the former standalone Agency Membership matrix. Each add/remove
-// commits immediately via PUT /runner-agencies with a SINGLE-runner body — the
-// endpoint replaces only the posted runners' sets, so this never disturbs any
-// other runner. Optimistic: reverts on error.
-function GroupEditor({ runner, available, onSaved }: { runner: Runner; available: { id: string; name: string }[]; onSaved: () => void }) {
-  const [ids, setIds] = useState<string[]>((runner.agencies ?? []).map((a) => a.id));
+// notOwnerWhy is the reason a control on a runner row is disabled for a caller
+// who holds configureApp somewhere and does not administer this runner's owner
+// (LR-59). "" when they may act. An older server sends no flag; the server
+// decides either way, so that reads as allowed.
+function notOwnerWhy(runner: Runner): string {
+  if (runner.canManage ?? true) return "";
+  const owner = runner.ownerAgency;
+  return !owner || owner.id === GLOBAL_AGENCY
+    ? "This runner is Global's — only a global administrator (a role on every agency) can manage it."
+    : `This runner belongs to ${owner.name} — only that agency's administrators can manage it.`;
+}
+
+const agencyChip = (): React.CSSProperties => ({
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 5,
+  padding: "3px 8px",
+  borderRadius: c.radiusChip,
+  fontSize: c.fontXs,
+  fontWeight: 600,
+  background: `${c.primary}1f`,
+  color: c.primary,
+  border: `1px solid ${c.primary}30`,
+});
+
+// OwnerAndServes shows a runner's placement (v2.3.0, MA-26): who OWNS it and
+// what it SERVES. For an agent the two are one fact, fixed by the registration
+// token it enrolled with, so there is nothing to edit: to serve another agency,
+// enrol an agent for that agency.
+//
+// The one runner with something to change is a LEGACY PLACEMENT — a runner that
+// served several agencies before 2.3.0. It keeps working; an agency can be
+// taken off it and none can be added (PUT /runner-agencies refuses the rest),
+// and once it serves a single agency it can be handed to that agency, which
+// ends it. Both are its owner's to do: a global administrator's.
+function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmHand, setConfirmHand] = useState(false);
+  const [confirmNarrow, setConfirmNarrow] = useState<{ id: string; name: string } | null>(null);
+  const owner = runner.ownerAgency;
+  const serves = runner.agencies ?? [];
+  const legacy = !!runner.legacyPlacement;
+  const why = notOwnerWhy(runner);
+  // Hand-over: Global's, serving exactly one agency that is not Global.
+  const handTo = legacy && owner?.id === GLOBAL_AGENCY && serves.length === 1 && serves[0].id !== GLOBAL_AGENCY ? serves[0] : null;
 
-  // Re-seed from the server's view whenever the list refetches (post-save).
-  useEffect(() => {
-    setIds((runner.agencies ?? []).map((a) => a.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify((runner.agencies ?? []).map((a) => a.id))]);
-
-  const nameOf = (id: string) => available.find((a) => a.id === id)?.name ?? id;
-  const unassigned = available.filter((a) => !ids.includes(a.id));
-
-  const commit = async (next: string[]) => {
-    const prev = ids;
-    setIds(next); // optimistic
+  const narrow = async (removeId: string) => {
     setBusy(true);
     setErr(null);
     const { error } = await api.PUT("/runner-agencies", {
       params: { header: csrfHeader },
-      body: [{ runnerId: String(runner.id), agencyIds: next }],
+      body: [{ runnerId: String(runner.id), agencyIds: serves.filter((a) => a.id !== removeId).map((a) => a.id) }],
     });
     setBusy(false);
-    if (error) {
-      setIds(prev);
-      setErr(errMsg(error));
-    } else {
-      onSaved();
-    }
+    setConfirmNarrow(null);
+    if (error) setErr(errMsg(error));
+    else onSaved();
+  };
+  const hand = async () => {
+    if (!handTo) return;
+    setBusy(true);
+    setErr(null);
+    const { error } = await api.POST("/runners/{runnerId}/owner", {
+      params: { path: { runnerId: String(runner.id) }, header: csrfHeader },
+      body: { agencyId: handTo.id },
+    });
+    setBusy(false);
+    setConfirmHand(false);
+    if (error) setErr(errMsg(error));
+    else onSaved();
   };
 
-  if (available.length === 0) {
-    // VU-14 — the pointer was stale: the Agencies catalog moved off Env Vars onto
-    // the Scopes page (SC2), so the old copy named a tab that no longer exists.
-    return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 10, flexWrap: "wrap", color: c.textMuted }}>
-        No groups defined yet — a runner with no group serves the general pool.
-        <Link to="/scopes?tab=agencies" style={{ textDecoration: "none" }}>
-          <Btn small>Manage agencies</Btn>
-        </Link>
-      </span>
-    );
-  }
   return (
     <div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        {ids.length === 0 && <span style={{ color: c.textMuted }}>General pool (no group binding)</span>}
-        {ids.map((id) => (
-          <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontWeight: 600, background: `${c.primary}1f`, color: c.primary, border: `1px solid ${c.primary}30` }}>
-            {nameOf(id)}
-            <button
-              onClick={() => commit(ids.filter((x) => x !== id))}
-              disabled={busy}
-              title="Remove from group"
-              style={{ background: "none", border: "none", padding: 0, margin: 0, color: c.primary, cursor: busy ? "default" : "pointer", fontSize: c.fontSm, lineHeight: 1 }}
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 12, rowGap: 6, alignItems: "center", fontSize: c.fontSm }}>
+        <span style={{ color: c.textSec }}>Owner</span>
+        <span style={{ color: c.text, fontWeight: 600 }}>{owner?.name || owner?.id || "—"}</span>
+        <span style={{ color: c.textSec }}>Serves</span>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {serves.length === 0 && <span style={{ color: c.danger }}>No agency — this runner can claim nothing. See Notices.</span>}
+          {serves.map((a) => (
+            <span key={a.id} style={agencyChip()}>
+              {a.name}
+              {legacy && serves.length > 1 && (
+                <button
+                  onClick={() => setConfirmNarrow(a)}
+                  disabled={busy || !!why}
+                  aria-label={`Stop serving ${a.name}`}
+                  title={why || `Take ${a.name} off this runner. It cannot be added back: an agent serves the agency that owns it.`}
+                  style={{ background: "none", border: "none", padding: 0, margin: 0, color: c.primary, cursor: busy || why ? "not-allowed" : "pointer", fontSize: c.fontSm, lineHeight: 1 }}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+          {legacy && (
+            <Link
+              to="/notices"
+              title="This runner served several agencies before 2.3.0. It keeps working, can be narrowed and never widened. Open Notices for how to settle it."
+              style={{ fontSize: c.fontXs, fontWeight: 600, padding: "2px 7px", borderRadius: c.radiusChip, background: `${c.warning}1f`, color: c.warning, border: `1px solid ${c.warning}40`, textDecoration: "none" }}
             >
-              ×
-            </button>
-          </span>
-        ))}
-        {unassigned.length > 0 && (
-          <select
-            value=""
-            disabled={busy}
-            onChange={(e) => { if (e.target.value) void commit([...ids, e.target.value]); }}
-            style={{ fontSize: c.fontSm, padding: "3px 6px", borderRadius: c.radiusChip, background: c.panelInput, color: c.text, border: `1px solid ${c.borderStrong}`, cursor: "pointer" }}
-          >
-            <option value="">+ Add group…</option>
-            {unassigned.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        )}
+              Legacy placement
+            </Link>
+          )}
+        </div>
       </div>
-      {err && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>Save failed: {err}</div>}
+      {!legacy && (
+        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
+          An agent serves the agency that owns it, set by the registration token it enrolled with. To serve another agency, enrol an
+          agent for that agency.
+        </div>
+      )}
+      {handTo && (
+        <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Btn small onClick={() => setConfirmHand(true)} disabled={busy || !!why} title={why || undefined}>
+            Hand to {handTo.name}
+          </Btn>
+          <span style={{ fontSize: c.fontXs, color: c.textSec }}>
+            It serves only {handTo.name} now. Handing it over makes {handTo.name} its owner and settles the notice.
+          </span>
+        </div>
+      )}
+      {err && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{err}</div>}
+      {confirmNarrow && (
+        <ConfirmDialog
+          title={`Stop ${runner.name} serving ${confirmNarrow.name}?`}
+          message={
+            <>
+              {confirmNarrow.name}'s runs will no longer be claimed by this runner, and any of {confirmNarrow.name}'s scopes still
+              bound to it will wait until they are bound to another. <strong>This cannot be undone:</strong> an agency cannot be added
+              back to a runner. Enrol an agent for {confirmNarrow.name} and re-bind its scopes first.
+            </>
+          }
+          confirmLabel={`Stop serving ${confirmNarrow.name}`}
+          busy={busy}
+          onCancel={() => setConfirmNarrow(null)}
+          onConfirm={() => narrow(confirmNarrow.id)}
+        />
+      )}
+      {confirmHand && handTo && (
+        <ConfirmDialog
+          title={`Hand ${runner.name} to ${handTo.name}?`}
+          message={`${handTo.name}'s administrators will manage this runner from now on, and global administrators will keep their access. This cannot be undone here: to move a runner back, deregister it and enrol it again.`}
+          confirmLabel={`Hand to ${handTo.name}`}
+          danger={false}
+          busy={busy}
+          onCancel={() => setConfirmHand(false)}
+          onConfirm={hand}
+        />
+      )}
     </div>
   );
 }
@@ -518,7 +605,10 @@ function RunnerTagsEditor({ runner, onSaved }: { runner: Runner; onSaved: () => 
 
   return (
     <div>
-      <TagEditor tags={tags} onChange={save} />
+      {/* Tags are the owner's to edit, like every write on the row (LR-59). */}
+      <div title={notOwnerWhy(runner) || undefined}>
+        <TagEditor tags={tags} onChange={save} disabled={!!notOwnerWhy(runner)} />
+      </div>
       {err && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>Save failed: {err}</div>}
     </div>
   );
@@ -561,7 +651,7 @@ function SecretInjectionEditor({ runner, canConfig, onSaved }: { runner: Runner;
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <div
         onClick={toggle}
-        title={canConfig ? undefined : "Requires the Configure App permission"}
+        title={canConfig ? undefined : notOwnerWhy(runner) || "Requires the Configure App permission"}
         style={{
           width: 36,
           height: 20,
@@ -601,11 +691,11 @@ function SecretInjectionEditor({ runner, canConfig, onSaved }: { runner: Runner;
 function RunnerDetail({
   runner,
   serverVersion,
-  availableAgencies,
   servedScopes,
   successor,
   onSuccessor,
   canConfig,
+  canConfigAnywhere,
   actions,
   onEditSettings,
   onScrollToToken,
@@ -613,13 +703,15 @@ function RunnerDetail({
 }: {
   runner: Runner;
   serverVersion?: string | null;
-  availableAgencies: { id: string; name: string }[];
   /** SB — the scopes bound to this runner, by name. */
   servedScopes: string[];
   /** SB — the runner this one's scopes were just handed to; see ScopesServed. */
   successor: KeyRunner | null;
   onSuccessor: (to: KeyRunner | null) => void;
+  /** configureApp held AND this runner is the caller's to manage (its owner's). */
   canConfig: boolean;
+  /** configureApp held somewhere, whoever owns this runner. */
+  canConfigAnywhere: boolean;
   actions?: React.ReactNode;
   onEditSettings: () => void;
   onScrollToToken: (tokenId: string) => void;
@@ -790,7 +882,11 @@ function RunnerDetail({
               </>
             }
             info="Server-managed overrides pushed to the agent: max concurrent jobs, sandbox caps, checkout policy and capability mask. When none are set the runner uses its local config."
-            actions={<Btn small onClick={onEditSettings}>⚙ Edit</Btn>}
+            actions={
+              <Btn small onClick={onEditSettings} disabled={!!notOwnerWhy(runner)} title={notOwnerWhy(runner) || undefined}>
+                ⚙ Edit
+              </Btn>
+            }
           >
             {ms == null ? (
               <span style={{ color: c.textMuted }}>No server-managed overrides — the runner uses its local config.</span>
@@ -824,22 +920,23 @@ function RunnerDetail({
             )}
           </Section>
 
-          {/* Groups (agencies) — editable inline, 0..many (relocated from the
-              former standalone Agency Membership matrix). */}
+          {/* Owner and serves (v2.3.0) — replaces the "Groups" editor, which
+              placed a runner in any number of agencies. */}
           <Section
-            title="Groups"
+            title="Agency"
             info={
               <>
-                Groups are network-isolation <strong>agencies</strong> (managed on the Scopes page). A runner in one
-                or more groups only claims runs targeting those groups; a runner in none serves the general pool.
+                The <strong>owner</strong> is the agency whose administrators manage this runner. What it{" "}
+                <strong>serves</strong> is the agencies whose runs it claims: for an agent, exactly its owner. Agencies are managed on
+                the Scopes page.
               </>
             }
           >
-            <PlacementOffer runner={runner} onSaved={onSaved} />
-            <GroupEditor runner={runner} available={availableAgencies} onSaved={onSaved} />
+            {canConfig && <PlacementOffer runner={runner} onSaved={onSaved} />}
+            <OwnerAndServes runner={runner} onSaved={onSaved} />
           </Section>
 
-          {/* SB — the scopes bound to this runner. Under Groups because it is the
+          {/* SB — the scopes bound to this runner. Under Agency because it is the
               same fact at finer grain: which department's work, then which
               scopes' work within it. Bindings are edited on the scope (that is
               where "these hosts are reached from here" belongs); what this
@@ -855,7 +952,7 @@ function RunnerDetail({
               </>
             }
           >
-            <ScopesServed runner={runner} scopes={servedScopes} canConfig={canConfig} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
+            <ScopesServed runner={runner} scopes={servedScopes} canReplace={canConfigAnywhere} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
           </Section>
 
           {/* Tags — operator-authored, editable inline like other catalog items */}
@@ -984,6 +1081,10 @@ interface RegTokenInfo {
   usedAt?: string | null;
   usedByRunnerId?: string | null;
   usedByRunnerName?: string | null;
+  // The agency that will own the agent this token enrols (v2.3.0). The name is
+  // empty when that agency has since been deleted: the token enrols nothing.
+  agencyId?: string;
+  agencyName?: string;
   status?: "active" | "used" | "expired" | "revoked" | string;
 }
 
@@ -1003,6 +1104,7 @@ const TOK_SORT_COLS: SortColumn<RegTokenInfo>[] = [
   { key: "status", get: (tk) => tk.status, type: "rank", rank: TOK_STATUS_RANK },
   { key: "usedBy", get: (tk) => tk.usedByRunnerName ?? tk.usedByRunnerId, type: "text" },
   { key: "label", get: (tk) => tk.label, type: "text" },
+  { key: "owner", get: (tk) => tk.agencyName || tk.agencyId, type: "text" },
   { key: "createdAt", get: (tk) => tk.createdAt, type: "date" },
   { key: "expiresAt", get: (tk) => tk.expiresAt, type: "date" },
 ];
@@ -1088,8 +1190,12 @@ export function Runners() {
   const [refresh, setRefresh] = useState(0);
   const [tokenV, setTokenV] = useState(0);
   const [canConfig, setCanConfig] = useState(false);
+  const [canConfigGlobal, setCanConfigGlobal] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanConfig(caps.configureApp));
+    fetchCapabilities().then((caps) => {
+      setCanConfig(caps.configureApp);
+      setCanConfigGlobal(!!caps.configureAppGlobal);
+    });
   }, []);
 
   const list = useGet<unknown>(() => api.GET("/runners"), [refresh]);
@@ -1177,39 +1283,43 @@ export function Runners() {
     },
     {
       key: "agencies",
-      label: "Agencies",
+      label: "Agency",
       width: COL_W.agencies,
       fixed: true,
-      cell: (r) =>
-        (r.agencies ?? []).length === 0 ? (
-          // RB-22 — say what the empty set MEANS. A runner in no agency serves
-          // the GENERAL POOL: every department's unscoped and system work. That
-          // is more reach than a departmental runner, and "—" reads as missing.
-          <span
-            title={
-              r.placementSuggestion
-                ? "In no agency — serving the general pool. A previous placement was found; expand the row to review and restore it."
-                : "In no agency — serves the general pool, so it may claim every department's unscoped and system work."
-            }
-            style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
-          >
-            general pool
-            {r.placementSuggestion ? (
-              <span style={{ color: c.warning, fontStyle: "normal", fontWeight: 600 }}> · was placed</span>
-            ) : null}
-          </span>
-        ) : (
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {(r.agencies ?? []).map((a) => (
-              <span
-                key={a.id}
-                style={{ display: "inline-flex", padding: "2px 7px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontWeight: 600, background: `${c.primary}1f`, color: c.primary, border: `1px solid ${c.primary}20` }}
-              >
-                {a.name}
+      // Owner, and what it serves when that is anything else (v2.3.0). For an
+      // agent the two are one, so one chip says both.
+      cell: (r) => {
+        const owner = r.ownerAgency;
+        const serves = r.agencies ?? [];
+        return (
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+            {!r.legacyPlacement ? (
+              <span title={`Owned by ${owner?.name ?? "—"}, and serves it`} style={agencyChip()}>
+                {owner?.name ?? serves[0]?.name ?? "—"}
               </span>
-            ))}
+            ) : (
+              <>
+                {serves.map((a) => (
+                  <span key={a.id} title={`Serves ${a.name}; owned by ${owner?.name ?? "Global"}`} style={agencyChip()}>
+                    {a.name}
+                  </span>
+                ))}
+                <span
+                  title={`A legacy placement: owned by ${owner?.name ?? "Global"}, serving agencies that are not its owner. Expand the row.`}
+                  style={{ fontSize: c.fontXs, fontWeight: 600, color: c.warning }}
+                >
+                  legacy
+                </span>
+              </>
+            )}
+            {r.placementSuggestion && (r.canManage ?? true) ? (
+              <span title="A previous enrolment under this name left scopes bound to it. Expand the row to review." style={{ color: c.warning, fontSize: c.fontXs, fontWeight: 600 }}>
+                · bindings to restore
+              </span>
+            ) : null}
           </div>
-        ),
+        );
+      },
     },
     {
       key: "load",
@@ -1257,10 +1367,10 @@ export function Runners() {
         // expanded detail (v0.47.20). stopPropagation so a button click doesn't
         // also toggle the row.
         <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-          <Btn small onClick={() => testRunner(r)} disabled={testingId === r.id || busy}>
+          <Btn small onClick={() => testRunner(r)} disabled={testingId === r.id || busy || !!notOwnerWhy(r)} title={notOwnerWhy(r) || undefined}>
             {testingId === r.id ? "Testing…" : "Test"}
           </Btn>
-          <Btn small dangerQuiet onClick={() => setDeregTarget(r)} disabled={busy}>
+          <Btn small dangerQuiet onClick={() => setDeregTarget(r)} disabled={busy || !!notOwnerWhy(r)} title={notOwnerWhy(r) || undefined}>
             Deregister
           </Btn>
         </div>
@@ -1311,6 +1421,22 @@ export function Runners() {
   const [addOpen, setAddOpen] = useState(false);
   const [addShowTwoStep, setAddShowTwoStep] = useState(false);
   const [mintLabel, setMintLabel] = useState("");
+  // LR-61 — a token names the agency that will OWN the agent it enrols. The
+  // caller is offered the agencies they administer; a global administrator is
+  // offered Global and every agency. One option is not a choice and is chosen.
+  const access = useMyAccess();
+  const tokenOwners: AgencyRef[] = canConfigGlobal
+    ? [{ id: GLOBAL_AGENCY, name: "Global" }, ...availableAgencies.filter((a) => a.id !== GLOBAL_AGENCY)]
+    : agenciesFor(access ?? null, "configureApp");
+  const [mintAgencyPick, setMintAgency] = useState("");
+  const mintAgency = tokenOwners.some((a) => a.id === mintAgencyPick)
+    ? mintAgencyPick
+    : canConfigGlobal
+      ? GLOBAL_AGENCY
+      : tokenOwners.length === 1
+        ? tokenOwners[0].id
+        : "";
+  const mintBlocked = !canConfigGlobal && tokenOwners.length > 1 && !mintAgency ? "Choose the agency this runner is for" : "";
   // The plaintext token is returned by the mint POST only once; the list never
   // carries it. Hold the freshly minted token locally so it stays copyable.
   const [minted, setMinted] = useState<MintedToken | null>(null);
@@ -1328,6 +1454,23 @@ export function Runners() {
   // lives here because the hand-over reloads the list, which remounts the row.
   const [handover, setHandover] = useState<{ from: string; to: KeyRunner } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const tokenOwnerSelect = (
+    <select
+      aria-label="Agency the runner is for"
+      value={mintAgency}
+      disabled={busy || tokenOwners.length <= 1}
+      onChange={(e) => setMintAgency(e.target.value)}
+      title="The agency that will own the runner this token enrols. Its administrators manage the runner, and it serves that agency's runs and no other's."
+      style={{ padding: "7px 8px", background: c.panel2, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, color: c.text, maxWidth: 220 }}
+    >
+      {!canConfigGlobal && tokenOwners.length !== 1 && <option value="">Runner for…</option>}
+      {tokenOwners.map((a) => (
+        <option key={a.id} value={a.id}>
+          For {a.name}
+        </option>
+      ))}
+    </select>
+  );
   // FX-16 — the shared toast + its timer, replacing a hand-rolled success
   // banner the operator had to dismiss by hand.
   const [actionOk, setActionOk] = useToast();
@@ -1443,7 +1586,7 @@ export function Runners() {
     setActionError(null);
     const { data, error } = await api.POST("/runners/registration-tokens", {
       params: { header: csrfHeader },
-      body: mintLabel.trim() ? { label: mintLabel.trim() } : {},
+      body: { ...(mintLabel.trim() ? { label: mintLabel.trim() } : {}), ...(mintAgency ? { agencyId: mintAgency } : {}) },
     });
     setBusy(false);
     if (error) {
@@ -1627,11 +1770,11 @@ export function Runners() {
                               <RunnerDetail
                                 runner={r}
                                 serverVersion={serverBuild?.version}
-                                availableAgencies={availableAgencies}
                                 servedScopes={servedBy(r.id)}
                                 successor={handover && handover.from === String(r.id) ? handover.to : null}
                                 onSuccessor={(to) => setHandover(to ? { from: String(r.id), to } : null)}
-                                canConfig={canConfig}
+                                canConfig={canConfig && (r.canManage ?? true)}
+                                canConfigAnywhere={canConfig}
                                 onEditSettings={() => setSettingsTarget(r)}
                                 onScrollToToken={scrollToToken}
                                 onSaved={refetchList}
@@ -1649,12 +1792,17 @@ export function Runners() {
                                     with an explanation; only irrelevance hides. (The
                                     per-button protocol gates that once sat here went with
                                     the server's protocol floor, v1.5.40.) */}
+                                {/* LR-59 — these are the runner's OWNER's. A caller who
+                                    holds configureApp elsewhere sees them disabled with
+                                    whose runner it is (FX-7). Scan keys is the exception
+                                    (LR-63): an administrator of an agency the runner
+                                    serves may scan their own scopes with it. */}
                                 {isReachable(r.status) && (
                                   <Btn
                                     small
                                     onClick={() => setResyncTarget(r)}
-                                    disabled={busy}
-                                    title="Force a re-declare of this runner's current local config now (config changes usually propagate automatically on the next poll after a restart)"
+                                    disabled={busy || !!notOwnerWhy(r)}
+                                    title={notOwnerWhy(r) || "Force a re-declare of this runner's current local config now (config changes usually propagate automatically on the next poll after a restart)"}
                                   >
                                     Resync
                                   </Btn>
@@ -1663,14 +1811,20 @@ export function Runners() {
                                   <Btn
                                     small
                                     onClick={() => setScanTarget(r)}
-                                    disabled={busy}
-                                    title="Get SSH host keys onto this runner: scan a scope, scan hosts, or paste keys, then review every fingerprint"
+                                    disabled={busy || !(r.canReviewHostKeys ?? r.canManage ?? true)}
+                                    title={
+                                      !(r.canReviewHostKeys ?? r.canManage ?? true)
+                                        ? notOwnerWhy(r)
+                                        : (r.canManage ?? true)
+                                          ? "Get SSH host keys onto this runner: scan a scope, scan hosts, or paste keys, then review every fingerprint"
+                                          : "Scan one of your agency's scopes with this runner and review the keys it finds"
+                                    }
                                   >
                                     Scan keys
                                   </Btn>
                                 )}
                                 {isReachable(r.status) && (
-                                  <Btn small onClick={() => setDrainTarget(r)} disabled={busy}>
+                                  <Btn small onClick={() => setDrainTarget(r)} disabled={busy || !!notOwnerWhy(r)} title={notOwnerWhy(r) || undefined}>
                                     Drain
                                   </Btn>
                                 )}
@@ -1737,7 +1891,8 @@ export function Runners() {
                   color: c.text,
                 }}
               />
-              <button style={btnStyle("primary")} onClick={mint} disabled={busy}>
+              {tokenOwnerSelect}
+              <button style={btnStyle("primary")} onClick={mint} disabled={busy || !!mintBlocked} title={mintBlocked || undefined}>
                 {busy ? "Minting…" : "Mint token"}
               </button>
             </div>
@@ -1869,6 +2024,7 @@ export function Runners() {
                           ["Status", "status"],
                           ["Used by", "usedBy"],
                           ["Label", "label"],
+                          ["For", "owner"],
                           ["Created", "createdAt"],
                           ["Expires", "expiresAt"],
                         ] as [string, string][]
@@ -1940,6 +2096,13 @@ export function Runners() {
                           <td style={{ ...tdStyle, color: statusColor }}>{tokenStatusLabel}</td>
                           <td style={tdStyle}>{usedBy ?? <span style={{ color: c.textSec }}>—</span>}</td>
                           <td style={{ ...tdStyle, color: c.text }}>{tk.label || <span style={{ color: c.textSec }}>—</span>}</td>
+                          <td style={tdStyle}>
+                            {tk.agencyName || (
+                              <span title="The agency this token was minted for has been deleted. It no longer enrols anything." style={{ color: c.warning }}>
+                                deleted agency
+                              </span>
+                            )}
+                          </td>
                           <td style={tdStyle}>{fmtDate(tk.createdAt)}</td>
                           <td style={tdStyle}>{fmtDate(tk.expiresAt)}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>
@@ -1996,7 +2159,7 @@ export function Runners() {
             {!tokList.loading && !tokList.error && regTokens.length === 0 && !minted && (
               <div style={{ fontSize: c.fontSm, color: c.textSec, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 No registration tokens yet — a runner needs one to register.
-                <Btn small onClick={mint} disabled={busy}>
+                <Btn small onClick={mint} disabled={busy || !!mintBlocked} title={mintBlocked || undefined}>
                   {busy ? "Minting…" : "Mint a token"}
                 </Btn>
               </div>
@@ -2048,7 +2211,8 @@ export function Runners() {
                   maxLength={120}
                   style={{ flex: 1, padding: "7px 10px", background: c.panel2, border: `1px solid ${c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, color: c.text }}
                 />
-                <Btn primary onClick={mint} disabled={busy}>
+                {tokenOwnerSelect}
+                <Btn primary onClick={mint} disabled={busy || !!mintBlocked} title={mintBlocked || undefined}>
                   {busy ? "Minting…" : "Mint & build command"}
                 </Btn>
               </div>
@@ -2155,6 +2319,7 @@ export function Runners() {
       {scanTarget && scanTarget.id != null && (
         <HostKeysDialog
           runner={{ id: String(scanTarget.id), name: scanTarget.name }}
+          guest={!(scanTarget.canManage ?? true)}
           onClose={() => {
             setScanTarget(null);
             refetchList();

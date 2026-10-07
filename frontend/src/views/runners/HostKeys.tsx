@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { api, csrfHeader, errMsg } from "../../api/client";
+import { agenciesFor, useMyAccess } from "../../api/access";
 import { useGet, rows } from "../../hooks";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
@@ -67,6 +68,9 @@ interface RunnerLite {
   name: string;
   status?: string | null;
   agencies?: { id: string }[];
+  ownerAgency?: { id?: string; name?: string };
+  /** Per-row authority from the server: false means the caller does not own this runner. */
+  canManage?: boolean;
 }
 
 const isReachable = (status?: string | null) => status === "online" || status === "degraded";
@@ -358,10 +362,18 @@ export function HostKeysDialog({
   initialCarryFrom,
   carryFromPrevious,
   startAt = "source",
+  guest: guestProp = false,
   onClose,
   onChanged,
 }: {
   runner: KeyRunner;
+  /**
+   * LR-63 — the caller does not own this runner; they administer an agency it
+   * serves. They may scan a scope of their own agency with it and decide the
+   * keys that scan finds: no typed hosts, no paste, no copy from another
+   * runner, and never a key that would replace one the runner trusts.
+   */
+  guest?: boolean;
   initialSource?: KeySource;
   initialScopeId?: string;
   initialCarryFrom?: string;
@@ -371,7 +383,7 @@ export function HostKeysDialog({
   onClose: () => void;
   onChanged?: () => void;
 }) {
-  const [source, setSource] = useState<KeySource>(initialSource);
+  const [pickedSource, setSource] = useState<KeySource>(initialSource);
   const [step, setStep] = useState<"source" | "review">(startAt);
   // What the review step is showing: keys the runner scanned (read live from
   // the pending list) or a fixed list the server parsed from a paste or a carry.
@@ -387,21 +399,32 @@ export function HostKeysDialog({
   // A scan needs the runner to answer. Unknown (the list has not loaded, or the
   // runner is not in it) is not treated as offline: the server has the last word.
   const reachable = !me || isReachable(me.status);
+  // LR-63 — guest mode is the server's per-row answer about THIS runner, so it
+  // holds wherever the dialog is opened from (the Runners page says so up
+  // front; the Scopes page's coverage panel does not know, and need not).
+  const guest = guestProp || me?.canManage === false;
+  const source: KeySource = guest ? "scope" : pickedSource;
+  const access = useMyAccess();
   const scopes = useMemo(() => {
     const mine = (s: ScopeLite) => (s.boundRunners ?? []).some((b) => b.runnerId === runner.id);
-    // Only the scopes this runner may serve: a scope in an agency takes a member
-    // runner, a scope in none takes a general-pool runner. The server enforces
+    // Only the scopes this runner serves: a scope takes a runner that serves
+    // its agency (Global's takes one that serves Global). The server enforces
     // the same rule; offering the others would only offer a refusal.
     const mayServe = (s: ScopeLite) => {
       if (!me) return true;
       const mineAg = new Set((me.agencies ?? []).map((a) => a.id));
-      const theirs = s.agencies ?? [];
-      return theirs.length === 0 ? mineAg.size === 0 : theirs.some((a) => mineAg.has(a.id));
+      return (s.agencies ?? []).some((a) => mineAg.has(a.id));
     };
-    const all = rows<ScopeLite>(scopesQ.data).filter((s) => s.id && (mayServe(s) || s.id === initialScopeId));
+    // A guest may scan the scopes of an agency they ADMINISTER that the runner
+    // serves and does not own — the server's own list (hostKeyGuestScopes).
+    // Reading a scope is not enough.
+    const held = new Set(agenciesFor(access ?? null, "configureApp").map((a) => a.id));
+    const guestMay = (s: ScopeLite) =>
+      !guest || access == null || (s.agencies ?? []).some((a) => held.has(a.id) && a.id !== me?.ownerAgency?.id);
+    const all = rows<ScopeLite>(scopesQ.data).filter((s) => s.id && guestMay(s) && (mayServe(s) || s.id === initialScopeId));
     // Scopes bound to this runner first: they are the ones it must be able to reach.
     return [...all].sort((a, b) => Number(mine(b)) - Number(mine(a)) || a.scope.localeCompare(b.scope));
-  }, [scopesQ.data, runner.id, me, initialScopeId]);
+  }, [scopesQ.data, runner.id, me, initialScopeId, guest, access]);
   const boundHere = (s: ScopeLite) => (s.boundRunners ?? []).some((b) => b.runnerId === runner.id);
   const others = useMemo(() => {
     const live: RunnerLite[] = rows<RunnerLite>(runnersQ.data).filter((r) => r.id && r.id !== runner.id);
@@ -623,7 +646,13 @@ export function HostKeysDialog({
             primary
             onClick={next}
             disabled={busy || offlineForScan}
-            title={offlineForScan ? `${runner.name} is not online, so it cannot scan. Paste keys instead: they are delivered when it returns.` : undefined}
+            title={
+              offlineForScan
+                ? guest
+                  ? `${runner.name} is not online, so it cannot scan. Try again when it is back, or ask its owner.`
+                  : `${runner.name} is not online, so it cannot scan. Paste keys instead: they are delivered when it returns.`
+                : undefined
+            }
           >
             {busy ? "Working…" : scanning ? "Queue scan" : "Review keys"}
           </Btn>
@@ -632,7 +661,13 @@ export function HostKeysDialog({
     ) : (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {err && <div role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
-        {chosenChanged > 0 && (
+        {guest && chosenChanged > 0 && (
+          <div role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>
+            {plural(chosenChanged, "selected key")} would replace a key {runner.name} already trusts. That is for the runner's owner
+            to decide; untick {chosenChanged === 1 ? "it" : "them"} to trust the rest.
+          </div>
+        )}
+        {!guest && chosenChanged > 0 && (
           <div style={{ color: c.danger, fontSize: c.fontSm }}>
             {plural(chosenChanged, "selected key")} {chosenChanged === 1 ? "differs" : "differ"} from a key already trusted. Accepting{" "}
             {chosenChanged === 1 ? "it" : "them"} replaces the old key on {runner.name}. Only do this if you know why the host's key changed.
@@ -662,7 +697,7 @@ export function HostKeysDialog({
           {nothingLeft ? (
             <Btn primary onClick={onClose}>Done</Btn>
           ) : (
-            <Btn primary onClick={accept} disabled={busy || chosen.length === 0 || (reviewing === "paste" && hasErrors)}>
+            <Btn primary onClick={accept} disabled={busy || chosen.length === 0 || (reviewing === "paste" && hasErrors) || (guest && chosenChanged > 0)}>
               {busy ? "Working…" : `Trust ${plural(chosen.length, "key")} on ${runner.name}`}
             </Btn>
           )}
@@ -678,17 +713,26 @@ export function HostKeysDialog({
             {runner.name} only connects to hosts whose SSH key it has been told to trust. Choose where the keys come from. Nothing is
             trusted until you have reviewed every fingerprint on the next screen.
           </div>
-          <TabBar
-            tabs={SOURCES.map((s) => ({ label: s.label }))}
-            active={SOURCES.findIndex((s) => s.k === source)}
-            onChange={(i) => {
-              setSource(SOURCES[i].k);
-              setErr(null);
-            }}
-          />
+          {guest ? (
+            <AlertBanner type="info">
+              {runner.name} is not your agency's runner, but it serves your agency. You can scan one of your agency's scopes with it
+              and trust the keys it finds for hosts it does not know yet. Scanning typed hosts, pasting or copying keys, and replacing
+              a key the runner already trusts are for the runner's owner.
+            </AlertBanner>
+          ) : (
+            <TabBar
+              tabs={SOURCES.map((s) => ({ label: s.label }))}
+              active={SOURCES.findIndex((s) => s.k === source)}
+              onChange={(i) => {
+                setSource(SOURCES[i].k);
+                setErr(null);
+              }}
+            />
+          )}
           {offlineForScan && (
             <AlertBanner type="warning">
-              {runner.name} is not online, so it cannot scan. Pasted keys do not need it: they are delivered when it returns.
+              {runner.name} is not online, so it cannot scan.{" "}
+              {guest ? "Try again when it is back, or ask its owner." : "Pasted keys do not need it: they are delivered when it returns."}
             </AlertBanner>
           )}
           {source === "scope" && (
@@ -701,8 +745,8 @@ export function HostKeysDialog({
                 <InlineLoading what="scopes" />
               ) : scopes.length === 0 ? (
                 <div style={prose()}>
-                  There is no scope this runner may serve. A scope in an agency takes a runner that is a member of it; a scope in no
-                  agency takes a general-pool runner.
+                  There is no scope here that this runner serves. A scope takes a runner that serves its agency, and a scope that
+                  is Global's takes a runner that serves Global.
                 </div>
               ) : (
                 <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: c.fontSm, color: c.textSec }}>

@@ -17,6 +17,7 @@ import { EnvVars } from "./views/EnvVars";
 import { Scopes } from "./views/Scopes";
 import { Settings } from "./views/Settings";
 import { Runners } from "./views/Runners";
+import { Notices } from "./views/Notices";
 import { TimezoneProvider } from "./timezone-context";
 import { useTheme } from "./theme-context";
 import { c } from "./theme";
@@ -70,6 +71,7 @@ export function App() {
         <Route path="env-vars" element={<EnvVars />} />
         <Route path="runners" element={<Runners />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="notices" element={<Notices />} />
       </Route>
       </Routes>
     </TimezoneProvider>

@@ -6,7 +6,7 @@ import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../comp
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { SkeletonRows } from "../../components/ui";
-import { globalOnly } from "../../api/globalAdmin";
+import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../../api/access";
 import { Btn, Card, StatusBadge, csrfHeader, errMsg, fmtDateTime, inputStyle } from "./ui";
 
 type SshHost = components["schemas"]["SshHost"];
@@ -24,9 +24,11 @@ interface HostForm {
   authKeyEnvVar: string;
   authCredentialId: string;
   user: string;
+  /** The agency that owns a hand-written record (LR-69). Chosen on Add; fixed afterwards. */
+  ownerAgency: string;
 }
 
-const EMPTY_HOST: HostForm = { hostname: "", address: "", port: 22, os: "Linux", via: "", authKeyEnvVar: "", authCredentialId: "", user: "" };
+const EMPTY_HOST: HostForm = { hostname: "", address: "", port: 22, os: "Linux", via: "", authKeyEnvVar: "", authCredentialId: "", user: "", ownerAgency: "" };
 
 function hostToForm(h: SshHost): HostForm {
   return {
@@ -38,11 +40,15 @@ function hostToForm(h: SshHost): HostForm {
     authKeyEnvVar: h.authKeyEnvVar ?? "",
     authCredentialId: h.authCredentialId ?? "",
     user: h.user ?? "",
+    ownerAgency: h.ownerAgency ?? "",
   };
 }
 
-function hostToInput(f: HostForm): SshHostInput {
+// The owner is sent when a record is CREATED. An edit leaves it out: giving a
+// record to another agency is a move, and this form does not make one.
+function hostToInput(f: HostForm, withOwner = false): SshHostInput {
   return {
+    ...(withOwner && f.ownerAgency ? { ownerAgency: f.ownerAgency } : {}),
     hostname: f.hostname,
     address: f.address,
     port: f.port,
@@ -63,9 +69,10 @@ interface BastionForm {
   authKeyEnvVar: string;
   authCredentialId: string;
   zone: string;
+  ownerAgency: string;
 }
 
-const EMPTY_BASTION: BastionForm = { name: "", address: "", port: 22, username: "jump", authKeyEnvVar: "", authCredentialId: "", zone: "" };
+const EMPTY_BASTION: BastionForm = { name: "", address: "", port: 22, username: "jump", authKeyEnvVar: "", authCredentialId: "", zone: "", ownerAgency: "" };
 
 function bastionToForm(b: SshBastion): BastionForm {
   return {
@@ -76,11 +83,13 @@ function bastionToForm(b: SshBastion): BastionForm {
     authKeyEnvVar: b.authKeyEnvVar ?? "",
     authCredentialId: b.authCredentialId ?? "",
     zone: b.zone ?? "",
+    ownerAgency: b.ownerAgency ?? "",
   };
 }
 
-function bastionToInput(f: BastionForm): SshBastionInput {
+function bastionToInput(f: BastionForm, withOwner = false): SshBastionInput {
   return {
+    ...(withOwner && f.ownerAgency ? { ownerAgency: f.ownerAgency } : {}),
     name: f.name,
     address: f.address,
     port: f.port,
@@ -196,6 +205,7 @@ const HOST_COL_W: Record<string, number> = {
   via: 120,
   authKey: 150,
   user: 90,
+  owner: 110,
   status: 100,
   lastChecked: 130,
   actions: 200,
@@ -208,6 +218,7 @@ const BASTION_COL_W: Record<string, number> = {
   user: 90,
   authKey: 150,
   zone: 100,
+  owner: 110,
   status: 100,
   lastChecked: 130,
   actions: 200,
@@ -224,19 +235,47 @@ const SSH_STATUS_RANK: Record<string, number> = { cred_error: 0, conn_error: 0, 
 // ExecutionsTab as the source), which is precisely the drift <TableHead> exists
 // to end.
 
-// `canWrite` — global administrator for configureApp (GC, v2.2.2). Two rules,
-// and they differ:
+// `canWrite` — the caller is a global administrator for configureApp.
 //
-//   - A BASTION is shared by every agency's hosts, and a host registered by hand
-//     belongs to no scope, so creating a host here and every bastion write are a
-//     global administrator's. Those controls are disabled with the reason.
-//   - An existing HOST row is writable by whoever administers the scope it was
-//     imported for; a hand-made row is not. Nothing on the row says which, and
-//     this view does not guess: Test/Edit/Remove stay enabled for a configureApp
-//     holder and a refusal shows the server's own sentence in the error line
-//     above the tables.
+// A bastion and a hand-written host record belong to ONE agency (v2.3.0,
+// LR-69): its administrators create and change them, and Global's are a global
+// administrator's. Until 2.3.0 both were a global administrator's alone, since
+// neither had an owner. So:
+//
+//   - "+ Add" asks whose the record is, offering the agencies the caller
+//     administers (Global too, for a global administrator);
+//   - a record another agency owns has its actions disabled, with whose it is;
+//   - a host IMPORTED for a scope follows that scope's gate, which the server
+//     judges; this view does not guess, and its actions stay live.
 export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
-  const why = globalOnly(canWrite);
+  // LR-69 (v2.3.0) — a bastion and a hand-written host record belong to ONE
+  // agency. Its administrators create and change them; Global's are a global
+  // administrator's. `owners` is what this caller may create a record for.
+  const access = useMyAccess();
+  const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
+  const catalog = rows<{ id: string; name: string }>(catalogQ.data);
+  const owners: AgencyRef[] = canWrite
+    ? [{ id: GLOBAL_AGENCY, name: "Global" }, ...catalog.filter((a) => a.id !== GLOBAL_AGENCY)]
+    : agenciesFor(access ?? null, "configureApp");
+  const mine = new Set(owners.map((a) => a.id));
+  // Whether the caller's agencies are KNOWN. While /me/access is loading, or
+  // if it cannot be read, nothing here claims a record is somebody else's or
+  // that there is no agency to create one for: the controls stay live and the
+  // server decides, as it does on the Runners page.
+  const known = canWrite || access != null;
+  const ownerName = (id?: string | null, name?: string | null) =>
+    name || owners.find((a) => a.id === id)?.name || catalog.find((a) => a.id === id)?.name || (id === GLOBAL_AGENCY || !id ? "Global" : id);
+  // Why "+ Add" is disabled: the caller administers no agency to create one for.
+  const addWhy = known && owners.length === 0 ? "You do not administer an agency, so there is none to create this for." : "";
+  // Why a record's actions are disabled: it is another owner's. A caller on an
+  // older server (no owner on the row) is not second-guessed: the server decides.
+  const ownedWhy = (owner: string | undefined | null, name: string | undefined | null, what: string): string => {
+    if (!known || !owner || mine.has(owner)) return "";
+    return owner === GLOBAL_AGENCY
+      ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
+      : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
+  };
+  const defaultOwner = canWrite ? GLOBAL_AGENCY : owners.length === 1 ? owners[0].id : "";
   const [bump, setBump] = useState(0);
   const hostsQ = useGet<unknown>(() => api.GET("/ssh/hosts"), [bump]);
   const bastionsQ = useGet<unknown>(() => api.GET("/ssh/bastions"), [bump]);
@@ -284,7 +323,13 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     }
     setBusy(true);
     setActionErr(null);
-    const { error } = await api.POST("/ssh/hosts", { params: { header: csrfHeader }, body: hostToInput(addHostForm) });
+    const owner = addHostForm.ownerAgency || defaultOwner;
+    if (!owner && known) {
+      setBusy(false);
+      setActionErr("Choose the agency that owns this host record.");
+      return;
+    }
+    const { error } = await api.POST("/ssh/hosts", { params: { header: csrfHeader }, body: hostToInput({ ...addHostForm, ownerAgency: owner }, true) });
     if (done(error)) {
       setShowAddHost(false);
       setAddHostForm({ ...EMPTY_HOST });
@@ -317,7 +362,13 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     }
     setBusy(true);
     setActionErr(null);
-    const { error } = await api.POST("/ssh/bastions", { params: { header: csrfHeader }, body: bastionToInput(addBastionForm) });
+    const owner = addBastionForm.ownerAgency || defaultOwner;
+    if (!owner && known) {
+      setBusy(false);
+      setActionErr("Choose the agency that owns this bastion.");
+      return;
+    }
+    const { error } = await api.POST("/ssh/bastions", { params: { header: csrfHeader }, body: bastionToInput({ ...addBastionForm, ownerAgency: owner }, true) });
     if (done(error)) {
       setShowAddBastion(false);
       setAddBastionForm({ ...EMPTY_BASTION });
@@ -429,6 +480,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     { key: "via", get: (h) => h.via, type: "text" },
     { key: "authKey", get: (h) => authKeyDisplay(h.authCredentialId, h.authKeyEnvVar), type: "text" },
     { key: "user", get: (h) => h.user, type: "text" },
+    { key: "owner", get: (h) => (h.scopeId ? "" : ownerName(h.ownerAgency, h.ownerAgencyName)), type: "text" },
     { key: "status", get: (h) => h.status, type: "rank", rank: SSH_STATUS_RANK },
     { key: "lastChecked", get: (h) => h.lastCheckedAt, type: "date" },
   ];
@@ -439,6 +491,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     { key: "user", get: (b) => b.username, type: "text" },
     { key: "authKey", get: (b) => authKeyDisplay(b.authCredentialId, b.authKeyEnvVar), type: "text" },
     { key: "zone", get: (b) => b.zone, type: "text" },
+    { key: "owner", get: (b) => ownerName(b.ownerAgency, b.ownerAgencyName), type: "text" },
     { key: "status", get: (b) => b.status, type: "rank", rank: SSH_STATUS_RANK },
     { key: "lastChecked", get: (b) => b.lastCheckedAt, type: "date" },
   ];
@@ -504,6 +557,16 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
     },
     { key: "user", label: "User", sortKey: "user", width: HOST_COL_W.user, fixed: true, tdStyle: { color: c.textSec }, cell: (h) => h.user || "—" },
     {
+      key: "owner",
+      label: "Owner",
+      sortKey: "owner",
+      width: HOST_COL_W.owner,
+      tdStyle: { color: c.textSec },
+      // A hand-written record has an owner; one imported for a scope belongs to
+      // that scope, and says so instead.
+      cell: (h) => (h.scopeId ? <span title="Imported for a scope: it follows that scope's agency.">its scope's</span> : ownerName(h.ownerAgency, h.ownerAgencyName)),
+    },
+    {
       key: "status",
       label: "Status",
       sortKey: "status",
@@ -536,6 +599,9 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
       cell: (h) => {
         const editing = editHostId === (h.id ?? "");
         const isGit = h.source === "git";
+        // A hand-written record (no scope) is its owner's. One imported for a
+        // scope follows the scope's gate, which the server judges: left live.
+        const why = h.scopeId ? "" : ownedWhy(h.ownerAgency, h.ownerAgencyName, "host record");
         return (
           <div style={{ display: "flex", gap: 4 }}>
             {editing ? (
@@ -547,11 +613,11 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
               </>
             ) : (
               <>
-                <Btn onClick={() => testHost(h)} disabled={testingId === h.id || busy}>
+                <Btn onClick={() => testHost(h)} disabled={testingId === h.id || busy || !!why} title={why || undefined}>
                   {testingId === h.id ? "Testing…" : "Test"}
                 </Btn>
                 {h.hostKeyPinned && (
-                  <Btn onClick={() => clearHostKey(h)} disabled={busy} title="Clear the pinned host key so it re-captures on next connect (re-key)">
+                  <Btn onClick={() => clearHostKey(h)} disabled={busy || !!why} title={why || "Clear the pinned host key so it re-captures on next connect (re-key)"}>
                     Clear pin
                   </Btn>
                 )}
@@ -560,6 +626,8 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                 ) : (
                   <>
                     <Btn
+                      disabled={!!why}
+                      title={why || undefined}
                       onClick={() => {
                         setEditHostId(h.id ?? null);
                         setEditHostForm(hostToForm(h));
@@ -568,7 +636,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                     >
                       Edit
                     </Btn>
-                    <Btn danger onClick={() => removeHost(h)} disabled={busy}>
+                    <Btn danger onClick={() => removeHost(h)} disabled={busy || !!why} title={why || undefined}>
                       Remove
                     </Btn>
                   </>
@@ -624,6 +692,14 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
         ),
     },
     {
+      key: "owner",
+      label: "Owner",
+      sortKey: "owner",
+      width: BASTION_COL_W.owner,
+      tdStyle: { color: c.textSec },
+      cell: (b) => ownerName(b.ownerAgency, b.ownerAgencyName),
+    },
+    {
       key: "status",
       label: "Status",
       sortKey: "status",
@@ -655,6 +731,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
       tdStyle: { whiteSpace: "nowrap" },
       cell: (b) => {
         const editing = editBastionId === (b.id ?? "");
+        const why = ownedWhy(b.ownerAgency, b.ownerAgencyName, "bastion");
         return (
           <div style={{ display: "flex", gap: 4 }}>
             {editing ? (
@@ -703,8 +780,34 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
 
   const viaOptions = [{ v: "", l: "Direct" }, ...bastions.map((b) => ({ v: b.name, l: b.name }))];
 
+  // The keys a record may name: its owner's, and Global's (LR-72). Anything
+  // else would be refused, so it is not offered. The key a record already
+  // names stays listed, so an edit shows what is there.
+  const keysFor = (owner: string, current: string) => {
+    const name = ownerName(owner || defaultOwner);
+    return creds.filter((cr) => cr.id === current || !cr.ownerAgency || cr.ownerAgency === "Global" || cr.ownerAgency === name);
+  };
+  const ownerPick = (value: string, set: (id: string) => void, what: string) => (
+    <select
+      aria-label={`Agency that owns this ${what}`}
+      value={value || defaultOwner}
+      disabled={owners.length <= 1}
+      onChange={(e) => set(e.target.value)}
+      title={`The agency that owns this ${what}: its administrators change it, and its runs (and no other agency's) use it. Global's is used by every agency.`}
+      style={smallInput({ cursor: owners.length <= 1 ? "default" : "pointer" })}
+    >
+      {!canWrite && owners.length > 1 && <option value="">Owner…</option>}
+      {owners.map((a) => (
+        <option key={a.id} value={a.id}>
+          {a.name}
+        </option>
+      ))}
+    </select>
+  );
+
   const hostFields = (form: HostForm, set: (p: Partial<HostForm>) => void, isAdd: boolean) => (
     <>
+      {isAdd && ownerPick(form.ownerAgency, (id) => set({ ownerAgency: id, authCredentialId: "" }), "host record")}
       {isAdd && (
         <input value={form.hostname} onChange={(e) => set({ hostname: e.target.value })} placeholder="Hostname" style={smallInput({ width: 130 })} />
       )}
@@ -727,13 +830,14 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
           </option>
         ))}
       </select>
-      <KeyPicker credentialId={form.authCredentialId} keyEnvVar={form.authKeyEnvVar} set={set} creds={creds} />
+      <KeyPicker credentialId={form.authCredentialId} keyEnvVar={form.authKeyEnvVar} set={set} creds={keysFor(form.ownerAgency, form.authCredentialId)} />
       <input value={form.user} onChange={(e) => set({ user: e.target.value })} placeholder="user" style={smallInput({ width: 80 })} />
     </>
   );
 
   const bastionFields = (form: BastionForm, set: (p: Partial<BastionForm>) => void, isAdd: boolean) => (
     <>
+      {isAdd && ownerPick(form.ownerAgency, (id) => set({ ownerAgency: id, authCredentialId: "" }), "bastion")}
       {isAdd && (
         <input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Name (e.g. bastion-prod)" style={smallInput({ width: 150 })} />
       )}
@@ -746,7 +850,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
         style={smallInput({ width: 60 })}
       />
       <input value={form.username} onChange={(e) => set({ username: e.target.value })} placeholder="User" style={smallInput({ width: 80 })} />
-      <KeyPicker credentialId={form.authCredentialId} keyEnvVar={form.authKeyEnvVar} set={set} creds={creds} />
+      <KeyPicker credentialId={form.authCredentialId} keyEnvVar={form.authKeyEnvVar} set={set} creds={keysFor(form.ownerAgency, form.authCredentialId)} />
       <input value={form.zone} onChange={(e) => set({ zone: e.target.value })} placeholder="Zone" style={smallInput({ width: 90 })} />
     </>
   );
@@ -792,8 +896,8 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
             <ColumnsMenu cols={hostCols} cw={hostCw} />
             <Btn
               primary
-              disabled={!!why}
-              title={why || undefined}
+              disabled={!!addWhy}
+              title={addWhy || undefined}
               onClick={() => {
                 setShowAddHost((s) => !s);
                 setActionErr(null);
@@ -863,8 +967,8 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
             <ColumnsMenu cols={bastionCols} cw={bastionCw} />
             <Btn
               primary
-              disabled={!!why}
-              title={why || undefined}
+              disabled={!!addWhy}
+              title={addWhy || undefined}
               onClick={() => {
                 setShowAddBastion((s) => !s);
                 setActionErr(null);

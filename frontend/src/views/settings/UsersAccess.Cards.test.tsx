@@ -232,11 +232,14 @@ describe("Roles card (RB-11)", () => {
     expect(roleRow("viewer").textContent).toMatch(/No permissions/i);
   });
 
-  it("warns that deleting a role signs everyone out", async () => {
+  // LR-79 — no access change signs anyone out since 2.3.0: grants are resolved
+  // per request, so a deleted role is simply gone on the next one. The dialog
+  // used to warn that every other operator would be signed out.
+  it("says a role's deletion is in force on the next request, and signs nobody out", async () => {
     await renderSection();
     fireEvent.click(within(roleRow("tax-operator")).getByText("Delete"));
     await waitFor(() => expect(screen.getByText(/Delete role tax-operator\?/i)).toBeTruthy());
-    expect(screen.getByText(/signed out/i)).toBeTruthy();
+    expect(screen.getByText(/in force on everyone's next request\. Nobody is signed out\./)).toBeTruthy();
     expect(deletes.length).toBe(0);
   });
 });

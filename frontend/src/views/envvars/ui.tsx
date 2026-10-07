@@ -454,11 +454,12 @@ export function AmbiguityBadge({ ambiguity }: { ambiguity: { owners: string[]; r
 // actually is when they ask it. The reads used here are the session-gated
 // membership matrices that exist precisely so views can label rows.
 //
-// EMPTY MEMBERSHIP IS NOT BLANK. Under AG-Q1(b) an entity in no agency is
-// unrestricted — reachable from everywhere — which reads as MORE access, not
-// less. AgencyCell says "unrestricted" in words for exactly the reason the
-// Honest View says "No access": the dangerous state must never look like
-// missing data.
+// EMPTY MEMBERSHIP IS NOT BLANK. Every row belongs to an agency since 2.3.0
+// (Global is one, and is where a row with no other agency is), so a row in NO
+// agency is damage: nothing can use it until a global administrator re-homes
+// it. AgencyCell says so in words, for the reason the Honest View says "No
+// access": a state that needs someone must never look like missing data.
+// (Until 2.3.0 the empty set meant "unrestricted", and the cell said that.)
 
 /** Map of entity id → agency display names, from the kind's membership matrix. */
 export function useEntityAgencies(kind: "secret" | "env-var" | "ssh-credential", bump?: number) {
@@ -483,13 +484,20 @@ export function useEntityAgencies(kind: "secret" | "env-var" | "ssh-credential",
 
 /** The Agencies cell: membership chips, or the word the empty set actually means. */
 export function AgencyCell({ names }: { names: string[] | undefined }) {
-  if (!names || names.length === 0) {
+  // UNKNOWN is not damage: until the membership read has answered (or if it
+  // cannot), there is no entry for the row, and saying "no agency" in red about
+  // every row on the page would be a false alarm. Only a row the server LISTED
+  // with no agency is said to have none.
+  if (names === undefined) {
+    return <span style={{ color: c.textMuted, fontSize: c.fontXs }}>—</span>;
+  }
+  if (names.length === 0) {
     return (
       <span
-        title="No agency restriction — reachable from every department."
-        style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
+        title="In no agency: nothing can use this until a global administrator gives it one. It is listed in Notices."
+        style={{ color: c.danger, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
       >
-        unrestricted
+        no agency
       </span>
     );
   }

@@ -1,130 +1,167 @@
 import { useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../api/client";
+import { GLOBAL_AGENCY, agenciesFor, fetchMyAccess, type AgencyRef } from "../api/access";
 import { c } from "../theme";
 
 type Agency = { id?: string; name?: string };
 
 /**
- * useCreationAgencies — the client half of the RF-Q2(a) creation rule
- * (the RBAC-fixes plan).
+ * useCreationAgencies — "whose is this?" on a create form.
  *
- * A secret, variable or SSH key created with NO agency membership is shared
- * infrastructure, and RB-Q14 makes shared infrastructure unrestricted-only for
- * writes and reveal. So a department-scoped operator who creates one without
- * naming an agency is locked out of the row the moment it exists — the server
- * therefore 422s them with `agency_required`.
+ * A scope, secret, variable and SSH key belongs to exactly ONE agency (v2.3.0,
+ * LR-7, LR-54), and that agency is its owner: its administrators change it, and
+ * only its runs may use it. The form therefore asks for one agency, once, at
+ * creation.
  *
- * That is the right server rule and the wrong user experience on its own: a rule
- * whose only compliance path is a rejected request is the exact shape RB-29 was
- * written to avoid. This hook plus CreationAgencyPicker are the compliance path —
- * the control appears precisely when the caller is restricted and the form is a
- * CREATE, and it is required there and absent everywhere else.
+ *   - An administrator of ONE agency is not asked: the row is theirs, and the
+ *     server would place it there anyway (RA-9). The picker shows which.
+ *   - An administrator of SEVERAL must say which (the server answers 422
+ *     `agency_required` otherwise). Their own agencies are offered and no others.
+ *   - A GLOBAL administrator may name any agency, or leave it Global's, which is
+ *     the default: usable by every agency, changed only by global administrators.
  *
- * Unrestricted callers see nothing: omitting membership is how they deliberately
- * mint shared infrastructure, which is a choice only they can make.
+ * Until 2.3.0 this was a multi-select shown only to restricted callers, because
+ * a row could be shared by several agencies and "no agency" meant shared
+ * infrastructure. Global is a real agency now, and it is offered to global
+ * administrators only: for anyone else it is a refusal waiting to happen.
  *
- * `permission` (GC-6, v2.2.2) names the verb the create route checks, for a form
- * whose rule is "a GLOBAL administrator for this permission may omit the agency"
- * rather than "an unrestricted caller may". The two differ: `unrestricted` is
- * permission-blind (a viewer on all scopes who administers one agency reads as
- * unrestricted), while the server asks whether one all-agencies grant CARRIES
- * the verb. Every caller names its create route's permission — "configureApp"
- * for scopes and SSH keys, "manageEnvVars" for secrets and variables — so the
- * picker appears exactly when requireCreationAgencies would refuse an omitted
- * agency. With no permission it falls back to `unrestricted`.
+ * `permission` names the verb the create route checks — "configureApp" for
+ * scopes and SSH keys, "manageEnvVars" for secrets and variables. With none it
+ * falls back to the permission-blind `unrestricted`, as before.
  */
 export function useCreationAgencies(isEdit: boolean, permission?: "configureApp" | "manageEnvVars") {
-  const [restricted, setRestricted] = useState(false);
-  const [agencies, setAgencies] = useState<Agency[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
+  const [global, setGlobal] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [agencies, setAgencies] = useState<AgencyRef[]>([]);
+  const [selected, setSelected] = useState("");
 
   useEffect(() => {
     if (isEdit) return;
     let cancelled = false;
-    // Fail CLOSED on a capabilities error: CAPS_OFF reports unrestricted=false, so
-    // the picker appears and the operator can comply. The reverse (hiding it) would
-    // send them into a 422 with no control to fix it.
-    fetchCapabilities().then((caps) => {
-      if (cancelled) return;
-      const global =
+    (async () => {
+      // Fail CLOSED on a capabilities error: CAPS_OFF reports every flag false,
+      // so the caller is treated as restricted and must choose. The reverse
+      // would offer Global to someone the server will refuse.
+      const caps = await fetchCapabilities();
+      const isGlobal =
         permission === "configureApp"
-          ? caps.configureAppGlobal
+          ? !!caps.configureAppGlobal
           : permission === "manageEnvVars"
-            ? caps.manageEnvVarsGlobal
-            : caps.unrestricted;
-      setRestricted(!global);
-    });
-    api.GET("/agencies").then((res) => {
-      if (!cancelled && res.data) setAgencies(res.data as Agency[]);
-    });
+            ? !!caps.manageEnvVarsGlobal
+            : !!caps.unrestricted;
+      const catalog = async (): Promise<AgencyRef[]> => {
+        const res = await api.GET("/agencies");
+        return ((res.data as Agency[] | undefined) ?? [])
+          .filter((a) => a.id && a.id !== GLOBAL_AGENCY)
+          .map((a) => ({ id: a.id as string, name: a.name || (a.id as string) }));
+      };
+      let options: AgencyRef[] = [];
+      try {
+        if (isGlobal) {
+          options = [{ id: GLOBAL_AGENCY, name: "Global" }, ...(await catalog())];
+        } else {
+          const mine = permission ? agenciesFor(await fetchMyAccess(), permission) : [];
+          // Their own agencies when the server could say; otherwise the catalog,
+          // so the operator can still comply (the server refuses a wrong pick).
+          options = mine.length > 0 ? mine : await catalog();
+        }
+      } catch {
+        // A failed read leaves whatever was gathered (Global, for a global
+        // administrator). The form must still settle: with nothing to choose
+        // from, the server names the owner or says what is missing.
+        if (isGlobal && options.length === 0) options = [{ id: GLOBAL_AGENCY, name: "Global" }];
+      }
+      if (cancelled) return;
+      setGlobal(isGlobal);
+      setAgencies(options);
+      // Global for a global administrator; the one agency for an administrator
+      // of one; nothing for an administrator of several, who must choose.
+      setSelected(isGlobal ? GLOBAL_AGENCY : options.length === 1 ? options[0].id : "");
+      setLoaded(true);
+    })();
     return () => {
       cancelled = true;
     };
   }, [isEdit, permission]);
 
-  const required = !isEdit && restricted;
+  const visible = !isEdit;
   return {
-    /** Show the picker, and block submission until something is chosen. */
-    required,
+    /** Mount the picker (every create form; never an edit). */
+    visible,
+    /** A choice must be made before submitting: everyone but a global administrator. */
+    required: visible && !global,
+    global,
     agencies,
     selected,
     setSelected,
-    /** Spread into the create body; empty for edits and unrestricted callers. */
-    body: !isEdit && selected.length > 0 ? { agencyIds: selected } : {},
+    /** Spread into the create body. The API takes a list and accepts exactly one. */
+    body: visible && selected ? { agencyIds: [selected] } : {},
     /** Non-empty when the form must not submit yet. */
-    blockedReason: required && selected.length === 0 ? "Choose at least one agency" : "",
+    // Nothing to choose from (the lists could not be read) does not block: the
+    // server places the row in the caller's one agency, or says which to name.
+    blockedReason: visible && loaded && !global && !selected && agencies.length > 0 ? "Choose an agency" : "",
   };
 }
 
+export type CreationAgencies = ReturnType<typeof useCreationAgencies>;
+
 /**
- * CreationAgencyPicker renders the multi-select for the hook above. It renders
- * nothing unless the rule applies, so every call site can mount it
- * unconditionally.
+ * CreationAgencyPicker renders the select for the hook above. It renders
+ * nothing on an edit, so every call site can mount it unconditionally.
  */
 export function CreationAgencyPicker({
   label,
-  required,
-  agencies,
-  selected,
-  setSelected,
+  pick,
 }: {
-  /** The entity noun, for the helper text: "secret", "variable", "SSH key". */
+  /** The entity noun, for the helper text: "secret", "variable", "SSH key", "scope". */
   label: string;
-  required: boolean;
-  agencies: Agency[];
-  selected: string[];
-  setSelected: (next: string[]) => void;
+  pick: CreationAgencies;
 }) {
-  if (!required) return null;
+  if (!pick.visible) return null;
+  const only = !pick.global && pick.agencies.length === 1;
   return (
     <div style={{ marginTop: 12 }}>
       <label style={{ display: "block", fontSize: c.fontSm, color: c.textMuted, marginBottom: 4 }}>
-        Agencies <span style={{ color: c.danger }}>*</span>
+        Agency {pick.required && <span style={{ color: c.danger }}>*</span>}
+        <select
+          aria-label="Agency"
+          value={pick.selected}
+          disabled={only}
+          onChange={(e) => pick.setSelected(e.target.value)}
+          style={{
+            display: "block",
+            width: "100%",
+            marginTop: 4,
+            background: c.panelInput,
+            color: c.text,
+            border: `1px solid ${c.borderStrong}`,
+            borderRadius: c.radiusChip,
+            padding: 6,
+            fontSize: c.fontBody,
+          }}
+        >
+          {!pick.global && !only && <option value="">Choose an agency…</option>}
+          {pick.agencies.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
       </label>
-      <select
-        multiple
-        size={Math.min(Math.max(agencies.length, 3), 6)}
-        value={selected}
-        onChange={(e) => setSelected(Array.from(e.target.selectedOptions, (o) => o.value))}
-        style={{
-          width: "100%",
-          background: c.panelInput,
-          color: c.text,
-          border: `1px solid ${c.border}`,
-          borderRadius: c.radiusSurface,
-          padding: 6,
-        }}
-      >
-        {agencies.map((a) => (
-          <option key={a.id} value={a.id}>
-            {a.name}
-          </option>
-        ))}
-      </select>
       <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
-        Your access is department-scoped, so this {label} must belong to one of your
-        agencies — otherwise it would count as shared infrastructure and only an
-        unrestricted operator could change it.
+        {pick.global ? (
+          <>
+            A {label} belongs to one agency. Global's is usable by every agency and changed only by global
+            administrators; an agency's is that agency's own.
+          </>
+        ) : only ? (
+          <>This {label} will belong to your agency, whose administrators manage it.</>
+        ) : (
+          <>
+            A {label} belongs to one agency, whose administrators manage it. You administer several, so choose the one
+            that owns this.
+          </>
+        )}
       </div>
     </div>
   );

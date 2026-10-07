@@ -3,6 +3,7 @@ import { api } from "../../api/client";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
+import { MoveAgency } from "./MoveAgency";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
 import { DetailPanel, EmptyCell, InlineTags, SkeletonRows, TagEditor, TagFilterSelect, matchesTags } from "../../components/ui";
@@ -351,6 +352,20 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
                               <DetailRow label="Description" value={v.description || "—"} />
                               <DetailRow label="Last Modified" value={fmtDate(v.lastModifiedAt)} />
                               <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                              {canEdit && v.id && (
+                                <MoveAgency
+                                  kind="env-var"
+                                  id={v.id}
+                                  name={v.key}
+                                  ownerName={v.ownerAgency}
+                                  permission="manageEnvVars"
+                                  onMoved={(text) => {
+                                    setNotice({ kind: "info", text });
+                                    refetch();
+                                  }}
+                                  onError={(text) => setNotice({ kind: "error", text })}
+                                />
+                              )}
                             </div>
                           </div>
                         </DetailGrid>
@@ -493,14 +508,15 @@ function VarFormModal({
               Deliberately NOT appended at the bottom of the form — this modal's body
               is already at its height, so a block added there lands exactly at the
               fold and renders shaved behind the pinned footer. tsc and the unit tests
-              cannot see that; screenshotting the real dialog can. Read-only because
-              ownership is fixed at creation and there is no transfer action, so an
-              editable-looking control would promise what the API cannot do. */}
+              cannot see that; screenshotting the real dialog can. Read-only here: the
+              owner is chosen at creation and changed by MOVING the row (the expanded
+              row's "Move to another agency"), which is a decision of its own and not
+              a field of this form. */}
           {isEdit && initial?.ownerAgency && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6, fontSize: c.fontXs, color: c.textMuted }}>
               <span>Owned by</span>
               <OwnerChip owner={initial.ownerAgency} />
-              <span>&middot; set at creation</span>
+              <span>&middot; set at creation; move it from the expanded row</span>
             </div>
           )}
             </>
@@ -553,13 +569,7 @@ function VarFormModal({
             the moment someone was reasoning about it. It is display-only on purpose:
             ownership is fixed at creation and there is no transfer action yet, so an
             editable-looking control would promise something the API cannot do. */}
-        <CreationAgencyPicker
-          label="variable"
-          required={agencyPick.required}
-          agencies={agencyPick.agencies}
-          selected={agencyPick.selected}
-          setSelected={agencyPick.setSelected}
-        />
+        <CreationAgencyPicker label="variable" pick={agencyPick} />
       </div>
     </Modal>
   );

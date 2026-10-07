@@ -2644,13 +2644,15 @@ export function RunDialog({
       <FormField label={mustBindScope ? "Target scope (required)" : "Target scope"}>
         <select value={scope} onChange={(e) => setScope(e.target.value)} style={{ ...inputStyle(), cursor: "pointer", marginBottom: 8 }}>
           {/* RB-26: for an unscoped job the empty value is not a "default", it is
-              the unbound/general-pool run — which only an unrestricted operator may
-              perform. Say so rather than letting it read as a harmless default. */}
+              the no-scope run, which is Global's — and the server asks for the verb
+              on every agency (this option still follows the broader `unrestricted`
+              flag, so a refusal there is possible and shows the server's reason).
+              Say so rather than letting it read as a harmless default. */}
           <option value="" disabled={mustBindScope}>
             {job.scope
               ? `Job default (${job.scope})`
               : unrestricted
-                ? "No scope — run unbound on the general pool"
+                ? "No scope (Global) — runs on a runner that serves Global"
                 : "Choose a scope…"}
           </option>
           {scopes.map((s) => (

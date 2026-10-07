@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 // "Delete Scope" in an expanded scope row is gated on TWO things, and both carry
 // meaning: the scope must be cronomicon-authored (a git-source scope is owned by its
@@ -18,6 +19,12 @@ let bindingNotices: unknown[] = [];
 // default here is the global administrator every pre-GC test was written as.
 let caps: Record<string, boolean> = {};
 let agencies: { id: string; name: string }[] = [];
+
+let ACCESS: unknown = null;
+vi.mock("../../api/access", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/access")>();
+  return { ...actual, fetchMyAccess: vi.fn(async () => ACCESS), useMyAccess: () => ACCESS };
+});
 
 vi.mock("../../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/client")>();
@@ -73,7 +80,11 @@ const GIT: ScopeRow = {
 // configure all of it" were one fact, and every test above the GC block means it
 // that way. The GC block passes the two apart.
 const renderTab = (scopes: ScopeRow[], canEdit: boolean, globalAdmin: boolean = canEdit) =>
-  render(<ScopesTab scopes={scopes} loading={false} error={null} refetch={vi.fn()} canEdit={canEdit} globalAdmin={globalAdmin} />);
+  render(
+    <MemoryRouter>
+      <ScopesTab scopes={scopes} loading={false} error={null} refetch={vi.fn()} canEdit={canEdit} globalAdmin={globalAdmin} />
+    </MemoryRouter>,
+  );
 
 // Expanding is a click on the row itself (the actions cell stops propagation).
 const expand = (q: ReturnType<typeof within>, scope: string) => fireEvent.click(q.getByText(scope));
@@ -81,6 +92,7 @@ const expand = (q: ReturnType<typeof within>, scope: string) => fireEvent.click(
 const deleteButtons = (q: ReturnType<typeof within>) => q.queryAllByRole("button", { name: "Delete Scope" });
 
 beforeEach(() => {
+  ACCESS = null;
   deletes.length = 0;
   puts.length = 0;
   posts.length = 0;
@@ -303,11 +315,15 @@ describe("ScopesTab — runner bindings (SB)", () => {
     expect(q.getByRole("button", { name: "replace" })).toBeTruthy();
   });
 
-  it("calls a scope in no agency the general pool — it is not open to every runner", () => {
+  // Every scope belongs to an agency since 2.3.0 (Global, when no other). One
+  // in none is damage, and says so: it read "general pool" until then, which
+  // made a broken row look like a placement.
+  it("says a scope in no agency is in none, and that nothing can run it", () => {
     const { container } = renderTab([LOCAL], true);
     const q = within(container);
-    const cell = q.getByText("general pool");
-    expect(cell.getAttribute("title")).toMatch(/only a general-pool runner/);
+    const cell = q.getByText("no agency");
+    expect(cell.getAttribute("title")).toMatch(/no runner can take this scope's jobs until a global administrator sets its agency/);
+    expect(q.queryByText("general pool")).toBeNull();
     expect(q.queryByText("unrestricted")).toBeNull();
   });
 
@@ -334,7 +350,7 @@ describe("ScopesTab — runner bindings (SB)", () => {
 describe("ScopesTab — global-administrator controls (GC)", () => {
   const WHY = /Only a global administrator \(a role on every agency\) can/;
 
-  it("disables Re-sync and the per-scope agency select for an administrator of one agency, with the reason", async () => {
+  it("disables Re-sync for an administrator of one agency, with the reason, and leaves the per-scope writes", async () => {
     const { container } = renderTab([LOCAL, GIT], true, false);
     const q = within(container);
 
@@ -342,15 +358,104 @@ describe("ScopesTab — global-administrator controls (GC)", () => {
     expect(resync.disabled).toBe(true);
     expect(resync.title).toMatch(WHY);
 
-    expand(q, "edge-lab");
-    const select = (await waitFor(() => q.getByLabelText("Agency for edge-lab"))) as HTMLSelectElement;
-    expect(select.disabled).toBe(true);
-    expect(select.title).toMatch(WHY);
-
     // The per-scope writes are NOT global: they are judged against the scope's
     // agency by the server, and this view does not guess at that — they stay.
     expect((q.getByRole("button", { name: "+ Add Scope" }) as HTMLButtonElement).disabled).toBe(false);
+    expand(q, "edge-lab");
+    await waitFor(() => q.getByLabelText("Agency for edge-lab"));
     expect((q.getByRole("button", { name: "Delete Scope" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  // v2.3.0 (LR-7) — a scope has ONE agency and is moved by whoever administers
+  // both sides. So the select is no longer a global administrator's alone: it
+  // offers the agencies the caller administers, and never Global to them.
+  const TAX = { id: "ag-tax", name: "Tax" };
+  const FIN = { id: "ag-fin", name: "Finance" };
+  const grant = (a: { id: string; name: string }) => ({
+    role: "admin", allScopes: false, agencyId: a.id, agencyName: a.name, scopes: [], permissions: ["configureApp"], groups: [], origin: "group",
+  });
+  const selectFor = async (scope: ScopeRow, global: boolean) => {
+    const { container } = renderTab([scope], true, global);
+    const q = within(container);
+    expand(q, scope.scope);
+    return (await waitFor(() => q.getByLabelText(`Agency for ${scope.scope}`))) as HTMLSelectElement;
+  };
+  const texts = (el: HTMLSelectElement) => Array.from(el.options).map((o) => o.textContent);
+
+  it("fixes the agency select for an administrator of only that agency, with the reason", async () => {
+    ACCESS = { grants: [grant(TAX)] };
+    agencies = [{ id: "global", name: "Global" }, TAX, FIN];
+    const select = await selectFor({ ...LOCAL, agencies: [TAX] }, false);
+    expect(select.value).toBe("ag-tax");
+    expect(texts(select)).toEqual(["Tax"]);
+    expect(select.disabled).toBe(true);
+    expect(select.title).toMatch(/You administer only this scope's agency/);
+  });
+
+  it("offers an administrator of two agencies both, never Global, and sends the one chosen", async () => {
+    ACCESS = { grants: [grant(TAX), grant(FIN)] };
+    agencies = [{ id: "global", name: "Global" }, TAX, FIN];
+    const select = await selectFor({ ...LOCAL, agencies: [TAX] }, false);
+    expect(select.disabled).toBe(false);
+    expect(texts(select)).toEqual(["Tax", "Finance"]);
+    fireEvent.change(select, { target: { value: "ag-fin" } });
+    await waitFor(() => expect(puts.some((p) => p.path === "/scopes/{scopeId}/agency")).toBe(true));
+    expect(puts.find((p) => p.path === "/scopes/{scopeId}/agency")!.body).toEqual({ agencyId: "ag-fin" });
+  });
+
+  // The scope must be the caller's to move: authority over every agency it is
+  // in today. A caller who can read it and administers a different agency (a
+  // viewer of everything who administers Finance, looking at Tax's scope) used
+  // to get a live select and a 403.
+  it("disables the select on a scope the caller does not administer, with whose it is", async () => {
+    ACCESS = { grants: [grant(FIN)] };
+    agencies = [{ id: "global", name: "Global" }, TAX, FIN];
+    const select = await selectFor({ ...LOCAL, agencies: [TAX] }, false);
+    expect(select.disabled).toBe(true);
+    expect(select.title).toBe("This scope belongs to Tax — moving it takes authority over that agency too.");
+    expect(select.value).toBe("ag-tax");
+  });
+
+  it("disables it on Global's scope for anyone who is not a global administrator", async () => {
+    ACCESS = { grants: [grant(FIN)] };
+    agencies = [{ id: "global", name: "Global" }, TAX, FIN];
+    const select = await selectFor({ ...LOCAL, agencies: [{ id: "global", name: "Global" }] }, false);
+    expect(select.disabled).toBe(true);
+    expect(select.title).toMatch(/This scope is Global's — only a global administrator/);
+  });
+
+  it("disables it on a scope in several agencies for an administrator of only one of them", async () => {
+    ACCESS = { grants: [grant(FIN)] };
+    agencies = [{ id: "global", name: "Global" }, TAX, FIN];
+    const select = await selectFor({ ...LOCAL, agencies: [TAX, FIN] }, false);
+    expect(select.disabled).toBe(true);
+    expect(select.title).toMatch(/This scope belongs to Tax/);
+  });
+
+  it("keeps a global administrator's select usable when the agency catalog cannot be read", async () => {
+    agencies = [];
+    const select = await selectFor({ ...LOCAL, agencies: [TAX] }, true);
+    // Its present agency is still shown, and nothing claims they administer "only this agency".
+    expect(select.value).toBe("ag-tax");
+    expect(select.disabled).toBe(false);
+    expect(texts(select)).toEqual(["Global", "Tax"]);
+  });
+
+  it("asks for the one agency of a scope still in several, and says why", async () => {
+    ACCESS = { grants: [grant(TAX), grant(FIN)] };
+    agencies = [{ id: "global", name: "Global" }, TAX, FIN];
+    const select = await selectFor({ ...LOCAL, agencies: [TAX, FIN] }, false);
+    expect(select.value).toBe("");
+    expect(texts(select)).toEqual(["Choose its one agency…", "Tax", "Finance"]);
+    expect(screen.getByText(/still in several agencies, from before 2\.3\.0/)).toBeTruthy();
+  });
+
+  it("offers a global administrator Global and every agency", async () => {
+    agencies = [{ id: "global", name: "Global" }, TAX, FIN];
+    const select = await selectFor({ ...LOCAL, agencies: [{ id: "global", name: "Global" }] }, true);
+    expect(select.value).toBe("global");
+    expect(texts(select)).toEqual(["Global", "Tax", "Finance"]);
+    expect(select.disabled).toBe(false);
   });
 
   it("leaves both enabled for a global administrator", async () => {
@@ -366,20 +471,20 @@ describe("ScopesTab — global-administrator controls (GC)", () => {
   });
 });
 
-// GC-6 — POST /scopes takes `agencyIds`. A scope created by a departmental
-// administrator must land in an agency they hold (it used to land in none, where
-// its own creator could not see it), and a caller holding configureApp on
-// several gets 422 `agency_required` unless they name one. The dialog reuses the
-// creation picker from secrets, variables and SSH keys, keyed on the GLOBAL flag
-// for configureApp rather than on `unrestricted`.
-describe("ScopesTab — Add Scope names its agency (GC-6)", () => {
-  const openAdd = async () => {
-    const { container } = renderTab([LOCAL], true, false);
+// GC-6, and one agency per scope since v2.3.0 (LR-7) — POST /scopes takes
+// `agencyIds` with exactly one id. The dialog asks "whose is this?" with the
+// creation picker secrets, variables and SSH keys use, keyed on the GLOBAL flag
+// for configureApp rather than on `unrestricted`: an administrator of several
+// agencies must choose, and a global administrator defaults to Global.
+describe("ScopesTab — Add Scope names its agency (GC-6, LR-7)", () => {
+  const openAdd = async (global = false) => {
+    const { container } = renderTab([LOCAL], true, global);
     fireEvent.click(within(container).getByRole("button", { name: "+ Add Scope" }));
     const body = within(document.body);
     await waitFor(() => expect(body.getByPlaceholderText("e.g. Edge-Lab")).toBeTruthy());
     return body;
   };
+  const picker = (body: ReturnType<typeof within>) => body.getByRole("combobox", { name: "Agency" }) as HTMLSelectElement;
 
   it("asks a non-global administrator for an agency, blocks until one is chosen, and sends it", async () => {
     caps = { configureAppGlobal: false, unrestricted: false };
@@ -387,15 +492,13 @@ describe("ScopesTab — Add Scope names its agency (GC-6)", () => {
     const body = await openAdd();
 
     // The picker, and a submit button that says what is missing.
-    await waitFor(() => expect(body.getByText(/this scope must belong to one of your\s+agencies/)).toBeTruthy());
-    const blocked = body.getByRole("button", { name: "Choose at least one agency" }) as HTMLButtonElement;
+    const blocked = (await waitFor(() => body.getByRole("button", { name: "Choose an agency" }))) as HTMLButtonElement;
     expect(blocked.disabled).toBe(true);
+    // Global is never offered to someone who is not a global administrator.
+    expect(Array.from(picker(body).options).map((o) => o.textContent)).toEqual(["Choose an agency…", "Tax", "Finance"]);
 
     fireEvent.change(body.getByPlaceholderText("e.g. Edge-Lab"), { target: { value: "Tax-Lab" } });
-    const list = body.getByRole("listbox") as HTMLSelectElement;
-    await waitFor(() => expect(list.options.length).toBe(2));
-    list.options[0].selected = true;
-    fireEvent.change(list);
+    fireEvent.change(picker(body), { target: { value: "ag-tax" } });
 
     fireEvent.click(await waitFor(() => body.getByRole("button", { name: "Create Scope" })));
     await waitFor(() => expect(posts.some((p) => p.path === "/scopes")).toBe(true));
@@ -404,31 +507,29 @@ describe("ScopesTab — Add Scope names its agency (GC-6)", () => {
     expect(sent.agencyIds).toEqual(["ag-tax"]);
   });
 
-  it("keys on the global flag, not on `unrestricted` — a viewer of everything who administers one agency is asked", async () => {
+  it("keys on the global flag, not on `unrestricted` — a viewer of everything who administers agencies is asked", async () => {
     // The permission-blind trap: `unrestricted` is true for this caller, and the
     // server still requires an agency because no all-agencies grant carries
     // configureApp.
     caps = { configureAppGlobal: false, unrestricted: true };
-    agencies = [{ id: "ag-tax", name: "Tax" }];
+    agencies = [{ id: "ag-tax", name: "Tax" }, { id: "ag-fin", name: "Finance" }];
     const body = await openAdd();
-    await waitFor(() => expect(body.getByRole("button", { name: "Choose at least one agency" })).toBeTruthy());
+    await waitFor(() => expect(body.getByRole("button", { name: "Choose an agency" })).toBeTruthy());
+    expect(Array.from(picker(body).options).map((o) => o.textContent)).not.toContain("Global");
   });
 
-  it("asks a global administrator for nothing and sends no agencyIds", async () => {
+  it("offers a global administrator Global by default, and any agency", async () => {
     caps = { configureAppGlobal: true };
-    agencies = [{ id: "ag-tax", name: "Tax" }];
-    const { container } = renderTab([LOCAL], true, true);
-    fireEvent.click(within(container).getByRole("button", { name: "+ Add Scope" }));
-    const body = within(document.body);
-    await waitFor(() => expect(body.getByPlaceholderText("e.g. Edge-Lab")).toBeTruthy());
-    // Let the capabilities read land; there must still be no picker.
-    await new Promise((r) => setTimeout(r, 20));
-    expect(body.queryByRole("listbox")).toBeNull();
+    agencies = [{ id: "global", name: "Global" }, { id: "ag-tax", name: "Tax" }];
+    const body = await openAdd(true);
+    await waitFor(() => expect(picker(body).value).toBe("global"));
+    expect(Array.from(picker(body).options).map((o) => o.textContent)).toEqual(["Global", "Tax"]);
 
     fireEvent.change(body.getByPlaceholderText("e.g. Edge-Lab"), { target: { value: "Shared" } });
     fireEvent.click(body.getByRole("button", { name: "Create Scope" }));
     await waitFor(() => expect(posts.some((p) => p.path === "/scopes")).toBe(true));
     const sent = posts.find((p) => p.path === "/scopes")!.body as Record<string, unknown>;
-    expect("agencyIds" in sent).toBe(false);
+    // Said outright: the scope is Global's.
+    expect(sent.agencyIds).toEqual(["global"]);
   });
 });

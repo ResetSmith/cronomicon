@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
+import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../../api/access";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
@@ -139,7 +140,39 @@ export function ScopesTab({
   const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   // Agency options for the per-scope binding selector (agency-support.md M1).
   const { data: agencyData } = useGet<unknown>(() => api.GET("/agencies"), []);
-  const agencies = rows<{ id: string; name: string }>(agencyData);
+  // The agencies a scope could be moved to by this caller: every agency and
+  // Global for a global administrator; otherwise the agencies they administer,
+  // beside whatever the scope is in now (so the select can show its value).
+  const access = useMyAccess();
+  // May this caller move the scope at all? It takes authority over EVERY agency
+  // the scope is in today (and over the one it goes to, which the options are
+  // limited to). "" when they may; otherwise whose scope it is. Unknown access
+  // (still loading, or unreadable) is not second-guessed: the server decides.
+  const moveWhy = (current: { id: string; name: string }[]): string => {
+    if (globalAdmin || access == null) return "";
+    const held = new Set(agenciesFor(access, "configureApp").map((a) => a.id));
+    const others = current.filter((a) => !held.has(a.id));
+    if (others.length === 0) return "";
+    const names = others.map((a) => a.name).join(", ");
+    return others.some((a) => a.id === GLOBAL_AGENCY)
+      ? "This scope is Global's — only a global administrator (a role on every agency) can move it."
+      : `This scope belongs to ${names} — moving it takes authority over ${others.length === 1 ? "that agency" : "those agencies"} too.`;
+  };
+  const agencyOptionsFor = (current: { id: string; name: string }[]): AgencyRef[] => {
+    const all = rows<{ id: string; name: string }>(agencyData);
+    const out = new Map<string, string>();
+    if (globalAdmin) {
+      out.set(GLOBAL_AGENCY, "Global");
+      for (const a of all) if (a.id !== GLOBAL_AGENCY) out.set(a.id, a.name);
+      // Whatever the scope is in now, so the select can show it even when the
+      // catalog could not be read.
+      for (const a of current) if (!out.has(a.id)) out.set(a.id, a.name);
+    } else {
+      for (const a of current) out.set(a.id, a.name);
+      for (const a of agenciesFor(access ?? null, "configureApp")) out.set(a.id, a.name);
+    }
+    return [...out].map(([id, name]) => ({ id, name }));
+  };
   const cw = useColumnWidths("envvars-scopes");
   const globalWhy = globalOnly(globalAdmin);
 
@@ -256,18 +289,16 @@ export function ScopesTab({
       // the Membership matrix until that grid was deleted; the question ("which
       // zones can run this scope's jobs?") belongs where the scope is.
       //
-      // SB — the empty state says "general pool", not "unrestricted". A scope in
-      // no agency is NOT open to any runner: the claim rule is disjoint, and
-      // only a runner in no agency may take its work. The old label was wrong
-      // about that, and with a Runners column beside it "unrestricted" would
-      // now also mean two different things on one row.
+      // Every scope belongs to an agency since 2.3.0 (Global, when no other), so
+      // the empty state is damage: no runner serves it, and nobody but a global
+      // administrator can change it. (It read "general pool" until then.)
       cell: (row) =>
         (row.agencies ?? []).length === 0 ? (
           <span
-            title="In no agency — only a general-pool runner (one in no agency) may run this scope's jobs."
-            style={{ color: c.textSec, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
+            title="In no agency: no runner can take this scope's jobs until a global administrator sets its agency. It is listed in Notices."
+            style={{ color: c.danger, fontSize: c.fontXs, fontStyle: "italic", cursor: "help" }}
           >
-            general pool
+            no agency
           </span>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -497,6 +528,13 @@ export function ScopesTab({
                             SEVERAL agencies it would silently truncate the set, so
                             it is replaced by a read-only summary that names them and
                             points at the matrix. */}
+                        {/* A scope belongs to ONE agency (v2.3.0, LR-7). It is moved
+                            by whoever administers both the agency that has it and
+                            the one it goes to; Global is a global administrator's
+                            on either side. The server judges that, so the select
+                            offers what the caller could name and no more. A scope
+                            still in several agencies (from before 2.3.0) is
+                            settled here, by choosing its one agency. */}
                         {s.id != null && (s.agencies?.length ?? 0) > 1 && (
                           <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <span style={{ ...labelStyle(), margin: 0 }}>Agencies</span>
@@ -508,50 +546,60 @@ export function ScopesTab({
                                 {a.name}
                               </span>
                             ))}
-                            <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                              This scope belongs to several isolation zones — a runner in <em>any</em> of them can execute
-                              its jobs. Edit the set on the <strong>Agencies</strong> tab (expand the agency); the picker
-                              here would keep only one.
+                            <span style={{ color: c.warning, fontSize: c.fontSm }}>
+                              This scope is still in several agencies, from before 2.3.0. It runs for each of them until its
+                              one agency is set{canEdit ? " below" : ""}; that takes authority over every agency it is in.
                             </span>
                           </div>
                         )}
-                        {canEdit && s.id != null && (s.agencies?.length ?? 0) <= 1 && (
-                          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                            <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
-                            <select
-                              aria-label={`Agency for ${s.scope}`}
-                              value={s.agencies?.[0]?.id ?? ""}
-                              // GC — a scope's agency decides who can reach it,
-                              // so moving one is a global administrator's.
-                              disabled={!!globalWhy}
-                              title={globalWhy || undefined}
-                              onChange={async (e) => {
-                                const agencyId = e.target.value || null;
-                                const { error: er } = await api.PUT("/scopes/{scopeId}/agency", {
-                                  params: { path: { scopeId: s.id! }, header: csrfHeader },
-                                  body: { agencyId },
-                                });
-                                if (er) setNotice({ kind: "error", text: `Agency update failed: ${errMsg(er)}` });
-                                else {
-                                  setNotice({ kind: "info", text: `Agency updated: ${s.scope}` });
-                                  refetch();
-                                }
-                              }}
-                              style={{ ...inputStyle(), cursor: globalWhy ? "not-allowed" : "pointer", maxWidth: 260 }}
-                            >
-                              <option value="">— None (general pool) —</option>
-                              {agencies.map((a) => (
-                                <option key={a.id} value={a.id}>
-                                  {a.name}
-                                </option>
-                              ))}
-                            </select>
-                            <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                              Network-isolation zone — only a runner in this agency can execute this scope's jobs, and
-                              only secrets and keys in it are injectable.{globalWhy ? ` ${globalWhy}` : ""}
-                            </span>
-                          </div>
-                        )}
+                        {canEdit && s.id != null && (() => {
+                          const current = s.agencies ?? [];
+                          const options = agencyOptionsFor(current);
+                          const single = current.length === 1 ? current[0].id : "";
+                          // Not theirs to move; or one option that is already the
+                          // scope's agency, which is not a choice.
+                          const notTheirs = moveWhy(current);
+                          const onlyOne = !globalAdmin && current.length === 1 && options.length <= 1;
+                          const fixed = !!notTheirs || onlyOne;
+                          const fixedWhy =
+                            notTheirs ||
+                            "You administer only this scope's agency. Moving a scope takes authority over the agency it goes to as well.";
+                          return (
+                            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                              <span style={{ ...labelStyle(), margin: 0 }}>Agency</span>
+                              <select
+                                aria-label={`Agency for ${s.scope}`}
+                                value={single}
+                                disabled={fixed}
+                                title={fixed ? fixedWhy : undefined}
+                                onChange={async (e) => {
+                                  if (!e.target.value || e.target.value === single) return;
+                                  const { error: er } = await api.PUT("/scopes/{scopeId}/agency", {
+                                    params: { path: { scopeId: s.id! }, header: csrfHeader },
+                                    body: { agencyId: e.target.value },
+                                  });
+                                  if (er) setNotice({ kind: "error", text: `Agency update failed: ${errMsg(er)}` });
+                                  else {
+                                    setNotice({ kind: "info", text: `Agency updated: ${s.scope}` });
+                                    refetch();
+                                  }
+                                }}
+                                style={{ ...inputStyle(), cursor: fixed ? "not-allowed" : "pointer", maxWidth: 260 }}
+                              >
+                                {current.length !== 1 && <option value="">Choose its one agency…</option>}
+                                {options.map((a) => (
+                                  <option key={a.id} value={a.id}>
+                                    {a.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                                Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets
+                                and keys (and Global's) are injectable.{fixed ? ` ${fixedWhy}` : ""}
+                              </span>
+                            </div>
+                          );
+                        })()}
                         {/* SB — the runners this scope is bound to, directly under
                             its agency: department first, then which of that
                             department's runners can reach these hosts. Shown to
@@ -1226,13 +1274,7 @@ function ScopeFormModal({
             )}
           </div>
         )}
-        <CreationAgencyPicker
-          label="scope"
-          required={agencyPick.required}
-          agencies={agencyPick.agencies}
-          selected={agencyPick.selected}
-          setSelected={agencyPick.setSelected}
-        />
+        <CreationAgencyPicker label="scope" pick={agencyPick} />
       </div>
     </Modal>
   );

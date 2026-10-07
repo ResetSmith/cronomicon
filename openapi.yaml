@@ -3812,6 +3812,10 @@ paths:
         a job whose YAML still carries `runner_tag` on a scope with no binding —
         is listed here until an operator binds its scope or dismisses it. A
         notice drops out by itself once its scope has a binding.
+
+        Since v2.3.0 the list holds the pins the caller may act on, as the
+        notices inbox does: `configureApp` on the pin's scope, and a global
+        administrator for a job with no scope. It was every pin before.
       responses:
         '200':
           description: The notices still needing an operator.
@@ -7066,7 +7070,8 @@ paths:
         for the one change Cronomicon cannot see — a person removed from a group at the
         identity provider keeps that group in their session until they sign in again (at most
         eight hours). In trusted-header mode the proxy asserts the groups on every request and
-        this affects nothing but developer-login sessions.
+        this affects nothing but developer-login sessions. CSRF required.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
       responses:
         '204': { description: Every other session is signed out. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -10789,6 +10794,24 @@ components:
                 serving the same ones under Global's ownership. It works as it
                 did, can lose an agency and never gain one, and has a
                 `legacy_placement` notice in the inbox.
+            canManage:
+              type: boolean
+              readOnly: true
+              description: |
+                Per-row authority (v2.3.0): the caller holds `configureApp` on
+                the agency that owns this runner, which is what every operator
+                write on it is gated on. Read this, not the flat `configureApp`
+                capability, to decide whether a control on the row is enabled.
+                Absent (never `false`) when the server could not work it out:
+                treat that as unknown and let the route decide.
+            canReviewHostKeys:
+              type: boolean
+              readOnly: true
+              description: |
+                The caller may review this runner's host keys: its owner, or an
+                administrator of an agency it serves and does not own, who may
+                scan a scope of their own agency and decide the keys that scan
+                found (and nothing else on the runner).
             placementSuggestion:
               allOf:
                 - $ref: '#/components/schemas/PlacementSuggestion'

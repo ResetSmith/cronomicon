@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import type { components } from "../../api/schema";
 
 // SB — the scope↔runner binding UI.
@@ -115,13 +116,13 @@ describe("BoundRunnersCell — the catalog column", () => {
 describe("ScopeRunnersField — the expanded row", () => {
   it("names the pool an unbound scope draws from, and offers to bind", () => {
     const { container } = render(<ScopeRunnersField scope={scope()} canEdit onSaved={vi.fn()} />);
-    expect(container.textContent).toMatch(/Not bound — any runner in Finance may run this scope's jobs/);
+    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may run this scope's jobs/);
     expect(within(container).getByRole("button", { name: "Bind runners…" })).toBeTruthy();
   });
 
-  it("says general pool for a scope in no agency", () => {
+  it("says Global for a scope that lists no other agency", () => {
     const { container } = render(<ScopeRunnersField scope={{ ...scope(), agencies: [] }} canEdit onSaved={vi.fn()} />);
-    expect(container.textContent).toMatch(/any runner in the general pool/);
+    expect(container.textContent).toMatch(/any runner that serves Global/);
   });
 
   it("keeps a deregistered runner on screen, says why nothing runs, and offers to replace it", () => {
@@ -187,7 +188,7 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     expect(box("runner-tax-01").disabled).toBe(true);
     expect(box("runner-pool-01").disabled).toBe(true);
     // Both are refused for the same reason on an agency scope, and each row says it.
-    expect(dialog.getAllByText("not in Finance")).toHaveLength(2);
+    expect(dialog.getAllByText("does not serve Finance")).toHaveLength(2);
     // The ghost is ticked (it is bound) and can be unticked.
     expect(box("runner-old").checked).toBe(true);
     expect(box("runner-old").disabled).toBe(false);
@@ -322,28 +323,32 @@ describe("BindingNotices — pins that could not become a binding", () => {
     recordedAt: "2026-10-05T00:00:00Z",
   });
 
+  const show = () =>
+    render(
+      <MemoryRouter>
+        <BindingNotices dep={0} />
+      </MemoryRouter>,
+    );
+
   it("renders nothing when there is nothing to resolve", async () => {
-    const { container } = render(<BindingNotices dep={0} onChanged={vi.fn()} />);
+    const { container } = show();
     await waitFor(() => expect(container.textContent).toBe(""));
   });
 
-  it("says how many jobs lost their confinement, groups them by scope with the reason, and dismisses a group", async () => {
+  // LR-85 — the list, the reason for each pin and the dismissal are in the
+  // Notices inbox now. What stays here is the count, the scopes concerned and
+  // where to act, because the remedy (binding the scope) is made on this page.
+  it("says how many jobs lost their confinement and on which scopes, and points at Notices", async () => {
     notices = [pin(1, "deploy", "mixed", "mixed_pins"), pin(2, "restart", "mixed", "mixed_pins"), pin(3, "sweep", "", "no_scope")];
-    const onChanged = vi.fn();
-    const { container } = render(<BindingNotices dep={0} onChanged={onChanged} />);
+    const { container } = show();
     const q = within(container);
     await waitFor(() => expect(container.textContent).toMatch(/3 jobs used to be confined to particular runners/));
-    fireEvent.click(q.getByRole("button", { name: /Show/ }));
-    expect(container.textContent).toContain("deploy → vlan-dmz, restart → vlan-dmz — its jobs were pinned to different tags");
-    expect(container.textContent).toContain("(no scope)");
-    expect(container.textContent).toContain("the job has no scope, so there is nothing to bind");
-
-    // Groups sort by scope name, so "(no scope)" — the empty name — is first.
-    const dismiss = q.getAllByRole("button", { name: "Dismiss" });
-    expect(dismiss).toHaveLength(2);
-    fireEvent.click(dismiss[1]);
-    await waitFor(() => expect(onChanged).toHaveBeenCalled());
-    expect(calls.find((c) => c.path === "/scope-binding-notices/dismiss")!.body).toEqual({ ids: [1, 2] });
+    expect(container.textContent).toMatch(/\(scope mixed\)/);
+    expect(container.textContent).toMatch(/Bind the scope's runners below to confine them again\./);
+    expect((q.getByRole("link", { name: "Review in Notices" }) as HTMLAnchorElement).getAttribute("href")).toBe("/notices");
+    // It holds no list of its own and decides nothing here.
+    expect(q.queryByRole("button")).toBeNull();
+    expect(calls.find((c) => c.path === "/scope-binding-notices/dismiss")).toBeUndefined();
   });
 });
 

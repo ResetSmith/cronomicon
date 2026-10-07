@@ -3,22 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-// GC (v2.2.2, gate closing) — Settings as an administrator of ONE agency sees it.
+// Settings, by who is reading it (GC in v2.2.2; LR-86 in v2.3.0).
 //
-// Before 2.2.2 every settings write asked "configureApp on any agency". They are
-// install-wide, so they now ask for a GLOBAL administrator (one grant covering
-// every agency AND carrying the permission), which GET /capabilities reports as
-// `configureAppGlobal` / `manageRolesGlobal` / `composeAdmin`. The flat flags
-// still decide which sections are listed — the caller holds the permission, so
-// by FX-7 the sections stay and say why they are read-only.
+// Settings is two groups. INSTALLATION is what only a global administrator
+// changes, and it is not shown to anyone else: in 2.2.2 an administrator of one
+// agency saw each of those sections read-only with a note, which is a whole
+// section that can never apply to its reader. AGENCY is what an agency's
+// administrators change for their own agency, and it is where they land.
 //
-// Three shapes are pinned here, one per kind of section:
-//   · read open, write global  → the form loads, a note above it, Save disabled
-//     with the reason (General, Observability, …);
-//   · read global too          → NO fetch, an explanation in place of the data
-//     (GitLab, Vault, Recycle Bin) — a card that loads and prints "forbidden" is
-//     the regression;
-//   · a global administrator   → none of it.
+// Pinned here:
+//   · an administrator of one agency → the Agency group and nothing of
+//     Installation, no fetch of an install-wide setting, and an address that
+//     names an Installation section falls back to their first;
+//   · the Recycle Bin (still `composeAdmin`) explains instead of loading a 403;
+//   · a global administrator → both groups, live, and addressable by ?tab=.
 
 let caps: Record<string, boolean> = {};
 const gets: string[] = [];
@@ -54,88 +52,82 @@ vi.mock("../api/client", async (importOriginal) => {
 
 import { Settings } from "./Settings";
 
-const WHY = "Only a global administrator (a role on every agency) can change this.";
-
 beforeEach(() => {
   gets.length = 0;
   caps = {};
 });
 afterEach(cleanup);
 
-const open = async () => {
+const INSTALLATION = ["General", "Notifications", "GitLab Connection", "Vault", "Observability", "Log Storage", "Audit & Compliance"];
+const AGENCY = ["Users & Access", "Service Accounts", "SSH Targets", "Recycle Bin"];
+
+const open = async (at = "/settings") => {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[at]}>
       <Settings />
     </MemoryRouter>,
   );
-  await waitFor(() => expect(screen.getByText("General Settings")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("Agency")).toBeTruthy());
 };
 const go = (label: string) => fireEvent.click(screen.getByText(label));
 const saveBtn = () => screen.getByRole("button", { name: "Save Changes" }) as HTMLButtonElement;
+const rail = () => Array.from(document.querySelectorAll("div")).map((d) => d.textContent);
 
-describe("Settings — an administrator of one agency (GC)", () => {
+describe("Settings — an administrator of one agency (LR-86)", () => {
   beforeEach(() => {
     caps = { configureApp: true, manageRoles: true };
   });
 
-  it("keeps every section it had — the flat permission still lists them", async () => {
+  it("shows the Agency group and nothing of Installation", async () => {
     await open();
-    for (const label of ["General", "Notifications", "GitLab Connection", "Vault", "Observability", "SSH Targets", "Log Storage", "Audit & Compliance", "Recycle Bin"]) {
-      expect(screen.getAllByText(label).length, label).toBeGreaterThan(0);
+    for (const label of AGENCY) expect(screen.getAllByText(label).length, label).toBeGreaterThan(0);
+    for (const label of INSTALLATION) expect(rail(), label).not.toContain(label);
+    expect(screen.queryByText("Installation")).toBeNull();
+    // And none of the install-wide settings was read on the way in.
+    await new Promise((r) => setTimeout(r, 20));
+    // (General is read by the timezone banner on every Settings page, so it is not in this list.)
+    for (const path of ["/settings/gitlab", "/settings/vault", "/settings/observability"]) {
+      expect(gets, path).not.toContain(path);
     }
   });
 
-  it("shows General read-only: the values load, a note says why, Save is disabled with the reason", async () => {
-    await open();
-    await waitFor(() => expect(screen.getByDisplayValue("Cronomicon")).toBeTruthy());
-    expect(screen.getByText(`Read-only. ${WHY}`)).toBeTruthy();
-    expect(saveBtn().disabled).toBe(true);
-    expect(saveBtn().title).toBe(WHY);
-    expect((screen.getByDisplayValue("Cronomicon") as HTMLInputElement).closest("fieldset")!.disabled).toBe(true);
-  });
-
-  it("shows Observability read-only the same way", async () => {
-    await open();
-    go("Observability");
-    await waitFor(() => expect(screen.getByDisplayValue("/metrics")).toBeTruthy());
-    expect(screen.getByText(`Read-only. ${WHY}`)).toBeTruthy();
-    expect(saveBtn().disabled).toBe(true);
-    expect(saveBtn().title).toBe(WHY);
-  });
-
-  it("does not fetch the GitLab or Vault connection — it explains instead of loading a 403", async () => {
-    await open();
-    go("GitLab Connection");
-    expect(screen.getByRole("note").textContent).toMatch(
-      /Only a global administrator \(a role on every agency\) can view or change this\./,
-    );
-    expect(screen.queryByRole("button", { name: "Save Changes" })).toBeNull();
-
-    go("Vault");
-    expect(screen.getByRole("note").textContent).toMatch(/can view or change this\./);
-
+  it("falls back to their first section when the address names one that is not theirs", async () => {
+    await open("/settings?tab=vault");
     await new Promise((r) => setTimeout(r, 20));
-    expect(gets).not.toContain("/settings/gitlab");
     expect(gets).not.toContain("/settings/vault");
-    expect(screen.queryByText(/Error:/)).toBeNull();
+    expect(screen.queryByText(/can view or change this/)).toBeNull();
   });
 
-  it("does not fetch the Recycle Bin without composeAdmin", async () => {
-    await open();
-    go("Recycle Bin");
+  it("opens the section its address names", async () => {
+    await open("/settings?tab=recyclebin");
+    // Still a global administrator's to use: it explains, and does not load a 403.
     expect(screen.getByRole("note").textContent).toMatch(/shared by every agency/);
     await new Promise((r) => setTimeout(r, 20));
     expect(gets).not.toContain("/recycle-bin");
   });
 });
 
-describe("Settings — a global administrator (GC)", () => {
+describe("Settings — someone who administers nothing", () => {
+  it("says so, and where to look", async () => {
+    caps = {};
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/You don't administer anything here/)).toBeTruthy();
+  });
+});
+
+describe("Settings — a global administrator", () => {
   beforeEach(() => {
     caps = { configureApp: true, configureAppGlobal: true, manageRoles: true, manageRolesGlobal: true, compose: true, composeAdmin: true, unrestricted: true };
   });
 
-  it("gets General with a live Save and no read-only note", async () => {
+  it("gets both groups, Installation first, with General live", async () => {
     await open();
+    expect(screen.getByText("Installation")).toBeTruthy();
+    for (const label of [...INSTALLATION, ...AGENCY]) expect(screen.getAllByText(label).length, label).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByDisplayValue("Cronomicon")).toBeTruthy());
     expect(screen.queryByText(/Read-only\./)).toBeNull();
     expect(saveBtn().disabled).toBe(false);
@@ -160,13 +152,18 @@ describe("Settings — a global administrator (GC)", () => {
     expect(gets).toContain("/recycle-bin");
   });
 
-  it("an older server that omits the global flags reads as NOT global — fail closed", async () => {
+  it("opens straight on the section its address names", async () => {
+    await open("/settings?tab=vault");
+    await waitFor(() => expect(screen.getByDisplayValue("https://vault.internal:8200")).toBeTruthy());
+    expect(screen.queryByText("General Settings")).toBeNull();
+  });
+
+  it("an older server that omits the global flags reads as NOT global — Installation is withheld", async () => {
     // `undefined` must never be mistaken for "allowed": withholding is the safe
     // way to be wrong, because the server refuses anyway.
     caps = { configureApp: true };
     await open();
-    await waitFor(() => expect(screen.getByDisplayValue("Cronomicon")).toBeTruthy());
-    expect(saveBtn().disabled).toBe(true);
-    expect(saveBtn().title).toBe(WHY);
+    expect(screen.queryByText("Installation")).toBeNull();
+    expect(screen.queryByText("General Settings")).toBeNull();
   });
 });

@@ -3,7 +3,8 @@ import { api, csrfHeader, errMsg } from "../../api/client";
 import { useGet, rows } from "../../hooks";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
-import { AlertBanner, Btn, ExpandChevron, InlineLoading, Modal } from "../../components/ui";
+import { Link } from "react-router-dom";
+import { AlertBanner, Btn, InlineLoading, Modal } from "../../components/ui";
 
 // Scope↔runner bindings — the UI (SB band).
 //
@@ -59,22 +60,21 @@ export function boundRunnerState(b: BoundRunner): string {
   return "";
 }
 
-/** "the general pool" for a scope in no agency, else its agency names. */
+/** The scope's agency by name ("Global" for one with none listed: where every scope without another agency is). */
 export function scopePoolName(scope: BindableScope): string {
   const names = (scope.agencies ?? []).map((a) => a.name);
-  return names.length === 0 ? "the general pool" : names.join(", ");
+  return names.length === 0 ? "Global" : names.join(", ");
 }
 
-// A runner is eligible for a scope by the claim query's agency rule: a member of
-// one of the scope's agencies, or — for a scope in none — a runner in none. The
-// server enforces it on save; this copy only decides what the picker offers, so
-// an ineligible runner is shown disabled with the reason instead of being
-// offered and then refused.
+// A runner is eligible for a scope by the claim query's agency rule: it serves
+// one of the scope's agencies (Global is one, since 2.3.0, and a scope with no
+// other agency is in it). The server enforces it on save; this copy only
+// decides what the picker offers, so an ineligible runner is shown disabled
+// with the reason instead of being offered and then refused. A scope that
+// lists no agency at all is damage, and no runner is eligible for it.
 function eligibleFor(scope: BindableScope, runner: RunnerLite): boolean {
   const scopeAgencies = new Set((scope.agencies ?? []).map((a) => a.id));
-  const runnerAgencies = (runner.agencies ?? []).map((a) => a.id);
-  if (scopeAgencies.size === 0) return runnerAgencies.length === 0;
-  return runnerAgencies.some((id) => scopeAgencies.has(id));
+  return (runner.agencies ?? []).some((a) => scopeAgencies.has(a.id));
 }
 
 const chip = (tone: "plain" | "warning"): React.CSSProperties => ({
@@ -148,7 +148,7 @@ export function ScopeRunnersField({
         </span>
         {bound.length === 0 ? (
           <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-            Not bound — any runner in {scopePoolName(scope)} may run this scope's jobs, and shell jobs default to SSH
+            Not bound — any runner that serves {scopePoolName(scope)} may run this scope's jobs, and shell jobs default to SSH
             from the server.
           </span>
         ) : (
@@ -182,7 +182,7 @@ export function ScopeRunnersField({
           {serving === 0 ? (
             <>
               ⚠ No bound runner can claim work right now, so this scope's runs are waiting. A binding is kept when its
-              runner goes away — on purpose, so the scope does not quietly reopen to {scopePoolName(scope)}.
+              runner goes away — on purpose, so the scope does not quietly reopen to every runner that serves {scopePoolName(scope)}.
             </>
           ) : (
             <>Only these runners may run this scope's jobs. Jobs with no executor of their own run on them; SSH is refused.</>
@@ -468,7 +468,7 @@ export function ScopeRunnersDialog({
       }
     >
       <p style={{ margin: "0 0 12px", fontSize: c.fontSm, color: c.textSec }}>
-        Choose the runners that can reach this scope's hosts. With none chosen, any runner in {scopePoolName(scope)} may
+        Choose the runners that can reach this scope's hosts. With none chosen, any runner that serves {scopePoolName(scope)} may
         run its jobs. Runs already queued follow the change.
       </p>
       {runnersQ.loading ? (
@@ -483,9 +483,7 @@ export function ScopeRunnersDialog({
             row(
               String(r.id),
               r.name,
-              (scope.agencies ?? []).length === 0
-                ? "in an agency — this scope takes a general-pool runner"
-                : `not in ${scopePoolName(scope)}`,
+              `does not serve ${scopePoolName(scope)}`,
               { disabled: true },
             ),
           )}
@@ -592,87 +590,39 @@ export function ReplaceRunnerDialog({
   );
 }
 
-const REASON: Record<RetiredPin["reason"], string> = {
-  mixed_pins: "its jobs were pinned to different tags",
-  partial_pins: "only some of its jobs were pinned",
-  no_scope: "the job has no scope, so there is nothing to bind",
-  unknown_scope: "the job names a scope that does not exist",
-  no_eligible_runner: "no runner both carried the tag and was eligible for the scope",
-  binned_job: "the job is in the recycle bin; restored, it would not be confined",
-  leftover_git_key: "its Git file still says runner_tag, and the scope is not bound",
-};
-
-// BindingNotices lists the runner pins that could not be turned into a scope
-// binding — by the upgrade, or by a Git job still carrying `runner_tag` on a
-// scope nobody bound. Each of those jobs USED to be confined to particular
-// runners and is not any more, which is the one thing this change must not let
-// happen quietly. A group disappears by itself when its scope is bound; the
-// rest need someone to say "seen, and that is fine".
-export function BindingNotices({ dep, onChanged }: { dep: number; onChanged: () => void }) {
-  const [bump, setBump] = useState(0);
-  const q = useGet<unknown>(() => api.GET("/scope-binding-notices"), [dep, bump]);
+// BindingNotices says, on the Scopes page, how many jobs lost the confinement a
+// runner tag used to give them: the runner pins that could not be turned into a
+// scope binding — by the upgrade, or by a Git job still carrying `runner_tag`
+// on a scope nobody bound. Each of those jobs USED to be confined to particular
+// runners and is not any more, which is the one thing that change must not let
+// happen quietly.
+//
+// It is a pointer since 2.3.0 (LR-85): the list itself, with why each pin could
+// not be converted and the dismissal, is in the Notices inbox, which is where
+// every standing condition is read. This banner stays because the remedy is
+// made here, by binding the scope's runners; a notice disappears by itself when
+// its scope is bound.
+export function BindingNotices({ dep }: { dep: number; onChanged?: () => void }) {
+  const q = useGet<unknown>(() => api.GET("/scope-binding-notices"), [dep]);
   const notices = rows<RetiredPin>(q.data);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const groups = useMemo(() => {
-    const by = new Map<string, RetiredPin[]>();
-    for (const n of notices) {
-      const key = n.scope || "";
-      by.set(key, [...(by.get(key) ?? []), n]);
-    }
-    return [...by.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [notices]);
-
   if (notices.length === 0) return null;
-
-  const dismiss = async (ids: number[]) => {
-    setBusy(true);
-    setErr(null);
-    const { error } = await api.POST("/scope-binding-notices/dismiss", {
-      params: { header: csrfHeader },
-      body: { ids },
-    });
-    setBusy(false);
-    if (error) {
-      setErr(errMsg(error));
-      return;
-    }
-    setBump((n) => n + 1);
-    onChanged();
-  };
-
+  const scopes = [...new Set(notices.map((n) => n.scope || "").filter(Boolean))].sort();
   return (
     <AlertBanner type="warning">
-      <div style={{ display: "grid", gap: 8, width: "100%" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <span>
-            <strong>{plural(notices.length, "job")}</strong> used to be confined to particular runners by a runner tag and{" "}
-            {notices.length === 1 ? "is" : "are"} not any more. Bind the scope's runners below to confine{" "}
-            {notices.length === 1 ? "it" : "them"} again, or dismiss what may run anywhere.
-          </span>
-          <Btn small onClick={() => setOpen((o) => !o)} ariaExpanded={open}>
-            <ExpandChevron open={open} /> {open ? "Hide" : "Show"}
-          </Btn>
-        </div>
-        {open && (
-          <div style={{ display: "grid", gap: 8 }}>
-            {groups.map(([scope, list]) => (
-              <div key={scope || "(none)"} style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", fontSize: c.fontSm }}>
-                <span style={{ fontFamily: c.mono, fontWeight: 600, color: c.text }}>{scope || "(no scope)"}</span>
-                <span style={{ color: c.textSec }}>
-                  {list.map((n) => `${n.jobName} → ${n.runnerTag}`).join(", ")} — {REASON[list[0].reason] ?? list[0].reason}
-                </span>
-                <Btn small onClick={() => dismiss(list.map((n) => n.id))} disabled={busy}>
-                  Dismiss
-                </Btn>
-              </div>
-            ))}
-            {err && <span role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>{err}</span>}
-          </div>
-        )}
-      </div>
+      <span>
+        <strong>{plural(notices.length, "job")}</strong> used to be confined to particular runners by a runner tag and{" "}
+        {notices.length === 1 ? "is" : "are"} not any more
+        {scopes.length > 0 ? (
+          <>
+            {" "}
+            (scope{scopes.length === 1 ? "" : "s"} <span style={{ fontFamily: c.mono }}>{scopes.join(", ")}</span>)
+          </>
+        ) : null}
+        . Bind the scope's runners below to confine {notices.length === 1 ? "it" : "them"} again.{" "}
+        <Link to="/notices" style={{ color: c.primary, fontWeight: 600 }}>
+          Review in Notices
+        </Link>
+      </span>
     </AlertBanner>
   );
 }

@@ -129,7 +129,7 @@ describe("JobComposer — scope is a required choice (AF-1)", () => {
     fireEvent.change(q.getByPlaceholderText("nightly-backup"), { target: { value: "orphan-job" } });
     pickScope(q, /^Orphan/);
 
-    await waitFor(() => expect(q.getByText(/not mapped to any agency/)).toBeTruthy());
+    await waitFor(() => expect(q.getByText(/is in no agency, so only global administrators will\s+see this job/)).toBeTruthy());
     // Advisory only — the save still goes through.
     fireEvent.click(q.getByRole("button", { name: "Create job" }));
     await waitFor(() => expect(posts.filter((p) => p.path === "/jobs")).toHaveLength(1));

@@ -1,6 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../../api/client";
 import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
+import { GLOBAL_AGENCY, useAgencyIdByName } from "../../api/access";
+import { useVaultPrefixes, vaultPathWhy } from "../../api/vaultPaths";
+import { MoveAgency } from "./MoveAgency";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
@@ -81,13 +84,15 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   // Vault-source secrets are only offered when Vault is actually configured
   // (C.3); otherwise the local-KEK "stored" path is the only active option.
   const [vaultEnabled, setVaultEnabled] = useState(false);
-  // GC-8 (v2.2.2) — there is ONE Vault connection for the installation and a
-  // secret's path is not divided by agency, so naming a path (creating a
-  // Vault-backed secret, editing one, migrating a stored one) is a global
-  // administrator's. `vaultWhy` is "" for them and the explanation for a
-  // departmental manageEnvVars holder, who keeps the controls — disabled.
+  // There is ONE Vault connection for the installation. Since v2.3.0 (LR-80) it
+  // is divided by agency: a global administrator assigns each agency its path
+  // prefixes, and an agency's administrators name paths inside them for the
+  // rows their agency owns. A row that is GLOBAL's has no path limit and stays a
+  // global administrator's: `vaultWhy` is "" for them and the explanation for
+  // anyone else, and it applies to Global's rows only (rowVaultWhy).
   const [vaultGlobal, setVaultGlobal] = useState(false);
   const vaultWhy = globalOnly(vaultGlobal, VAULT_SECRET_GLOBAL_ONLY);
+  const rowVaultWhy = (v: EnvSecretRow) => (!v.ownerAgency || v.ownerAgency === "Global" ? vaultWhy : "");
   useEffect(() => {
     let cancelled = false;
     fetchCapabilities().then((caps) => {
@@ -274,12 +279,14 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <span onClick={(e) => e.stopPropagation()}>
           {canEdit && (
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              {/* A Vault-backed row may be edited only by a global administrator
-                  (the edit can re-point its path). Deleting it names no path. */}
+              {/* A Vault-backed row that is Global's may be edited only by a
+                  global administrator (the edit can re-point its path); an
+                  agency's own is its administrators', inside its Vault paths.
+                  Deleting it names no path. */}
               <Btn
                 onClick={() => setEditing(v)}
-                disabled={v.source === "vault" && !!vaultWhy}
-                title={v.source === "vault" && vaultWhy ? vaultWhy : undefined}
+                disabled={v.source === "vault" && !!rowVaultWhy(v)}
+                title={v.source === "vault" && rowVaultWhy(v) ? rowVaultWhy(v) : undefined}
               >
                 Edit
               </Btn>
@@ -475,13 +482,27 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                               />
                               <DetailRow label={isVault ? "Last Resolved" : "Last Rotated"} value={fmtDate(v.lastModifiedAt)} />
                               <DetailRow label="Created By" value={v.createdBy || "—"} last />
+                              {canEdit && v.id && (
+                                <MoveAgency
+                                  kind="secret"
+                                  id={v.id}
+                                  name={v.key}
+                                  ownerName={v.ownerAgency}
+                                  permission="manageEnvVars"
+                                  onMoved={(text) => {
+                                    setNotice({ kind: "info", text });
+                                    refetch();
+                                  }}
+                                  onError={(text) => setNotice({ kind: "error", text })}
+                                />
+                              )}
                               {!isVault && vaultEnabled && (
                                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                  <Btn onClick={() => setMigrating(v)} disabled={!!vaultWhy} title={vaultWhy || undefined}>
+                                  <Btn onClick={() => setMigrating(v)} disabled={!!rowVaultWhy(v)} title={rowVaultWhy(v) || undefined}>
                                     Migrate to Vault
                                   </Btn>
                                   <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
-                                    {vaultWhy || "Converts this entry to a vault reference"}
+                                    {rowVaultWhy(v) || "Converts this entry to a vault reference"}
                                   </span>
                                 </div>
                               )}
@@ -512,7 +533,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
           initial={editing}
           scopeNames={scopeNames}
           vaultEnabled={vaultEnabled}
-          vaultWhy={vaultWhy}
+          globalVaultWhy={vaultWhy}
           onClose={() => {
             setAdding(false);
             setEditing(null);
@@ -560,16 +581,16 @@ function SecretFormModal({
   initial,
   scopeNames,
   vaultEnabled,
-  vaultWhy,
+  globalVaultWhy,
   onClose,
   onSaved,
 }: {
   initial: EnvSecretRow | null;
   scopeNames: string[];
   vaultEnabled: boolean;
-  /** GC-8 — non-empty when the caller may not name a Vault path: the Vault
-   *  source option renders disabled with this as its explanation. */
-  vaultWhy: string;
+  /** Non-empty when the caller may not name a Vault path for a row that is
+   *  GLOBAL's (they are not a global administrator). */
+  globalVaultWhy: string;
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
@@ -585,8 +606,21 @@ function SecretFormModal({
   const [keyError, setKeyError] = useState("");
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
-  // RF-Q2(a): the create-time agency binding, shown only to restricted callers.
+  // The one agency a new secret belongs to (LR-54).
   const agencyPick = useCreationAgencies(isEdit, "manageEnvVars");
+
+  // LR-80 — whose Vault paths apply: the row's owner on an edit, the agency
+  // chosen on a create. Global's rows have no path limit and are a global
+  // administrator's; an agency's must lie inside that agency's prefixes.
+  const editOwnerId = useAgencyIdByName(isEdit ? initial?.ownerAgency || "Global" : undefined);
+  const ownerId = isEdit ? editOwnerId : agencyPick.selected || undefined;
+  const ownerName = isEdit
+    ? initial?.ownerAgency || "Global"
+    : agencyPick.agencies.find((a) => a.id === agencyPick.selected)?.name || "the agency";
+  const prefixes = useVaultPrefixes(ownerId, vaultEnabled);
+  // Why the Vault SOURCE cannot be chosen at all, and why this PATH cannot be.
+  const vaultWhy = ownerId === GLOBAL_AGENCY ? globalVaultWhy : vaultPathWhy(prefixes, ownerName);
+  const pathWhy = source === "vault" && ownerId !== GLOBAL_AGENCY ? vaultPathWhy(prefixes, ownerName, vaultPath) : "";
 
   const onKeyChange = (raw: string) => {
     const up = raw.toUpperCase().replace(/[^A-Z0-9_]/g, "");
@@ -601,6 +635,10 @@ function SecretFormModal({
     }
     if (source === "vault" && !vaultPath.trim()) {
       setFormError("Vault path is required for vault-source secrets");
+      return;
+    }
+    if (source === "vault" && (vaultWhy || pathWhy)) {
+      setFormError(vaultWhy || pathWhy);
       return;
     }
     if (source === "stored" && !isEdit && !value) {
@@ -665,14 +703,15 @@ function SecretFormModal({
               Deliberately NOT appended at the bottom of the form — this modal's body
               is already at its height, so a block added there lands exactly at the
               fold and renders shaved behind the pinned footer. tsc and the unit tests
-              cannot see that; screenshotting the real dialog can. Read-only because
-              ownership is fixed at creation and there is no transfer action, so an
-              editable-looking control would promise what the API cannot do. */}
+              cannot see that; screenshotting the real dialog can. Read-only here: the
+              owner is chosen at creation and changed by MOVING the row (the expanded
+              row's "Move to another agency"), which is a decision of its own and not
+              a field of this form. */}
           {isEdit && initial?.ownerAgency && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 6, fontSize: c.fontXs, color: c.textMuted }}>
               <span>Owned by</span>
               <OwnerChip owner={initial.ownerAgency} />
-              <span>&middot; set at creation</span>
+              <span>&middot; set at creation; move it from the expanded row</span>
             </div>
           )}
             </>
@@ -700,8 +739,10 @@ function SecretFormModal({
                   ...(vaultEnabled ? [{ v: "vault", l: "Vault reference" }] : []),
                 ] as { v: SecretSource; l: string }[]
               ).map((opt, i) => {
-                // Vault is configured (so the option is relevant) but naming a
-                // path is a global administrator's: disabled, with the reason.
+                // Vault is configured (so the option is relevant) but this row's
+                // owner cannot name a path — Global's for anyone who is not a
+                // global administrator, or an agency with no Vault paths
+                // assigned: disabled, with the reason.
                 const blocked = opt.v === "vault" && !!vaultWhy;
                 return (
                   <div
@@ -759,6 +800,22 @@ function SecretFormModal({
               style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
             />
             <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
+            {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
+              <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
+                {ownerName} may name paths inside:{" "}
+                {prefixes.prefixes.map((p, i) => (
+                  <span key={p}>
+                    {i > 0 && ", "}
+                    <code style={{ fontFamily: c.mono }}>{p}</code>
+                  </span>
+                ))}
+              </div>
+            )}
+            {pathWhy && (
+              <div role="alert" style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>
+                {pathWhy}
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -794,13 +851,7 @@ function SecretFormModal({
             the moment someone was reasoning about it. It is display-only on purpose:
             ownership is fixed at creation and there is no transfer action yet, so an
             editable-looking control would promise something the API cannot do. */}
-        <CreationAgencyPicker
-          label="secret"
-          required={agencyPick.required}
-          agencies={agencyPick.agencies}
-          selected={agencyPick.selected}
-          setSelected={agencyPick.setSelected}
-        />
+        <CreationAgencyPicker label="secret" pick={agencyPick} />
       </div>
     </Modal>
   );
@@ -818,11 +869,30 @@ function MigrateModal({
   const [vaultPath, setVaultPath] = useState(`secret/data/cronomicon#${row.key}`);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
+  // LR-80 — the path must lie inside the Vault paths of the agency that owns
+  // the row (no limit for one of Global's).
+  const ownerName = row.ownerAgency || "Global";
+  const ownerId = useAgencyIdByName(ownerName);
+  const prefixes = useVaultPrefixes(ownerId);
+  const pathWhy = ownerId === GLOBAL_AGENCY ? "" : vaultPathWhy(prefixes, ownerName, vaultPath);
+  // The suggested path is only a starting point. For an agency's row it is
+  // moved inside that agency's first prefix once the prefixes are known, so
+  // the dialog does not open on a refusal the operator did nothing to cause.
+  // Never after they have typed.
+  const [touched, setTouched] = useState(false);
+  const firstPrefix = prefixes.kind === "prefixes" ? prefixes.prefixes[0] : undefined;
+  useEffect(() => {
+    if (!touched && firstPrefix) setVaultPath(`${firstPrefix}/cronomicon#${row.key}`);
+  }, [touched, firstPrefix, row.key]);
 
   const migrate = async () => {
     if (row.id == null) return;
     if (!vaultPath.trim()) {
       setFormError("Vault path is required");
+      return;
+    }
+    if (pathWhy) {
+      setFormError(pathWhy);
       return;
     }
     setBusy(true);
@@ -861,10 +931,23 @@ function MigrateModal({
         <label style={labelStyle()}>Vault Path *</label>
         <input
           value={vaultPath}
-          onChange={(e) => setVaultPath(e.target.value)}
+          onChange={(e) => {
+            setTouched(true);
+            setVaultPath(e.target.value);
+          }}
           style={{ ...inputStyle(), fontFamily: c.mono, fontSize: c.fontSm }}
         />
         <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>Format: engine/data/path#FIELD_NAME</div>
+        {prefixes.kind === "prefixes" && prefixes.prefixes.length > 0 && (
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 4 }}>
+            {ownerName} may name paths inside: <code style={{ fontFamily: c.mono }}>{prefixes.prefixes.join(", ")}</code>
+          </div>
+        )}
+        {pathWhy && (
+          <div role="alert" style={{ fontSize: c.fontXs, color: c.danger, marginTop: 4 }}>
+            {pathWhy}
+          </div>
+        )}
       </div>
     </Modal>
   );
