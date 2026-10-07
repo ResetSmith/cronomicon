@@ -507,15 +507,23 @@ func TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse(t *testing.T) {
 	}
 }
 
-// GC-8 — a Vault path is named on the installation's one Vault connection.
+// GC-8 — a Vault path is named on the installation's one Vault connection, so
+// an agency may not name one it was not given. In 2.2.2 that meant no agency
+// could name any (403: a global administrator's). Since 2.3.0 an agency names
+// paths inside the prefixes assigned to it (LR-80, vault_prefix_test.go); with
+// none assigned the answer is still no, as a 422 that says what is missing.
 func TestGC_VaultPathsAreAGlobalAdministrators(t *testing.T) {
 	h, pool := gateServer(t)
+	notAllowed := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "vault_path_not_allowed" {
+			t.Errorf("%s = %d %s, want 422 vault_path_not_allowed (%s)", what, rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+		}
+	}
 
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gFinAdmin,
 		`{"key":"FIN_VAULT","source":"vault","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin binding a Vault path = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin binding a Vault path with no prefix assigned", rec)
 	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE key='FIN_VAULT'`); n != 0 {
 		t.Error("a vault-source secret was written by a departmental administrator")
 	}
@@ -532,13 +540,18 @@ func TestGC_VaultPathsAreAGlobalAdministrators(t *testing.T) {
 	// ...but may not be turned into a vault-source one, by edit or by migration.
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/env-secrets/"+sec.ID, gFinAdmin,
 		`{"key":"FIN_STORED","source":"vault","scope":"fin-hosts","vaultPath":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin re-sourcing a secret to Vault = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin re-sourcing a secret to Vault", rec)
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets/"+sec.ID+"/migrate-to-vault", gFinAdmin,
 		`{"vaultPath":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin migrating a secret to a Vault path = %d, want 403 (%s)", rec.Code, rec.Body)
+	notAllowed("fin admin migrating a secret to a Vault path", rec)
+	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE source <> 'stored' OR vault_ref IS NOT NULL`); n != 0 {
+		t.Errorf("%d secret(s) now name a Vault path", n)
+	}
+	// A secret that is Global's is still a global administrator's, any path.
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/env-secrets", gRoot,
+		`{"key":"SHARED_VAULT","source":"vault","vaultPath":"secret/data/anything/at/all#k"}`)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("a global administrator creating a Global Vault-backed secret = %d, want 201 (%s)", rec.Code, rec.Body)
 	}
 }
 
@@ -815,8 +828,8 @@ func TestGC_VaultGateCannotBeSidesteppedBySourceSpelling(t *testing.T) {
 		{"POST with a stored source carrying a vaultPath", http.MethodPost, "/api/v1/env-secrets",
 			`{"key":"FIN_SNEAK2","source":"stored","scope":"fin-hosts","value":"v","vaultPath":"secret/data/tax/db#password"}`},
 	} {
-		if rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body); rec.Code != http.StatusForbidden {
-			t.Errorf("%s = %d, want 403 (%s)", c.name, rec.Code, rec.Body)
+		if rec := gateReq(t, h, c.method, c.path, gFinAdmin, c.body); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "vault_path_not_allowed" {
+			t.Errorf("%s = %d %s, want 422 vault_path_not_allowed (%s)", c.name, rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 		}
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM secrets WHERE source='vault' OR vault_ref IS NOT NULL`); n != 0 {
@@ -904,17 +917,21 @@ func TestGC_AVaultBackedSSHKeyIsAGlobalAdministrators(t *testing.T) {
 	h, pool := gateServer(t)
 	const vaultKey = `{"label":"not_really_a_key","source":"vault","vaultRef":"secret/data/tax/db#password"}`
 
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/ssh/credentials", gFinAdmin, vaultKey)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("fin admin creating a Vault-backed SSH key = %d, want 403 (%s)", rec.Code, rec.Body)
+	// 403 in 2.2.3 (a global administrator's). Since 2.3.0 the answer depends on
+	// the agency's Vault paths (LR-80); with none assigned it is still no.
+	notAllowed := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "vault_path_not_allowed" {
+			t.Errorf("%s = %d %s, want 422 vault_path_not_allowed (%s)", what, rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+		}
 	}
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/ssh/credentials", gFinAdmin, vaultKey)
+	notAllowed("fin admin creating a Vault-backed SSH key", rec)
 	// The store reads only source=="vault" as Vault; a stray vaultRef on a
 	// "stored" write is refused all the same rather than argued about.
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/ssh/credentials", gFinAdmin,
 		`{"label":"sneaky","source":"stored","material":"x","vaultRef":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin sending a vaultRef on a stored key = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin sending a vaultRef on a stored key", rec)
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_credentials`); n != 0 {
 		t.Fatalf("a refused Vault-backed key was written (%d rows)", n)
 	}
@@ -925,9 +942,7 @@ func TestGC_AVaultBackedSSHKeyIsAGlobalAdministrators(t *testing.T) {
 	mustExec(t, pool)(`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-fin','ag:FIN')`)
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/ssh/credentials/k-fin", gFinAdmin,
 		`{"label":"fin_deploy","source":"vault","vaultRef":"secret/data/tax/db#password"}`)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("fin admin re-sourcing its key to Vault = %d, want 403 (%s)", rec.Code, rec.Body)
-	}
+	notAllowed("fin admin re-sourcing its key to Vault", rec)
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_credentials WHERE id='k-fin' AND source='stored' AND vault_ref IS NULL`); n != 1 {
 		t.Error("the refused re-source changed the key")
 	}

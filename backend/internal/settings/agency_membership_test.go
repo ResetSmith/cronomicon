@@ -455,3 +455,49 @@ func TestBuildAgencyDetailReportsTheQueueTrap(t *testing.T) {
 		t.Errorf("BuildAgencyDetail(unknown) = (%v, %v), want (nil, nil)", missing, err)
 	}
 }
+
+// LR-80 — an agency owns a Vault-backed row only when the row's path is one the
+// agency may name. A row several agencies shared is Global-owned; when all but
+// one give it up the one that is left becomes its owner, but not of a Vault path
+// outside its prefixes: another agency removing itself must not be a way to
+// hand an agency a path it was never assigned.
+func TestNarrowingASharedVaultRowDoesNotGiveAwayAPathItsNewOwnerMayNotName(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name, prefix, wantOwner string
+	}{
+		{"the remaining agency may name the path", "secret/data/shared", "ag-dss"},
+		{"it may not", "secret/data/dss-only", "global"},
+		{"it has no prefix at all", "", "global"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pool := membershipDB(t)
+			exec := func(q string, a ...any) {
+				t.Helper()
+				if _, err := pool.Exec(q, a...); err != nil {
+					t.Fatalf("seed: %v\n%s", err, q)
+				}
+			}
+			exec(`INSERT INTO secrets (id, key, source, vault_ref, created_at) VALUES ('sv', 'SHARED_VAULT', 'vault', 'secret/data/shared/db#k', 't')`)
+			exec(`DELETE FROM secret_agencies WHERE secret_id = 'sv'`)
+			exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES ('sv', 'ag-dss'), ('sv', 'ag-nwd')`)
+			if c.prefix != "" {
+				if _, err := SetVaultPrefixes(ctx, pool, "ag-dss", []string{c.prefix}, "root"); err != nil {
+					t.Fatalf("SetVaultPrefixes: %v", err)
+				}
+			}
+			// NWD gives up its share.
+			if _, err := SetAgencyMembers(ctx, pool, "ag-nwd", nil, "nwd-admin"); err != nil {
+				t.Fatalf("SetAgencyMembers: %v", err)
+			}
+			if got := entityOwner(ctx, pool, "secrets", "sv"); got != c.wantOwner {
+				t.Errorf("owner after NWD left = %q, want %q", got, c.wantOwner)
+			}
+			var members string
+			_ = pool.QueryRow(`SELECT group_concat(agency_id) FROM secret_agencies WHERE secret_id = 'sv'`).Scan(&members)
+			if members != "ag-dss" {
+				t.Errorf("members after NWD left = %q, want ag-dss alone (the removal itself is NWD's to make)", members)
+			}
+		})
+	}
+}

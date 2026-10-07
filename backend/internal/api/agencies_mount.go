@@ -1,8 +1,10 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,6 +37,12 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	// The inverse of the per-kind matrices below; it touches only rows with this
 	// agency_id, so edits to two different agencies cannot race by construction.
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/members", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetAgencyMembers)))
+	// LR-80: the Vault paths an agency may name. Assigned by a global
+	// administrator (the installation has one Vault connection, and which part
+	// of it an agency may point at is the installation's decision); read by the
+	// agency's own administrators, who need to know where they may write.
+	mux.Handle("GET /api/v1/agencies/{agencyId}/vault-prefixes", s.auth.RequireSession(http.HandlerFunc(s.handleListVaultPrefixes)))
+	mux.Handle("PUT /api/v1/agencies/{agencyId}/vault-prefixes", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetVaultPrefixes)))
 	// Runner ↔ agency membership matrix (M2). Reads session-gated so the Runners
 	// view can render membership; writes ConfigureApp + CSRF (operator-assigned).
 	mux.Handle("GET /api/v1/runner-agencies", s.auth.RequireSession(http.HandlerFunc(s.handleListRunnerAgencies)))
@@ -260,6 +268,14 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	for _, m := range body {
 		if !s.requireMove(w, r, id, kind, m.ID, m.AgencyIDs) {
 			return
+		}
+		// LR-80: a Vault-backed secret or key that moves to an agency must lie
+		// inside THAT agency's Vault paths, or the move would be the way to get
+		// a path into an agency that was never assigned it.
+		for _, aid := range m.AgencyIDs {
+			if !s.requireVaultRowFits(w, r, id, kind, m.ID, aid) {
+				return
+			}
 		}
 	}
 	if err := settings.SetAgencyMembership(r.Context(), s.db, kind, body, id.Email); err != nil {
@@ -645,6 +661,9 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		if !s.requireMove(w, r, id, settings.MemberKind(m.Kind), m.ID, []string{agencyID}) {
 			return
 		}
+		if !s.requireVaultRowFits(w, r, id, settings.MemberKind(m.Kind), m.ID, agencyID) {
+			return
+		}
 	}
 	for _, m := range delta.Removed {
 		perm, _, _, label := membershipAuthzFor(settings.MemberKind(m.Kind))
@@ -703,4 +722,122 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	return true
+}
+
+// requireVaultRowFits is the Vault-path half of a move (LR-80): when the entity
+// is a Vault-backed secret or SSH key and it is going to a named agency, its
+// path must lie inside that agency's prefixes. Any other kind, a row that is
+// not Vault-backed, and a move into Global (a global administrator's, already
+// established by requireMove) need nothing here.
+func (s *Server) requireVaultRowFits(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	kind settings.MemberKind, entityID, targetAgency string) bool {
+
+	if targetAgency == agencyid.Global {
+		return true
+	}
+	var table, perm, label string
+	switch kind {
+	case settings.MemberSecret:
+		table, perm, label = "secrets", auth.PermManageEnvVars, "secret"
+	case settings.MemberSSHCredential:
+		table, perm, label = "ssh_credentials", auth.PermConfigureApp, "SSH key"
+	default:
+		return true
+	}
+	var source string
+	var ref sql.NullString
+	err := s.db.QueryRowContext(r.Context(),
+		`SELECT COALESCE(source, ''), vault_ref FROM `+table+` WHERE id = ?`, entityID).Scan(&source, &ref)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true // the setter's own "unknown member"
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	// Each store's own question (see secretNamesVault and credentialNamesVault).
+	vault := ref.String != ""
+	if kind == settings.MemberSecret {
+		vault = vault || source != "stored"
+	} else {
+		vault = vault || source == "vault"
+	}
+	if !vault {
+		return true
+	}
+	return s.requireVaultPath(w, r, id, perm, targetAgency, ref.String, label)
+}
+
+type vaultPrefixesJSON struct {
+	AgencyID string   `json:"agencyId"`
+	Prefixes []string `json:"prefixes"`
+}
+
+func (s *Server) handleListVaultPrefixes(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	agencyID := r.PathValue("agencyId")
+	// Readable by whoever writes Vault-backed rows for the agency (manageEnvVars
+	// for its secrets, configureApp for its keys) and by a global administrator.
+	// Which part of Vault another agency may point at is not everyone's to read.
+	if !id.GlobalAdmin(auth.PermConfigureApp) &&
+		!id.CanAgency(auth.PermManageEnvVars, agencyID) && !id.CanAgency(auth.PermConfigureApp, agencyID) {
+		s.denyEntityAgency(w, r, id, auth.PermManageEnvVars, agencyID,
+			"you do not administer this agency, so its Vault paths are not yours to read")
+		return
+	}
+	ag, err := settings.GetAgency(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if ag == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+		return
+	}
+	prefixes, err := settings.ListVaultPrefixes(r.Context(), s.db, agencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+}
+
+func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	agencyID := r.PathValue("agencyId")
+	var body struct {
+		Prefixes *[]string `json:"prefixes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	// This route REPLACES the list, so a body without the field — `{}`, or a
+	// misspelt key — must not read as "no prefixes" and clear it.
+	if body.Prefixes == nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
+			"prefixes is required: send the whole list, or [] to remove every prefix")
+		return
+	}
+	prefixes, err := settings.SetVaultPrefixes(r.Context(), s.db, agencyID, *body.Prefixes, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+	case errors.Is(err, settings.ErrGlobalHasNoVaultPrefixes):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "builtin_agency", err.Error())
+	case errors.Is(err, vaultpath.ErrInvalid):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+	case err != nil:
+		httpx.Fail500(w, s.log, "update_failed", err)
+	default:
+		httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
+	}
 }

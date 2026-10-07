@@ -628,6 +628,15 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		}
 	}
 
+	// LR-80: an agency names Vault paths only inside the prefixes a global
+	// administrator assigned it. agency-alpha owns the three scoped secrets above
+	// and is given the path they live under; agency-beta has a path of its own
+	// and nothing under it yet. The two global secrets are Global's and need none.
+	exec(`INSERT INTO agency_vault_prefixes (agency_id, prefix, created_by, created_at) VALUES (?, 'secret/data/cronomicon', ?, ?)`,
+		agencies[0].id, dev, ago(18*day))
+	exec(`INSERT INTO agency_vault_prefixes (agency_id, prefix, created_by, created_at) VALUES (?, 'secret/data/agency-beta', ?, ?)`,
+		agencies[1].id, dev, ago(18*day))
+
 	// ── SSH key credential (SK.13) ─────────────────────────────────────────────
 	// A first-class SSH key the cronomicon hosts + bastions below attach to via FK,
 	// so the SK.10/SK.11 picker and the Env Vars → SSH Keys management tab are

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 )
 
 // The checks below find conditions the database can be in but the application
@@ -31,6 +32,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindScopeSeveralAgencies, checkScopeSeveralAgencies},
 		{KindTargetHostOutsideScope, checkTargetHostOutsideScope},
 		{KindRecordKeyOutsideOwner, checkRecordKeyOutsideOwner},
+		{KindVaultPathOutsidePrefix, checkVaultPathOutsidePrefix},
 	} {
 		if err := c.run(ctx, database); err != nil {
 			errs = append(errs, c.name+": "+err.Error())
@@ -92,31 +94,39 @@ var ownedKinds = []struct {
 	{"ssh-credential", "SSH key", "ssh_credentials", "label", "''", "ssh_credential_agencies", "credential_id"},
 }
 
-// checkSharedOwnership lists rows that Global owns and only some agencies may
-// use. Nothing in 2.3.0 creates one: they are what several agencies shared
-// before it, and what migration 1220 would not give to one agency because doing
-// so would have changed which row some run resolves. They work exactly as they
-// did. They are listed because only a global administrator can change one, and
-// because "one agency per row" is the rule everything created since follows.
+// checkSharedOwnership lists secrets, variables and SSH keys that are not simply
+// one agency's or Global's. Nothing in 2.3.0 creates one; they are from before:
+//
+//   - owned by Global and usable by only some agencies: what several agencies
+//     shared, and what migration 1220 would not give to one agency because doing
+//     so would have changed which row some run resolves;
+//   - owned by one agency and shared with others, which 2.2 allowed.
+//
+// They work exactly as they did. They are listed because "one agency per row"
+// is the rule everything created since follows, and because who may change one
+// is not what its member list suggests: a Global-owned row is a global
+// administrator's, and an agency-owned row's Vault path is its owner's alone.
+// Filed under Global, whose administrators can settle either kind.
 func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 	var found []Finding
 	for _, k := range ownedKinds {
 		rows, err := database.QueryContext(ctx, `
-			SELECT t.id, t.`+k.nameCol+`, `+k.scopeExpr+`,
+			SELECT t.id, t.`+k.nameCol+`, `+k.scopeExpr+`, t.owner_agency,
+			       COALESCE((SELECT name FROM agencies WHERE id = t.owner_agency), t.owner_agency),
 			       (SELECT group_concat(name, ', ') FROM (
 			            SELECT a.name AS name FROM `+k.join+` m JOIN agencies a ON a.id = m.agency_id
 			             WHERE m.`+k.col+` = t.id ORDER BY a.name))
 			  FROM `+k.table+` t
-			 WHERE t.owner_agency = ?
-			   AND EXISTS (SELECT 1 FROM `+k.join+` m WHERE m.`+k.col+` = t.id AND m.agency_id <> ?)
+			 WHERE (t.owner_agency = ? AND EXISTS (SELECT 1 FROM `+k.join+` m WHERE m.`+k.col+` = t.id AND m.agency_id <> ?))
+			    OR (SELECT COUNT(*) FROM `+k.join+` m WHERE m.`+k.col+` = t.id) > 1
 			 ORDER BY t.id`, agencyid.Global, agencyid.Global)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var id, name, scope string
+			var id, name, scope, owner, ownerName string
 			var members sql.NullString
-			if err := rows.Scan(&id, &name, &scope, &members); err != nil {
+			if err := rows.Scan(&id, &name, &scope, &owner, &ownerName, &members); err != nil {
 				rows.Close()
 				return err
 			}
@@ -127,10 +137,10 @@ func checkSharedOwnership(ctx context.Context, database *sql.DB) error {
 			found = append(found, Finding{
 				AgencyID: agencyid.Global,
 				Subject:  k.kind + ":" + id,
-				Detail: fmt.Sprintf("The %s %s%s is owned by Global and usable only by %s. It works as it did before 2.3.0. "+
+				Detail: fmt.Sprintf("The %s %s%s is owned by %s and usable by %s. It works as it did before 2.3.0. "+
 					"To settle it, give it to one agency (set its agencies to that one), or make it Global's for every "+
 					"agency to use; if several agencies need their own, create a copy in each first.",
-					k.noun, name, where, members.String),
+					k.noun, name, where, ownerName, members.String),
 			})
 		}
 		if err := rows.Err(); err != nil {
@@ -347,4 +357,79 @@ func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
 		found = append(found, byName...)
 	}
 	return Reconcile(ctx, database, KindRecordKeyOutsideOwner, found)
+}
+
+// checkVaultPathOutsidePrefix lists Vault-backed secrets and SSH keys that an
+// agency owns and whose path is not inside the Vault paths assigned to that
+// agency (LR-80, LR-81). The prefix rule is applied when such a row is written
+// or moved, never when a run resolves it, so these go on working: removing a
+// prefix does not revoke what was written under it, and on the day of the
+// upgrade no agency has a prefix at all, so every agency-owned Vault-backed row
+// is listed until a global administrator assigns one. Filed under Global, whose
+// administrators assign prefixes. Rows that are Global's have no limit.
+func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
+	prefixes := map[string][]string{}
+	rows, err := database.QueryContext(ctx, `SELECT agency_id, prefix FROM agency_vault_prefixes ORDER BY agency_id, prefix`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var a, p string
+		if err := rows.Scan(&a, &p); err != nil {
+			rows.Close()
+			return err
+		}
+		prefixes[a] = append(prefixes[a], p)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	var found []Finding
+	for _, k := range []struct{ kind, noun, table, nameCol, isVault string }{
+		// Each store's own question for "is this row Vault-backed".
+		{"secret", "secret", "secrets", "key", "(t.source <> 'stored' OR COALESCE(t.vault_ref, '') <> '')"},
+		{"ssh-credential", "SSH key", "ssh_credentials", "label", "(t.source = 'vault' OR COALESCE(t.vault_ref, '') <> '')"},
+	} {
+		rows, err := database.QueryContext(ctx, `
+			SELECT t.id, t.`+k.nameCol+`, t.owner_agency, COALESCE((SELECT name FROM agencies WHERE id = t.owner_agency), t.owner_agency),
+			       COALESCE(t.vault_ref, '')
+			  FROM `+k.table+` t
+			 WHERE t.owner_agency <> ? AND `+k.isVault+`
+			 ORDER BY t.id`, agencyid.Global)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id, name, owner, ownerName, ref string
+			if err := rows.Scan(&id, &name, &owner, &ownerName, &ref); err != nil {
+				rows.Close()
+				return err
+			}
+			if ok, perr := vaultpath.Allowed(ref, prefixes[owner]); perr == nil && ok {
+				continue
+			}
+			path, _ := vaultpath.Split(ref)
+			why := "is outside the Vault paths assigned to " + ownerName + " (" + strings.Join(prefixes[owner], ", ") + ")"
+			if len(prefixes[owner]) == 0 {
+				why = "and " + ownerName + " has no Vault paths assigned"
+			}
+			found = append(found, Finding{
+				AgencyID: agencyid.Global,
+				Subject:  k.kind + ":" + id,
+				Detail: fmt.Sprintf("The %s %s belongs to %s and reads the Vault path %s, which %s. It still works; "+
+					"it cannot be edited or moved until that is settled. Assign %s a Vault path prefix that covers it, "+
+					"or make the %s Global's if every agency is meant to use it.",
+					k.noun, name, ownerName, path, why, ownerName, k.noun),
+			})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	return Reconcile(ctx, database, KindVaultPathOutsidePrefix, found)
 }

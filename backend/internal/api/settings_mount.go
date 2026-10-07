@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 	"io"
 	"log/slog"
 	"net/http"
@@ -125,11 +127,14 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// which would lock the creator out of the row they just made. RA-9: when they
 		// name none and hold the verb on exactly one department, it is inherited
 		// rather than refused, so the safe outcome is the default.
-		if secretNamesVault(inp.Source, inp.VaultPath) && !s.requireVaultSourceGlobal(w, r, id) {
-			return
-		}
 		agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermManageEnvVars, inp.AgencyIDs, "secret")
 		if !ok {
+			return
+		}
+		// LR-80: a Vault path is named inside the owner agency's prefixes (a
+		// global administrator's, unrestricted, for a secret that is Global's).
+		if secretNamesVault(inp.Source, inp.VaultPath) &&
+			!s.requireVaultPath(w, r, id, auth.PermManageEnvVars, ownerAgencyFor(agencyIDs), inp.VaultPath, "secret") {
 			return
 		}
 		sc, err := sec.Create(r.Context(), secrets.CreateInput{
@@ -209,10 +214,24 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !ok {
 			return
 		}
-		// GC-8: both sides — a vault-source row may not be edited, and a stored
-		// row may not be turned into one, by anyone but a global administrator.
-		if (existing.Source == "vault" || secretNamesVault(inp.Source, inp.VaultPath)) && !s.requireVaultSourceGlobal(w, r, id) {
-			return
+		// LR-80 (GC-8 until 2.3.0, when any Vault path was a global
+		// administrator's): the path the row will name must lie inside its owner
+		// agency's prefixes. That is the path sent, or the one it already has when
+		// the edit leaves the path alone. Turning a Vault-backed row into a stored
+		// one names no path and needs nothing here.
+		if secretNamesVault(inp.Source, inp.VaultPath) {
+			path := inp.VaultPath
+			if path == "" && existing.VaultPath != nil {
+				path = *existing.VaultPath
+			}
+			owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
+			if oerr != nil {
+				httpx.Fail500(w, s.log, "db_error", oerr)
+				return
+			}
+			if !s.requireVaultPath(w, r, id, auth.PermManageEnvVars, owner, path, "secret") {
+				return
+			}
 		}
 		// The target scope must be writable too (blocks moving it out of reach OR
 		// widening a scoped secret to global). A restricted PUT that omits scope would
@@ -341,8 +360,14 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sid, "secret") {
 			return
 		}
-		// GC-8: migration WRITES to a caller-supplied Vault path.
-		if !s.requireVaultSourceGlobal(w, r, id) {
+		// LR-80: migration WRITES the value to a caller-supplied Vault path, so
+		// the path must lie inside the owner agency's prefixes.
+		owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
+		if oerr != nil {
+			httpx.Fail500(w, s.log, "db_error", oerr)
+			return
+		}
+		if !s.requireVaultPath(w, r, id, auth.PermManageEnvVars, owner, inp.VaultPath, "secret") {
 			return
 		}
 		sc, err := sec.MigrateToVault(r.Context(), sid, inp.VaultPath, id.Email)
@@ -451,14 +476,17 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// governed by the RF-Q2(a) rule: a restricted creator names at least one
 		// held agency, so the new key is born owned rather than born global —
 		// inherited per RA-9 when they hold configureApp on exactly one department.
-		if credentialNamesVault(inp.Source, inp.VaultRef) && !s.requireVaultKeyGlobal(w, r, id) {
-			return
-		}
 		agencyIDs, ok = s.requireCreationAgencies(w, r, id, auth.PermConfigureApp, agencyIDs, "SSH key")
 		if !ok {
 			return
 		}
 		inp.OwnerAgency = ownerAgencyFor(agencyIDs) // RA-19 — see the secret create site
+		// LR-80: as a Vault-backed secret — what Vault returns for the path is
+		// shipped to a runner as key material.
+		if credentialNamesVault(inp.Source, inp.VaultRef) &&
+			!s.requireVaultPath(w, r, id, auth.PermConfigureApp, inp.OwnerAgency, inp.VaultRef, "SSH key") {
+			return
+		}
 		c, err := keys.Create(r.Context(), *inp, id.Email)
 		if err != nil {
 			if sshkeys.IsValidationError(err) {
@@ -533,8 +561,25 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 			return
 		}
-		if credentialNamesVault(inp.Source, inp.VaultRef) && !s.requireVaultKeyGlobal(w, r, id) {
-			return
+		if credentialNamesVault(inp.Source, inp.VaultRef) {
+			cid := r.PathValue("credentialId")
+			ref := inp.VaultRef
+			if ref == "" { // the edit leaves the path alone: judge the one it has
+				var cur sql.NullString
+				if qerr := s.db.QueryRowContext(r.Context(), `SELECT vault_ref FROM ssh_credentials WHERE id = ?`, cid).Scan(&cur); qerr != nil && !errors.Is(qerr, sql.ErrNoRows) {
+					httpx.Fail500(w, s.log, "db_error", qerr)
+					return
+				}
+				ref = cur.String
+			}
+			owner, oerr := s.rowOwnerAgency(r.Context(), "ssh_credentials", cid)
+			if oerr != nil {
+				httpx.Fail500(w, s.log, "db_error", oerr)
+				return
+			}
+			if !s.requireVaultPath(w, r, id, auth.PermConfigureApp, owner, ref, "SSH key") {
+				return
+			}
 		}
 		c, err := keys.Update(r.Context(), r.PathValue("credentialId"), *inp, id.Email)
 		if err != nil {
@@ -683,17 +728,85 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // genuinely out-of-scope non-global row (no existence oracle), so the only row
 // that reaches the writability gate and fails it is a global one, for which 403 is
 // correct (global existence is not scope-secret; it mirrors the create-side 403).
-// requireVaultSourceGlobal gates every write that names a Vault path (GC-8).
+// requireVaultPath gates every write that names a Vault path (LR-80; GC-8 and
+// its SSH-key half until 2.3.0).
 //
-// There is ONE Vault connection for the installation and a secret's path is
-// checked only for being non-empty, so a vault-source secret can name any path
-// that connection's credential can read — another agency's included — and
-// migrate-to-Vault can write to any path it can write. A departmental
-// manageEnvVars holder could therefore read or overwrite another department's
-// Vault material by binding its path. Per-agency paths need a table that does
-// not exist yet, so until they do the interim is closed rather than open: a
-// Vault path is a global administrator's to name. Reading, revealing and
-// consuming an existing vault-source secret are unchanged.
+// There is ONE Vault connection for the installation, so a Vault-backed secret
+// or key can name any path that connection's credential can read, another
+// agency's included, and migrate-to-Vault can write to any path it can write.
+// From 2.2.2 that made every Vault path a global administrator's to name, which
+// closed the hole and left an agency unable to manage its own Vault-backed
+// secrets. Now the path is judged against the OWNER of the row:
+//
+//   - a row that is Global's: a global administrator, any path, as before;
+//   - a row that is an agency's: a path inside one of the prefixes a global
+//     administrator assigned to that agency (internal/vaultpath: whole segments,
+//     no "..", nothing a URL could decode into one). An agency with no prefix
+//     can name no path. This binds a global administrator too — the rule is
+//     about where an agency's secret may point, not about who is typing.
+//
+// It also asks for the permission on the OWNER agency itself, before the path
+// is judged or the agency's prefixes are named in a refusal. The surrounding
+// gates are not enough for that: they pass a caller who administers ANY agency
+// the row is in, and a row from before 2.3.0 may be owned by one agency and
+// shared with another. Without this, the sharing agency's administrator could
+// re-point the owner's Vault-backed key anywhere in the owner's Vault subtree,
+// or migrate a secret into it, and would be told the owner's prefixes by the
+// refusal. Reading, revealing and consuming an existing Vault-backed row are
+// unchanged, and a path is NOT re-checked when a run resolves it (LR-81).
+func (s *Server) requireVaultPath(w http.ResponseWriter, r *http.Request, id auth.Identity, perm, ownerAgencyID, ref, label string) bool {
+	if ownerAgencyID == agencyid.Global || ownerAgencyID == "" {
+		if id.GlobalAdmin(perm) {
+			return true
+		}
+		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
+			"a Vault-backed "+label+" that is Global's may name any path on the installation's one Vault "+
+				"connection, so only a global administrator may create, edit or migrate one")
+		return false
+	}
+	if !id.CanAgency(perm, ownerAgencyID) {
+		s.denyEntityAgency(w, r, id, perm, ownerAgencyID,
+			"this "+label+" is owned by another agency: only that agency's administrators may say which Vault path it names")
+		return false
+	}
+	prefixes, err := settings.ListVaultPrefixes(r.Context(), s.db, ownerAgencyID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if len(prefixes) == 0 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
+			"this "+label+"'s agency has no Vault paths assigned, so it cannot name one: a global administrator "+
+				"assigns an agency its Vault path prefixes")
+		return false
+	}
+	ok, err := vaultpath.Allowed(ref, prefixes)
+	if err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return false
+	}
+	if !ok {
+		// The caller administers this agency and may read its prefixes, so the
+		// refusal names them.
+		httpx.Fail(w, http.StatusUnprocessableEntity, "vault_path_not_allowed",
+			"that Vault path is outside the paths assigned to this "+label+"'s agency ("+strings.Join(prefixes, ", ")+")")
+		return false
+	}
+	return true
+}
+
+// rowOwnerAgency reads the owner_agency of a secret or an SSH credential. A row
+// that does not exist reads as Global's, which is the stricter answer; the
+// handler's own 404 follows.
+func (s *Server) rowOwnerAgency(ctx context.Context, table, id string) (string, error) {
+	var owner string
+	err := s.db.QueryRowContext(ctx, `SELECT owner_agency FROM `+table+` WHERE id = ?`, id).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agencyid.Global, nil
+	}
+	return owner, err
+}
+
 // secretNamesVault reports whether a secret write would produce a vault-source
 // row. The store treats every source that is not exactly "stored" as Vault —
 // an omitted source and a misspelled one included — so the gate must ask the
@@ -711,33 +824,6 @@ func secretNamesVault(source, vaultPath string) bool {
 // vaultRef on a write that says it is stored.
 func credentialNamesVault(source, vaultRef string) bool {
 	return source == "vault" || vaultRef != ""
-}
-
-// requireVaultKeyGlobal is requireVaultSourceGlobal for the SSH-key routes
-// (GC-8, completed in v2.2.3). A Vault-backed SSH credential names
-// a path on the installation's one Vault connection exactly as a Vault-backed
-// secret does, and what Vault returns for it is shipped to a runner as key
-// material — so "it is a key, not a secret" was a second door onto every
-// agency's Vault paths, open to an administrator of one. Using an existing
-// Vault-backed key is unchanged.
-func (s *Server) requireVaultKeyGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
-	if id.GlobalAdmin(auth.PermConfigureApp) {
-		return true
-	}
-	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
-		"a Vault-backed SSH key names a path on the installation's one Vault connection, "+
-			"which is not divided by agency — only an administrator of every agency may create or edit one")
-	return false
-}
-
-func (s *Server) requireVaultSourceGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
-	if id.GlobalAdmin(auth.PermManageEnvVars) {
-		return true
-	}
-	s.denyEntityAgency(w, r, id, auth.PermManageEnvVars, auth.AllScopes,
-		"a Vault-backed secret names a path on the installation's one Vault connection, "+
-			"which is not divided by agency — only an administrator of every agency may create, edit or migrate one")
-	return false
 }
 
 func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec *secrets.Service, sid string, actor auth.Identity) (*secrets.Secret, bool) {
