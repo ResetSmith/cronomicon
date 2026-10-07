@@ -205,7 +205,11 @@ func (s *Server) writeRole(ctx context.Context, name string, in roleInput, built
 // them out of the screen that fixes their own grants is unrecoverable, and
 // seeing the role list grants nothing.
 func (s *Server) requireRoleTemplateAdmin(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
-	if id.Unrestricted() {
+	// GC-3: an unrestricted grant CARRYING manageRoles, not merely some grant
+	// that reaches every scope. Unrestricted() is permission-blind — a viewer on
+	// all scopes who administers one agency passed it and could edit the shared
+	// role templates, which is the circular escalation described above.
+	if id.CanAgency(auth.PermManageRoles, "") {
 		return true
 	}
 	if s.auth != nil {

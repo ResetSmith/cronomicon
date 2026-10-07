@@ -44,7 +44,7 @@ vi.mock("../../api/client", async (importOriginal) => {
 import { NotificationsSection } from "./Notifications";
 
 const renderSection = async () => {
-  render(<NotificationsSection />);
+  render(<NotificationsSection canWrite />);
   // Wait for the CONFIG, not just the card. "Run Notifications" is the card's
   // title and renders before GET /settings/notifications resolves, so every
   // assertion about lastSent used to race that fetch — passing only because the
@@ -166,5 +166,42 @@ describe("Notifications — the test-send button (K-5)", () => {
     fireEvent.click(screen.getByText("Send test"));
     await waitFor(() => expect(screen.getByText(/Test failed/)).toBeTruthy());
     postError = null;
+  });
+});
+
+// GC (v2.2.2, gate closing) — PUT /settings/notifications and POST
+// /settings/notifications/test need a global administrator: the transports are
+// the installation's, and a test send delivers to real people over the stored
+// config. The read is open to every session (it lists targets by label, with the
+// credential-bearing URLs masked for anyone else), so an administrator of one
+// agency sees the card with both writes disabled and the reason on each (FX-7).
+describe("Notifications — global-administrator gate on the transports (GC)", () => {
+  const WHY = "Only a global administrator (a role on every agency) can change this.";
+  const btn = (label: string) => screen.getByText(label).closest("button") as HTMLButtonElement;
+
+  it("disables Send test and Save, with the reason, for a non-global administrator", async () => {
+    config = { provider: "apprise", apprise: { enabled: true, targets: [{ id: "t1", label: "ops", service: "slack", url: "", enabled: true }] } };
+    render(<NotificationsSection canWrite={false} />);
+    // The config still loads and shows — the target's label is on screen.
+    await waitFor(() => expect(screen.getByDisplayValue("ops")).toBeTruthy());
+
+    expect(btn("Send test").disabled).toBe(true);
+    expect(btn("Send test").title).toBe(WHY);
+    expect(btn("Save Changes").disabled).toBe(true);
+    expect(btn("Save Changes").title).toBe(WHY);
+    // The form is inert rather than absent.
+    expect(screen.getByDisplayValue("ops").closest("fieldset")!.disabled).toBe(true);
+    expect(btn("+ Add target").disabled).toBe(true);
+
+    fireEvent.click(btn("Send test"));
+    expect(posts.length).toBe(0);
+  });
+
+  it("leaves both enabled, with no reason, for a global administrator", async () => {
+    await renderSection();
+    expect(btn("Send test").disabled).toBe(false);
+    expect(btn("Send test").title).toBe("");
+    expect(btn("Save Changes").disabled).toBe(false);
+    expect(btn("Save Changes").title).toBe("");
   });
 });

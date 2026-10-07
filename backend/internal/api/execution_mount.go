@@ -1104,7 +1104,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// none. A job with a declared scope had its host authored against that scope, so
 	// validating it here would reject configurations that are already live; and an
 	// unrestricted actor already reaches every host, so there is nothing to enforce.
-	if scope != "" && (jr.Scope == nil || *jr.Scope == "") && targetHost != "" && !id.Unrestricted() {
+	if scope != "" && (jr.Scope == nil || *jr.Scope == "") && targetHost != "" && !id.CanUnbound(auth.PermTriggerJobs) {
 		members, err := execspec.ScopeHosts(r.Context(), s.db, scope)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
@@ -2181,6 +2181,9 @@ func (s *Server) updateJobTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := r.PathValue("jobId")
+	if !s.requireJobVisible(w, r, jobID) { // GC-12
+		return
+	}
 
 	// Decode/normalize/UPDATE + RowsAffected==0 → 404 is the shared skeleton (CC.12).
 	if _, ok := s.writeTagsUpdate(w, r, "jobs", "rowid = ?", "job not found", jobID); !ok {
@@ -2838,6 +2841,13 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 			// was created under. Revoking the creator's grants does NOT cancel it;
 			// the recourse is cancelling the parked row.
 			pendingID, err := scheduler.InsertPendingRun(r.Context(), s.db, "workflow", wr.Name, wr.Source, "", runAt, id.Email, nil)
+			if err == nil && wr.UID != "" {
+				// InsertPendingRun derives owner_uid from (name, source), which is
+				// not an identity for a cronomicon workflow: two agencies may hold
+				// the same name. The handler knows exactly which workflow this is.
+				_, err = s.db.ExecContext(r.Context(),
+					`UPDATE pending_runs SET owner_uid = ? WHERE id = ?`, wr.UID, pendingID)
+			}
 			if err != nil {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return
@@ -2974,6 +2984,9 @@ func (s *Server) updateWorkflowTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wfID := r.PathValue("workflowId")
+	if !s.requireWorkflowVisible(w, r, wfID) { // GC-12
+		return
+	}
 
 	// Decode/normalize/UPDATE + RowsAffected==0 → 404 is the shared skeleton (CC.12).
 	if _, ok := s.writeTagsUpdate(w, r, "workflows", "rowid = ?", "workflow not found", wfID); !ok {
@@ -3327,11 +3340,11 @@ func workflowDisplayStatus(raw string, cancelled int) string {
 func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceID := r.PathValue("traceId")
-		var status string
+		var status, wfSource string
 		var stepsSnapshot sql.NullString
 		err := s.db.QueryRowContext(r.Context(), `
-			SELECT status, steps_snapshot FROM workflow_runs WHERE id = ?
-		`, traceID).Scan(&status, &stepsSnapshot)
+			SELECT status, steps_snapshot, COALESCE(workflow_source,'') FROM workflow_runs WHERE id = ?
+		`, traceID).Scan(&status, &stepsSnapshot, &wfSource)
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 			return
@@ -3424,6 +3437,48 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 						}
 					}
 				}
+			}
+		}
+
+		// GC-10: CancelTree below stops every sub-workflow run under this one, so
+		// the caller needs the verb on what THOSE runs touch — the runs they have
+		// already started, and the jobs their graphs have yet to reach. Before
+		// this only the addressed run's own children were checked, so a parent
+		// was a way to cancel another agency's work.
+		nested, err := eng.DescendantRunScopes(r.Context(), traceID)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if stepsSnapshot.Valid && stepsSnapshot.String != "" {
+			if steps, perr := workflow.ParseSteps(stepsSnapshot.String); perr == nil {
+				pending, err := eng.SubWorkflowJobScopes(r.Context(), steps, wfSource)
+				if err != nil {
+					httpx.Fail500(w, s.log, "db_error", err)
+					return
+				}
+				nested = append(nested, pending...)
+			}
+		}
+		for _, sc := range nested {
+			if sc == "" {
+				if !id.CanUnbound(auth.PermKillJobs) {
+					if s.auth != nil {
+						s.auth.AuditDenied(r, id.Email, "insufficient_scope", auth.AllScopes,
+							auditDetails(r, "workflow run reaches an unscoped job through a sub-workflow ("+auth.PermKillJobs+")"))
+					}
+					httpx.Fail(w, http.StatusForbidden, "forbidden",
+						"this workflow run includes a run with no scope; only an unrestricted operator may cancel it")
+					return
+				}
+				continue
+			}
+			if !auth.ScopeReadable(id, sc) {
+				s.denyScope(w, r, sc, "scope access denied")
+				return
+			}
+			if !s.requireCan(w, r, id, auth.PermKillJobs, sc) {
+				return
 			}
 		}
 

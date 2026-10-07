@@ -15,6 +15,13 @@ import { MemoryRouter } from "react-router-dom";
 // Everything else stays: they must still be able to grant and revoke within
 // their own agencies, which is the entire point of delegation.
 
+// GC-3 (v2.2.2) — the flag both rules read is `manageRolesGlobal`, not
+// `unrestricted`. The second is permission-blind: a VIEWER on all scopes who
+// delegates for one agency reads as unrestricted, and until 2.2.2 that was
+// enough to edit the shared role templates. `caps` lets one test be exactly that
+// caller.
+let caps: Record<string, boolean> = {};
+
 const ROLES = [
   { name: "admin", description: "Full access", builtin: true, rank: 3, permissions: { manageRoles: true } },
   { name: "operator", description: "Runs jobs", builtin: true, rank: 2, permissions: { triggerJobs: true } },
@@ -49,13 +56,18 @@ vi.mock("../../api/client", async (importOriginal) => {
       triggerJobs: true,
       killJobs: true,
       unrestricted: false, // …but only for its own agencies
+      manageRolesGlobal: false,
+      ...caps,
     })),
   };
 });
 
 import { UsersAccessSection } from "./UsersAccess";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  caps = {};
+});
 
 const renderSection = () => {
   const { container } = render(
@@ -79,7 +91,26 @@ describe("Users & Access — the delegate's view (AF-3)", () => {
     expect(q.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(q.queryByRole("button", { name: "Delete" })).toBeNull();
     // And the absence is explained rather than mysterious.
-    expect(q.getByText(/only an unrestricted administrator changes them/i)).toBeTruthy();
+    expect(q.getByText(/only a global administrator \(a role on every agency\) changes\s+them/i)).toBeTruthy();
+  });
+
+  it("is not fooled by `unrestricted` — a viewer of everything who delegates for one agency gets neither write (GC-3)", async () => {
+    caps = { unrestricted: true, manageRolesGlobal: false };
+    const q = renderSection();
+    await waitFor(() => expect(q.getByText("Tax dept")).toBeTruthy());
+    await waitFor(() => expect(q.getByRole("note")).toBeTruthy());
+    expect(q.queryByRole("button", { name: "+ New role" })).toBeNull();
+    expect(q.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(q.queryByRole("option", { name: /All scopes \(unrestricted\)/ })).toBeNull();
+  });
+
+  it("offers both to a global administrator for manageRoles, whatever `unrestricted` says (GC-3)", async () => {
+    caps = { unrestricted: false, manageRolesGlobal: true };
+    const q = renderSection();
+    await waitFor(() => expect(q.getByRole("button", { name: "+ New role" })).toBeTruthy());
+    expect(q.getAllByRole("button", { name: "Edit" }).length).toBe(ROLES.length);
+    expect(q.queryByRole("note")).toBeNull();
+    expect(q.getByRole("option", { name: /All scopes \(unrestricted\)/ })).toBeTruthy();
   });
 
   it("withholds the All-scopes option when granting", async () => {

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
-import { Btn, Card, SaveBtn, SettingRow, Status, Toggle, csrfHeader, errMsg, fmtDateTime, inputStyle, useSettingForm } from "./ui";
+import { GLOBAL_ADMIN_VIEW_ONLY, globalOnly } from "../../api/globalAdmin";
+import { Btn, Card, ReadOnlyFields, SaveBtn, SettingRow, Status, Toggle, csrfHeader, errMsg, fmtDateTime, inputStyle, useSettingForm } from "./ui";
 import { Rule } from "../../components/ui";
 import { fmtInAppZone } from "../../utils/datetime";
 
@@ -28,8 +29,29 @@ const VAULT_STATUS: Record<string, string> = {
 // useSettingForm / SaveBtn / Status moved to ./ui when the retention card became
 // their third consumer — same behaviour, one copy.
 
+// GC (v2.2.2) — GET /settings/gitlab and GET /settings/vault are refused for
+// anyone but a global administrator (they expose connection config), so these two
+// sections must not fetch at all for an administrator of one agency: the card
+// would load, 403, and show "Error: forbidden" for a rule the caller cannot fix.
+// The outer component decides; the form (and its hooks) mount only when the read
+// will be answered.
+function GlobalOnlyCard({ title }: { title: string }) {
+  return (
+    <Card title={title}>
+      <div role="note" style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
+        {GLOBAL_ADMIN_VIEW_ONLY} The connection is shared by every agency, and its settings are not shown to an
+        administrator of one.
+      </div>
+    </Card>
+  );
+}
+
 // ── GitLab Connection ────────────────────────────────────────────────────────
-export function GitlabSection() {
+export function GitlabSection({ canWrite }: { canWrite: boolean }) {
+  return canWrite ? <GitlabForm /> : <GlobalOnlyCard title="GitLab Connection" />;
+}
+
+function GitlabForm() {
   const s = useSettingForm<GitlabConfig>(() => api.GET("/settings/gitlab"), (body) =>
     api.PUT("/settings/gitlab", { params: { header: csrfHeader }, body }),
   );
@@ -136,7 +158,11 @@ export function GitlabSection() {
 }
 
 // ── Vault ────────────────────────────────────────────────────────────────────
-export function VaultSection() {
+export function VaultSection({ canWrite }: { canWrite: boolean }) {
+  return canWrite ? <VaultForm /> : <GlobalOnlyCard title="Vault" />;
+}
+
+function VaultForm() {
   const s = useSettingForm<VaultConfig>(() => api.GET("/settings/vault"), (body) =>
     api.PUT("/settings/vault", { params: { header: csrfHeader }, body }),
   );
@@ -222,7 +248,12 @@ function syncSelectValue(sync?: LogSync | null): string {
   return "21600";
 }
 
-export function LogStorageSection() {
+// `canWrite` — global administrator for configureApp (GC, v2.2.2). The read is
+// open to every session, so an administrator of one agency still sees the
+// backend, the archive status and the usage; Save and Sync now are disabled with
+// the reason.
+export function LogStorageSection({ canWrite }: { canWrite: boolean }) {
+  const why = globalOnly(canWrite);
   const s = useSettingForm<LogStorageConfig>(() => api.GET("/settings/log-storage"), (body) =>
     api.PUT("/settings/log-storage", { params: { header: csrfHeader }, body }),
   );
@@ -247,13 +278,16 @@ export function LogStorageSection() {
   // Sync now gates on what the SERVER holds, not the unsaved form: a backend
   // switched in the dropdown but not yet saved has no store to sync with.
   const savedS3 = s.data?.backend === "s3" && !s.saving;
-  const syncReason = !isS3
-    ? "Select the S3 archive backend and save first"
-    : archive?.inProgress
-      ? "A sync is running"
-      : !savedS3
-        ? "Save the S3 settings first"
-        : "";
+  // The permission comes first: it is the one reason the caller cannot clear.
+  const syncReason = why
+    ? why
+    : !isS3
+      ? "Select the S3 archive backend and save first"
+      : archive?.inProgress
+        ? "A sync is running"
+        : !savedS3
+          ? "Save the S3 settings first"
+          : "";
 
   async function syncNow() {
     setSyncing(true);
@@ -266,10 +300,11 @@ export function LogStorageSection() {
   }
 
   return (
-    <Card title="Log Storage" action={<SaveBtn onClick={() => s.save(buildBody())} saving={s.saving} saved={s.saved} disabled={!form} />}>
+    <Card title="Log Storage" action={<SaveBtn onClick={() => s.save(buildBody())} saving={s.saving} saved={s.saved} disabled={!form} reason={why} />}>
       <Status loading={s.loading} error={s.error} saveErr={s.saveErr} />
       {form && (
         <div style={{ fontSize: c.fontSm }}>
+          <ReadOnlyFields readOnly={!canWrite}>
           <SettingRow label="Backend">
             <select value={form.backend ?? "local"} onChange={(e) => patch({ backend: e.target.value as LogStorageConfig["backend"] })} style={{ ...inputStyle(), width: 200, cursor: "pointer" }}>
               <option value="local">Local volume</option>
@@ -289,7 +324,7 @@ export function LogStorageSection() {
                 <input value={form.s3?.endpoint ?? ""} onChange={(e) => patch({ s3: { ...form.s3, endpoint: e.target.value } })} placeholder="minio.internal:9000" style={wide()} />
               </SettingRow>
               <SettingRow label="Use SSL" hint="Off for a plain-HTTP MinIO on the LAN.">
-                <Toggle on={form.s3?.useSsl ?? true} onChange={() => patch({ s3: { ...form.s3, useSsl: !(form.s3?.useSsl ?? true) } })} />
+                <Toggle on={form.s3?.useSsl ?? true} disabled={!canWrite} onChange={() => patch({ s3: { ...form.s3, useSsl: !(form.s3?.useSsl ?? true) } })} />
               </SettingRow>
               {(form.s3?.useSsl ?? true) && (
                 <SettingRow label="CA Bundle" hint="For a private S3 node signed by an internal CA: paste the PEM certificate(s) to trust. Leave empty to use the host's trust store. Takes effect on save, no restart.">
@@ -352,6 +387,7 @@ export function LogStorageSection() {
               </SettingRow>
             </>
           )}
+          </ReadOnlyFields>
           {(isS3 || (archive?.count ?? 0) > 0) && (
             <LogArchiveStatusLine archive={archive} syncing={syncing} reason={syncReason} onSync={syncNow} message={syncMsg} />
           )}
@@ -468,7 +504,8 @@ function LogStorageUsage({ stats, archive }: { stats: LogStats; archive?: LogArc
 }
 
 // ── Observability ────────────────────────────────────────────────────────────
-export function ObservabilitySection() {
+export function ObservabilitySection({ canWrite }: { canWrite: boolean }) {
+  const why = globalOnly(canWrite);
   const s = useSettingForm<ObservabilityConfig>(() => api.GET("/settings/observability"), (body) =>
     api.PUT("/settings/observability", { params: { header: csrfHeader }, body }),
   );
@@ -476,12 +513,13 @@ export function ObservabilitySection() {
   const { form, patch } = s;
 
   return (
-    <Card title="Observability" action={<SaveBtn onClick={() => s.save({ ...form!, ...(newToken ? { bearerToken: newToken } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} />}>
+    <Card title="Observability" action={<SaveBtn onClick={() => s.save({ ...form!, ...(newToken ? { bearerToken: newToken } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} reason={why} />}>
       <Status loading={s.loading} error={s.error} saveErr={s.saveErr} />
       {form && (
+        <ReadOnlyFields readOnly={!canWrite}>
         <div style={{ fontSize: c.fontSm }}>
           <SettingRow label="Metrics Enabled" hint="Let Prometheus scrape metrics from the path below. While this is off, that path returns 404.">
-            <Toggle on={form.enabled ?? false} onChange={() => patch({ enabled: !form.enabled })} />
+            <Toggle on={form.enabled ?? false} disabled={!canWrite} onChange={() => patch({ enabled: !form.enabled })} />
           </SettingRow>
           {/* VU-16: the restart caveat is not guessable from the field. The
               enabled/auth gate is read per scrape, but the path is resolved once
@@ -501,6 +539,7 @@ export function ObservabilitySection() {
             </SettingRow>
           )}
         </div>
+        </ReadOnlyFields>
       )}
     </Card>
   );

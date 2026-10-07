@@ -6322,6 +6322,8 @@ export interface components {
             hosts?: string[];
             /** @description Optional raw Ansible inventory (INI format) provided during creation/update. */
             rawInventory?: string;
+            /** @description Create only (GC-6, 2.2.2): the agency the new scope belongs to. A caller whose configureApp grant is agency-scoped may omit it when they hold the permission on exactly one agency (the scope inherits it) and must name one they hold otherwise (422 `agency_required`, 403 for an agency that is not theirs). A global administrator may omit it to create a scope no agency owns. Ignored on update — moving a scope between agencies is a separate, global-administrator act. */
+            agencyIds?: string[];
         };
         ReferenceBinding: {
             /**
@@ -6496,6 +6498,16 @@ export interface components {
             composeUnbound: boolean;
             /** @description Scope REACH, not a permission: the caller holds a grant covering every scope. Drives the Run dialog's unscoped-job binding path (RB-26/RB-29). */
             unrestricted: boolean;
+            /** @description GC-15 (2.2.2) — the caller is a GLOBAL administrator for configureApp: one grant covers every agency AND carries the permission. This is what every install-wide route asks (settings, the audit export, the agency catalog, alert rules, bastions and manual host records, Git sync). `configureApp` alone is true for an administrator of one agency, who is refused by all of them. */
+            configureAppGlobal?: boolean;
+            /** @description Global administrator for manageRoles — may edit role templates and write all-agencies grants and service accounts. */
+            manageRolesGlobal?: boolean;
+            /** @description Global administrator for manageEnvVars — may create, edit or migrate Vault-backed secrets and edit script reference bindings. */
+            manageEnvVarsGlobal?: boolean;
+            /** @description Global publisher — may publish schedule and workflow files, unscoped jobs, and jobs in any scope. */
+            publishScheduleGlobal?: boolean;
+            /** @description The caller holds compose AND configureApp on one all-agencies grant: the gate on reusable schedules, calendars, reactions, revisions and the recycle bin, none of which has an owning agency. */
+            composeAdmin?: boolean;
         };
         EnvVarInput: {
             key: string;
@@ -11209,7 +11221,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created. Admin role gains access by default; others denied. */
+            /** @description Created, and placed in the agency named by `agencyIds` (or inherited — see LocalScopeInput). */
             201: {
                 headers: {
                     [name: string]: unknown;

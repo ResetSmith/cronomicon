@@ -31,7 +31,18 @@ type Minted = ServiceAccount & { token: string };
 type Agency = { id: string; name: string };
 type Role = { name: string; label?: string };
 
-export function ServiceAccountsSection() {
+// `canGrantEverywhere` — the caller is a global administrator for manageRoles
+// (GC-5, v2.2.2). Minting a service account IS granting a role, so it follows
+// the access-grant rules: a delegate mints for the agencies they administer and
+// never for all of them. The "All scopes" option is therefore WITHHELD from a
+// delegate rather than disabled — it is not a precondition they can meet, it is
+// an option that is never theirs (FX-7: only irrelevance hides) — and the form
+// starts with no place chosen instead of defaulting to the one it cannot send.
+//
+// The agency list is every agency: this view has no way to know which ones the
+// caller administers, and the server's refusal names the agency when they pick
+// one they do not.
+export function ServiceAccountsSection({ canGrantEverywhere }: { canGrantEverywhere: boolean }) {
   const [items, setItems] = useState<ServiceAccount[] | null>(null);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -45,7 +56,10 @@ export function ServiceAccountsSection() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [role, setRole] = useState("operator");
-  const [where, setWhere] = useState<string>(""); // "" = all scopes, else agency id
+  // "" = all scopes for a global administrator; "" = nothing chosen yet for a
+  // delegate, who must name an agency. Otherwise the agency id.
+  const [where, setWhere] = useState<string>("");
+  const needsAgency = !canGrantEverywhere && where === "";
   const [expiresAt, setExpiresAt] = useState("");
 
   const load = useCallback(async () => {
@@ -69,8 +83,9 @@ export function ServiceAccountsSection() {
     setError(null);
     try {
       const body: Record<string, unknown> = { name: name.trim(), description: description.trim(), role };
-      if (where === "") body.allScopes = true;
-      else body.agencyId = where;
+      if (where !== "") body.agencyId = where;
+      else if (canGrantEverywhere) body.allScopes = true;
+      else return; // a delegate with no agency chosen — the button is disabled for it
       if (expiresAt) body.expiresAt = new Date(expiresAt).toISOString();
       const { data, error: e } = await api.POST("/service-accounts", {
         params: { header: csrfHeader },
@@ -185,9 +200,22 @@ export function ServiceAccountsSection() {
             ))}
           </select>
         </SettingRow>
-        <SettingRow label="Where" hint="Bind the token to one agency's scopes, or grant every scope. Prefer an agency.">
-          <select style={inputStyle()} value={where} onChange={(e) => setWhere(e.target.value)}>
-            <option value="">All scopes (*)</option>
+        <SettingRow
+          label="Where"
+          hint={
+            canGrantEverywhere
+              ? "Bind the token to one agency's scopes, or grant every scope. Prefer an agency."
+              : "Bind the token to one agency's scopes — an agency you administer. A token for every scope is a global administrator's to mint."
+          }
+        >
+          <select aria-label="Where" style={inputStyle()} value={where} onChange={(e) => setWhere(e.target.value)}>
+            {canGrantEverywhere ? (
+              <option value="">All scopes (*)</option>
+            ) : (
+              <option value="" disabled>
+                Choose an agency…
+              </option>
+            )}
             {agencies.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -209,7 +237,7 @@ export function ServiceAccountsSection() {
         </SettingRow>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", paddingTop: 12 }}>
-          <Btn primary onClick={create} disabled={busy || name.trim() === ""}>
+          <Btn primary onClick={create} disabled={busy || name.trim() === "" || needsAgency} title={needsAgency ? "Choose an agency first" : undefined}>
             {busy ? "Creating…" : "Create service account"}
           </Btn>
           {error && <span style={{ color: c.danger, fontSize: c.fontSm }}>{error}</span>}

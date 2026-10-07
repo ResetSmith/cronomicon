@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/runref"
+	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
 // Authorization denial helpers (LU-9).
@@ -177,6 +179,189 @@ func (s *Server) denyUnrestricted(w http.ResponseWriter, r *http.Request, messag
 			auditDetails(r, "unrestricted scope access required: "+message))
 	}
 	httpx.Fail(w, http.StatusForbidden, "forbidden", message)
+}
+
+// requireGlobal gates an act on the INSTALLATION rather than on any one agency's
+// objects (GC-1): install-wide settings, the audit export, the agency catalog,
+// and every shared object that has no owner yet. It requires an UNRESTRICTED
+// grant that itself CARRIES perm — CanAgency(perm, ""), the predicate
+// requireFleetWide has always used for runner tokens.
+//
+// The two weaker checks it replaces are the reason it exists. requirePerm asks
+// "do you hold this verb SOMEWHERE", so an administrator of one agency passed it
+// and could rewrite the Vault connection for all of them. A bare
+// id.Unrestricted() asks "does ANY grant reach every scope" and is
+// permission-blind: a viewer on all scopes who is also an admin of one agency
+// reads as unrestricted. Neither is "a global administrator".
+//
+// It chains requirePerm first so the session + CSRF checks and the plain
+// "you lack this permission entirely" 403 are unchanged; only the caller who
+// holds the verb on one agency sees the new refusal.
+func (s *Server) requireGlobal(perm string) func(http.Handler) http.Handler {
+	has := func(p rolePermissions) bool { return p.Has(perm) }
+	return func(next http.Handler) http.Handler {
+		return s.requirePerm(perm, has)(s.globalOnly(perm,
+			"this changes the whole installation, not one agency — only an administrator "+
+				"whose "+perm+" grant covers every agency may do it", next))
+	}
+}
+
+// globalOnly is the in-chain half of requireGlobal, for routes that already sit
+// behind requirePerm and need their own refusal sentence (requireFleetWide).
+func (s *Server) globalOnly(perm, message string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		if !id.CanAgency(perm, "") {
+			s.denyEntityAgency(w, r, id, perm, auth.AllScopes, message)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isGlobal reports whether the caller is a global administrator for perm, for
+// handlers that shape a response on it rather than refuse (GC-14).
+func isGlobal(r *http.Request, perm string) bool {
+	id, ok := auth.IdentityFrom(r.Context())
+	return ok && id.CanAgency(perm, "")
+}
+
+// requireScopeAgency wraps a scope route with the departmental gate (GC-6): the
+// caller must hold configureApp on an agency the scope belongs to. A scope with
+// NO agency is shared by every department, so it is a global administrator's —
+// the same RB-Q14 rule requireEntityAgency applies to every other unmembered
+// entity.
+//
+// Before this, the scope routes asked only for configureApp SOMEWHERE: an
+// administrator of one agency could edit, re-inventory, delete or unbind another
+// agency's scope (reproduced 2026-10-06 — PATCH 200, DELETE 204, unbind 200).
+// A scope id that matches no row reads as unmembered, so a departmental caller
+// gets the same 403 for "not yours" and "does not exist".
+//
+// Sits INSIDE requirePerm, like requireRunnerAgency.
+func (s *Server) requireScopeAgency(pathVar string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp,
+			"scope_agencies", "scope_id", r.PathValue(pathVar), "scope") {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireHostOwner wraps a write on ONE ssh host record (GC-7). A record that
+// was imported for a scope follows that scope's gate. A manually authored
+// record has no owner and applies to every scope — it wins over an imported
+// one — so until host records carry an owner it is a global administrator's.
+//
+// A host id that matches no row falls through to the handler's own 404.
+func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, ok := auth.IdentityFrom(r.Context())
+		if !ok {
+			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		var scopeID sql.NullString
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT scope_id FROM ssh_hosts WHERE id = ?`, r.PathValue(pathVar)).Scan(&scopeID)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			next.ServeHTTP(w, r)
+			return
+		case err != nil:
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if scopeID.Valid && scopeID.String != "" {
+			if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp,
+				"scope_agencies", "scope_id", scopeID.String, "scope") {
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !id.CanAgency(auth.PermConfigureApp, "") {
+			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+				"a manually authored host record applies to every scope, so only an "+
+					"administrator of every agency may change it")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireJobVisible is the read gate for the routes any signed-in user may
+// WRITE through — tags and annotations (GC-12). "Any signed-in user" was meant
+// as "no role needed", not "no scope needed": these routes address a job by
+// row id and used to check nothing, so a viewer in one agency could rewrite the
+// tags and notes of another agency's job and receive its full row in reply.
+//
+// It differs from requireReadableJob in one way, on purpose: a binned job
+// passes, because tags and annotations stay editable in the recycle bin
+// (FX-Q5). A job the caller cannot read answers 404, never 403 — the same
+// no-oracle rule as every other row-id route.
+func (s *Server) requireJobVisible(w http.ResponseWriter, r *http.Request, jobID string) bool {
+	jr := s.fetchJobByID(r, jobID)
+	if jr == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
+		return false
+	}
+	id, hasID := auth.IdentityFrom(r.Context())
+	if !hasID {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return false
+	}
+	scope := ""
+	if jr.Scope != nil {
+		scope = *jr.Scope
+	}
+	if !id.Unrestricted() && !auth.ScopeReadable(id, scope) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
+		return false
+	}
+	return true
+}
+
+// requireWorkflowVisible is requireJobVisible for a workflow, which has no scope
+// of its own: it is visible when every scope its jobs are in — its
+// sub-workflows' jobs included — is readable by the caller. A workflow none of
+// whose jobs resolve has nothing to protect and passes, as it always has.
+func (s *Server) requireWorkflowVisible(w http.ResponseWriter, r *http.Request, wfID string) bool {
+	wr := s.fetchWorkflowByID(r, wfID)
+	if wr == nil {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
+		return false
+	}
+	id, hasID := auth.IdentityFrom(r.Context())
+	if !hasID {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return false
+	}
+	if id.Unrestricted() {
+		return true
+	}
+	scopes, err := workflow.New(s.db, s.log).JobScopes(r.Context(), wr.Steps, wr.Source)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	for _, sc := range scopes {
+		if !auth.ScopeReadable(id, sc) {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow not found")
+			return false
+		}
+	}
+	return true
 }
 
 // requireEntityAgency is the agency-side counterpart to requireCan, for entities

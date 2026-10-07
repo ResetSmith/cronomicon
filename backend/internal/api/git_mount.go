@@ -55,7 +55,7 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 					httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 					return
 				}
-				h.PublishSchedule(id.Email, w, r)
+				h.PublishSchedule(id.Email, s.authorizePublish, w, r)
 			}),
 		),
 	)
@@ -75,7 +75,7 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 
 	// ── Git sync trigger (ConfigureApp, PP-B1) ─────────────────────────────
 	mux.Handle("POST /api/v1/git/sync",
-		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(h.PostSync)),
+		s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(h.PostSync)),
 	)
 
 	// ── Git sync history (operator GET) ───────────────────────────────────
@@ -84,7 +84,7 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 
 	// ── Scope resync (ConfigureApp, PP-B1) ─────────────────────────────────
 	mux.Handle("POST /api/v1/scopes/resync",
-		s.requirePerm("configureApp", permConfigureApp)(
+		s.requireGlobal(auth.PermConfigureApp)(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				id, ok := auth.IdentityFrom(r.Context())
 				if !ok {
@@ -95,4 +95,85 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 			}),
 		),
 	)
+}
+
+// authorizePublish is the per-file half of the publish gate (GC-9).
+//
+// The route asks only whether the caller holds publishSchedule SOMEWHERE. Until
+// v2.2.2 nothing asked more, so an approver in one agency could write any
+// `jobs/`, `schedules/` or `workflows/` file naming any scope — authoring
+// another department's job through the one shared repository. The rule now:
+//
+//   - a global publisher (an unrestricted grant carrying the permission) may
+//     publish anything, as before;
+//   - anyone else may publish only a JOB file, whose incoming content names a
+//     scope they hold the permission on — and, when the publish REPLACES
+//     something, the scope it replaces must be theirs too. "Replaces" covers
+//     both the file already at that path and any git job that already uses the
+//     incoming name (sync upserts by name, so a second file with a taken name
+//     would rewrite the first one's row);
+//   - a schedule or workflow file, an unscoped job, or content whose scope
+//     cannot be read is a global publisher's alone.
+//
+// It returns "" to allow, or the 403 message, having written the audit row.
+func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) string {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		return "login required"
+	}
+	const perm = auth.PermPublishSchedule
+	if id.CanUnbound(perm) {
+		return ""
+	}
+	deny := func(where, msg string) string {
+		if s.auth != nil {
+			s.auth.AuditDenied(r, id.Email, "insufficient_permission", perm, auditDetails(r, msg+" ("+where+")"))
+		}
+		return msg
+	}
+	if t.Kind != "job" {
+		return deny(t.Kind+" file", "schedule and workflow files are shared by every agency — "+
+			"only an administrator whose publish permission covers every agency may publish them")
+	}
+	if !t.NewParsed || t.NewScope == "" {
+		return deny("no scope", "a job you publish must name a scope you hold publishSchedule on; "+
+			"an unscoped job is shared by every agency")
+	}
+	if !id.Can(perm, t.NewScope) {
+		return deny("scope "+t.NewScope, "insufficient permissions: publishSchedule is required on scope "+t.NewScope)
+	}
+	// The name check below is only as good as the name. Sync falls back to the
+	// base name of spec.target_host for a job that carries no metadata.name, so
+	// a nameless file could be aimed at any existing job's row and would skip
+	// the check entirely.
+	if t.Name == "" {
+		return deny("no name", "a job you publish must carry metadata.name")
+	}
+	// One sentence for every "it is someone else's" case, so the refusal does
+	// not say whether the path or the name was the one already taken.
+	const taken = "this would replace a definition outside your access — choose another file name and job name"
+	if t.OldExists && (!t.OldParsed || t.OldScope == "" || !id.Can(perm, t.OldScope)) {
+		return deny("replaces file", taken)
+	}
+	{
+		rows, err := s.db.QueryContext(r.Context(),
+			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ?`, t.Name)
+		if err != nil {
+			return deny("db error", "could not verify the job name; try again")
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var sc string
+			if err := rows.Scan(&sc); err != nil {
+				return deny("db error", "could not verify the job name; try again")
+			}
+			if sc == "" || !id.Can(perm, sc) {
+				return deny("replaces name", taken)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return deny("db error", "could not verify the job name; try again")
+		}
+	}
+	return ""
 }

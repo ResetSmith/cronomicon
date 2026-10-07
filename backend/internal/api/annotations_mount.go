@@ -238,6 +238,9 @@ func (s *Server) updateJobAnnotation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := r.PathValue("jobId")
+	if !s.requireJobVisible(w, r, jobID) { // GC-12
+		return
+	}
 	if !s.writeAnnotation(w, r, "job", "jobs", jobID, actor) {
 		return
 	}
@@ -264,6 +267,9 @@ func (s *Server) updateWorkflowAnnotation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	wfID := r.PathValue("workflowId")
+	if !s.requireWorkflowVisible(w, r, wfID) { // GC-12
+		return
+	}
 	if !s.writeAnnotation(w, r, "workflow", "workflows", wfID, actor) {
 		return
 	}

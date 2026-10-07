@@ -1192,3 +1192,113 @@ func TestOrdinarySuppressionEmitsNoActivity(t *testing.T) {
 		t.Errorf("a disabled-reaction suppression wrote %d activity rows, want 0", n)
 	}
 }
+
+// GC-13 (v2.2.2) — a reaction watches a DEFINITION, not a name. Names are
+// per-agency since R2, so two departments may each hold a cronomicon job called
+// "nightly"; matching the upstream by name alone let one department's run fire
+// the reaction authored against the other's.
+func TestReactionMatchesTheUpstreamByIdentityNotName(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	seedJobRow(t, pool, "downstream", 1)
+	for _, uid := range []string{"uid-fin-nightly", "uid-tax-nightly"} {
+		if _, err := pool.ExecContext(ctxb(),
+			`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, created_at)
+			 VALUES (?, 'nightly', 'cronomicon', 'bash', 'Allow', 1, 't')`, uid); err != nil {
+			t.Fatalf("seed job %s: %v", uid, err)
+		}
+	}
+	// The reaction is authored against FIN's "nightly".
+	if _, err := pool.ExecContext(ctxb(), `
+		INSERT INTO reactions (owner_source, owner_kind, owner_name, name,
+		                       on_source, on_kind, on_name, on_outcome, on_uid,
+		                       delay_seconds, min_interval_seconds, include_workflow_children, enabled, owner_uid)
+		VALUES ('git','job','downstream','on-fin-nightly',
+		        'cronomicon','job','nightly','success','uid-fin-nightly',
+		        0,0,0,1,(SELECT uid FROM jobs WHERE name='downstream' AND source='git'))`); err != nil {
+		t.Fatalf("seed reaction: %v", err)
+	}
+	finish := func(id, uid string) {
+		ts := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+		if _, err := pool.ExecContext(ctxb(), `
+			INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by,
+			                  trigger_kind, completed_at, created_at)
+			VALUES (?, 'nightly', 'cronomicon', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`,
+			id, uid, ts, ts); err != nil {
+			t.Fatalf("seed run %s: %v", id, err)
+		}
+	}
+
+	primeCursor(t, s)
+	finish("r-tax", "uid-tax-nightly")
+	s.ScanReactions(ctxb())
+	if n := countPending(t, pool, "downstream"); n != 0 {
+		t.Fatalf("TAX's same-named job fired FIN's reaction: %d pending run(s)", n)
+	}
+
+	finish("r-fin", "uid-fin-nightly")
+	s.ScanReactions(ctxb())
+	if n := countPending(t, pool, "downstream"); n != 1 {
+		t.Fatalf("FIN's own run must still fire it: pending = %d, want 1", n)
+	}
+}
+
+// A reaction with no pinned identity matches by name only while the name means
+// one definition; and a reaction whose pinned definition has been purged falls
+// back to the name on the same condition, so recreating a job does not silently
+// orphan its reactions.
+func TestReactionNameFallbackNeedsAnUnambiguousName(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	seedJobRow(t, pool, "downstream", 1)
+	job := func(uid string) {
+		if _, err := pool.ExecContext(ctxb(), `
+			INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, created_at)
+			VALUES (?, 'nightly', 'cronomicon', 'bash', 'Allow', 1, 't')`, uid); err != nil {
+			t.Fatalf("seed job %s: %v", uid, err)
+		}
+	}
+	react := func(name string, onUID any) {
+		if _, err := pool.ExecContext(ctxb(), `
+			INSERT INTO reactions (owner_source, owner_kind, owner_name, name,
+			                       on_source, on_kind, on_name, on_outcome, on_uid,
+			                       delay_seconds, min_interval_seconds, include_workflow_children, enabled, owner_uid)
+			VALUES ('git','job','downstream',?,'cronomicon','job','nightly','success',?,
+			        0,0,0,1,(SELECT uid FROM jobs WHERE name='downstream' AND source='git'))`, name, onUID); err != nil {
+			t.Fatalf("seed reaction %s: %v", name, err)
+		}
+	}
+	n := 0
+	finish := func(uid string) {
+		n++
+		ts := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+		if _, err := pool.ExecContext(ctxb(), `
+			INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by,
+			                  trigger_kind, completed_at, created_at)
+			VALUES (?, 'nightly', 'cronomicon', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`,
+			"r"+string(rune('0'+n)), uid, ts, ts); err != nil {
+			t.Fatalf("seed run: %v", err)
+		}
+	}
+
+	// The reaction pins a job that no longer exists (purged), and one "nightly"
+	// exists now — its recreation. The name is unambiguous: it fires.
+	job("uid-new")
+	react("pinned-to-a-purged-job", "uid-old")
+	primeCursor(t, s)
+	finish("uid-new")
+	s.ScanReactions(ctxb())
+	if got := countPending(t, pool, "downstream"); got != 1 {
+		t.Fatalf("a recreated job must keep its reaction: pending = %d, want 1", got)
+	}
+
+	// A second agency now holds a "nightly" too. The dangling pin can no longer
+	// be resolved by name, so neither job's run fires it.
+	job("uid-other-agency")
+	finish("uid-other-agency")
+	finish("uid-new")
+	s.ScanReactions(ctxb())
+	if got := countPending(t, pool, "downstream"); got != 1 {
+		t.Fatalf("an ambiguous name must not fire a reaction with no usable identity: pending = %d, want still 1", got)
+	}
+}

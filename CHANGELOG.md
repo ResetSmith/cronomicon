@@ -13,6 +13,143 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.2.2] - 2026-10-06
+
+An administrator of one agency can no longer change the installation or another
+agency (GC band). Most write routes asked only whether the caller held a
+permission on *some* agency; the ones that change install-wide state now need a
+**global administrator** — a role granted on every agency that itself carries
+the permission — and the ones that change one agency's objects are checked
+against that agency. No new feature. Schema (v1210) and runner protocol (14)
+are unchanged; a 2.2.1 runner works with a 2.2.2 server.
+
+**Upgrading.** This release takes abilities away from agency-scoped
+administrators, so read what it will change *before* you upgrade:
+
+```bash
+cronomicon preflight            # new binary, existing database; read-only
+```
+
+It says whether a global administrator exists, lists each AD group whose
+agency-scoped grant loses an ability, the active service accounts their creator
+could not mint under the new rules, and the Vault-backed secrets an agency
+owns. Exit status 3 means **no global administrator exists**: after the upgrade
+nobody could change a setting or repair access. Fix that first, with an
+all-agencies admin grant in Settings → Users & Access or with
+`cronomicon grant-admin <ad-group>`. The server logs the same findings once, at
+its first start on 2.2.2, and warns `NO GLOBAL ADMINISTRATOR` at every start
+while the condition holds.
+
+What an administrator of **one agency** can no longer do, until the release
+that gives each of these an owning agency:
+
+- change install-wide settings (General, Notifications, GitLab, Vault, Log
+  Storage, Observability, Audit & Compliance), start a Git sync or scope
+  resync, or export the audit history;
+- create, rename or delete an agency, move a scope between agencies, or change
+  a scope that belongs to another agency or to none;
+- create or edit alert rules, bastions, or manually authored SSH host records;
+- create, edit or migrate a Vault-backed secret;
+- author reusable schedules, calendars or reactions, or use revisions and the
+  recycle bin;
+- mint or revoke a service account outside their agency, for every agency, or
+  with a role above their own;
+- publish a schedule file, a workflow file, an unscoped job, or a job in
+  another agency's scope.
+
+Within their own agency they keep everything else: scopes, runners, stored
+secrets, variables, SSH keys, jobs, workflows and access grants. A scope they
+create now lands in their agency (it used to land in none, where its creator
+could not see it), and their own session can use it at once. As with every
+change to which scopes an agency holds, other signed-in users are signed out.
+
+### Security
+
+- **Install-wide routes need a global administrator.** Every install-wide
+  setting, the audit export, Git sync and scope resync, the agency catalog,
+  alert rules, bastions and manual host records were writable with
+  `configureApp` held on any one agency.
+- **"Unrestricted" is never checked without the permission.** Someone who was a
+  viewer on all scopes and an admin of one agency passed the two
+  unrestricted-only guards on role templates and all-scopes grants, and three
+  smaller ones.
+- **No route decides on a role's name.** Reusable schedules, calendars,
+  reactions, revisions and the recycle bin checked for a role literally named
+  `admin` on any grant: an `admin` of one agency reached all of them, and a
+  custom role with every permission on every agency reached none. They now need
+  `compose` and `configureApp` on the same all-agencies grant.
+- **Service accounts follow the delegation rules.** Minting one skipped the
+  three rules that govern access grants: a delegate for one agency could mint a
+  token for another agency, for every agency with the `admin` role, or with a
+  role it did not hold. Revoke had no ownership check and the list was not
+  filtered.
+- **Scopes are administered by their own agency.** An administrator of one
+  agency could edit, re-inventory, delete or unbind another agency's scope.
+  Replacing a runner now needs authority over every scope the old runner is
+  bound to, not only over the replacement.
+- **Publish is checked per file.** Anyone with `publishSchedule` on one agency
+  could write any `jobs/`, `schedules/` or `workflows/` file naming any scope.
+  The scope is now checked on both sides of the write, including a job name
+  another agency's file already uses.
+- **A Vault path is named by a global administrator.** There is one Vault
+  connection and a secret's path was checked only for being non-empty, so an
+  agency's secrets manager could bind, or migrate to, any path that connection
+  can reach.
+- **Workflow authorization follows sub-workflows.** A workflow whose only step
+  was a sub-workflow was authorized on nothing: it could be composed, triggered,
+  paused or cancelled by someone with no authority over the jobs it ran.
+- **Cancelling a pending run needs a run verb.** Any signed-in user, a viewer
+  included, could cancel another agency's scheduled workflow run.
+- **Tags and annotations need a readable row.** Any signed-in user could
+  rewrite the tags and notes of any job or workflow by row id and receive the
+  full row in reply.
+- **A reaction matches its upstream by identity.** Two agencies may hold
+  same-named jobs; one's run fired the reaction authored against the other's.
+  A reaction with no usable identity still matches by name, but only while
+  exactly one definition carries that name. If two do, it does not fire until
+  it is saved again against the one it means.
+- **Dismissing a scope-binding notice needs the notice's scope.** Any
+  `configureApp` holder could hide the notice that told another agency its job
+  was no longer confined to a runner.
+- **A name is never resolved by guessing between two definitions.** Where the
+  server recorded a definition's identity from its name (reactions, deferred
+  runs), two same-named definitions now record none, and the paths that read
+  it fail closed. A sub-workflow step whose name matches two workflows runs the
+  oldest, always, and is authorized on that one.
+- **Notification target URLs are masked.** `GET /settings/notifications` returned
+  every Apprise target's URL — a webhook or an API key — to any session.
+
+### Added
+
+- `cronomicon preflight`, and the same report in the log at the first start of
+  this release.
+- Five capability flags that answer "may the caller do this to the
+  installation": `configureAppGlobal`, `manageRolesGlobal`,
+  `manageEnvVarsGlobal`, `publishScheduleGlobal`, `composeAdmin`. The console
+  uses them to disable an install-wide control, with the reason, for an
+  administrator of one agency.
+- `POST /scopes` accepts `agencyIds`. An agency administrator's new scope
+  inherits their agency, or they name one of several.
+
+### Fixed
+
+- `GET /analytics/runs` answered 500 to every caller who was not unrestricted:
+  the scope filter was joined with a second `AND`.
+- A scope resync left no row in the Git sync history: it recorded the actor's
+  email where the table accepts only `poll`, `webhook` or `manual`.
+- The first-boot lockout warning counted grants of the role named `admin` on
+  any agency, so it stayed silent on an installation with no one able to
+  administer it.
+
+### For developers
+
+- `writeRouteGates` (`internal/api/write_route_gates_test.go`) classifies every
+  route that is not a GET; a new write route fails the build until it has an
+  entry saying who may call it.
+- `gateServer` (`internal/api/gate_fixture_test.go`) is a two-agency cast for
+  authorization tests: a global admin, an admin of each agency, viewers, and
+  the actors that tell "somewhere" from "here" from "everywhere".
+
 ## [2.2.1] - 2026-10-06
 
 The frontend moves to React Router 7 and Vite 7, which clears the advisories

@@ -494,7 +494,7 @@ function SshKeyFormModal({
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
   // RF-Q2(a): the create-time agency binding, shown only to restricted callers.
-  const agencyPick = useCreationAgencies(isEdit);
+  const agencyPick = useCreationAgencies(isEdit, "configureApp");
   // After a successful create/rotate, show the derived fingerprint + public key.
   const [result, setResult] = useState<Credential | null>(null);
 

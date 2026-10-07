@@ -61,7 +61,7 @@ vi.mock("../../api/client", async (importOriginal) => {
 import { NotificationsSection } from "./Notifications";
 
 const renderSection = async () => {
-  const out = render(<NotificationsSection />);
+  const out = render(<NotificationsSection canWrite />);
   await waitFor(() => expect(screen.getByText("Alert Rules")).toBeTruthy());
   return out;
 };
@@ -289,6 +289,47 @@ describe("Alert Rules — the Edit button works on every row it renders (FX-12)"
       expect(within(orphan).queryByText("Edit")).toBeNull();
     } finally {
       RULES.pop();
+    }
+  });
+});
+
+// GC (v2.2.2, gate closing) — POST/PUT/DELETE /alerts need a global
+// administrator; GET /alerts is open to every session. So the rules stay listed
+// for an administrator of one agency, and "+ Add Alert Rule" and each row's Edit
+// — the only doors to Save and Delete — are disabled with the reason (FX-7).
+describe("Alert Rules — global-administrator gate (GC)", () => {
+  const WHY = "Only a global administrator (a role on every agency) can change this.";
+
+  it("lists the rules but disables Add and Edit, with the reason, for a non-global administrator", async () => {
+    render(<NotificationsSection canWrite={false} />);
+    await waitFor(() => expect(screen.getByText("nightly-db-backup")).toBeTruthy());
+
+    const add = screen.getByRole("button", { name: "+ Add Alert Rule" }) as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    expect(add.title).toBe(WHY);
+
+    const edits = within(ruleTable()).getAllByRole("button", { name: "Edit" }) as HTMLButtonElement[];
+    expect(edits.length).toBe(RULES.length);
+    for (const e of edits) {
+      expect(e.disabled).toBe(true);
+      expect(e.title).toBe(WHY);
+    }
+
+    // Clicking a disabled Edit opens no editor, so Save and Delete are unreachable.
+    fireEvent.click(edits[0]);
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(puts.length).toBe(0);
+    expect(deletes.length).toBe(0);
+  });
+
+  it("leaves Add and Edit enabled for a global administrator", async () => {
+    await renderSection();
+    await waitFor(() => expect(screen.getByText("nightly-db-backup")).toBeTruthy());
+    const add = screen.getByRole("button", { name: "+ Add Alert Rule" }) as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    expect(add.title).toBe("");
+    for (const e of within(ruleTable()).getAllByRole("button", { name: "Edit" }) as HTMLButtonElement[]) {
+      expect(e.disabled).toBe(false);
     }
   });
 });

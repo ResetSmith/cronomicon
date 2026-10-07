@@ -58,6 +58,10 @@ vi.mock("../../api/client", async (importOriginal) => {
     // every agency), so these cards render their write affordances only for an
     // unrestricted administrator. This suite is that administrator; the
     // delegate's view is covered by UsersAccess.Delegate.test.tsx.
+    //
+    // GC-3 (v2.2.2) — "unrestricted administrator" is `manageRolesGlobal`: one
+    // grant covering every agency that itself carries manageRoles. The cards no
+    // longer read the permission-blind `unrestricted`.
     fetchCapabilities: vi.fn(async () => ({
       vault: false,
       apprise: false,
@@ -70,6 +74,7 @@ vi.mock("../../api/client", async (importOriginal) => {
       triggerJobs: true,
       killJobs: true,
       unrestricted: true,
+      manageRolesGlobal: true,
     })),
   };
 });

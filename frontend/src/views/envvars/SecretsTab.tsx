@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../../api/client";
+import { VAULT_SECRET_GLOBAL_ONLY, globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useColumnWidths, useInlineTags, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
@@ -80,10 +81,19 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
   // Vault-source secrets are only offered when Vault is actually configured
   // (C.3); otherwise the local-KEK "stored" path is the only active option.
   const [vaultEnabled, setVaultEnabled] = useState(false);
+  // GC-8 (v2.2.2) — there is ONE Vault connection for the installation and a
+  // secret's path is not divided by agency, so naming a path (creating a
+  // Vault-backed secret, editing one, migrating a stored one) is a global
+  // administrator's. `vaultWhy` is "" for them and the explanation for a
+  // departmental manageEnvVars holder, who keeps the controls — disabled.
+  const [vaultGlobal, setVaultGlobal] = useState(false);
+  const vaultWhy = globalOnly(vaultGlobal, VAULT_SECRET_GLOBAL_ONLY);
   useEffect(() => {
     let cancelled = false;
     fetchCapabilities().then((caps) => {
-      if (!cancelled) setVaultEnabled(caps.vault);
+      if (cancelled) return;
+      setVaultEnabled(caps.vault);
+      setVaultGlobal(!!caps.manageEnvVarsGlobal);
     });
     return () => {
       cancelled = true;
@@ -264,7 +274,15 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
         <span onClick={(e) => e.stopPropagation()}>
           {canEdit && (
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <Btn onClick={() => setEditing(v)}>Edit</Btn>
+              {/* A Vault-backed row may be edited only by a global administrator
+                  (the edit can re-point its path). Deleting it names no path. */}
+              <Btn
+                onClick={() => setEditing(v)}
+                disabled={v.source === "vault" && !!vaultWhy}
+                title={v.source === "vault" && vaultWhy ? vaultWhy : undefined}
+              >
+                Edit
+              </Btn>
               <Btn dangerQuiet onClick={() => setDeleting(v)}>
                 Delete
               </Btn>
@@ -459,8 +477,12 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                               <DetailRow label="Created By" value={v.createdBy || "—"} last />
                               {!isVault && vaultEnabled && (
                                 <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${c.borderLight}`, display: "flex", alignItems: "center", gap: 10 }}>
-                                  <Btn onClick={() => setMigrating(v)}>Migrate to Vault</Btn>
-                                  <span style={{ fontSize: c.fontXs, color: c.textMuted }}>Converts this entry to a vault reference</span>
+                                  <Btn onClick={() => setMigrating(v)} disabled={!!vaultWhy} title={vaultWhy || undefined}>
+                                    Migrate to Vault
+                                  </Btn>
+                                  <span style={{ fontSize: c.fontXs, color: c.textMuted }}>
+                                    {vaultWhy || "Converts this entry to a vault reference"}
+                                  </span>
                                 </div>
                               )}
                             </div>
@@ -490,6 +512,7 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
           initial={editing}
           scopeNames={scopeNames}
           vaultEnabled={vaultEnabled}
+          vaultWhy={vaultWhy}
           onClose={() => {
             setAdding(false);
             setEditing(null);
@@ -537,12 +560,16 @@ function SecretFormModal({
   initial,
   scopeNames,
   vaultEnabled,
+  vaultWhy,
   onClose,
   onSaved,
 }: {
   initial: EnvSecretRow | null;
   scopeNames: string[];
   vaultEnabled: boolean;
+  /** GC-8 — non-empty when the caller may not name a Vault path: the Vault
+   *  source option renders disabled with this as its explanation. */
+  vaultWhy: string;
   onClose: () => void;
   onSaved: (msg: string) => void;
 }) {
@@ -559,7 +586,7 @@ function SecretFormModal({
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
   // RF-Q2(a): the create-time agency binding, shown only to restricted callers.
-  const agencyPick = useCreationAgencies(isEdit);
+  const agencyPick = useCreationAgencies(isEdit, "manageEnvVars");
 
   const onKeyChange = (raw: string) => {
     const up = raw.toUpperCase().replace(/[^A-Z0-9_]/g, "");
@@ -672,29 +699,44 @@ function SecretFormModal({
                   // Vault option only appears when Vault is configured (C.3).
                   ...(vaultEnabled ? [{ v: "vault", l: "Vault reference" }] : []),
                 ] as { v: SecretSource; l: string }[]
-              ).map((opt, i) => (
-                <div
-                  key={opt.v}
-                  onClick={() => {
-                    setSource(opt.v);
-                    setValue("");
-                    setVaultPath("");
-                  }}
-                  style={{
-                    padding: "6px 12px",
-                    cursor: "pointer",
-                    fontSize: c.fontSm,
-                    fontWeight: source === opt.v ? 600 : 400,
-                    userSelect: "none",
-                    background: source === opt.v ? c.primary : "transparent",
-                    color: source === opt.v ? c.onSolid : c.textSec,
-                    borderRight: i === 0 ? `1px solid ${c.border}` : "none",
-                  }}
-                >
-                  {opt.l}
-                </div>
-              ))}
+              ).map((opt, i) => {
+                // Vault is configured (so the option is relevant) but naming a
+                // path is a global administrator's: disabled, with the reason.
+                const blocked = opt.v === "vault" && !!vaultWhy;
+                return (
+                  <div
+                    key={opt.v}
+                    aria-disabled={blocked || undefined}
+                    title={blocked ? vaultWhy : undefined}
+                    onClick={
+                      blocked
+                        ? undefined
+                        : () => {
+                            setSource(opt.v);
+                            setValue("");
+                            setVaultPath("");
+                          }
+                    }
+                    style={{
+                      padding: "6px 12px",
+                      cursor: blocked ? "not-allowed" : "pointer",
+                      opacity: blocked ? 0.5 : 1,
+                      fontSize: c.fontSm,
+                      fontWeight: source === opt.v ? 600 : 400,
+                      userSelect: "none",
+                      background: source === opt.v ? c.primary : "transparent",
+                      color: source === opt.v ? c.onSolid : c.textSec,
+                      borderRight: i === 0 ? `1px solid ${c.border}` : "none",
+                    }}
+                  >
+                    {opt.l}
+                  </div>
+                );
+              })}
             </div>
+            {vaultEnabled && vaultWhy && (
+              <span role="note" style={{ fontSize: c.fontXs, color: c.textMuted, flex: 1, minWidth: 200 }}>{vaultWhy}</span>
+            )}
           </div>
         )}
         <div>

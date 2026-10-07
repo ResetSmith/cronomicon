@@ -36,9 +36,20 @@ export function Scopes() {
   };
   // Scope + agency writes require ConfigureApp (matching the server requirePerm
   // gates). Mutation controls are hidden when the caller lacks the permission.
+  //
+  // GC (v2.2.2) — `canConfig` is still "configureApp somewhere" and still decides
+  // whether the mutation controls exist at all. `globalAdmin` is the narrower
+  // fact the install-wide ones now need: the agency catalog, moving a scope
+  // between agencies, and the GitLab re-sync all ask for one grant covering
+  // every agency. An administrator of one agency keeps those controls, disabled
+  // with the reason.
   const [canConfig, setCanConfig] = useState(false);
+  const [globalAdmin, setGlobalAdmin] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanConfig(caps.configureApp));
+    fetchCapabilities().then((caps) => {
+      setCanConfig(caps.configureApp);
+      setGlobalAdmin(!!caps.configureAppGlobal);
+    });
   }, []);
   // ScopesTab is a controlled child: it renders the rows we fetch and bumps the
   // dep via refetch() after a mutation. AgenciesTab self-fetches and needs none.
@@ -49,7 +60,7 @@ export function Scopes() {
   return (
     <div>
       <TabBar tabs={["Scopes", "Agencies"]} active={tab} onChange={select} />
-      {tab === 0 && <ScopesTab scopes={scopes} loading={loading} error={error} refetch={() => setScopesDep((n) => n + 1)} canEdit={canConfig} dep={scopesDep} />}
+      {tab === 0 && <ScopesTab scopes={scopes} loading={loading} error={error} refetch={() => setScopesDep((n) => n + 1)} canEdit={canConfig} globalAdmin={globalAdmin} dep={scopesDep} />}
       {/* RB-22 — the Membership matrix tab is gone. It was rows × 24 agency
           columns with a non-sticky name cell: scrolled right, you were ticking
           anonymous checkboxes — the same horizontal wall as the deleted Scope
@@ -57,7 +68,7 @@ export function Scopes() {
           question is actually asked: "what is in Tax?" is the Agencies tab (each
           row expands into an editable member list), and "which agencies hold this
           secret?" is an Agencies column on the entity's own catalog row. */}
-      {tab === 1 && <AgenciesTab canEdit={canConfig} />}
+      {tab === 1 && <AgenciesTab canEdit={canConfig} globalAdmin={globalAdmin} />}
     </div>
   );
 }

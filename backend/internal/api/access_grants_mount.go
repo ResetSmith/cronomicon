@@ -145,7 +145,10 @@ func (s *Server) validateGrant(r *http.Request, in *accessGrantInput) (string, b
 // On refusal it has written the 403 and the audit row; the call site is
 // `if !s.requireGrantWritable(...) { return }`.
 func (s *Server) requireGrantWritable(w http.ResponseWriter, r *http.Request, id auth.Identity, role, agencyID string, allScopes bool) bool {
-	if id.Unrestricted() {
+	// GC-3: "unrestricted" here must mean an unrestricted grant that itself
+	// carries manageRoles. The bare Unrestricted() is permission-blind, so a
+	// viewer on all scopes who delegates for one agency skipped all three rules.
+	if id.CanAgency(auth.PermManageRoles, "") {
 		return true
 	}
 	deny := func(msg string) bool {

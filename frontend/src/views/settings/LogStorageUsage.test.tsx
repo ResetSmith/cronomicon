@@ -69,7 +69,7 @@ describe("Log Storage usage line", () => {
         },
       },
     };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText(/2 run logs/)).toBeTruthy());
     // The run-log size, not the total — the whole point of the split.
@@ -91,7 +91,7 @@ describe("Log Storage usage line", () => {
         classes: { ...BASE.stats.classes, runLogs: { fileCount: 1, totalSizeBytes: 512 } },
       },
     };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText(/1 run logs/)).toBeTruthy());
     expect(q.queryByText(/Audit log/)).toBeNull();
@@ -117,7 +117,7 @@ describe("Log Storage usage line", () => {
         },
       },
     };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText(/1 run logs/)).toBeTruthy());
     expect(q.getByText(/Other 100 B/)).toBeTruthy();
@@ -135,7 +135,7 @@ describe("Log Storage usage line", () => {
         classes: { ...BASE.stats.classes, processLog: { fileCount: 1, totalSizeBytes: 4096 } },
       },
     };
-    const { container } = render(<LogStorageSection />);
+    const { container } = render(<LogStorageSection canWrite />);
     const q = within(container);
     await waitFor(() => expect(q.getByText(/0 run logs/)).toBeTruthy());
     expect(q.queryByText(/oldest/)).toBeNull();

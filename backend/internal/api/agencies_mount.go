@@ -26,10 +26,10 @@ import (
 //	PUT    /api/v1/agencies/{agencyId}/members  (ConfigureApp + CSRF) — 422, RF-1b per added entity
 func (s *Server) mountAgencies(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/agencies", s.auth.RequireSession(http.HandlerFunc(s.handleListAgencies)))
-	mux.Handle("POST /api/v1/agencies", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCreateAgency)))
-	mux.Handle("PUT /api/v1/agencies/{agencyId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleUpdateAgency)))
-	mux.Handle("DELETE /api/v1/agencies/{agencyId}", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDeleteAgency)))
-	mux.Handle("PUT /api/v1/scopes/{scopeId}/agency", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetScopeAgency)))
+	mux.Handle("POST /api/v1/agencies", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleCreateAgency)))
+	mux.Handle("PUT /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAgency)))
+	mux.Handle("DELETE /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteAgency)))
+	mux.Handle("PUT /api/v1/scopes/{scopeId}/agency", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetScopeAgency)))
 	// RB-22: the agency-scoped member setter — replace ONE AGENCY's member list.
 	// The inverse of the per-kind matrices below; it touches only rows with this
 	// agency_id, so edits to two different agencies cannot race by construction.
@@ -152,6 +152,25 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 	}
 }
 
+// requireScopeMove gates a change to which agency a SCOPE belongs to (GC-6).
+//
+// A scope's agencies decide who can reach it: every grant on an agency expands
+// to that agency's scopes. So moving a scope is not a departmental act — an
+// administrator of one agency who could do it would pull another agency's scope
+// into their own grant, or push theirs out from under its owners. The setters
+// always SAID this was "the global configureApp gate"; the route gate was only
+// ever "configureApp somewhere". Until a scope has a single owner and the move
+// can be authorized on both sides, it is for a global administrator alone.
+func (s *Server) requireScopeMove(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
+	if id.CanAgency(auth.PermConfigureApp, "") {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+		"a scope's agency decides who can reach it, so moving a scope between agencies "+
+			"is for an administrator of every agency")
+	return false
+}
+
 // handleSetAgencyMembership replaces the agency set of each posted entity
 // (replace-per-row, like the runner-agencies and scope-restrictions matrices).
 func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Request, kind settings.MemberKind) {
@@ -185,7 +204,11 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	// Scope membership is exempt: a scope's agencies define the grant expansion
 	// itself, so it is administered by the global configureApp gate above and not
 	// by the departmental axis it produces.
-	if kind != settings.MemberScope {
+	if kind == settings.MemberScope {
+		if !s.requireScopeMove(w, r, id) {
+			return
+		}
+	} else {
 		perm, joinTable, joinCol, label := membershipAuthzFor(kind)
 		for _, m := range body {
 			if !s.requireEntityAgency(w, r, id, perm, joinTable, joinCol, m.ID, label) {
@@ -559,6 +582,16 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
+	}
+	for _, m := range append(append([]settings.AgencyMemberRef{}, delta.Added...), delta.Removed...) {
+		if m.Kind == "scope" {
+			// GC-6: adding or removing a scope re-homes it, whichever side of
+			// the delta it lands on.
+			if !s.requireScopeMove(w, r, id) {
+				return
+			}
+			break
+		}
 	}
 	for _, m := range delta.Added {
 		if m.Kind == "scope" {

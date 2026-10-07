@@ -1,5 +1,6 @@
-import { Fragment, useState } from "react";
-import { api, csrfHeader } from "../../api/client";
+import { Fragment, useEffect, useState } from "react";
+import { api, csrfHeader, fetchCapabilities } from "../../api/client";
+import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
 import { useGet, paged, useColumnWidths, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { type SortColumn } from "../../utils/sort";
@@ -62,6 +63,16 @@ export function GitSyncTab() {
   const [bump, setBump] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncErr, setSyncErr] = useState<string | null>(null);
+  // GC (v2.2.2) — POST /git/sync re-reads the whole definitions repo, every
+  // agency's files included, so it takes a global administrator for
+  // configureApp. The log itself is readable by anyone who can open History, so
+  // the button stays for everyone and is disabled with the reason for a caller
+  // the server would refuse — it used to be live for all of them and 403.
+  const [canSync, setCanSync] = useState(false);
+  useEffect(() => {
+    fetchCapabilities().then((caps) => setCanSync(!!caps.configureAppGlobal));
+  }, []);
+  const syncWhy = globalOnly(canSync, GLOBAL_ADMIN_SYNC_ONLY);
   const [search, setSearchRaw] = useState("");
   const [action, setActionRaw] = useState("All");
   const [status, setStatusRaw] = useState("All");
@@ -204,7 +215,8 @@ export function GitSyncTab() {
         <ColumnsMenu cols={cols} cw={cw} />
         <button
           onClick={syncNow}
-          disabled={syncing}
+          disabled={syncing || !!syncWhy}
+          title={syncWhy || undefined}
           style={{
             marginLeft: "auto",
             padding: "7px 14px",
@@ -214,8 +226,8 @@ export function GitSyncTab() {
             color: c.primary,
             fontSize: c.fontSm,
             fontWeight: 600,
-            cursor: syncing ? "default" : "pointer",
-            opacity: syncing ? 0.6 : 1,
+            cursor: syncWhy ? "not-allowed" : syncing ? "default" : "pointer",
+            opacity: syncing || syncWhy ? 0.6 : 1,
           }}
         >
           {syncing ? "Syncing…" : "↻ Sync now"}
@@ -241,7 +253,7 @@ export function GitSyncTab() {
                     title="No Git sync events yet"
                     hint="Sync events appear after the first GitLab pull or push."
                     action={
-                      <Btn small onClick={syncNow} disabled={syncing}>
+                      <Btn small onClick={syncNow} disabled={syncing || !!syncWhy} title={syncWhy || undefined}>
                         {syncing ? "Syncing…" : "Sync now"}
                       </Btn>
                     }

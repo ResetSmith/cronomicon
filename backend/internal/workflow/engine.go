@@ -1147,7 +1147,40 @@ func (e *Engine) maxParallel(ctx context.Context) int {
 // produced an empty list and therefore no check at all. Fixed in RF-6
 // (the RBAC-fixes plan). If this is ever changed back to skipping
 // empties, that guard silently stops running.
+//
+// GC-10 (v2.2.2): the list covers the jobs of every SUB-WORKFLOW too. It used to
+// stop at the workflow's own job steps, because collectStepRefs deliberately
+// does not flatten a child's jobs into the parent's lookup. That is right for
+// resolution and was wrong for authorization: a workflow whose only step is a
+// sub-workflow produced no scopes, so triggering, pausing or cancelling it was
+// authorized on nothing while the engine went on to run the child's jobs with
+// the caller as actor.
 func (e *Engine) JobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	add := func(scopes []string) {
+		for _, sc := range scopes {
+			if !seen[sc] {
+				seen[sc] = true
+				out = append(out, sc)
+			}
+		}
+	}
+	own, err := e.ownJobScopes(ctx, steps, wfSource)
+	if err != nil {
+		return nil, err
+	}
+	add(own)
+	nested, err := e.SubWorkflowJobScopes(ctx, steps, wfSource)
+	if err != nil {
+		return nil, err
+	}
+	add(nested)
+	return out, nil
+}
+
+// ownJobScopes is the scopes of the job steps this graph names directly.
+func (e *Engine) ownJobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
 	defs, err := e.lookupJobDefs(ctx, steps, wfSource)
 	if err != nil {
 		return nil, err
@@ -1161,6 +1194,104 @@ func (e *Engine) JobScopes(ctx context.Context, steps []Step, wfSource string) (
 		}
 	}
 	return out, nil
+}
+
+// SubWorkflowJobScopes returns the scopes of every job reachable THROUGH the
+// sub-workflow steps of a graph — the jobs the engine will run on the caller's
+// behalf that the graph itself never names (GC-10). An unscoped job yields ""
+// here exactly as it does in JobScopes, and for the same reason.
+//
+// Each child is resolved by loadChildWorkflow, the function the engine itself
+// calls when the step runs, so the walk authorizes the workflow that would
+// actually run and nothing else. Authorizing against every workflow that merely
+// SHARES the name would be wrong in the other direction: names are per-agency,
+// so another department could veto this one's trigger, pause and cancel by
+// creating a workflow of the same name. A child that does not resolve
+// contributes nothing — it will not run either.
+//
+// The answer is true at the moment it is given. A child that is disabled now
+// and enabled before its step is reached runs on an authorization that did not
+// see it; closing that window needs the run to carry the resolution it was
+// authorized on, which it does not yet.
+//
+// Descent stops at MaxWorkflowDepth, the engine's own ceiling. A workflow is
+// walked again when it is reached at a SHALLOWER depth than before: its
+// subtree was cut off earlier at the ceiling, and from nearer the root more of
+// it is reachable — the engine would run that part.
+func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	walkedAt := map[int64]int{} // workflow rowid → shallowest depth walked from
+	var walk func(steps []Step, source string, depth int) error
+	walk = func(steps []Step, source string, depth int) error {
+		if DepthExceeded(depth) {
+			return nil
+		}
+		if source == "" {
+			source = "git"
+		}
+		for _, name := range collectWorkflowRefs(steps) {
+			childSource, childSteps, rowid, ok := e.loadChildWorkflow(ctx, name, source)
+			if !ok {
+				continue
+			}
+			if prev, done := walkedAt[rowid]; done && prev <= depth {
+				continue
+			}
+			walkedAt[rowid] = depth
+			scopes, err := e.ownJobScopes(ctx, childSteps, childSource)
+			if err != nil {
+				return err
+			}
+			for _, sc := range scopes {
+				if !seen[sc] {
+					seen[sc] = true
+					out = append(out, sc)
+				}
+			}
+			if err := walk(childSteps, childSource, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// The children of the addressed workflow run at depth 1.
+	if err := walk(steps, wfSource, 1); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// collectWorkflowRefs lists the sub-workflow names a graph references, walking
+// the same containers collectStepRefs walks.
+func collectWorkflowRefs(steps []Step) []string {
+	var out []string
+	seen := map[string]bool{}
+	var walk func([]Step)
+	walk = func(ss []Step) {
+		for _, s := range ss {
+			switch stepKind(s) {
+			case "parallel":
+				walk(s.Jobs)
+			case "sequence":
+				walk(s.Steps)
+			case "branch":
+				if s.Pass != nil {
+					walk(s.Pass.Steps)
+				}
+				if s.Fail != nil {
+					walk(s.Fail.Steps)
+				}
+			case stepKindWorkflow:
+				if s.Workflow != "" && !seen[s.Workflow] {
+					seen[s.Workflow] = true
+					out = append(out, s.Workflow)
+				}
+			}
+		}
+	}
+	walk(steps)
+	return out
 }
 
 // resolveJobDef finds a step's job def: by identity when the step pins one

@@ -201,12 +201,12 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 			                       owner_uid, on_uid)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,
 				CASE ?
-				  WHEN 'job'      THEN (SELECT uid FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT uid FROM workflows WHERE name = ? AND source = ?)
+				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
+				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 				END,
 				CASE ?
-				  WHEN 'job'      THEN (SELECT uid FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT uid FROM workflows WHERE name = ? AND source = ?)
+				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
+				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 				END)`,
 			source, kind, name, in.Name,
 			onSource, in.OnKind, in.OnName, in.OnOutcome,

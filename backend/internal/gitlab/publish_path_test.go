@@ -54,7 +54,7 @@ func TestPublishScheduleRejectsTraversal(t *testing.T) {
 	req.Header.Set("If-Match", "deadbeefdeadbeef")
 	rec := httptest.NewRecorder()
 
-	h.PublishSchedule("attacker@example.com", rec, req)
+	h.PublishSchedule("attacker@example.com", nil, rec, req)
 
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("traversal publish = %d, want 422 (rejected before Publish)", rec.Code)

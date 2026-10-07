@@ -175,12 +175,22 @@ func NewService(ctx context.Context, cfg *config.Config, db *sql.DB, log *slog.L
 		// an instance with legacy admin rows and no grants was genuinely locked out
 		// and this stayed silent. A lockout warning that reads the wrong table is
 		// worse than none, because it is trusted at exactly the moment it misleads.
-		var admins int
-		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM access_grants WHERE lower(role) = ?`, AdminRole).Scan(&admins)
-		if admins == 0 {
-			log.Warn("⚠️  NO ADMIN CONFIGURED — RBAC is enforced but no admin access grant exists " +
-				"and CRONOMICON_BOOTSTRAP_ADMIN_GROUP is unset. No operator can reach admin-gated routes. " +
-				"Set CRONOMICON_BOOTSTRAP_ADMIN_GROUP for the first login, then add an admin Access Grant in Settings.")
+		//
+		// GC-16 (v2.2.2): it counted grants of the role NAMED admin, on any
+		// agency. Install-wide routes now need a GLOBAL administrator — an
+		// all-agencies grant whose role carries the permission — so an
+		// installation run entirely by agency-scoped admins has grants, passes
+		// that count, and has nobody who can change a setting or repair access.
+		// Count what the gates actually ask for.
+		var globalAdmins int
+		_ = db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM access_grants g JOIN roles r ON lower(r.name) = lower(g.role)
+			 WHERE g.all_scopes = 1 AND r.configure_app = 1 AND r.manage_roles = 1`).Scan(&globalAdmins)
+		if globalAdmins == 0 {
+			log.Warn("⚠️  NO GLOBAL ADMINISTRATOR — no access grant gives configureApp and manageRoles on every " +
+				"agency, and CRONOMICON_BOOTSTRAP_ADMIN_GROUP is unset. Nobody can change install-wide settings " +
+				"or repair access. Run `cronomicon grant-admin <ad-group>` (server stopped), or set " +
+				"CRONOMICON_BOOTSTRAP_ADMIN_GROUP for the first login, then add an all-agencies admin grant in Settings.")
 		}
 	}
 
@@ -458,6 +468,47 @@ func (s *Service) BumpSessionEpoch(ctx context.Context) {
 		}
 	}
 	s.log.Info("session epoch bumped — prior OIDC sessions revoked", "epoch", e)
+}
+
+// RevokeOtherSessionsRefreshingOwn is RevokeOtherSessions for a change the ACTOR
+// must be able to use at once: it re-resolves the actor's own grants before
+// re-issuing their cookie, instead of carrying the old ones forward.
+//
+// Scope creation is the case (GC-6). A departmental administrator's new scope
+// lands in their agency, and their grant on that agency covers it — but the
+// scope list in a cookie is expanded at login, so a cookie re-issued unchanged
+// still could not read or compose in the scope its owner had just made, until
+// they signed out and in again. Every other session is revoked by the bump and
+// picks the scope up at its next login, as with any scope_agencies write.
+//
+// If the grants cannot be resolved the old identity is kept: a failed refresh
+// must not sign the actor out of the request that succeeded.
+//
+// The dev-login identity is kept as issued too. Its grant is constructed, not
+// resolved (see devIdentity), so its group has an access_grants row only when
+// the demo seed wrote one; on an unseeded database a re-resolve returns no
+// grants and no error, and the developer's own cookie came back with zero
+// access. It already holds "*", so there is nothing for a refresh to add.
+func (s *Service) RevokeOtherSessionsRefreshingOwn(w http.ResponseWriter, r *http.Request) {
+	s.BumpSessionEpoch(r.Context())
+	id, ok := s.codec.read(r)
+	if !ok {
+		return // trusted-header mode: identity is resolved per request
+	}
+	if s.devAuth && id.Email == devIdentity().Email {
+		id.Epoch = s.currentSessionEpoch()
+		_ = s.codec.write(w, id)
+		return
+	}
+	if grants, err := ResolveGrants(r.Context(), s.db, id.Groups); err == nil {
+		id.Grants = grants
+		id.Roles = UnionGrantRoles(grants)
+		id.AllowedScopes = UnionGrantScopes(grants)
+	} else {
+		s.log.Error("refreshing the actor's grants failed; keeping the session as issued", "error", err, "email", id.Email)
+	}
+	id.Epoch = s.currentSessionEpoch()
+	_ = s.codec.write(w, id)
 }
 
 // RevokeOtherSessions bumps the epoch (revoking every session issued before now,

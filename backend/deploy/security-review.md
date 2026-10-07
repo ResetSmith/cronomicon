@@ -443,3 +443,47 @@ Accepted notes:
   webhook secret, S3 log-storage key, Vault role id and observability bearer
   token are masked in both places.
 - **The process log is not masked** (deferred; see the durable-log note above).
+
+## Install-wide and cross-agency gates
+
+An administrator of one agency cannot change the installation or another
+agency (GC band, v2.2.2). Before it, most write routes asked only whether the
+caller held the permission on *some* agency.
+
+| # | Control | Enforced by | Verification |
+|---|---|---|---|
+| GC-1 | **Install-wide writes need a global administrator** — an unrestricted grant that itself carries the permission: every install-wide setting, the audit export, Git sync and scope resync, the agency catalog, alert rules, bastions and manual host records | `api.requireGlobal` (`CanAgency(perm, "")`) | **Automated:** `TestInstallWideRoutesRefuseAnAdminOfOneAgency` probes every route the table classes as global |
+| GC-3 | **"Unrestricted" is never checked without the permission** — a viewer on all scopes who administers one agency is not a global administrator | `requireRoleTemplateAdmin`, `requireGrantWritable`, script bindings, placement | **Automated:** `TestGC_UnrestrictedViewerWhoAdministersOneAgencyIsNotAGlobalAdmin`, `TestAViewerOfEveryScopeCanChangeNothing` |
+| GC-4 | **No route decides on a role's name** — the shared authoring surfaces (reusable schedules, calendars, reactions, revisions, recycle bin) need compose and configureApp on one unrestricted grant | `api.requireComposeAdmin` | **Automated:** `TestGC_SharedAuthoringNeedsComposeAndConfigureOnEveryAgency` |
+| GC-5 | **A service account is a grant** — mint and revoke obey own-agency, no-all-scopes and no-amplification; the list is filtered | `requireGrantWritable` in `createServiceAccount` / `revokeServiceAccount` | **Automated:** `TestGC_ServiceAccountsFollowTheDelegationRules` |
+| GC-6 | **A scope is administered by its own agency** — edit, inventory, delete, tags and runner binding; a new scope is born in its creator's agency; moving a scope, and a scope no agency owns, are a global administrator's; a runner replace needs every bound scope | `requireScopeAgency`, `requireScopeMove`, `requireCreationAgencies` | **Automated:** `TestGC_ScopesAreAdministeredByTheirOwnAgency`, `TestGC_ANewScopeLandsInItsCreatorsAgency`, `TestGC_ReplacingARunnerNeedsEveryBoundScope` |
+| GC-7 | **Host and bastion records** — a record imported for a scope follows that scope; a manual record and every bastion are a global administrator's | `requireHostOwner`, `requireGlobal` | **Automated:** `TestGC_HostAndBastionRecords` |
+| GC-8 | **A Vault path is named by a global administrator** — create, edit and migrate of a vault-source secret; the gate asks the store's question (anything not exactly `stored`, or any path) | `requireVaultSourceGlobal`, `secretNamesVault` | **Automated:** `TestGC_VaultPathsAreAGlobalAdministrators`, `TestGC_VaultGateCannotBeSidesteppedBySourceSpelling` |
+| GC-9 | **Publish is authorized per file** — the scope in the incoming content, the scope of the file it replaces, and any Git job already using the name; schedule and workflow files, unscoped jobs and nameless jobs are a global publisher's | `Server.authorizePublish` | **Automated:** `TestGC_PublishIsCheckedPerFile`, `TestGC_PublishRefusesANamelessJob` |
+| GC-10 | **Workflow authorization follows sub-workflows** — compose, trigger, pause and cancel are checked against every job the tree runs, resolved by the function the engine itself uses | `workflow.Engine.JobScopes` / `SubWorkflowJobScopes` / `DescendantRunScopes` | **Automated:** `TestGC_WorkflowAuthorizationFollowsSubWorkflows`, `TestGC_AnotherAgencysSameNamedWorkflowIsNotAVeto`, `workflow.TestSubWorkflowJobScopesReWalksAtAShallowerDepth` |
+| GC-11 | **Cancelling a pending run needs a run verb** on every scope it would touch | `cancelPendingRun` | **Automated:** `TestGC_CancellingAPendingRunNeedsARunVerb` |
+| GC-12 | **Tags and annotations need a readable row** | `requireJobVisible`, `requireWorkflowVisible` | **Automated:** `TestGC_TagsAndNotesNeedAReadableRow` |
+| GC-13 | **A reaction matches its upstream by identity**, not by a name another agency may share; the name is a fallback only while it is unambiguous | `Scheduler.deliverEvent` | **Automated:** `scheduler.TestReactionMatchesTheUpstreamByIdentityNotName`, `TestReactionNameFallbackNeedsAnUnambiguousName` |
+| GC-20 | **A scope-binding notice is dismissed by its own scope's administrator** | `handleDismissScopeBindingNotices` | **Automated:** `TestGC_DismissingANoticeNeedsItsScope` |
+| GC-14 | **Notification target URLs are returned only to a global administrator** | `handleGetNotifications` | **Automated:** `TestGC_NotificationTargetURLsAreMasked` |
+| GC-18 | **Every write route is classified** — a route that is not a GET cannot be registered without an entry saying who may call it | `writeRouteGates` | **Automated:** `TestEveryWriteRouteIsClassified` |
+
+Accepted notes:
+
+- **Vault paths are closed, not divided.** Until agencies have their own path
+  prefixes, no agency administrator can create or edit a Vault-backed secret.
+  A secret written before v2.2.2 keeps the path it was given; `cronomicon
+  preflight` lists the ones an agency owns.
+- **Shared objects still have no owner.** A reusable schedule, a calendar and
+  an alert rule can still affect every agency; the control is that only a
+  global administrator can write one.
+- **A sub-workflow is authorized as it resolves at that moment.** A child that
+  is disabled when its parent is triggered and enabled before its step is
+  reached runs on an authorization that did not see it.
+- **Reads are not covered here.** Activity, the change log, workflow
+  definitions, schedules and script bodies are readable by any session.
+- **A workflow has no token opt-in.** A service account can trigger any
+  workflow its grant covers; only jobs have `requestable`.
+- **A session keeps the scopes it had at login.** The administrator who creates
+  a scope has their own session refreshed; everyone else is signed out by the
+  change and picks it up at their next sign-in (OIDC mode).

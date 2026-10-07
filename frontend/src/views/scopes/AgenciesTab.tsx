@@ -1,5 +1,6 @@
 import { Fragment, useState } from "react";
 import { api } from "../../api/client";
+import { globalOnly } from "../../api/globalAdmin";
 import { useGet, rows, useTableSort } from "../../hooks";
 import { type SortColumn } from "../../utils/sort";
 import { c } from "../../theme";
@@ -50,7 +51,15 @@ const SORT_COLS: SortColumn<AgencyRow>[] = [
 // the trap the originating investigation hit — an agency with no online runner
 // queues every run targeting it, forever. That was previously visible only on an
 // individual run, which is exactly why it cost someone a debugging session.
-export function AgenciesTab({ canEdit }: { canEdit: boolean }) {
+// `canEdit` is configureApp SOMEWHERE and decides whether the mutation controls
+// exist. `globalAdmin` (GC, v2.2.2) is configureApp on every agency, which is
+// what the agency CATALOG now needs — an agency is the unit access is divided
+// by, so creating, renaming or deleting one, and moving a SCOPE into or out of
+// one, is not something an administrator of a single agency may do. Those
+// controls stay, disabled with the reason. Secret, variable, key and runner
+// membership is unchanged: still judged per agency by the server.
+export function AgenciesTab({ canEdit, globalAdmin }: { canEdit: boolean; globalAdmin: boolean }) {
+  const globalWhy = globalOnly(globalAdmin);
   const [dep, setDep] = useState(0);
   const { data, error, loading } = useGet<unknown>(() => api.GET("/agencies"), [dep]);
   const items = rows<AgencyRow>(data);
@@ -114,7 +123,7 @@ export function AgenciesTab({ canEdit }: { canEdit: boolean }) {
           <SearchBar value={search} onChange={setSearch} placeholder="Search agencies by name or description..." />
         </div>
         {canEdit && (
-          <Btn primary onClick={() => setAdding(true)}>
+          <Btn primary onClick={() => setAdding(true)} disabled={!!globalWhy} title={globalWhy || undefined}>
             + Add Agency
           </Btn>
         )}
@@ -133,7 +142,7 @@ export function AgenciesTab({ canEdit }: { canEdit: boolean }) {
               <div>No agencies yet. Until one exists, every scope, credential and runner is unrestricted.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
-                  <Btn small onClick={() => setAdding(true)}>
+                  <Btn small onClick={() => setAdding(true)} disabled={!!globalWhy} title={globalWhy || undefined}>
                     Add an agency
                   </Btn>
                 </div>
@@ -211,8 +220,8 @@ export function AgenciesTab({ canEdit }: { canEdit: boolean }) {
                     <td style={{ ...tdStyle(), borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                       {canEdit && (
                         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          <Btn onClick={() => setEditing(a)}>Edit</Btn>
-                          <Btn danger onClick={() => setDeleting(a)}>
+                          <Btn onClick={() => setEditing(a)} disabled={!!globalWhy} title={globalWhy || undefined}>Edit</Btn>
+                          <Btn danger onClick={() => setDeleting(a)} disabled={!!globalWhy} title={globalWhy || undefined}>
                             Delete
                           </Btn>
                         </div>
@@ -224,7 +233,7 @@ export function AgenciesTab({ canEdit }: { canEdit: boolean }) {
                       <td style={{ borderBottom: "none" }} />
                       <td colSpan={5} style={{ padding: "2px 16px 16px", borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                         <RefreshScope>
-                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} onMembersChanged={() => setDep((n) => n + 1)} />
+                        <AgencyDetailPanel agencyId={a.id} canEdit={canEdit} globalAdmin={globalAdmin} onMembersChanged={() => setDep((n) => n + 1)} />
                         </RefreshScope>
                       </td>
                     </tr>
@@ -362,9 +371,12 @@ function AgencyFormModal({
 // touches only this agency's rows, so two admins editing two different
 // departments cannot race on the same entity — the lost-update hazard a
 // read-modify-write through the entity-centric setters would reintroduce.
-function AgencyDetailPanel({ agencyId, canEdit, onMembersChanged }: {
+function AgencyDetailPanel({ agencyId, canEdit, globalAdmin, onMembersChanged }: {
   agencyId: string;
   canEdit: boolean;
+  /** GC — moving a SCOPE into or out of an agency needs a global administrator
+   *  (a scope's agency decides who can reach it). The other four kinds do not. */
+  globalAdmin: boolean;
   onMembersChanged?: () => void;
 }) {
   interface Member {
@@ -499,6 +511,8 @@ function AgencyDetailPanel({ agencyId, canEdit, onMembersChanged }: {
         {groups.map((g) => {
           const mine = members.filter((m) => m.kind === g.kind);
           const avail = canEdit ? candidates(g.kind) : [];
+          // Non-empty only for the Scopes group of a non-global administrator.
+          const why = g.kind === "scope" ? globalOnly(globalAdmin) : "";
           return (
             <div key={g.kind}>
               <div style={{ fontSize: c.fontXs, fontFamily: c.sansCond, fontWeight: 700, color: c.textMuted, textTransform: "uppercase", letterSpacing: 0.7, marginBottom: 6 }}>
@@ -529,14 +543,14 @@ function AgencyDetailPanel({ agencyId, canEdit, onMembersChanged }: {
                       {canEdit && (
                         <button
                           onClick={() => remove(m)}
-                          disabled={busy != null}
+                          disabled={busy != null || !!why}
                           aria-label={`Remove ${m.name} from this agency`}
-                          title={`Remove ${m.name} from this agency`}
+                          title={why || `Remove ${m.name} from this agency`}
                           style={{
                             border: "none",
                             background: "transparent",
-                            color: busy === `${m.kind}-${m.id}` ? c.textMuted : c.textSec,
-                            cursor: busy != null ? "default" : "pointer",
+                            color: busy === `${m.kind}-${m.id}` || why ? c.textMuted : c.textSec,
+                            cursor: why ? "not-allowed" : busy != null ? "default" : "pointer",
                             padding: 0,
                             fontSize: c.fontXs,
                             lineHeight: 1,
@@ -552,7 +566,8 @@ function AgencyDetailPanel({ agencyId, canEdit, onMembersChanged }: {
               {canEdit && (
                 <select
                   value=""
-                  disabled={busy != null || avail.length === 0}
+                  disabled={busy != null || avail.length === 0 || !!why}
+                  title={why || undefined}
                   aria-label={`Add a ${g.label.replace(/s$/, "").toLowerCase()} to this agency`}
                   onChange={(e) => {
                     if (e.target.value) add(g.kind, e.target.value);
@@ -562,7 +577,7 @@ function AgencyDetailPanel({ agencyId, canEdit, onMembersChanged }: {
                     width: "100%",
                     fontSize: c.fontXs,
                     padding: "3px 6px",
-                    cursor: avail.length === 0 ? "default" : "pointer",
+                    cursor: why ? "not-allowed" : avail.length === 0 ? "default" : "pointer",
                     color: c.textSec,
                   }}
                 >

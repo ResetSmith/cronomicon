@@ -26,10 +26,15 @@ export const lblStyle = (): React.CSSProperties => ({
 });
 
 // ── Toggle switch ──
-export function Toggle(props: { on: boolean; onChange: () => void; onColor?: string }) {
+// `disabled` (GC) makes it inert and says so to assistive tech: a switch the
+// caller may not flip must not flip the unsaved form either, or the card shows a
+// state the server never stored.
+export function Toggle(props: { on: boolean; onChange: () => void; onColor?: string; disabled?: boolean; title?: string }) {
   return (
     <div
-      onClick={props.onChange}
+      aria-disabled={props.disabled || undefined}
+      title={props.title}
+      onClick={props.disabled ? undefined : props.onChange}
       style={{
         width: 36,
         height: 20,
@@ -40,7 +45,8 @@ export function Toggle(props: { on: boolean; onChange: () => void; onColor?: str
         borderRadius: c.radiusPill,
         background: props.on ? (props.onColor ?? c.success) : c.border,
         padding: 2,
-        cursor: "pointer",
+        cursor: props.disabled ? "not-allowed" : "pointer",
+        opacity: props.disabled ? 0.5 : 1,
         transition: "background 0.2s",
         flexShrink: 0,
       }}
@@ -196,11 +202,28 @@ export function useSettingForm<T extends object>(
 
 // SaveBtn is the panels' only success affordance — a transient green flip, no
 // toast. Kept that way deliberately so the settings views stay consistent.
-export function SaveBtn({ onClick, saving, saved, disabled }: { onClick: () => void; saving: boolean; saved: boolean; disabled?: boolean }) {
+//
+// `reason` (GC, v2.2.2) is why the caller may not save at all — non-empty
+// disables the button and becomes its tooltip (FX-7: a precondition disables
+// with an explanation). Pass `globalOnly(canWrite)`.
+export function SaveBtn({ onClick, saving, saved, disabled, reason }: { onClick: () => void; saving: boolean; saved: boolean; disabled?: boolean; reason?: string }) {
   return (
-    <KitBtn primary onClick={onClick} disabled={disabled || saving} style={saved ? { background: c.success, borderColor: c.success } : undefined}>
+    <KitBtn primary onClick={onClick} disabled={disabled || saving || !!reason} title={reason || undefined} style={saved ? { background: c.success, borderColor: c.success } : undefined}>
       {saved ? "✓ Saved" : saving ? "Saving…" : "Save Changes"}
     </KitBtn>
+  );
+}
+
+// ReadOnlyFields wraps a settings form the caller may read but not write (GC).
+// A disabled <fieldset> disables every native control inside it in one place, so
+// a card does not need `disabled` threaded through thirty inputs — and a field
+// added later is covered without anyone remembering to. The settings Toggle is a
+// div, not a form control: pass it `disabled` yourself.
+export function ReadOnlyFields({ readOnly, children }: { readOnly: boolean; children: React.ReactNode }) {
+  return (
+    <fieldset disabled={readOnly} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
+      {children}
+    </fieldset>
   );
 }
 

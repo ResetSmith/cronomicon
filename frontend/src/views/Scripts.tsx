@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
+import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows, useClientPager, useColumnWidths, useInlineTags, useTableSort } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
 import { c } from "../theme";
@@ -88,9 +89,18 @@ export function Scripts() {
   // JobComposer — same gate as the Jobs page's "+ Create" (D6/I-1: never offer
   // a create affordance that dead-ends on the composer's capability notice).
   const [canCompose, setCanCompose] = useState(false);
+  // GC (v2.2.2) — the Git pull re-reads the whole definitions repo, every
+  // agency's files included, so POST /git/sync takes a global administrator for
+  // configureApp. The button is on a catalog everyone reads, so it stays and is
+  // disabled with the reason rather than 403ing on click.
+  const [canSync, setCanSync] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanCompose(caps.compose));
+    fetchCapabilities().then((caps) => {
+      setCanCompose(caps.compose);
+      setCanSync(!!caps.configureAppGlobal);
+    });
   }, []);
+  const syncWhy = globalOnly(canSync, GLOBAL_ADMIN_SYNC_ONLY);
 
   // Optimistic per-script tag edits (keyed by name) so a detail-pane edit shows
   // in the table column immediately without a full catalog refetch. Cleared on a
@@ -344,8 +354,8 @@ export function Scripts() {
         <Btn
           primary
           onClick={gitPull}
-          disabled={pulling}
-          title="Pulls the whole definitions repo from GitLab (jobs, scripts, schedules, workflows)."
+          disabled={pulling || !!syncWhy}
+          title={syncWhy || "Pulls the whole definitions repo from GitLab (jobs, scripts, schedules, workflows)."}
           style={{ padding: "8px 14px", fontSize: c.fontSm }}
         >
           {pulling ? "Pulling…" : "↻ Git Pull"}
@@ -378,7 +388,7 @@ export function Scripts() {
           <div style={{ padding: 36, textAlign: "center", color: c.textMuted, fontSize: c.fontSm }}>
             <div>No scripts yet. They are synced from the scripts/ directory of the definitions repo — there is no in-app script authoring.</div>
             <div style={{ marginTop: 12 }}>
-              <Btn small onClick={gitPull} disabled={pulling}>
+              <Btn small onClick={gitPull} disabled={pulling || !!syncWhy} title={syncWhy || undefined}>
                 {pulling ? "Pulling…" : "Pull from GitLab"}
               </Btn>
             </div>

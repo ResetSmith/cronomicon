@@ -10,7 +10,7 @@ the API + embedded frontend from one container, backed by SQLite.
 ## Layout
 
 ```
-cmd/cronomicon/        entrypoint + `validate`, `restore`, `rewrap-secrets` subcommands
+cmd/cronomicon/        entrypoint + `validate`, `restore`, `rewrap-secrets`, `grant-admin`, `preflight` subcommands
 internal/
   config/           env → typed Config
   db/               SQLite open, golang-migrate, retention sweep, UUIDv7 ids

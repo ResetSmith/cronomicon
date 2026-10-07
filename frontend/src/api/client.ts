@@ -125,6 +125,14 @@ const CAPS_OFF: Capabilities = {
   // to be wrong, since the server refuses it anyway.
   composeUnbound: false,
   unrestricted: false,
+  // GC (v2.2.2) — the global-administrator flags. Optional on the wire (an older
+  // server omits them), so they are spelled out here: every consumer then reads
+  // a boolean, and `undefined` can never be mistaken for "allowed".
+  configureAppGlobal: false,
+  manageRolesGlobal: false,
+  manageEnvVarsGlobal: false,
+  publishScheduleGlobal: false,
+  composeAdmin: false,
 };
 
 export async function fetchCapabilities(): Promise<Capabilities> {

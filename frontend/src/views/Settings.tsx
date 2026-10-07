@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { c } from "../theme";
-import { InlineLoading } from "../components/ui";
+import { AlertBanner, InlineLoading } from "../components/ui";
 import { fetchCapabilities, type Capabilities } from "../api/client";
+import { GLOBAL_ADMIN_ONLY } from "../api/globalAdmin";
 import { GeneralSection } from "./settings/General";
 import { NotificationsSection } from "./settings/Notifications";
 import { SshTargetsSection } from "./settings/SshTargets";
@@ -17,25 +18,38 @@ import { TimezoneAlert } from "./settings/TimezoneAlert";
 // `requires` is the /capabilities permission the backend enforces for that
 // section (PP-B1); sections the caller can't manage are hidden so the UI matches
 // what the server will allow instead of rendering controls that 403.
+//
+// GC (v2.2.2) — `requires` is still the FLAT flag ("holds this permission
+// somewhere") and still decides whether the section is listed. `global` is the
+// flag the section's WRITES now need: one grant covering every agency. A caller
+// with the first and not the second is an administrator of one agency, who keeps
+// the section — disabled, with the reason — rather than losing it (FX-7: a
+// precondition disables with an explanation; only irrelevance hides).
+// `readOnlyNote` marks the sections that are read-only as a whole for such a
+// caller, so the reason is stated once above the card; the others (SSH Targets,
+// Users & Access, Service Accounts) keep agency-level work and explain
+// themselves control by control, and GitLab, Vault and the Recycle Bin — whose
+// READ is refused too — render their own explanation in place of the data.
 const SECTIONS = [
-  { group: "General", key: "general", label: "General", requires: "configureApp" },
-  { group: "General", key: "notifications", label: "Notifications", requires: "configureApp" },
-  { group: "Integrations", key: "gitlab", label: "GitLab Connection", requires: "configureApp" },
-  { group: "Integrations", key: "vault", label: "Vault", requires: "configureApp" },
-  { group: "Integrations", key: "observability", label: "Observability", requires: "configureApp" },
-  { group: "Execution", key: "targets", label: "SSH Targets", requires: "configureApp" },
-  { group: "Execution", key: "logstorage", label: "Log Storage", requires: "configureApp" },
-  { group: "Access & Security", key: "users", label: "Users & Access", requires: "manageRoles" },
+  { group: "General", key: "general", label: "General", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: true },
+  { group: "General", key: "notifications", label: "Notifications", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: true },
+  { group: "Integrations", key: "gitlab", label: "GitLab Connection", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: false },
+  { group: "Integrations", key: "vault", label: "Vault", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: false },
+  { group: "Integrations", key: "observability", label: "Observability", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: true },
+  { group: "Execution", key: "targets", label: "SSH Targets", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: false },
+  { group: "Execution", key: "logstorage", label: "Log Storage", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: true },
+  { group: "Access & Security", key: "users", label: "Users & Access", requires: "manageRoles", global: "manageRolesGlobal", readOnlyNote: false },
   // ET-C: minting one IS granting a role, so it sits behind manageRoles rather
   // than configureApp — the same permission that edits access grants.
-  { group: "Access & Security", key: "serviceaccounts", label: "Service Accounts", requires: "manageRoles" },
-  { group: "Access & Security", key: "audit", label: "Audit & Compliance", requires: "configureApp" },
+  { group: "Access & Security", key: "serviceaccounts", label: "Service Accounts", requires: "manageRoles", global: "manageRolesGlobal", readOnlyNote: false },
+  { group: "Access & Security", key: "audit", label: "Audit & Compliance", requires: "configureApp", global: "configureAppGlobal", readOnlyNote: true },
   // RH: cross-kind, and its purge window lives next door in Audit & Compliance.
-  { group: "Access & Security", key: "recyclebin", label: "Recycle Bin", requires: "configureApp" },
+  { group: "Access & Security", key: "recyclebin", label: "Recycle Bin", requires: "configureApp", global: "composeAdmin", readOnlyNote: false },
 ] as const;
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
 type CapKey = (typeof SECTIONS)[number]["requires"];
+type GlobalKey = (typeof SECTIONS)[number]["global"];
 
 export function Settings() {
   const [caps, setCaps] = useState<Capabilities | null>(null);
@@ -62,6 +76,10 @@ export function Settings() {
       </div>
     );
   }
+
+  // The active section's global flag — `undefined` (an older server) is false.
+  const current = SECTIONS.find((s) => s.key === section);
+  const isGlobal = current ? !!caps[current.global as GlobalKey] : false;
 
   return (
     <div>
@@ -112,17 +130,18 @@ export function Settings() {
           })}
         </div>
         <div>
-          {section === "general" && <GeneralSection />}
-          {section === "notifications" && <NotificationsSection />}
-          {section === "gitlab" && <GitlabSection />}
-          {section === "vault" && <VaultSection />}
-          {section === "observability" && <ObservabilitySection />}
-          {section === "targets" && <SshTargetsSection />}
-          {section === "logstorage" && <LogStorageSection />}
+          {current?.readOnlyNote && !isGlobal && <AlertBanner type="info">Read-only. {GLOBAL_ADMIN_ONLY}</AlertBanner>}
+          {section === "general" && <GeneralSection canWrite={isGlobal} />}
+          {section === "notifications" && <NotificationsSection canWrite={isGlobal} />}
+          {section === "gitlab" && <GitlabSection canWrite={isGlobal} />}
+          {section === "vault" && <VaultSection canWrite={isGlobal} />}
+          {section === "observability" && <ObservabilitySection canWrite={isGlobal} />}
+          {section === "targets" && <SshTargetsSection canWrite={isGlobal} />}
+          {section === "logstorage" && <LogStorageSection canWrite={isGlobal} />}
           {section === "users" && <UsersAccessSection />}
-          {section === "serviceaccounts" && <ServiceAccountsSection />}
-          {section === "audit" && <AuditComplianceSection />}
-          {section === "recyclebin" && <RecycleBinSection />}
+          {section === "serviceaccounts" && <ServiceAccountsSection canGrantEverywhere={isGlobal} />}
+          {section === "audit" && <AuditComplianceSection canWrite={isGlobal} />}
+          {section === "recyclebin" && <RecycleBinSection canWrite={isGlobal} />}
         </div>
       </div>
     </div>

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -31,8 +33,8 @@ import (
 // receives, which is the same act as placing it. Removing a binding names no
 // runner and needs nothing more than the route gate.
 func (s *Server) mountScopeRunners(mux *http.ServeMux) {
-	mux.Handle("PUT /api/v1/scopes/{scopeId}/runners", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetScopeRunners)))
-	mux.Handle("POST /api/v1/scopes/{scopeId}/runners/preview", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handlePreviewScopeRunners)))
+	mux.Handle("PUT /api/v1/scopes/{scopeId}/runners", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handleSetScopeRunners))))
+	mux.Handle("POST /api/v1/scopes/{scopeId}/runners/preview", s.requirePerm("configureApp", permConfigureApp)(s.requireScopeAgency("scopeId", http.HandlerFunc(s.handlePreviewScopeRunners))))
 	mux.Handle("POST /api/v1/scope-runners/replace", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleReplaceScopeRunner)))
 	mux.Handle("GET /api/v1/scope-binding-notices", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleListScopeBindingNotices)))
 	mux.Handle("POST /api/v1/scope-binding-notices/dismiss", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleDismissScopeBindingNotices)))
@@ -141,11 +143,43 @@ func (s *Server) handleReplaceScopeRunner(w http.ResponseWriter, r *http.Request
 	if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "runner_agencies", "runner_id", inp.ToRunnerID, "runner") {
 		return
 	}
+	// GC-6: the swap rewrites the binding of EVERY scope the old runner serves,
+	// so the caller needs authority over each of those scopes, not only over the
+	// replacement. Without this an administrator of one agency could re-point
+	// another agency's confined scope at a runner of their own.
+	boundScopes, err := s.scopesBoundTo(r.Context(), inp.FromRunnerID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	for _, sid := range boundScopes {
+		if !s.requireEntityAgency(w, r, id, auth.PermConfigureApp, "scope_agencies", "scope_id", sid, "scope") {
+			return
+		}
+	}
 	scopes, err := settings.ReplaceScopeRunner(r.Context(), s.db, inp.FromRunnerID, inp.ToRunnerID, id.Email)
 	if s.failScopeRunners(w, err) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"scopes": scopes})
+}
+
+// scopesBoundTo lists the ids of the scopes a runner is bound to.
+func (s *Server) scopesBoundTo(ctx context.Context, runnerID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT scope_id FROM scope_runners WHERE runner_id = ?`, runnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		out = append(out, sid)
+	}
+	return out, rows.Err()
 }
 
 // handleListScopeBindingNotices returns the runner-tag pins that could not be
@@ -172,6 +206,33 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
+	}
+	// A notice says a job is no longer confined to the runner its tag named.
+	// Dismissing it hides that from the scope's own administrators, so it takes
+	// configureApp on the notice's scope; a notice with no scope is a global
+	// administrator's. A notice id that matches nothing is skipped by the writer.
+	for _, nid := range inp.IDs {
+		var scope sql.NullString
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT scope FROM retired_runner_pins WHERE id = ?`, nid).Scan(&scope)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if scope.String == "" {
+			if !id.CanAgency(auth.PermConfigureApp, "") {
+				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+					"this notice is about a job with no scope; only an administrator of every agency may dismiss it")
+				return
+			}
+			continue
+		}
+		if !s.requireCan(w, r, id, auth.PermConfigureApp, scope.String) {
+			return
+		}
 	}
 	n, err := settings.DismissRetiredPins(r.Context(), s.db, inp.IDs, id.Email)
 	if err != nil {

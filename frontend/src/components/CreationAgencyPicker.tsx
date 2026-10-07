@@ -22,8 +22,18 @@ type Agency = { id?: string; name?: string };
  *
  * Unrestricted callers see nothing: omitting membership is how they deliberately
  * mint shared infrastructure, which is a choice only they can make.
+ *
+ * `permission` (GC-6, v2.2.2) names the verb the create route checks, for a form
+ * whose rule is "a GLOBAL administrator for this permission may omit the agency"
+ * rather than "an unrestricted caller may". The two differ: `unrestricted` is
+ * permission-blind (a viewer on all scopes who administers one agency reads as
+ * unrestricted), while the server asks whether one all-agencies grant CARRIES
+ * the verb. Every caller names its create route's permission — "configureApp"
+ * for scopes and SSH keys, "manageEnvVars" for secrets and variables — so the
+ * picker appears exactly when requireCreationAgencies would refuse an omitted
+ * agency. With no permission it falls back to `unrestricted`.
  */
-export function useCreationAgencies(isEdit: boolean) {
+export function useCreationAgencies(isEdit: boolean, permission?: "configureApp" | "manageEnvVars") {
   const [restricted, setRestricted] = useState(false);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -35,7 +45,14 @@ export function useCreationAgencies(isEdit: boolean) {
     // the picker appears and the operator can comply. The reverse (hiding it) would
     // send them into a 422 with no control to fix it.
     fetchCapabilities().then((caps) => {
-      if (!cancelled) setRestricted(!caps.unrestricted);
+      if (cancelled) return;
+      const global =
+        permission === "configureApp"
+          ? caps.configureAppGlobal
+          : permission === "manageEnvVars"
+            ? caps.manageEnvVarsGlobal
+            : caps.unrestricted;
+      setRestricted(!global);
     });
     api.GET("/agencies").then((res) => {
       if (!cancelled && res.data) setAgencies(res.data as Agency[]);
@@ -43,7 +60,7 @@ export function useCreationAgencies(isEdit: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [isEdit]);
+  }, [isEdit, permission]);
 
   const required = !isEdit && restricted;
   return {

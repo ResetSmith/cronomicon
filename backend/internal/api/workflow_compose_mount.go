@@ -277,6 +277,24 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 			return false
 		}
 	}
+	// GC-10: a sub-workflow step names no job, so the loop above never saw the
+	// jobs it will run. Composing a workflow that reaches another agency's jobs
+	// through a child is authoring over those jobs, and takes the same
+	// per-scope compose check. Composed workflows are cronomicon-source.
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobScopes(r.Context(), steps, "cronomicon")
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	for _, scope := range nested {
+		if seenScope[scope] {
+			continue
+		}
+		seenScope[scope] = true
+		if !s.requireComposeScope(w, r, id, scope) {
+			return false
+		}
+	}
 	return true
 }
 

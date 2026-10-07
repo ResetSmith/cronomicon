@@ -1993,12 +1993,12 @@ func writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerSource, owne
 			                      owner_uid, on_uid)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,
 				CASE ?
-				  WHEN 'job'      THEN (SELECT uid FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT uid FROM workflows WHERE name = ? AND source = ?)
+				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
+				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 				END,
 				CASE ?
-				  WHEN 'job'      THEN (SELECT uid FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT uid FROM workflows WHERE name = ? AND source = ?)
+				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
+				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 				END)`,
 			ownerSource, ownerKind, ownerName, e.Name,
 			e.OnSourceOrDefault(), e.OnKind, e.OnName, e.OnOutcome,
@@ -2033,8 +2033,8 @@ func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, owne
 				owner_uid, schedule_uid)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,
 				CASE ?
-				  WHEN 'job'      THEN (SELECT uid FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT uid FROM workflows WHERE name = ? AND source = ?)
+				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
+				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 				END,
 				(SELECT s.uid FROM schedules s WHERE s.name = ?
 				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,

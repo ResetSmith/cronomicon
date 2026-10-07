@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState, type ComponentType } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
+import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows, useClientPager, useInlineTags, useTableSort, useColumnWidths } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
 import { c } from "../theme";
@@ -154,7 +155,15 @@ function CatalogTab() {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  // GC (v2.2.2) — two facts, not one. `canCompose` ("may author SOMEWHERE")
+  // still decides whether the authoring controls are relevant at all. A reusable
+  // schedule has no owning agency — it retimes everyone who references it — so
+  // WRITING one needs `composeAdmin`: compose and configureApp on one
+  // all-agencies grant. A departmental composer keeps the controls, disabled
+  // with the reason, instead of walking into the builder to be refused.
   const [canCompose, setCanCompose] = useState(false);
+  const [composeAdmin, setComposeAdmin] = useState(false);
+  const authorWhy = globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [tagMatch, setTagMatch] = useState<"any" | "all">("any");
   // Optimistic per-schedule tag edits keyed by source:name (a name can recur across
@@ -171,7 +180,10 @@ function CatalogTab() {
   );
   const [params, setParams] = useSearchParams();
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanCompose(caps.compose));
+    fetchCapabilities().then((caps) => {
+      setCanCompose(caps.compose || !!caps.composeAdmin);
+      setComposeAdmin(!!caps.composeAdmin);
+    });
   }, []);
 
   // Current folder lives in the URL (?path=) so back/forward and deep links work.
@@ -329,6 +341,7 @@ function CatalogTab() {
               <ScheduleDetail
                 listRow={s}
                 canCompose={canCompose}
+                authorWhy={authorWhy}
                 onChanged={() => setRefresh((n) => n + 1)}
                 tags={tags}
                 onSaveTags={(next) => inlineTags.save(s, next)}
@@ -348,11 +361,16 @@ function CatalogTab() {
         <SearchBar value={search} onChange={(v) => { setSearch(v); pager.setPage(0); }} placeholder="Search schedules…" style={{ flex: 1, minWidth: 200, maxWidth: 340 }} />
         <TagFilterSelect items={items} selected={tagFilter} onChange={(v) => { setTagFilter(v); pager.setPage(0); }} getTags={(s) => inlineTags.tagsFor(s)} matchMode={tagMatch} onMatchModeChange={(m) => { setTagMatch(m); pager.setPage(0); }} />
         <ColumnsMenu cols={cols} cw={cw} />
-        {canCompose && (
-          <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
-            <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
-          </Link>
-        )}
+        {/* A disabled button inside a live <Link> would still navigate, so the
+            link is only rendered when the click can succeed. */}
+        {canCompose &&
+          (authorWhy ? (
+            <Btn primary disabled title={authorWhy} style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
+          ) : (
+            <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
+              <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
+            </Link>
+          ))}
       </div>
 
       {loading && <div style={{ padding: 16 }}><SkeletonRows rows={5} /></div>}
@@ -366,9 +384,13 @@ function CatalogTab() {
           <div>No schedules yet. Schedules are synced from the schedules/ directory of the definitions repo, or authored in the Schedule Builder.</div>
           {canCompose && (
             <div style={{ marginTop: 12 }}>
-              <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
-                <Btn small>New schedule</Btn>
-              </Link>
+              {authorWhy ? (
+                <Btn small disabled title={authorWhy}>New schedule</Btn>
+              ) : (
+                <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
+                  <Btn small>New schedule</Btn>
+                </Link>
+              )}
             </div>
           )}
         </div>
@@ -420,7 +442,11 @@ function CatalogTab() {
 // stay in sync); onTagsSaved propagates an edit back up for the optimistic table
 // update. Tags are operator-owned and SQLite-only (tags-support.md) — editable for
 // both git and cronomicon schedules (any logged-in user, D4), unlike Edit/Delete.
-function ScheduleDetail({ listRow, canCompose, onChanged, tags, onSaveTags, tagErr }: { listRow: Schedule; canCompose: boolean; onChanged: () => void; tags: string[]; onSaveTags: (tags: string[]) => void; tagErr?: string }) {
+// `authorWhy` (GC) is non-empty when the caller composes somewhere but is not a
+// compose administrator: Edit and Delete then render disabled with it as their
+// tooltip, and the sentence is repeated beside them, since a tooltip on a
+// disabled control is the one explanation a keyboard or touch user never meets.
+function ScheduleDetail({ listRow, canCompose, authorWhy, onChanged, tags, onSaveTags, tagErr }: { listRow: Schedule; canCompose: boolean; authorWhy: string; onChanged: () => void; tags: string[]; onSaveTags: (tags: string[]) => void; tagErr?: string }) {
   const name = listRow.name ?? "";
   const { data } = useGet<Schedule>(
     () => api.GET("/schedule-defs/{name}", { params: { path: { name }, query: { source: listRow.source } } }),
@@ -519,7 +545,13 @@ function ScheduleDetail({ listRow, canCompose, onChanged, tags, onSaveTags, tagE
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: `1px solid ${c.border}`, paddingTop: 12 }}>
         {isCronomicon ? (
-          canCompose ? (
+          canCompose && authorWhy ? (
+            <>
+              <Btn small disabled title={authorWhy}>Edit</Btn>
+              <Btn small danger disabled title={authorWhy}>Delete</Btn>
+              <span role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>{authorWhy}</span>
+            </>
+          ) : canCompose ? (
             <>
               <Link to={`/schedule-builder?name=${encodeURIComponent(name)}`} style={{ textDecoration: "none" }}>
                 <Btn small>Edit</Btn>

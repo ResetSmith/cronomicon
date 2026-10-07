@@ -442,7 +442,7 @@ func (s *Server) putScriptBindings(w http.ResponseWriter, r *http.Request) {
 	// scopes, so a per-scope gate is not well-defined. Require an UNRESTRICTED
 	// manager to edit script bindings — the simplest safe rule (a restricted manager
 	// rarely authors shared scripts). A restricted actor is refused with 403.
-	if !actor.Unrestricted() {
+	if !actor.CanAgency(auth.PermManageEnvVars, "") { // GC-3: the grant must carry the verb
 		// The requirement is not a scope but "any scope", so this audits with the
 		// AllScopes target rather than a scope name (see denyUnrestricted).
 		s.denyUnrestricted(w, r,

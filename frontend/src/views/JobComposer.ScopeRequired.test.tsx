@@ -174,3 +174,42 @@ describe("JobComposer — All is withheld without composeUnbound (AF-2)", () => 
     expect(q.getByText(/Pick one of the scopes your role is granted/)).toBeTruthy();
   });
 });
+
+// GC (v2.2.2, gate closing) — reactions are the one part of this form the server
+// takes only from a compose ADMINISTRATOR (PUT /reactions/… needs compose and
+// configureApp on one all-agencies grant): a reaction couples this job to
+// another definition, whoever owns it. A departmental composer still edits the
+// job and its inline schedules; the Reactions section is read-only for them and
+// says why (FX-7), rather than accepting input the second save would refuse
+// with "the job was saved, but its reactions were not".
+describe("JobComposer — reactions need a compose administrator (GC)", () => {
+  const WHY = /only a global administrator \(a role on every agency\) can change them\./;
+  const BASE = {
+    vault: false, apprise: false, compose: true, composeUnbound: true, manageRoles: false,
+    configureApp: false, manageEnvVars: true, publishSchedule: false, triggerJobs: false,
+    killJobs: false, unrestricted: false,
+  };
+
+  it("disables Add reaction with the reason for a departmental composer", async () => {
+    const q = renderComposer("/compose?id=8");
+    const add = (await waitFor(() => q.getByRole("button", { name: "+ Add reaction" }))) as HTMLButtonElement;
+    await waitFor(() => expect(add.disabled).toBe(true));
+    expect(add.title).toMatch(WHY);
+    expect(q.getByRole("note").textContent).toMatch(WHY);
+  });
+
+  it("enables it for a compose administrator", async () => {
+    const { fetchCapabilities } = await import("../api/client");
+    const original = vi.mocked(fetchCapabilities).getMockImplementation();
+    vi.mocked(fetchCapabilities).mockImplementation(async () => ({ ...BASE, configureApp: true, configureAppGlobal: true, composeAdmin: true, unrestricted: true }));
+    try {
+      const q = renderComposer("/compose?id=8");
+      const add = (await waitFor(() => q.getByRole("button", { name: "+ Add reaction" }))) as HTMLButtonElement;
+      await waitFor(() => expect(add.disabled).toBe(false));
+      expect(add.title).toBe("");
+      expect(q.queryByRole("note")).toBeNull();
+    } finally {
+      vi.mocked(fetchCapabilities).mockImplementation(original!);
+    }
+  });
+});

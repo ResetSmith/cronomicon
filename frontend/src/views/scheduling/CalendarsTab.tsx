@@ -15,6 +15,7 @@
 // outbound call would fail closed in exactly the environment that needs this most.
 import { useEffect, useState } from "react";
 import { api, csrfHeader, errMsg, fetchCapabilities } from "../../api/client";
+import { COMPOSE_ADMIN_ONLY, globalOnly } from "../../api/globalAdmin";
 import { c } from "../../theme";
 import { DOC_LINKS } from "../../components/docLinks";
 import { Btn, SkeletonRows, TableSurface,
@@ -81,12 +82,23 @@ const GlobalBadge = () => (
 
 export function CalendarsTab() {
   const [refresh, setRefresh] = useState(0);
+  // GC (v2.2.2) — `canCompose` is "authors somewhere" and decides whether the
+  // authoring controls are relevant; `composeAdmin` is what a calendar WRITE
+  // needs. A calendar belongs to no agency — a `global` one vetoes every
+  // agency's fires — so the server takes its writes only from compose and
+  // configureApp on one all-agencies grant. A departmental composer keeps "New
+  // calendar", disabled with the reason, and opens rows read-only.
   const [canCompose, setCanCompose] = useState(false);
+  const [composeAdmin, setComposeAdmin] = useState(false);
+  const authorWhy = globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY);
   const [editing, setEditing] = useState<string | null>(null); // calendar name, or "" for a new one
   const { calendars, expiryWarningDays, loading, error } = useCalendars(refresh);
 
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanCompose(caps.compose));
+    fetchCapabilities().then((caps) => {
+      setCanCompose(caps.compose || !!caps.composeAdmin);
+      setComposeAdmin(!!caps.composeAdmin);
+    });
   }, []);
 
   const reload = () => setRefresh((n) => n + 1);
@@ -112,7 +124,11 @@ export function CalendarsTab() {
           or so it runs on no others. It can only ever <em>stop</em> a run, never cause one.{" "}
           <DocLink href={DOC_LINKS.calendars}>How the veto is applied</DocLink>
         </div>
-        {canCompose && <Btn primary onClick={() => setEditing("")} style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New calendar</Btn>}
+        {canCompose && (
+          <Btn primary onClick={() => setEditing("")} disabled={!!authorWhy} title={authorWhy || undefined} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
+            + New calendar
+          </Btn>
+        )}
       </div>
 
       {loading && <div style={{ padding: 16 }}><SkeletonRows rows={4} /></div>}
@@ -143,7 +159,10 @@ export function CalendarsTab() {
           </div>
           {canCompose && (
             <div style={{ marginTop: 14 }}>
-              <Btn small onClick={() => setEditing("")}>New calendar</Btn>
+              <Btn small onClick={() => setEditing("")} disabled={!!authorWhy} title={authorWhy || undefined}>New calendar</Btn>
+              {authorWhy && (
+                <div role="note" style={{ marginTop: 8, fontSize: c.fontSm, color: c.textMuted }}>{authorWhy}</div>
+              )}
             </div>
           )}
           {!canCompose && (
@@ -190,7 +209,7 @@ export function CalendarsTab() {
                         : `${usedBy.length} ${usedBy.length === 1 ? "entry" : "entries"}`}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <Btn small onClick={() => setEditing(cal.name ?? "")}>{canCompose ? "Edit" : "View"}</Btn>
+                      <Btn small onClick={() => setEditing(cal.name ?? "")}>{composeAdmin ? "Edit" : "View"}</Btn>
                     </td>
                   </tr>
                 );
@@ -209,7 +228,11 @@ const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () => void; onSaved: () => void }) {
   const isEdit = !!name;
+  // `canCompose` here means "may WRITE a calendar" — `composeAdmin` since GC
+  // (v2.2.2). `composes` is the flat flag, kept only to choose the sentence the
+  // read-only editor shows.
   const [canCompose, setCanCompose] = useState<boolean | null>(null);
+  const [composes, setComposes] = useState(false);
   const [slug, setSlug] = useState(name);
   const [description, setDescription] = useState("");
   const [global, setGlobal] = useState(false);
@@ -222,7 +245,10 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
   const [pendingForce, setPendingForce] = useState(false);
 
   useEffect(() => {
-    fetchCapabilities().then((caps) => setCanCompose(caps.compose));
+    fetchCapabilities().then((caps) => {
+      setCanCompose(!!caps.composeAdmin);
+      setComposes(caps.compose);
+    });
   }, []);
 
   useEffect(() => {
@@ -345,11 +371,14 @@ function CalendarEditor({ name, onClose, onSaved }: { name: string; onClose: () 
     <div style={{ maxWidth: 720, display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ fontSize: c.fontSm, color: c.textSec }}>
         {isEdit ? (
-          <>Editing the working calendar <span style={{ fontFamily: c.mono }}>{name}</span>.</>
+          <>{readOnly ? "Viewing" : "Editing"} the working calendar <span style={{ fontFamily: c.mono }}>{name}</span>.</>
         ) : (
           <>A new working calendar: a named set of dates that schedule entries can be bound to.</>
         )}
       </div>
+      {readOnly && composes && (
+        <div role="note" style={{ fontSize: c.fontSm, color: c.textMuted }}>Read-only. {COMPOSE_ADMIN_ONLY}</div>
+      )}
 
       <Field label="Name">
         <input

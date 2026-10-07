@@ -2,7 +2,8 @@ import { useState } from "react";
 import { api, csrfHeader } from "../../api/client";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
-import { Btn, Card, Chip, SaveBtn, SettingRow, Status, errMsg, inputStyle, lblStyle, useSettingForm } from "./ui";
+import { globalOnly } from "../../api/globalAdmin";
+import { Btn, Card, Chip, ReadOnlyFields, SaveBtn, SettingRow, Status, errMsg, inputStyle, lblStyle, useSettingForm } from "./ui";
 
 type AuditComplianceSettings = components["schemas"]["AuditComplianceSettings"];
 type RetentionDays = NonNullable<AuditComplianceSettings["retentionDays"]>;
@@ -79,7 +80,7 @@ const RETENTION_FIELDS: { k: keyof RetentionDays; label: string; hint: string }[
 // These knobs were stored but read by nothing until the sweeper was wired to
 // them (LU-2). That is why the card states plainly when a change takes effect:
 // a retention control that silently does nothing is worse than no control.
-function RetentionCard() {
+function RetentionCard({ canWrite }: { canWrite: boolean }) {
   const s = useSettingForm<AuditComplianceSettings>(
     () => api.GET("/settings/audit-compliance"),
     (body) => api.PUT("/settings/audit-compliance", { params: { header: csrfHeader }, body }),
@@ -97,9 +98,10 @@ function RetentionCard() {
   };
 
   return (
-    <Card title="Data Retention" action={<SaveBtn onClick={() => s.save()} saving={s.saving} saved={s.saved} disabled={!form} />}>
+    <Card title="Data Retention" action={<SaveBtn onClick={() => s.save()} saving={s.saving} saved={s.saved} disabled={!form} reason={globalOnly(canWrite)} />}>
       <Status loading={s.loading} error={s.error} saveErr={s.saveErr} />
       {form && (
+        <ReadOnlyFields readOnly={!canWrite}>
         <div style={{ fontSize: c.fontSm }}>
           <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 6, lineHeight: 1.6 }}>
             How long each kind of record is kept. <strong>0 means keep forever.</strong> Pruning runs during the nightly
@@ -124,6 +126,7 @@ function RetentionCard() {
             </SettingRow>
           ))}
         </div>
+        </ReadOnlyFields>
       )}
     </Card>
   );
@@ -142,7 +145,12 @@ const EVENT_TYPES: { k: EventType; l: string }[] = [
 
 const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 
-export function AuditComplianceSection() {
+// `canWrite` — global administrator for configureApp (GC, v2.2.2): both the
+// retention PUT and GET /audit/export (the whole installation's history) are
+// install-wide. An administrator of one agency reads the windows and finds Save
+// and Export disabled with the reason.
+export function AuditComplianceSection({ canWrite }: { canWrite: boolean }) {
+  const why = globalOnly(canWrite);
   const [from, setFrom] = useState(isoDate(new Date(Date.now() - 30 * 86400000)));
   const [to, setTo] = useState(isoDate(new Date()));
   const [eventTypes, setEventTypes] = useState<EventType[]>(EVENT_TYPES.map((e) => e.k));
@@ -187,7 +195,7 @@ export function AuditComplianceSection() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <RetentionCard />
+      <RetentionCard canWrite={canWrite} />
       <Card title="Audit Export">
         <div style={{ fontSize: c.fontSm, color: c.textSec, marginBottom: 14, lineHeight: 1.6 }}>
           Export the audit trail for a date range. The file downloads as soon as it is ready.
@@ -237,7 +245,7 @@ export function AuditComplianceSection() {
               </div>
             ))}
           </div>
-          <Btn primary onClick={doExport} disabled={exporting}>
+          <Btn primary onClick={doExport} disabled={exporting || !!why} title={why || undefined}>
             {exporting ? "Preparing…" : "Export Audit Trail"}
           </Btn>
           {exportedAt && <span style={{ fontSize: c.fontSm, color: c.success, fontWeight: 600 }}>✓ Export downloaded at {exportedAt}</span>}
