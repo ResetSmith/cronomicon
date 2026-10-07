@@ -12,6 +12,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/metrics"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
@@ -219,7 +220,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	// Subtract the server-managed capability mask (Phase 4, D3): the run-types it
 	// lists are removed from the runner's effective claim set. Enforced here at
 	// claim time (the real gate); the agent honors it too for symmetry.
-	caps = effectiveClaimCaps(caps, managedVals.CapabilityMask)
+	caps = execspec.EffectiveCaps(caps, managedVals.CapabilityMask)
 	if len(caps) == 0 {
 		respondControlOr204(w, control, settingsPayload, watches)
 		return
@@ -504,7 +505,7 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	// satisfied, agency-eligible, scope-bound, injection-gated run and
 	// transition it to running in a single UPDATE ... RETURNING (SQLite 3.35+).
 	// Placeholders in order: runner_id, started-at ts, caps (run_type), caps
-	// (requires⊆), agency runnerID ×2, binding runnerID, injectFlag.
+	// (requires⊆), agency runnerID, binding runnerID, injectFlag.
 	var (
 		traceID string
 		jobName string
@@ -530,34 +531,28 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			  -- run_agencies (mig. 690) purely so this probe is a keyed lookup
 			  -- rather than a per-row JSON parse — agencies_json stays authoritative.
 			  --
-			  -- BOTH branches are deliberately shaped to stay cheap, and the shape is
-			  -- load-bearing (see poll_claim_bench_test.go for the measurements):
-			  --   · the membership branch's inner IN is UNCORRELATED, so SQLite
-			  --     materializes the runner's agency names once per statement;
-			  --   · the general-pool branch tests the compact-JSON column with a byte
-			  --     comparison instead of a correlated NOT EXISTS, which is what the
-			  --     legacy predicate got for free from a plain IS NULL test.
-			  AND (
-			    -- tagged run → this runner must be a member of AT LEAST ONE of the
-			    -- agencies the run requires
-			    (COALESCE(runs.agencies_json, '[]') <> '[]'
-			     AND EXISTS (SELECT 1 FROM run_agencies rag
-			                 WHERE rag.run_id = runs.id
-			                   AND rag.agency IN (SELECT a.name FROM runner_agencies ra
-			                                      JOIN agencies a ON a.id = ra.agency_id
-			                                      WHERE ra.runner_id = ?)))
-			    -- untagged run → ONLY a runner with no agencies. This disjoint
-			    -- general-pool rule is UNCHANGED (AG-Q3a): it is an isolation
-			    -- invariant, not an implementation detail, and relaxing it in passing
-			    -- would silently let agency-bound runners start taking general work.
-			    OR (COALESCE(runs.agencies_json, '[]') = '[]'
-			        AND NOT EXISTS (SELECT 1 FROM runner_agencies WHERE runner_id = ?))
-			  )
+			  -- ONE rule since migration 1220: the runner serves at least one of
+			  -- the agencies the run requires. There used to be a second, disjoint
+			  -- arm for "the general pool" (a run with agencies_json '[]' → only a
+			  -- runner with no agencies). Global is a row now: a run with no scope
+			  -- carries ["Global"], a runner with no other agency serves Global,
+			  -- and this arm says both. A row that still carries '[]' is no
+			  -- agency's and nothing claims it — the writer and the birth trigger
+			  -- make that unreachable; it must never read as "anyone's".
+			  --
+			  -- The inner IN is UNCORRELATED on purpose (see
+			  -- poll_claim_bench_test.go): SQLite materializes the runner's agency
+			  -- names once per statement, and the probe of run_agencies is keyed.
+			  AND EXISTS (SELECT 1 FROM run_agencies rag
+			              WHERE rag.run_id = runs.id
+			                AND rag.agency IN (SELECT a.name FROM runner_agencies ra
+			                                   JOIN agencies a ON a.id = ra.agency_id
+			                                   WHERE ra.runner_id = ?))
 			  -- SB-1 scope binding (mig. 1180). A scope with rows in scope_runners
 			  -- is claimable only by a runner named there; a scope with none, and
 			  -- a run with no scope, behave exactly as before.
 			  --
-			  -- ANDed with the agency branch above, deliberately and permanently
+			  -- ANDed with the agency rule above, deliberately and permanently
 			  -- (the RT-Q2 rule, inherited from the runner-tag pin this
 			  -- replaced): a binding NARROWS the eligible set and must never
 			  -- widen it. Written as an OR — or moved inside the agency
@@ -616,7 +611,7 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			LIMIT 1
 		)
 		RETURNING id, job_name, run_type, scope`,
-		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, runnerID, injectFlag,
+		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, injectFlag,
 	).Scan(&traceID, &jobName, &runType, &scope)
 
 	if errors.Is(err, sql.ErrNoRows) {

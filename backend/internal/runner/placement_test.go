@@ -295,12 +295,16 @@ func TestApplyPlacementRefusesAnAgencyTheCallerCannotGrant(t *testing.T) {
 	if err := svc.ApplyPlacement(context.Background(), "new", histID, "ops@example", permits); err != ErrPlacementForbidden {
 		t.Fatalf("expected ErrPlacementForbidden, got %v", err)
 	}
+	// The runner is where it was born: serving Global, and nothing else.
 	var n int
-	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id='new'`).Scan(&n); err != nil {
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id='new' AND agency_id <> 'global'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
 		t.Errorf("a refused accept must apply NOTHING, found %d membership(s)", n)
+	}
+	if err := svc.db.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id='new' AND agency_id = 'global'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("a refused accept left the runner without its Global row (n=%d, err=%v)", n, err)
 	}
 }
 

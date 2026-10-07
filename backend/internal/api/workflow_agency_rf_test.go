@@ -93,8 +93,8 @@ func TestWorkflowListDerivesAgenciesFromItsJobs(t *testing.T) {
 		t.Errorf("wf-both agencies = %v, want [Finance Tax] — a workflow spanning two "+
 			"departments must list both, since that is what its authorization walk covers", got["wf-both"])
 	}
-	if len(got["wf-orph"]) != 0 {
-		t.Errorf("wf-orph agencies = %v, want empty — its job's scope belongs to no agency", got["wf-orph"])
+	if !eq(got["wf-orph"], "Global") {
+		t.Errorf("wf-orph agencies = %v, want [Global] — its job's scope was never assigned, so it is Global's", got["wf-orph"])
 	}
 	if !eq(got["wf-nested"], "Finance") {
 		t.Errorf("wf-nested agencies = %v, want [Finance] — the union must walk NESTED "+

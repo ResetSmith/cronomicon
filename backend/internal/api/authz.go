@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 	"net/http"
 	"strings"
 
@@ -397,8 +400,8 @@ func (s *Server) requireEntityAgency(w http.ResponseWriter, r *http.Request, id 
 	}
 	if deniedAgency == "" {
 		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
-			label+" belongs to no agency, so it is shared by every department; only an "+
-				"unrestricted operator may change or reveal it")
+			label+" belongs to Global, so it is shared by every agency; only a global "+
+				"administrator may change or reveal it")
 		return false
 	}
 	s.denyEntityAgency(w, r, id, perm, deniedAgency,
@@ -409,9 +412,21 @@ func (s *Server) requireEntityAgency(w http.ResponseWriter, r *http.Request, id 
 // entityAgencyPermitted is the transport-free core of requireEntityAgency, for
 // call sites that are not a whole route — the per-run reference/credential
 // checks inside runJob and the compose path (RF-4), where the denial response is
-// shaped by the caller. deniedAgency is "" for the empty-membership (RB-Q14)
-// case and the first owning agency otherwise; it is meaningful only when
-// permitted is false.
+// shaped by the caller. deniedAgency is "" when the entity is Global's (RB-Q14's
+// shared tier: a global administrator's to change) and the first owning agency
+// otherwise; it is meaningful only when permitted is false.
+//
+// Three outcomes when the entity has NO membership rows (migration 1220):
+//
+//   - the entity does not exist: there is nothing to own. A global administrator
+//     proceeds to the handler's own 404 or 422; anyone else is refused. (An id
+//     nothing matches has always read this way, and two callers rely on it: a
+//     scope id that names no row, and the ledger of a deregistered runner, whose
+//     membership went with it.)
+//   - the entity exists: that is an ERROR. Every scope, runner, secret, variable
+//     and key is born with a Global row and no route leaves one with none, so
+//     the row was deleted around the application. It is never read as "global".
+//   - (and with rows, the ordinary case: any one of its agencies suffices.)
 func (s *Server) entityAgencyPermitted(ctx context.Context, id auth.Identity,
 	perm, joinTable, joinCol, entityID string) (permitted bool, deniedAgency string, err error) {
 
@@ -440,16 +455,69 @@ func (s *Server) entityAgencyPermitted(ctx context.Context, id auth.Identity,
 	rows.Close()
 
 	if len(agencies) == 0 {
-		// The global-infrastructure case (RB-Q14). CanAgency("") already demands an
-		// unrestricted grant, so this is one call rather than a special case.
+		catalog, known := membershipCatalog[joinTable]
+		if !known {
+			return false, "", fmt.Errorf("entityAgencyPermitted: unknown membership table %q", joinTable)
+		}
+		var exists bool
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT EXISTS (SELECT 1 FROM `+catalog+` WHERE id = ?)`, entityID).Scan(&exists); err != nil {
+			return false, "", err
+		}
+		if exists {
+			return false, "", fmt.Errorf("%w: %s %s — every row has at least Global's "+
+				"(migration 1220), so this one was changed outside the application", errInNoAgency, catalog, entityID)
+		}
 		return id.GlobalAdmin(perm), "", nil
 	}
+	onlyGlobal := true
 	for _, a := range agencies {
+		if a != agencyid.Global {
+			onlyGlobal = false
+		}
 		if id.CanAgency(perm, a) {
 			return true, "", nil
 		}
 	}
+	if onlyGlobal {
+		return false, "", nil
+	}
 	return false, agencies[0], nil
+}
+
+// errInNoAgency is entityAgencyPermitted's answer for a row that exists and has
+// no membership rows. Every route but one turns it into a 500: nobody can be
+// shown to own the row, so nobody is let through. The one is the route that
+// GIVES a row its agencies (requireEntityAgencyOrRepair) — without it the row
+// could never be put right from inside the application.
+var errInNoAgency = errors.New("belongs to no agency")
+
+// requireEntityAgencyOrRepair is requireEntityAgency for the membership setters
+// alone. A row in no agency is damage, and assigning it an agency is the repair:
+// a GLOBAL administrator may do that (the row is nobody's, and what nobody owns
+// is theirs to place), and it is logged. Anyone else gets the 500 every other
+// route gives — a department's administrator claiming an orphan would be taking
+// a row they cannot be shown to own.
+func (s *Server) requireEntityAgencyOrRepair(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	perm, joinTable, joinCol, entityID, label string) bool {
+
+	_, _, err := s.entityAgencyPermitted(r.Context(), id, perm, joinTable, joinCol, entityID)
+	if errors.Is(err, errInNoAgency) && id.GlobalAdmin(perm) {
+		s.log.Warn("agency membership: repairing a row that was in no agency",
+			"kind", label, "id", entityID, "actor", id.Email)
+		return true
+	}
+	return s.requireEntityAgency(w, r, id, perm, joinTable, joinCol, entityID, label)
+}
+
+// membershipCatalog maps a membership join table to the table its entity lives
+// in. Compile-time constants, never input.
+var membershipCatalog = map[string]string{
+	"scope_agencies":          "scopes",
+	"runner_agencies":         "runners",
+	"secret_agencies":         "secrets",
+	"env_var_agencies":        "env_vars",
+	"ssh_credential_agencies": "ssh_credentials",
 }
 
 // requireCreationAgencies enforces the RF-Q2(a) creation rule
@@ -505,6 +573,17 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 			httpx.Fail(w, http.StatusUnprocessableEntity, "agency_required", msg)
 			return nil, false
 		}
+	}
+	// A global administrator who names nothing creates in Global (LR-22). It used
+	// to be "in no agency"; Global is where that row has always belonged, and it
+	// is said as a membership now, so nothing downstream has to read an empty set.
+	if len(agencyIDs) == 0 {
+		agencyIDs = []string{agencyid.Global}
+	}
+	if err := settings.ValidateAgencySet(agencyIDs); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "global_mixed",
+			"a new "+label+" is Global's or an agency's, never both: name Global alone, or the agencies")
+		return nil, false
 	}
 	for _, a := range agencyIDs {
 		var n int
@@ -612,7 +691,7 @@ func (s *Server) refEntityPermitted(ctx context.Context, id auth.Identity,
 		return true, nil
 	}
 	if deniedAgency == "" {
-		// ⚠️ The UNMEMBERED entity is allowed here, unlike on the settings routes,
+		// ⚠️ A GLOBAL entity is allowed here, unlike on the settings routes,
 		// and the asymmetry is deliberate. RB-Q14 makes shared infrastructure
 		// unrestricted-only for "writes and reveal" and says in the same breath that
 		// "reads and RUN-TIME CONSUMPTION are unchanged" — and attaching a reference
@@ -644,19 +723,23 @@ func (s *Server) denyEntityAgency(w http.ResponseWriter, r *http.Request, id aut
 // Ownership is deliberately SINGLE-VALUED — that is what lets uniqueness stay a
 // plain DB fact rather than a property of a many-to-many join (§2.6). So:
 //
-//	exactly one agency  ⇒ that agency owns the row (the departmental case)
-//	none                ⇒ unowned: shared infrastructure, an unrestricted admin's
-//	                      deliberate statement, and every pre-Phase-E row
-//	several             ⇒ unowned, but VISIBLE to all of them via membership
+//	exactly one agency  ⇒ that agency owns the row (the departmental case, and —
+//	                      when the one agency is Global — shared infrastructure,
+//	                      a global administrator's deliberate statement)
+//	several             ⇒ Global owns it, VISIBLE only to those agencies via
+//	                      membership
 //
 // The last case is the interesting one. A creator who names several departments is
-// saying "these departments share this", which is exactly what an unowned row with
-// multi-department membership means — whereas picking one of them as owner would
+// saying "these departments share this", which is exactly what a Global-owned row
+// with a narrowed member list means — whereas picking one of them as owner would
 // invent an ownership claim they never made, and silently give that department's
 // runs precedence over the others'. Membership still narrows who can reach it.
+// (LR-54 retires the several case: one agency per secret, variable and key.)
+//
+// Never empty since migration 1220: "unowned" is "Global's", with an id.
 func ownerAgencyFor(agencyIDs []string) string {
 	if len(agencyIDs) == 1 {
 		return agencyIDs[0]
 	}
-	return ""
+	return agencyid.Global
 }

@@ -106,6 +106,19 @@ import (
 // poll. That is a larger win than any predicate here
 // and is left alone only because it is not this change's to make.
 //
+// G1 RE-MEASUREMENT (mig. 1220, Global as a row). The disjoint general-pool arm is
+// gone: a run with no scope carries ["Global"] and a runner in no other agency
+// serves Global, so one membership arm says everything. Medians of 5 × 300
+// claims, back to back on one (busy) host:
+//
+//	  Disjoint (the 2.2 predicate)     456,000 ns/op
+//	  Shipped  (one arm)               427,000 ns/op     -6%, inside the noise band
+//	  Shipped, a quarter of scopes bound 409,000 ns/op
+//
+// No worse, and one correlated arm fewer to keep cheap. The Phase 0 baseline
+// taken on a quiet host was 370,000 for the predicate now called Disjoint; the
+// comparison that counts is the same-run one above.
+//
 //	go test ./internal/runner/ -run '^$' -bench BenchmarkClaimPredicate -benchtime 300x
 
 const (
@@ -338,7 +351,9 @@ const inSetAgencyClause = `
 			    OR (NOT EXISTS (SELECT 1 FROM run_agencies WHERE run_id = runs.id)
 			        AND NOT EXISTS (SELECT 1 FROM runner_agencies WHERE runner_id = ?))`
 
-// shippedAgencyClause — the predicate that ships.
+// disjointAgencyClause — the predicate that shipped from migration 690 until
+// migration 1220 (v2.3.0), kept as the baseline the single-arm predicate below is
+// measured against.
 //
 // The remaining cost in every variant above turned out to be the GENERAL-POOL
 // branch, not the membership one: `NOT EXISTS (SELECT … WHERE run_id = runs.id)` is
@@ -351,7 +366,7 @@ const inSetAgencyClause = `
 // general-pool test is the byte comparison `= '[]'` — no JSON parsing, no subquery.
 // The membership branch is then the same uncorrelated materialized set the legacy
 // predicate used, over the migration-690 index.
-const shippedAgencyClause = `
+const disjointAgencyClause = `
 			    (COALESCE(runs.agencies_json, '[]') <> '[]'
 			     AND EXISTS (SELECT 1 FROM run_agencies rag
 			                 WHERE rag.run_id = runs.id
@@ -360,6 +375,32 @@ const shippedAgencyClause = `
 			                                      WHERE ra.runner_id = ?)))
 			    OR (COALESCE(runs.agencies_json, '[]') = '[]'
 			        AND NOT EXISTS (SELECT 1 FROM runner_agencies WHERE runner_id = ?))`
+
+// shippedAgencyClause — the predicate claimRun runs since migration 1220: ONE
+// arm. Global is a row, so "the general pool" is a membership like any other (a
+// run with no scope carries ["Global"], a runner with no other agency serves
+// Global) and the second, disjoint arm of every candidate above has nothing left
+// to do. It is the membership arm of disjointAgencyClause without the column
+// test in front of it: a row that still says '[]' has no run_agencies row, so
+// the EXISTS is false for it and nothing claims it.
+const shippedAgencyClause = `
+			    EXISTS (SELECT 1 FROM run_agencies rag
+			            WHERE rag.run_id = runs.id
+			              AND rag.agency IN (SELECT a.name FROM runner_agencies ra
+			                                 JOIN agencies a ON a.id = ra.agency_id
+			                                 WHERE ra.runner_id = ?))`
+
+// claimArgs binds one runner to claimSQL(clause): the fixed parameters, one
+// runner id for each placeholder the agency clause carries (two for the disjoint
+// candidates, one for the shipped predicate), one for the binding clause, and
+// the injection flag.
+func claimArgs(clause, runnerID, ts, caps string) []any {
+	args := []any{runnerID, ts, caps, caps}
+	for range strings.Count(clause, "?") {
+		args = append(args, runnerID)
+	}
+	return append(args, runnerID, 1)
+}
 
 func benchmarkClaim(b *testing.B, clause string) { benchmarkClaimOn(b, clause, false) }
 
@@ -376,7 +417,7 @@ func benchmarkClaimOn(b *testing.B, clause string, withBindings bool) {
 		rid := runnerIDs[i%len(runnerIDs)]
 		var claimed string
 		err := svc.db.QueryRowContext(ctx, stmt,
-			rid, "2026-01-01T00:00:00Z", string(caps), string(caps), rid, rid, rid, 1).Scan(&claimed)
+			claimArgs(clause, rid, "2026-01-01T00:00:00Z", string(caps))...).Scan(&claimed)
 		if err == sql.ErrNoRows {
 			b.Fatalf("iteration %d claimed nothing — the fixture must always have a claimable run, "+
 				"or the benchmark is measuring the empty case", i)
@@ -419,8 +460,12 @@ func BenchmarkClaimPredicateProbe(b *testing.B) { benchmarkClaim(b, probeAgencyC
 // BenchmarkClaimPredicateInSet is the fully-uncorrelated candidate.
 func BenchmarkClaimPredicateInSet(b *testing.B) { benchmarkClaim(b, inSetAgencyClause) }
 
+// BenchmarkClaimPredicateDisjoint is the two-arm predicate claimRun ran before
+// migration 1220 — the baseline for Shipped below.
+func BenchmarkClaimPredicateDisjoint(b *testing.B) { benchmarkClaim(b, disjointAgencyClause) }
+
 // BenchmarkClaimPredicateShipped is the predicate claimRun actually runs. THIS is
-// the number that must clear the ≤15% budget against LegacyScalar.
+// the number that must stay within the budget against Disjoint (and LegacyScalar).
 func BenchmarkClaimPredicateShipped(b *testing.B) { benchmarkClaim(b, shippedAgencyClause) }
 
 // BenchmarkClaimPredicateShippedBoundScopes is Shipped over a fleet that actually
@@ -472,17 +517,22 @@ func TestClaimPredicatesAgree(t *testing.T) {
 		                       created_at, agency, agencies_json, requires_json)
 		      VALUES(?, 'j','bash','queued','t','manual','runner',?,?,?,'[]')`, id, created, a, aj)
 		if agency != "" {
-			exec(`INSERT INTO run_agencies(run_id, agency) VALUES(?,?)`, id, agency)
+			// OR IGNORE: for a Global run the birth trigger (mig. 1220) has
+			// already written the row.
+			exec(`INSERT OR IGNORE INTO run_agencies(run_id, agency) VALUES(?,?)`, id, agency)
 		}
 	}
-	mk("r-b", "B", `["B"]`, "2026-01-01T00:00:01Z")   // wrong agency for rn-a
-	mk("r-general", "", `[]`, "2026-01-01T00:00:02Z") // general pool
-	mk("r-a", "A", `["A"]`, "2026-01-01T00:00:03Z")   // rn-a's agency
+	mk("r-b", "B", `["B"]`, "2026-01-01T00:00:01Z") // wrong agency for rn-a
+	// What was "the general pool": a run with no scope is Global's (mig. 1220),
+	// and rn-none, a runner in no other agency, serves Global. The legacy scalar
+	// column is given the same answer so that predicate can still be compared.
+	mk("r-general", "Global", `["Global"]`, "2026-01-01T00:00:02Z")
+	mk("r-a", "A", `["A"]`, "2026-01-01T00:00:03Z") // rn-a's agency
 
 	claim := func(clause, runnerID string) string {
 		t.Helper()
 		var got string
-		err := pool.QueryRow(claimSQL(clause), runnerID, ts, string(caps), string(caps), runnerID, runnerID, runnerID, 1).Scan(&got)
+		err := pool.QueryRow(claimSQL(clause), claimArgs(clause, runnerID, ts, string(caps))...).Scan(&got)
 		if err == sql.ErrNoRows {
 			return ""
 		}
@@ -496,22 +546,36 @@ func TestClaimPredicatesAgree(t *testing.T) {
 
 	for _, runner := range []string{"rn-a", "rn-none"} {
 		legacy := claim(legacyAgencyClause, runner)
-		set := claim(setAgencyClause, runner)
-		indexed := claim(indexedAgencyClause, runner)
-		if legacy != set || legacy != indexed {
-			t.Errorf("runner %s: legacy claimed %q, set claimed %q, indexed claimed %q — all three must agree",
-				runner, legacy, set, indexed)
+		for name, clause := range map[string]string{
+			"set": setAgencyClause, "indexed": indexedAgencyClause, "probe": probeAgencyClause,
+			"inSet": inSetAgencyClause, "disjoint": disjointAgencyClause, "shipped": shippedAgencyClause,
+		} {
+			if got := claim(clause, runner); got != legacy {
+				t.Errorf("runner %s: legacy claimed %q, %s claimed %q — every predicate must agree", runner, legacy, name, got)
+			}
 		}
 	}
 	// The specific properties that agreement alone would not pin down:
-	if got := claim(indexedAgencyClause, "rn-a"); got != "r-a" {
-		t.Errorf("agency-bound runner claimed %q, want r-a (never the general-pool or wrong-agency run)", got)
+	if got := claim(shippedAgencyClause, "rn-a"); got != "r-a" {
+		t.Errorf("agency-bound runner claimed %q, want r-a (never Global's or another agency's run)", got)
 	}
-	// AG-Q3a — the disjoint general-pool rule is deliberately UNCHANGED: an
-	// agency-bound runner must still refuse untagged work, and only a runner with no
-	// agencies may take it.
-	if got := claim(indexedAgencyClause, "rn-none"); got != "r-general" {
-		t.Errorf("agency-less runner claimed %q, want r-general", got)
+	// The isolation rule the disjoint arm used to carry, unchanged in effect: a
+	// department's runner refuses Global's work, and only a runner that serves
+	// Global takes it.
+	if got := claim(shippedAgencyClause, "rn-none"); got != "r-general" {
+		t.Errorf("the Global runner claimed %q, want r-general", got)
+	}
+	// A row with no agency at all (written around the writer and the trigger) is
+	// claimable by NOBODY under the shipped predicate. Under the disjoint one it
+	// would have gone to any runner with no agency rows.
+	exec(`INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor, created_at, agencies_json, requires_json)
+	      VALUES('r-orphan','j','bash','queued','t','manual','runner','2026-01-01T00:00:00Z','[]','[]')`)
+	exec(`DELETE FROM run_agencies WHERE run_id = 'r-orphan'`)
+	exec(`UPDATE runs SET agencies_json = '[]' WHERE id = 'r-orphan'`)
+	for _, runner := range []string{"rn-a", "rn-none"} {
+		if got := claim(shippedAgencyClause, runner); got == "r-orphan" {
+			t.Errorf("runner %s claimed a run that belongs to no agency", runner)
+		}
 	}
 }
 
@@ -530,7 +594,7 @@ func TestClaimQueryPlan(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	rows, err := pool.Query("EXPLAIN QUERY PLAN "+claimSQL(shippedAgencyClause),
-		"rn", "t", `["bash"]`, `["bash"]`, "rn", "rn", "rn", 1)
+		claimArgs(shippedAgencyClause, "rn", "t", `["bash"]`)...)
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"strconv"
@@ -26,6 +27,10 @@ type Agency struct {
 	CreatedAt      string  `json:"createdAt,omitempty"`
 	LastModifiedBy string  `json:"lastModifiedBy,omitempty"`
 	LastModifiedAt string  `json:"lastModifiedAt,omitempty"`
+	// Builtin marks Global, the one agency every installation has (LR-21,
+	// migration 1220). It cannot be renamed or deleted, and no access grant may
+	// name it: it belongs to the global administrators.
+	Builtin bool `json:"builtin"`
 	// OnlineRunnerCount is the number of ONLINE runners assigned to this agency
 	// (agency-support.md M4 coverage view). 0 ⇒ jobs bound here will wait — no
 	// runner can claim them. Computed per list read; not stored.
@@ -50,12 +55,34 @@ var (
 	// not in the catalog — the write-time integrity guard (agency-support.md §2.3;
 	// mapped 422).
 	ErrUnknownAgency = errors.New("unknown agency")
+
+	// ErrAgencyRequired is returned by a membership write that would leave an
+	// entity in no agency at all (LR-26). Every scope, runner, secret, variable
+	// and key belongs to at least one; to make something Global's, name Global.
+	// Removing the last agency used to be HOW a row became "global" — for a
+	// secret that means usable by every agency — which made a delete the way to
+	// take the most consequential decision there is. Mapped 422.
+	ErrAgencyRequired = errors.New("every entity belongs to at least one agency — name Global to make it Global's")
+
+	// ErrGlobalMixed is returned when a membership write names Global together
+	// with another agency (LR-25). Global's rows are already usable by every
+	// agency; "Global and Finance" says nothing "Global" does not, and reads as a
+	// restriction it is not. Mapped 422.
+	ErrGlobalMixed = errors.New("an entity is Global's or an agency's, never both")
+
+	// ErrBuiltinAgency is returned by an attempt to rename or delete Global
+	// (LR-21). Runs name their agency by NAME, and code and triggers name its id.
+	ErrBuiltinAgency = errors.New("the Global agency is built in: it cannot be renamed or deleted")
+
+	// ErrAgencyNameReserved is returned when another agency would be called
+	// Global, in any letter case.
+	ErrAgencyNameReserved = errors.New("the name Global is reserved for the built-in agency")
 )
 
 // ListAgencies returns the agency catalog ordered by name.
 func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 	rows, err := database.QueryContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin
 		 FROM agencies ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list agencies: %w", err)
@@ -100,7 +127,7 @@ func ListAgencies(ctx context.Context, database *sql.DB) ([]Agency, error) {
 // GetAgency fetches one agency by id; returns (nil, nil) if not found.
 func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error) {
 	row := database.QueryRowContext(ctx,
-		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at
+		`SELECT id, name, description, created_by, created_at, last_modified_by, last_modified_at, builtin
 		 FROM agencies WHERE id=?`, id)
 	a, err := scanAgency(row)
 	if err != nil {
@@ -115,7 +142,7 @@ func GetAgency(ctx context.Context, database *sql.DB, id string) (*Agency, error
 func scanAgency(rs interface{ Scan(...any) error }) (Agency, error) {
 	var a Agency
 	var desc, createdBy, lmBy, lmAt sql.NullString
-	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt); err != nil {
+	if err := rs.Scan(&a.ID, &a.Name, &desc, &createdBy, &a.CreatedAt, &lmBy, &lmAt, &a.Builtin); err != nil {
 		return a, err
 	}
 	if desc.Valid {
@@ -139,6 +166,9 @@ func CreateAgency(ctx context.Context, database *sql.DB, inp AgencyInput, actor 
 		return nil, fmt.Errorf("agency name is required")
 	}
 	id := db.NewID()
+	if agencyid.IsGlobalName(name) {
+		return nil, ErrAgencyNameReserved
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := database.ExecContext(ctx,
 		`INSERT INTO agencies (id, name, description, created_by, created_at, last_modified_by, last_modified_at)
@@ -160,6 +190,12 @@ func UpdateAgency(ctx context.Context, database *sql.DB, id string, inp AgencyIn
 	name := strings.TrimSpace(inp.Name)
 	if name == "" {
 		return nil, fmt.Errorf("agency name is required")
+	}
+	if id == agencyid.Global && name != agencyid.GlobalName {
+		return nil, ErrBuiltinAgency
+	}
+	if id != agencyid.Global && agencyid.IsGlobalName(name) {
+		return nil, ErrAgencyNameReserved
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	// The rename and its propagation to waiting runs are one transaction: a run
@@ -405,6 +441,9 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 	if err != nil || existing == nil {
 		return false, err
 	}
+	if id == agencyid.Global {
+		return false, ErrBuiltinAgency
+	}
 	// ⚠️ The M1 scope guard used to live here as
 	//     SELECT COUNT(*) FROM scopes WHERE agency_id = ?
 	// with its error discarded. Migration 700 DROPPED scopes.agency_id (670 moved the
@@ -414,14 +453,24 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 	// counted below by AgencyMemberCounts(MemberScope) over scope_agencies, which is
 	// where the binding actually lives. Nothing regresses, and the struct no longer
 	// carries a field that can only ever be zero.
+	// Every count below FAILS the delete when it cannot be read. Each used to be
+	// best-effort ("a pre-670 schema has no such table"), which made an unreadable
+	// table read as "nothing references this agency" — and the cascade then took
+	// the membership of everything that did. Migrations run before anything
+	// serves, so there is no old schema to be lenient towards.
 	var runnerRefs int
-	_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_agencies WHERE agency_id=?`, id).Scan(&runnerRefs)
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_agencies WHERE agency_id=?`, id).Scan(&runnerRefs); err != nil {
+		return false, fmt.Errorf("delete agency: count runners: %w", err)
+	}
 	// T2.8 — the guard must count the migration-670 membership tables too. Without
 	// this, deleting an agency that only holds SECRET or KEY members succeeds and the
 	// ON DELETE CASCADE silently drops that membership: an access-control fact
 	// disappears with no 409 and no way to notice. The scope case is caught above
 	// only because scopes.agency_id has no cascade — which is luck, not design.
-	members, _ := AgencyMemberCounts(ctx, database, id)
+	members, err := AgencyMemberCounts(ctx, database, id)
+	if err != nil {
+		return false, fmt.Errorf("delete agency: count members: %w", err)
+	}
 	memberRefs := 0
 	for _, n := range members {
 		memberRefs += n
@@ -441,13 +490,11 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 	owned := map[string]int{}
 	for _, table := range []string{"secrets", "env_vars", "ssh_credentials"} {
 		var n int
-		// Best-effort per table, matching AgencyMemberCounts: a pre-830 schema has no
-		// owner_agency column, and failing the whole guard there would make every
-		// agency undeletable on an old schema.
 		if err := database.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM `+table+` WHERE owner_agency = ?`, id).Scan(&n); err == nil {
-			owned[table] = n
+			`SELECT COUNT(*) FROM `+table+` WHERE owner_agency = ?`, id).Scan(&n); err != nil {
+			return false, fmt.Errorf("delete agency: count owned %s: %w", table, err)
 		}
+		owned[table] = n
 	}
 	ownerRefs := owned["secrets"] + owned["env_vars"] + owned["ssh_credentials"]
 	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 {
@@ -461,6 +508,22 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 	}
 	res, err := database.ExecContext(ctx, `DELETE FROM agencies WHERE id=?`, id)
 	if err != nil {
+		// The counts above and this DELETE are separate statements, so something
+		// can join the agency in between. The database refuses the delete itself
+		// (trigger agencies_no_delete_in_use, migration 1220): that is the guard,
+		// and the counts are how the refusal gets its wording. Count again so the
+		// caller is told what arrived.
+		if strings.Contains(err.Error(), "agency_in_use") {
+			inUse := &AgencyInUseError{Members: map[MemberKind]int{}}
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM runner_agencies WHERE agency_id=?`, id).Scan(&inUse.Runners)
+			if m, merr := AgencyMemberCounts(ctx, database, id); merr == nil {
+				inUse.Members = m
+			}
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM secrets WHERE owner_agency = ?`, id).Scan(&inUse.Secrets)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM env_vars WHERE owner_agency = ?`, id).Scan(&inUse.EnvVars)
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM ssh_credentials WHERE owner_agency = ?`, id).Scan(&inUse.Keys)
+			return false, inUse
+		}
 		return false, fmt.Errorf("delete agency: %w", err)
 	}
 	n, _ := res.RowsAffected()
@@ -484,11 +547,16 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 	if err != nil || sc == nil {
 		return nil, err
 	}
-	var val any
+	// A scope always has an agency (LR-26). This route's "no agency" (a null or
+	// empty agencyId, the Scopes tab's "none" option) has always meant "nobody's
+	// in particular"; that is Global now, said as a row.
+	var val any = agencyid.Global
 	if agencyID != nil && strings.TrimSpace(*agencyID) != "" {
 		aid := strings.TrimSpace(*agencyID)
 		var exists int
-		_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM agencies WHERE id=?`, aid).Scan(&exists)
+		if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM agencies WHERE id=?`, aid).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("set scope agency: %w", err)
+		}
 		if exists == 0 {
 			return nil, ErrUnknownAgency
 		}
@@ -499,19 +567,25 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 	// tab has always used, and a scope with one agency is still the common case; it
 	// simply writes the join table. Setting a SECOND agency requires the N:M matrix
 	// (PUT /scope-agencies), which this endpoint would otherwise silently truncate.
-	if _, err := database.ExecContext(ctx, `DELETE FROM scope_agencies WHERE scope_id=?`, scopeID); err != nil {
+	//
+	// One transaction: the delete and the insert are a replacement, and a scope
+	// caught between them belongs to no agency — the state every reader refuses.
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
 		return nil, fmt.Errorf("set scope agency: %w", err)
 	}
-	if val != nil {
-		if _, err := database.ExecContext(ctx,
-			`INSERT INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, scopeID, val); err != nil {
-			return nil, fmt.Errorf("set scope agency: %w", err)
-		}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scope_agencies WHERE scope_id=?`, scopeID); err != nil {
+		return nil, fmt.Errorf("set scope agency: %w", err)
 	}
-	detail := "cleared"
-	if val != nil {
-		detail = fmt.Sprintf("%v", val)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, scopeID, val); err != nil {
+		return nil, fmt.Errorf("set scope agency: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("set scope agency: %w", err)
+	}
+	detail := fmt.Sprintf("%v", val)
 	audit(ctx, database, actor, "Scopes", "agency-set", sc.Scope, detail)
 	return GetScope(ctx, database, scopeID)
 }
@@ -579,6 +653,9 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 				return ErrUnknownAgency
 			}
 		}
+		if err := ValidateAgencySet(a.AgencyIDs); err != nil {
+			return err
+		}
 	}
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -619,10 +696,11 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 			return err
 		}
 		summary := "agencies set: " + strings.Join(agencyNamesFor(ctx, tx, after), ", ")
-		if len(after) == 0 {
-			// RB-22: say what the empty set MEANS. This runner now serves every
-			// department's untagged work, which is MORE reach, not less.
-			summary = "removed from all agencies (now general pool)"
+		if len(after) == 1 && after[0] == agencyid.Global {
+			// RB-22: say what the move MEANS. This runner now serves Global's
+			// work — every run with no scope — which is a change of who it works
+			// for, not merely a removal.
+			summary = "moved to Global (it now serves Global's runs, and no department's)"
 		}
 		// In the transaction, like DRF-1/DRF-4: a membership change is an
 		// isolation change, and one without its audit row must not exist. Target
@@ -705,4 +783,28 @@ func sameSet(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// ValidateAgencySet applies the two rules every membership write obeys since
+// Global became an agency (migration 1220): the set is not empty (LR-26), and
+// Global is not named beside another agency (LR-25). The database enforces the
+// second with a trigger as well; checking here turns a constraint error into a
+// sentence, before anything is written.
+func ValidateAgencySet(agencyIDs []string) error {
+	if len(agencyIDs) == 0 {
+		return ErrAgencyRequired
+	}
+	named := 0
+	global := false
+	for _, id := range agencyIDs {
+		if id == agencyid.Global {
+			global = true
+		} else {
+			named++
+		}
+	}
+	if global && named > 0 {
+		return ErrGlobalMixed
+	}
+	return nil
 }

@@ -211,8 +211,11 @@ type jobRow struct {
 	// Display only. They gate buttons; the run path enforces scope but not the verb
 	// until RB-2, and they become departmentally correct when RB-15 makes grants
 	// authoritative — at which point these fields already carry the right answer.
-	CanRun  bool `json:"canRun"`
-	CanKill bool `json:"canKill"`
+	//
+	// Three flags because the three routes ask three questions (rowAuthority).
+	CanRun   bool `json:"canRun"`
+	CanKill  bool `json:"canKill"`
+	CanPause bool `json:"canPause"`
 
 	// AN-2 — the operator annotation (migration 1060), flattened into this row.
 	// Operator-owned and sync-preserved, unlike Description, which is Git-owned
@@ -312,6 +315,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			j.uid AS uid,
 			(SELECT COUNT(*) FROM paused_jobs p WHERE p.source = j.source AND p.owner_kind = 'job' AND p.name = j.name) AS paused_count,
 			lr.status AS last_run_status,
+			COALESCE(lr.scope, '') AS last_run_scope,
 			lr.created_at AS last_run_at,
 			lr.duration_ms AS last_run_duration_ms,
 			ls.created_at AS last_skipped_at,
@@ -418,7 +422,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			synced_at, created_at, last_modified_at, source_path,
 			uid,
 			last_run_at, last_run_duration_ms, last_skipped_at, last_skip_reason, schedule_count, agencies,
-			critical, contact, status
+			critical, contact, status, COALESCE(last_run_status, ''), last_run_scope
 		FROM (` + derived + `)` + statusWhere + ` ORDER BY name LIMIT ? OFFSET ?`
 	args = append(args, pageSize, (page-1)*pageSize)
 
@@ -456,6 +460,8 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		critical              int
 		contact               string
 		status                string
+		lastRunStatus         string
+		lastRunScope          string
 	}
 	// RB-24: the caller, resolved once for the whole page rather than per row.
 	// An unauthenticated request cannot reach here (the route is session-gated), so
@@ -471,7 +477,8 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			&j.createdAt, &j.lastModifiedAt, &j.sourcePath,
 			&j.uid,
 			&j.lastRunAt, &j.lastDurationMs, &j.lastSkippedAt, &j.lastSkipReason,
-			&j.scheduleCount, &j.agencies, &j.critical, &j.contact, &j.status); err != nil {
+			&j.scheduleCount, &j.agencies, &j.critical, &j.contact, &j.status,
+			&j.lastRunStatus, &j.lastRunScope); err != nil {
 			continue
 		}
 		bases = append(bases, j)
@@ -582,9 +589,9 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 		if j.agencies.Valid && j.agencies.String != "" {
 			jr.Agencies = strings.Split(j.agencies.String, "\x1f")
 		}
-		// RB-24: evaluate the caller's authority against THIS row's scope.
-		jr.CanRun = actor.Can(auth.PermTriggerJobs, j.scope.String)
-		jr.CanKill = actor.Can(auth.PermKillJobs, j.scope.String)
+		// RB-24: evaluate the caller's authority against THIS row, asking each
+		// route's own question (see rowAuthority).
+		jr.CanRun, jr.CanKill, jr.CanPause = rowAuthority(actor, j.scope.String, j.lastRunStatus, j.lastRunScope)
 		// AN-2 list subset — Notes/NotesBy/NotesAt stay zero here on purpose.
 		jr.Critical = j.critical == 1
 		jr.Contact = j.contact
@@ -2036,6 +2043,45 @@ func (s *Server) requirePauseAuthority(w http.ResponseWriter, r *http.Request, i
 	httpx.Fail(w, http.StatusForbidden, "forbidden",
 		"this job has no scope, so it belongs to no one agency; only an unrestricted operator may pause or resume it")
 	return false
+}
+
+// rowAuthority answers the three per-row questions the Jobs list asks about the
+// caller (RB-24), each the way its route's gate answers it:
+//
+//	canRun    may they start a run — runJob. On a job with no scope that is
+//	          "after choosing a scope they hold" (RB-26): the job is Global's
+//	          (LR-24) and a department runs it against its own scope, so the
+//	          verb held anywhere is enough to open the dialog. Only a global
+//	          administrator may run it unbound.
+//	canKill   may they stop the run that is active — killJob, which authorizes
+//	          on the RUN's scope, not the job's: a run of an unscoped job
+//	          carries the scope its triggerer bound, and an unbound run is
+//	          Global's. With nothing running it answers for the job's scope.
+//	canPause  may they pause or resume the JOB — pauseJob and resumeJob. That
+//	          changes the job for everyone, so on a job with no scope it is a
+//	          global administrator's.
+//
+// Until 2.3.0 the last two were one flag computed as Can(perm, jobScope), which
+// every grant satisfies for the empty scope: a department's operator was offered
+// Stop and Pause on Global's jobs and refused on the click.
+func rowAuthority(actor auth.Identity, jobScope, lastRunStatus, lastRunScope string) (canRun, canKill, canPause bool) {
+	on := func(perm, scope string) bool {
+		if scope == "" {
+			return actor.CanUnbound(perm)
+		}
+		return auth.ScopeReadable(actor, scope) && actor.Can(perm, scope)
+	}
+	if jobScope == "" {
+		canRun = actor.CanAnywhere(auth.PermTriggerJobs)
+	} else {
+		canRun = on(auth.PermTriggerJobs, jobScope)
+	}
+	canPause = on(auth.PermKillJobs, jobScope)
+	canKill = canPause
+	if lastRunStatus == "queued" || lastRunStatus == "running" {
+		canKill = on(auth.PermKillJobs, lastRunScope)
+	}
+	return canRun, canKill, canPause
 }
 
 func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {
@@ -4249,10 +4295,13 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 			// No online runner in the run's pool at all — the coarsest cause. T3.7:
 			// name the SET, because "no online runner in agency 'DSS'" is actively
 			// misleading once a run can require any of several.
+			// A run with no scope is Global's and says so here like any other
+			// (migration 1220). An EMPTY set is no agency at all: not reachable
+			// through the run writer or the birth trigger, and nothing claims it.
 			if len(runAgencies) > 0 {
 				statusReason = "Waiting: no online runner in " + joinAgencyNames(runAgencies)
 			} else {
-				statusReason = "Waiting: no online general-pool runner (all runners are agency-bound)"
+				statusReason = "Waiting: this run carries no agency, so no runner can claim it (an internal error)"
 			}
 		} else if eligible, requires, _ := execspec.EligibleOnlineRunnerForRun(context.Background(), s.db, rr.id); !eligible {
 			// A runner exists in the pool but none can take this run. SB-1: ask

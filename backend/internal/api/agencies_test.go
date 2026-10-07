@@ -83,13 +83,16 @@ func TestAgenciesAPI(t *testing.T) {
 	// ── List contains it ──────────────────────────────────────────────────────────
 	resp = do(http.MethodGet, "/api/v1/agencies", nil, false)
 	var list []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Builtin bool   `json:"builtin"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&list)
 	resp.Body.Close()
-	if len(list) != 1 || list[0].Name != "alpha-renamed" {
-		t.Fatalf("list = %+v, want one agency named alpha-renamed", list)
+	// The catalog always holds Global, the built-in agency (migration 1220),
+	// beside whatever an administrator created. Sorted by name.
+	if len(list) != 2 || list[0].ID != "global" || !list[0].Builtin || list[1].Name != "alpha-renamed" || list[1].Builtin {
+		t.Fatalf("list = %+v, want Global (built in) and alpha-renamed", list)
 	}
 
 	// ── Bind scope to unknown agency → 422 unknown_agency ─────────────────────────

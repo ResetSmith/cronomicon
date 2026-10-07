@@ -51,8 +51,8 @@ func (s *Server) failScopeRunners(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_runner", "the referenced runner is not registered")
 	case errors.As(err, &notEligible):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "runner_not_eligible",
-			notEligible.Error()+" — a scope in an agency takes a runner that is a member of it, and a "+
-				"scope in no agency takes a general-pool runner; fix the runner's agency membership first")
+			notEligible.Error()+" — a scope takes a runner that serves its agency, and a scope that is "+
+				"Global's takes a runner that serves Global; fix the runner's agency membership first")
 	case errors.Is(err, settings.ErrBindingsChanged):
 		httpx.Fail(w, http.StatusConflict, "bindings_changed",
 			"this scope's bound runners changed while you were editing; reload and try again")

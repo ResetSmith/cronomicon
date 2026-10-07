@@ -44,10 +44,10 @@ func TestEnqueueRunSnapshotsAgencies(t *testing.T) {
 	if tagged != `["alpha","beta"]` {
 		t.Errorf("tagged run agencies_json = %q, want the full set", tagged)
 	}
-	// A general-pool run must be the EMPTY ARRAY, never NULL or "": the claim
-	// predicate tests this column with a byte comparison against '[]'.
-	if untagged != "[]" {
-		t.Errorf("untagged run agencies_json = %q, want []", untagged)
+	// A run given no agency is Global's (migration 1220), never the empty array:
+	// nothing claims a run that belongs to no agency.
+	if untagged != `["Global"]` {
+		t.Errorf("untagged run agencies_json = %q, want [\"Global\"]", untagged)
 	}
 
 	var idx int
@@ -58,7 +58,7 @@ func TestEnqueueRunSnapshotsAgencies(t *testing.T) {
 	}
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM run_agencies rag
 	                   JOIN runs r ON r.id = rag.run_id WHERE r.job_name='untagged'`).Scan(&idx)
-	if idx != 0 {
-		t.Errorf("run_agencies rows for the general-pool run = %d, want 0", idx)
+	if idx != 1 {
+		t.Errorf("run_agencies rows for the Global run = %d, want 1 — the claim reads this index", idx)
 	}
 }

@@ -117,20 +117,15 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 	return out
 }
 
-// watchAgencyPermits mirrors claimRun's disjoint general-pool rule (AG-Q3a): a
-// scope belonging to agencies is watchable only by a member runner, and an
-// unscoped job only by a runner with no agencies at all. Relaxing either half
-// would let one department observe another's directories.
+// watchAgencyPermits mirrors claimRun's agency rule: a job's directories are
+// watchable only by a runner that serves one of the job's scope's agencies. An
+// unscoped job is Global's (migration 1220) and is watched only by a runner that
+// serves Global — what "a runner with no agencies at all" meant before Global
+// was a row. Relaxing it would let one department observe another's directories.
 func watchAgencyPermits(ctx context.Context, database *sql.DB, scope string, runnerAgencies []string) bool {
-	if strings.TrimSpace(scope) == "" {
-		return len(runnerAgencies) == 0
-	}
-	jobAgencies, err := execspec.ScopeAgencies(ctx, database, scope)
+	jobAgencies, err := execspec.ScopeAgencies(ctx, database, strings.TrimSpace(scope))
 	if err != nil {
 		return false
-	}
-	if len(jobAgencies) == 0 {
-		return len(runnerAgencies) == 0
 	}
 	for _, ja := range jobAgencies {
 		if slices.Contains(runnerAgencies, ja) {
@@ -370,7 +365,9 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
 		jobUID.String, jobUID.String, spec.JobName, spec.JobSource).Scan(&scriptRef)
 	owners := runref.RunOwners(spec.JobSource, spec.JobName, jobUID.String, scriptRef.String)
-	if scope == "" && len(scopeAgencies) == 0 {
+	// The scope alone decides: an unbound run carries ["Global"] since migration
+	// 1220, never the empty set this also used to ask for.
+	if scope == "" {
 		blocked, berr := runref.UnboundRunBlocked(ctx, s.db, owners, scope, scopeAgencies)
 		if berr != nil {
 			s.refuseSighting(ctx, sightingID, "could not check credential bindings: "+berr.Error())

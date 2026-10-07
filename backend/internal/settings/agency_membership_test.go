@@ -74,13 +74,28 @@ func TestSetAgencyMembershipAllKinds(t *testing.T) {
 			if got[0].AgencyIDs[0] != "ag-dss" || got[0].AgencyIDs[1] != "ag-nwd" {
 				t.Errorf("agency ids not sorted: %v", got[0].AgencyIDs)
 			}
-			// An empty set CLEARS — the "no restriction" state, not a no-op.
+			// An empty set is REFUSED (LR-26). It used to clear the row to "no
+			// restriction" — for a secret, usable by every agency — which made a
+			// delete the way to take that decision.
 			if err := SetAgencyMembership(ctx, pool, tc.kind,
-				[]AgencyMembership{{ID: tc.id}}, "alice"); err != nil {
-				t.Fatalf("clear: %v", err)
+				[]AgencyMembership{{ID: tc.id}}, "alice"); !errors.Is(err, ErrAgencyRequired) {
+				t.Fatalf("an empty set = %v, want ErrAgencyRequired", err)
 			}
-			if got, _ := ListAgencyMembership(ctx, pool, tc.kind); len(got) != 0 {
-				t.Errorf("membership not cleared: %+v", got)
+			// Global beside another agency is refused too (LR-25).
+			if err := SetAgencyMembership(ctx, pool, tc.kind,
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global", "ag-dss"}}}, "alice"); !errors.Is(err, ErrGlobalMixed) {
+				t.Fatalf("Global with another agency = %v, want ErrGlobalMixed", err)
+			}
+			if got, _ := ListAgencyMembership(ctx, pool, tc.kind); len(got) != 1 || len(got[0].AgencyIDs) != 2 {
+				t.Fatalf("a refused write changed membership: %+v", got)
+			}
+			// Naming Global is how a row becomes Global's.
+			if err := SetAgencyMembership(ctx, pool, tc.kind,
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global"}}}, "alice"); err != nil {
+				t.Fatalf("move to Global: %v", err)
+			}
+			if got, _ := ListAgencyMembership(ctx, pool, tc.kind); len(got) != 1 || len(got[0].AgencyIDs) != 1 || got[0].AgencyIDs[0] != "global" {
+				t.Errorf("membership after the move to Global: %+v", got)
 			}
 		})
 	}
@@ -99,8 +114,13 @@ func TestSetAgencyMembershipFailsClosed(t *testing.T) {
 	if !errors.Is(err, ErrUnknownMember) {
 		t.Fatalf("err = %v, want ErrUnknownMember", err)
 	}
-	if got, _ := ListAgencyMembership(ctx, pool, MemberSecret); len(got) != 0 {
-		t.Errorf("a rejected batch still wrote %d rows — validation must precede every write", len(got))
+	// s1 is where it was born: in Global, and nowhere else.
+	untouched := func() bool {
+		got, _ := ListAgencyMembership(ctx, pool, MemberSecret)
+		return len(got) == 1 && got[0].ID == "s1" && len(got[0].AgencyIDs) == 1 && got[0].AgencyIDs[0] == "global"
+	}
+	if !untouched() {
+		t.Errorf("a rejected batch still wrote rows — validation must precede every write")
 	}
 
 	err = SetAgencyMembership(ctx, pool, MemberSecret,
@@ -108,7 +128,7 @@ func TestSetAgencyMembershipFailsClosed(t *testing.T) {
 	if !errors.Is(err, ErrUnknownAgency) {
 		t.Fatalf("err = %v, want ErrUnknownAgency", err)
 	}
-	if got, _ := ListAgencyMembership(ctx, pool, MemberSecret); len(got) != 0 {
+	if !untouched() {
 		t.Errorf("unknown agency still wrote membership")
 	}
 }
@@ -141,12 +161,13 @@ func TestScopeAgencyBindingWritesTheJoinTable(t *testing.T) {
 	if len(joined()) != 1 || joined()[0] != "ag-dss" {
 		t.Fatalf("binding did not reach scope_agencies: %v", joined())
 	}
-	// Clearing removes the row rather than leaving a stale one.
+	// "No agency" on this route is Global (LR-26): the old row goes and the scope
+	// is Global's, never nobody's.
 	if _, err := SetScopeAgency(ctx, pool, "sc-prod", nil, "alice"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	if len(joined()) != 0 {
-		t.Fatalf("clear left membership behind: %v", joined())
+	if got := joined(); len(got) != 1 || got[0] != "global" {
+		t.Fatalf("after clearing, membership = %v, want [global]", got)
 	}
 
 	// The N:M setter is the only way to express more than one, and it must not be
@@ -186,11 +207,11 @@ func TestDeleteAgencyGuardCountsMembership(t *testing.T) {
 			if !errors.Is(err, ErrAgencyInUse) {
 				t.Fatalf("delete with a %s = %v, want ErrAgencyInUse", tc.name, err)
 			}
-			// Clearing membership makes it deletable again — the guard must not be a
-			// one-way latch.
+			// Moving the member elsewhere makes it deletable again — the guard must
+			// not be a one-way latch.
 			if err := SetAgencyMembership(ctx, pool, tc.kind,
-				[]AgencyMembership{{ID: tc.id}}, "alice"); err != nil {
-				t.Fatalf("clear: %v", err)
+				[]AgencyMembership{{ID: tc.id, AgencyIDs: []string{"global"}}}, "alice"); err != nil {
+				t.Fatalf("move to Global: %v", err)
 			}
 			ok, err := DeleteAgency(ctx, pool, "ag-dss", "alice")
 			if err != nil || !ok {
@@ -241,8 +262,10 @@ func TestBuildAgencyMatrixIncludesUnrestrictedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildAgencyMatrix: %v", err)
 	}
-	if len(m.Agencies) != 2 {
-		t.Fatalf("columns = %d, want 2", len(m.Agencies))
+	// Global is a column like any other: "what belongs to Global" is a question
+	// the grid answers.
+	if len(m.Agencies) != 3 {
+		t.Fatalf("columns = %d, want 3 (DSS, Global, NWD)", len(m.Agencies))
 	}
 	byKey := map[string]MatrixRow{}
 	for _, r := range m.Rows {
@@ -257,10 +280,9 @@ func TestBuildAgencyMatrixIncludesUnrestrictedRows(t *testing.T) {
 	if got := byKey["secret DB_PASS"].AgencyIDs; len(got) != 1 || got[0] != "ag-dss" {
 		t.Errorf("assigned row agencyIds = %v, want [ag-dss]", got)
 	}
-	// The unassigned rows must carry an EMPTY slice, not null — a client rendering
-	// "unrestricted" should not have to special-case a nil.
-	if got := byKey["env-var REGION"].AgencyIDs; got == nil || len(got) != 0 {
-		t.Errorf("unassigned row agencyIds = %v, want an empty (non-nil) slice", got)
+	// A row nobody assigned is Global's, and says so: there is no empty set.
+	if got := byKey["env-var REGION"].AgencyIDs; len(got) != 1 || got[0] != "global" {
+		t.Errorf("unassigned row agencyIds = %v, want [global]", got)
 	}
 }
 

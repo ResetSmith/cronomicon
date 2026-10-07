@@ -94,7 +94,7 @@ func TestAgencyMembersUnknowns(t *testing.T) {
 		t.Errorf("unknown kind = %d, want 422", rec.Code)
 	}
 	var n int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM secret_agencies`).Scan(&n)
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM secret_agencies WHERE agency_id <> 'global'`).Scan(&n)
 	if n != 0 {
 		t.Error("a refused save wrote membership rows")
 	}

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"io"
 	"os"
 	"path/filepath"
@@ -385,12 +386,18 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 // returns the same single name ScopeAgency does — the dual-write is what lets
 // Phase 3 flip claimRun onto the set with the data already in place. Names, sorted,
 // so the snapshot is deterministic and two enqueues of the same scope produce
-// byte-identical JSON. Empty (non-nil) for an unscoped scope, a scope with no
-// agency, or a pre-670 schema.
+// byte-identical JSON.
+//
+// Never empty (LR-22, LR-24, migration 1220). A run with no scope is Global's,
+// and so is a run whose job names a scope the catalog does not hold (a job's
+// scope is free text; such a run has always been general-pool work). A scope
+// that EXISTS and has no agency is not "global": every scope is born with a
+// Global row and can only trade it for another, so that state is corruption, and
+// it is returned as ErrScopeHasNoAgency for the producer to refuse on.
 func ScopeAgencies(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
 	out := []string{}
 	if scope == "" {
-		return out, nil
+		return []string{agencyid.GlobalName}, nil
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT a.name FROM scope_agencies sa
@@ -415,8 +422,27 @@ func ScopeAgencies(ctx context.Context, db *sql.DB, scope string) ([]string, err
 		}
 		out = append(out, name)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) > 0 {
+		return out, nil
+	}
+	var known bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM scopes WHERE name = ?)`, scope).Scan(&known); err != nil {
+		return nil, err
+	}
+	if known {
+		return nil, fmt.Errorf("%w: %q", ErrScopeHasNoAgency, scope)
+	}
+	return []string{agencyid.GlobalName}, nil
 }
+
+// ErrScopeHasNoAgency reports a scope row with no membership at all. The
+// database gives every scope a Global row at birth (migration 1220) and the
+// setters refuse to leave one with none, so this is a row something deleted by
+// hand. It is never read as "global".
+var ErrScopeHasNoAgency = errors.New("scope belongs to no agency")
 
 // MarshalAgencies renders an agency set as the runs.agencies_json snapshot. Always
 // a well-formed array — never NULL, never "" — because json_each runs over this
@@ -434,30 +460,26 @@ func MarshalAgencies(names []string) string {
 }
 
 // AgenciesHaveOnlineRunner reports whether at least one ONLINE runner is eligible
-// to claim a run for the given agency SET, under the disjoint matrix
-// (agency-support.md M4, widened for AG-Q2b): for a non-empty set, an online member
-// of ANY of them; for the EMPTY set (the general pool), an online runner with NO
-// agencies. A queued runner run for which this is false will wait indefinitely —
-// the stuck-run signal. Best-effort on a pre-440 schema.
+// to claim a run for the given agency SET (agency-support.md M4, widened for
+// AG-Q2b): an online runner that serves ANY of them. A queued runner run for
+// which this is false will wait indefinitely — the stuck-run signal.
+//
+// One rule since migration 1220. There used to be a second arm for the empty
+// set ("the general pool": a runner with no agencies); a run with no agency is
+// now Global's, a runner with none now serves Global, and the membership arm
+// says both. An EMPTY set is no agency at all and nothing serves it.
 func AgenciesHaveOnlineRunner(ctx context.Context, db *sql.DB, agencies []string) (bool, error) {
-	var exists bool
-	var err error
 	if len(agencies) == 0 {
-		err = db.QueryRowContext(ctx, `
-			SELECT EXISTS(
-				SELECT 1 FROM runners rn
-				WHERE rn.status = 'online'
-				  AND NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = rn.id)
-			)`).Scan(&exists)
-	} else {
-		err = db.QueryRowContext(ctx, `
-			SELECT EXISTS(
-				SELECT 1 FROM runner_agencies ra
-				JOIN agencies a  ON a.id  = ra.agency_id
-				JOIN runners  rn ON rn.id = ra.runner_id
-				WHERE a.name IN (SELECT value FROM json_each(?)) AND rn.status = 'online'
-			)`, MarshalAgencies(agencies)).Scan(&exists)
+		return false, nil
 	}
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM runner_agencies ra
+			JOIN agencies a  ON a.id  = ra.agency_id
+			JOIN runners  rn ON rn.id = ra.runner_id
+			WHERE a.name IN (SELECT value FROM json_each(?)) AND rn.status = 'online'
+		)`, MarshalAgencies(agencies)).Scan(&exists)
 	if err != nil {
 		return false, err
 	}
@@ -466,18 +488,18 @@ func AgenciesHaveOnlineRunner(ctx context.Context, db *sql.DB, agencies []string
 
 // EligibleOnlineRunnerForRun reports whether some ONLINE runner can actually
 // claim the given run — the requirements-aware stuck-run probe (ansible-update.md
-// §5, review R3). It mirrors claimRun's gates entirely in SQL (json_each subset
-// shape, no Go-side set intersection): run_type ∈ the runner's capability tokens,
-// the run's requires ⊆ those tokens, the agency-eligibility split (a tagged
-// run needs a member of that agency; an untagged run needs a runner with no
-// agencies), and the SB-1 scope binding. It also returns the run's requirement
-// tokens so a caller can name the unmet requirements in a stuck-run hint. A run
-// that does not exist / is not a runner run returns (false, nil, nil).
+// §5, review R3). It is claimRun's predicate seen from the run's side, in one
+// statement: run_type ∈ the runner's EFFECTIVE capability tokens (declared minus
+// the mask), the run's requires ⊆ those tokens, the runner serves one of the
+// run's agencies, the SB-1 scope binding, and the injection gate. The pieces it
+// shares with the claim are in claimrule.go. It also returns the run's
+// requirement tokens so a caller can name the unmet ones in a stuck-run hint. A
+// run that does not exist returns (false, nil, nil).
 func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (ok bool, requires []string, err error) {
-	var agenciesJSON, runType, requiresJSON, jobName, jobSource, scriptRef, scope sql.NullString
+	var agenciesJSON, runType, requiresJSON, scope sql.NullString
 	err = db.QueryRowContext(ctx,
-		`SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, job_name, job_source, script_ref, scope FROM runs WHERE id = ?`, runID).
-		Scan(&agenciesJSON, &runType, &requiresJSON, &jobName, &jobSource, &scriptRef, &scope)
+		`SELECT COALESCE(agencies_json,'[]'), run_type, requires_json, scope FROM runs WHERE id = ?`, runID).
+		Scan(&agenciesJSON, &runType, &requiresJSON, &scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil, nil
 	}
@@ -488,21 +510,18 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 		_ = json.Unmarshal([]byte(requiresJSON.String), &requires)
 	}
 
-	// Secret-injection gate parity with claimRun (P1.4): a run whose job/script
-	// declares reference bindings needs an allow_secret_injection runner, so the
-	// stuck-run hint must not claim an ordinary online runner could take it.
-	var bindsSecrets int
-	_ = db.QueryRowContext(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM reference_bindings rb
-			WHERE (rb.owner_kind = 'job' AND rb.owner_source = COALESCE(NULLIF(?, ''), 'git') AND rb.owner_name = ?)
-			   OR (rb.owner_kind = 'script' AND rb.owner_name = ?))`,
-		jobSource.String, jobName.String, scriptRef.String).Scan(&bindsSecrets)
+	// Secret-injection gate parity with claimRun (P1.4): a run that will have
+	// material injected needs an allow_secret_injection runner, so the stuck-run
+	// hint must not claim an ordinary online runner could take it. A failed read
+	// is "needs one" — the hint may then name a gate that is not the cause, which
+	// is better than promising a claim that will not come.
+	needsInjection, ierr := runNeedsInjectionRunner(ctx, db, runID)
+	if ierr != nil {
+		needsInjection = true
+	}
 
-	// The run's frozen agency SET (mig. 680). "[]" ⇒ the general pool. This mirrors
-	// claimRun's predicate exactly — including the deliberately unchanged disjoint
-	// general-pool branch (AG-Q3a) — because a stuck-run hint that disagreed with
-	// the claim query would send an operator looking in the wrong place.
+	// The run's frozen agency SET (mig. 680). One membership arm since migration
+	// 1220, where a run with no scope is Global's and "[]" is no agency at all.
 	ag := agenciesJSON.String
 	if ag == "" {
 		ag = "[]"
@@ -511,19 +530,17 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 	if reqJSON == "" {
 		reqJSON = "[]"
 	}
+	caps := effectiveCapsSQL("rn")
 	err = db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM runners rn
 			WHERE rn.status = 'online'
-			  AND ? IN (SELECT value FROM json_each(rn.capabilities))
+			  AND ? IN `+caps+`
 			  AND NOT EXISTS (
 			    SELECT 1 FROM json_each(?) je
-			    WHERE je.value NOT IN (SELECT value FROM json_each(rn.capabilities)))
-			  AND (
-			    (? <> '[]' AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-			                           WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?))))
-			    OR (? = '[]' AND NOT EXISTS (SELECT 1 FROM runner_agencies ra WHERE ra.runner_id = rn.id))
-			  )
+			    WHERE je.value NOT IN `+caps+`)
+			  AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
+			               WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))
 			  -- SB-1 binding parity (mig. 1180): an unrestricted scope passes, a
 			  -- restricted one needs THIS runner named. Correlated here where
 			  -- claimRun's is not, because this probe walks runners for one run
@@ -533,7 +550,7 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 			       OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
 			                   WHERE sc.name = ? AND sr.runner_id = rn.id))
 			  AND (? = 0 OR rn.allow_secret_injection = 1)
-		)`, runType.String, reqJSON, ag, ag, ag, scope.String, scope.String, bindsSecrets).Scan(&ok)
+		)`, runType.String, reqJSON, ag, scope.String, scope.String, needsInjection).Scan(&ok)
 	if err != nil {
 		return false, requires, err
 	}
@@ -662,7 +679,10 @@ func SafeReadRepoFile(gitCacheDir, relPath string, limit int64) (data []byte, tr
 // its own INSERT rather than going through scheduler.EnqueueParams.
 func SyncRunAgencies(ctx context.Context, db *sql.DB, runID, agenciesJSON string) error {
 	if agenciesJSON == "" || agenciesJSON == "[]" {
-		return nil // general pool — no rows, which is what the predicate expects
+		// No agency, so no rows — and nothing will claim it. Only a terminal row
+		// (a skip, a connection test) is written this way since migration 1220; a
+		// run that will execute always names an agency, Global at the least.
+		return nil
 	}
 	var names []string
 	if err := json.Unmarshal([]byte(agenciesJSON), &names); err != nil {

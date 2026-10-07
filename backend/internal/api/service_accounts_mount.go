@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"strconv"
 	"strings"
@@ -226,6 +227,13 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.AgencyID != "" {
+		// LR-9, LR-25: a service account is a grant, and Global is not grantable
+		// by itself — the account for every agency is the all-scopes one.
+		if in.AgencyID == agencyid.Global {
+			httpx.Fail(w, http.StatusBadRequest, "validation",
+				"Global cannot be named for a service account: use allScopes for one that reaches every agency")
+			return
+		}
 		var n int
 		_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, in.AgencyID).Scan(&n)
 		if n == 0 {

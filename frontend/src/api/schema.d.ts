@@ -238,8 +238,8 @@ export interface paths {
          *     Finance, rather than one catalog entry per department.
          *
          *     Binding also makes the run real rather than nominal: it records the bound
-         *     scope, derives that scope's agency set (so the run leaves the general pool
-         *     and reaches that department's runners), and enables host-subset targeting,
+         *     scope, derives that scope's agency set (so the run is that department's,
+         *     not Global's, and reaches that department's runners), and enables host-subset targeting,
          *     which requires a scope to validate membership against.
          *
          *     **A declared targetHost is validated against a newly bound scope** (RB-27).
@@ -250,7 +250,7 @@ export interface paths {
          *     bound to Tax would still reach the Finance host.
          *
          *     A SCHEDULED fire has no caller, so it is deliberately left unbound and
-         *     general-pool (RB-Q11(c)); schedule authoring is admin-only for that reason.
+         *     runs as Global's work (RB-Q11(c)); schedule authoring is admin-only for that reason.
          */
         post: operations["runJob"];
         delete?: never;
@@ -270,7 +270,10 @@ export interface paths {
         put?: never;
         /**
          * Pause scheduled runs
-         * @description Per-instance pause of scheduled execution; writes a Change Log entry. CSRF required.
+         * @description Per-instance pause of scheduled execution; writes a Change Log entry.
+         *     Requires `killJobs` on the job's scope. A job with no scope belongs to
+         *     Global: pausing or resuming it needs `killJobs` on every agency (403
+         *     otherwise, since v2.2.3). CSRF required.
          */
         post: operations["pauseJob"];
         delete?: never;
@@ -290,7 +293,7 @@ export interface paths {
         put?: never;
         /**
          * Resume scheduled runs
-         * @description Counterpart of pause (prototype Change Log shows Paused/Resumed actions). CSRF required.
+         * @description Counterpart of pause, under the same gate. CSRF required.
          */
         post: operations["resumeJob"];
         delete?: never;
@@ -1987,7 +1990,9 @@ export interface paths {
         put?: never;
         /**
          * Create an agency
-         * @description Operator-governed (ConfigureApp); agencies are never self-declared by a runner. CSRF required.
+         * @description Operator-governed (ConfigureApp); agencies are never self-declared by a runner.
+         *     The name `Global` is reserved in every letter case for the built-in agency
+         *     (422 `name_reserved`, v2.3.0). CSRF required.
          */
         post: operations["createAgency"];
         delete?: never;
@@ -2017,13 +2022,20 @@ export interface paths {
          *     cannot disagree.
          */
         get: operations["getAgencyDetail"];
-        /** Update an agency */
+        /**
+         * Update an agency
+         * @description A rename is carried onto the runs that are waiting or running under the old
+         *     name, so they stay claimable. The built-in agency Global cannot be renamed
+         *     (422 `builtin_agency`), and no other agency may take its name (422
+         *     `name_reserved`).
+         */
         put: operations["updateAgency"];
         post?: never;
         /**
          * Delete an agency
-         * @description Blocked with 409 (code=agency_in_use) while any scope (and, from M2, any
-         *     runner) references it. Historical run agency snapshots never block deletion.
+         * @description Blocked with 409 (code=agency_in_use) while any scope, runner or active
+         *     service account references it. Historical run agency snapshots never block
+         *     deletion. The built-in agency Global cannot be deleted (422 `builtin_agency`).
          */
         delete: operations["deleteAgency"];
         options?: never;
@@ -2043,8 +2055,10 @@ export interface paths {
          * Bind (or clear) a scope's agency
          * @description Operator overlay valid for both git- and cronomicon-source scopes (agency is a
          *     deployment fact the GitOps repo does not own); survives re-sync. A null
-         *     agencyId clears the binding. 422 (code=unknown_agency) if the id is not in
-         *     the catalog. CSRF required.
+         *     agencyId returns the scope to **Global** (v2.3.0): its jobs then run as
+         *     Global's work, on a runner that serves Global, and no department's runner
+         *     claims them. 422 (code=unknown_agency) if the id is not in the catalog.
+         *     CSRF required.
          */
         put: operations["setScopeAgency"];
         post?: never;
@@ -2075,10 +2089,11 @@ export interface paths {
          *     so runs already queued follow the change.
          *
          *     A runner being ADDED must be registered (422 code=unknown_runner) and
-         *     eligible for the scope's agency: a member of it, or a general-pool runner
-         *     for a scope in no agency (422 code=runner_not_eligible). It also needs the
-         *     caller's configureApp on an agency that runner belongs to (unrestricted
-         *     for a general-pool runner), else 403. A binding already present is kept
+         *     eligible for the scope's agency: a runner that serves it, which for a scope
+         *     that is Global's means a runner that serves Global (422
+         *     code=runner_not_eligible). It also needs the caller's configureApp on an
+         *     agency that runner belongs to (a global administrator for one of
+         *     Global's), else 403. A binding already present is kept
          *     as it is, including one whose runner has since been deregistered.
          *
          *     `runnerIds` is required: because [] is the operation that removes the
@@ -2149,8 +2164,8 @@ export interface paths {
          *     code=unknown_runner) and eligible for every affected scope (422
          *     code=runner_not_eligible, naming the scopes it is not eligible for). 409
          *     (code=no_bindings) when `fromRunnerId` is bound to nothing. The caller
-         *     needs configureApp on an agency the replacement belongs to (unrestricted
-         *     for a general-pool runner), else 403.
+         *     needs configureApp on an agency the replacement belongs to (a global
+         *     administrator for one of Global's), else 403.
          *
          *     CSRF required.
          */
@@ -2475,7 +2490,8 @@ export interface paths {
         /**
          * Accept a placement suggestion for an unbound runner
          * @description Restores the agency membership and tags recorded in a snapshot onto a
-         *     runner that currently belongs to no agency (DR-7).
+         *     runner that currently serves only Global (DR-7): a re-enrolled runner is
+         *     born there.
          *
          *     This endpoint IS the human confirmation. The server never re-binds a
          *     re-registered runner on its own — see PlacementSuggestion for why.
@@ -2508,9 +2524,9 @@ export interface paths {
          *     is kept as history and still ages out on the retention window.
          *
          *     Same authorization as accepting: dismissing is a decision about
-         *     placement, and a suggestion only ever targets a runner in no agency —
-         *     the general pool — so it is `configureApp` and, per RF-Q3, unrestricted
-         *     in practice.
+         *     placement, and a suggestion only ever targets a runner that serves only
+         *     Global — so it is `configureApp` and, per RF-Q3, a global
+         *     administrator's in practice.
          */
         post: operations["dismissRunnerPlacement"];
         delete?: never;
@@ -2698,8 +2714,8 @@ export interface paths {
          *     with runner names and full SHA256 fingerprints for out-of-band
          *     comparison (approving without out-of-band verification is still TOFU).
          *     Since SB the list holds only the runners the caller has authority over
-         *     (configureApp on one of the runner's agencies; unrestricted for a
-         *     general-pool runner): the rows name hosts.
+         *     (configureApp on one of the runner's agencies; a global administrator
+         *     for one of Global's): the rows name hosts.
          */
         get: operations["listPendingHostKeys"];
         put?: never;
@@ -2743,8 +2759,8 @@ export interface paths {
         };
         /**
          * What one runner trusts — approved keys, their history, and its own file (SB)
-         * @description ConfigureApp, plus the runner's departmental gate (a general-pool or
-         *     deregistered runner is unrestricted-only). Three lists that are
+         * @description ConfigureApp, plus the runner's departmental gate (a runner of Global's,
+         *     or a deregistered one, is a global administrator's). Three lists that are
          *     deliberately never merged:
          *
          *     - `inForce` — keys approved in Cronomicon and currently trusted, from the
@@ -3713,8 +3729,12 @@ export interface paths {
          *     grant expansion); a scope moving in or out signs out all other operators.
          *
          *     Refuses removing an entity from the agency that OWNS it (422
-         *     `owner_removal`, RA-15) — transfer ownership first. A no-op save writes no
-         *     audit row. Returns the resulting AgencyDetail.
+         *     `owner_removal`, RA-15) — transfer ownership first. Since v2.3.0 it also
+         *     refuses a removal that would leave an entity in no agency at all (422
+         *     `agency_required`: move it to another agency, or to Global, instead), and
+         *     adding to Global an entity that is in a named agency (422 `global_mixed`).
+         *     Adding to a named agency an entity that is Global's moves it out of Global.
+         *     A no-op save writes no audit row. Returns the resulting AgencyDetail.
          */
         put: operations["setAgencyMembers"];
         post?: never;
@@ -3737,7 +3757,11 @@ export interface paths {
          * Replace the agency membership of each posted runner
          * @description Operator-assigned (ConfigureApp); runners never self-declare membership.
          *     Replace-per-row — only the posted runners change. 422 (unknown_agency /
-         *     unknown_runner) if a referenced id is not in the catalog. CSRF required.
+         *     unknown_runner) if a referenced id is not in the catalog. Since v2.3.0 a
+         *     runner always serves at least one agency: an empty list is 422
+         *     `agency_required`, and Global beside a named agency is 422 `global_mixed`
+         *     (a runner that serves Global claims Global's runs and no department's).
+         *     CSRF required.
          */
         put: operations["setRunnerAgencies"];
         post?: never;
@@ -3756,18 +3780,16 @@ export interface paths {
         };
         /**
          * Get the scope → agencies membership matrix
-         * @description One row per scope that belongs to at least one agency (migration 670,
-         *     the agencies plan Phase 2). An ABSENT row means "no membership",
-         *     which is not the same as "belongs to nothing useful": under AG-Q1(b) an
-         *     empty set means **no agency restriction**, so an unscoped/global row stays
-         *     reachable everywhere. That convention is what makes the migration
-         *     behavior-preserving.
+         * @description One row per scope with the agencies it belongs to (migration 670,
+         *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
+         *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
+         *     agency of the global administrators, and says so here. A Global secret,
+         *     variable or key is usable by every agency's runs; a Global scope or runner
+         *     serves Global's work only.
          *
-         *     NOTHING READS THIS FOR DISPATCH OR RESOLUTION YET. Phase 2 is inert by
-         *     design — `claimRun` still matches the scalar `runs.agency` and reference
-         *     resolution still runs on scope — so that the pre-flight report at
-         *     `GET /agency-preflight` can be reviewed against real data before Phase 3
-         *     switches the predicates.
+         *     These tables are what dispatch and reference resolution read: a runner claims
+         *     a run only when it serves one of the run's agencies, and a run resolves a
+         *     secret, variable or key only when the row is Global's or one of its own.
          */
         get: operations["listScopeAgencies"];
         /**
@@ -3802,18 +3824,16 @@ export interface paths {
         };
         /**
          * Get the secret → agencies membership matrix
-         * @description One row per secret that belongs to at least one agency (migration 670,
-         *     the agencies plan Phase 2). An ABSENT row means "no membership",
-         *     which is not the same as "belongs to nothing useful": under AG-Q1(b) an
-         *     empty set means **no agency restriction**, so an unscoped/global row stays
-         *     reachable everywhere. That convention is what makes the migration
-         *     behavior-preserving.
+         * @description One row per secret with the agencies it belongs to (migration 670,
+         *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
+         *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
+         *     agency of the global administrators, and says so here. A Global secret,
+         *     variable or key is usable by every agency's runs; a Global scope or runner
+         *     serves Global's work only.
          *
-         *     NOTHING READS THIS FOR DISPATCH OR RESOLUTION YET. Phase 2 is inert by
-         *     design — `claimRun` still matches the scalar `runs.agency` and reference
-         *     resolution still runs on scope — so that the pre-flight report at
-         *     `GET /agency-preflight` can be reviewed against real data before Phase 3
-         *     switches the predicates.
+         *     These tables are what dispatch and reference resolution read: a runner claims
+         *     a run only when it serves one of the run's agencies, and a run resolves a
+         *     secret, variable or key only when the row is Global's or one of its own.
          */
         get: operations["listSecretAgencies"];
         /**
@@ -3848,18 +3868,16 @@ export interface paths {
         };
         /**
          * Get the env-var → agencies membership matrix
-         * @description One row per env-var that belongs to at least one agency (migration 670,
-         *     the agencies plan Phase 2). An ABSENT row means "no membership",
-         *     which is not the same as "belongs to nothing useful": under AG-Q1(b) an
-         *     empty set means **no agency restriction**, so an unscoped/global row stays
-         *     reachable everywhere. That convention is what makes the migration
-         *     behavior-preserving.
+         * @description One row per env-var with the agencies it belongs to (migration 670,
+         *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
+         *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
+         *     agency of the global administrators, and says so here. A Global secret,
+         *     variable or key is usable by every agency's runs; a Global scope or runner
+         *     serves Global's work only.
          *
-         *     NOTHING READS THIS FOR DISPATCH OR RESOLUTION YET. Phase 2 is inert by
-         *     design — `claimRun` still matches the scalar `runs.agency` and reference
-         *     resolution still runs on scope — so that the pre-flight report at
-         *     `GET /agency-preflight` can be reviewed against real data before Phase 3
-         *     switches the predicates.
+         *     These tables are what dispatch and reference resolution read: a runner claims
+         *     a run only when it serves one of the run's agencies, and a run resolves a
+         *     secret, variable or key only when the row is Global's or one of its own.
          */
         get: operations["listEnvVarAgencies"];
         /**
@@ -3894,18 +3912,16 @@ export interface paths {
         };
         /**
          * Get the ssh-credential → agencies membership matrix
-         * @description One row per ssh-credential that belongs to at least one agency (migration 670,
-         *     the agencies plan Phase 2). An ABSENT row means "no membership",
-         *     which is not the same as "belongs to nothing useful": under AG-Q1(b) an
-         *     empty set means **no agency restriction**, so an unscoped/global row stays
-         *     reachable everywhere. That convention is what makes the migration
-         *     behavior-preserving.
+         * @description One row per ssh-credential with the agencies it belongs to (migration 670,
+         *     the agencies plan Phase 2). Every row belongs to at least one agency since v2.3.0 (migration 1220):
+         *     what belonged to "no agency" belongs to **Global** (`global`), the built-in
+         *     agency of the global administrators, and says so here. A Global secret,
+         *     variable or key is usable by every agency's runs; a Global scope or runner
+         *     serves Global's work only.
          *
-         *     NOTHING READS THIS FOR DISPATCH OR RESOLUTION YET. Phase 2 is inert by
-         *     design — `claimRun` still matches the scalar `runs.agency` and reference
-         *     resolution still runs on scope — so that the pre-flight report at
-         *     `GET /agency-preflight` can be reviewed against real data before Phase 3
-         *     switches the predicates.
+         *     These tables are what dispatch and reference resolution read: a runner claims
+         *     a run only when it serves one of the run's agencies, and a run resolves a
+         *     secret, variable or key only when the row is Global's or one of its own.
          */
         get: operations["listSshCredentialAgencies"];
         /**
@@ -3945,10 +3961,10 @@ export interface paths {
          *     it existed, nothing answered "what belongs to DSS?" in one view, and an
          *     operator had to hold five facts across four mechanisms at once.
          *
-         *     Rows with NO membership are included deliberately. An empty row is not
-         *     missing information — it is the statement "unrestricted, reachable from
-         *     everywhere", which is precisely the fact you need before assigning
-         *     membership that would narrow it.
+         *     Every row names at least one agency since v2.3.0. A row that names
+         *     `global` is Global's: for a secret, a variable or a key that is the
+         *     statement "usable by every agency's runs", which is precisely the fact
+         *     you need before assigning it to a department, which would narrow it.
          *
          *     `scope` carries the entity's own scope where it has one ("" = global), so two
          *     same-named secrets in different scopes are distinguishable. Names and ids
@@ -3968,45 +3984,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/agency-preflight": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * What would break if the agency predicates were switched on (T2.12)
-         * @description A read-only report of every reference binding that works TODAY and would
-         *     stop working if the Phase-3 agency predicates were enabled right now
-         *     (the agencies plan T2.12). Ship and review this **before**
-         *     Phase 3 — that is the entire reason Phases 2 and 3 are not merged: Phase 2
-         *     populates the membership tables without changing behavior, so this can be
-         *     read against real production data rather than discovered in production.
-         *
-         *     Two independently reviewable halves: `referenceFindings` (AG-Q1(b), the
-         *     agency clause on secrets/variables) and `keyFindings` (AG-Q5, the SSH-key
-         *     tightening §7.1 warns about — today any job may bind any key).
-         *
-         *     An EMPTY report on a freshly migrated database is expected and correct: the
-         *     migration-670 backfill deliberately assigns no membership that would narrow
-         *     anything, so the tightening only acquires teeth as an operator assigns
-         *     membership. Read `membershipAssigned` alongside the findings — zero there
-         *     means the report has nothing to bite on yet, not that Phase 3 is safe.
-         *
-         *     Script-owned bindings cannot be evaluated statically (a script has no scope
-         *     of its own; its bindings resolve against whatever scope the run carries) and
-         *     are counted, not guessed at.
-         */
-        get: operations["getAgencyPreflight"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/env-var-shadows": {
         parameters: {
             query?: never;
@@ -4017,18 +3994,18 @@ export interface paths {
         /**
          * Scoped rows that shadow a global row of the same key (RA-10)
          * @description Every scoped Secrets/Variables row that shadows a global row of the same
-         *     key (the runas-update plan RA-10). The same findings appear in
-         *     `GET /agency-preflight`; this endpoint exists so the Env Vars view can warn
-         *     the person editing the catalogue, not only the admin planning a tightening.
+         *     key (the runas-update plan RA-10), so the Env Vars view can warn the person
+         *     editing the catalogue.
          *
          *     **The failure mode.** Reference resolution prefers a scope-exact row over a
-         *     global one, and an empty agency membership set means "no restriction". A
-         *     scoped row created without membership therefore wins for EVERY department's
+         *     global one, and a row that belongs to **Global** is usable by every agency's
+         *     runs. A scoped row that is Global's therefore wins for EVERY department's
          *     runs in that scope — silently, with nothing in the list or the run log
-         *     saying which row was injected. Unmembered is the state migration 670 leaves
-         *     every row in, so this is the default outcome of adding a scoped row and not
+         *     saying which row was injected. Global is where a global administrator's new
+         *     row is born, so this is the default outcome of adding a scoped row and not
          *     thinking about departments, not an exotic misconfiguration. Those findings
-         *     carry `unrestricted: true`.
+         *     carry `unrestricted: true`, and their `agencies` list is empty: the lists
+         *     name departments, and Global is left out of them.
          *
          *     A shadow with membership is reported too but is usually the override feature
          *     working as intended: it wins only for its own department's runs.
@@ -4075,12 +4052,10 @@ export interface paths {
          *       asking the question against the grants that decide access).
          *     - `unscopedJobs` / `unscopedJobShare` / `totalJobs` — jobs a restricted
          *       actor must bind a scope for (RB-26), with the denominator.
-         *     - `unscopedSchedules` — deliberately general-pool per RB-Q11(c); a
+         *     - `unscopedSchedules` — deliberately Global's work per RB-Q11(c); a
          *       number to watch, not a blocker.
          *     - `pendingUnbound` / `pendingRevoked` — parked runs that fire with
          *       frozen authorization (RB-Q12); the hand-sweep list.
-         *     - `emptyMembershipEntities` — secrets/variables with no agency
-         *       membership, unrestricted-only under RB-Q14.
          *
          *     An EMPTY report on a fresh database is expected and correct. Read
          *     `usersEvaluated` / `grantsEvaluated` alongside the findings — zero there
@@ -4591,10 +4566,12 @@ export interface components {
             readonly scheduleCount?: number;
             /** @description The job's agency set, DERIVED from its scope via scope_agencies (RB-23). Display and filtering only — a job carries no agency of its own, because a second source of truth could disagree with the first (a job labelled Tax whose scope belongs to Finance) and every authorization decision would then have to pick a winner. The run path already settled this by snapshotting the derived set onto the run. */
             readonly agencies?: string[];
-            /** @description Whether the CALLER may trigger this specific job (RB-24), computed server-side against this row's scope. The /capabilities flags are a flat union — "may trigger somewhere" — and cannot answer per-row truth: an operator scoped to Finance reports triggerJobs=true and still may not touch a Tax job. Consume this rather than re-deriving authorization in the client, which is how a UI gate drifts from the server's answer. Display only: the run path enforces scope but not the verb until the release that wires triggerJobs. */
+            /** @description Whether the CALLER may start a run of this specific job (RB-24), computed server-side for this row on list responses. The /capabilities flags are a flat union — "may trigger somewhere" — and cannot answer per-row truth: an operator scoped to Finance reports triggerJobs=true and still may not touch a Tax job. Consume this rather than re-deriving authorization in the client. On a job with NO scope it means "after choosing a scope you hold": the job is Global's, a department runs it against its own scope, and only a global administrator may run it unbound (RB-26, LR-24). */
             readonly canRun?: boolean;
-            /** @description Whether the caller may stop/pause/resume runs of this job (RB-24). See canRun. */
+            /** @description Whether the caller may stop this job's ACTIVE run (RB-24). Judged on the run's own scope, as the kill route judges it: a run of a job with no scope carries the scope its triggerer bound, and an unbound run is a global administrator's. With nothing queued or running it answers for the job's scope. */
             readonly canKill?: boolean;
+            /** @description Whether the caller may pause or resume this job (v2.3.0). That changes the job for everyone, so it is judged on the job's own scope, and a job with no scope is a global administrator's to pause. Until 2.3.0 the Jobs list used canKill for this, which over-reported. */
+            readonly canPause?: boolean;
             /** @description Inline one-liner executable source (execution-update EX.1). Exactly one of command/script/scriptPath is set. */
             readonly command?: string | null;
             /** @description Inline multi-line executable source (EX.1). */
@@ -6160,8 +6137,9 @@ export interface components {
              *     column was dropped in migration 700).
              *
              *     Operator-owned and never synced: a git sync neither inserts nor
-             *     deletes membership, so an assignment survives every pull. Empty
-             *     means the general pool. Bind one with PUT /scopes/{scopeId}/agency
+             *     deletes membership, so an assignment survives every pull. Never
+             *     empty since v2.3.0: a scope nobody assigned is Global's, and lists
+             *     Global here. Bind one with PUT /scopes/{scopeId}/agency
              *     (the 1:1 affordance) or several with PUT /scope-agencies.
              */
             readonly agencies?: {
@@ -6205,8 +6183,8 @@ export interface components {
             status: string;
             /**
              * @description Whether the runner passes the agency rule for this scope today (a
-             *     member of one of the scope's agencies, or a general-pool runner for a
-             *     scope in none). Checked when the binding is made and reported here
+             *     runner that serves one of the scope's agencies; Global is an agency
+             *     here like any other). Checked when the binding is made and reported here
              *     because membership can drift afterwards; an ineligible bound runner
              *     cannot claim the scope's runs.
              */
@@ -6519,8 +6497,8 @@ export interface components {
              */
             tags?: string[];
             /**
-             * @description RA-15 (Phase E) — the NAME of the department that OWNS this variable, or ""
-             *     for shared infrastructure. Ownership is what lets two departments hold the
+             * @description RA-15 (Phase E) — the NAME of the agency that OWNS this variable. Shared
+             *     infrastructure is owned by `Global` (it was "" until v2.3.0). Ownership is what lets two departments hold the
              *     same key in the same scope: uniqueness is
              *     (key, scope, owner_agency), and a run resolves its OWN department's
              *     variable before falling back to a shared one (RA-17). A run whose departments
@@ -6571,7 +6549,7 @@ export interface components {
             value: string;
             scope: string;
             description?: string;
-            /** @description Agencies to place the new variable in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity with no membership is shared infrastructure and is unrestricted-only for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /env-var-agencies. */
+            /** @description Agencies to place the new variable in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /env-var-agencies. */
             agencyIds?: string[];
         };
         /** @description Run aggregates over a window (SL-E). */
@@ -6720,6 +6698,8 @@ export interface components {
             description?: string | null;
             /** @description Number of online runners assigned to this agency (M4 coverage view). 0 means jobs bound here will wait — no runner can claim them. */
             readonly onlineRunnerCount?: number;
+            /** @description True for **Global** (id `global`), the one agency every installation has (v2.3.0, LR-21). It cannot be renamed or deleted (422 `builtin_agency`), no other agency may be called Global in any letter case (422 `name_reserved`), and no access grant or service account may name it: it belongs to the global administrators, and the way to be one is an all-scopes grant. */
+            readonly builtin?: boolean;
         } & components["schemas"]["AuditFields"];
         AgencyInput: {
             name: string;
@@ -6748,8 +6728,8 @@ export interface components {
              */
             tags?: string[];
             /**
-             * @description RA-15 (Phase E) — the NAME of the department that OWNS this secret, or ""
-             *     for shared infrastructure. Ownership is what lets two departments hold the
+             * @description RA-15 (Phase E) — the NAME of the agency that OWNS this secret. Shared
+             *     infrastructure is owned by `Global` (it was "" until v2.3.0). Ownership is what lets two departments hold the
              *     same key in the same scope: uniqueness is (key, scope, owner_agency), and a run resolves its OWN
              *     department's secret before falling back to a shared one (RA-17). A run whose
              *     departments span MORE THAN ONE owner of a name resolves to nothing at all —
@@ -6773,7 +6753,7 @@ export interface components {
             value?: string;
             /** @description Required when source=vault. */
             vaultPath?: string;
-            /** @description Agencies to place the new secret in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity with no membership is shared infrastructure and is unrestricted-only for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /secret-agencies. */
+            /** @description Agencies to place the new secret in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /secret-agencies. */
             agencyIds?: string[];
         };
         /**
@@ -6782,9 +6762,9 @@ export interface components {
          *     with a NEW id, so its agency membership and tags — both keyed to the id
          *     that was deleted — are gone.
          *
-         *     Losing placement is not "goes idle": the claim predicate admits a runner
-         *     with no agencies to every UNTAGGED run, so an unbound runner has silently
-         *     moved from its department's pool into the shared general pool. That is an
+         *     Losing placement is not "goes idle": a re-enrolled runner is born serving
+         *     Global, so it has silently moved from its department's work to Global's
+         *     (the runs of jobs with no scope, and of Global's own scopes). That is an
          *     isolation change, which is why it is surfaced rather than left to be
          *     noticed.
          *
@@ -6812,8 +6792,8 @@ export interface components {
              *     claim their runs — until the placement is restored; accepting the
              *     offer re-points them at this runner. [] when there are none.
              *
-             *     A general-pool runner has no agencies to restore, so for one the
-             *     offer may carry scopes and an empty `agencies` list.
+             *     A runner that served only Global has no agencies to restore, so for
+             *     one the offer may carry scopes and an empty `agencies` list.
              */
             scopes?: string[];
             /** Format: date-time */
@@ -6917,7 +6897,7 @@ export interface components {
             }[];
             /**
              * @description A prior placement offered for an operator to confirm (DR-7).
-             *     Present ONLY on a runner that currently belongs to no agency and
+             *     Present ONLY on a runner that currently serves only Global and
              *     whose name matches a retained snapshot. Absent means "no offer",
              *     never "no placement".
              *
@@ -7162,7 +7142,7 @@ export interface components {
             name: string;
             /** @description The entity's own scope where it has one; "" is global (or the kind has no scope). */
             scope: string;
-            /** @description Empty means NO agency restriction — reachable from everywhere — not "belongs to nothing". */
+            /** @description Never empty since v2.3.0. `["global"]` is a row that is Global's: for a secret, variable or key, usable by every agency's runs. */
             agencyIds: string[];
         };
         AgencyMatrix: {
@@ -7196,31 +7176,15 @@ export interface components {
         };
         /**
          * @description One entity's agency set (migration 670). `id` is the scope / secret /
-         *     env-var / ssh-credential id, depending on the endpoint. An empty or absent
-         *     set means NO agency restriction — the row is reachable from everywhere —
-         *     which is the convention that keeps a global secret global under AG-Q1(b).
+         *     env-var / ssh-credential id, depending on the endpoint. The set is never
+         *     empty since v2.3.0: a row that belongs to no department belongs to
+         *     **Global** (`global`), and Global is never listed beside another agency.
+         *     On a write, an empty set is refused (422 `agency_required`) and so is
+         *     Global mixed with a named agency (422 `global_mixed`).
          */
         AgencyMembership: {
             id: string;
             agencyIds: string[];
-        };
-        /** @description One binding that works today and would stop resolving under the Phase-3 predicates. */
-        AgencyPreflightFinding: {
-            /** @enum {string} */
-            kind: "secret" | "var" | "key";
-            /** @description The bare row name the binding declares. */
-            name: string;
-            /** @description The derived CRONOMICON_<SECTION>_<name>. */
-            reference: string;
-            jobSource?: string;
-            jobName: string;
-            /** @description "" is the global scope. */
-            jobScope: string;
-            /** @description Agencies the job's scope belongs to; empty means the general pool, which intersects nothing. */
-            jobAgencies: string[];
-            /** @description The referenced row's membership. Never empty — an unrestricted row is not a finding. */
-            rowAgencies: string[];
-            reason: string;
         };
         /**
          * @description RA-10 — one scoped Secrets/Variables row that shadows a global row of the
@@ -7241,14 +7205,14 @@ export interface components {
             reference: string;
             /** @description The SHADOWING row's scope. Never "" — a global row shadows nothing. */
             scope: string;
-            /** @description The shadowing row's membership. Empty means no restriction — the severe case. */
+            /** @description The DEPARTMENTS the shadowing row belongs to; Global is left out. Empty means the row is Global's, usable by every agency — the severe case. */
             agencies: string[];
             /** @description The shadowed global row's membership, for contrast. */
             globalAgencies: string[];
             /** @description AF-2 — the caller may author an ALL-scoped (unscoped) job or workflow. Only an unrestricted compose grant qualifies, because a scheduled fire of an unbound job runs scope-unchecked (RB-30). The composer reads this to withhold the "All agencies (global)" scope option rather than teaching the rule with a 403. */
             composeUnbound?: boolean;
             /**
-             * @description True when the shadowing row has NO membership, so it wins for EVERY
+             * @description True when the shadowing row is Global's, so it wins for EVERY
              *     department's runs in that scope with no department restriction of its
              *     own. This is the silent hole Phase D exists to make visible; a membered
              *     shadow is usually the override feature working as intended.
@@ -7291,32 +7255,6 @@ export interface components {
              */
             ambiguities: components["schemas"]["EnvVarAmbiguityFinding"][];
         };
-        AgencyPreflightReport: {
-            /** @description Secret/variable bindings AG-Q1(b) would break. */
-            referenceFindings: components["schemas"]["AgencyPreflightFinding"][];
-            /** @description SSH-key bindings AG-Q5's tightening would break. */
-            keyFindings: components["schemas"]["AgencyPreflightFinding"][];
-            /**
-             * @description RA-10 — scoped rows that shadow a global row of the same key. Unlike the
-             *     two above these are not about a pending tightening: they describe what
-             *     resolution does TODAY, so an operator reviewing membership sees the rows
-             *     whose resolution is already ambiguous in the same report.
-             */
-            shadowFindings: components["schemas"]["EnvVarShadowFinding"][];
-            /**
-             * @description RA-18 — names owned by more than one department. Also a description of
-             *     TODAY rather than a pending tightening: a run spanning several of the
-             *     owners already fails closed, so it belongs in the report an operator
-             *     reads before they meet it as a refused run.
-             */
-            ambiguityFindings: components["schemas"]["EnvVarAmbiguityFinding"][];
-            /** @description How many job-owned bindings were evaluated, so an empty findings list can be told apart from a report over no data. */
-            jobBindingsChecked: number;
-            /** @description Script-owned bindings, which have no static answer (a script carries no scope of its own). */
-            scriptBindingsUnevaluated: number;
-            /** @description Total membership rows across the four join tables. Zero means the tightening has nothing to bite on yet. */
-            membershipAssigned: number;
-        };
         /** @description One observed file arrival and what became of it. */
         FileSighting: {
             id: string;
@@ -7347,21 +7285,10 @@ export interface components {
             detail: string;
             reason: string;
         };
-        /** @description A secret or variable with no agency membership, which RB-Q14 makes unrestricted-only for writes and reveals. */
-        RbacEntityFinding: {
-            /** @enum {string} */
-            kind: "secret" | "var";
-            key: string;
-            /** @description "" is the global scope. */
-            scope: string;
-            lastModifiedBy: string;
-        };
         /** @description The current-state RBAC hygiene report. FX-E6: this schema previously required eight fields of the pre-v0.57.8 conversion report that the backend no longer emits, so a schema-validating client rejected every valid response; it now matches what /rbac-preflight actually returns, and a conformance test pins the two together. */
         RbacPreflightReport: {
             /** @description AD groups seen in recent_logins that no access grant names. Fail-closed means they hold nothing, which reads to that department as an outage rather than missing configuration. */
             ungrantedGroups: string[];
-            /** @description Secrets/variables with no agency membership, which RB-Q14 makes unrestricted-only. The "assign memberships first" backlog. */
-            emptyMembershipEntities: components["schemas"]["RbacEntityFinding"][];
             /** @description RB-26 — jobs with no declared scope, which a restricted actor must bind at trigger time. */
             unscopedJobs: components["schemas"]["RbacJobFinding"][];
             /** @description unscopedJobs as a percentage of the catalog, rounded. A count alone does not say whether this is an edge case or the norm. */
@@ -8096,7 +8023,7 @@ export interface components {
             material?: string;
             /** @description Vault path#field holding the key. Required when source=vault. */
             vaultRef?: string;
-            /** @description Agencies to place the new SSH key in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity with no membership is shared infrastructure and is unrestricted-only for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /ssh-credential-agencies. */
+            /** @description Agencies to place the new SSH key in, applied at CREATE only (RF-Q2(a), the RBAC-fixes plan). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure. Membership is edited afterwards via PUT /ssh-credential-agencies. */
             agencyIds?: string[];
         };
         SshCredential: {
@@ -8122,8 +8049,8 @@ export interface components {
              */
             tags?: string[];
             /**
-             * @description RA-15 (Phase E) — the NAME of the department that OWNS this SSH key, or ""
-             *     for shared infrastructure. Ownership is what lets two departments hold the
+             * @description RA-15 (Phase E) — the NAME of the agency that OWNS this SSH key. Shared
+             *     infrastructure is owned by `Global` (it was "" until v2.3.0). Ownership is what lets two departments hold the
              *     same label (RA-19; labels carry no scope): uniqueness is (label, owner_agency), and a run resolves its OWN
              *     department's SSH key before falling back to a shared one (RA-17). A run whose
              *     departments span MORE THAN ONE owner of a name resolves to nothing at all —
@@ -12246,6 +12173,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            422: components["responses"]["Validation"];
         };
     };
     setScopeAgency: {
@@ -15781,28 +15709,6 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-        };
-    };
-    getAgencyPreflight: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The pre-flight report. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgencyPreflightReport"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
         };
     };
     getEnvVarShadows: {

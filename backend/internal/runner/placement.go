@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
@@ -65,13 +66,19 @@ func capturePlacement(ctx context.Context, tx *sql.Tx, runnerID, name, actor, vi
 	return nil
 }
 
-// agencyIDsFor reads a runner's agency membership. Returns a non-nil empty slice
-// for a runner in no agency, so the stored JSON is "[]" rather than "null" — the
-// column is NOT NULL and a reader should never have to handle both spellings of
-// empty.
+// agencyIDsFor reads the agencies a runner was PLACED in: its membership other
+// than Global. Returns a non-nil empty slice for a runner that serves Global
+// only, so the stored JSON is "[]" rather than "null" — the column is NOT NULL
+// and a reader should never have to handle both spellings of empty.
+//
+// Global is left out on purpose. A snapshot of "[]" has always meant "this runner
+// had no placement to lose" (the suggestion query and ApplyPlacement both read
+// it that way), and every runner is born serving Global (migration 1220): it is
+// where a re-enrolled runner already is, not something a restore puts back.
 func agencyIDsFor(ctx context.Context, tx *sql.Tx, runnerID string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT agency_id FROM runner_agencies WHERE runner_id = ? ORDER BY agency_id`, runnerID)
+		`SELECT agency_id FROM runner_agencies WHERE runner_id = ? AND agency_id <> ? ORDER BY agency_id`,
+		runnerID, agencyid.Global)
 	if err != nil {
 		return nil, fmt.Errorf("read runner agencies: %w", err)
 	}
@@ -313,9 +320,13 @@ func (s *Service) ApplyPlacement(ctx context.Context, runnerID string, historyID
 	if exists == 0 {
 		return ErrPlacementGone
 	}
+	// "Already placed" is membership of any agency other than Global: a runner
+	// that serves Global only is the re-enrolled runner this offer is for. The
+	// restored rows below take it out of Global (the leave-global trigger).
 	var placed int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM runner_agencies WHERE runner_id = ?`, runnerID).Scan(&placed); err != nil {
+		`SELECT COUNT(*) FROM runner_agencies WHERE runner_id = ? AND agency_id <> ?`,
+		runnerID, agencyid.Global).Scan(&placed); err != nil {
 		return err
 	}
 	if placed > 0 {

@@ -39,8 +39,6 @@ import (
 //	                          per RB-Q11(c), so a number to watch, not a blocker.
 //	PendingUnbound/Revoked  — parked ad-hoc runs that fire with frozen
 //	                          authorization (RB-Q12); the hand-sweep list.
-//	EmptyMembershipEntities — secrets/variables with no agency membership, which
-//	                          RB-Q14 makes unrestricted-only for writes/reveals.
 //
 // It mirrors AgencyPreflight (T2.12), which shipped one release ahead of the
 // agency tightening for the same reason and is the precedent this follows.
@@ -60,15 +58,6 @@ type RbacJobFinding struct {
 	Reason string `json:"reason"`
 }
 
-// RbacEntityFinding is one secret or variable with no agency membership, which
-// RB-Q14 makes unrestricted-only for writes and reveals.
-type RbacEntityFinding struct {
-	Kind           string `json:"kind"` // secret | var
-	Key            string `json:"key"`
-	Scope          string `json:"scope"` // "" = global
-	LastModifiedBy string `json:"lastModifiedBy"`
-}
-
 // RbacPreflightReport is the whole answer, split by the switch that causes each
 // finding so each release can be reviewed and accepted independently.
 type RbacPreflightReport struct {
@@ -82,10 +71,6 @@ type RbacPreflightReport struct {
 	// ad_group_mappings table and started asking the question against the grants
 	// that actually decide access.
 	UngrantedGroups []string `json:"ungrantedGroups"`
-	// EmptyMembershipEntities are secrets/variables with no agency membership,
-	// which RB-Q14 makes unrestricted-only for writes and reveals. The
-	// "assign memberships first" backlog to clear before RB-15.
-	EmptyMembershipEntities []RbacEntityFinding `json:"emptyMembershipEntities"`
 
 	// ── RB-26, v0.56.4 ───────────────────────────────────────────────────────
 	// UnscopedJobs are jobs with no declared scope. A restricted actor must bind
@@ -128,12 +113,11 @@ const preflightWindowDays = 90
 // RbacPreflight computes the report against live data.
 func RbacPreflight(ctx context.Context, database *sql.DB) (*RbacPreflightReport, error) {
 	rep := &RbacPreflightReport{
-		UngrantedGroups:         []string{},
-		EmptyMembershipEntities: []RbacEntityFinding{},
-		UnscopedJobs:            []RbacJobFinding{},
-		UnscopedSchedules:       []RbacJobFinding{},
-		PendingUnbound:          []RbacJobFinding{},
-		PendingRevoked:          []RbacJobFinding{},
+		UngrantedGroups:   []string{},
+		UnscopedJobs:      []RbacJobFinding{},
+		UnscopedSchedules: []RbacJobFinding{},
+		PendingUnbound:    []RbacJobFinding{},
+		PendingRevoked:    []RbacJobFinding{},
 	}
 
 	// ── Inputs, all read up front ────────────────────────────────────────────
@@ -442,35 +426,6 @@ func RbacPreflight(ctx context.Context, database *sql.DB) (*RbacPreflightReport,
 					"row anyway. Sweep by hand if that is not intended",
 			})
 		}
-	}
-
-	// ── RB-Q14: entities with no agency membership ───────────────────────────
-	for _, spec := range []struct{ kind, table, joinTable, joinCol string }{
-		{"secret", "secrets", "secret_agencies", "secret_id"},
-		{"var", "env_vars", "env_var_agencies", "env_var_id"},
-	} {
-		rows, err := database.QueryContext(ctx, `
-			SELECT e.key, COALESCE(e.scope,''), COALESCE(e.last_modified_by, COALESCE(e.created_by,''))
-			FROM `+spec.table+` e
-			WHERE NOT EXISTS (SELECT 1 FROM `+spec.joinTable+` m WHERE m.`+spec.joinCol+` = e.id)
-			ORDER BY e.key`)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var f RbacEntityFinding
-			f.Kind = spec.kind
-			if err := rows.Scan(&f.Key, &f.Scope, &f.LastModifiedBy); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			rep.EmptyMembershipEntities = append(rep.EmptyMembershipEntities, f)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		rows.Close()
 	}
 
 	return rep, nil

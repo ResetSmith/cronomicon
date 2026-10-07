@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"strings"
 	"time"
@@ -112,6 +113,13 @@ func (s *Server) validateGrant(r *http.Request, in *accessGrantInput) (string, b
 		return "a grant must name exactly one of an agency or allScopes", false
 	}
 	if in.AgencyID != "" {
+		// LR-9, LR-25: Global is not grantable by itself. It belongs to the global
+		// administrators, and the way to be one is an all-agencies grant — a grant
+		// "on Global" would reach Global's scopes and nothing else while reading
+		// like the keys to the installation.
+		if in.AgencyID == agencyid.Global {
+			return "Global cannot be named in a grant: use allScopes for a global administrator", false
+		}
 		var n int
 		if err := s.db.QueryRowContext(r.Context(),
 			`SELECT COUNT(*) FROM agencies WHERE id = ?`, in.AgencyID).Scan(&n); err != nil || n == 0 {

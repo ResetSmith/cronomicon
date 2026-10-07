@@ -19,8 +19,16 @@ const JOBS = {
   items: [
     { id: 1, name: "tax-job", type: "bash", scope: "tax", source: "git", status: "idle", schedule: "manual", agencies: ["Tax"], canRun: true, canKill: true },
     { id: 2, name: "finance-job", type: "bash", scope: "finance", source: "git", status: "idle", schedule: "manual", agencies: ["Finance"], canRun: false, canKill: false },
+    // A job with no scope is Global's: a department may run it against its own
+    // scope, and may not pause it for everyone (LR-24).
+    { id: 3, name: "platform-job", type: "bash", scope: null, source: "git", status: "idle", schedule: "0 2 * * *", canRun: true, canKill: false, canPause: false },
+    { id: 4, name: "tax-nightly", type: "bash", scope: "tax", source: "git", status: "idle", schedule: "0 2 * * *", agencies: ["Tax"], canRun: true, canKill: true, canPause: true },
+    // Stop without Pause: a department's own run of a Global job is theirs to stop.
+    { id: 5, name: "platform-running", type: "bash", scope: null, source: "git", status: "running", schedule: "0 3 * * *", canRun: true, canKill: true, canPause: false },
+    // A server that predates canPause: the row falls back to canKill, as before.
+    { id: 6, name: "old-server-job", type: "bash", scope: "tax", source: "git", status: "idle", schedule: "0 4 * * *", agencies: ["Tax"], canRun: true, canKill: true },
   ],
-  totalItems: 2,
+  totalItems: 6,
   totalPages: 1,
   page: 1,
   pageSize: 50,
@@ -97,7 +105,36 @@ describe("Jobs — per-row authority overrides the flat capability (RB-24)", () 
 
   it("renders the derived agency for each row (RB-23)", async () => {
     const q = await renderJobs();
-    await waitFor(() => expect(q.getByText("Tax")).toBeTruthy());
+    await waitFor(() => expect(q.getAllByText("Tax").length).toBeGreaterThan(0));
     expect(q.getByText("Finance")).toBeTruthy();
+  });
+
+  // Pause and Resume change the job for everyone, so they follow canPause, not
+  // canKill: until 2.3.0 one flag served both, and a department's operator was
+  // offered Pause on a job with no scope and refused on the click.
+  it("offers Run but not Pause on a job with no scope the caller may only run", async () => {
+    const q = await renderJobs();
+    fireEvent.click(q.getByText("platform-job").closest("tr")!);
+    await waitFor(() => expect(q.getByRole("button", { name: /▶ Run/ })).toBeTruthy());
+    expect(q.queryByRole("button", { name: "Pause" })).toBeNull();
+  });
+
+  it("offers Pause where the server says the caller may pause", async () => {
+    const q = await renderJobs();
+    fireEvent.click(q.getByText("tax-nightly").closest("tr")!);
+    await waitFor(() => expect(q.getByRole("button", { name: "Pause" })).toBeTruthy());
+  });
+
+  it("offers Stop without Pause on a running job the caller may only stop", async () => {
+    const q = await renderJobs();
+    fireEvent.click(q.getByText("platform-running").closest("tr")!);
+    await waitFor(() => expect(q.getByRole("button", { name: /Stop run/ })).toBeTruthy());
+    expect(q.queryByRole("button", { name: "Pause" })).toBeNull();
+  });
+
+  it("falls back to canKill for Pause when the row carries no canPause", async () => {
+    const q = await renderJobs();
+    fireEvent.click(q.getByText("old-server-job").closest("tr")!);
+    await waitFor(() => expect(q.getByRole("button", { name: "Pause" })).toBeTruthy());
   });
 });

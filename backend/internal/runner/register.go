@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"time"
 
@@ -299,15 +300,15 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		out[i].Agencies = byRunner[out[i].ID]
 	}
 
-	// DR-7 (c): offer a prior placement to every UNBOUND runner. Unbound is not
-	// "idle" — the claim predicate's general-pool branch admits a runner with no
-	// agencies to every UNTAGGED run (poll.go, AG-Q3a) — so a runner that lost its
-	// placement has silently moved from its department's pool into the shared one.
-	// That is an isolation change, which is why it is surfaced rather than left to
-	// be noticed.
+	// DR-7 (c): offer a prior placement to every runner that serves Global and
+	// nothing else — where a re-enrolled runner lands. That is not "idle": it
+	// claims Global's runs (poll.go), so a runner that lost its placement has
+	// silently moved from its department's pool into Global's. That is an
+	// isolation change, which is why it is surfaced rather than left to be
+	// noticed.
 	unbound := map[string]string{}
 	for i := range out {
-		if len(out[i].Agencies) == 0 {
+		if len(out[i].Agencies) == 1 && out[i].Agencies[0].ID == agencyid.Global {
 			unbound[out[i].ID] = out[i].Name
 		}
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/backup"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/logsink"
 	"github.com/ResetSmith/cronomicon/internal/logsync"
@@ -183,6 +184,11 @@ func run() error {
 	// setting / env_var write (secrets.RedactionSourceChanged) and reports a
 	// degraded build once per outage as an `Audit / redactor-unavailable` row.
 	redactdict.Install(pool, cfg, logger)
+
+	// The "why can't this run be claimed" explainers apply the claim query's
+	// rules from places that hold no configuration; tell them whether the
+	// secret-injection fence is in force, as the claim itself reads it.
+	execspec.SetInjectionGateArmed(cfg.SecretsInjectionEnabled)
 
 	// GC-19: say once, at the first boot of this release, what the upgrade
 	// changed for THIS installation — the same report `cronomicon preflight`

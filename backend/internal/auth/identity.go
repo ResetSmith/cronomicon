@@ -5,6 +5,7 @@ package auth
 
 import (
 	"context"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"slices"
 	"time"
 )
@@ -254,7 +255,19 @@ func (i Identity) GlobalAdmin(perm string) bool {
 // true only for unrestricted actors holding the permission. It is wired to real
 // membership by RB-16/RB-32 in Phase 2; it exists now so the seam is complete and
 // testable, not because anything calls it yet.
+//
+// Global (migration 1220) is the one agency no grant may name (LR-9): it
+// belongs to the global administrators, so authority on it IS GlobalAdmin, and
+// that is decided here explicitly — a grant row that named Global, should one
+// ever get in, must not pass for it. An EMPTY agency id is no agency at all and
+// passes for nobody; "everywhere" is spelled GlobalAdmin(perm).
 func (i Identity) CanAgency(perm, agencyID string) bool {
+	if agencyID == agencyid.Global {
+		return i.GlobalAdmin(perm)
+	}
+	if agencyID == "" {
+		return false
+	}
 	for _, g := range i.RoleGrants() {
 		if !PermsForRoles([]string{g.Role}).Has(perm) {
 			continue

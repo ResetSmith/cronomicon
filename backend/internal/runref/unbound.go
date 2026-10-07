@@ -84,10 +84,13 @@ func UnresolvableBindings(ctx context.Context, database *sql.DB, owners []Owner,
 // (empty ⇒ let it run). A run with any scope at all is not this function's business
 // and returns nil immediately.
 func UnboundRunBlocked(ctx context.Context, database *sql.DB, owners []Owner, scope string, agencies []string) ([]Binding, error) {
-	if scope != "" || len(agencies) > 0 {
+	if scope != "" {
 		return nil, nil
 	}
-	return UnresolvableBindings(ctx, database, owners, "", nil)
+	// An unbound run is Global's (migration 1220): it resolves Global's rows and
+	// no department's, which is the question this asks. The agencies are passed
+	// through, not assumed, so the probe and the run it predicts cannot differ.
+	return UnresolvableBindings(ctx, database, owners, "", agencies)
 }
 
 // RunOwners is the binding-owner set for a run, mirroring

@@ -369,7 +369,11 @@ export function OwnerChip({ owner }: { owner?: string | null }) {
   if (!owner) return null;
   return (
     <span
-      title={`Owned by ${owner}. This department's runs resolve this row before any shared row of the same name.`}
+      title={
+        owner === "Global"
+          ? "Owned by Global: shared by every agency. An agency's own row of the same name is used before this one."
+          : `Owned by ${owner}. This agency's runs resolve this row before any shared row of the same name.`
+      }
       style={{
         padding: "1px 6px",
         borderRadius: c.radiusChip,

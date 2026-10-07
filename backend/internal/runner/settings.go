@@ -42,26 +42,6 @@ func parseManagedSettings(raw string) (runnerproto.PollSettingsValues, error) {
 	return v, nil
 }
 
-// effectiveClaimCaps subtracts a capability mask from a runner's declared
-// capability tokens — the server-side enforcement of the subtract-only mask.
-// Order-preserving; a nil/empty mask returns caps unchanged.
-func effectiveClaimCaps(caps []string, mask []string) []string {
-	if len(mask) == 0 {
-		return caps
-	}
-	masked := make(map[string]bool, len(mask))
-	for _, m := range mask {
-		masked[m] = true
-	}
-	out := make([]string, 0, len(caps))
-	for _, c := range caps {
-		if !masked[c] {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 // validateAndNormalize checks an incoming managed-settings object and returns
 // its canonical JSON for storage. An all-empty object stores as "" (NULL) so
 // the poll layer reports "no server opinion".

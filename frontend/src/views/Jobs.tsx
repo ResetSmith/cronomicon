@@ -209,13 +209,18 @@ export function Jobs() {
     });
   }, []);
 
-  // Per-row authority (RB-24). The server computes canRun/canKill against each
-  // row's scope, so a restricted operator sees Run on their department's jobs and
-  // not on anyone else's. Fall back to the flat capability only when a row predates
-  // the field (an older server, or a cached list) — never widen past it, so an
-  // absent field can hide a button but can never conjure one.
+  // Per-row authority (RB-24). The server computes each flag the way the route
+  // behind the button decides, so a restricted operator sees Run on their
+  // department's jobs and not on anyone else's. Three flags, because the routes
+  // ask three questions: Stop is judged on the active RUN's scope, Pause and
+  // Resume on the JOB's — and a job with no scope is Global's to pause, while a
+  // department may still run it against its own scope. Fall back to the flat
+  // capability only when a row predates the field (an older server, or a cached
+  // list) — never widen past it, so an absent field can hide a button but can
+  // never conjure one.
   const rowCanRun = (j: Job) => (j.canRun ?? capsCanRun);
   const rowCanKill = (j: Job) => (j.canKill ?? capsCanRun);
+  const rowCanPause = (j: Job) => (j.canPause ?? j.canKill ?? capsCanRun);
 
   // Run/Kill/Pause/Resume visibility (RB-3). This replaced a client-side role list
   // (auth.canTriggerJobs) that hardcoded admin|approver|operator: identical today,
@@ -666,7 +671,7 @@ export function Jobs() {
                 onSaveAnnotation={(next) => inlineAnnotation.save(j, next)}
                 annotationErr={inlineAnnotation.errors[String(j.id)]}
                 canEdit={canCompose && j.source === "cronomicon"}
-                actions={(rowCanRun(j) || (canCompose && j.source === "cronomicon")) ? (
+                actions={(rowCanRun(j) || rowCanKill(j) || rowCanPause(j) || (canCompose && j.source === "cronomicon")) ? (
                 <>
                   {/* Run stays available while a run is active — overlapping runs are
                       legal under the Allow policy (the default), and Forbid/Queue jobs
@@ -683,7 +688,7 @@ export function Jobs() {
                       the state was unreachable from the UI. `isScheduled` is a fair
                       precondition for Pause (pausing a manual-only job suppresses
                       nothing) — it was only ever wrong for Resume. */}
-                  {rowCanKill(j) &&
+                  {rowCanPause(j) &&
                     (j.status === "paused" ? (
                       <Btn small style={{ minWidth: 72 }} disabled={busy} onClick={() => act(j, "resume")}>Resume</Btn>
                     ) : (

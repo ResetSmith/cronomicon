@@ -2,6 +2,7 @@ package execspec
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -9,8 +10,9 @@ import (
 )
 
 // TestScopeAgency covers the M3 resolver: a scope bound to an agency resolves to
-// that agency's NAME; an unbound scope, an unknown scope, and the empty scope all
-// resolve to "" (general pool).
+// that agency's NAME; a scope nobody assigned, an unknown scope, and the empty
+// scope all resolve to Global (migration 1220 — they resolved to nothing, which
+// meant "the general pool", before Global was a row).
 func TestScopeAgency(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "scopeagency.db"))
 	if err != nil {
@@ -42,9 +44,9 @@ func TestScopeAgency(t *testing.T) {
 		want  []string
 	}{
 		{"prod", []string{"alpha", "beta"}}, // bound to BOTH, sorted by name
-		{"staging", nil},                    // exists, no agency
-		{"ghost", nil},                      // unknown scope
-		{"", nil},                           // unscoped
+		{"staging", []string{"Global"}},     // exists, never assigned: born in Global
+		{"ghost", []string{"Global"}},       // unknown scope (a job's scope is free text)
+		{"", []string{"Global"}},            // unscoped
 	}
 	for _, c := range cases {
 		got, err := ScopeAgencies(ctx, pool, c.scope)
@@ -83,8 +85,8 @@ func TestScopeAgenciesReturnsAReadFailure(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	ctx := context.Background()
-	if got, err := ScopeAgencies(ctx, pool, ""); err != nil || len(got) != 0 {
-		t.Fatalf("the empty scope = %v, %v; want no agencies and no error", got, err)
+	if got, err := ScopeAgencies(ctx, pool, ""); err != nil || len(got) != 1 || got[0] != "Global" {
+		t.Fatalf("the empty scope = %v, %v; want [Global] and no error", got, err)
 	}
 	_ = pool.Close()
 	got, err := ScopeAgencies(ctx, pool, "prod")
@@ -93,5 +95,33 @@ func TestScopeAgenciesReturnsAReadFailure(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("a failed read returned a set (%v) alongside its error", got)
+	}
+}
+
+// A scope that exists and belongs to NO agency is not "global": the database
+// gives every scope a Global row at birth and the setters refuse to leave one
+// with none, so the state is corruption. It is an error the producers refuse
+// on — reading it as Global would bring back the convention migration 1220
+// retired, and reading it as "nobody's" would hide the scope.
+func TestAScopeWithNoAgencyIsAnErrorNotGlobal(t *testing.T) {
+	pool, err := db.Open(filepath.Join(t.TempDir(), "scopenoagency.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if err := db.Migrate(pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	for _, q := range []string{
+		`INSERT INTO scopes(id, name, source, created_at) VALUES('s1','orphan','cronomicon','t')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 's1'`, // what no route can do
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	got, err := ScopeAgencies(context.Background(), pool, "orphan")
+	if !errors.Is(err, ErrScopeHasNoAgency) {
+		t.Fatalf("ScopeAgencies(orphan) = %v, %v; want ErrScopeHasNoAgency", got, err)
 	}
 }

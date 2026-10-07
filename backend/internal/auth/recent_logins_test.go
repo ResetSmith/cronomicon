@@ -149,6 +149,10 @@ func TestHonestViewDropsGrantsWithTheirAgency(t *testing.T) {
 		t.Fatalf("fixture: grants = %+v, want 2 before the delete", got)
 	}
 
+	// An agency that still holds a scope cannot be deleted (migration 1220), so
+	// the scope goes back to Global first, as it would in the product.
+	exec(t, s.db, `DELETE FROM scope_agencies WHERE scope_id = 's-fin'`)
+	exec(t, s.db, `INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-fin', 'global')`)
 	exec(t, s.db, `DELETE FROM agencies WHERE id = 'a-fin'`)
 	GrantsChanged() // as settings.DeleteAgency does; a raw DELETE announces nothing (LR-78)
 
