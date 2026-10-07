@@ -215,12 +215,24 @@ func (i Identity) CanAnywhere(perm string) bool {
 // Unused in v0.56.0. RB-2/RB-26 call it in v0.56.4; it ships now so that release
 // is a substitution rather than a new mechanism arriving alongside a behavioral
 // shock.
-func (i Identity) CanUnbound(perm string) bool {
+func (i Identity) CanUnbound(perm string) bool { return i.GlobalAdmin(perm) }
+
+// GlobalAdmin reports whether the actor is a global administrator for perm: one
+// of their grants reaches EVERY agency and itself carries the permission.
+//
+// It is the one predicate behind "this changes the installation, or something no
+// single agency owns". It was written three ways before v2.3.0 — CanUnbound(perm),
+// CanAgency(perm, "") with an empty agency standing for "no agency", and (the bug
+// the GC band closed) a bare Unrestricted() — and the middle one stops making
+// sense once Global is a real agency with an id of its own (LR-8, LR-21): an
+// empty string is then no agency at all, and must not be something a caller can
+// pass to mean "everywhere". Ask this instead.
+//
+// A viewer on every agency is NOT a global administrator for configureApp: the
+// grant that reaches everywhere has to be the grant that carries the verb.
+func (i Identity) GlobalAdmin(perm string) bool {
 	for _, g := range i.RoleGrants() {
-		if !PermsForRoles([]string{g.Role}).Has(perm) {
-			continue
-		}
-		if g.Unrestricted() {
+		if g.Unrestricted() && PermsForRoles([]string{g.Role}).Has(perm) {
 			return true
 		}
 	}
@@ -260,7 +272,7 @@ func (i Identity) CanAgency(perm, agencyID string) bool {
 // AgenciesFor lists the agency IDs this actor holds perm on through a DEPARTMENTAL
 // grant, sorted and de-duplicated. Unrestricted grants contribute nothing — they
 // reach every agency without naming one, so there is no id to return, and a caller
-// that needs "does this actor reach everywhere?" must ask CanAgency(perm, "").
+// that needs "does this actor reach everywhere?" must ask GlobalAdmin(perm).
 //
 // RA-9: this is what lets a new secret/variable/SSH key INHERIT its creator's
 // department instead of being refused for not naming one. Exactly one entry is the

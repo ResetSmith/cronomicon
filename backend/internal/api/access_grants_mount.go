@@ -148,7 +148,7 @@ func (s *Server) requireGrantWritable(w http.ResponseWriter, r *http.Request, id
 	// GC-3: "unrestricted" here must mean an unrestricted grant that itself
 	// carries manageRoles. The bare Unrestricted() is permission-blind, so a
 	// viewer on all scopes who delegates for one agency skipped all three rules.
-	if id.CanAgency(auth.PermManageRoles, "") {
+	if id.GlobalAdmin(auth.PermManageRoles) {
 		return true
 	}
 	deny := func(msg string) bool {

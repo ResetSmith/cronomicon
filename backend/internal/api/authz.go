@@ -184,7 +184,7 @@ func (s *Server) denyUnrestricted(w http.ResponseWriter, r *http.Request, messag
 // requireGlobal gates an act on the INSTALLATION rather than on any one agency's
 // objects (GC-1): install-wide settings, the audit export, the agency catalog,
 // and every shared object that has no owner yet. It requires an UNRESTRICTED
-// grant that itself CARRIES perm — CanAgency(perm, ""), the predicate
+// grant that itself CARRIES perm — id.GlobalAdmin(perm), the predicate
 // requireFleetWide has always used for runner tokens.
 //
 // The two weaker checks it replaces are the reason it exists. requirePerm asks
@@ -215,7 +215,7 @@ func (s *Server) globalOnly(perm, message string, next http.Handler) http.Handle
 			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 			return
 		}
-		if !id.CanAgency(perm, "") {
+		if !id.GlobalAdmin(perm) {
 			s.denyEntityAgency(w, r, id, perm, auth.AllScopes, message)
 			return
 		}
@@ -227,7 +227,7 @@ func (s *Server) globalOnly(perm, message string, next http.Handler) http.Handle
 // handlers that shape a response on it rather than refuse (GC-14).
 func isGlobal(r *http.Request, perm string) bool {
 	id, ok := auth.IdentityFrom(r.Context())
-	return ok && id.CanAgency(perm, "")
+	return ok && id.GlobalAdmin(perm)
 }
 
 // requireScopeAgency wraps a scope route with the departmental gate (GC-6): the
@@ -290,7 +290,7 @@ func (s *Server) requireHostOwner(pathVar string, next http.Handler) http.Handle
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !id.CanAgency(auth.PermConfigureApp, "") {
+		if !id.GlobalAdmin(auth.PermConfigureApp) {
 			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
 				"a manually authored host record applies to every scope, so only an "+
 					"administrator of every agency may change it")
@@ -442,7 +442,7 @@ func (s *Server) entityAgencyPermitted(ctx context.Context, id auth.Identity,
 	if len(agencies) == 0 {
 		// The global-infrastructure case (RB-Q14). CanAgency("") already demands an
 		// unrestricted grant, so this is one call rather than a special case.
-		return id.CanAgency(perm, ""), "", nil
+		return id.GlobalAdmin(perm), "", nil
 	}
 	for _, a := range agencies {
 		if id.CanAgency(perm, a) {
@@ -477,7 +477,7 @@ func (s *Server) entityAgencyPermitted(ctx context.Context, id auth.Identity,
 func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request, id auth.Identity,
 	perm string, agencyIDs []string, label string) ([]string, bool) {
 
-	// ⚠️ The predicate is CanAgency(perm, ""), not Unrestricted(). Unrestricted() is
+	// ⚠️ The predicate is GlobalAdmin(perm), not Unrestricted(). Unrestricted() is
 	// permission-BLIND — it asks only whether some grant reaches every scope, and
 	// UnionGrantScopes collapses to ["*"] if ANY grant does. A user who is an
 	// unrestricted VIEWER and a Tax ADMIN reads as unrestricted, would be waved
@@ -486,7 +486,7 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 	// unrestricted grant CARRYING THE PERMISSION, which their viewer grant does not.
 	// That is precisely the lockout this rule exists to prevent, so the two must ask
 	// the same question.
-	if !id.CanAgency(perm, "") && len(agencyIDs) == 0 {
+	if !id.GlobalAdmin(perm) && len(agencyIDs) == 0 {
 		// RA-9: inherit, when "their department" has exactly one answer. The inherited
 		// id still goes through the existence + entitlement loop below, so inheritance
 		// can never place a row somewhere an explicit request could not.

@@ -720,7 +720,7 @@ func credentialNamesVault(source, vaultRef string) bool {
 // agency's Vault paths, open to an administrator of one. Using an existing
 // Vault-backed key is unchanged.
 func (s *Server) requireVaultKeyGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
-	if id.CanAgency(auth.PermConfigureApp, "") {
+	if id.GlobalAdmin(auth.PermConfigureApp) {
 		return true
 	}
 	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
@@ -730,7 +730,7 @@ func (s *Server) requireVaultKeyGlobal(w http.ResponseWriter, r *http.Request, i
 }
 
 func (s *Server) requireVaultSourceGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
-	if id.CanAgency(auth.PermManageEnvVars, "") {
+	if id.GlobalAdmin(auth.PermManageEnvVars) {
 		return true
 	}
 	s.denyEntityAgency(w, r, id, auth.PermManageEnvVars, auth.AllScopes,
@@ -1477,7 +1477,7 @@ func (s *Server) requireHostKeyUsable(w http.ResponseWriter, r *http.Request, id
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
-	if id.CanAgency(auth.PermConfigureApp, "") {
+	if id.GlobalAdmin(auth.PermConfigureApp) {
 		if exists == 0 {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_credential", "no SSH key has that id")
 			return false
@@ -1915,10 +1915,10 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	if id, ok := auth.IdentityFrom(r.Context()); ok {
 		perms = permsForRoles(id.Roles)
 		unrestricted = id.Unrestricted()
-		globalConfigureApp = id.CanAgency(auth.PermConfigureApp, "")
-		globalManageRoles = id.CanAgency(auth.PermManageRoles, "")
-		globalManageEnvVars = id.CanAgency(auth.PermManageEnvVars, "")
-		globalPublish = id.CanAgency(auth.PermPublishSchedule, "")
+		globalConfigureApp = id.GlobalAdmin(auth.PermConfigureApp)
+		globalManageRoles = id.GlobalAdmin(auth.PermManageRoles)
+		globalManageEnvVars = id.GlobalAdmin(auth.PermManageEnvVars)
+		globalPublish = id.GlobalAdmin(auth.PermPublishSchedule)
 		composeAdmin = isComposeAdmin(id)
 		// AF-2 — may this caller author an ALL-scoped (unscoped) definition? Only
 		// an unrestricted compose grant may, because a scheduled fire of an unbound
