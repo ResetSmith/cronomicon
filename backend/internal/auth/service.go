@@ -483,11 +483,22 @@ func (s *Service) BumpSessionEpoch(ctx context.Context) {
 //
 // If the grants cannot be resolved the old identity is kept: a failed refresh
 // must not sign the actor out of the request that succeeded.
+//
+// The dev-login identity is kept as issued too. Its grant is constructed, not
+// resolved (see devIdentity), so its group has an access_grants row only when
+// the demo seed wrote one; on an unseeded database a re-resolve returns no
+// grants and no error, and the developer's own cookie came back with zero
+// access. It already holds "*", so there is nothing for a refresh to add.
 func (s *Service) RevokeOtherSessionsRefreshingOwn(w http.ResponseWriter, r *http.Request) {
 	s.BumpSessionEpoch(r.Context())
 	id, ok := s.codec.read(r)
 	if !ok {
 		return // trusted-header mode: identity is resolved per request
+	}
+	if s.devAuth && id.Email == devIdentity().Email {
+		id.Epoch = s.currentSessionEpoch()
+		_ = s.codec.write(w, id)
+		return
 	}
 	if grants, err := ResolveGrants(r.Context(), s.db, id.Groups); err == nil {
 		id.Grants = grants

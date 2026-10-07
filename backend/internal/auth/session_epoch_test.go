@@ -121,3 +121,42 @@ func TestRevokeOtherSessionsRefreshingOwnPicksUpANewScope(t *testing.T) {
 		t.Error("the cookie from before the bump must be revoked")
 	}
 }
+
+// The dev-login identity carries a constructed "*" grant with no access_grants
+// row behind it unless the demo seed ran. Re-resolving it on an unseeded
+// database returned no grants, so the developer who created a scope in an
+// agency got their own cookie back with zero access.
+func TestRevokeOtherSessionsRefreshingOwnKeepsTheDevIdentity(t *testing.T) {
+	s := testService(t)
+	s.devAuth = true
+	s.loadSessionEpoch(context.Background())
+
+	atLogin := devIdentity()
+	atLogin.Epoch = s.currentSessionEpoch()
+	rec := httptest.NewRecorder()
+	if err := s.codec.write(rec, atLogin); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	for _, c := range rec.Result().Cookies() {
+		req.AddCookie(c)
+	}
+
+	out := httptest.NewRecorder()
+	s.RevokeOtherSessionsRefreshingOwn(out, req)
+
+	next := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, c := range out.Result().Cookies() {
+		next.AddCookie(c)
+	}
+	got, ok := s.readSession(nil, next)
+	if !ok {
+		t.Fatal("the developer's own session must survive the bump")
+	}
+	if !got.Unrestricted() || !got.CanAgency(PermConfigureApp, "") {
+		t.Errorf("the dev identity lost its access: grants = %v, scopes = %v", got.Grants, got.AllowedScopes)
+	}
+	if _, ok := s.readSession(nil, req); ok {
+		t.Error("the cookie from before the bump must be revoked")
+	}
+}
