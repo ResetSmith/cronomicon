@@ -469,6 +469,22 @@ func (s *Server) handleDeleteAgency(w http.ResponseWriter, r *http.Request) {
 			"agency is referenced by "+strconv.Itoa(grantRefs)+" access grant(s); remove those grants first")
 		return
 	}
+	// A service account bound to this agency is the same shape as a grant —
+	// service_accounts.agency_id is ON DELETE CASCADE too — and it was not
+	// counted: deleting the agency deleted its tokens' rows, and an integration
+	// stopped authenticating with nothing said. Refuse while one is ACTIVE; a
+	// revoked account is already dead and goes with the agency.
+	var tokenRefs int
+	if err := s.db.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM service_accounts WHERE agency_id = ? AND revoked_at IS NULL`, aid).Scan(&tokenRefs); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if tokenRefs > 0 {
+		httpx.Fail(w, http.StatusConflict, "agency_in_use",
+			"agency is referenced by "+strconv.Itoa(tokenRefs)+" active service account(s); revoke those first")
+		return
+	}
 	found, err := settings.DeleteAgency(r.Context(), s.db, aid, id.Email)
 	if err != nil {
 		if errors.Is(err, settings.ErrAgencyInUse) {

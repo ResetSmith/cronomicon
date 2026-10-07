@@ -69,3 +69,29 @@ func TestScopeAgency(t *testing.T) {
 		}
 	}
 }
+
+// An unreadable membership is not an empty one. ScopeAgencies used to answer
+// "no agencies" when its query failed, and every producer stamped the run with
+// that: claimable by general-pool runners, resolving none of its own agency's
+// secrets. It returns the error, and the producers refuse to enqueue on it.
+func TestScopeAgenciesReturnsAReadFailure(t *testing.T) {
+	pool, err := db.Open(filepath.Join(t.TempDir(), "scopeagencyerr.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrate(pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	ctx := context.Background()
+	if got, err := ScopeAgencies(ctx, pool, ""); err != nil || len(got) != 0 {
+		t.Fatalf("the empty scope = %v, %v; want no agencies and no error", got, err)
+	}
+	_ = pool.Close()
+	got, err := ScopeAgencies(ctx, pool, "prod")
+	if err == nil {
+		t.Fatalf("a failed read answered %v with no error — it would be taken for \"no agency\"", got)
+	}
+	if got != nil {
+		t.Errorf("a failed read returned a set (%v) alongside its error", got)
+	}
+}

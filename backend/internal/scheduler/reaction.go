@@ -595,7 +595,11 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 		effectiveConcKey = cronutil.ConcurrencyKey(concKey.String, jobUID.String, source, jobName)
 	}
 
-	scopeAgencies, _ := execspec.ScopeAgencies(ctx, s.db, scope.String)
+	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, scope.String)
+	if aerr != nil {
+		// The delivery records the error; nothing is enqueued on a guessed agency set.
+		return nil, fmt.Errorf("read the agencies of scope %q: %w", scope.String, aerr)
+	}
 
 	// RA-24 — the same unbound-reference refusal the scheduled path applies. A
 	// reaction fire has no human watching it either, so a run that resolves no

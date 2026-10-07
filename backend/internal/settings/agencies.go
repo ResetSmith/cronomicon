@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
@@ -161,17 +162,169 @@ func UpdateAgency(ctx context.Context, database *sql.DB, id string, inp AgencyIn
 		return nil, fmt.Errorf("agency name is required")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := database.ExecContext(ctx,
-		`UPDATE agencies SET name=?, description=?, last_modified_by=?, last_modified_at=? WHERE id=?`,
-		name, inp.Description, actor, now, id)
+	// The rename and its propagation to waiting runs are one transaction: a run
+	// stores its agencies by NAME, and the claim matches those names against the
+	// live catalog, so a rename that reached the catalog and not the runs would
+	// leave them claimable by nobody (see renameAgencyOnWaitingRuns).
+	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("update agency: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return nil, nil
+	defer tx.Rollback() //nolint:errcheck
+	var oldName string
+	if err := tx.QueryRowContext(ctx, `SELECT name FROM agencies WHERE id = ?`, id).Scan(&oldName); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("update agency: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE agencies SET name=?, description=?, last_modified_by=?, last_modified_at=? WHERE id=?`,
+		name, inp.Description, actor, now, id); err != nil {
+		return nil, fmt.Errorf("update agency: %w", err)
+	}
+	if oldName != name {
+		if err := renameAgencyOnWaitingRuns(ctx, tx, oldName, name); err != nil {
+			return nil, fmt.Errorf("update agency: carry the new name onto waiting runs: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("update agency: %w", err)
 	}
 	audit(ctx, database, actor, "Agencies", "updated", name, "")
 	return GetAgency(ctx, database, id)
+}
+
+// renameAgencyOnWaitingRuns carries an agency's new name onto every run that
+// has not finished: queued and running rows of `runs` (their agencies_json and
+// the run_agencies index beside it) and parked rows of `pending_runs`.
+//
+// A run's agency snapshot is a list of NAMES — every other table stores the id
+// — and it is read by name three times after the run is written: by the claim
+// (runner/poll.go matches run_agencies.agency against the names of the agencies
+// a runner serves), by reference resolution (runref matches it against a
+// secret's, variable's or key's agencies), and by promotion of a parked run,
+// which replays the frozen value. Before v2.3.0 a rename touched none of them:
+// a run queued under the old name could be claimed by no runner, resolved none
+// of its agency's secrets, and dropped out of the agency's own queued count,
+// until someone renamed the agency back. (A new agency created under the old
+// name would have adopted it.)
+//
+// Finished runs keep the name they ran under. That is history, and nothing
+// reads it to make a decision.
+//
+// The parked snapshot is not a JSON array: pending_runs.params_json is the
+// marshalled scheduler.EnqueueParams, whose AgenciesJSON field is a STRING that
+// holds the array (`"AgenciesJSON":"[\"Tax\"]"`), and may be "" or absent; a
+// workflow-kind row has no params at all. Only that one key is rewritten; every
+// other key keeps the value it was frozen with.
+func renameAgencyOnWaitingRuns(ctx context.Context, tx *sql.Tx, oldName, newName string) error {
+	// runs.agencies_json, for the rows the index says carry the old name.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE runs
+		   SET agencies_json = (
+		         SELECT json_group_array(CASE WHEN je.value = ?1 THEN ?2 ELSE je.value END)
+		           FROM json_each(runs.agencies_json) je)
+		 WHERE status IN ('queued','running')
+		   AND EXISTS (SELECT 1 FROM json_each(runs.agencies_json) je WHERE je.value = ?1)`,
+		oldName, newName); err != nil {
+		return err
+	}
+	// The index. OR IGNORE: a run that already lists the new name (it cannot
+	// today, names being unique, but the index must not be what fails a rename)
+	// keeps its one row, and the leftover old row is removed below.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE OR IGNORE run_agencies SET agency = ?2
+		 WHERE agency = ?1
+		   AND run_id IN (SELECT id FROM runs WHERE status IN ('queued','running'))`,
+		oldName, newName); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM run_agencies
+		 WHERE agency = ?1
+		   AND run_id IN (SELECT id FROM runs WHERE status IN ('queued','running'))`,
+		oldName); err != nil {
+		return err
+	}
+
+	// Parked runs. Read them all first: a write inside an open cursor on the same
+	// transaction is not safe to rely on.
+	type parked struct{ id, params string }
+	var rows []parked
+	rs, err := tx.QueryContext(ctx, `
+		SELECT id, params_json FROM pending_runs
+		 WHERE params_json IS NOT NULL AND params_json LIKE '%AgenciesJSON%'`)
+	if err != nil {
+		return err
+	}
+	for rs.Next() {
+		var p parked
+		if err := rs.Scan(&p.id, &p.params); err != nil {
+			rs.Close()
+			return err
+		}
+		rows = append(rows, p)
+	}
+	if err := rs.Err(); err != nil {
+		rs.Close()
+		return err
+	}
+	rs.Close()
+	for _, p := range rows {
+		next, changed, err := renameAgencyInParams(p.params, oldName, newName)
+		if err != nil || !changed {
+			// An unreadable snapshot is left alone: promotion will fail it with its
+			// own error, which says more than a rename refusing to proceed.
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE pending_runs SET params_json = ? WHERE id = ?`, next, p.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// renameAgencyInParams rewrites one name inside the AgenciesJSON string of a
+// marshalled scheduler.EnqueueParams, leaving every other key untouched.
+func renameAgencyInParams(params, oldName, newName string) (string, bool, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(params), &fields); err != nil {
+		return "", false, err
+	}
+	raw, ok := fields["AgenciesJSON"]
+	if !ok {
+		return "", false, nil
+	}
+	var inner string
+	if err := json.Unmarshal(raw, &inner); err != nil || inner == "" {
+		return "", false, err
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(inner), &names); err != nil {
+		return "", false, err
+	}
+	changed := false
+	for i, n := range names {
+		if n == oldName {
+			names[i], changed = newName, true
+		}
+	}
+	if !changed {
+		return "", false, nil
+	}
+	innerOut, err := json.Marshal(names)
+	if err != nil {
+		return "", false, err
+	}
+	if fields["AgenciesJSON"], err = json.Marshal(string(innerOut)); err != nil {
+		return "", false, err
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return "", false, err
+	}
+	return string(out), true, nil
 }
 
 // AgencyInUseError reports WHICH references block an agency delete. It wraps

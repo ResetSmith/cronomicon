@@ -121,7 +121,11 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 	//
 	// Downgraded rather than dropped: the operator still sees the row and is told
 	// why it will be refused, which is what makes the dialog actionable.
-	runAgencies, _ := execspec.ScopeAgencies(r.Context(), s.db, body.Scope)
+	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, body.Scope)
+	if aerr != nil {
+		httpx.Fail500(w, s.log, "db_error", aerr)
+		return
+	}
 	for i := range results {
 		if !results[i].OK {
 			continue
