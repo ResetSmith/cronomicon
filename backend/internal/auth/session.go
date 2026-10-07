@@ -28,14 +28,43 @@ const (
 	// cookies to reason about in THAT release: everyone re-authenticates once here,
 	// while the field is still inert and a bad resolution cannot deny anyone.
 	// Deliberately paid a release early, for exactly that reason.
-	sessionCookieName = "cronomicon_session_v3"
+	//
+	// …_v3 → _v4 (LR-78, v2.3.0): the cookie stops carrying authority. It held the
+	// whole Identity, grants expanded at login included; it now holds
+	// sessionPayload — who the user is and which groups they are in — and the
+	// grants are resolved per request from the snapshot (snapshot.go). A _v3
+	// cookie decodes into nothing a _v4 reader wants, so everyone signs in once
+	// at the upgrade. That is the last time an RBAC change signs anyone out.
+	sessionCookieName = "cronomicon_session_v4"
 	// sessionTTL bounds how long a session survives (SU-5): dropped from 12h to 8h so
 	// stale access is bounded even between epoch bumps. The session-epoch check
 	// (auth.Service) is the primary revocation mechanism; the TTL is the backstop.
 	sessionTTL = 8 * time.Hour
 )
 
-// sessionCodec encodes the Identity into a tamper-proof, encrypted cookie (T8).
+// sessionPayload is what the cookie carries: identity and group membership as
+// the identity provider asserted them at login, and the three session clocks.
+// It deliberately has no roles, scopes or grants — see sessionCookieName. A
+// field added here is a field an attacker with a stolen cookie keeps for eight
+// hours, and one the 4 KB cookie ceiling has to fit.
+type sessionPayload struct {
+	Email       string
+	DisplayName string
+	Groups      []string
+	IssuedAt    time.Time
+	LastSeen    time.Time
+	Epoch       int
+}
+
+func payloadOf(id Identity) sessionPayload {
+	return sessionPayload{
+		Email: id.Email, DisplayName: id.DisplayName, Groups: id.Groups,
+		IssuedAt: id.IssuedAt, LastSeen: id.LastSeen, Epoch: id.Epoch,
+	}
+}
+
+// sessionCodec encodes the session payload into a tamper-proof, encrypted
+// cookie (T8).
 type sessionCodec struct {
 	sc     *securecookie.SecureCookie
 	secure bool
@@ -63,8 +92,11 @@ func newSessionCodec(hashKey, blockKey []byte, secure bool) (codec *sessionCodec
 	return &sessionCodec{sc: sc, secure: secure}, ephemeral
 }
 
+// write stores the session half of id. Its Roles, AllowedScopes and Grants are
+// NOT written: read returns an Identity without them, and the caller resolves
+// them for the request in hand (Service.readSession).
 func (c *sessionCodec) write(w http.ResponseWriter, id Identity) error {
-	enc, err := c.sc.Encode(sessionCookieName, id)
+	enc, err := c.sc.Encode(sessionCookieName, payloadOf(id))
 	if err != nil {
 		return err
 	}
@@ -85,11 +117,14 @@ func (c *sessionCodec) read(r *http.Request) (Identity, bool) {
 	if err != nil {
 		return Identity{}, false
 	}
-	var id Identity
-	if err := c.sc.Decode(sessionCookieName, cookie.Value, &id); err != nil {
+	var p sessionPayload
+	if err := c.sc.Decode(sessionCookieName, cookie.Value, &p); err != nil {
 		return Identity{}, false
 	}
-	return id, true
+	return Identity{
+		Email: p.Email, DisplayName: p.DisplayName, Groups: p.Groups,
+		IssuedAt: p.IssuedAt, LastSeen: p.LastSeen, Epoch: p.Epoch,
+	}, true
 }
 
 func (c *sessionCodec) clear(w http.ResponseWriter) {

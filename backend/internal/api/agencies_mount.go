@@ -239,18 +239,12 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
-	// RB-Q10: agency membership is an authorization input now. SCOPE membership
-	// feeds LOGIN-TIME grant expansion (agency → scopes), so an edit does not
-	// reach live sessions until the epoch bump signs them out — the same
-	// machinery every other RBAC write uses. ENTITY membership
-	// (secret/variable/SSH-key/runner) deliberately does NOT bump: those sets are
-	// read per-request by requireEntityAgency (RB-16/RB-32), so an edit takes
-	// effect on the next request with no session churn. Two different lifetimes,
-	// both correct — this comment is what keeps the asymmetry from reading as an
-	// omission (RF-8).
-	if kind == settings.MemberScope {
-		s.auth.RevokeOtherSessions(w, r)
-	}
+	// Scope membership decides what an agency grant reaches. Since LR-78 that is
+	// resolved per request from the grant snapshot, which the setter itself
+	// invalidates (settings.SetAgencyMembership → auth.GrantsChanged), so the
+	// move is in force on the next request and nobody is signed out. Entity
+	// membership (secret, variable, SSH key, runner) is read per request by
+	// requireEntityAgency, as it always was.
 	list, err := settings.ListAgencyMembership(r.Context(), s.db, kind)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -619,8 +613,7 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	result, err := settings.SetAgencyMembers(r.Context(), s.db, agencyID, body.Members, id.Email)
-	if err != nil {
+	if _, err := settings.SetAgencyMembers(r.Context(), s.db, agencyID, body.Members, id.Email); err != nil {
 		switch {
 		case errors.Is(err, settings.ErrUnknownAgency):
 			httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
@@ -634,19 +627,8 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// RB-Q10, same asymmetry as handleSetAgencyMembership and for the same reason:
-	// SCOPE membership feeds login-time grant expansion, so a scope moving in or
-	// out of this agency changes what grants reach and must bounce live sessions.
-	// Entity membership is read per-request and needs no churn.
-	scopeChanged := false
-	for _, m := range append(append([]settings.AgencyMemberRef{}, result.Added...), result.Removed...) {
-		if m.Kind == "scope" {
-			scopeChanged = true
-		}
-	}
-	if scopeChanged {
-		s.auth.RevokeOtherSessions(w, r)
-	}
+	// A scope moving in or out of this agency changes what grants reach; the
+	// setter told the grant snapshot (LR-78). No session is signed out.
 
 	d, err := settings.BuildAgencyDetail(r.Context(), s.db, agencyID)
 	if err != nil || d == nil {

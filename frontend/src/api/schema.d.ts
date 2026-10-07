@@ -4192,6 +4192,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the caller's own groups grant them
+         * @description LR-87. About the caller only, for any session: the groups their sign-in carried, each grant those groups hold with the role, the agency (or every agency) and the permissions it carries, and the groups that matched no grant. The grants are the ones this request was authorised with. Grants are resolved on every request (LR-78): a change an administrator makes is reflected on the caller's next request, without signing in again.
+         */
+        get: operations["getMyAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/sessions/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign out every other session
+         * @description LR-79. Signs out every cookie session except the caller's own, which is re-issued. A global administrator's action (`manageRoles` on every agency). No access change needs it: a grant, role or scope change reaches a live session on its next request. It exists for the one change Cronomicon cannot see — a person removed from a group at the identity provider keeps that group in their session until they sign in again (at most eight hours). In trusted-header mode the proxy asserts the groups on every request and this affects nothing but developer-login sessions.
+         */
+        post: operations["revokeSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/capabilities": {
         parameters: {
             query?: never;
@@ -8217,6 +8257,34 @@ export interface components {
              * @description FX-E4 — the sliding activity stamp behind the sessionPolicy idle cap. Absent on a session established before the cap shipped. The raw Identity serializes onto /me, so the field is declared here rather than left as undocumented drift — the exact class this band exists to close.
              */
             readonly seen?: string | null;
+        };
+        /** @description LR-87 — the caller's own groups and what they grant. */
+        MyAccess: {
+            email: string;
+            name: string;
+            /** @description The groups the caller's sign-in carried, sorted. */
+            groups: string[];
+            grants: components["schemas"]["MyAccessGrant"][];
+            /** @description The caller's groups that no access grant names. A grant's group name is matched exactly, case included, so a group listed here is the usual reason for "I was added to the group and nothing changed". */
+            unmatchedGroups: string[];
+        };
+        MyAccessGrant: {
+            role: string;
+            /** @description True for a grant on every agency (a global grant). `agencyId` and `agencyName` are then absent. */
+            allScopes: boolean;
+            agencyId?: string;
+            agencyName?: string;
+            /** @description The scopes that agency holds now. An agency with none grants nothing. Empty when `allScopes` is true. */
+            scopes: string[];
+            /** @description The permissions the role carries, in the order the roles editor lists them. */
+            permissions: string[];
+            /** @description The caller's groups that hold this grant: the groups an access grant names, or the bootstrap group when `origin` is `bootstrap`. Empty for the developer login. */
+            groups: string[];
+            /**
+             * @description `group` — supplied by an access grant on one of the caller's groups. `bootstrap` — the break-glass administrator grant of `CRONOMICON_BOOTSTRAP_ADMIN_GROUP`. `dev` — the developer login.
+             * @enum {string}
+             */
+            origin: "group" | "bootstrap" | "dev";
         };
         GitSyncEvent: {
             id?: number;
@@ -15963,6 +16031,56 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    getMyAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's groups and grants. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAccess"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    revokeSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every other session is signed out. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The revocation could not be recorded (`revocation_failed`). No session was signed out. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getCapabilities: {

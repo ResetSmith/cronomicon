@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"slices"
 	"sort"
 	"strings"
@@ -128,6 +129,10 @@ func ListAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind
 // (migration 700, T3.9): scope_agencies is the only binding now, and a scope may
 // hold several agencies without anything truncating the set.
 func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind, assignments []AgencyMembership, actor string) error {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	t, ok := memberTableFor(kind)
 	if !ok {
 		return fmt.Errorf("invalid membership kind %q", string(kind))
@@ -545,6 +550,10 @@ func ComputeAgencyMembersDelta(ctx context.Context, database *sql.DB, agencyID s
 // memberships in OTHER agencies are untouched — that isolation is this function's
 // reason to exist.
 func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, desired []AgencyMemberRef, actor string) (*AgencyMembersDelta, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	var ac int
 	_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM agencies WHERE id=?`, agencyID).Scan(&ac)
 	if ac == 0 {

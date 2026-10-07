@@ -78,6 +78,7 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/runner-agencies":                                   {clsObject, "per runner: the runner-agency gate on both sides"},
 	"PUT /api/v1/":                                                  {clsObject, "the four {kind}-agencies setters: requireEntityAgency on both sides; the scope kind needs requireScopeMove"},
 	"POST /api/v1/auth/logout":                                      {clsSelf, "ends the caller's own session"},
+	"POST /api/v1/auth/sessions/revoke":                             {clsGlobal, "signs out every agency's users (LR-79); requireGlobal(manageRoles)"},
 	"PUT /api/v1/job-reference-bindings/{jobId}":                    {clsObject, "manageEnvVars on the job's scope, from ONE grant (unbound: every scope)"},
 	"PUT /api/v1/script-reference-bindings/{name...}":               {clsGlobal, "a script is shared across scopes: an unrestricted manageEnvVars grant"},
 	"POST /api/v1/references/validate":                              {clsOpen, "validates reference names for the caller; writes nothing"},

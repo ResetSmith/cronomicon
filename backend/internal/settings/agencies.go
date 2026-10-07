@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"strconv"
 	"strings"
 	"time"
@@ -128,6 +129,10 @@ func scanAgency(rs interface{ Scan(...any) error }) (Agency, error) {
 // CreateAgency inserts a new agency. A duplicate name surfaces as a UNIQUE
 // constraint error (mapped 409 at the handler).
 func CreateAgency(ctx context.Context, database *sql.DB, inp AgencyInput, actor string) (*Agency, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	name := strings.TrimSpace(inp.Name)
 	if name == "" {
 		return nil, fmt.Errorf("agency name is required")
@@ -147,6 +152,10 @@ func CreateAgency(ctx context.Context, database *sql.DB, inp AgencyInput, actor 
 
 // UpdateAgency renames / re-describes an agency. Returns (nil, nil) if not found.
 func UpdateAgency(ctx context.Context, database *sql.DB, id string, inp AgencyInput, actor string) (*Agency, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	name := strings.TrimSpace(inp.Name)
 	if name == "" {
 		return nil, fmt.Errorf("agency name is required")
@@ -235,6 +244,10 @@ func (e *AgencyInUseError) Blockers() []string {
 // a runner (M2), a membership row (T2.8), or an OWNED entity (RA-15/RA-19).
 // Historical runs.agency name snapshots never block deletion (immutable facts).
 func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	existing, err := GetAgency(ctx, database, id)
 	if err != nil || existing == nil {
 		return false, err
@@ -310,6 +323,10 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 // upsertScopes never writes agency_id. Returns (nil, nil) if the scope is not
 // found, or ErrUnknownAgency (mapped 422) if the agency id is not in the catalog.
 func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agencyID *string, actor string) (*Scope, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	sc, err := GetScope(ctx, database, scopeID)
 	if err != nil || sc == nil {
 		return nil, err

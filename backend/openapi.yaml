@@ -6725,6 +6725,48 @@ paths:
               schema: { $ref: '#/components/schemas/CurrentUser' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /me/access:
+    get:
+      tags: [Access]
+      operationId: getMyAccess
+      summary: What the caller's own groups grant them
+      description: >-
+        LR-87. About the caller only, for any session: the groups their sign-in carried, each
+        grant those groups hold with the role, the agency (or every agency) and the permissions
+        it carries, and the groups that matched no grant. The grants are the ones this request
+        was authorised with. Grants are resolved on every request (LR-78): a change an
+        administrator makes is reflected on the caller's next request, without signing in again.
+      responses:
+        '200':
+          description: The caller's groups and grants.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/sessions/revoke:
+    post:
+      tags: [Access]
+      operationId: revokeSessions
+      summary: Sign out every other session
+      description: >-
+        LR-79. Signs out every cookie session except the caller's own, which is re-issued. A
+        global administrator's action (`manageRoles` on every agency). No access change needs
+        it: a grant, role or scope change reaches a live session on its next request. It exists
+        for the one change Cronomicon cannot see — a person removed from a group at the
+        identity provider keeps that group in their session until they sign in again (at most
+        eight hours). In trusted-header mode the proxy asserts the groups on every request and
+        this affects nothing but developer-login sessions.
+      responses:
+        '204': { description: Every other session is signed out. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500':
+          description: The revocation could not be recorded (`revocation_failed`). No session was signed out.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /capabilities:
     get:
       tags: [Settings]
@@ -12141,6 +12183,62 @@ components:
             session established before the cap shipped. The raw Identity serializes onto /me, so
             the field is declared here rather than left as undocumented drift — the exact class
             this band exists to close.
+
+    MyAccess:
+      type: object
+      readOnly: true
+      description: LR-87 — the caller's own groups and what they grant.
+      required: [email, name, groups, grants, unmatchedGroups]
+      properties:
+        email: { type: string }
+        name: { type: string }
+        groups:
+          type: array
+          description: The groups the caller's sign-in carried, sorted.
+          items: { type: string }
+        grants:
+          type: array
+          items: { $ref: '#/components/schemas/MyAccessGrant' }
+        unmatchedGroups:
+          type: array
+          description: >-
+            The caller's groups that no access grant names. A grant's group name is matched
+            exactly, case included, so a group listed here is the usual reason for "I was added
+            to the group and nothing changed".
+          items: { type: string }
+
+    MyAccessGrant:
+      type: object
+      readOnly: true
+      required: [role, allScopes, scopes, permissions, groups, origin]
+      properties:
+        role: { type: string }
+        allScopes:
+          type: boolean
+          description: True for a grant on every agency (a global grant). `agencyId` and `agencyName` are then absent.
+        agencyId: { type: string }
+        agencyName: { type: string }
+        scopes:
+          type: array
+          description: The scopes that agency holds now. An agency with none grants nothing. Empty when `allScopes` is true.
+          items: { type: string }
+        permissions:
+          type: array
+          description: The permissions the role carries, in the order the roles editor lists them.
+          items: { type: string }
+        groups:
+          type: array
+          description: >-
+            The caller's groups that hold this grant: the groups an access grant names, or the
+            bootstrap group when `origin` is `bootstrap`. Empty for the developer login.
+          items: { type: string }
+        origin:
+          type: string
+          enum: [group, bootstrap, dev]
+          description: >-
+            `group` — supplied by an access grant on one of the caller's groups. `bootstrap` —
+            the break-glass administrator grant of `CRONOMICON_BOOTSTRAP_ADMIN_GROUP`. `dev` —
+            the developer login.
 
     # ── Git / Health ─────────────────────────────────────────────────────────
     GitSyncEvent:

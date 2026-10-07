@@ -1051,10 +1051,9 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail500(w, s.log, "create_failed", err)
 			return
 		}
-		// Scope membership feeds login-time grant expansion (RB-Q10), like every
-		// other scope_agencies write — and the creator's own cookie is refreshed,
-		// or they could not see the scope they just made.
-		s.auth.RevokeOtherSessionsRefreshingOwn(w, r)
+		// The creator can use the scope on their next request, and so can everyone
+		// else their agency's grants reach: SetAgencyMembership told the grant
+		// snapshot (LR-78). Nobody is signed out (LR-79).
 		if placed, err := settings.GetScope(r.Context(), s.db, sc.ID); err == nil && placed != nil {
 			sc = placed
 		}
@@ -1227,11 +1226,10 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 	if broken == nil {
 		broken = []settings.BrokenReference{}
 	}
-	// SU-5: on a rename, the scope name in every session's frozen AllowedScopes is now
-	// stale — revoke other sessions so they re-resolve (closes the name-reuse vector).
-	if oldScopeName != "" && sc.Scope != oldScopeName {
-		s.auth.RevokeOtherSessions(w, r)
-	}
+	// A rename needs no session work since LR-78: no session holds a scope name.
+	// UpdateScope told the grant snapshot, so the new name is what every grant on
+	// this scope's agency covers from the next request, and the old one covers
+	// nothing — the name-reuse vector SU-5 closed with a sign-out stays closed.
 	httpx.JSON(w, http.StatusOK, updateResp{Scope: *sc, BrokenReferences: broken})
 }
 

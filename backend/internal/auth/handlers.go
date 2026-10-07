@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -101,7 +100,11 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) {
 	// rather than resolved on independent axes — that independence is what produced
 	// the cross-product leak. A failure fails the login: continuing would mint an
 	// identity with no grants, which after the switch means zero authority.
-	grants, err := ResolveGrants(ctx, s.db, cl.Groups)
+	//
+	// LR-78: the grants resolved here are for the login record and to fail a
+	// login the server could not authorise. They are NOT stored in the cookie;
+	// every later request resolves its own.
+	grants, err := s.grantsFor(ctx, cl.Groups)
 	if err != nil {
 		s.log.Error("grant resolution failed", "error", err)
 		s.auditLoginFailed(ctx, r, "grant_resolution_failed")
@@ -226,18 +229,16 @@ func (s *Service) RecentLogins(w http.ResponseWriter, r *http.Request) {
 	// Agency NAMES are resolved once, up front, rather than per row: the ids on a
 	// grant are meaningless to a reader, and a per-row lookup would put a query
 	// inside this loop for a table that is two dozen rows at most.
-	agencyNames, err := agencyNameByID(r.Context(), s.db)
+	//
+	// LR-78: both come from the grant snapshot, one read for the whole list. This
+	// loop issued two queries per row before v2.3.0.
+	snap, err := s.snapshot(r.Context())
 	if err != nil {
-		httpx.Fail(w, http.StatusInternalServerError, "query_failed", "could not read agencies")
+		httpx.Fail(w, http.StatusInternalServerError, "role_resolution_failed", "could not resolve roles")
 		return
 	}
 	for i := range out {
-		grants, err := ResolveGrants(r.Context(), s.db, out[i].Groups)
-		if err != nil {
-			httpx.Fail(w, http.StatusInternalServerError, "role_resolution_failed", "could not resolve roles")
-			return
-		}
-		out[i].Grants = grantViews(grants, agencyNames)
+		out[i].Grants = grantViews(snap.resolve(out[i].Groups), snap.agencyNames)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": out})
 }
@@ -302,24 +303,6 @@ type grantView struct {
 	// differently — an unrestricted grant is the one worth auditing first, and a
 	// sentinel string sorts in among real department names.
 	AllScopes bool `json:"allScopes"`
-}
-
-// agencyNameByID loads the agency id → name map used to render grants.
-func agencyNameByID(ctx context.Context, db *sql.DB) (map[string]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, name FROM agencies`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
-			return nil, err
-		}
-		out[id] = name
-	}
-	return out, rows.Err()
 }
 
 // grantViews renders a resolved grant set for display. ResolveGrants has already

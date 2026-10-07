@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"path/filepath"
 	"strings"
 	"time"
@@ -363,6 +364,10 @@ func resolveBoundRunners(ctx context.Context, database *sql.DB, scopeID string) 
 
 // CreateScope creates a new local scope.
 func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, actor string) (*Scope, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	if inp.RawInventory != nil && *inp.RawInventory != "" {
 		if secErrs := inventory.ValidateSecrets(*inp.RawInventory, "inventory"); len(secErrs) > 0 {
 			out := make([]LineError, 0, len(secErrs))
@@ -433,6 +438,10 @@ func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, act
 
 // UpdateScope updates a local scope. On rename it returns broken references (S9).
 func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScopeInput, actor string) (*Scope, []BrokenReference, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	existing, err := GetScope(ctx, database, id)
 	if err != nil || existing == nil {
 		return nil, nil, err
@@ -573,6 +582,10 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 
 // DeleteScope removes an cronomicon-source scope. Returns 409 if jobs reference it.
 func DeleteScope(ctx context.Context, database *sql.DB, id, actor string) (bool, error) {
+	// LR-78: this changes what an access grant reaches (or what it is shown as),
+	// so the grant snapshot is told on the way out — after the write, on every
+	// return path, a failed half-write included.
+	defer auth.GrantsChanged()
 	existing, err := GetScope(ctx, database, id)
 	if err != nil || existing == nil {
 		return false, err

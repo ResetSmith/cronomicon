@@ -59,10 +59,15 @@ type Service struct {
 	loginSeen   map[string]time.Time
 
 	// sessionEpoch is the in-memory mirror of auth_session_epoch (SU-5). Loaded at
-	// boot, bumped in-process on any RBAC change, and compared against a cookie's
-	// stamped epoch per request — server-side session revocation without a DB read
-	// on the hot path.
+	// boot and compared against a cookie's stamped epoch per request — server-side
+	// session revocation without a DB read on the hot path. Since LR-79 (v2.3.0)
+	// no RBAC write bumps it: grants are resolved per request, so there is nothing
+	// stale to revoke. It moves only when a global administrator signs everyone
+	// out (RevokeSessions).
 	sessionEpoch atomic.Int64
+
+	// grants is the per-request grant snapshot (LR-78, snapshot.go).
+	grants grantStore
 
 	// idlePolicy caches the sessionPolicy settings blob (FX-E4), refreshed at
 	// most every idlePolicyRefresh so the hot path pays no DB read. The same
@@ -371,6 +376,37 @@ func (s *Service) readSession(w http.ResponseWriter, r *http.Request) (Identity,
 		id.LastSeen = time.Now().UTC()
 		_ = s.codec.write(w, id)
 	}
+	return s.withGrants(r.Context(), id)
+}
+
+// withGrants attaches what the session's groups grant NOW (LR-78). It runs
+// after every check that can refuse the session and after the slide, so the
+// authority resolved for this request is never what gets written back into a
+// cookie.
+//
+// The dev-login identity is the exception: its "*" grant is constructed, not
+// resolved (see devIdentity), and its group has an access_grants row only when
+// the demo seed wrote one. Resolved through the snapshot it would hold nothing
+// on an unseeded database. It is recognised only while dev auth is on, by the
+// email no identity provider issues.
+//
+// A snapshot that cannot be built at all fails the request closed: an identity
+// with no grants is zero access, which is the wrong answer to "the database
+// could not be read" for every user at once.
+func (s *Service) withGrants(ctx context.Context, id Identity) (Identity, bool) {
+	if s.devAuth && id.Email == devIdentity().Email {
+		dev := devIdentity()
+		id.Roles, id.AllowedScopes, id.Grants = dev.Roles, dev.AllowedScopes, dev.Grants
+		return id, true
+	}
+	grants, err := s.grantsFor(ctx, id.Groups)
+	if err != nil {
+		s.log.Error("session grant resolution failed", "error", err, "email", id.Email)
+		return Identity{}, false
+	}
+	id.Grants = grants
+	id.Roles = UnionGrantRoles(grants)
+	id.AllowedScopes = UnionGrantScopes(grants)
 	return id, true
 }
 
@@ -446,17 +482,23 @@ func (s *Service) loadSessionEpoch(ctx context.Context) {
 }
 
 // BumpSessionEpoch increments the global session epoch (SU-5), invalidating every
-// OIDC session issued before now. Call on any RBAC change (AD-group mapping / scope
-// grant). A DB failure is logged and the in-memory epoch is left unchanged.
-func (s *Service) BumpSessionEpoch(ctx context.Context) {
-	if _, err := s.db.ExecContext(ctx, `UPDATE auth_session_epoch SET epoch = epoch + 1 WHERE id = 1`); err != nil {
-		s.log.Error("session epoch bump failed", "error", err)
-		return
-	}
+// OIDC session issued before now. A DB failure is logged and returned, and the
+// in-memory epoch is left unchanged.
+//
+// It has ONE caller, RevokeSessions. Until v2.3.0 every RBAC write called it,
+// because a cookie froze the grants it was issued with; grants are resolved per
+// request now (LR-78), so a write has nothing to revoke (LR-79). Do not add a
+// caller to make a permission change "take effect": it already has.
+func (s *Service) BumpSessionEpoch(ctx context.Context) error {
+	// One statement: the increment and the value it produced. A separate reload
+	// could fail after the increment had landed, leaving the in-memory epoch
+	// behind the stored one — nobody revoked until a restart, and then the caller
+	// too.
 	var e int64
-	if err := s.db.QueryRowContext(ctx, `SELECT epoch FROM auth_session_epoch WHERE id = 1`).Scan(&e); err != nil {
-		s.log.Error("session epoch reload failed after bump", "error", err)
-		return
+	if err := s.db.QueryRowContext(ctx,
+		`UPDATE auth_session_epoch SET epoch = epoch + 1 WHERE id = 1 RETURNING epoch`).Scan(&e); err != nil {
+		s.log.Error("session epoch bump failed", "error", err)
+		return err
 	}
 	// Advance the in-memory mirror monotonically: under two concurrent bumps a plain
 	// Store could regress the mirror one epoch below the DB (a brief under-revocation);
@@ -468,61 +510,51 @@ func (s *Service) BumpSessionEpoch(ctx context.Context) {
 		}
 	}
 	s.log.Info("session epoch bumped — prior OIDC sessions revoked", "epoch", e)
+	return nil
 }
 
-// RevokeOtherSessionsRefreshingOwn is RevokeOtherSessions for a change the ACTOR
-// must be able to use at once: it re-resolves the actor's own grants before
-// re-issuing their cookie, instead of carrying the old ones forward.
+// RevokeSessions signs out every cookie session except the caller's own
+// (POST /api/v1/auth/sessions/revoke, a global administrator's).
 //
-// Scope creation is the case (GC-6). A departmental administrator's new scope
-// lands in their agency, and their grant on that agency covers it — but the
-// scope list in a cookie is expanded at login, so a cookie re-issued unchanged
-// still could not read or compose in the scope its owner had just made, until
-// they signed out and in again. Every other session is revoked by the bump and
-// picks the scope up at its next login, as with any scope_agencies write.
+// What it is for: a session carries the groups the identity provider asserted
+// at LOGIN, for up to eight hours. Changing what a group may do reaches a live
+// session on its next request, but removing a PERSON from a group at the
+// identity provider does not — Cronomicon cannot see that until they sign in
+// again. Before v2.3.0 any RBAC edit had this effect as a side effect; this is
+// the same lever, pulled on purpose.
 //
-// If the grants cannot be resolved the old identity is kept: a failed refresh
-// must not sign the actor out of the request that succeeded.
+// The caller's cookie is re-issued at the new epoch so the administrator is not
+// signed out of the request that succeeded. In trusted-header mode there is no
+// cookie: the proxy asserts the groups on every request, and the bump affects
+// only dev-login sessions.
 //
-// The dev-login identity is kept as issued too. Its grant is constructed, not
-// resolved (see devIdentity), so its group has an access_grants row only when
-// the demo seed wrote one; on an unseeded database a re-resolve returns no
-// grants and no error, and the developer's own cookie came back with zero
-// access. It already holds "*", so there is nothing for a refresh to add.
-func (s *Service) RevokeOtherSessionsRefreshingOwn(w http.ResponseWriter, r *http.Request) {
-	s.BumpSessionEpoch(r.Context())
-	id, ok := s.codec.read(r)
-	if !ok {
-		return // trusted-header mode: identity is resolved per request
+// It answers 204 only when the epoch moved. This is the route's whole purpose,
+// so a bump that failed is a 500 and an audited failure, never a quiet success.
+func (s *Service) RevokeSessions(w http.ResponseWriter, r *http.Request) {
+	actor := ""
+	if id, ok := IdentityFrom(r.Context()); ok {
+		actor = id.Email
 	}
-	if s.devAuth && id.Email == devIdentity().Email {
-		id.Epoch = s.currentSessionEpoch()
-		_ = s.codec.write(w, id)
+	if err := s.BumpSessionEpoch(r.Context()); err != nil {
+		s.auditAuth(r.Context(), r, auditlog.AuthEventParams{
+			Kind: auditlog.AuthSessionRevoked, Outcome: auditlog.OutcomeFailure,
+			Actor: actor, Reason: "revocation_failed",
+			Details: "the session epoch could not be advanced; no session was signed out",
+		})
+		httpx.Fail(w, http.StatusInternalServerError, "revocation_failed",
+			"could not sign the other sessions out; nothing was changed")
 		return
 	}
-	if grants, err := ResolveGrants(r.Context(), s.db, id.Groups); err == nil {
-		id.Grants = grants
-		id.Roles = UnionGrantRoles(grants)
-		id.AllowedScopes = UnionGrantScopes(grants)
-	} else {
-		s.log.Error("refreshing the actor's grants failed; keeping the session as issued", "error", err, "email", id.Email)
-	}
-	id.Epoch = s.currentSessionEpoch()
-	_ = s.codec.write(w, id)
-}
-
-// RevokeOtherSessions bumps the epoch (revoking every session issued before now,
-// SU-5) but re-issues the ACTING operator's OWN cookie at the new epoch, so the
-// admin making an RBAC change is not logged out of their own session. The re-issued
-// cookie keeps the actor's existing identity (their fresh grants apply on next
-// login). In trusted-header mode there is no cookie to re-issue and identity is
-// resolved per request, so nothing to do beyond the bump.
-func (s *Service) RevokeOtherSessions(w http.ResponseWriter, r *http.Request) {
-	s.BumpSessionEpoch(r.Context())
 	if id, ok := s.codec.read(r); ok {
 		id.Epoch = s.currentSessionEpoch()
 		_ = s.codec.write(w, id)
 	}
+	s.auditAuth(r.Context(), r, auditlog.AuthEventParams{
+		Kind: auditlog.AuthSessionRevoked, Outcome: auditlog.OutcomeSuccess,
+		Actor: actor, Reason: "revoked_by_administrator",
+		Details: "every other session signed out",
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // RequireRole gates an endpoint behind a named role. Must be wrapped inside

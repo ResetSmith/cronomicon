@@ -236,7 +236,7 @@ func (s *Server) handleCreateAccessGrant(w http.ResponseWriter, r *http.Request)
 	}
 	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "created",
 		"access grant: "+in.AdGroup, grantWhere(in))
-	s.auth.RevokeOtherSessions(w, r)
+	auth.GrantsChanged() // LR-78: live sessions pick the change up on their next request
 	httpx.JSON(w, http.StatusCreated, accessGrantResp{
 		ID: newID, AdGroup: in.AdGroup, Role: in.Role, AgencyID: in.AgencyID, AllScopes: in.AllScopes,
 		CreatedBy: id.Email, CreatedAt: now, LastModifiedBy: id.Email, LastModifiedAt: now,
@@ -296,7 +296,7 @@ func (s *Server) handleUpdateAccessGrant(w http.ResponseWriter, r *http.Request)
 	}
 	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "updated",
 		"access grant: "+in.AdGroup, grantWhere(in))
-	s.auth.RevokeOtherSessions(w, r)
+	auth.GrantsChanged() // LR-78: live sessions pick the change up on their next request
 	httpx.JSON(w, http.StatusOK, accessGrantResp{
 		ID: grantID, AdGroup: in.AdGroup, Role: in.Role, AgencyID: in.AgencyID, AllScopes: in.AllScopes,
 		LastModifiedBy: id.Email, LastModifiedAt: now,
@@ -331,7 +331,7 @@ func (s *Server) handleDeleteAccessGrant(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "deleted", "access grant: "+adGroup, "")
-	s.auth.RevokeOtherSessions(w, r)
+	auth.GrantsChanged() // LR-78: live sessions pick the change up on their next request
 	w.WriteHeader(http.StatusNoContent)
 }
 
