@@ -150,6 +150,7 @@ func TestHonestViewDropsGrantsWithTheirAgency(t *testing.T) {
 	}
 
 	exec(t, s.db, `DELETE FROM agencies WHERE id = 'a-fin'`)
+	GrantsChanged() // as settings.DeleteAgency does; a raw DELETE announces nothing (LR-78)
 
 	got := recentLogins(t, s)["both@ex.com"]
 	if len(got) != 1 {

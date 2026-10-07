@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"io"
 	"log/slog"
 	"net/http"
@@ -274,6 +275,11 @@ func (s *Service) SyncBlocking(ctx context.Context, triggeredBy string) SyncResu
 
 // sync is the internal sync implementation.
 func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
+	// LR-78: a sync may add, rename away or prune a scope, and a scope's existence
+	// decides what an agency grant reaches. The grant snapshot is told on the way
+	// out, after the transaction has committed or rolled back. (gitlab cannot be
+	// handed the auth Service; the counter is the hook.)
+	defer auth.GrantsChanged()
 	start := time.Now().UTC()
 	res := SyncResult{Status: "failed", StartedAt: start}
 	if s.db == nil {

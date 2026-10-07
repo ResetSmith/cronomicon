@@ -2,58 +2,14 @@ package api_test
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"testing"
-
-	"github.com/ResetSmith/cronomicon/internal/config"
 )
 
 // LR Phase 0 — today's behaviour at the route level, pinned before the phase
 // named in each test changes it. The package-level pins are
-// auth/lr_phase0_test.go (frozen grants, the epoch) and
-// sshexec/lr_phase0_test.go (the SSH pool's claim).
-
-// An agency administrator creating a scope in their own agency signs out every
-// other cookie session on the installation: scope membership feeds login-time
-// grant expansion, so the write bumps the one global session epoch.
-//
-// The "other session" here is the dev-login cookie, the only cookie session an
-// API test can mint; the actor arrives by trusted header, as the fixture's cast
-// does.
-//
-// Phase S inverts it (LR-78, LR-79): grants resolve per request, no RBAC write
-// bumps the epoch, and the bystander's next request is answered 200.
-func TestLR0_AScopeCreateSignsOutEveryOtherSession(t *testing.T) {
-	h, _ := gateServerWith(t, func(c *config.Config) { c.DevAuth = true })
-
-	login := httptest.NewRecorder()
-	h.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/api/v1/auth/dev-login", nil))
-	if login.Code != http.StatusFound {
-		t.Fatalf("dev-login = %d, want 302", login.Code)
-	}
-	bystander := func() int {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/capabilities", nil)
-		for _, c := range login.Result().Cookies() {
-			req.AddCookie(c)
-		}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		return rec.Code
-	}
-	if code := bystander(); code != http.StatusOK {
-		t.Fatalf("precondition: the bystander's session = %d, want 200", code)
-	}
-
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/scopes", gFinAdmin, `{"scope":"fin-new","hosts":["h1"]}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("fin admin creating a scope = %d, want 201 (%s)", rec.Code, rec.Body)
-	}
-
-	if code := bystander(); code != http.StatusUnauthorized {
-		t.Errorf("PIN: after another agency's scope create the bystander's session = %d, want 401. "+
-			"If RBAC writes no longer bump the epoch (LR-79), replace this pin with its inverse.", code)
-	}
-}
+// sshexec/lr_phase0_test.go (the SSH pool's claim, host records) and
+// runner/lr_phase0_test.go (agency rename). The session pins were inverted by
+// Phase S and live on as grants_live_test.go and auth/snapshot_test.go.
 
 // lr0SharedRunner seeds one runner that belongs to both FIN and TAX.
 func lr0SharedRunner(t *testing.T, exec func(string, ...any)) {

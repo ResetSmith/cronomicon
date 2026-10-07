@@ -252,7 +252,9 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "created", name, grantSummaryPerms(in.Permissions))
-	s.auth.RevokeOtherSessions(w, r) // RB-10: a role's permissions change everyone's authz
+	// LR-79: no sign-out. A role's permissions are read from the registry on
+	// every request, and the snapshot is told in case a grant names this role.
+	auth.GrantsChanged()
 	role, _ := auth.LookupRole(name)
 	httpx.JSON(w, http.StatusCreated, role)
 }
@@ -297,7 +299,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "updated", name, grantSummaryPerms(in.Permissions))
-	s.auth.RevokeOtherSessions(w, r) // RB-10
+	auth.GrantsChanged()
 	role, _ := auth.LookupRole(name)
 	httpx.JSON(w, http.StatusOK, role)
 }
@@ -359,7 +361,7 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = settings.WriteChangeLog(r.Context(), s.db, id.Email, "Roles", "deleted", name, "")
-	s.auth.RevokeOtherSessions(w, r) // RB-10
+	auth.GrantsChanged()
 	w.WriteHeader(http.StatusNoContent)
 }
 

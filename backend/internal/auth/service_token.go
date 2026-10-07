@@ -56,7 +56,7 @@ func (s *Service) RequireServiceToken(next http.Handler) http.Handler {
 			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
 		}
-		id, name, valid, err := ServiceTokenIdentity(r.Context(), s.db, token)
+		id, name, valid, err := s.serviceTokenIdentity(r.Context(), token)
 		if err != nil {
 			s.log.Error("service token check failed", "error", err)
 			httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "auth backend error")
@@ -87,13 +87,16 @@ func (s *Service) RequireServiceToken(next http.Handler) http.Handler {
 	})
 }
 
-// ServiceTokenIdentity resolves a plaintext token to the Identity it authorizes
-// as. Exported so the trigger handlers' tests (and any future non-HTTP caller)
-// can mint the same principal the middleware does.
+// serviceTokenIdentity resolves a plaintext token to the Identity it authorizes
+// as.
 //
 // Returns the account NAME alongside the identity because the caller needs it
 // for the liveness stamp; the identity's Email carries it in `svc:` form.
-func ServiceTokenIdentity(ctx context.Context, db *sql.DB, token string) (Identity, string, bool, error) {
+//
+// The account row is read on every request — it is the credential check. The
+// agency's scopes come from the grant snapshot (LR-78), as a session's do.
+func (s *Service) serviceTokenIdentity(ctx context.Context, token string) (Identity, string, bool, error) {
+	db := s.db
 	now := time.Now().UTC().Format(time.RFC3339)
 	var (
 		name, role string
@@ -119,7 +122,7 @@ func ServiceTokenIdentity(ctx context.Context, db *sql.DB, token string) (Identi
 		// The "*" sentinel — unrestricted, exactly as an all_scopes access_grant.
 		grant.Scopes = []string{AllScopes}
 	} else {
-		byAgency, err := AgencyScopes(ctx, db, []string{agencyID.String})
+		scopes, err := s.agencyScopesFor(ctx, agencyID.String)
 		if err != nil {
 			return Identity{}, "", false, err
 		}
@@ -127,7 +130,7 @@ func ServiceTokenIdentity(ctx context.Context, db *sql.DB, token string) (Identi
 		// — never "all". That is A5's tri-state and the reason this is not
 		// `len(scopes) > 0 ? scopes : all`.
 		grant.Agency = agencyID.String
-		grant.Scopes = byAgency[agencyID.String]
+		grant.Scopes = scopes
 	}
 
 	id := Identity{
