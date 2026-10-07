@@ -64,6 +64,14 @@ const (
 // the cast above. The KEK is set so secret and credential routes work.
 func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 	t.Helper()
+	return gateServerWith(t, nil)
+}
+
+// gateServerWith is gateServer with the configuration adjusted before the
+// server is built — DevAuth, for a test that needs a cookie session beside the
+// trusted-header cast.
+func gateServerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *sql.DB) {
+	t.Helper()
 	pool, err := db.Open(filepath.Join(t.TempDir(), "gate.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -112,6 +120,9 @@ func gateServer(t *testing.T) (http.Handler, *sql.DB) {
 		AuthMode:       config.AuthModeTrustedHeader,
 		TrustedProxies: []string{"192.0.2.0/24"},
 		SecretKEKEnv:   "YTM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM=",
+	}
+	if adjust != nil {
+		adjust(cfg)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	authSvc := auth.NewService(context.Background(), cfg, pool, log)
