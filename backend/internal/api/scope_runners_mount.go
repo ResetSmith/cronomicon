@@ -223,7 +223,7 @@ func (s *Server) handleDismissScopeBindingNotices(w http.ResponseWriter, r *http
 			return
 		}
 		if scope.String == "" {
-			if !id.CanAgency(auth.PermConfigureApp, "") {
+			if !id.GlobalAdmin(auth.PermConfigureApp) {
 				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
 					"this notice is about a job with no scope; only an administrator of every agency may dismiss it")
 				return

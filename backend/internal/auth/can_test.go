@@ -97,7 +97,7 @@ func TestCanFailsClosedOnUnknownPermission(t *testing.T) {
 		if admin.Can(bogus, AllScopes) {
 			t.Errorf("Can(%q) granted for an unknown permission name", bogus)
 		}
-		if admin.CanAgency(bogus, "") {
+		if admin.GlobalAdmin(bogus) {
 			t.Errorf("CanAgency(%q) granted for an unknown permission name", bogus)
 		}
 	}
@@ -276,5 +276,33 @@ func TestPermsForRolesMatchesMatrix(t *testing.T) {
 	// The union really unions: operator ∪ approver picks up publishSchedule.
 	if got := PermsForRoles([]string{"operator", "approver"}); !got.PublishSchedule {
 		t.Error("PermsForRoles did not union publishSchedule from approver")
+	}
+}
+
+// GlobalAdmin is the one "reaches everywhere AND carries the verb" predicate.
+// A viewer on every agency who administers one is the case every hand-rolled
+// form of it got wrong at some point: unrestricted reach, and the permission,
+// from two different grants.
+func TestGlobalAdminNeedsOneGrantThatReachesEverywhereAndCarriesThePermission(t *testing.T) {
+	all := []string{AllScopes}
+	cases := []struct {
+		name   string
+		grants []RoleGrant
+		want   bool
+	}{
+		{"admin on every agency", []RoleGrant{{Role: "admin", Scopes: all}}, true},
+		{"admin of one agency", []RoleGrant{{Role: "admin", Agency: "ag", Scopes: []string{"s"}}}, false},
+		{"viewer on every agency", []RoleGrant{{Role: "viewer", Scopes: all}}, false},
+		{"viewer everywhere plus admin of one", []RoleGrant{{Role: "viewer", Scopes: all}, {Role: "admin", Agency: "ag", Scopes: []string{"s"}}}, false},
+		{"no grants", nil, false},
+	}
+	for _, c := range cases {
+		id := Identity{Grants: c.grants}
+		if got := id.GlobalAdmin(PermConfigureApp); got != c.want {
+			t.Errorf("%s: GlobalAdmin(configureApp) = %v, want %v", c.name, got, c.want)
+		}
+		if got := id.CanUnbound(PermConfigureApp); got != c.want {
+			t.Errorf("%s: CanUnbound must be the same predicate, got %v", c.name, got)
+		}
 	}
 }

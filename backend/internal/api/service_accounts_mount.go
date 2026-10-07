@@ -127,10 +127,15 @@ func (s *Server) listServiceAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		it.AllScopes = allScopes == 1
-		// GC-5: a delegate sees the accounts of the agencies they administer.
-		// CanAgency(perm, "") is the all-scopes case, so an all-scopes account —
-		// and every account — is listed only for a global administrator.
-		if !viewer.CanAgency(auth.PermManageRoles, agencyID.String) {
+		// GC-5: a delegate sees the accounts of the agencies they administer; an
+		// all-scopes account (no agency) is listed only for a global administrator.
+		// Written as two cases: the empty agency of an all-scopes account must not
+		// be handed to CanAgency to mean "everywhere".
+		visible := viewer.GlobalAdmin(auth.PermManageRoles)
+		if !visible && agencyID.String != "" {
+			visible = viewer.CanAgency(auth.PermManageRoles, agencyID.String)
+		}
+		if !visible {
 			continue
 		}
 		it.Status = serviceAccountStatus(revoked, expires, now)

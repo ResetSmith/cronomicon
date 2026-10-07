@@ -209,7 +209,7 @@ func (s *Server) requireRoleTemplateAdmin(w http.ResponseWriter, r *http.Request
 	// that reaches every scope. Unrestricted() is permission-blind — a viewer on
 	// all scopes who administers one agency passed it and could edit the shared
 	// role templates, which is the circular escalation described above.
-	if id.CanAgency(auth.PermManageRoles, "") {
+	if id.GlobalAdmin(auth.PermManageRoles) {
 		return true
 	}
 	if s.auth != nil {

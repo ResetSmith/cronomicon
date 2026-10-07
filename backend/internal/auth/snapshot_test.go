@@ -194,7 +194,7 @@ func TestTheDevIdentityKeepsItsConstructedGrant(t *testing.T) {
 	req := lr0Session(t, s, dev)
 
 	got, ok := s.readSession(nil, req)
-	if !ok || !got.Unrestricted() || !got.CanAgency(PermConfigureApp, "") {
+	if !ok || !got.Unrestricted() || !got.GlobalAdmin(PermConfigureApp) {
 		t.Fatalf("the dev session lost its access on an unseeded database: ok=%v grants=%v", ok, got.Grants)
 	}
 	s.devAuth = false
@@ -247,7 +247,7 @@ func TestAFailedRebuildKeepsTheLastGoodSnapshotForABoundedTime(t *testing.T) {
 	_ = s.db.Close()
 	GrantsChanged()
 	got, ok := s.readSession(nil, req)
-	if !ok || !got.CanAgency(PermConfigureApp, "") {
+	if !ok || !got.GlobalAdmin(PermConfigureApp) {
 		t.Errorf("a failed rebuild dropped the last good snapshot: ok=%v grants=%v", ok, got.Grants)
 	}
 	// Between attempts (the backoff) the answer is the same.
@@ -382,7 +382,7 @@ func TestRevokeSessionsSignsOutEveryoneButTheCaller(t *testing.T) {
 	for _, c := range out.Result().Cookies() {
 		next.AddCookie(c)
 	}
-	if got, ok := s.readSession(nil, next); !ok || !got.CanAgency(PermManageRoles, "") {
+	if got, ok := s.readSession(nil, next); !ok || !got.GlobalAdmin(PermManageRoles) {
 		t.Error("the caller was signed out of the request that succeeded")
 	}
 }

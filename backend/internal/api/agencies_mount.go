@@ -162,7 +162,7 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 // ever "configureApp somewhere". Until a scope has a single owner and the move
 // can be authorized on both sides, it is for a global administrator alone.
 func (s *Server) requireScopeMove(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
-	if id.CanAgency(auth.PermConfigureApp, "") {
+	if id.GlobalAdmin(auth.PermConfigureApp) {
 		return true
 	}
 	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
