@@ -14,7 +14,7 @@ built from `backend/Dockerfile`, `backend/Dockerfile.runner` and
 | `cronomicon.env.example` | Annotated server runtime env template | operators; copy into your deployment |
 | `env-matrix.md` | Every `CRONOMICON_*` variable, default and requirement | `internal/config/envdoc_test.go` (both directions) |
 | `runner-install.sh` | Runner agent installer, served in-app at `/runner-install.sh`. `--instance <name>` installs a further agent beside a machine's first | `frontend/vite-manuals-plugin.js`, Runners view |
-| `runner-install-check.sh` | The installer's own checks: syntax, flag parsing, and the layout and unit it derives for the default agent and for an instance. Needs no root and changes nothing | run by hand before changing the installer |
+| `runner-install-check.sh` | The installer's own checks: syntax, flag parsing, and the layout and unit it derives for the default agent and for an instance. Needs no root and changes nothing | `make verify` (and `make installer-check` alone) |
 | `runner-isolation-check.sh` | Served in-app at `/runner-isolation-check.sh`. Run as root on a runner host AFTER installing: checks each agent's account, directories and unit, and that no agent's user can read or write another's (state, config, `/dev/shm`). Creates only probe directories it removes | `vite-manuals-plugin.js`, runner install guide §3 |
 | `cronomicon-runner.env.example` | Runner agent env template, served in-app | `vite-manuals-plugin.js`, `runner-provision.test.ts` |
 | `cronomicon-runner.service` | Hardened systemd unit the installer writes | `internal/agent/sandbox.go`, runner guides |

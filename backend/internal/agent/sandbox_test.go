@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -205,5 +208,60 @@ func TestProbeSandboxSaysWhyNot(t *testing.T) {
 	fake("exit 0\n")
 	if ok, why := probeSandbox(context.Background()); !ok || why != "" {
 		t.Errorf("scope created: probeSandbox() = %v, %q; want true and no reason", ok, why)
+	}
+}
+
+// The one line an operator reads in the journal when an agent has no per-run
+// sandbox, which is every agent the installer sets up. It has to carry what
+// systemd-run answered and what bounds the agent instead: the guides quote
+// both, and "no usable systemd-run" alone sent readers looking for a program.
+func TestNoSandboxLineSaysWhyAndWhatToDo(t *testing.T) {
+	const refusal = "Failed to start transient scope unit: Interactive authentication required."
+	for _, tc := range []struct {
+		name     string
+		checkout bool
+		level    string
+		msg      string
+	}{
+		{"an ordinary agent", false, "level=INFO", "tier-2 sandbox unavailable"},
+		// Checkout runs a repository's code on the runner: never quietly uncapped.
+		{"an agent with checkout on", true, "level=WARN", "SANDBOX UNAVAILABLE"},
+	} {
+		var buf bytes.Buffer
+		logNoSandbox(slog.New(slog.NewTextHandler(&buf, nil)), tc.checkout, refusal)
+		line := buf.String()
+		if n := strings.Count(strings.TrimSpace(line), "\n"); n != 0 {
+			t.Errorf("%s: want one line, got %d:\n%s", tc.name, n+1, line)
+		}
+		for _, want := range []string{
+			tc.level, tc.msg,
+			`reason="` + refusal + `"`,
+			"hint=",
+			"systemctl set-property <unit> MemoryMax=",
+			"--memory-max", "--cpu-quota", "--tasks-max",
+			"limit the container",
+		} {
+			if !strings.Contains(line, want) {
+				t.Errorf("%s: the line lacks %q:\n%s", tc.name, want, line)
+			}
+		}
+	}
+}
+
+// The hint names the installer's flags. It must not outlive them: every flag
+// it mentions is one runner-install.sh still parses.
+func TestSandboxHintNamesFlagsTheInstallerTakes(t *testing.T) {
+	installer, err := os.ReadFile(filepath.Join("..", "..", "deploy", "runner-install.sh"))
+	if err != nil {
+		t.Fatalf("reading the installer: %v", err)
+	}
+	flags := regexp.MustCompile(`--[a-z][a-z-]+`).FindAllString(sandboxHint, -1)
+	if len(flags) != 3 {
+		t.Fatalf("the hint names %v; want the three limit flags", flags)
+	}
+	for _, f := range flags {
+		if !regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(f) + `\) `).Match(installer) {
+			t.Errorf("the hint names %s, which runner-install.sh does not parse", f)
+		}
 	}
 }

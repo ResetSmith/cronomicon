@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -133,6 +136,82 @@ func TestDoctorQuickFailsOnABrokenUnitWithNoLocalToolchain(t *testing.T) {
 	}
 	if s := statusOf(checks, "path-lookup"); s != CheckFail {
 		t.Errorf("path-lookup = %s, want FAIL: %+v", s, checks)
+	}
+}
+
+// The full doctor is what the installer runs last, so its `sandbox` line is
+// where most administrators first learn their agent has none. It is a warning,
+// never a failure (unsandboxed is a supported mode), and it has to say why and
+// what bounds the agent instead: on an installed agent the reason is a refusal,
+// not a missing program.
+func TestDoctorSandboxCheckSaysWhyAndWhatToDo(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the sandbox probe is Linux-only")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
+	defer srv.Close()
+	cfg, err := Resolve([]string{"-server", srv.URL, "-name", "d",
+		"-registration-token", "crn_reg_x", "-identity-file", t.TempDir() + "/id.json"}, noEnv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	fake := func(script string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(binDir, "systemd-run"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sandbox := func(c Config, quick bool) (Check, bool) {
+		t.Helper()
+		checks, ok := Doctor(context.Background(), c, quick)
+		for _, ch := range checks {
+			if ch.Name == "sandbox" {
+				return ch, ok
+			}
+		}
+		return Check{}, ok
+	}
+
+	const refusal = "Failed to start transient scope unit: Interactive authentication required."
+	fake("echo '" + refusal + "' >&2\nexit 1\n")
+	got, ok := sandbox(cfg, false)
+	if got.Status != CheckWarn {
+		t.Fatalf("sandbox = %q %q, want a WARN", got.Status, got.Detail)
+	}
+	if !ok {
+		t.Error("an agent with no sandbox failed the doctor: unsandboxed is a supported mode")
+	}
+	for _, want := range []string{refusal, "runs execute unsandboxed", "systemctl set-property <unit> MemoryMax=", "--memory-max", "limit the container"} {
+		if !strings.Contains(got.Detail, want) {
+			t.Errorf("the sandbox line lacks %q: %s", want, got.Detail)
+		}
+	}
+
+	// No systemd-run at all (a container): a different reason, the same remedy.
+	if err := os.Remove(filepath.Join(binDir, "systemd-run")); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := sandbox(cfg, false); got.Status != CheckWarn || !strings.Contains(got.Detail, "systemd-run is not on $PATH") {
+		t.Errorf("no systemd-run: sandbox = %q %q, want a WARN that names the missing program", got.Status, got.Detail)
+	}
+
+	fake("exit 0\n")
+	if got, _ := sandbox(cfg, false); got.Status != CheckPass || strings.Contains(got.Detail, "set-property") {
+		t.Errorf("a scope that can be created: sandbox = %q %q, want a plain PASS", got.Status, got.Detail)
+	}
+
+	// Turned off on purpose is said as that, with no probe and no remedy to offer.
+	off := cfg
+	off.NoSandbox = true
+	if got, _ := sandbox(off, false); got.Status != CheckWarn || got.Detail != "disabled (NoSandbox)" {
+		t.Errorf("NoSandbox: sandbox = %q %q", got.Status, got.Detail)
+	}
+
+	// The quick doctor (before every start) does not probe: it must stay fast.
+	if got, _ := sandbox(cfg, true); got.Name != "" {
+		t.Errorf("the quick doctor ran the sandbox check: %+v", got)
 	}
 }
 
