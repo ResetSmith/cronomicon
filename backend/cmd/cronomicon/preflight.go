@@ -30,10 +30,12 @@ func runPreflight(args []string) int {
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, `usage: cronomicon preflight [-db path]
 
-Reports what this release changes for this installation: whether a global
-administrator exists, which agency-scoped grants lose abilities, which service
-accounts and Vault-backed secrets are affected. Read-only; safe to run against
-a live database.`)
+Reports what this release changes for this installation. For 2.2.2 and 2.2.3:
+whether a global administrator exists, which agency-scoped grants lose
+abilities, which service accounts, Vault-backed secrets and host records are
+affected. For 2.3.0: rows and runners in several agencies, where shell jobs may
+run once the SSH executor becomes the local runner, hosts with no stored host
+key. Read-only; safe to run against a live database.`)
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -42,11 +44,15 @@ a live database.`)
 		fs.Usage()
 		return 2
 	}
+	// The configuration is read for two things: the database path when -db is
+	// not given, and what the SSH executor's switch says here — the 2.3.0
+	// upgrade pass acts on it. A configuration that does not load is fatal only
+	// for the first.
+	cfg, cfgErr := config.Load()
 	target := *dbPath
 	if target == "" {
-		cfg, err := config.Load()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "preflight: load config:", err)
+		if cfgErr != nil {
+			fmt.Fprintln(os.Stderr, "preflight: load config:", cfgErr)
 			return 1
 		}
 		target = cfg.DBPath
@@ -76,11 +82,49 @@ a live database.`)
 		return 1
 	}
 	rep.Write(os.Stdout)
+
+	fmt.Println()
+	var schema int
+	if err := pool.QueryRowContext(ctx, `SELECT version FROM schema_migrations LIMIT 1`).Scan(&schema); err != nil {
+		fmt.Fprintln(os.Stderr, "preflight: read schema version:", err)
+		return 1
+	}
+	if schema < lastSchema22 {
+		// The section reads tables 2.2 added (scope_runners, for one). An older
+		// database is two upgrades away, and the first one changes what this
+		// section would report.
+		fmt.Printf("Cronomicon 2.3.0 — not reported: this database is on schema v%d, older than 2.2 (v%d).\n", schema, lastSchema22)
+		fmt.Println("Upgrade to 2.2.3 first, then run `cronomicon preflight` again before 2.3.0.")
+	} else if schema >= firstSchema230 {
+		// The section reads the 2.2 tables. On a database already upgraded,
+		// what it would say is in the app, and current.
+		fmt.Println("Cronomicon 2.3.0 — this database is already on the 2.3.0 schema.")
+		fmt.Println("What the upgrade found is in the app under Notices.")
+	} else {
+		rep230, err := preflight.Build230(ctx, pool)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "preflight:", err)
+			return 1
+		}
+		var sshExecutor *bool
+		if cfgErr == nil {
+			sshExecutor = &cfg.SSHExecutorEnabled
+		}
+		rep230.Write(os.Stdout, sshExecutor)
+	}
 	if !rep.HasGlobalAdmin() {
 		return 3
 	}
 	return 0
 }
+
+// firstSchema230 is the first migration of 2.3.0 (1220_global_agency). A
+// database below it holds the 2.2 tables the 2.3.0 preflight section reads.
+const firstSchema230 = 1220
+
+// lastSchema22 is the schema of the 2.2 line (1210_runner_known_hosts), the
+// oldest the 2.3.0 section can read.
+const lastSchema22 = 1210
 
 // upgradeReportMarker records that the 2.2.2 report has been logged, so it is
 // said once and not on every boot.

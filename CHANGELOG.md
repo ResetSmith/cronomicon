@@ -13,6 +13,267 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.3.0] - 2026-10-07
+
+Agencies own what is theirs, and the server is one more runner (LR band, with
+the machine side of the runner model, MA). An agency's administrators create
+and move their own scopes, keep their own host records and Vault references,
+and enrol and manage their own runner agents, without a global administrator.
+The in-app SSH executor becomes the **local runner**: the server, listed with
+the other runners, claiming runs by the same rule. Nothing chooses an executor
+any more. Schema v1280 (seven migrations; the downs of 1220, 1230, 1250, 1260 and 1270
+are lossy, so rolling back means restoring the backup).
+Runner protocol **14**, unchanged: a 2.2 agent keeps working, though agents and
+server should be kept on the same release.
+
+**Upgrading.** This release changes more on first start than any before it, and
+almost all of it is decided by what the installation holds. With two exceptions
+named in the list below (an agency already called Global is renamed, and some
+unowned secrets gain an owner), it converts nothing: what it finds keeps
+working and is listed in the new **Notices** inbox. Read the report first, and take a backup:
+
+```bash
+cronomicon preflight            # new binary, existing database; read-only
+```
+
+Take the backup immediately before the first start of 2.3.0: a `VACUUM INTO`
+snapshot or the S3 backup (`backend/deploy/backup-restore.md`). Rolling back is
+restoring it under the 2.2.x binary; runs made in between are lost. The report's new 2.3.0 section says, for this installation,
+everything in the list below.
+
+- **Everyone is signed out once.** From 2.3.0 a change to access grants takes
+  effect within seconds, not at the next sign-in, and the session cookie no
+  longer carries grants.
+- **"No agency" becomes the Global agency.** Every scope, secret, variable, SSH
+  key, host record, bastion and runner belongs to exactly one agency. What was
+  in none is Global's: every agency may use it, a global administrator changes
+  it. A row that was in several agencies stays as it is, works as it did, and
+  is listed by a notice until it is moved to one. An agency that is already
+  called Global, in any letter case, is renamed "<name> (renamed)" and a notice
+  says so. A secret, variable or SSH key with no owner that is in exactly one
+  agency becomes that agency's, except where that would change which row a run
+  resolves.
+- **A runner agent serves exactly the agency that owns it.** An agent in one
+  agency is now owned by it; an agent in none is Global's. An agent that served
+  several agencies becomes a *legacy placement*: it keeps working, is managed
+  by a global administrator only, and can be narrowed but never widened. The
+  notice gives the order that settles it without closing a bound scope.
+- **The SSH executor becomes the local runner.** If
+  `CRONOMICON_SSH_EXECUTOR_ENABLED` is true the first time 2.3.0 starts, the
+  local runner is turned on and made to serve the agencies whose shell jobs ran
+  from the server. After that the switch is **Settings → Local runner**; the
+  two `CRONOMICON_SSH_EXECUTOR_*` names are read once, as seeds. Set
+  `CRONOMICON_LOCAL_RUNNER=forbid` on a host that must never run jobs itself.
+- **A shell job may now be taken by an agent, or by the server.** A run is
+  taken by whichever eligible runner asks first. Where an agency has an agent
+  with a shell capability *and* the local runner serves it, a shell job on an
+  unbound scope can run on either, from the first poll after the upgrade. With
+  the SSH executor off, shell jobs that never ran can start running on an
+  agent. **To decide where a scope's jobs run, bind the scope to runners.** The
+  report names the scopes concerned in every case; three notices name them
+  afterwards only where the SSH executor was on at that first start.
+- **`executor` is ignored everywhere**: in a job's or script's YAML (a
+  warning from `cronomicon validate` and the sync log, and a notice listing the
+  jobs), in the Job Composer, and in a run request. Remove the line.
+- **`requires` is read for every shell job.** An agent always read it; the SSH
+  executor ignored it. A shell job that ran from the server and declares
+  `requires` now waits for an agent that advertises what it asks: the local
+  runner satisfies none.
+- **A job runs only against hosts of its own scope.** A job whose fixed
+  `target_host` is not a host of its scope (where the scope lists hosts) can no
+  longer be started by hand or by a token, and a scheduled run fails for that
+  host. The report lists them; fix the target, or add the host to the scope,
+  before upgrading.
+- **The server captures no host key on first connect.** The keys it already
+  holds are carried over as approved. A host or bastion with no stored key
+  fails with `host_key_unverified` until a key is approved under Runners →
+  Local runner → Trusted host keys. Where two records for one address held
+  different keys, one is trusted and a notice names the other.
+- **Assign Vault path prefixes** (Scopes → Agencies) to each agency that holds
+  Vault-backed secrets or keys, so its administrators can manage them.
+
+### Added
+
+- **The Global agency** (migration 1220). What had no agency has one, with an
+  id and a name, held in place by triggers: every new scope, runner, secret,
+  variable and key is born in Global unless it names another agency; Global is
+  never mixed with a named agency; an agency that still holds anything cannot
+  be deleted. A row found in no agency at all is damage and fails closed.
+- **One agency per row, and an owner that moves with it.** A scope, secret,
+  variable, SSH key, host record or bastion is created in one agency and moved
+  by an explicit move, which needs the permission on the agency it is in and
+  on the agency it goes to, and refuses a name the target already owns
+  (409 `owner_conflict`). Host records and bastions gain an owner (migration
+  1230), so an agency's administrators keep their own.
+- **Vault path prefixes per agency** (migration 1240;
+  `PUT /agencies/{agencyId}/vault-prefixes`). An agency's administrators create
+  and edit Vault-backed secrets and SSH keys inside the prefixes a global
+  administrator gives the agency. The rule is applied on write and on move
+  (422 `vault_path_not_allowed`), never at run time; a reference that already
+  falls outside keeps resolving and is listed by a notice.
+- **A runner has an owner** (migration 1250; `POST /runners/{runnerId}/owner`).
+  A registration token is minted *for* an agency, by that agency's
+  administrators or a global administrator, and the agent it enrols is owned by
+  that agency and serves it. The agent declares nothing. The Runners view shows
+  each runner's **Owner** and what it **Serves**; *Hand to an agency* settles a
+  Global-owned agent that serves one.
+- **The local runner** (migration 1260; `GET`/`PUT /local-runner`). The server
+  running shell jobs itself is a row in the runner list: Global's, never
+  reaped, never deregistered, and the one runner with a serve list. It runs
+  bash, perl, powershell and python, and never a run that binds an SSH key. It
+  is turned on and off, sized and placed under **Settings → Local runner** by a
+  global administrator, and can be bound to a scope like any runner.
+- **The local runner's host keys are reviewed** (migration 1270). The server
+  connects only to a host whose key an operator approved, through the same
+  review screen and ledger as an agent's: scan a scope or a list of hosts,
+  paste lines, or copy from a runner. An approval is in force at once. *Test
+  connection* answers `unverified` for a host with no approved key.
+- **Notices** (`GET /notices`, `POST /notices/dismiss`). An inbox of conditions
+  that hold now, each filed under the agency that can clear it: rows and
+  runners in several agencies, keys a record's owner cannot use, Vault paths
+  outside a prefix, a job's target outside its scope, what the upgrade changed
+  about where shell jobs run, hosts the local runner has no key for, leftover
+  `executor` and `runner_tag` keys. A notice clears itself when its condition
+  ends; a dismissal lasts until the condition goes away and comes back.
+- **Sign out everyone else** (`POST /auth/sessions/revoke`, global
+  administrators), in the account menu: the one deliberate way to end every
+  other session, for a change made at the identity provider that the server
+  cannot see.
+- **My access** (`GET /me/access`): which permissions the signed-in user holds
+  in which agencies. It also fills the owner pickers, which offer exactly the
+  agencies the user may create in.
+- **History names the runner** (migration 1280). A run keeps the name of the
+  runner that took it, so the Runner column still answers after that runner is
+  reaped or re-enrolled. `GET /runs` returns `runnerName` and sorts by
+  `runner`.
+- **Several agents on one machine.** `runner-install.sh --instance <name>`
+  installs a further agent beside a machine's first, with an OS user, a group,
+  a unit and state and config directories of its own, all named
+  `cronomicon-runner-<name>`; the binary is shared. The install helpers have an
+  optional **Instance name** field, and offer no command while the name is not
+  one the installer accepts. The upgrade command restarts every agent unit on
+  the machine that is enabled or running, and reports each. `runner-isolation-check.sh`,
+  served by the app, checks on the host that no agent's user can read or write
+  another's files.
+- **`cronomicon preflight`: the 2.3.0 section.** Rows and runners in several
+  agencies, where shell jobs ran and which runners may take them now, the
+  agencies the local runner will be placed in, shell jobs that declare
+  `requires`, records with no stored host key and addresses with two, leftover
+  `executor` keys, Vault-backed rows held by an agency, and jobs whose target
+  host is outside their scope.
+
+### Changed
+
+- **One claim.** An agent's poll and the local runner take runs through the
+  same statement, under the same rules: the runner serves the run's agency, is
+  bound to the scope if the scope names runners, can run the type and satisfies
+  `requires`, and may receive what the run carries. Every new run is written
+  for the runner executor; `runs.executor` is history.
+- **A run that binds an SSH key is an agent's.** The local runner never takes
+  one. A shell run that binds a key waits for an agent that serves its scope
+  and is refused when none is registered (422
+  `key_binding_requires_runner`, a skipped row for a scheduled fire, a failed
+  workflow step). A *connect as* key is not a binding and works on the local
+  runner.
+- **Grants are resolved per request** from a cached snapshot that every grant
+  write refreshes. No access change signs anyone out.
+- **What an agency administrator can do for their own agency** that 2.2.2 had
+  reserved to a global administrator: create scopes in it and move scopes into
+  it, write host records and bastions, create and edit Vault-backed secrets and
+  keys inside its prefixes, mint registration tokens and manage its agents, and
+  bind its scopes to runners that serve it.
+- **Settings is in two groups.** *Agency* (Users & Access, Service Accounts,
+  SSH Targets, Recycle Bin) and *Installation* (General, Notifications, GitLab
+  Connection, Vault, Observability, Log Storage, Audit & Compliance, Local
+  runner). The Installation group is shown to global administrators only, and
+  every section has an address (`/settings?tab=<key>`).
+- **The Run dialog states who takes the run.** Its Method section shows a
+  read-only **Runs on**: the scope's bound runners, an agent for Ansible,
+  Terraform and any run that binds an SSH key, any runner otherwise. The Jobs
+  detail and the Job Composer say the same; History and the Dashboard readout
+  show a Runner where they showed an executor.
+- **A waiting run says why, and stops saying it when it is claimed.** New
+  reasons name the local runner being off, a key binding with no agent online,
+  and a run queued for the retired SSH executor.
+- **Restore placement** re-points scope bindings on the accepting runner's own
+  agency's scopes and never changes what a runner serves.
+- Refusing Ansible-only run options on another run type answers 422
+  `ansible_only` (was `invalid_executor`).
+- A guest reviewing host keys on a runner that is not their agency's may add a
+  first key for a host in their own scope and never replace one; on the local
+  runner only a global administrator decides.
+
+### Removed
+
+- **The executor choice.** `executor` on a job, a script, the compose request
+  and the job and script responses; the `defaultExecutor` setting; the Executor
+  picker in the Run dialog and the Job Composer; the executor resolver and its
+  refusals `invalid_executor` and `scope_requires_runner`. A run request's
+  `executor` is accepted and ignored for one more minor.
+- **Capture of a host key on first connect**, in a run and in *Test
+  connection*, with the stored key on host records and bastions, the *Clear
+  pin* action, `DELETE /ssh/hosts/{hostId}/host-key` and
+  `DELETE /ssh/bastions/{bastionId}/host-key`, and the
+  `unpinned_bastion_target` guard, whose condition can no longer arise.
+- **Shared agents and the general pool.** An agent cannot be placed in a
+  second agency, and a runner with no agency does not exist. The
+  runner-to-agency membership editor remains only as the local runner's serve
+  list, and to narrow a legacy placement.
+- `GET /runs?sort=executor` (400; use `sort=runner`).
+- `GET /agency-preflight`, superseded by the notices and `cronomicon
+  preflight`.
+
+### Fixed
+
+- **An agent's state directory was listable by every user on its host.** The
+  unit set `StateDirectory=` without a mode, and systemd resets such a
+  directory to 0755 at every start, undoing the installer's 0750. The agent's
+  own files stayed closed (identity 0600, keys 0700), but the directory and
+  anything a job left in it were not. The installer now writes
+  `StateDirectoryMode=0750`. **An agent installed before 2.3.0 keeps the old
+  unit**: run the installer again for it, or add a drop-in
+  (`systemctl edit cronomicon-runner`, `[Service]`, `StateDirectoryMode=0750`)
+  and restart it. `runner-isolation-check.sh` reports a host that needs it.
+- Runner API keys are revoked by runner id; two runners that declared the same
+  name no longer share a revocation.
+- Output markers in an agent's log are parsed according to whether that run's
+  lines are host-prefixed, so text a job echoes after a bracket cannot set an
+  output.
+
+### Security
+
+- An agent's serve list cannot be widened by anyone, and cannot be declared by
+  the agent: it is the owner the registration token carried.
+- The server's host-key trust is reviewed and recorded like every runner's; a
+  bastion is verified under the address its record is dialled at, never under
+  a name.
+- A Vault path on an agency's row is judged against that agency's prefixes,
+  for a global administrator too. A Global row may name any path and is a
+  global administrator's alone.
+- A row in no agency fails closed everywhere it is read: no runner takes its
+  runs, no run resolves its secrets.
+
+### For developers
+
+- `runner.Claim` is the one statement that moves a run from queued to running;
+  the rule's shared pieces are in `execspec/claimrule.go`, and
+  `runner.TestClaimRuleMirrorsAgreeWithTheClaim` holds the two mirrors to it.
+- `settings.SetAgencyMembership` is the move and the only writer of
+  `owner_agency` on scopes, secrets, variables, keys, host records and
+  bastions (a runner's owner is `settings.SetRunnerOwner`); `settings.CheckRunnerPlacement` is the only gate on what a
+  runner serves. `internal/vaultpath` is the one rule for "inside a prefix".
+- `internal/notices`: a check enumerates what holds now and calls `Reconcile`.
+- `sshexec` verifies every hop through `hostTrust`/`bastionTrust`; the scan is
+  `internal/keyscan`, shared with the agent.
+- `auth.GrantsChanged()` must follow every write of a grant, a scope's agency,
+  a scope's name or an agency's name.
+- `gitlab.storableExecutor` is why a retired YAML value cannot fail an insert:
+  `jobs.executor` and `scripts.executor` keep their CHECK.
+- `db.MigrateTo` builds a database at an older schema for the tests that need
+  one.
+- `runner-install.sh` derives every installed name from `set_layout`;
+  `runner-install-check.sh` asserts the default layout and unit are unchanged.
+
 ## [2.2.3] - 2026-10-07
 
 Five ways an administrator or operator of one agency could still reach
