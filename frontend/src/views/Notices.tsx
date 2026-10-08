@@ -31,6 +31,12 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   record_key_outside_owner: { title: "A host record or bastion names a key its owner cannot use", to: "/settings?tab=targets", toLabel: "SSH Targets" },
   vault_path_outside_prefix: { title: "A Vault path outside its agency's prefixes", to: "/scopes?tab=agencies", toLabel: "Agencies" },
   legacy_placement: { title: "A runner that serves agencies it is not owned by", to: "/runners", toLabel: "Runners" },
+  may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
+  mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },
+  may_run_on_server: { title: "Shell jobs that ran on agents may now run from the server", to: "/scopes", toLabel: "Scopes" },
+  agency_placed: { title: "The upgrade made the local runner serve an agency", to: "/settings?tab=localrunner", toLabel: "Local runner" },
+  shell_job_requires: { title: "A shell job requires what no agent has", to: "/jobs", toLabel: "Jobs" },
+  no_runner_for_shell_jobs: { title: "An agency's shell jobs have no runner", to: "/runners", toLabel: "Runners" },
 };
 
 export function Notices() {

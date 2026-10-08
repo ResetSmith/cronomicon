@@ -621,7 +621,6 @@ func AgenciesHaveOnlineRunner(ctx context.Context, db *sql.DB, agencies []string
 			JOIN agencies a  ON a.id  = ra.agency_id
 			JOIN runners  rn ON rn.id = ra.runner_id
 			WHERE a.name IN (SELECT value FROM json_each(?)) AND rn.status = 'online'
-			  AND `+ClaimsByPollSQL("rn")+`
 		)`, MarshalAgencies(agencies)).Scan(&exists)
 	if err != nil {
 		return false, err
@@ -662,6 +661,12 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 	if ierr != nil {
 		needsInjection = true
 	}
+	// LR-47: the local runner does not take a run that binds an SSH key. A
+	// failed read is "binds one", for the same reason as above.
+	bindsKey, kerr := runBindsKey(ctx, db, runID)
+	if kerr != nil {
+		bindsKey = true
+	}
 
 	// The run's frozen agency SET (mig. 680). One membership arm since migration
 	// 1220, where a run with no scope is Global's and "[]" is no agency at all.
@@ -678,7 +683,6 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 		SELECT EXISTS(
 			SELECT 1 FROM runners rn
 			WHERE rn.status = 'online'
-			  AND `+ClaimsByPollSQL("rn")+`
 			  AND ? IN `+caps+`
 			  AND NOT EXISTS (
 			    SELECT 1 FROM json_each(?) je
@@ -694,7 +698,8 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 			       OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
 			                   WHERE sc.name = ? AND sr.runner_id = rn.id))
 			  AND (? = 0 OR rn.allow_secret_injection = 1)
-		)`, runType.String, reqJSON, ag, scope.String, scope.String, needsInjection).Scan(&ok)
+			  AND `+localRunnerCannotSQL("rn")+`
+		)`, runType.String, reqJSON, ag, scope.String, scope.String, needsInjection, bindsKey).Scan(&ok)
 	if err != nil {
 		return false, requires, err
 	}

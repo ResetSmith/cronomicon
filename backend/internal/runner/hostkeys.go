@@ -1562,6 +1562,17 @@ func (s *Service) HandleScopeHostKeyCoverage(w http.ResponseWriter, r *http.Requ
 	}
 	cov.Runners = make([]coverageRunner, 0, len(bound))
 	for _, b := range bound {
+		// The local runner is left out. This table reads a runner's ledger and
+		// its known_hosts report, and the local runner has neither: it verifies
+		// against the keys kept with the SSH targets (until they move to the
+		// ledger). Listed, it would show every host as untrusted and offer a
+		// scan its routes refuse.
+		if local, lerr := settings.IsLocalRunner(ctx, s.db, b.RunnerID); lerr != nil {
+			fail(lerr)
+			return
+		} else if local {
+			continue
+		}
 		trusted, err := hostkeys.LoadTrusted(ctx, s.db, b.RunnerID)
 		if err != nil {
 			fail(err)

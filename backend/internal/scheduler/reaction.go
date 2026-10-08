@@ -616,21 +616,10 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 		return nil, fmt.Errorf("reacting job %q consumes department-owned credentials unbound at this scope: %s",
 			jobName, runref.UnboundRefusal(blocked))
 	}
-	// KB — same posture for a key-bound job that resolves to the ssh executor:
-	// the delivery row carries the refusal, no run row is invented.
-	resolved := execspec.ResolveExecutor(ctx, s.db, execspec.ExecutorQuery{
-		JobUID: jobUID.String, JobSource: source, JobName: jobName, RunType: runType.String, Scope: scope.String,
-	})
-	if resolved.Err != nil {
-		return nil, fmt.Errorf("resolve executor for %q: %w", jobName, resolved.Err)
-	}
-	// SB — a job that asks for ssh on a scope bound to runners: refused on the
-	// delivery row, like the two refusals around it.
-	if resolved.ScopeRefused() {
-		return nil, fmt.Errorf("reacting job %q: %s", jobName, resolved.Refusal.Message)
-	}
-	executor := resolved.Executor
-	keys, kerr := runref.KeyBindingsOnSSH(ctx, s.db, owners, executor)
+	// LR-47 — same posture for a key-bound shell job with no agent to deliver
+	// the key: the delivery row carries the refusal, no run row is invented.
+	executor := execspec.ExecutorRunner
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType.String, scope.String)
 	if kerr != nil {
 		return nil, fmt.Errorf("check key bindings for %q: %w", jobName, kerr)
 	}

@@ -57,16 +57,53 @@ func effectiveCapsSQL(alias string) string {
 	                            ELSE '[]' END) em))`
 }
 
-// ClaimsByPollSQL is true of a runner (the runners row aliased `alias`) that
-// takes `executor='runner'` runs: an agent. The local runner (kind 'server',
-// Phase A of 2.3.0) has a row among the runners and, until Phase B gives the
-// engine the one claim path, still claims only `executor='ssh'` runs through
-// sshexec's own query. So until then it must not be counted by anything that
-// answers "can a runner take this run" or "may this scope be bound to that
-// runner": a scope bound to it would send its jobs to the runner executor and
-// nothing would ever claim them, with the two mirrors reporting that something
-// could. Phase B deletes this function and every use of it together.
-func ClaimsByPollSQL(alias string) string { return alias + `.kind <> 'server'` }
+// RunBindsKeySQL is the question "does this run's job or script declare an SSH
+// key binding", as a boolean SQL expression over the runs row aliased `alias`.
+// The local runner cannot take such a run (LR-47): an agent is handed key
+// material as files on its own disk, and the server connects FROM itself TO the
+// target, so it would have to place a key on the target host — delivery that was
+// dropped in KB and is not rebuilt. The claim binds it in for the local runner;
+// the two mirrors ask it through runBindsKey.
+//
+// A key added to ONE run (the Run dialog's references, stored in the run's
+// override envelope) counts like a declared one. Left out, such a run could be
+// taken by either kind of runner, and would succeed on an agent and fail on the
+// server according to which asked first.
+//
+// A per-run SSH credential (connect-as) is NOT a key binding here, although the
+// injection gate treats it as one for an agent: on the server it is a credential
+// the engine dials with directly, and excluding it would strand every
+// connect-as run.
+func RunBindsKeySQL(alias string) string {
+	return `(EXISTS (
+	       SELECT 1 FROM json_each(CASE WHEN json_valid(` + alias + `.override_json)
+	                                    THEN ` + alias + `.override_json ELSE '{}' END, '$.references') pr
+	        WHERE json_extract(pr.value, '$.kind') = 'key')
+	    OR EXISTS (
+	       SELECT 1 FROM reference_bindings kb
+	        WHERE kb.ref_kind = 'key'
+	          AND ((kb.owner_kind = 'job'
+	                AND CASE WHEN COALESCE(` + alias + `.job_uid, '') <> ''
+	                         THEN kb.owner_uid = ` + alias + `.job_uid
+	                         ELSE kb.owner_source = COALESCE(NULLIF(` + alias + `.job_source, ''), 'git')
+	                              AND kb.owner_name = ` + alias + `.job_name END)
+	            OR (kb.owner_kind = 'script' AND kb.owner_name = ` + alias + `.script_ref))))`
+}
+
+// runBindsKey is RunBindsKeySQL for one run.
+func runBindsKey(ctx context.Context, database *sql.DB, runID string) (bool, error) {
+	var binds bool
+	err := database.QueryRowContext(ctx,
+		`SELECT `+RunBindsKeySQL("r")+` FROM runs r WHERE r.id = ?`, runID).Scan(&binds)
+	return binds, err
+}
+
+// localRunnerCannotSQL is the clause that keeps the local runner (the runners
+// row aliased `alias`, kind 'server') away from a run that binds a key. It takes
+// one parameter: whether the run binds one.
+func localRunnerCannotSQL(alias string) string {
+	return `(? = 0 OR ` + alias + `.kind <> 'server')`
+}
 
 // injectionGateArmed mirrors config.SecretsInjectionEnabled for the two
 // mirrors, which are called from places that hold no configuration (the run

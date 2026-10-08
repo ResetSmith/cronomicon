@@ -205,13 +205,16 @@ export interface paths {
         put?: never;
         /**
          * Trigger a manual run
-         * @description Enqueues a run. The backend mints the trace ID (UUIDv7, S11), resolves
-         *     the executor (R5.1: per-trigger override > job spec.executor > global
-         *     execution.defaultExecutor > run-type capability default), and filters
-         *     candidate runners by capability (A6.3); if none match, the run stays
-         *     queued with reason "waiting for {type}-capable runner".
-         *     ansible/terraform route to the runner executor and queue normally when
-         *     no capable runner is registered (R4.3) — they are not rejected.
+         * @description Enqueues a run. The backend mints the trace ID (UUIDv7, S11) and writes
+         *     the run for the runner executor — the only one since v2.3.0. Which
+         *     runner takes it is decided when it is claimed: an agent, or the server
+         *     itself as the local runner, that serves the run's agency, is named by
+         *     the scope's binding if it has one, and has the run type (A6.3). If
+         *     none can, the run stays queued and `statusReason` says why. That holds
+         *     for every run type: a shell run waits for a runner like an ansible or
+         *     terraform one (R4.3) — none is rejected for want of one, with the one
+         *     exception of a key-bound shell run that has no agent at all (422
+         *     `key_binding_requires_runner`).
          *     Targeting a scope whose declared types exclude the job type is allowed
          *     (advisory model, §9.2) — the UI soft-warns, the API does not reject.
          *     Auth: session + CSRF, **plus scope access AND the triggerJobs verb**, both
@@ -2132,11 +2135,13 @@ export interface paths {
         /**
          * Preview what replacing a scope's bound runners would change
          * @description Computes the effect of PUT /scopes/{scopeId}/runners with the same body,
-         *     and changes nothing. Binding a scope is not only a dispatch change: a job
-         *     with no executor of its own moves from the ssh executor (the control
-         *     plane, with the server's credentials and known_hosts) to the bound
-         *     runners (their own keys and known_hosts); a job that asks for ssh starts
-         *     being refused; and clearing a binding moves everything back.
+         *     and changes nothing. Binding a scope decides WHICH runners take its
+         *     runs: unbound, every runner that serves the scope's agency does —
+         *     agents and the local runner alike; bound, only the named ones. Each
+         *     has its own keys and its own host-key trust, and only an agent can
+         *     deliver a bound SSH key, so the preview names the runners that would
+         *     start or stop serving the scope and the jobs that would be left with
+         *     nobody to deliver their key.
          *
          *     Nothing is validated: an unregistered or ineligible runner is reported as
          *     such rather than refused, since saying why a save would fail is part of
@@ -4920,7 +4925,9 @@ export interface components {
             /** @description Repo-relative script file, read from the synced clone (EX.1). */
             readonly scriptPath?: string | null;
             /**
-             * @description Per-job executor default (EX.3). null ⇒ resolved from run_type at trigger (shell types ⇒ ssh).
+             * @description What the job's definition says its executor is (EX.3). **Not read
+             *     since v2.3.0** (LR-42): every run is written for the runner executor
+             *     and where it runs is decided when it is claimed. Kept for display.
              * @enum {string|null}
              */
             readonly executor?: "runner" | "ssh" | null;
@@ -6151,7 +6158,10 @@ export interface components {
             /** @description Single-host target when not a scope fan-out (EX.3/EX.5). */
             readonly targetHost?: string | null;
             /**
-             * @description Execution method resolved at trigger and frozen on the run (EX.3). ssh ⇒ in-app SSH executor; runner ⇒ out-of-process agent (V2).
+             * @description History. Every run written since v2.3.0 says `runner`, whichever
+             *     runner took it — an agent or the server as the local runner
+             *     (`runnerId` says which). `ssh` appears only on runs from before
+             *     v2.3.0, which the in-app SSH executor ran.
              * @enum {string}
              */
             readonly executor?: "runner" | "ssh";
@@ -6162,7 +6172,7 @@ export interface components {
             /** @description User email for manual runs; null for scheduler-triggered. */
             readonly triggeredBy?: string | null;
             readonly killedBy?: string | null;
-            /** @description UUID of the runner that executed this run; null for in-app SSH runs or deregistered runners (runs.runner_id is ON DELETE SET NULL). */
+            /** @description UUID of the runner that executed this run — an agent's */
             readonly runnerId?: string | null;
             /**
              * @description HISTORICAL. The runner-tag pin this run was dispatched with, for runs
@@ -6532,31 +6542,35 @@ export interface components {
              */
             eligible: boolean;
         };
+        /** @description A runner whose part in a scope changes with a save. */
+        ScopeRunnersPreviewRunnerRef: {
+            runnerId: string;
+            name: string;
+            /** @description The local runner (this server), not an agent. */
+            local: boolean;
+            status: string;
+        };
         /** @description What replacing a scope's bound-runner set would change. */
         ScopeRunnersPreview: {
             scope: string;
             currentlyBound: boolean;
             willBeBound: boolean;
-            /** @description Jobs that resolve to the ssh executor today and would resolve to the runner. */
-            jobsMovingToRunner: components["schemas"]["ScopeRunnersPreviewJob"][];
             /**
-             * @description Jobs that would return to the ssh executor — to running from the
-             *     server: those the binding was sending to the runners, and those that
-             *     ask for ssh and were being refused.
+             * @description Runners that take this scope's runs today and would not after the
+             *     save. Unbound, every runner that serves the scope's agency takes
+             *     them, the local runner included; bound, only the named ones.
              */
-            jobsMovingToSsh: components["schemas"]["ScopeRunnersPreviewJob"][];
+            runnersLosing: components["schemas"]["ScopeRunnersPreviewRunnerRef"][];
+            /** @description Runners that would take this scope's runs after the save and do not today. */
+            runnersGaining: components["schemas"]["ScopeRunnersPreviewRunnerRef"][];
             /**
-             * @description Jobs that ask for the ssh executor themselves and would be refused
-             *     (scope_requires_runner) while the scope is bound.
+             * @description The scope's shell jobs that bind an SSH key, listed when no agent
+             *     would serve the scope after the save. Only an agent can deliver a
+             *     key file, so their runs would be refused
+             *     (`key_binding_requires_runner`).
              */
-            jobsRefused: components["schemas"]["ScopeRunnersPreviewJob"][];
-            /**
-             * @description Runs already queued on this scope, or parked for later (deferred, or
-             *     held behind a Queue gate), and frozen onto the ssh executor. They
-             *     keep it, and run from the server whatever is saved.
-             */
-            queuedSshRuns: number;
-            /** @description The run types of the jobs that would run on the bound runners. */
+            jobsNeedingAgent: components["schemas"]["ScopeRunnersPreviewJob"][];
+            /** @description The run types of the scope's jobs. */
             runTypes: string[];
             /** @description How many of those jobs bind secrets or an SSH key and so need a secret-injection runner. */
             jobsNeedingInjection: number;
@@ -6566,6 +6580,8 @@ export interface components {
             runners: {
                 runnerId: string;
                 name: string;
+                /** @description The local runner (this server), not an agent. It has no known_hosts file, so `hostsWithoutKey` is always 0 for it. */
+                local: boolean;
                 registered: boolean;
                 /** @description Whether the runner passes the agency rule for this scope; a save refuses one that does not. */
                 eligible: boolean;
@@ -6633,6 +6649,17 @@ export interface components {
              *       installation assigns prefixes). It keeps working and cannot be
              *       edited until a prefix covers it. Subject `<kind>:<id>`. Filed
              *       under Global.
+             *     - `may_run_on_agent`, `mixed_scope`, `may_run_on_server` — after the
+             *       upgrade to v2.3.0, an unbound scope whose shell jobs ran from the
+             *       server, in both places, or on agents, and which the other kind of
+             *       runner can now take too (subject: the scope's id, or `no-scope`).
+             *       Resolved by binding the scope.
+             *     - `agency_placed` — the upgrade added an agency to those the local
+             *       runner serves (subject: the agency's id; Global's).
+             *     - `shell_job_requires` — a shell job requires tokens no registered
+             *       agent that serves it advertises (subject: the job's uid).
+             *     - `no_runner_for_shell_jobs` — an agency has shell jobs and no
+             *       registered runner serving it can run them (subject: the agency's id).
              *     - `legacy_placement` — a runner whose serve list is not exactly its
              *       owner: one that served several agencies before 2.3.0. It works as
              *       it did, is Global's, and can be narrowed and never widened; the
@@ -8106,10 +8133,10 @@ export interface components {
             /** @description Global concurrent-run cap. Per-job caps are an open S16 decision and not in the v1 contract. */
             maxConcurrent?: number;
             /**
-             * @description Global executor default (R5.1) applied when neither a per-trigger
-             *     override nor a job's spec.executor is set. Lowest-precedence
-             *     explicit input; the run-type capability default still overrides it
-             *     for ansible/terraform (which always need the runner executor).
+             * @description **Not read since v2.3.0.** It was the global executor default
+             *     (R5.1); there is one executor now, and where a run goes is
+             *     decided when it is claimed. Stored and returned as before; the
+             *     field goes in a later release.
              * @default ssh
              * @enum {string}
              */
@@ -9253,19 +9280,23 @@ export interface operations {
                     targetGroups?: string[];
                     /**
                      * @description M3 — RAW `ansible --limit` passthrough for patterns the structured
-                     *     projection can't model (e.g. complex set arithmetic). ANSIBLE / runner
-                     *     runs only — rejected (422, code=invalid_executor) on the SSH executor,
+                     *     projection can't model (e.g. complex set arithmetic). ANSIBLE runs
+                     *     only — rejected (422, code=invalid_executor) for any other run type,
                      *     which cannot honor a raw pattern. Takes precedence over the structured
                      *     host∪group limit. Exec-safe (a single argv element, no shell); its
                      *     content is the operator's responsibility.
                      */
                     ansibleLimit?: string;
                     /**
-                     * @description Per-trigger executor override (R5.1). Highest-precedence input;
-                     *     overrides the job's spec.executor and the global default. Omit
-                     *     to resolve from spec.executor → global default → run-type
-                     *     capability default. executor=ssh is rejected (422) for
-                     *     ansible/terraform, which require the runner executor (R5.2).
+                     * @deprecated
+                     * @description **Ignored since v2.3.0**, and kept in the contract for one more
+                     *     minor so that a caller which sends it does not break (LR-50).
+                     *     There is one executor: every run is written for the runner
+                     *     executor, and which runner takes it — an agent, or the server
+                     *     itself as the local runner — is decided when it is claimed, by
+                     *     agency, scope binding and capability. Nothing on a run or a job
+                     *     chooses. A value that is not one of the two is still 422
+                     *     `invalid_executor`; leave the field out.
                      * @enum {string}
                      */
                     executor?: "runner" | "ssh";
@@ -9390,12 +9421,13 @@ export interface operations {
                      *     enter the run's override envelope. Requires the ManageEnvVars
                      *     permission (403 without it): a reference is a grant over stored
                      *     secret/key material, the same gate as editing a job's declared
-                     *     bindings. Invalid kind or bare name → 422 invalid_binding. A key
-                     *     added to a run that RESOLVES to the ssh executor is refused like a
-                     *     declared key (422 key_binding_requires_runner, KB — the in-app
-                     *     executor cannot deliver key files; SSH keys are delivered on the
-                     *     runner path only). Preflight resolvability with POST
-                     *     /references/validate.
+                     *     bindings. Invalid kind or bare name → 422 invalid_binding. An SSH
+                     *     key is delivered as a file by an AGENT only: a run that names one
+                     *     here and is then taken by the local runner (the server) fails
+                     *     before it connects, with the reason in its log. A key the job or
+                     *     its script DECLARES keeps the local runner from taking the run at
+                     *     all (see 422 key_binding_requires_runner). Preflight
+                     *     resolvability with POST /references/validate.
                      */
                     references?: {
                         /**
@@ -9460,17 +9492,11 @@ export interface operations {
             };
             /**
              * @description Validation failed. `Error.code` distinguishes the cases:
-             *     `invalid_executor` — executor=ssh cannot run ansible/terraform; use the
-             *     runner executor (R5.2). This applies to an ssh the run or the job ASKS
-             *     for; a global default executor of ssh falls through to the runner for
-             *     those run types instead, as it always has for scheduled runs.
-             *     `scope_requires_runner` (SB) — the run's effective scope is bound to
-             *     runners (see PUT /scopes/{scopeId}/runners) and the run or the job asks
-             *     for the ssh executor, which would run it from the server instead; the
-             *     message names the scope and which of the two asked. A job with no
-             *     executor of its own on a bound scope is not refused — it runs on the
-             *     bound runners. Scheduled, workflow, reaction and file-arrival fires
-             *     record the same refusal as a skipped or failed run.
+             *     `invalid_executor` — `executor` is not `runner` or `ssh` (the field
+             *     is ignored since v2.3.0, and still checked), or `ansibleLimit` was
+             *     given for a run type that is not ansible.
+             *     (`scope_requires_runner`, returned until v2.3.0 for an ssh asked of a
+             *     scope bound to runners, is retired: there is no executor to ask for.)
              *     `scope_membership` / `group_membership` — a
              *     targetHosts/targetGroups entry that is not a member of the effective scope's
              *     inventory (F2/M3). `prompt_required` (JR-Q5) — the job is
@@ -9483,14 +9509,20 @@ export interface operations {
              *     write); or two entries naming DIFFERENT rows alias to the same
              *     destination (RA-Q2), which is refused rather than resolved by a silent
              *     last-wins. The message names the contested CRONOMICON_* key.
-             *     `key_binding_requires_runner` (KB) — the run RESOLVED to the ssh
-             *     executor and the job, its script, or a per-run addition binds an SSH
-             *     key; the in-app executor connects from Cronomicon and cannot place a key
-             *     file on the target, so the run is refused rather than started without
-             *     it. The message names the key and both ways out (the runner executor,
-             *     or a Secret binding written to a file by the job body). Scheduled,
-             *     workflow, reaction and file-arrival fires of such a job record the
-             *     same refusal as a skipped or failed run.
+             *     `key_binding_requires_runner` (KB, LR-47) — a shell job, or its
+             *     script, binds an SSH key and NO registered agent serves the run's
+             *     effective scope (none serves its agency, or the scope is bound and no
+             *     agent is among the runners named). A key is delivered as a file on the
+             *     machine that runs the job; an agent does that, and the local runner
+             *     connects from the server and cannot place one on the target. The
+             *     claim keeps the local runner away from such a run, so with no agent
+             *     to wait for it is refused rather than queued for nobody. An agent that
+             *     exists and is offline is an ordinary wait, not this. The message names
+             *     the key and both ways out (enrol an agent for the scope's agency, or
+             *     bind the key as a Secret and write the file in the job body).
+             *     Scheduled, workflow, reaction and file-arrival fires of such a job
+             *     record the same refusal as a skipped or failed run. Ansible and
+             *     terraform runs are not refused: they wait for a capable agent.
              */
             422: {
                 headers: {
@@ -12470,7 +12502,7 @@ export interface operations {
             /**
              * @description Validation failed — the same `Error.code` set as `POST
              *     /jobs/{id}/run`, including `key_binding_requires_runner` (KB): a
-             *     key-bound job whose run resolves to the ssh executor is refused for
+             *     key-bound shell job with no agent to deliver the key is refused for
              *     a token exactly as for a click.
              */
             422: {

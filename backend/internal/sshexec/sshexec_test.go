@@ -161,7 +161,7 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','runner',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,7 +173,7 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
@@ -273,7 +273,7 @@ func setupBlockingRun(t *testing.T, timeoutSeconds int) (*Service, *sql.DB) {
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','bash','testscope','testhost','queued','tester','manual','runner',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,7 +306,7 @@ func runExecuteWithDeadline(t *testing.T, svc *Service, r claimedRun, d time.Dur
 // remote command hangs is interrupted, finalizes failure, and logs the timeout.
 func TestSSHExecutorTimeoutInterruptsRun(t *testing.T) {
 	svc, pool := setupBlockingRun(t, 1)
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
@@ -330,7 +330,7 @@ func TestSSHExecutorTimeoutInterruptsRun(t *testing.T) {
 // finalizes terminal, and the kill signal is consumed.
 func TestSSHExecutorKillInterruptsRun(t *testing.T) {
 	svc, pool := setupBlockingRun(t, 0)
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}

@@ -65,10 +65,9 @@ const emptyPreview = (ids: string[], over: Partial<Preview> = {}): Preview => ({
   scope: "dmz-web",
   currentlyBound: false,
   willBeBound: ids.length > 0,
-  jobsMovingToRunner: [],
-  jobsMovingToSsh: [],
-  jobsRefused: [],
-  queuedSshRuns: 0,
+  runnersLosing: [],
+  runnersGaining: [],
+  jobsNeedingAgent: [],
   runTypes: [],
   jobsNeedingInjection: 0,
   scopeHosts: 0,
@@ -116,7 +115,7 @@ describe("BoundRunnersCell — the catalog column", () => {
 describe("ScopeRunnersField — the expanded row", () => {
   it("names the pool an unbound scope draws from, and offers to bind", () => {
     const { container } = render(<ScopeRunnersField scope={scope()} canEdit onSaved={vi.fn()} />);
-    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may run this scope's jobs/);
+    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may take this scope's runs: its agents, and the local\s+runner if it serves Finance/);
     expect(within(container).getByRole("button", { name: "Bind runners…" })).toBeTruthy();
   });
 
@@ -195,17 +194,16 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     expect(dialog.getByText("deregistered — untick to remove")).toBeTruthy();
   });
 
-  // Until the local runner claims by the runner rule, a scope bound to it would
-  // send its jobs where nothing takes them; the server refuses the save, so the
-  // picker does not offer it — even when it serves the scope's agency.
-  it("does not offer the local runner as a binding target", async () => {
+  // The local runner is a runner like the others here (LR-62): a scope it
+  // serves may be bound to it.
+  it("offers the local runner as a binding target when it serves the scope's agency", async () => {
     fleet = [
       { id: "id-fin-1", name: "runner-fin-01", status: "online", agencies: [FIN] },
       { id: "id-local", name: "Local runner", kind: "server", status: "online", agencies: [FIN] },
     ];
-    const { dialog, box } = await open();
+    const { box } = await open();
     expect(box("runner-fin-01").disabled).toBe(false);
-    expect(dialog.queryByText("Local runner")).toBeNull();
+    expect(box("Local runner").disabled).toBe(false);
   });
 
   it("keeps Save disabled until something changed AND its preview has arrived, then sends the whole set", async () => {
@@ -230,14 +228,18 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     fleet = [{ id: "id-fin-1", name: "runner-fin-01", status: "online", agencies: [FIN] }];
     preview = (ids) =>
       emptyPreview(ids, {
-        jobsMovingToRunner: ids.length ? [{ uid: "u1", name: "restart", source: "git", runType: "bash" }] : [],
-        jobsRefused: ids.length ? [{ uid: "u2", name: "legacy", source: "git", runType: "bash" }] : [],
-        queuedSshRuns: ids.length ? 2 : 0,
+        runnersLosing: ids.length
+          ? [
+              { runnerId: "id-local", name: "Local runner", local: true, status: "online" },
+              { runnerId: "id-fin-2", name: "runner-fin-02", local: false, status: "offline" },
+            ]
+          : [],
         jobsNeedingInjection: ids.length ? 1 : 0,
         scopeHosts: 12,
         runners: ids.map((id) => ({
           runnerId: id,
           name: "runner-fin-01",
+          local: false,
           registered: true,
           eligible: true,
           capabilities: ["bash"],
@@ -250,31 +252,45 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     fireEvent.click(box("runner-fin-01"));
     await waitFor(() => expect(save().disabled).toBe(false));
     const text = document.body.textContent ?? "";
-    expect(text).toMatch(/1 job will move from SSH on the server to the bound runners/);
-    expect(text).toContain("restart");
-    expect(text).toMatch(/1 job asks for the SSH executor and will be refused/);
-    expect(text).toContain("legacy");
-    expect(text).toMatch(/2 runs already queued or scheduled for SSH will still run from the server/);
+    // Unbound, every runner of the agency took the scope's runs — the server
+    // among them. Bound, the ones not named stop.
+    expect(text).toMatch(/2 runners will stop taking this scope's runs: Local runner \(this server\), runner-fin-02\./);
     expect(text).toMatch(/runner-fin-01 cannot run ansible jobs/);
     expect(text).toMatch(/runner-fin-01 may not receive secrets, and 1 job on this scope binds one/);
-    // Host-key trust moves with the executor: the runner's own file, not the server's pins.
+    // Whose host-key trust applies is decided by which runner takes the run.
     expect(text).toMatch(/runner-fin-01 does not yet trust 3 of this scope's 12 hosts/);
     // One runner is a single point of failure, and the dialog says so.
     expect(dialog.getByText(/One runner serves this scope/)).toBeTruthy();
   });
 
-  it("warns that clearing a binding sends jobs back to the server, and labels the button for what it does", async () => {
+  it("says who starts taking the scope's runs when a binding is cleared, and labels the button for what it does", async () => {
     fleet = [{ id: "id-runner-dmz-01", name: "runner-dmz-01", status: "online", agencies: [FIN] }];
     preview = (ids) =>
       emptyPreview(ids, {
         currentlyBound: true,
-        jobsMovingToSsh: ids.length === 0 ? [{ uid: "u1", name: "restart", source: "git", runType: "bash" }] : [],
+        runnersGaining: ids.length === 0 ? [{ runnerId: "id-local", name: "Local runner", local: true, status: "offline" }] : [],
       });
     const { box, save } = await open([br({ name: "runner-dmz-01" })]);
     fireEvent.click(box("runner-dmz-01"));
     await waitFor(() => expect(save().disabled).toBe(false));
     expect(save().textContent).toBe("Remove binding");
-    expect(document.body.textContent).toMatch(/1 job will go back to running over SSH from the\s+server/);
+    expect(document.body.textContent).toMatch(/1 runner will start taking this scope's runs:\s+Local runner \(this server\)/);
+  });
+
+  // Only an agent can deliver a key file (LR-47). Binding a scope to the local
+  // runner alone leaves its key-bound jobs with nobody, and the dialog says so
+  // before the save does it.
+  it("warns when no agent would serve a scope that has key-bound jobs", async () => {
+    fleet = [{ id: "id-local", name: "Local runner", kind: "server", status: "online", agencies: [FIN] }];
+    preview = (ids) =>
+      emptyPreview(ids, {
+        jobsNeedingAgent: ids.length ? [{ uid: "u1", name: "deploy", source: "git", runType: "bash" }] : [],
+      });
+    const { box, save } = await open();
+    fireEvent.click(box("Local runner"));
+    await waitFor(() => expect(save().disabled).toBe(false));
+    const text = document.body.textContent ?? "";
+    expect(text).toMatch(/1 job binds an\s+SSH key, and no agent will serve this scope\. Only an agent can deliver a key file, so\s+its runs will be refused: deploy/);
   });
 
   it("shows the server's refusal and stays open", async () => {
@@ -294,8 +310,6 @@ describe("ReplaceRunnerDialog — hand a runner's scopes over", () => {
     fleet = [
       { id: "id-old", name: "runner-old", status: "offline" },
       { id: "id-new", name: "runner-new", status: "online" },
-      // Never a replacement: nothing can be bound to it yet.
-      { id: "id-local", name: "Local runner", kind: "server", status: "online" },
     ];
     const onDone = vi.fn();
     render(<ReplaceRunnerDialog from={{ id: "id-old", name: "runner-old" }} onClose={vi.fn()} onDone={onDone} />);
@@ -303,7 +317,6 @@ describe("ReplaceRunnerDialog — hand a runner's scopes over", () => {
     const select = (await waitFor(() => dialog.getByRole("combobox"))) as HTMLSelectElement;
     // The runner being replaced is not offered as its own replacement.
     expect([...select.options].map((o) => o.value)).toEqual(["", "id-new"]);
-    expect(select.textContent).not.toContain("Local runner");
     const replace = () => dialog.getByRole("button", { name: "Replace" }) as HTMLButtonElement;
     expect(replace().disabled).toBe(true);
     fireEvent.change(select, { target: { value: "id-new" } });

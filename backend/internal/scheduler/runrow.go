@@ -194,9 +194,18 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			-- 409ing at manifest time. Injected rather than authored because a
 			-- requirement an operator can forget is a requirement that does not
 			-- exist. (Missing from two of the five writers until RR-0.)
+			--
+			-- ANSIBLE jobs only. Sync stores become_password_secret on a job of
+			-- any run type ("stored but ignored" for the others), and until 2.3.0
+			-- a shell run was claimed by an SSH pool that did not read a run's
+			-- requirements, so the token on a shell run cost nothing. The local
+			-- runner claims by the one claim, which does read them, and it
+			-- advertises no such token: a shell job carrying an ignored become
+			-- password would have waited for ever.
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE
 				          WHEN become_password_secret IS NOT NULL AND become_password_secret != ''
+				               AND run_type = 'ansible'
 				            THEN CASE WHEN EXISTS (
 				                        SELECT 1 FROM json_each(COALESCE(NULLIF(requires_json,''), '[]'))
 				                        WHERE value = 'become-file')

@@ -28,9 +28,8 @@ import (
 //     CRONOMICON_LOCAL_RUNNER=forbid, which wins (LR-17).
 //   - It is the one runner with a serve list a global administrator edits
 //     (MA-11, MA-14); see CheckRunnerPlacement.
-//
-// (Until Phase B of this release the engine still claims by its own query,
-// `executor='ssh'`; the switch here already decides whether it does.)
+//   - It claims through the one claim (runner.Claim), as this row: agencies,
+//     scope bindings, requirements and priority apply to it as to an agent.
 
 const (
 	// RunnerKindAgent is every runner that registers with a token.
@@ -44,6 +43,11 @@ const (
 	LocalRunnerName = "Local runner"
 
 	localRunnerEnabledKey = "localRunner.enabled"
+	// localRunnerSeedKey records what the switch was SEEDED with: whether the
+	// SSH executor was on when 2.3.0 first started. The upgrade pass reads
+	// this, not the switch — the switch can be changed, or overruled by the
+	// host's forbid, before the pass has run.
+	localRunnerSeedKey = "localRunner.sshExecutorWasOn"
 )
 
 // LocalRunnerCapabilities are fixed (LR-41): the server image carries no
@@ -114,6 +118,25 @@ func LocalRunnerEnabled(ctx context.Context, database *sql.DB, forbid bool) (boo
 	return v == "true", nil
 }
 
+// SSHExecutorWasOn reports whether the SSH executor was turned on when 2.3.0
+// first started against this database: the value the switch was seeded with.
+// It is what the upgrade pass acts on. Neither the present switch nor the
+// host's forbid answers that question — an operator may have changed the one,
+// and the other says what the server may do from now on, not what it was
+// doing. (A database seeded before this record existed has only the switch,
+// and falls back to it.)
+func SSHExecutorWasOn(ctx context.Context, database *sql.DB) (bool, error) {
+	var v string
+	err := database.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, localRunnerSeedKey).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LocalRunnerEnabled(ctx, database, false)
+	}
+	if err != nil {
+		return false, err
+	}
+	return v == "true", nil
+}
+
 // EnsureLocalRunner creates the local runner's row and seeds its switch, once.
 // It is idempotent and is called at every boot before anything claims.
 //
@@ -164,6 +187,11 @@ func EnsureLocalRunner(ctx context.Context, database *sql.DB, seedEnabled bool, 
 			INSERT INTO settings (key, value, last_modified_by, last_modified_at) VALUES (?, ?, 'system', ?)`,
 			localRunnerEnabledKey, boolStr(seedEnabled), ts); err != nil {
 			return "", false, fmt.Errorf("seed the local runner setting: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO settings (key, value, last_modified_by, last_modified_at) VALUES (?, ?, 'system', ?)`,
+			localRunnerSeedKey, boolStr(seedEnabled), ts); err != nil {
+			return "", false, fmt.Errorf("record the local runner seed: %w", err)
 		}
 		seeded = true
 	}

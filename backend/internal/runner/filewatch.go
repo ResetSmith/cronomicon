@@ -378,30 +378,18 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 			return false, nil
 		}
 	}
-	// KB — an arrival for a key-bound job that resolves to the ssh executor is
-	// refused with the reason recorded, like every other gate here: the executor
-	// cannot deliver the key, and nobody is watching a file land.
-	resolved := execspec.ResolveExecutor(ctx, s.db, execspec.ExecutorQuery{
-		JobUID: jobUID.String, JobSource: spec.JobSource, JobName: spec.JobName, RunType: runType, Scope: scope,
-	})
-	if resolved.Err != nil {
-		s.refuseSighting(ctx, sightingID, "could not resolve the executor: "+resolved.Err.Error())
-		return false, nil
-	}
-	// SB — an arrival for a job that asks for ssh on a scope bound to runners is
-	// refused with the reason recorded, like every other gate here.
-	if resolved.ScopeRefused() {
-		s.refuseSighting(ctx, sightingID, execspec.ReasonScopeRequiresRunner)
-		return false, nil
-	}
-	executor := resolved.Executor
-	keys, kerr := runref.KeyBindingsOnSSH(ctx, s.db, owners, executor)
+	// LR-47 — an arrival for a key-bound shell job with no agent to deliver the
+	// key is refused with the reason recorded, like every other gate here: the
+	// local runner cannot deliver it, and nobody is watching a file land. Every
+	// run is written for the runner executor (LR-42).
+	executor := execspec.ExecutorRunner
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, scope)
 	if kerr != nil {
 		s.refuseSighting(ctx, sightingID, "could not check key bindings: "+kerr.Error())
 		return false, nil
 	}
 	if len(keys) > 0 {
-		s.refuseSighting(ctx, sightingID, runref.ReasonKeyBindingOnSSH)
+		s.refuseSighting(ctx, sightingID, runref.ReasonKeyBindingNeedsAgent)
 		return false, nil
 	}
 

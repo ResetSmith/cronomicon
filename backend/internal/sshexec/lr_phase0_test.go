@@ -6,57 +6,74 @@ import (
 	"time"
 )
 
-// LR Phase 0 — today's behaviour, pinned before Phase B changes it.
+// LR Phase 0 found, on 2026-10-06, that the in-app SSH pool claimed with a query
+// of its own that read neither the run's agency snapshot nor any runner
+// membership: a scope in agency "finance", a bash run, no runners; the row
+// carried agencies_json ["finance"], and the pool claimed it. Agency isolation
+// was a property of the runner claim only. That was pinned here as a test.
 //
-// The in-app SSH pool claims with its own query, and that query reads neither
-// the run's agency snapshot nor any runner membership: it asks for a queued
-// shell run with executor='ssh' and nothing else. A run that belongs to an
-// agency is therefore dispatched from the server whether or not anything was
-// ever placed in that agency — agency isolation is a property of the runner
-// claim (runner/poll.go claimRun) only.
-//
-// This is the 2026-10-06 probe: a scope in agency "finance", a bash run, no
-// runners; the resolver sent it to ssh, the row carried agencies_json
-// ["finance"], and this pool claimed it.
-//
-// Phase B inverts it: the pool claims through claimRun as the local runner, so
-// the run is claimable only once the local runner serves "finance" (LR-2,
-// LR-40). When that lands, this test becomes "not claimed until placed".
-func TestLR0_TheSSHPoolClaimsAnAgencyTaggedRunWithNoAgencyCheck(t *testing.T) {
+// Phase B inverted it, and this is the inverse (LR-2, LR-40): the server claims
+// through the one claim as the local runner, so an agency's run is the server's
+// to take only once the local runner serves that agency — and then it is.
+func TestTheLocalRunnerTakesAnAgencysRunOnlyOnceItServesThatAgency(t *testing.T) {
 	svc, pool := probeFixture(t)
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, q := range []string{
 		`INSERT INTO agencies (id,name,created_at) VALUES ('ag:fin','finance','` + now + `')`,
 		`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc:fin','fin-hosts','cronomicon','` + now + `')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc:fin'`,
 		`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc:fin','ag:fin')`,
 		`INSERT INTO jobs (name, run_type, command, concurrency_policy, synced_at) VALUES ('ledger','bash','true','Allow','` + now + `')`,
 		`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, agencies_json, created_at)
-		 VALUES ('run-fin','ledger','bash','fin-hosts','h1','queued','tester','manual','ssh','["finance"]','` + now + `')`,
+		 VALUES ('run-fin','ledger','bash','fin-hosts','h1','queued','tester','manual','runner','["finance"]','` + now + `')`,
 		`INSERT INTO run_agencies (run_id, agency) VALUES ('run-fin','finance')`,
 	} {
 		if _, err := pool.Exec(q); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	// Nothing serves finance: no runner exists at all, so no membership does.
-	var runners, members int
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM runners`).Scan(&runners)
-	_ = pool.QueryRow(`SELECT COUNT(*) FROM runner_agencies`).Scan(&members)
-	if runners != 0 || members != 0 {
-		t.Fatalf("precondition: runners=%d memberships=%d, want none", runners, members)
+
+	// The local runner exists and serves Global, as it does from creation.
+	// Finance's run is not Global's.
+	r, err := claimAsLocal(t, svc, pool)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if r != nil {
+		t.Fatalf("the local runner took finance's run while serving only Global: %+v", r)
+	}
+	var status string
+	_ = pool.QueryRow(`SELECT status FROM runs WHERE id='run-fin'`).Scan(&status)
+	if status != "queued" {
+		t.Fatalf("status = %q, want queued", status)
 	}
 
-	r, err := svc.claim(context.Background())
+	// A global administrator puts finance on its serve list.
+	if _, err := pool.Exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, 'ag:fin')`, svc.localID); err != nil {
+		t.Fatal(err)
+	}
+	r, err = claimAsLocal(t, svc, pool)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 	if r == nil || r.traceID != "run-fin" {
-		t.Fatalf("PIN: the SSH pool did not claim the agency-tagged run (got %+v). "+
-			"If the pool now claims through claimRun (LR-40), replace this pin with its inverse.", r)
+		t.Fatalf("serving finance, the local runner did not take finance's run (got %+v)", r)
 	}
-	var status string
-	_ = pool.QueryRow(`SELECT status FROM runs WHERE id='run-fin'`).Scan(&status)
-	if status != "running" {
-		t.Errorf("status = %q, want running", status)
+	var runnerID string
+	_ = pool.QueryRow(`SELECT status, COALESCE(runner_id, '') FROM runs WHERE id='run-fin'`).Scan(&status, &runnerID)
+	if status != "running" || runnerID != svc.localID {
+		t.Errorf("status = %q, runner = %q; want running, claimed by the local runner's row", status, runnerID)
+	}
+	// The claim took a slot on its row, as it does for an agent; finishing the
+	// run gives it back.
+	var load int
+	_ = pool.QueryRow(`SELECT load FROM runners WHERE id = ?`, svc.localID).Scan(&load)
+	if load != 1 {
+		t.Errorf("load after one claim = %d, want 1", load)
+	}
+	svc.finalize(context.Background(), *r, "success", nil)
+	_ = pool.QueryRow(`SELECT load FROM runners WHERE id = ?`, svc.localID).Scan(&load)
+	if load != 0 {
+		t.Errorf("load after the run finished = %d, want 0", load)
 	}
 }

@@ -194,14 +194,22 @@ func TestARunDoesNotConnectWithAnotherAgencysKey(t *testing.T) {
 		`INSERT INTO scope_hosts (scope_id, host) VALUES ('sc:fin','db01')`,
 		`INSERT INTO jobs (name, run_type, command, concurrency_policy, synced_at) VALUES ('ledger','bash','true','Allow','` + now + `')`,
 		`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, agencies_json, created_at)
-		 VALUES ('run-fin','ledger','bash','fin-prod','db01','queued','tester','manual','ssh','["finance"]','` + now + `')`,
+		 VALUES ('run-fin','ledger','bash','fin-prod','db01','queued','tester','manual','runner','["finance"]','` + now + `')`,
 		`INSERT INTO run_agencies (run_id, agency) VALUES ('run-fin','finance')`,
 	} {
 		if _, err := pool.Exec(q); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	claimed, err := svc.claim(context.Background())
+	// The run is finance's: the local runner takes it once it serves finance.
+	if claimed, err := claimAsLocal(t, svc, pool); err != nil || claimed != nil {
+		t.Fatalf("the local runner took finance's run before serving finance: %v, %v", claimed, err)
+	}
+	if _, err := pool.Exec(`INSERT INTO runner_agencies (runner_id, agency_id)
+	                        SELECT ?, id FROM agencies WHERE name = 'finance'`, svc.localID); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v, %v", claimed, err)
 	}

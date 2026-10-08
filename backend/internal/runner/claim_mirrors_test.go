@@ -45,6 +45,10 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 	      VALUES('job', 'cronomicon', 'twin', 'uid-bound', 'secret', 'TOKEN', ?)`, now())
 	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, ref_kind, ref_name, created_at)
 	      VALUES('script', 'git', 'scripts/bound.sh', 'secret', 'TOKEN', ?)`, now())
+	// An SSH key binding: an injection like any other for an agent, and the one
+	// thing the local runner does not take (LR-47).
+	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+	      VALUES('job', 'cronomicon', 'twin', 'uid-key', 'key', 'deploy_key', ?)`, now())
 
 	type runnerShape struct {
 		caps, mask []string
@@ -66,7 +70,11 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 		{name: "a same-named sibling declares one", jobUID: "uid-sibling"},
 		{name: "the script declares one", jobUID: "uid-plain", script: "scripts/bound.sh"},
 		{name: "a per-run SSH credential", jobUID: "uid-plain", sshCred: "deploy-key"},
+		{name: "the job binds an SSH key", jobUID: "uid-key"},
 	}
+	// The runner under test is an agent, or the local runner (kind 'server'),
+	// which claims with one more clause and is always allowed injection.
+	kinds := []string{"agent", "server"}
 
 	checked, claimedN := 0, 0
 	for _, armed := range []bool{true, false} {
@@ -75,58 +83,70 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 		for _, rs := range runners {
 			for _, runnerAgency := range []string{"global", "a1"} {
 				for _, allowInjection := range []bool{false, true} {
-					// One runner, rebuilt per shape: nothing else is ever online.
-					exec(`DELETE FROM runners`)
-					insertRunner(t, svc, "r1", "r1", "online", rs.caps)
-					if runnerAgency != "global" {
-						addRunnerAgency(t, svc, "r1", runnerAgency)
-					}
-					if rs.mask != nil {
-						m, _ := json.Marshal(map[string]any{"capabilityMask": rs.mask})
-						setManagedSettings(t, svc, "r1", string(m))
-					}
-					if allowInjection {
-						exec(`UPDATE runners SET allow_secret_injection = 1 WHERE id = 'r1'`)
-					}
-					for _, runType := range []string{"bash", "ansible"} {
-						for _, requires := range []string{`[]`, `["vault"]`} {
-							for _, runAgency := range []string{"Global", "alpha"} {
-								for _, scope := range []string{"open", "mine", "theirs"} {
-									for _, inj := range injections {
-										exec(`DELETE FROM runs`)
-										exec(`INSERT INTO runs(id, job_name, job_source, job_uid, script_ref, ssh_credential, run_type, scope,
+					for _, kind := range kinds {
+						if kind == "server" && !allowInjection {
+							continue // LR-46: secret injection is fixed on for it
+						}
+						// One runner, rebuilt per shape: nothing else is ever online.
+						exec(`DELETE FROM runners`)
+						insertRunner(t, svc, "r1", "r1", "online", rs.caps)
+						exec(`UPDATE runners SET kind = ? WHERE id = 'r1'`, kind)
+						if runnerAgency != "global" {
+							addRunnerAgency(t, svc, "r1", runnerAgency)
+						}
+						if rs.mask != nil {
+							m, _ := json.Marshal(map[string]any{"capabilityMask": rs.mask})
+							setManagedSettings(t, svc, "r1", string(m))
+						}
+						if allowInjection {
+							exec(`UPDATE runners SET allow_secret_injection = 1 WHERE id = 'r1'`)
+						}
+						for _, runType := range []string{"bash", "ansible"} {
+							for _, requires := range []string{`[]`, `["vault"]`} {
+								for _, runAgency := range []string{"Global", "alpha"} {
+									for _, scope := range []string{"open", "mine", "theirs"} {
+										for _, inj := range injections {
+											exec(`DELETE FROM runs`)
+											exec(`INSERT INTO runs(id, job_name, job_source, job_uid, script_ref, ssh_credential, run_type, scope,
 										                       requires_json, agencies_json, status, triggered_by, trigger_kind, executor, created_at)
 										      VALUES ('run', 'twin', 'cronomicon', ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, 'queued', 'test', 'manual', 'runner', ?)`,
-											inj.jobUID, inj.script, inj.sshCred, runType, scope, requires, `["`+runAgency+`"]`, now())
-										exec(`INSERT OR IGNORE INTO run_agencies(run_id, agency) VALUES('run', ?)`, runAgency)
+												inj.jobUID, inj.script, inj.sshCred, runType, scope, requires, `["`+runAgency+`"]`, now())
+											exec(`INSERT OR IGNORE INTO run_agencies(run_id, agency) VALUES('run', ?)`, runAgency)
 
-										// The mirrors first: the claim moves the run to running.
-										eligible, _, err := execspec.EligibleOnlineRunnerForRun(ctx, svc.db, "run")
-										if err != nil {
-											t.Fatalf("EligibleOnlineRunnerForRun: %v", err)
-										}
-										reason, err := execspec.UnclaimableReason(ctx, svc.db, "run")
-										if err != nil {
-											t.Fatalf("UnclaimableReason: %v", err)
-										}
-										// The claim, as HandlePoll makes it: the mask is
-										// subtracted before the query sees the capabilities.
-										got, err := svc.claimRun(ctx, "r1", execspec.EffectiveCaps(rs.caps, rs.mask), allowInjection)
-										if err != nil {
-											t.Fatalf("claimRun: %v", err)
-										}
-										claimed := got != nil
-										checked++
-										if claimed {
-											claimedN++
-										}
-										if eligible != claimed || (reason == "") != claimed {
-											t.Errorf("%s\n  claimed=%v  EligibleOnlineRunnerForRun=%v  UnclaimableReason=%q",
-												fmt.Sprintf("switch=%v runner{caps=%v mask=%v agency=%s injection=%v} run{type=%s requires=%s agency=%s scope=%s, %s}",
-													armed, rs.caps, rs.mask, runnerAgency, allowInjection, runType, requires, runAgency, scope, inj.name),
-												claimed, eligible, reason)
-											if t.Failed() && checked > 4000 {
-												t.FailNow()
+											// The mirrors first: the claim moves the run to running.
+											eligible, _, err := execspec.EligibleOnlineRunnerForRun(ctx, svc.db, "run")
+											if err != nil {
+												t.Fatalf("EligibleOnlineRunnerForRun: %v", err)
+											}
+											reason, err := execspec.UnclaimableReason(ctx, svc.db, "run")
+											if err != nil {
+												t.Fatalf("UnclaimableReason: %v", err)
+											}
+											// The claim, as HandlePoll makes it: the mask is
+											// subtracted before the query sees the capabilities.
+											got, err := Claim(ctx, svc.db, svc.log, ClaimRequest{
+												RunnerID:    "r1",
+												Caps:        execspec.EffectiveCaps(rs.caps, rs.mask),
+												InjectionOK: !armed || allowInjection,
+												Local:       kind == "server",
+												Actor:       "test",
+											})
+											if err != nil {
+												t.Fatalf("Claim: %v", err)
+											}
+											claimed := got != nil
+											checked++
+											if claimed {
+												claimedN++
+											}
+											if eligible != claimed || (reason == "") != claimed {
+												t.Errorf("%s\n  claimed=%v  EligibleOnlineRunnerForRun=%v  UnclaimableReason=%q",
+													fmt.Sprintf("switch=%v runner{kind=%s caps=%v mask=%v agency=%s injection=%v} run{type=%s requires=%s agency=%s scope=%s, %s}",
+														armed, kind, rs.caps, rs.mask, runnerAgency, allowInjection, runType, requires, runAgency, scope, inj.name),
+													claimed, eligible, reason)
+												if t.Failed() && checked > 4000 {
+													t.FailNow()
+												}
 											}
 										}
 									}

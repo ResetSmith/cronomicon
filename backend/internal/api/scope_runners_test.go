@@ -505,11 +505,12 @@ func TestPreviewScopeRunnersRoute(t *testing.T) {
 		t.Fatalf("preview = %d, want 200 (%s)", code, body)
 	}
 	var p struct {
-		Scope              string `json:"scope"`
-		WillBeBound        bool   `json:"willBeBound"`
-		JobsMovingToRunner []struct {
-			Name string `json:"name"`
-		} `json:"jobsMovingToRunner"`
+		Scope         string `json:"scope"`
+		WillBeBound   bool   `json:"willBeBound"`
+		RunnersLosing []struct {
+			Name  string `json:"name"`
+			Local bool   `json:"local"`
+		} `json:"runnersLosing"`
 		Runners []struct {
 			RunnerID string `json:"runnerId"`
 			Eligible bool   `json:"eligible"`
@@ -518,14 +519,16 @@ func TestPreviewScopeRunnersRoute(t *testing.T) {
 	if err := json.Unmarshal(body, &p); err != nil {
 		t.Fatalf("decode preview: %v\n%s", err, body)
 	}
-	if p.Scope != "dmz-web" || !p.WillBeBound || len(p.JobsMovingToRunner) != 1 || p.JobsMovingToRunner[0].Name != "restart" {
-		t.Errorf("preview = %+v, want dmz-web to become bound and move restart", p)
+	// The scope is Global's and unbound, so the local runner (which serves
+	// Global) takes its runs today; bound to the agent alone, it stops.
+	if p.Scope != "dmz-web" || !p.WillBeBound || len(p.RunnersLosing) != 1 || !p.RunnersLosing[0].Local {
+		t.Errorf("preview = %+v, want dmz-web to become bound and the local runner to stop serving it", p)
 	}
 	if len(p.Runners) != 1 || p.Runners[0].RunnerID != "r-pool" || !p.Runners[0].Eligible {
-		t.Errorf("runners = %+v, want the eligible general-pool runner", p.Runners)
+		t.Errorf("runners = %+v, want the eligible Global runner", p.Runners)
 	}
 	// Arrays are always arrays: the form iterates them without a nil check.
-	for _, key := range []string{`"jobsMovingToSsh":[]`, `"jobsRefused":[]`} {
+	for _, key := range []string{`"runnersGaining":[]`, `"jobsNeedingAgent":[]`} {
 		if !strings.Contains(string(body), key) {
 			t.Errorf("preview body lacks %s: %s", key, body)
 		}

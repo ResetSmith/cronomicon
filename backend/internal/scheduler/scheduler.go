@@ -395,15 +395,11 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// R5.1 — the executor this fire resolves to, decided once (execspec owns the
-	// precedence). Resolved up front because every skip record below is written
-	// against it; whether the resolution REFUSES the fire, or could not be made
-	// at all, is judged further down, after the gates that would suppress the
-	// fire anyway have had their say.
-	resolved := execspec.ResolveExecutor(ctx, s.db, execspec.ExecutorQuery{
-		JobUID: jobUID, JobSource: source, JobName: jobName, RunType: runType, Scope: scope,
-	})
-	executor := resolved.Executor
+	// Every run is written for the runner executor (LR-42): where it runs is
+	// decided at claim time by agency, scope binding and capability, and the
+	// server takes its share as the local runner. There is no executor to
+	// resolve, and nothing on a job or a run chooses one.
+	executor := execspec.ExecutorRunner
 
 	// Operator pause (migration 030; 170 made it source/owner_kind aware): a
 	// paused job's cron fires are skipped.
@@ -576,32 +572,17 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// runners is recorded as skipped rather than run from the server — the same
 	// shape as the refusals around it, and for the same reason: nobody is
 	// watching a cron fire, so the row in History is the only notice there is.
-	if resolved.Err != nil {
-		s.log.Error("scheduler: resolve executor", "job", jobName, "err", resolved.Err)
-		return
-	}
-	if resolved.ScopeRefused() {
-		s.log.Warn("scheduler: skip fire — job asks for the ssh executor on a scope bound to runners",
-			"job", jobName, "scope", scope, "detail", resolved.Refusal.Message)
-		// No ConcurrencyKey, and a day-bounded episode: see standingRefusal.
-		if err := s.recordSuppression(ctx, EnqueueParams{
-			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
-			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
-		}, s.standingRefusal(execspec.ReasonScopeRequiresRunner)); err != nil {
-			s.log.Error("scheduler: record scope-binding skip", "job", jobName, "err", err)
-		}
-		return
-	}
-	// KB — a key-bound job whose fire resolves to the ssh executor: the executor
-	// cannot deliver the key, so the fire is recorded as skipped (same shape as
-	// the unbound refusal above, same argument — nobody is watching a cron fire).
-	keys, kerr := runref.KeyBindingsOnSSH(ctx, s.db, owners, executor)
+	// LR-47 — a key-bound shell job with no agent to deliver the key: the local
+	// runner cannot, so the fire is recorded as skipped (same shape as the
+	// unbound refusal above, same argument — nobody is watching a cron fire, and
+	// a row that waits for a runner that does not exist holds the fleet cap).
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, scope)
 	if kerr != nil {
 		s.log.Error("scheduler: check key bindings", "job", jobName, "err", kerr)
 		return
 	}
 	if len(keys) > 0 {
-		s.log.Warn("scheduler: skip fire — key-bound job resolved to the ssh executor",
+		s.log.Warn("scheduler: skip fire — key-bound job with no agent to deliver the key",
 			"job", jobName, "reference", keys[0].Reference, "detail", runref.KeyBindingRefusal(keys))
 		// No ConcurrencyKey, and a day-bounded episode: see standingRefusal. This
 		// record used to carry the key and one unbounded episode, and had both of
@@ -609,7 +590,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		if err := s.recordSuppression(ctx, EnqueueParams{
 			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
 			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
-		}, s.standingRefusal(runref.ReasonKeyBindingOnSSH)); err != nil {
+		}, s.standingRefusal(runref.ReasonKeyBindingNeedsAgent)); err != nil {
 			s.log.Error("scheduler: record key-binding skip", "job", jobName, "err", err)
 		}
 		return
@@ -914,11 +895,14 @@ func (p EnqueueParams) agenciesJSONOrDefault() string {
 // execspec.MarshalAgencies produces.
 var globalAgenciesJSON = execspec.MarshalAgencies([]string{agencyid.GlobalName})
 
+// executorOrDefault is the value of runs.executor for a NEW row: always the
+// runner executor (LR-42). The parameter is not consulted. A parked run's
+// frozen snapshot (pending_runs.params_json) may still say "ssh" from before
+// 2.3.0, and promotion replays it through here, so the one writer of runs is
+// where the old value stops — a row written 'ssh' would have nothing left to
+// claim it. runs.executor stays a column: History reads it.
 func (p EnqueueParams) executorOrDefault() string {
-	if p.Executor == "" {
-		return "ssh"
-	}
-	return p.Executor
+	return execspec.ExecutorRunner
 }
 
 func (p EnqueueParams) jobSourceOrDefault() string {

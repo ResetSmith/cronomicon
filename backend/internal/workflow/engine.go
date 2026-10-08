@@ -539,16 +539,14 @@ func (e *Engine) runJob(
 	// Insert the child run directly (pre-assigned trace ID). Gap A: each child
 	// inherits the parent workflow run's env snapshot so sshexec injection applies
 	// uniformly to scheduled-workflow steps.
-	// R5.1 — resolve the executor (job spec.executor > global default > capability),
-	// source-qualified by the step's resolved job source (A11 precedence; v20 Phase 4).
+	// Every run is written for the runner executor (LR-42); where a step runs is
+	// decided at claim time. The job source qualifies the concurrency key (A11
+	// precedence; v20 Phase 4).
 	jobSrc := jd.source
 	if jobSrc == "" {
 		jobSrc = "git"
 	}
-	resolved := execspec.ResolveExecutor(ctx, e.db, execspec.ExecutorQuery{
-		JobUID: jd.uid, JobSource: jobSrc, JobName: step.Name, RunType: jd.runType, Scope: effectiveScope,
-	})
-	executor := resolved.Executor
+	executor := execspec.ExecutorRunner
 	concKey := cronutil.ConcurrencyKey(jd.concurrencyKey, jd.uid, jobSrc, step.Name)
 	// M3/T3.6 — snapshot the effective scope's agency SET onto the child run (hard
 	// isolation). This path builds its own INSERT rather than going through
@@ -614,34 +612,19 @@ func (e *Engine) runJob(
 				"job", step.Name, "reference", blocked[0].Reference, "detail", runref.UnboundRefusal(blocked))
 		}
 	}
-	// SB — the step's executor could not be resolved, or the resolution refuses
-	// it: a job that asks for ssh on a scope bound to runners fails the step,
-	// terminal-and-recorded, rather than running from the control plane. An
-	// unreadable binding is not guessed at, for the same reason.
+	// LR-47 — a key-bound shell step with no agent to deliver the key fails the
+	// step here, terminal-and-recorded like the refusal above: the local runner
+	// cannot deliver it, and a step left queued for a runner that does not exist
+	// would hold the workflow for its whole timeout (or for ever with none).
 	if stepStatus == "queued" {
-		if resolved.Err != nil {
-			e.log.Error("workflow: resolve executor", "job", step.Name, "err", resolved.Err)
-			return "danger", false
-		}
-		if resolved.ScopeRefused() {
-			stepStatus, stepQueuedReason = "failure", execspec.ReasonScopeRequiresRunner
-			e.log.Warn("workflow: step asks for the ssh executor on a scope bound to runners",
-				"job", step.Name, "scope", effectiveScope, "detail", resolved.Refusal.Message)
-		}
-	}
-	// KB — a key-bound step whose run resolves to the ssh executor fails the
-	// step here, terminal-and-recorded like the two refusals above: the executor
-	// cannot deliver the key, and a step that vanished would leave the workflow
-	// waiting on a run that never existed.
-	if stepStatus == "queued" {
-		keys, kerr := runref.KeyBindingsOnSSH(ctx, e.db, stepOwners, executor)
+		keys, kerr := runref.KeyBindingsNeedAgent(ctx, e.db, stepOwners, nil, jd.runType, effectiveScope)
 		if kerr != nil {
 			e.log.Error("workflow: check key bindings", "job", step.Name, "err", kerr)
 			return "danger", false
 		}
 		if len(keys) > 0 {
-			stepStatus, stepQueuedReason = "failure", runref.ReasonKeyBindingOnSSH
-			e.log.Warn("workflow: step binds an SSH key but resolved to the ssh executor",
+			stepStatus, stepQueuedReason = "failure", runref.ReasonKeyBindingNeedsAgent
+			e.log.Warn("workflow: step binds an SSH key and no agent serves its scope",
 				"job", step.Name, "reference", keys[0].Reference, "detail", runref.KeyBindingRefusal(keys))
 		}
 	}

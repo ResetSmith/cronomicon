@@ -167,14 +167,9 @@ func TestLocalRunner_AgentRoutesRefuseIt(t *testing.T) {
 
 // MA-11, MA-14: the local runner's serve list is whatever non-empty set a
 // global administrator gives it — Global beside agencies included — and nobody
-// else's to write.
-//
-// Binding a scope to it is refused for now, whoever asks and whatever it
-// serves: a bound scope sends its jobs to the runner executor, and until Phase
-// B the local runner claims only the SSH executor's rows, so the scope's jobs
-// would wait for ever. (From Phase B, LR-62: an agency binds its own scope to
-// the local runner when it serves them.)
-func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndNoScopeBindsToItYet(t *testing.T) {
+// else's to write. LR-62: an agency binds its own scope to the local runner
+// when it serves them, and cannot when it does not.
+func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndAgenciesBindToIt(t *testing.T) {
 	h, pool := gateServer(t)
 	id := localRunnerID(t, pool)
 	set := func(who string, agencies ...string) (int, string) {
@@ -221,29 +216,55 @@ func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndNoScopeBindsToItYet(t
 		}
 	}
 
-	// It serves FIN now, and FIN's scope still cannot be bound to it — not by
-	// FIN, not by a global administrator, and not by handing an agent's
-	// bindings over to it.
-	for _, who := range []string{gFinAdmin, gRoot} {
-		if code, ec := bind(who, "sc:fin"); code != 422 || ec != "runner_not_eligible" {
-			t.Errorf("binding FIN's scope to the local runner as %s = %d %s, want 422 runner_not_eligible", who, code, ec)
-		}
+	// Now it serves FIN: FIN binds its own scope to it, with no authority over
+	// the runner; TAX still cannot bind theirs.
+	if code, ec := bind(gFinAdmin, "sc:fin"); code != 200 {
+		t.Errorf("FIN binding its scope to the local runner that serves it = %d %s, want 200", code, ec)
 	}
-	exec := mustExec(t, pool)
-	seedBindingRunner(exec, "r-fin", "fin-agent", "ag:FIN")
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/runners", gFinAdmin, `{"runnerIds":["r-fin"]}`); rec.Code != 200 {
-		t.Fatalf("fixture: binding FIN's scope to its agent = %d (%s)", rec.Code, rec.Body)
+	if code, ec := bind(gTaxAdmin, "sc:tax"); code != 422 || ec != "runner_not_eligible" {
+		t.Errorf("TAX binding its scope to a local runner that does not serve TAX = %d %s, want 422 runner_not_eligible", code, ec)
 	}
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/scope-runners/replace", gRoot, `{"fromRunnerId":"r-fin","toRunnerId":"`+id+`"}`)
-	if rec.Code/100 == 2 {
-		t.Errorf("an agent's bindings were handed to the local runner: %d (%s)", rec.Code, rec.Body)
-	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_runners WHERE runner_id = ?`, id); n != 0 {
-		t.Errorf("%d scope(s) are bound to the local runner", n)
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_runners WHERE runner_id = ? AND scope_id = 'sc:fin'`, id); n != 1 {
+		t.Errorf("FIN's scope has %d binding(s) to the local runner, want 1", n)
 	}
 	// Its owner never changes.
-	rec = gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/owner", gRoot, `{"agencyId":"ag:FIN"}`)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/owner", gRoot, `{"agencyId":"ag:FIN"}`)
 	if rec.Code != 422 || errCode(rec.Body.Bytes()) != "owner_change_refused" {
 		t.Errorf("handing the local runner to an agency = %d %s, want 422 owner_change_refused", rec.Code, errCode(rec.Body.Bytes()))
+	}
+}
+
+// A run that waits with no stored reason gets one when it is read. For the
+// causes 2.3.0 added, the older hints would misname it: a Global shell run with
+// the local runner turned off is not "no online runner in Global" in any way an
+// operator can act on — the runner is there, and it is switched off.
+func TestLocalRunner_AWaitingRunSaysTheLocalRunnerIsOff(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO runs (id, job_name, job_source, run_type, status, triggered_by, trigger_kind, executor, created_at)
+	      VALUES ('run-waits', 'loose', 'git', 'bash', 'queued', 'seed', 'manual', 'runner', '2026-10-07T00:00:00Z')`)
+	// A row still frozen onto the SSH executor, which nothing claims any more.
+	exec(`INSERT INTO runs (id, job_name, job_source, run_type, status, triggered_by, trigger_kind, executor, created_at)
+	      VALUES ('run-ssh', 'loose', 'git', 'bash', 'queued', 'seed', 'manual', 'ssh', '2026-10-07T00:00:00Z')`)
+
+	reason := func(id string) string {
+		t.Helper()
+		rec := gateReq(t, h, http.MethodGet, "/api/v1/runs/"+id, gRoot, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET run %s = %d (%s)", id, rec.Code, rec.Body)
+		}
+		var run struct {
+			StatusReason string `json:"statusReason"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+			t.Fatalf("decode run: %v\n%s", err, rec.Body)
+		}
+		return run.StatusReason
+	}
+	if got := reason("run-waits"); !strings.Contains(got, "local runner") || !strings.Contains(got, "not running") {
+		t.Errorf("statusReason = %q, want it to say the local runner would take the run and is not running", got)
+	}
+	if got := reason("run-ssh"); !strings.Contains(got, "SSH executor") {
+		t.Errorf("statusReason of a row frozen onto the SSH executor = %q, want it to say nothing will claim it", got)
 	}
 }

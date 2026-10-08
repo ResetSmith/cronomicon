@@ -259,9 +259,8 @@ describe("Runners — the local runner's row (LR-38)", () => {
     expect(sec.queryByRole("button", { name: /Stop serving/ })).toBeNull();
     expect(sec.queryByText("Legacy placement")).toBeNull();
     for (const name of ["Resync", "Drain", "Scan keys", "⚙ Edit"]) expect(screen.queryByRole("button", { name }), name).toBeNull();
-    // No scope can be bound to it yet, so it is not told to "bind it to a scope".
-    expect(screen.queryByText(/Scopes served/)).toBeNull();
-    expect(screen.queryByText(/Bind it to a scope/)).toBeNull();
+    // It is bound to scopes like any runner, and its row says which.
+    expect(screen.getByText(/Scopes served/)).toBeTruthy();
     expect(screen.queryByText("Copy upgrade command")).toBeNull();
     expect(screen.getByText(/Always on\. This server is the secret store/)).toBeTruthy();
     expect(screen.getByText(/verifies hosts against the keys kept with the SSH targets/)).toBeTruthy();

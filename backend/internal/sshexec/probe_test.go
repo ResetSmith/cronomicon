@@ -16,6 +16,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -439,4 +440,20 @@ func TestProbeBastion_NotFound(t *testing.T) {
 	if _, err := svc.ProbeBastion(context.Background(), "nope"); err != ErrProbeNotFound {
 		t.Fatalf("err = %v, want ErrProbeNotFound", err)
 	}
+}
+
+// claimAsLocal makes svc the local runner the way Start does — its row exists,
+// Global's and serving Global — and claims once. The engine has no claim query
+// of its own since 2.3.0 (LR-40): it claims as that row, by the rule an agent's
+// poll uses, so a test that wants a run claimed needs the row and a run the
+// row may take.
+func claimAsLocal(t *testing.T, svc *Service, pool *sql.DB) (*claimedRun, error) {
+	t.Helper()
+	ctx := context.Background()
+	id, _, err := settings.EnsureLocalRunner(ctx, pool, true, 4)
+	if err != nil {
+		t.Fatalf("the local runner's row: %v", err)
+	}
+	svc.localID = id
+	return svc.claim(ctx)
 }

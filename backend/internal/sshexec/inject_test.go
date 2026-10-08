@@ -177,7 +177,7 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	// undeclared EXTRA variable.
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, override_json, created_at)
-		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',
 		       '{"references":[{"kind":"var","name":"EXTRA"}]}',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
@@ -315,7 +315,7 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','cronomicon','bash','s','testhost','queued','ops@x','manual','ssh',?)`, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash','s','testhost','queued','ops@x','manual','runner',?)`, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -325,7 +325,7 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 	// Break the audit sink so the injection audit write fails.
@@ -407,7 +407,7 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -441,11 +441,11 @@ func readLog(t *testing.T, dir, trace string) string {
 	return string(b)
 }
 
-// TestSSHExecutorFailsBeforeConnectingOnKeyBinding is the KB executor-side half:
-// a bound SSH key that reaches dispatch on this executor (a binding added while
-// the run waited — every producer refuses one at enqueue) fails the run BEFORE
-// it connects, with the reason in the run log and the injection audit row still
-// written. It used to warn in-band and run anyway.
+// TestSSHExecutorFailsBeforeConnectingOnKeyBinding: the local runner and a bound
+// SSH key (LR-47). The claim keeps it away from a job that binds one; and a
+// key that reaches the engine all the same fails the run BEFORE it connects,
+// with the reason in the run log and the injection audit row still written. It
+// used to warn in-band and run anyway.
 func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "ssh.db"))
 	if err != nil {
@@ -499,7 +499,7 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -509,18 +509,38 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	// LR-47, the claim's half: the local runner does not take a run whose job
+	// binds a key. It stays queued, for an agent.
+	jobOwner := runref.Owner{Kind: "job", Source: "cronomicon", Name: "j1"}
+	keyBinding := []runref.Binding{{Kind: runref.KindKey, Name: "deploy_key"}}
+	if claimed, err := claimAsLocal(t, svc, pool); err != nil || claimed != nil {
+		t.Fatalf("the local runner claimed a key-bound run: run=%v err=%v", claimed, err)
+	}
+	var status string
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-1'`).Scan(&status); err != nil || status != "queued" {
+		t.Fatalf("a key-bound run the local runner must not take is %q (%v), want queued", status, err)
+	}
+
+	// The engine's half, the backstop: a binding the claim did not see — here
+	// one declared in the instant after the claim — fails the run before it
+	// connects.
+	if err := runref.ReplaceBindings(context.Background(), pool, jobOwner, nil, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}
+	if err := runref.ReplaceBindings(context.Background(), pool, jobOwner, keyBinding, "tester"); err != nil {
+		t.Fatal(err)
+	}
 	svc.execute(context.Background(), *claimed)
 
-	var status string
 	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-1'`).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "failure" {
-		t.Fatalf("run status = %q, want failure — the executor cannot deliver the key, so the run must not start", status)
+		t.Fatalf("run status = %q, want failure — the local runner cannot deliver the key, so the run must not start", status)
 	}
 	logStr := readLog(t, logDir, "run-1")
 	if !strings.Contains(logStr, "CRONOMICON_KEY_deploy_key") || !strings.Contains(logStr, "cannot deliver key files") {
