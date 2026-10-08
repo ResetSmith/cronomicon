@@ -66,9 +66,11 @@ export interface ProvisionOptions {
   // <hostname>-<instance>. Ignored unless it is a valid instance name, and by
   // the docker artifact (a container has one agent).
   instance?: string;
-  // Resource limits for the agent's unit (2.3.1): the install command's
-  // --memory-max / --cpu-quota / --tasks-max. The installer writes them into
-  // the UNIT, so the env file and the container command do not carry them.
+  // Resource limits for the agent and everything it runs (2.3.1). On a systemd
+  // host they are the install command's --memory-max / --cpu-quota /
+  // --tasks-max, which the installer writes into the UNIT; for a container
+  // they are the runtime's own (containerLimitFlags). The env file has no
+  // variable for them: neither a unit nor a container reads its limit from it.
   limits?: UnitLimits;
   // Empty ⇒ auto-detect (D1: 1B): the agent claims the four shell types and
   // probes its host for ansible and terraform at startup. Non-empty is an
@@ -268,6 +270,41 @@ export function provisionOneLiner(o: ProvisionOptions): string {
   return parts.join(" ");
 }
 
+// containerLimitFlags are the same three limits for an agent that runs in a
+// container, where there is no unit: the runtime's own flags. Like a unit's,
+// they bound the agent and everything it runs, together (one container is one
+// agent), and a process inside cannot lift them.
+//
+//   memory  4G    → --memory 4g --memory-swap 4g   (K/M/G/T are docker's k/m/g/t;
+//                   a bare number is bytes in both)
+//   CPU     150%  → --cpus 1.5                      (a count of CPUs, not a percentage)
+//   tasks   1024  → --pids-limit 1024
+//
+// --memory-swap is set EQUAL to --memory on purpose. Left out, docker lets the
+// container use as much swap again as its memory, so a run over the limit is
+// slowed, not stopped; equal, the container has no swap and the kernel kills
+// what goes over. Docker refuses a memory limit under 6 MB; nothing an agent
+// could run in, so it is left for docker to say.
+export function containerLimitFlags(limits?: UnitLimits): string[] {
+  const out: string[] = [];
+  const mem = (limits?.memoryMax ?? "").trim();
+  if (mem) {
+    const m = mem.toLowerCase();
+    out.push(`--memory ${m}`, `--memory-swap ${m}`);
+  }
+  const cpu = (limits?.cpuQuota ?? "").trim();
+  if (cpu) out.push(`--cpus ${cpusOf(cpu)}`);
+  const tasks = (limits?.tasksMax ?? "").trim();
+  if (tasks) out.push(`--pids-limit ${tasks}`);
+  return out;
+}
+
+// "150%" of one CPU is 1.5 CPUs. Whole hundredths, with no trailing zeros.
+function cpusOf(percent: string): string {
+  const hundredths = Number.parseInt(percent, 10);
+  return (hundredths / 100).toFixed(2).replace(/\.?0+$/, "");
+}
+
 // The published runner images (.github/workflows/publish-images.yml): the slim
 // agent, and a separate -fat package that adds the ansible/terraform toolchains.
 export const RUNNER_IMAGE = "ghcr.io/resetsmith/cronomicon-runner";
@@ -285,6 +322,8 @@ export function runnerImage(fat: boolean, serverVersion?: string): string {
 // identity + keys persist on a named volume; slim vs fat is derived from the
 // selected capabilities (ansible/terraform need the fat image's toolchains).
 export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string): string {
+  if (limitsInvalid(o.limits)) return INVALID_LIMITS_COMMAND;
+  const limitFlags = containerLimitFlags(o.limits);
   const fat = o.capabilities.some((c) => FAT_RUN_TYPES.has(c));
   const name = o.name || "runner-01";
   const env: string[] = [
@@ -324,9 +363,17 @@ export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string):
           `# (they run on the targets); only the -fat image has ansible/terraform.`,
         ]
       : []),
+    ...(limitFlags.length > 0
+      ? [
+          `# The limits bound this agent and everything it runs, together. With`,
+          `# --memory-swap equal to --memory the container has no swap: a run that`,
+          `# goes over the memory limit is killed, not slowed.`,
+        ]
+      : []),
     `docker volume create cronomicon-runner-data`,
     ``,
     `docker run -d --name ${shellArg(name)} --restart unless-stopped \\`,
+    ...(limitFlags.length > 0 ? [`  ${limitFlags.join(" ")} \\`] : []),
     ...env.map((e) => `  -e ${shellArg(e)} \\`),
     `  -v cronomicon-runner-data:${STATE_DIR} \\`,
     `  ${runnerImage(fat, serverVersion)}`,

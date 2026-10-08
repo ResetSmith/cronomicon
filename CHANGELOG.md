@@ -48,8 +48,20 @@ one machine on purpose.
   helper, and every form of the generated install command carries what was
   typed. The fields take what the installer takes; while one does not, no
   command is shown, so a command that silently lacked a limit cannot be copied.
-  They are written into the unit, so the generated `runner.env` and the
-  container command do not carry them.
+  The generated `runner.env` does not carry them: neither a unit nor a
+  container reads its limit from it.
+- **The same limits for an agent in a container.** A container has no unit, so
+  the installer's flags do not reach it. The advanced helper's container
+  command now carries the same three fields as the runtime's own limits:
+  `--memory` with `--memory-swap` equal to it, `--cpus` (a count: `150%` is
+  `1.5`) and `--pids-limit`. With the swap limit equal to the memory limit a
+  run that goes over is stopped by the kernel, where a unit limit on a host
+  with swap only slows it. The install guide has the table of equivalents, the
+  compose keys (`mem_limit`, `memswap_limit`, `cpus`, `pids_limit`) and
+  `docker update` for a running container; a runner's *Unit limits* section
+  says what to do when the runner is a container, since its command finds no
+  unit there. Nothing sets a container's limit for you: it is off until the
+  flags or the compose keys are there.
 - **A command to change an installed agent's limits, built in the app.** A
   runner's **⚙ Edit** has a *Unit limits* section: type the new limits (or
   `none` to remove one, or leave a field empty to keep what the unit has) and

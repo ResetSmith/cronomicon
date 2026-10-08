@@ -5286,7 +5286,9 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         <code>systemctl set-property</code> on an installed agent (the runner's
                         <strong>⚙ Edit</strong> &rarr; <em>Unit limits</em> gives you the command to run on the
                         machine). A unit limit applies to the agent and all its runs together. On a machine with
-                        more than one agent, give each agent a limit.</li>
+                        more than one agent, give each agent a limit. An agent in a container has no unit: limit
+                        the container (<code>--memory</code> with <code>--memory-swap</code> equal to it,
+                        <code>--cpus</code>, <code>--pids-limit</code>, or the same keys in the compose file).</li>
                     <li><strong>One key, both engines.</strong> One provisioned SSH key serves bash/Go-SSH runs and
                         ansible runs. For a single-key run, the agent adds <code>--private-key &lt;path&gt;</code> to
                         <code>ansible-playbook</code> automatically and injects the <code>authKeyEnvVar</code> name into

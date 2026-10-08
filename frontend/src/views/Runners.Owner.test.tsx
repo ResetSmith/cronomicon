@@ -218,6 +218,10 @@ describe("Runners — owner and serves (MA-26)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
     expect(await screen.findByText("Unit limits", { selector: "div" })).toBeTruthy();
     expect(screen.getByText(/Save does not apply this section\./)).toBeTruthy();
+    // The server is not told whether a runner is a container, so the section
+    // says what to do for one: it has no unit for the command to find.
+    expect(screen.getByText("If this runner is a container")).toBeTruthy();
+    expect(screen.getByText(/docker update --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 <container>/)).toBeTruthy();
     // Nothing to run until a limit is typed.
     expect(screen.queryByLabelText("Limits command")).toBeNull();
 

@@ -20,6 +20,11 @@
 //
 // `set-property` applies at once, without a restart, and keeps the value in
 // /etc/systemd/system.control/<unit>.d/, where it wins over the unit file's.
+//
+// An agent in a CONTAINER has no unit, and this command finds nothing to act
+// on there (the identity is on the container's volume). Its limits are the
+// container's: the compose file, or `docker update`. The server is not told
+// which kind a runner is, so the drawer says both.
 
 import { LIMIT_FIELDS, validLimit, type LimitField, type UnitLimits } from "./runner-install-cmd";
 
@@ -97,6 +102,7 @@ export function limitsCommand(runnerId: string, limits: UnitLimits): string {
     `done`,
     `if [ -z "$UNIT" ]; then`,
     `  echo "No agent on this machine is runner $RUNNER_ID. Nothing was changed." >&2`,
+    `  echo "(An agent that runs in a container has no unit: limit the container instead.)" >&2`,
     `  exit 1`,
     `fi`,
     ``,

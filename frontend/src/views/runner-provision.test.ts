@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  containerLimitFlags,
   defaultProvisionOptions,
   generateRunnerEnv,
   provisionOneLiner,
@@ -292,9 +293,9 @@ describe("an instance", () => {
   });
 });
 
-// 2.3.1 — limits for the unit the installer writes. They are the installer's
-// flags, so they are in the install command and nowhere else: the env file has
-// no variable for them, and a container is limited by its runtime.
+// 2.3.1 — limits for an agent and everything it runs. The install command
+// carries them as the installer's flags (written into the unit); the container
+// command as the runtime's own. The env file has no variable for them.
 describe("resource limits", () => {
   const withLimits = (over: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
     ...defaultProvisionOptions("https://cronomicon.example.com"),
@@ -324,8 +325,65 @@ describe("resource limits", () => {
     }
   });
 
-  it("are not in the env file or the container command", () => {
+  it("are not in the env file", () => {
     expect(generateRunnerEnv(example, withLimits())).toBe(generateRunnerEnv(example, withLimits({ limits: undefined })));
-    expect(provisionDockerRun(withLimits())).toBe(provisionDockerRun(withLimits({ limits: undefined })));
+  });
+
+  // A container has no unit. The same three limits are docker's own flags
+  // there; each spelling below was accepted by Docker 29 (2026-10-08).
+  it("become the runtime's own flags in the container command", () => {
+    expect(containerLimitFlags({ memoryMax: "4G", cpuQuota: "200%", tasksMax: "1024" })).toEqual([
+      "--memory 4g",
+      "--memory-swap 4g",
+      "--cpus 2",
+      "--pids-limit 1024",
+    ]);
+    const cmd = provisionDockerRun(withLimits());
+    expect(cmd).toContain("--restart unless-stopped \\\n  --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 \\\n  -e ");
+    // The installer's flags are not docker's.
+    expect(cmd).not.toMatch(/--(memory-max|cpu-quota|tasks-max)/);
+  });
+
+  it("translate each unit: memory suffixes to docker's, a CPU percentage to a count of CPUs", () => {
+    const mem = (v: string) => containerLimitFlags({ memoryMax: v });
+    expect(mem("512M")).toEqual(["--memory 512m", "--memory-swap 512m"]);
+    expect(mem("64K")).toEqual(["--memory 64k", "--memory-swap 64k"]);
+    expect(mem("2T")).toEqual(["--memory 2t", "--memory-swap 2t"]);
+    expect(mem("4294967296")).toEqual(["--memory 4294967296", "--memory-swap 4294967296"]); // bytes in both
+    const cpu = (v: string) => containerLimitFlags({ cpuQuota: v });
+    expect(cpu("150%")).toEqual(["--cpus 1.5"]);
+    expect(cpu("125%")).toEqual(["--cpus 1.25"]);
+    expect(cpu("100%")).toEqual(["--cpus 1"]);
+    expect(cpu("1000%")).toEqual(["--cpus 10"]);
+    expect(cpu("50%")).toEqual(["--cpus 0.5"]);
+    expect(cpu("1%")).toEqual(["--cpus 0.01"]);
+    expect(cpu("7%")).toEqual(["--cpus 0.07"]);
+  });
+
+  // Swap off, always: left out, docker gives the container as much swap again
+  // as its memory, and a run over the limit is slowed where it should stop.
+  it("never write a memory limit without the swap limit equal to it", () => {
+    for (const v of ["4G", "512M", "8388608K", "1T", "6291456"]) {
+      const flags = containerLimitFlags({ memoryMax: v });
+      expect(flags).toHaveLength(2);
+      expect(flags[1]).toBe(flags[0].replace("--memory ", "--memory-swap "));
+    }
+    expect(containerLimitFlags({ cpuQuota: "200%", tasksMax: "64" }).join(" ")).not.toContain("--memory");
+  });
+
+  it("leave the container command as it was when none is set", () => {
+    const base = provisionDockerRun(withLimits({ limits: undefined }));
+    expect(base).not.toMatch(/--(memory|cpus|pids-limit)/);
+    expect(provisionDockerRun(withLimits({ limits: {} }))).toBe(base);
+    expect(provisionDockerRun(withLimits({ limits: { memoryMax: "  ", cpuQuota: "" } }))).toBe(base);
+    expect(containerLimitFlags(undefined)).toEqual([]);
+  });
+
+  it("yield no container command while one is not valid", () => {
+    for (const bad of ["4GB", "4g", "0", "4G --privileged", "$(id)"]) {
+      const cmd = provisionDockerRun(withLimits({ limits: { memoryMax: bad } }));
+      expect(cmd.startsWith("#"), bad).toBe(true);
+      expect(cmd).not.toContain("docker run");
+    }
   });
 });
