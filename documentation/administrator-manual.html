@@ -6791,6 +6791,22 @@ curl -s -o /dev/null -w '%{http_code}\n' https://cronomicon.example.com/metrics<
                                     it serves one agency, hand it to that agency.</td>
                             </tr>
                             <tr>
+                                <td><em>Two runners of one agency share a name</em>
+                                    (<code>runner_name_shared</code>, from 2.3.2)</td>
+                                <td>Two or more agents that one agency owns are registered under the same name and
+                                    are both polling. Each runs its jobs correctly, because a runner is identified
+                                    by its id. But History, Activity and the host-key ledger show the name, so the
+                                    agents cannot be told apart there, and the offer to restore a lost runner's
+                                    scope bindings goes by name, so it would be made to the other. The owning
+                                    agency's.</td>
+                                <td>Give all but one a name of its own: set
+                                    <code>CRONOMICON_RUNNER_NAME</code> (or <code>-name</code>) in that agent's
+                                    configuration and restart it. It keeps its identity, keys and bindings; its row
+                                    is renamed on its next poll and the notice clears. An agent that enrolled
+                                    again and left its old row behind does not raise this: that is one agent, and
+                                    <strong>Restore placement</strong> is the tool.</td>
+                            </tr>
+                            <tr>
                                 <td><em>A scope in several agencies</em>
                                     (<code>scope_several_agencies</code>)</td>
                                 <td>A scope that was in more than one agency before 2.3.0. It still runs for each

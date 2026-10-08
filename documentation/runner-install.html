@@ -303,6 +303,32 @@ sudo bash runner-isolation-check.sh</code></pre></li>
 
 <ul><li>Put the identity file on <strong>durable</strong> storage: a named volume in containers (<code>/var/lib/cronomicon-runner</code>), a real path under systemd <code>StateDirectory</code>.</li><li>Keep <code>-name</code> <strong>stable</strong> across restarts.</li><li>A present-but-corrupt identity file is a <strong>hard error</strong> (the agent will not silently re-register and orphan the existing row) — restore or delete it deliberately.</li></ul>
 
+<h3>One identity file, one agent: never copy it</h3>
+
+<p>The identity file <em>is</em> the runner: its id and its key. A copy of it started somewhere else is not a second runner, it is <strong>the same runner twice</strong>. That happens when a VM is cloned, or a template or snapshot is taken, <em>after</em> the agent on it enrolled; when two containers mount the same runner volume; and when a backup of a runner's state directory is restored and started beside the original.</p>
+
+<p>The server cannot tell the two processes apart, and shows them as <strong>one row</strong> in the Runners view. What goes wrong:</p>
+
+<ul>
+<li><strong>Each one's start ends the other's work on the record.</strong> An agent that starts tells the server it holds no runs, and the server closes every run it shows as running on that runner as failed (<em>runner lost</em>, from 2.3.2). With two copies, that includes the runs the <em>other</em> copy is in the middle of: those jobs carry on to the end on their targets, are recorded as failed, and the rest of their logs are refused.</li>
+<li><strong>They take each other's messages.</strong> A Stop, a drain, a host-key delivery or a settings change is handed to whichever copy asks first. A Stop that goes to the copy that is not running the job does nothing.</li>
+<li><strong>The record is one runner's.</strong> History, the runner's load and its trusted host keys describe "the runner", and each of the two machines has its own <code>known_hosts</code> and keys behind it.</li>
+</ul>
+
+<p><strong>Do it this way instead.</strong> Take the template, snapshot or image <em>before</em> the agent enrols, or remove the identity from the copy and enrol it as a runner of its own, with its own registration token and its own name:</p>
+
+<pre><code># On the COPY, before it is allowed to reach the server:
+sudo systemctl stop cronomicon-runner
+sudo rm /var/lib/cronomicon-runner/identity.json
+# Mint a token for its agency (Runners → + Add Runner), put it in
+# /etc/cronomicon-runner/runner.env as CRONOMICON_RUNNER_REGISTRATION_TOKEN,
+# and give it a name of its own (CRONOMICON_RUNNER_NAME), then:
+sudo systemctl start cronomicon-runner</code></pre>
+
+<p>In containers, give each agent <strong>its own</strong> named volume. The copy's host keys must be approved for it afresh (<a href="./runner-manage.html"><code>runner-manage.html</code></a> §4.6); its SSH keys are its own to install.</p>
+
+<blockquote><p><strong>This is not the same as two agents with the same <em>name</em>.</strong> Two agents that enrolled separately and happen to declare one name are two runners, each with its own id, and their jobs run correctly. The name is only what History, Activity and the host-key ledger show, and what the offer to restore a lost runner's scope bindings goes by. From 2.3.2 the Notices inbox reports two live agents of one agency under one name (<em>Two runners of one agency share a name</em>) and clears when one is renamed: set <code>CRONOMICON_RUNNER_NAME</code> and restart it.</p></blockquote>
+
 <p>(The day-2 side of this — re-registration after a server reap, and forcing a re-register to push config — lives in <a href="./runner-manage.html"><code>runner-manage.html</code></a>.)</p>
 
 <hr />

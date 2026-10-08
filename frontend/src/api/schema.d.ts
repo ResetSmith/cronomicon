@@ -6638,6 +6638,13 @@ export interface components {
              *       it did, is Global's, and can be narrowed and never widened; the
              *       detail gives the order that settles it. Subject: the runner's id.
              *       Filed under Global.
+             *     - `runner_name_shared` — two or more agents that one agency owns
+             *       are registered under the same name and are both polling
+             *       (v2.3.2). They run correctly (a runner is identified by its id),
+             *       but History, Activity and the host-key ledger show the name, and
+             *       the offer to restore a lost runner's bindings goes by name.
+             *       Subject: `<agency id>:<name>`. Filed under the owning agency. It
+             *       clears when one of them is renamed.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.

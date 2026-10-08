@@ -48,6 +48,24 @@ a container needs a longer stop timeout to drain (below).
   field before Save and by the server (400): a runner that has not polled for
   two minutes is shown as degraded. An agent older than 2.3.2 ignores it.
   `pollIntervalSeconds` in `PATCH /runners/{runnerId}/settings`.
+- **A notice when two runners of one agency share a name.** A runner's name is
+  what its agent declares, and nothing makes it unique. Two agents under one
+  name both run their jobs correctly, because everything that decides
+  anything goes by the runner's id. But History, Activity and the host-key
+  ledger show the name, so the two cannot be told apart there, and the offer
+  to restore a lost runner's scope bindings goes by name, so it would be made
+  to the other. The Notices inbox now reports two or more live agents of one
+  agency under one name (`runner_name_shared`), to that agency, with each
+  runner's id, and clears when one is renamed (`CRONOMICON_RUNNER_NAME`, then
+  a restart: the runner keeps its identity). An agent that enrolled again and
+  left its old row behind does not raise it, and neither does another agency's
+  runner of the same name.
+- **The install guide says what copying an identity file does.** A cloned VM,
+  a snapshot taken after enrolment or two containers on one volume are the
+  same runner twice, shown as one row. Each copy takes the other's messages,
+  and from this release each copy's start closes the runs the other is in the
+  middle of as *runner lost*. The guide's identity section has the signs, and
+  the steps to make the copy a runner of its own.
 
 ### Fixed
 
