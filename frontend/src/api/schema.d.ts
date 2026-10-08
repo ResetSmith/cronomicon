@@ -13584,11 +13584,13 @@ export interface operations {
                  */
                 started?: "1";
                 /**
-                 * @description `claim=0` is sent by an agent that was told to stop and is
-                 *     finishing the runs it has in flight (2.3.2). The poll is still its
+                 * @description `claim=0` is sent by an agent that can start no run now (2.3.2): it
+                 *     was told to stop and is finishing the runs it has in flight, or
+                 *     every one of its concurrency slots is taken. The poll is still its
                  *     heartbeat and still delivers control messages and settings, but no
                  *     run is claimed for it and the request is not held. Absent ⇒ an
-                 *     ordinary poll.
+                 *     ordinary poll. The claim does not otherwise know how many runs an
+                 *     agent holds.
                  */
                 claim?: "0";
             };

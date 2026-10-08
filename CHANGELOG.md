@@ -55,6 +55,36 @@ a container needs a longer stop timeout to drain (below).
   starts again never is. The first poll of an agent process now says that it
   has just started, and the server closes every run it still shows as running
   on that runner as failed (*runner lost*), with the usual notification.
+- **An agent at its concurrency limit was handed more work, and that work was
+  lost.** The server's claim does not know how many runs an agent holds: it
+  counts them and compares the count with nothing. An agent polls while it is
+  busy, so one with every slot taken was given the next queued run, could not
+  start it, wrote a warning in its own journal and dropped it. The server went
+  on showing that run as *running* on that runner: never executed, never
+  ended, and counted in the runner's load. The default limit is 5, so any
+  agent with more than five runs' worth of work queued did this. Reproduced
+  with the real agent and server: limit one, one run in flight, a second
+  queued; the second was *running* within seconds and still *running* after
+  the first had finished. Now:
+  - **An agent with no free slot asks for nothing.** Its poll is a heartbeat
+    that claims no run (the `claim=0` a stopping agent sends), and it asks
+    again the moment a run ends.
+  - **A run that is assigned and cannot be started is ended, not dropped.**
+    The agent reports it as failed, with a line in its log saying that
+    nothing was executed and why (no free slot, stopping, a run type its
+    settings no longer allow). This is the fallback for what the first point
+    cannot rule out, such as a server older than the agent.
+  - An agent older than 2.3.2 still does the old thing, which is one more
+    reason to upgrade the agents with the server. Runs it stranded are closed
+    as *runner lost* when it comes back upgraded.
+- **An agent stopped while it was enrolling could never enrol again.** A
+  registration token is good for one use. An agent that was stopped after the
+  server had answered and before it had written its identity file had spent
+  the token and kept nothing: every later start asked again with the same
+  token, was refused (`token_used`) and exited, until somebody minted another.
+  Seen on RHEL 8.10 when a unit was restarted a second after the installer
+  started it. The exchange and the saving of its answer are now one step that
+  a stop signal does not interrupt (bounded at 30 seconds).
 - **The upgrade notice about two host keys for one address never cleared.**
   `host_key_conflict` stayed for as long as a record's old key differed from
   the trusted one, so approving the host's current key, which is what the
@@ -104,8 +134,15 @@ a container needs a longer stop timeout to drain (below).
 
 - Two poll query params, additive within protocol 14 and documented in
   `openapi.yaml`: `started=1` (no poll of this process has been answered yet)
-  and `claim=0` (a stopping agent's heartbeat; no run is claimed and the
-  request is not held). `runnerproto.PollParamStarted`, `PollParamClaim`.
+  and `claim=0` (the heartbeat of an agent that can start nothing: stopping,
+  or full; no run is claimed and the request is not held).
+  `runnerproto.PollParamStarted`, `PollParamClaim`. **The claim still does not
+  compare `runners.load` with `max_concurrent`**: `claim=0` is the only thing
+  between a full agent and a run it cannot start, so a poll path that drops
+  the param reopens the bug (`TestRunnerAgentE2EFullAgentIsNotHandedWork`,
+  `TestPollOfAFullAgentClaimsNothing`).
+- `Agent.dispatch` no longer drops an assignment it cannot start: it calls
+  `Agent.refuse`, which uploads a one-line log and a failure envelope.
 - `Agent.Run` returns when its context is cancelled **and** its runs have
   ended; `Agent.Abort` cancels them. A test that cancels the context with a
   run in flight must end the run or call `Abort`, or `Run` does not return.

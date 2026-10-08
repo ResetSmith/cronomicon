@@ -181,10 +181,14 @@ const (
 	// the offline window, since only the reaper closes a runner's runs and it
 	// only acts on a runner that has gone quiet.
 	PollParamStarted = "started"
-	// PollParamClaim ("claim=0") is sent by an agent that was told to stop and
-	// is finishing its runs. The poll is still its heartbeat and still delivers
-	// a kill, a settings change and a host-key op, but the server claims
-	// nothing for it and does not hold the request.
+	// PollParamClaim ("claim=0") is sent by an agent that can start no run now:
+	// it was told to stop and is finishing its runs, or every one of its
+	// concurrency slots is taken. The poll is still its heartbeat and still
+	// delivers a kill, a settings change and a host-key op, but the server
+	// claims nothing for it and does not hold the request. The claim itself
+	// does not know how many runs an agent holds (it increments runners.load
+	// and compares it with nothing), so this param is the only thing that
+	// keeps a full agent from being handed a run it cannot start.
 	PollParamClaim = "claim"
 )
 

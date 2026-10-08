@@ -235,10 +235,13 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// An agent that was told to stop and is finishing its runs (2.3.2,
-	// runnerproto.PollParamClaim). The poll has done its work above: the
-	// heartbeat, and any kill, settings change or host-key op. It is handed no
-	// run, and it is not held: the agent comes back in a few seconds.
+	// An agent that can start no run now (2.3.2, runnerproto.PollParamClaim):
+	// it was told to stop and is finishing its runs, or all its slots are
+	// taken. The poll has done its work above: the heartbeat, and any kill,
+	// settings change or host-key op. It is handed no run, and it is not held:
+	// the agent comes back when a slot opens, or on its next tick. Nothing
+	// below this point knows how many runs the agent holds, so without this a
+	// full agent is claimed a run it cannot start.
 	if r.URL.Query().Get(runnerproto.PollParamClaim) == "0" {
 		respondControlOr204(w, control, settingsPayload, watches)
 		return

@@ -383,6 +383,42 @@ func TestRunnerAgentE2ERestartClosesLostRuns(t *testing.T) {
 	}
 }
 
+// TestRunnerAgentE2EFullAgentIsNotHandedWork: an agent with every slot taken
+// asks for nothing. The claim does not know how many runs an agent holds, so
+// until 2.3.2 a full agent that polled was handed the next queued run, could
+// not start it, and the run stayed `running` on that runner for good: never
+// executed, never reported, and counted in the runner's load.
+func TestRunnerAgentE2EFullAgentIsNotHandedWork(t *testing.T) {
+	h := newStopHarness(t, "full-runner")
+	h.cfg.MaxConcurrent = 1
+	h.start(t) // its one slot is taken by a run that is held open
+
+	second := h.queueRun(t)
+	// Many poll cycles (the cadence here is 20ms): the second run must wait.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if st, _ := h.run(second); st != "queued" {
+			t.Fatalf("a full agent was handed a second run (status %q): it cannot start it, and nothing would end it", st)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	var load int
+	_ = h.svc.db.QueryRow(`SELECT load FROM runners WHERE name = 'full-runner'`).Scan(&load)
+	if load != 1 {
+		t.Errorf("runner load = %d with one run in flight and a limit of one", load)
+	}
+
+	close(h.release) // the first run finishes; the slot opens
+
+	if !waitFor(t, 10*time.Second, func() bool { st, _ := h.run(second); return st == "success" }) {
+		st, reason := h.run(second)
+		t.Fatalf("the waiting run was not taken once a slot opened: status %q (%s)", st, reason)
+	}
+	if st, _ := h.run(h.traceID); st != "success" {
+		t.Errorf("the first run: status %q, want success", st)
+	}
+}
+
 // pollWith is pollAs with a query string.
 func pollWith(t *testing.T, svc *Service, runnerID, token, query string) (int, runnerproto.PollResponse) {
 	t.Helper()

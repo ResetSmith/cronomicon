@@ -252,10 +252,12 @@ type pollState struct {
 	// run. The server closes any run it still shows as running here: they were
 	// this runner's before it stopped, and nothing will ever report on them.
 	started bool
-	// stopping: the process was told to stop and is finishing its runs. The
-	// poll is a heartbeat and a way to receive a kill; it must not be handed
-	// new work.
-	stopping bool
+	// noClaim: the agent can start no run now. It was told to stop and is
+	// finishing its runs, or every concurrency slot is taken. The poll is a
+	// heartbeat and a way to receive a kill; it must not be handed new work,
+	// because a run the agent is handed and cannot start has no owner: the
+	// server shows it as running, and nothing here will ever report on it.
+	noClaim bool
 }
 
 // Poll performs GET /api/v1/runners/{id}/poll. The server holds the request
@@ -279,7 +281,7 @@ func (c *Client) Poll(ctx context.Context, id Identity, configDigest string, set
 	if st.started {
 		q.Set(runnerproto.PollParamStarted, "1")
 	}
-	if st.stopping {
+	if st.noClaim {
 		q.Set(runnerproto.PollParamClaim, "0")
 	}
 	// Always present (even "0") so the server can tell a Phase-4 agent from an
