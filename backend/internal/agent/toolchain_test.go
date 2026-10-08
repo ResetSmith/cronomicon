@@ -52,8 +52,9 @@ func TestLookPathBounded(t *testing.T) {
 }
 
 // hangLookups makes every PATH lookup block until the test ends, as it does
-// under a unit whose syscall filter kills the looking thread (systemd 239) or
-// with a $PATH directory on a hung mount.
+// with a $PATH directory on a hung mount. A unit whose syscall filter kills the
+// looking thread (systemd 239) hangs fewer than that: see
+// hangLookupsThatFindAFile.
 func hangLookups(t *testing.T) {
 	t.Helper()
 	release := make(chan struct{})
@@ -61,6 +62,56 @@ func hangLookups(t *testing.T) {
 	lookPath = func(string) (string, error) { <-release; return "", exec.ErrNotFound }
 	lookPathTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { close(release); lookPath, lookPathTimeout = prevLook, prevTimeout })
+}
+
+// hangLookupsThatFindAFile is what a systemd 239 unit that filters system calls
+// with no error number does to exec.LookPath: the stat of each candidate is
+// answered, and the "may I execute it" call after a stat that SUCCEEDED never
+// is. A lookup for a file that is not there returns "not found" as on any
+// host; only a lookup that finds something hangs.
+func hangLookupsThatFindAFile(t *testing.T) {
+	t.Helper()
+	release := make(chan struct{})
+	prevLook, prevTimeout := lookPath, lookPathTimeout
+	lookPath = func(file string) (string, error) {
+		candidates := []string{file}
+		if !strings.Contains(file, "/") {
+			candidates = nil
+			for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+				candidates = append(candidates, filepath.Join(dir, file))
+			}
+		}
+		for _, c := range candidates {
+			if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+				<-release
+				break
+			}
+		}
+		return "", exec.ErrNotFound
+	}
+	lookPathTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { close(release); lookPath, lookPathTimeout = prevLook, prevTimeout })
+}
+
+// The canary is only worth looking for if it is there (see lookupCanary), and
+// a process that cannot name its own file still gets a lookup to try.
+func TestLookupCanaryIsAFileThatExists(t *testing.T) {
+	got := lookupCanary()
+	if fi, err := os.Stat(got); err != nil || fi.IsDir() || !strings.Contains(got, "/") {
+		t.Fatalf("lookupCanary() = %q, want the path of an existing file (stat: %v)", got, err)
+	}
+
+	prev := executable
+	t.Cleanup(func() { executable = prev })
+	for name, fn := range map[string]func() (string, error){
+		"unknown": func() (string, error) { return "", os.ErrNotExist },
+		"gone":    func() (string, error) { return filepath.Join(t.TempDir(), "replaced-binary"), nil },
+	} {
+		executable = fn
+		if got := lookupCanary(); got != localToolchainProbes[0].bins[0] {
+			t.Errorf("own file %s: lookupCanary() = %q, want the first local toolchain %q", name, got, localToolchainProbes[0].bins[0])
+		}
+	}
 }
 
 func TestALookupThatNeverReturnsIsNotAnAbsentToolchain(t *testing.T) {

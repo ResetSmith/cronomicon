@@ -104,6 +104,38 @@ func TestDoctorQuickFailsWhenAPathLookupNeverReturns(t *testing.T) {
 	}
 }
 
+// The unit that kills lookups kills only the ones that FIND a file, and most
+// agents have no Ansible or Terraform to find. The check must fail there too:
+// such an agent still loses systemd-run, and when it looked for
+// ansible-playbook the doctor passed on RHEL 8.10 beside a sandbox probe that
+// never returned.
+func TestDoctorQuickFailsOnABrokenUnitWithNoLocalToolchain(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
+	defer srv.Close()
+	cfg, err := Resolve([]string{"-server", srv.URL, "-name", "d",
+		"-registration-token", "crn_reg_x", "-identity-file", t.TempDir() + "/id.json"}, noEnv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	t.Setenv("PATH", t.TempDir()) // nothing installed: no local toolchain to find
+
+	hangLookupsThatFindAFile(t)
+	for _, p := range localToolchainProbes {
+		for _, bin := range p.bins {
+			if _, _, late := lookPathBounded(context.Background(), bin); late {
+				t.Fatalf("the lookup of %s, which is not installed, must return on this host for the test to mean anything", bin)
+			}
+		}
+	}
+	checks, ok := Doctor(context.Background(), cfg, true)
+	if ok {
+		t.Error("the doctor passed under a unit that hangs every lookup that finds a file")
+	}
+	if s := statusOf(checks, "path-lookup"); s != CheckFail {
+		t.Errorf("path-lookup = %s, want FAIL: %+v", s, checks)
+	}
+}
+
 func statusOf(checks []Check, name string) CheckStatus {
 	for _, c := range checks {
 		if c.Name == name {
