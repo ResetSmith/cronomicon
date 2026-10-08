@@ -57,12 +57,16 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 		}
 	}
 	mustExec(`INSERT OR REPLACE INTO git_sync_state (id, last_sha) VALUES (1, 'deadbeefcafe')`)
+	// An ANSIBLE job, so that the become-file token the run writer injects for
+	// a become password is in the snapshot: it is injected for ansible runs
+	// only since 2.3.0 (a shell job with an ignored become password would have
+	// waited for a runner that advertises a token it has no use for).
 	mustExec(`
 		INSERT INTO jobs (name, source, uid, run_type, scope, target_host, concurrency_policy, synced_at,
 		                  script_ref, content_hash, project_root, script_path,
 		                  requires_json, become_password_secret, env_json,
 		                  ssh_user, ssh_credential)
-		VALUES ('golden-job', 'git', 'uid-golden', 'bash', 'prod', 'db-1.internal', 'Forbid', '2026-01-01T00:00:00Z',
+		VALUES ('golden-job', 'git', 'uid-golden', 'ansible', 'prod', 'db-1.internal', 'Forbid', '2026-01-01T00:00:00Z',
 		        'scripts/site.sh', 'sha256:0123', 'playbooks/site', 'site.yml',
 		        '["vault","collection:community.vmware"]', 'vault:become', '{"JOB_LEVEL":"1"}',
 		        'deploy', 'cred-1')`)

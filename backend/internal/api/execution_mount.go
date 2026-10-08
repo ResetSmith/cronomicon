@@ -1411,51 +1411,42 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		targetHost = "" // group subset supersedes the single-host override
 	}
 
-	// R5.1/R5.2 — resolve the executor with precedence
-	//   per-trigger override > job spec.executor > global default > capability
-	// and reject invalid combinations (ssh + ansible/terraform). With no capable
-	// runner registered, an ansible/terraform run still enqueues and sits queued
-	// (A6.3 waiting-for-capable-runner) — it is no longer a 422 (R4.3).
-	//
-	// SB — the scope is part of the decision: a scope bound to runners sends a
-	// job with no explicit executor to those runners, and an explicit ssh on one
-	// is refused (422 scope_requires_runner) instead of leaving from the server.
-	// It is the run's EFFECTIVE scope, so a per-run scope override is judged
-	// against the scope the run will actually use.
+	// Every run is written for the runner executor (LR-42): where it runs is
+	// decided at claim time by agency, scope binding and capability, and the
+	// server takes its share as the local runner. `executor` on the request
+	// body is accepted and IGNORED for one minor (LR-50) — a service-account
+	// caller may still send it — and `jobs.executor` is no longer read. With no
+	// capable runner an ansible or terraform run still enqueues and waits
+	// (A6.3), with the reason stamped on it.
 	jobSrc := s.defSource(r, "jobs", jobID)
-	resolved := execspec.ResolveExecutor(r.Context(), s.db, execspec.ExecutorQuery{
-		JobUID: jr.UID, JobSource: jobSrc, JobName: jr.Name, RunType: jr.Type,
-		Scope: scope, Override: body.Executor,
-	})
-	if resolved.Err != nil {
-		httpx.Fail500(w, s.log, "db_error", resolved.Err)
+	executor := execspec.ExecutorRunner
+	// Ignored is not the same as unchecked: the field keeps its two values for
+	// as long as it is in the contract, so a typo is still told it is one.
+	if body.Executor != "" && body.Executor != execspec.ExecutorSSH && body.Executor != execspec.ExecutorRunner {
+		httpx.Fail(w, http.StatusUnprocessableEntity, execspec.CodeInvalidExecutor,
+			fmt.Sprintf("invalid executor %q (want ssh|runner — and the field is ignored since 2.3.0: leave it out)", body.Executor))
 		return
 	}
-	if resolved.Refusal != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, resolved.Refusal.Code, resolved.Refusal.Message)
-		return
-	}
-	executor := resolved.Executor
 
-	// KB — a bound SSH key: the ssh executor connects FROM
-	// cronomicon and cannot place a key file on the target, so a key-bound run that
-	// resolves to ssh is refused here rather than started with an input it will
-	// never receive (the executor used to warn and skip). Tests the RESOLVED
-	// executor for the reason the block above gives; serves the token trigger
-	// too, since it rides this handler.
+	// LR-47 — a bound SSH key is delivered as a file on the machine that runs
+	// the job. An agent does that; the local runner connects FROM the server
+	// and cannot place a key on the target, so the claim keeps it away from
+	// such a run. A shell run that binds a key and has no agent to wait for is
+	// refused here rather than queued for nobody. Judged on the run's EFFECTIVE
+	// scope; serves the token trigger too, since it rides this handler.
 	{
 		scriptRef := ""
 		if jr.ScriptRef != nil {
 			scriptRef = *jr.ScriptRef
 		}
-		keys, kerr := runref.KeyBindingsOnSSH(r.Context(), s.db,
-			runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef), executor)
+		keys, kerr := runref.KeyBindingsNeedAgent(r.Context(), s.db,
+			runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef), runRefs, jr.Type, scope)
 		if kerr != nil {
 			httpx.Fail500(w, s.log, "db_error", kerr)
 			return
 		}
 		if len(keys) > 0 {
-			httpx.Fail(w, http.StatusUnprocessableEntity, runref.CodeKeyBindingOnSSH, runref.KeyBindingRefusal(keys))
+			httpx.Fail(w, http.StatusUnprocessableEntity, runref.CodeKeyBindingNeedsAgent, runref.KeyBindingRefusal(keys))
 			return
 		}
 	}
@@ -1646,9 +1637,8 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	if body.Scope != "" {
 		override["scope"] = body.Scope
 	}
-	if body.Executor != "" {
-		override["executor"] = body.Executor
-	}
+	// body.Executor is ignored (LR-50) and so is not recorded: an override
+	// that changed nothing has no place in "what was overridden".
 	if len(body.TargetHosts) > 0 {
 		override["hosts"] = body.TargetHosts
 	}
@@ -4291,7 +4281,19 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 	// Deliberately context.Background(): the helper conflates a query error with
 	// "no online runner", so a canceled request context must not fabricate the reason.
 	statusReason := nullStrVal(rr.queuedReason)
-	if (!rr.queuedReason.Valid || rr.queuedReason.String == "") &&
+	localWhy := ""
+	if (!rr.queuedReason.Valid || rr.queuedReason.String == "") && rr.status == "queued" {
+		// The three causes 2.3.0 added, which the older branches below would
+		// misname ("no online runner in …" for a server that is merely turned
+		// off, the run type for the key rule) or not see at all (a row still
+		// frozen onto the SSH executor).
+		switch why, _ := execspec.UnclaimableReason(context.Background(), s.db, rr.id); why {
+		case execspec.ReasonLocalRunnerOff, execspec.ReasonKeyNeedsAgent, execspec.ReasonQueuedForSSHExecutor:
+			localWhy = "Waiting: " + why
+			statusReason = localWhy
+		}
+	}
+	if localWhy == "" && (!rr.queuedReason.Valid || rr.queuedReason.String == "") &&
 		rr.status == "queued" && runExecutor(rr) == "runner" {
 		runAgencies := parseAgenciesJSON(rr.agenciesJSON)
 		if ok, _ := execspec.AgenciesHaveOnlineRunner(context.Background(), s.db, runAgencies); !ok {

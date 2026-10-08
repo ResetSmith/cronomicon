@@ -776,6 +776,20 @@ func TestScopeCoverage(t *testing.T) {
 	if len(cov.Hosts) != 3 || len(cov.Runners) != 2 {
 		t.Fatalf("coverage = %d hosts × %d runners; want 3 × 2", len(cov.Hosts), len(cov.Runners))
 	}
+	// The local runner bound to the same scope is not in this table: it has no
+	// ledger and no known_hosts report to be read (it verifies against the keys
+	// kept with the SSH targets), and listed it would show every host untrusted.
+	if _, err := f.svc.db.Exec(`INSERT INTO runners (id, name, kind, status, registered_at, created_at) VALUES ('local', 'Local runner', 'server', 'online', 't', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.db.Exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_by, bound_at) VALUES (?, 'local', 'Local runner', 'test', 't')`, scopeID); err != nil {
+		t.Fatal(err)
+	}
+	var withLocal scopeCoverage
+	_ = json.Unmarshal(f.do(f.svc.HandleScopeHostKeyCoverage, http.MethodGet, "/x", "", "scopeId", scopeID).Body.Bytes(), &withLocal)
+	if len(withLocal.Runners) != 2 {
+		t.Errorf("coverage with the local runner bound lists %d runners, want the same 2 agents", len(withLocal.Runners))
+	}
 	for _, r := range cov.Runners {
 		states := map[string]string{}
 		for i, h := range cov.Hosts {

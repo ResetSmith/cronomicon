@@ -15,17 +15,18 @@ import { AlertBanner, Btn, InlineLoading, Modal } from "../../components/ui";
 //
 // Three rules shape everything in this file, and all three are the server's:
 //
-//   - A scope with no bound runner is unrestricted: any runner eligible for its
-//     agency may serve it, and shell jobs default to SSH from the server.
+//   - A scope with no bound runner is unrestricted: any runner that serves its
+//     agency takes its runs — an agent, or the server as the local runner.
 //   - A binding outlives its runner. A runner that has been deregistered is
 //     still listed, still restricts the scope, and nothing can claim the scope's
 //     runs until it is replaced. That is deliberate — the alternative is a
 //     confined scope quietly reopening to its whole agency — so the UI's job is
 //     to make the state LOUD, never to tidy it away.
-//   - Binding changes more than dispatch. Jobs with no executor of their own
-//     move from SSH (the server's keys and known_hosts) to the runners (theirs);
-//     jobs that ask for SSH start being refused. So the dialog previews before
-//     it saves.
+//   - Binding changes more than dispatch. It decides WHICH machines take the
+//     scope's runs, and each has its own keys and its own host-key trust; a
+//     job that binds an SSH key needs an agent among them. So the dialog
+//     previews before it saves. (Until 2.3.0 a binding also moved jobs between
+//     two executors; there is one now.)
 
 export type BoundRunner = components["schemas"]["BoundRunner"];
 type Preview = components["schemas"]["ScopeRunnersPreview"];
@@ -74,12 +75,6 @@ export function scopePoolName(scope: BindableScope): string {
 // decides what the picker offers, so an ineligible runner is shown disabled
 // with the reason instead of being offered and then refused. A scope that
 // lists no agency at all is damage, and no runner is eligible for it.
-// The local runner (kind "server") is not offered as a binding target: until it
-// claims by the runner rule, a scope bound to it would send its jobs where
-// nothing takes them, and the server refuses the save. It is left out of the
-// pickers, not shown disabled — there is nothing an operator could do about it.
-const bindable = (r: RunnerLite) => r.kind !== "server";
-
 function eligibleFor(scope: BindableScope, runner: RunnerLite): boolean {
   const scopeAgencies = new Set((scope.agencies ?? []).map((a) => a.id));
   return (runner.agencies ?? []).some((a) => scopeAgencies.has(a.id));
@@ -156,8 +151,8 @@ export function ScopeRunnersField({
         </span>
         {bound.length === 0 ? (
           <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-            Not bound — any runner that serves {scopePoolName(scope)} may run this scope's jobs, and shell jobs default to SSH
-            from the server.
+            Not bound — any runner that serves {scopePoolName(scope)} may take this scope's runs: its agents, and the local
+            runner if it serves {scopePoolName(scope)}.
           </span>
         ) : (
           bound.map((b) => {
@@ -193,7 +188,7 @@ export function ScopeRunnersField({
               runner goes away — on purpose, so the scope does not quietly reopen to every runner that serves {scopePoolName(scope)}.
             </>
           ) : (
-            <>Only these runners may run this scope's jobs. Jobs with no executor of their own run on them; SSH is refused.</>
+            <>Only these runners take this scope's runs.</>
           )}
         </div>
       )}
@@ -239,47 +234,38 @@ function JobNames({ jobs }: { jobs: { name: string }[] }) {
 // rather than leaving the panel empty.
 function PreviewPanel({ preview, selectedCount }: { preview: Preview; selectedCount: number }) {
   const lines: { tone: "info" | "warning"; node: React.ReactNode }[] = [];
-  if (preview.jobsMovingToRunner.length > 0) {
+  const who = (rs: Preview["runnersLosing"]) =>
+    rs.map((r) => (r.local ? `${r.name} (this server)` : r.name)).join(", ");
+  if (preview.runnersLosing.length > 0) {
+    lines.push({
+      tone: "warning",
+      node: (
+        <>
+          <strong>{plural(preview.runnersLosing.length, "runner")}</strong> will stop taking this scope's runs:{" "}
+          {who(preview.runnersLosing)}. Runs they would have taken wait for the runners that remain.
+        </>
+      ),
+    });
+  }
+  if (preview.runnersGaining.length > 0) {
     lines.push({
       tone: "info",
       node: (
         <>
-          <strong>{plural(preview.jobsMovingToRunner.length, "job")}</strong> will move from SSH on the server to the bound
-          runners — they will connect with the runners' own keys and known hosts: <JobNames jobs={preview.jobsMovingToRunner} />
+          <strong>{plural(preview.runnersGaining.length, "runner")}</strong> will start taking this scope's runs:{" "}
+          {who(preview.runnersGaining)} — each with its own keys and its own trusted host keys.
         </>
       ),
     });
   }
-  if (preview.jobsRefused.length > 0) {
+  if (preview.jobsNeedingAgent.length > 0) {
     lines.push({
       tone: "warning",
       node: (
         <>
-          <strong>{plural(preview.jobsRefused.length, "job")}</strong> {preview.jobsRefused.length === 1 ? "asks" : "ask"} for
-          the SSH executor and will be refused while the scope is bound, until that setting is removed:{" "}
-          <JobNames jobs={preview.jobsRefused} />
-        </>
-      ),
-    });
-  }
-  if (preview.jobsMovingToSsh.length > 0) {
-    lines.push({
-      tone: "warning",
-      node: (
-        <>
-          <strong>{plural(preview.jobsMovingToSsh.length, "job")}</strong> will go back to running over SSH from the
-          server: <JobNames jobs={preview.jobsMovingToSsh} />
-        </>
-      ),
-    });
-  }
-  if (preview.queuedSshRuns > 0) {
-    lines.push({
-      tone: "warning",
-      node: (
-        <>
-          <strong>{plural(preview.queuedSshRuns, "run")}</strong> already queued or scheduled for SSH will still run from
-          the server; the binding applies to runs produced after it is saved.
+          <strong>{plural(preview.jobsNeedingAgent.length, "job")}</strong> {preview.jobsNeedingAgent.length === 1 ? "binds" : "bind"} an
+          SSH key, and no agent will serve this scope. Only an agent can deliver a key file, so{" "}
+          {preview.jobsNeedingAgent.length === 1 ? "its" : "their"} runs will be refused: <JobNames jobs={preview.jobsNeedingAgent} />
         </>
       ),
     });
@@ -314,8 +300,8 @@ function PreviewPanel({ preview, selectedCount }: { preview: Preview; selectedCo
         ),
       });
     }
-    // The move to a runner moves host-key trust with it: the server's own pins
-    // stop mattering and this runner's known_hosts starts to.
+    // Which runner takes a run decides whose host-key trust applies: an agent
+    // trusts the hosts in its own reviewed known_hosts.
     if (r.hostsWithoutKey > 0) {
       lines.push({
         tone: "warning",
@@ -345,7 +331,7 @@ function PreviewPanel({ preview, selectedCount }: { preview: Preview; selectedCo
         <div style={{ fontSize: c.fontSm, color: c.textSec }}>
           {selectedCount === 0 && !preview.currentlyBound
             ? "Nothing — the scope stays unbound."
-            : "No job changes executor, and every chosen runner can serve what runs on this scope."}
+            : "The same runners take this scope's runs, and every chosen runner can serve what runs on it."}
         </div>
       ) : (
         <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 6 }}>
@@ -375,7 +361,7 @@ export function ScopeRunnersDialog({
   onSaved: (message: string) => void;
 }) {
   const runnersQ = useGet<unknown>(() => api.GET("/runners"), []);
-  const fleet = rows<RunnerLite>(runnersQ.data).filter(bindable);
+  const fleet = rows<RunnerLite>(runnersQ.data);
   const bound = scope.boundRunners ?? [];
   const initial = useMemo(() => bound.map((b) => b.runnerId).sort(), [bound]);
   const [selected, setSelected] = useState<string[]>(initial);
@@ -530,7 +516,7 @@ export function ReplaceRunnerDialog({
   onDone: (message: string, to: { id: string; name: string }) => void;
 }) {
   const runnersQ = useGet<unknown>(() => api.GET("/runners"), []);
-  const candidates = rows<RunnerLite>(runnersQ.data).filter((r) => String(r.id) !== from.id && bindable(r));
+  const candidates = rows<RunnerLite>(runnersQ.data).filter((r) => String(r.id) !== from.id);
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);

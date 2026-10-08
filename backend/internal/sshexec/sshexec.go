@@ -1,9 +1,11 @@
-// Package sshexec is the in-app SSH executor (execution-update.md EX.4): an
-// opt-in, in-process worker pool that claims executor='ssh' runs and executes
-// them over SSH (direct or via a bastion) against a single host or a scope of
-// hosts. It shares the runner subsystem's redaction seam, kill mechanism
-// (action_queue), concurrency cap, and metrics/notify terminal seam — it adds
-// an executor, not a parallel lifecycle.
+// Package sshexec is the local runner's engine (execution-update.md EX.4;
+// 2.3.0, LR-40): an opt-in, in-process worker pool that executes shell runs
+// over SSH (direct or via a bastion) against a single host or a scope of
+// hosts. It has no claim of its own: it claims through runner.Claim, as the
+// local runner's row, so agencies, scope bindings and requirements apply to
+// the server as they do to an agent. It shares the runner subsystem's
+// redaction seam, kill mechanism (action_queue), concurrency cap, and
+// metrics/notify terminal seam — an engine, not a parallel lifecycle.
 package sshexec
 
 import (
@@ -11,7 +13,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -175,7 +176,7 @@ func (s *Service) LogDir() string {
 // (ssh runs queue, never execute).
 func (s *Service) Start(ctx context.Context) {
 	// Reconcile crash-orphaned runs BEFORE anything else, even when the local
-	// runner is off: an executor='ssh' run still 'running' at process start has
+	// runner is off: a run of the server's still 'running' at process start has
 	// no live worker and permanently consumes a global concurrency slot until
 	// reconciled (PP-H2). Synchronous so a fast restart frees slots before the
 	// loop begins claiming. Safe under the single-instance invariant.
@@ -201,6 +202,19 @@ func (s *Service) Start(ctx context.Context) {
 	s.runMu.Lock()
 	s.base, s.localID = ctx, id
 	s.runMu.Unlock()
+
+	// Once, on the first start of 2.3.0: put the local runner where the server
+	// was serving, record how each scope's shell jobs were served, and move
+	// the rows still queued for the SSH executor (settings.RunLocalRunnerUpgradePass).
+	// Before Apply, so the loop's first claim already sees the placements. A
+	// failure is logged and tried again at the next start: nothing was marked
+	// done.
+	wasOn, werr := settings.SSHExecutorWasOn(ctx, s.db)
+	if werr != nil {
+		s.log.Error("local runner: could not read what the SSH executor was for the upgrade pass", "error", werr)
+	} else if _, uerr := settings.RunLocalRunnerUpgradePass(ctx, s.db, s.log, wasOn); uerr != nil {
+		s.log.Error("local runner: the 2.3.0 upgrade pass failed; it will be tried again at the next start", "error", uerr)
+	}
 
 	// The periodic orphan reaper runs whether or not the local runner is on: a
 	// run it started can outlive the switch being turned off.
@@ -423,47 +437,51 @@ type claimedRun struct {
 
 // claim atomically transitions the oldest queued ssh-executor run to running.
 func (s *Service) claim(ctx context.Context) (*claimedRun, error) {
-	now := time.Now().UTC()
-	ts := now.Format(time.RFC3339)
-	var r claimedRun
-	var scope, targetHost, envJSON, overrideJSON, jobSource, jobUID, scriptRef, triggeredBy, entityCode, sshUser, sshCred sql.NullString
-	err := s.db.QueryRowContext(ctx, `
-		UPDATE runs
-		SET status = 'running', started_at = ?
-		WHERE id = (
-			SELECT id FROM runs
-			WHERE status = 'queued' AND executor = 'ssh'
-			  AND run_type IN ('bash','perl','powershell','python')
-			-- QP: see the note on runner/poll.go's twin. Both claim queries must
-			-- sort the same way or priority applies to some run types and not others.
-			--
-			-- SB: the scope↔runner binding (mig. 1180) is deliberately NOT
-			-- mirrored here, and this is the one asymmetry the "both claim
-			-- queries" rule above does not cover. A binding names runners; this
-			-- pool IS the control plane, so there is nothing here it could match.
-			-- It is enforced upstream instead, where the executor is chosen:
-			-- execspec.ResolveExecutor sends a run on a bound scope to the runner
-			-- executor, and refuses one that asks for ssh, in every producer — so
-			-- a run produced on a bound scope never reaches this query. (The
-			-- runner-tag pin this replaced made the same promise and kept it only
-			-- on the manual trigger; SB Phase 0 has the test.) Do not "fix" the
-			-- asymmetry by adding a predicate here: it would strand, permanently
-			-- and silently, every run it matched.
-			ORDER BY priority DESC, created_at ASC
-			LIMIT 1
-		)
-		RETURNING id, job_name, job_source, job_uid, script_ref, run_type, scope, target_host, triggered_by, env_json, override_json, entity_code, ssh_user, ssh_credential`, ts).
-		Scan(&r.traceID, &r.jobName, &jobSource, &jobUID, &scriptRef, &r.runType, &scope, &targetHost, &triggeredBy, &envJSON, &overrideJSON, &entityCode, &sshUser, &sshCred)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	caps, err := s.localCaps(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// The one claim (LR-40): the statement an agent's poll runs, for this
+	// server's own row. Agencies, scope bindings, requirements and priority
+	// apply to the local runner exactly as they do to an agent; the SSH pool's
+	// own query, which knew none of them, is gone. Secret injection is always
+	// allowed (LR-46: this process is the secret store), and the one clause
+	// that is the local runner's alone keeps it from a run that binds a key.
+	c, err := runner.Claim(ctx, s.db, s.log, runner.ClaimRequest{
+		RunnerID:    s.localID,
+		Caps:        caps,
+		InjectionOK: true,
+		Local:       true,
+		Actor:       localRunnerActor,
+	})
+	if err != nil || c == nil {
+		return nil, err
+	}
+	r := claimedRun{traceID: c.TraceID, jobName: c.JobName, runType: c.RunType, scope: c.Scope}
+	if t, perr := time.Parse(time.RFC3339, c.StartedAt); perr == nil {
+		r.startedAt = t
+	} else {
+		r.startedAt = time.Now().UTC()
+	}
+	metrics.RunStarted()
+
+	// The rest of the row, by id. The run is already 'running' and this
+	// process is its only worker, so a failed read must not return an error
+	// and walk away: it is finalized here, with the cause.
+	var targetHost, envJSON, overrideJSON, jobSource, jobUID, scriptRef, triggeredBy, entityCode, sshUser, sshCred sql.NullString
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT job_source, job_uid, script_ref, target_host, triggered_by, env_json, override_json,
+		       entity_code, ssh_user, ssh_credential
+		  FROM runs WHERE id = ?`, c.TraceID).
+		Scan(&jobSource, &jobUID, &scriptRef, &targetHost, &triggeredBy, &envJSON, &overrideJSON,
+			&entityCode, &sshUser, &sshCred); err != nil {
+		s.log.Error("local runner: claimed a run and could not read it; failing it", "trace_id", c.TraceID, "error", err)
+		s.finalizeReason(ctx, r, "failure", nil, "local_runner_read_failed")
+		return nil, nil
 	}
 	r.jobSource = jobSource.String
 	r.jobUID = jobUID.String
 	r.scriptRef = scriptRef.String
-	r.scope = scope.String
 	r.targetHost = targetHost.String
 	r.triggeredBy = triggeredBy.String
 	r.envJSON = envJSON.String
@@ -471,19 +489,32 @@ func (s *Service) claim(ctx context.Context) (*claimedRun, error) {
 	r.entityCode = entityCode.String
 	r.sshUser = sshUser.String
 	r.sshCred = sshCred.String
-	r.startedAt = now
-	metrics.RunStarted()
-	// ts is the claim instant already written to runs.started_at — reuse it so the
-	// run-start row cannot land before (or after) the run it announces.
-	_ = auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
-		At:      ts,
-		Kind:    "run-start",
-		Actor:   "ssh-executor",
-		JobName: r.jobName,
-		Scope:   r.scope,
-		TraceID: r.traceID,
-	})
 	return &r, nil
+}
+
+// localRunnerActor is the activity actor of a run the local runner took
+// (LR-53). Rows written before 2.3.0 say "ssh-executor" and are left as they are.
+const localRunnerActor = "local-runner"
+
+// localCaps is what the local runner may claim: the capabilities on its row
+// (the four shell types, LR-41) minus the operator's mask, as for an agent.
+func (s *Service) localCaps(ctx context.Context) ([]string, error) {
+	var capsJSON string
+	var managed sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(capabilities, '[]'), managed_settings FROM runners WHERE id = ?`, s.localID).
+		Scan(&capsJSON, &managed); err != nil {
+		return nil, fmt.Errorf("read the local runner: %w", err)
+	}
+	var caps []string
+	_ = json.Unmarshal([]byte(capsJSON), &caps)
+	var ms struct {
+		CapabilityMask []string `json:"capabilityMask"`
+	}
+	if managed.Valid && managed.String != "" {
+		_ = json.Unmarshal([]byte(managed.String), &ms)
+	}
+	return execspec.EffectiveCaps(caps, ms.CapabilityMask), nil
 }
 
 // execute resolves the command + targets, fans out over SSH, and finalizes.
@@ -543,23 +574,22 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		}
 	}
 
-	// KB — a bound SSH key that reached dispatch on this executor. Every producer
-	// refuses a key-bound run that resolves to ssh at enqueue (runref.
-	// KeyBindingsOnSSH), so this is reachable only by a binding added while the
-	// run was queued or parked. The executor connects FROM cronomicon and cannot
-	// place the key on the target, so the run fails HERE, before connecting —
-	// after the injection audit above, in the same order the missing-binding
-	// path uses (the audit records what was declared). It used to warn and
-	// continue, which started a run with an input it would never receive.
+	// LR-47 — a bound SSH key that reached the local runner. The claim keeps it
+	// away from a job or script that declares a key binding, so this is
+	// reachable only by a binding the claim cannot see: one that resolves from
+	// the run's own overrides. The local runner connects FROM the server and
+	// cannot place a key on the target, so the run fails HERE, before
+	// connecting — after the injection audit above, in the same order the
+	// missing-binding path uses (the audit records what was declared).
 	if resolved != nil && len(resolved.Keys) > 0 {
 		names := make([]string, 0, len(resolved.Keys))
 		for _, k := range resolved.Keys {
 			names = append(names, k.Reference)
 		}
-		s.log.Warn("ssh executor: key-bound run reached dispatch on the ssh executor",
+		s.log.Warn("local runner: a key-bound run reached it",
 			"trace_id", r.traceID, "references", names)
 		sink.line("", "cronomicon: this run binds SSH key "+strings.Join(names, ", ")+
-			" and resolved to the SSH executor, which cannot deliver key files; run it on a runner, or bind the key as a Secret and write the file in the job body")
+			" and was taken by the local runner, which cannot deliver key files; it needs an agent — or bind the key as a Secret and write the file in the job body")
 		s.finalize(ctx, r, "failure", nil)
 		return
 	}
@@ -1004,13 +1034,32 @@ func (s *Service) finalizeReason(ctx context.Context, r claimedRun, status strin
 	if !r.startedAt.IsZero() {
 		durVal = now.Sub(r.startedAt).Milliseconds()
 	}
-	if _, err := s.db.ExecContext(wctx, `
+	res, err := s.db.ExecContext(wctx, `
 		UPDATE runs SET status = ?, completed_at = ?, duration_ms = ?, exit_code = ?,
 		    queued_reason = COALESCE(NULLIF(?, ''), queued_reason)
-		WHERE id = ? AND status = 'running'`, status, ts, durVal, exitVal, reason, r.traceID); err != nil {
+		WHERE id = ? AND status = 'running'`, status, ts, durVal, exitVal, reason, r.traceID)
+	if err != nil {
 		s.log.Error("ssh executor finalize", "trace_id", r.traceID, "error", err)
 	}
+	// The slot is given back by whoever ends the run, once. A run the stale
+	// reaper already reconciled is no longer 'running' here: its slot went
+	// back then, and this worker finishing late must not give back another.
+	if res != nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			s.releaseLoad(wctx)
+		}
+	}
 	s.emitTerminal(wctx, r.traceID, r.jobName, r.scope, status, exit)
+}
+
+// releaseLoad gives back the slot the claim took on the local runner's row
+// (runners.load, which the claim increments for every runner). An agent's is
+// given back when its final log chunk arrives; the server's is given back here.
+func (s *Service) releaseLoad(ctx context.Context) {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE runners SET load = MAX(0, load - 1) WHERE kind = 'server'`); err != nil {
+		s.log.Error("local runner: release load", "error", err)
+	}
 }
 
 // emitTerminal fires the shared run-end seam — the activity row + RunFinished
@@ -1025,7 +1074,7 @@ func (s *Service) emitTerminal(ctx context.Context, traceID, jobName, scope, sta
 		At:      ts,
 		Kind:    "run-end",
 		Outcome: status,
-		Actor:   "ssh-executor",
+		Actor:   localRunnerActor,
 		JobName: jobName,
 		Scope:   scope,
 		TraceID: traceID,
@@ -1068,7 +1117,7 @@ func (s *Service) reconcileOrphan(ctx context.Context, o orphan) bool {
 	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE runs SET status='failure', queued_reason='executor_lost', completed_at=?, duration_ms=?
-		WHERE id=? AND status='running' AND executor='ssh'`, ts, durVal, o.traceID)
+		WHERE id=? AND status='running' AND `+localRunSQL, ts, durVal, o.traceID)
 	if err != nil {
 		s.log.Error("ssh executor reconcile orphan", "trace_id", o.traceID, "error", err)
 		return false
@@ -1076,9 +1125,17 @@ func (s *Service) reconcileOrphan(ctx context.Context, o orphan) bool {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return false // already terminal — don't double-emit
 	}
+	s.releaseLoad(ctx)
 	s.emitTerminal(ctx, o.traceID, o.jobName, o.scope, "failure", nil)
 	return true
 }
+
+// localRunSQL is true of a run this process is the worker of: one the local
+// runner claimed (its id on the row), or one the SSH executor claimed before
+// 2.3.0, which stamped no runner and is known by its executor. The second arm
+// is for rows a crash left 'running' across the upgrade; nothing writes
+// executor='ssh' any more.
+const localRunSQL = `(runner_id IN (SELECT id FROM runners WHERE kind = 'server') OR executor = 'ssh')`
 
 // reconcileOrphans runs the given orphan query, reconciles each match, and
 // returns the number reconciled. Rows are collected before any UPDATE so the
@@ -1110,22 +1167,29 @@ func (s *Service) reconcileOrphans(ctx context.Context, query string, args ...an
 	return n
 }
 
-// sweepOrphansOnStartup reconciles EVERY executor='ssh' run still 'running' at
-// process start. The in-app executor is single-instance, so any such run is by
+// sweepOrphansOnStartup reconciles EVERY run of the server's (localRunSQL)
+// still 'running' at process start. The engine is single-instance, so any such run is by
 // definition orphaned (no live worker owns it — workers exist only within this
 // process's loop). Running it synchronously before the claim loop frees the
 // concurrency slots a crashed predecessor left wedged (PP-H2).
 func (s *Service) sweepOrphansOnStartup(ctx context.Context) {
 	n := s.reconcileOrphans(ctx, `
 		SELECT id, job_name, COALESCE(scope,''), COALESCE(started_at,'')
-		FROM runs WHERE executor='ssh' AND status='running'`)
+		FROM runs WHERE status='running' AND `+localRunSQL)
 	if n > 0 {
-		s.log.Warn("ssh executor: reconciled orphaned runs at startup (executor_lost)", "count", n)
+		s.log.Warn("local runner: reconciled orphaned runs at startup (executor_lost)", "count", n)
+	}
+	// Nothing of the local runner's is running now, and it is not claiming,
+	// whatever a crash left on its row. Apply writes "online" when it starts
+	// the loop; if the start fails before that, the row must not go on saying
+	// a runner is there for the claim's mirrors to count.
+	if _, err := s.db.ExecContext(ctx, `UPDATE runners SET load = 0, status = 'offline' WHERE kind = 'server'`); err != nil {
+		s.log.Error("local runner: reset its row", "error", err)
 	}
 }
 
 // reapOrphansLoop is the periodic safety net (mirrors runner StartReaper's
-// goroutine lifecycle): every minute it reconciles executor='ssh' runs that have
+// goroutine lifecycle): every minute it reconciles the server's runs that have
 // been 'running' longer than the stale window. The window is set far above any
 // plausible job timeout so it never kills a live long-running run — the startup
 // sweep, not this, is what recovers crashed runs quickly.
@@ -1152,7 +1216,7 @@ func (s *Service) reapOrphansOnce(ctx context.Context, staleAfter time.Duration)
 	cutoff := sshReaperNow().Add(-staleAfter).Format(time.RFC3339)
 	return s.reconcileOrphans(ctx, `
 		SELECT id, job_name, COALESCE(scope,''), COALESCE(started_at,'')
-		FROM runs WHERE executor='ssh' AND status='running'
+		FROM runs WHERE status='running' AND `+localRunSQL+`
 		  AND started_at IS NOT NULL AND started_at < ?`, cutoff)
 }
 

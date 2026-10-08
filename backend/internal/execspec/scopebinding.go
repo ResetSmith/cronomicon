@@ -167,13 +167,10 @@ func scopeBindingReason(scope string, bound []BoundRunner) string {
 // registered. This is the bind-time check: binding a runner the claim query
 // would refuse produces a scope nothing can serve, which is better refused at
 // the form than discovered as a stuck run.
-//
-// False for the local runner until it claims by the runner rule (Phase B): see
-// ClaimsByPollSQL.
 func RunnerEligibleForScope(ctx context.Context, q rowQueryer, scopeID, runnerID string) (bool, error) {
 	var ok bool
 	err := q.QueryRowContext(ctx, `
-		SELECT EXISTS (SELECT 1 FROM runners rn WHERE rn.id = ? AND `+ClaimsByPollSQL("rn")+`)
+		SELECT EXISTS (SELECT 1 FROM runners rn WHERE rn.id = ?)
 		   AND EXISTS (SELECT 1 FROM scope_agencies sa
 		                 JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
 		                WHERE sa.scope_id = ? AND ra.runner_id = ?)`,

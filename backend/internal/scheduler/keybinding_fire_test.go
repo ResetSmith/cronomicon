@@ -10,9 +10,11 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
-// KB — the cron and reaction halves of the producer conformance: a key-bound
-// job whose fire resolves to the ssh executor is refused with the reason
-// recorded, and the same job on the runner executor enqueues. The manual/token,
+// LR-47 (the KB refusal, narrowed) — the cron and reaction halves of the
+// producer conformance: a key-bound shell job with no agent to deliver the key
+// is refused with the reason recorded, and the same job enqueues once an agent
+// serves its scope. The job's own `executor` is not read any more (LR-42); the
+// fixtures still set it, to show it changes nothing. The manual/token,
 // workflow-step and file-arrival halves live next to their producers
 // (api/keybinding_run_test.go, workflow/keybinding_step_test.go,
 // runner/filewatch_keybinding_test.go) — the FX-C shape.
@@ -50,10 +52,10 @@ func TestScheduledFireOfKeyBoundJobOnSSHIsRecordedNotEnqueued(t *testing.T) {
 		t.Fatalf("no run row recorded — the fire vanished silently: %v", err)
 	}
 	if status != "skipped" {
-		t.Errorf("status = %q, want skipped — the ssh executor cannot deliver the key, so the run must not start", status)
+		t.Errorf("status = %q, want skipped — no agent can deliver the key, so the run must not be queued", status)
 	}
-	if reason != runref.ReasonKeyBindingOnSSH {
-		t.Errorf("queued_reason = %q, want %q", reason, runref.ReasonKeyBindingOnSSH)
+	if reason != runref.ReasonKeyBindingNeedsAgent {
+		t.Errorf("queued_reason = %q, want %q", reason, runref.ReasonKeyBindingNeedsAgent)
 	}
 
 	// Once per episode, like every other skip reason.
@@ -65,10 +67,28 @@ func TestScheduledFireOfKeyBoundJobOnSSHIsRecordedNotEnqueued(t *testing.T) {
 	}
 }
 
-func TestScheduledFireOfKeyBoundJobOnRunnerEnqueues(t *testing.T) {
+// agentServing registers an agent of Global's and makes sure the scope exists
+// (a new scope is Global's), so the agent serves it.
+func agentServing(t *testing.T, pool *sql.DB, scope string) {
+	t.Helper()
+	const now = "2026-01-01T00:00:00Z"
+	for _, q := range []string{
+		`INSERT OR IGNORE INTO scopes (id, name, source, created_at) VALUES ('sc-` + scope + `', '` + scope + `', 'cronomicon', '` + now + `')`,
+		`INSERT INTO runners (id, name, status, registered_at, created_at) VALUES ('agent-1', 'agent-1', 'offline', '` + now + `', '` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+}
+
+func TestScheduledFireOfKeyBoundJobWithAnAgentEnqueues(t *testing.T) {
 	pool, _ := unboundFireDB(t)
-	setExecutor(t, pool, "unscoped-job", "runner")
+	// The job says ssh, which until 2.3.0 was what refused it. An agent serves
+	// its scope — offline, even: that is an ordinary wait — so it enqueues.
+	setExecutor(t, pool, "unscoped-job", "ssh")
 	bindKey(t, pool, "unscoped-job")
+	agentServing(t, pool, "tax")
 
 	s := New(pool, quietLog(), nil)
 	s.fire("git", "unscoped-job", "", "bash", "tax", "Allow", "unscoped-job", "nightly", "")
@@ -79,7 +99,7 @@ func TestScheduledFireOfKeyBoundJobOnRunnerEnqueues(t *testing.T) {
 		t.Fatalf("no run row: %v", err)
 	}
 	if status != "queued" || executor != "runner" {
-		t.Errorf("status/executor = %q/%q, want queued/runner — the refusal must not reach the runner path", status, executor)
+		t.Errorf("status/executor = %q/%q, want queued/runner — an agent can deliver the key, so the run waits for it", status, executor)
 	}
 }
 

@@ -197,8 +197,8 @@ type Config struct {
 	// config and references disjoint. Set CRONOMICON_SECRETS_INJECTION_ENABLED=false
 	// to hard-disable injection for a release.
 	SecretsInjectionEnabled bool
-	// SSHExecutorStaleAfter bounds the periodic SSH-orphan reaper (PP-H2): an
-	// executor='ssh' run still 'running' longer than this is reconciled to
+	// SSHExecutorStaleAfter bounds the periodic orphan reaper (PP-H2): a run
+	// the local runner claimed that is still 'running' longer than this is reconciled to
 	// failure (executor_lost). Must stay safely above the longest plausible job
 	// (its A12 timeout) so it never kills a live run — the synchronous startup
 	// sweep, not this window, provides fast crash recovery. Default 24h.

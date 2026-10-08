@@ -1008,10 +1008,6 @@ function RunnerDetail({
               where "these hosts are reached from here" belongs); what this
               runner's row owes the operator is the consequence — what stops if
               it goes away — and the one-step way to hand that over. */}
-          {/* Not for the local runner yet: no scope can be bound to it until it
-              claims by the runner rule (the server refuses the save), so "bind
-              it to a scope" would be advice nobody can follow. */}
-          {!local && (
           <Section
             title={`Scopes served${servedScopes.length ? ` (${servedScopes.length})` : ""}`}
             info={
@@ -1024,7 +1020,6 @@ function RunnerDetail({
           >
             <ScopesServed runner={runner} scopes={servedScopes} canReplace={canConfigAnywhere} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
           </Section>
-          )}
 
           {/* Tags — operator-authored, editable inline like other catalog items */}
           <Section
@@ -1880,7 +1875,15 @@ export function Runners() {
                                 runner={r}
                                 serverVersion={serverBuild?.version}
                                 servedScopes={servedBy(r.id)}
-                                successor={handover && handover.from === String(r.id) ? handover.to : null}
+                                // No offer to copy host keys when the scopes went to
+                                // the local runner: it has no known_hosts of its own
+                                // to copy them into (it verifies against the keys kept
+                                // with the SSH targets), and its routes refuse the copy.
+                                successor={
+                                  handover && handover.from === String(r.id) && !runners.some((x) => String(x.id) === handover.to.id && isLocal(x))
+                                    ? handover.to
+                                    : null
+                                }
                                 onSuccessor={(to) => setHandover(to ? { from: String(r.id), to } : null)}
                                 canConfig={canConfig && (r.canManage ?? true)}
                                 canConfigAnywhere={canConfig}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -464,6 +465,64 @@ func respondControlOr204(w http.ResponseWriter, control []runnerproto.PollContro
 // The len(caps)==0 early-return avoids a pointless query for a runner with no
 // capabilities at all.
 func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, allowSecretInjection bool) (*runnerproto.PollAssignment, error) {
+	c, err := Claim(ctx, s.db, s.log, ClaimRequest{
+		RunnerID: runnerID,
+		Caps:     caps,
+		// The injection fence is DISARMED when the global kill switch is off
+		// (see Claim): any runner may then take a binding-bearing run.
+		InjectionOK: !s.cfg.SecretsInjectionEnabled || allowSecretInjection,
+		Actor:       "runner:" + runnerID,
+	})
+	if err != nil || c == nil {
+		return nil, err
+	}
+	return &runnerproto.PollAssignment{
+		TraceID: c.TraceID,
+		JobName: c.JobName,
+		RunType: c.RunType,
+		Scope:   c.Scope,
+		Payload: map[string]any{
+			"jobName": c.JobName,
+			"type":    c.RunType,
+			"scope":   c.Scope,
+		},
+		LiveLog: true, // v12: this server accepts mid-run partial log chunks
+	}, nil
+}
+
+// ClaimRequest is one runner asking for one run.
+type ClaimRequest struct {
+	RunnerID string
+	// Caps are the runner's EFFECTIVE capability tokens: declared, minus the
+	// operator's mask (execspec.EffectiveCaps).
+	Caps []string
+	// InjectionOK: this runner may take a run that injects secret material
+	// (it is flagged allow_secret_injection, or the kill switch is off and
+	// nothing is injected).
+	InjectionOK bool
+	// Local is the local runner — the server itself (LR-40). It claims by this
+	// same rule, with one more clause: it does not take a run whose job or
+	// script binds an SSH key (LR-47, execspec.RunBindsKeySQL).
+	Local bool
+	// Actor is the activity row's actor: "runner:<id>" for an agent,
+	// "local-runner" for the server (LR-53).
+	Actor string
+}
+
+// Claimed is the run a Claim moved from queued to running.
+type Claimed struct {
+	TraceID, JobName, RunType, Scope string
+	// StartedAt is the claim instant, as written to runs.started_at.
+	StartedAt string
+}
+
+// Claim is THE claim: the one statement that moves a queued run to running,
+// for an agent's poll and for the local runner's loop alike (2.3.0, LR-40;
+// until then the server's SSH pool had a query of its own that knew nothing of
+// agencies, scope bindings or requirements). It returns nil when nothing
+// queued matches.
+func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimRequest) (*Claimed, error) {
+	runnerID, caps := req.RunnerID, req.Caps
 	if len(caps) == 0 {
 		return nil, nil
 	}
@@ -487,8 +546,13 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	// registered agent speaks the current protocol.) The kill-switch-off case is
 	// unaffected: nothing is injected, so any runner may claim it.
 	injectFlag := 0
-	if !s.cfg.SecretsInjectionEnabled || allowSecretInjection {
+	if req.InjectionOK {
 		injectFlag = 1
+	}
+	// LR-47: 1 keeps this claim away from a run that binds an SSH key.
+	localFlag := 0
+	if req.Local {
+		localFlag = 1
 	}
 
 	// Match against the EFFECTIVE caps passed in (already masked by the caller,
@@ -505,16 +569,20 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	// satisfied, agency-eligible, scope-bound, injection-gated run and
 	// transition it to running in a single UPDATE ... RETURNING (SQLite 3.35+).
 	// Placeholders in order: runner_id, started-at ts, caps (run_type), caps
-	// (requires⊆), agency runnerID, binding runnerID, injectFlag.
+	// (requires⊆), agency runnerID, binding runnerID, injectFlag, localFlag.
 	var (
 		traceID string
 		jobName string
 		runType string
 		scope   sql.NullString
 	)
-	err = s.db.QueryRowContext(ctx, `
+	err = database.QueryRowContext(ctx, `
 		UPDATE runs
-		SET status = 'running', runner_id = ?, started_at = ?
+		-- queued_reason is the "why is this waiting" sentence; it stops being
+		-- true here. Left in place it would follow a run that waited and then
+		-- succeeded into History (the finalizers only ever overwrite it with
+		-- a reason of their own).
+		SET status = 'running', runner_id = ?, started_at = ?, queued_reason = NULL
 		WHERE id = (
 			SELECT id FROM runs
 			WHERE status = 'queued' AND executor = 'runner'
@@ -601,6 +669,8 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			           OR (rb.owner_kind = 'script' AND rb.owner_name = runs.script_ref))
 			    )
 			  )
+			  -- LR-47: the local runner does not take a run that binds an SSH key
+			  AND (? = 0 OR NOT `+execspec.RunBindsKeySQL("runs")+`)
 			-- QP: highest priority first, then oldest. The index
 			-- idx_runs_claimable is cut (status, executor, priority DESC,
 			-- created_at ASC) to match this mixed-direction sort exactly; a
@@ -611,7 +681,7 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 			LIMIT 1
 		)
 		RETURNING id, job_name, run_type, scope`,
-		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, injectFlag,
+		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, injectFlag, localFlag,
 	).Scan(&traceID, &jobName, &runType, &scope)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -622,35 +692,26 @@ func (s *Service) claimRun(ctx context.Context, runnerID string, caps []string, 
 	}
 
 	// Increment runner load counter.
-	if _, err := s.db.ExecContext(ctx,
+	if _, err := database.ExecContext(ctx,
 		`UPDATE runners SET load = load + 1 WHERE id = ?`, runnerID); err != nil {
-		s.log.Error("increment runner load", "runner_id", runnerID, "error", err)
+		log.Error("increment runner load", "runner_id", runnerID, "error", err)
 	}
 
 	// Emit run-start activity (B4 seam: B4 owns queued→running transition).
 	scopeVal := scope.String
+	var runnerName string
+	_ = database.QueryRowContext(ctx, `SELECT name FROM runners WHERE id = ?`, runnerID).Scan(&runnerName)
 	// At is the claim ts also written to runs.started_at — a fresh stamp here
 	// could order the run-start after its own run row.
-	_ = auditlog.WriteActivity(ctx, s.db, auditlog.ActivityParams{
+	_ = auditlog.WriteActivity(ctx, database, auditlog.ActivityParams{
 		At:         ts,
 		Kind:       "run-start",
-		Actor:      "runner:" + runnerID,
-		RunnerName: s.runnerNameOf(ctx, runnerID),
+		Actor:      req.Actor,
+		RunnerName: runnerName,
 		JobName:    jobName,
 		Scope:      scopeVal,
 		TraceID:    traceID,
 	})
 
-	return &runnerproto.PollAssignment{
-		TraceID: traceID,
-		JobName: jobName,
-		RunType: runType,
-		Scope:   scopeVal,
-		Payload: map[string]any{
-			"jobName": jobName,
-			"type":    runType,
-			"scope":   scopeVal,
-		},
-		LiveLog: true, // v12: this server accepts mid-run partial log chunks
-	}, nil
+	return &Claimed{TraceID: traceID, JobName: jobName, RunType: runType, Scope: scopeVal, StartedAt: ts}, nil
 }

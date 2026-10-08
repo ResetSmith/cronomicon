@@ -49,12 +49,12 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	if err != nil {
 		return "", err
 	}
-	// Every reason below is about RUNNERS. A run frozen onto the ssh executor is
-	// claimed by the in-process pool and needs none, so "no runner is online" on
-	// such a run is not a hint, it is a wrong answer (SB Phase 0 found every
-	// queued ssh run in a runner-less deployment carrying exactly that).
+	// Nothing claims a row frozen onto the SSH executor any more (2.3.0, LR-42):
+	// every run is written for the runner executor and the server takes its
+	// share as the local runner. The upgrade converts the rows that were
+	// waiting; one that is still here was written around the one writer of runs.
 	if executor.String == "ssh" {
-		return "", nil
+		return ReasonQueuedForSSHExecutor, nil
 	}
 	ok, _, err := EligibleOnlineRunnerForRun(ctx, database, runID)
 	if err != nil || ok {
@@ -64,11 +64,46 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	if ag == "" || ag == "null" {
 		ag = "[]"
 	}
+	bindsKey, err := runBindsKey(ctx, database, runID)
+	if err != nil {
+		return "", err
+	}
+
+	// 0. The local runner would take this run and is not running. Asked first,
+	// because it is the one cause with a single switch behind it, and because
+	// every line below counts ONLINE runners and would say "no runner is
+	// online" about a server that is merely turned off. Type, requirements,
+	// agency, binding and the key rule, as the claim applies them; secret
+	// injection is always on for it (LR-46).
+	reqJSON := requiresJSON.String
+	if reqJSON == "" {
+		reqJSON = "[]"
+	}
+	lcaps := effectiveCapsSQL("rn")
+	var localOff bool
+	if err := database.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM runners rn
+			 WHERE rn.kind = 'server' AND rn.status <> 'online'
+			   AND ? IN `+lcaps+`
+			   AND NOT EXISTS (SELECT 1 FROM json_each(?) je WHERE je.value NOT IN `+lcaps+`)
+			   AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
+			                WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))
+			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ?)
+			        OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
+			                    WHERE sc.name = ? AND sr.runner_id = rn.id))
+			   AND ? = 0)`,
+		runType.String, reqJSON, ag, scope.String, scope.String, bindsKey).Scan(&localOff); err != nil {
+		return "", err
+	}
+	if localOff {
+		return ReasonLocalRunnerOff, nil
+	}
 
 	count := func(where string, args ...any) (int, error) {
 		var n int
 		e := database.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM runners rn WHERE rn.status = 'online' AND `+ClaimsByPollSQL("rn")+` AND `+where, args...).Scan(&n)
+			`SELECT COUNT(*) FROM runners rn WHERE rn.status = 'online' AND `+where, args...).Scan(&n)
 		return n, e
 	}
 
@@ -145,6 +180,20 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		return scopeBindingReason(scope.String, bound), nil
 	}
 
+	// 3.6. An SSH key binding (LR-47). The runners that passed so far may be the
+	// local runner alone, and it does not take a run that binds a key: an agent
+	// is handed the key as a file on its own disk, the server would have to
+	// place one on the target.
+	keyClause := bindClause + ` AND ` + localRunnerCannotSQL("rn")
+	keyArgs := append(append([]any{}, bindArgs...), bindsKey)
+	n, err = count(keyClause, keyArgs...)
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return ReasonKeyNeedsAgent, nil
+	}
+
 	// 4. Secret injection (P1.4): a run whose job/script declares bindings needs an
 	// injection-flagged runner. This is the gate most likely to be hit by a NEW
 	// runner — enrolling it in the agency is the obvious step, ticking the
@@ -156,8 +205,8 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	if err != nil {
 		return "", err
 	}
-	injectionClause := bindClause + ` AND (? = 0 OR rn.allow_secret_injection = 1)`
-	injectionArgs := append(append([]any{}, bindArgs...), bindsSecrets)
+	injectionClause := keyClause + ` AND (? = 0 OR rn.allow_secret_injection = 1)`
+	injectionArgs := append(append([]any{}, keyArgs...), bindsSecrets)
 	n, err = count(injectionClause, injectionArgs...)
 	if err != nil {
 		return "", err
@@ -192,6 +241,20 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// plainly rather than guessing.
 	return "no single online runner satisfies all of this run's requirements", nil
 }
+
+// The three reasons 2.3.0 added with the local runner. Sentences, shown
+// verbatim (there is no token-to-text map on the frontend).
+const (
+	// ReasonLocalRunnerOff: the local runner serves this run and is not running.
+	ReasonLocalRunnerOff = "the local runner would take this run and is not running — it is turned off, or " +
+		"forbidden on this host (a global administrator: Settings → Local runner)"
+	// ReasonKeyNeedsAgent: only the local runner is in reach, and the job binds a key.
+	ReasonKeyNeedsAgent = "this job binds an SSH key, which the local runner cannot deliver, and no agent " +
+		"that could take the run is online"
+	// ReasonQueuedForSSHExecutor: a row no claim reads any more.
+	ReasonQueuedForSSHExecutor = "this run was queued for the SSH executor, which the local runner replaced in " +
+		"2.3.0, so nothing will claim it — cancel it and run the job again"
+)
 
 // StampUnclaimableReason writes UnclaimableReason onto a queued run, if any. Never
 // fails the caller: an advisory hint that errors must not take an enqueue down with

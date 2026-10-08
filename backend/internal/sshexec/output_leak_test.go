@@ -153,7 +153,7 @@ func TestSSHExecutorRefusesOutputLeakingSecret(t *testing.T) {
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, job_source, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','ssh',?)`, scope, now); err != nil {
+		VALUES('run-1','j1','cronomicon','bash',?,'testhost','queued','ops@x','manual','runner',?)`, scope, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,7 +163,7 @@ func TestSSHExecutorRefusesOutputLeakingSecret(t *testing.T) {
 	svc.WithShutdownWG(endWG)
 	t.Cleanup(endWG.Wait)
 
-	claimed, err := svc.claim(context.Background())
+	claimed, err := claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim: run=%v err=%v", claimed, err)
 	}

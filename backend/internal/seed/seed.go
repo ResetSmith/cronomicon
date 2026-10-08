@@ -381,9 +381,9 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		// R2-2: seeded history carries the job's uid, exactly as a real enqueue
 		// would. Without it the job-detail panel — which asks by uid — would show
 		// an empty history for every demo job.
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, status, queued_reason, triggered_by, trigger_kind, created_at, job_uid)
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, status, queued_reason, triggered_by, trigger_kind, created_at, job_uid, executor)
 		      VALUES (?, ?, ?, ?, 'queued', ?, 'alice@corp.example', 'manual', ?,
-		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner')`,
 			db.NewTraceID(), q.job, q.runType, q.scope, q.reason, ago(3*minute), q.job)
 	}
 
@@ -419,9 +419,9 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		for ci, ch := range wr.children {
 			cStart := start.Add(time.Duration(ci) * 4 * minute)
 			cEnd := cStart.Add(3 * minute)
-			exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, workflow_run_id, started_at, completed_at, duration_ms, exit_code, created_at, job_uid)
+			exec(`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, workflow_run_id, started_at, completed_at, duration_ms, exit_code, created_at, job_uid, executor)
 			      VALUES (?, ?, ?, ?, ?, 'alice@corp.example', 'workflow', ?, ?, ?, ?, ?, ?,
-			              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+			              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner')`,
 				db.NewTraceID(), ch[0], ch[1], wr.scope, wr.childStatus[ci], wfTrace,
 				iso(cStart), iso(cEnd), 180000, exitFor(wr.childStatus[ci]), iso(cStart), ch[0])
 		}
@@ -860,9 +860,13 @@ func seedRun(exec func(string, ...any), r runRow) {
 	switch r.status {
 	case "running":
 		started := r.created
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, schedule_name, env_json, started_at, created_at, job_uid)
+		// Every run is the runner executor's (LR-42), and a running one is
+		// somebody's: without a runner on the row no sweep would ever close a
+		// seeded "running" run, and it would sit against the fleet cap for good.
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, schedule_name, env_json, started_at, created_at, job_uid, executor, runner_id)
 		      VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?,
-		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner',
+		              (SELECT id FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1))`,
 			r.id, r.job, r.runType, scope, host, r.triggeredBy, r.triggerKind,
 			nullStr(r.scheduleName), nullStr(r.envJSON), iso(started), iso(r.created), r.job)
 	default:
@@ -873,9 +877,9 @@ func seedRun(exec func(string, ...any), r runRow) {
 		if r.status == "killed" {
 			killedBy = "bob@corp.example"
 		}
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, killed_by, schedule_name, env_json, started_at, completed_at, duration_ms, exit_code, created_at, job_uid)
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, killed_by, schedule_name, env_json, started_at, completed_at, duration_ms, exit_code, created_at, job_uid, executor)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'))`,
+		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner')`,
 			r.id, r.job, r.runType, scope, host, r.status, r.triggeredBy, r.triggerKind, killedBy,
 			nullStr(r.scheduleName), nullStr(r.envJSON),
 			iso(started), iso(completed), dur, exitFor(r.status), iso(r.created), r.job)

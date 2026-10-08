@@ -59,7 +59,7 @@ func queueSSHRun(t *testing.T, pool *sql.DB, id string) {
 	}
 	if _, err := pool.Exec(`
 		INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor, created_at)
-		VALUES(?, 'j-local', 'bash', 'queued', 'tester', 'manual', 'ssh', ?)`, id, now); err != nil {
+		VALUES(?, 'j-local', 'bash', 'queued', 'tester', 'manual', 'runner', ?)`, id, now); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -317,3 +317,51 @@ func TestApplyReportsAStartThatFailed(t *testing.T) {
 		t.Fatal("Apply answered nil although Start could not create the local runner")
 	}
 }
+
+// The SSH executor was on under 2.2, and the first 2.3.0 start sets
+// CRONOMICON_LOCAL_RUNNER=forbid. The upgrade pass acts on what the server WAS
+// doing: the local runner is placed where it was serving and the queued runs
+// are moved, not closed as "the executor was off" — so the day forbid is lifted
+// it serves what it served. While forbidden it claims nothing.
+func TestForbidAtTheFirstStartStillPlacesTheLocalRunner(t *testing.T) {
+	svc, pool, ctx := localRunnerEngine(t, &config.Config{SSHExecutorEnabled: true, LocalRunnerForbid: true})
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, q := range []string{
+		`INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', '` + now + `')`,
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('s-fin', 'fin-web', 'cronomicon', '` + now + `')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 's-fin'`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-fin', 'ag-fin')`,
+		`INSERT INTO jobs (uid, name, source, run_type, scope, command, concurrency_policy, synced_at)
+		 VALUES ('u-restart', 'restart', 'cronomicon', 'bash', 'fin-web', 'true', 'Allow', '` + now + `')`,
+		`INSERT INTO runs (id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, agencies_json, created_at)
+		 VALUES ('was-queued', 'restart', 'bash', 'fin-web', 'queued', 'seed', 'manual', 'ssh', '["Finance"]', '` + now + `')`,
+		`INSERT INTO run_agencies (run_id, agency) VALUES ('was-queued', 'Finance')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	svc.Start(ctx)
+
+	id, status, _ := localRow(t, pool)
+	if status != "offline" {
+		t.Errorf("forbidden, the row reads %q", status)
+	}
+	var serves int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM runner_agencies WHERE runner_id = ? AND agency_id = 'ag-fin'`, id).Scan(&serves); err != nil || serves != 1 {
+		t.Errorf("the local runner was not placed in Finance, where the server was serving (%d rows, %v)", serves, err)
+	}
+	var runStatus, executor string
+	if err := pool.QueryRow(`SELECT status, executor FROM runs WHERE id = 'was-queued'`).Scan(&runStatus, &executor); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != "queued" || executor != "runner" {
+		t.Errorf("the run that was waiting is %s/%s, want queued for the runner executor (not closed, not claimed)", runStatus, executor)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if s := runStatusOf(t, pool, "was-queued"); s != "queued" {
+		t.Errorf("a forbidden local runner claimed a run: %s", s)
+	}
+}
+
+func runStatusOf(t *testing.T, pool *sql.DB, id string) string { return runStatus(t, pool, id) }

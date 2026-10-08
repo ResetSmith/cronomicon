@@ -27,7 +27,7 @@ func auditTestService(t *testing.T, traceID, triggeredBy, scope string) *Service
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, run_type, status, scope, triggered_by, trigger_kind, executor, created_at)
-		VALUES(?, 'j1', 'bash', 'running', ?, ?, 'manual', 'ssh', ?)`, traceID, scope, triggeredBy, now); err != nil {
+		VALUES(?, 'j1', 'bash', 'running', ?, ?, 'manual', 'runner', ?)`, traceID, scope, triggeredBy, now); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{SSHExecutorEnabled: true, SecretsInjectionEnabled: true}

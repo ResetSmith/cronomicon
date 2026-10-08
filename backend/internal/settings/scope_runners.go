@@ -431,6 +431,8 @@ type PreviewRunner struct {
 	Name       string `json:"name"`
 	Registered bool   `json:"registered"`
 	Eligible   bool   `json:"eligible"`
+	// Local is the local runner: this server, not an agent.
+	Local bool `json:"local"`
 	// Capabilities are the runner's EFFECTIVE capability tokens: what it
 	// declared, minus the server-managed mask — the set the claim query uses.
 	Capabilities []string `json:"capabilities"`
@@ -443,35 +445,43 @@ type PreviewRunner struct {
 	// HostsWithoutKey is how many of the scope's hosts this runner does not
 	// trust: neither approved here nor reported in its own known_hosts file.
 	// A run on such a host fails at the first connection. Compare with
-	// ScopeRunnersPreview.ScopeHosts.
+	// ScopeRunnersPreview.ScopeHosts. Always 0 for the local runner, which has
+	// no known_hosts file: it verifies against the keys kept with the SSH
+	// targets (until its keys move to the ledger).
 	HostsWithoutKey int `json:"hostsWithoutKey"`
+}
+
+// PreviewRunnerRef names a runner whose part in a scope changes with a save.
+type PreviewRunnerRef struct {
+	RunnerID string `json:"runnerId"`
+	Name     string `json:"name"`
+	// Local is the local runner: this server, not an agent.
+	Local  bool   `json:"local"`
+	Status string `json:"status"`
 }
 
 // ScopeRunnersPreview is what PUT /scopes/{id}/runners WOULD do, computed
 // without doing it.
 //
-// Binding a scope is not only a dispatch change. A job with no executor of its
-// own moves from the ssh executor (the control plane, with the server's
-// credentials and known_hosts) to the bound runners (their own key directory or
-// a delivered key, their own known_hosts); a job that asks for ssh starts being
-// refused; and clearing a binding moves everything back. None of that is visible
-// from the form, so the form asks first.
+// A binding decides WHICH runners take a scope's runs. Unbound, every runner
+// that serves the scope's agency does — agents and the local runner alike —
+// with whatever keys and known_hosts each of them has. Bound, only the named
+// ones do. So a save moves runs between machines with different credentials
+// and different host-key trust, and none of that is visible from the form; the
+// form asks first. (Until 2.3.0 this reported jobs moving between the SSH
+// executor and the runner executor. There is one executor now, LR-42.)
 type ScopeRunnersPreview struct {
 	Scope          string `json:"scope"`
 	CurrentlyBound bool   `json:"currentlyBound"`
 	WillBeBound    bool   `json:"willBeBound"`
-	// JobsMovingToRunner resolve to ssh today and would resolve to the runner.
-	JobsMovingToRunner []PreviewJob `json:"jobsMovingToRunner"`
-	// JobsMovingToSSH resolve to the runner today only because the scope is
-	// bound, and would return to ssh — to running from the server.
-	JobsMovingToSSH []PreviewJob `json:"jobsMovingToSsh"`
-	// JobsRefused ask for the ssh executor themselves and would be refused
-	// (scope_requires_runner) while the scope is bound.
-	JobsRefused []PreviewJob `json:"jobsRefused"`
-	// QueuedSSHRuns are runs already queued on this scope, or parked for later,
-	// and frozen onto ssh. They keep that executor and run from the server
-	// whatever is saved.
-	QueuedSSHRuns int `json:"queuedSshRuns"`
+	// RunnersLosing serve this scope today and would not after the save.
+	RunnersLosing []PreviewRunnerRef `json:"runnersLosing"`
+	// RunnersGaining would serve this scope after the save and do not today.
+	RunnersGaining []PreviewRunnerRef `json:"runnersGaining"`
+	// JobsNeedingAgent are the scope's shell jobs that bind an SSH key, listed
+	// when NO agent would serve the scope after the save: only an agent can
+	// deliver a key file, so their runs would be refused (LR-47).
+	JobsNeedingAgent []PreviewJob `json:"jobsNeedingAgent"`
 	// RunTypes are the run types the scope's jobs use; JobsNeedingInjection is
 	// how many of them need a secret-injection runner.
 	RunTypes             []string `json:"runTypes"`
@@ -492,14 +502,14 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 	}
 	ids := normalizeIDs(runnerIDs)
 	out := &ScopeRunnersPreview{
-		Scope:              sc.Scope,
-		CurrentlyBound:     len(sc.BoundRunners) > 0,
-		WillBeBound:        len(ids) > 0,
-		JobsMovingToRunner: []PreviewJob{},
-		JobsMovingToSSH:    []PreviewJob{},
-		JobsRefused:        []PreviewJob{},
-		RunTypes:           []string{},
-		Runners:            []PreviewRunner{},
+		Scope:            sc.Scope,
+		CurrentlyBound:   len(sc.BoundRunners) > 0,
+		WillBeBound:      len(ids) > 0,
+		RunnersLosing:    []PreviewRunnerRef{},
+		RunnersGaining:   []PreviewRunnerRef{},
+		JobsNeedingAgent: []PreviewJob{},
+		RunTypes:         []string{},
+		Runners:          []PreviewRunner{},
 	}
 
 	// The scope's live jobs. Read fully before resolving anything: the resolver
@@ -508,6 +518,7 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 	type jobRow struct {
 		PreviewJob
 		needsInjection bool
+		bindsKey       bool
 	}
 	rows, err := database.QueryContext(ctx, `
 		SELECT COALESCE(j.uid, ''), j.name, j.source, j.run_type,
@@ -516,7 +527,13 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 		                    WHERE (rb.owner_kind = 'job'
 		                            AND CASE WHEN COALESCE(j.uid, '') <> '' THEN rb.owner_uid = j.uid
 		                                     ELSE rb.owner_source = j.source AND rb.owner_name = j.name END)
-		                       OR (rb.owner_kind = 'script' AND rb.owner_name = j.script_ref)))
+		                       OR (rb.owner_kind = 'script' AND rb.owner_name = j.script_ref))),
+		       EXISTS (SELECT 1 FROM reference_bindings kb
+		                WHERE kb.ref_kind = 'key'
+		                  AND ((kb.owner_kind = 'job'
+		                        AND CASE WHEN COALESCE(j.uid, '') <> '' THEN kb.owner_uid = j.uid
+		                                 ELSE kb.owner_source = j.source AND kb.owner_name = j.name END)
+		                       OR (kb.owner_kind = 'script' AND kb.owner_name = j.script_ref)))
 		  FROM jobs j
 		 WHERE j.scope = ? AND j.deleted_at IS NULL
 		 ORDER BY j.name, j.source`, sc.Scope)
@@ -526,7 +543,7 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 	var jobs []jobRow
 	for rows.Next() {
 		var j jobRow
-		if err := rows.Scan(&j.UID, &j.Name, &j.Source, &j.RunType, &j.needsInjection); err != nil {
+		if err := rows.Scan(&j.UID, &j.Name, &j.Source, &j.RunType, &j.needsInjection, &j.bindsKey); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("preview scope runners: %w", err)
 		}
@@ -537,36 +554,13 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 		return nil, fmt.Errorf("preview scope runners: %w", err)
 	}
 
+	// Every job of the scope runs on whichever runner claims it, so every job
+	// sets a requirement on the runners proposed.
 	runTypes := map[string]bool{}
 	for _, j := range jobs {
-		eq := execspec.ExecutorQuery{
-			JobUID: j.UID, JobSource: j.Source, JobName: j.Name, RunType: j.RunType, Scope: sc.Scope,
-		}
-		before := execspec.ResolveExecutorGiven(ctx, database, eq, out.CurrentlyBound)
-		after := execspec.ResolveExecutorGiven(ctx, database, eq, out.WillBeBound)
-		if before.Err != nil {
-			return nil, fmt.Errorf("preview scope runners: %w", before.Err)
-		}
-		if after.Err != nil {
-			return nil, fmt.Errorf("preview scope runners: %w", after.Err)
-		}
-		switch {
-		case after.ScopeRefused():
-			out.JobsRefused = append(out.JobsRefused, j.PreviewJob)
-			continue // it will not run here at all, so it sets no requirement
-		case before.Executor == execspec.ExecutorSSH && after.Executor == execspec.ExecutorRunner:
-			out.JobsMovingToRunner = append(out.JobsMovingToRunner, j.PreviewJob)
-		case after.Executor == execspec.ExecutorSSH && after.Refusal == nil &&
-			(before.Executor == execspec.ExecutorRunner || before.ScopeRefused()):
-			// Either it ran on the bound runners, or it asked for ssh and was being
-			// refused. Clear the binding and both run from the server.
-			out.JobsMovingToSSH = append(out.JobsMovingToSSH, j.PreviewJob)
-		}
-		if after.Executor == execspec.ExecutorRunner {
-			runTypes[j.RunType] = true
-			if j.needsInjection {
-				out.JobsNeedingInjection++
-			}
+		runTypes[j.RunType] = true
+		if j.needsInjection {
+			out.JobsNeedingInjection++
 		}
 	}
 	for rt := range runTypes {
@@ -574,20 +568,42 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 	}
 	sort.Strings(out.RunTypes)
 
-	// Queued rows, plus runs parked for later (deferred, or held behind a Queue
-	// gate): a parked run's executor was frozen when it was parked, so it is
-	// promoted onto ssh exactly like a row already in the queue. json_valid
-	// guards the extract — workflow rows carry no params, and one unreadable
-	// blob must not fail the whole preview.
-	if err := database.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(*) FROM runs
-		         WHERE scope = ? AND status = 'queued' AND executor = 'ssh')
-		     + (SELECT COUNT(*) FROM pending_runs
-		         WHERE scope = ? AND status = 'pending'
-		           AND json_valid(params_json)
-		           AND json_extract(params_json, '$.Executor') = 'ssh')`,
-		sc.Scope, sc.Scope).Scan(&out.QueuedSSHRuns); err != nil {
+	// Who serves the scope before and after. "Serves" is the claim's agency
+	// rule and, on a bound scope, being named: capability and the injection
+	// flag are reported per proposed runner below, not folded in here, because
+	// a runner that lacks one still takes the scope's other jobs.
+	inAgency, err := runnersServingScopeAgency(ctx, database, scopeID)
+	if err != nil {
 		return nil, fmt.Errorf("preview scope runners: %w", err)
+	}
+	boundNow := map[string]bool{}
+	for _, b := range sc.BoundRunners {
+		boundNow[b.RunnerID] = true
+	}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+	agentAfter := false
+	for _, r := range inAgency {
+		before := !out.CurrentlyBound || boundNow[r.RunnerID]
+		after := !out.WillBeBound || want[r.RunnerID]
+		switch {
+		case before && !after:
+			out.RunnersLosing = append(out.RunnersLosing, r)
+		case after && !before:
+			out.RunnersGaining = append(out.RunnersGaining, r)
+		}
+		if after && !r.Local {
+			agentAfter = true
+		}
+	}
+	if !agentAfter {
+		for _, j := range jobs {
+			if j.bindsKey && execspec.SupportedRunType(j.RunType) {
+				out.JobsNeedingAgent = append(out.JobsNeedingAgent, j.PreviewJob)
+			}
+		}
 	}
 
 	already := map[string]execspec.BoundRunner{}
@@ -603,24 +619,26 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 	out.ScopeHosts = len(scopeHosts)
 	for _, id := range ids {
 		pr := PreviewRunner{RunnerID: id, Name: id, Capabilities: []string{}, MissingRunTypes: []string{}}
-		trusted, err := hostkeys.LoadTrusted(ctx, database, id)
-		if err != nil {
-			return nil, fmt.Errorf("preview scope runners: %w", err)
-		}
-		for _, h := range scopeHosts {
-			if trusted.State(h) == hostkeys.StateNone {
-				pr.HostsWithoutKey++
-			}
-		}
 		var name, capsJSON string
 		var mask sql.NullString
 		var injection int
-		err = database.QueryRowContext(ctx, `
+		err := database.QueryRowContext(ctx, `
 			SELECT name, COALESCE(capabilities, '[]'),
 			       CASE WHEN json_valid(managed_settings)
 			            THEN json_extract(managed_settings, '$.capabilityMask') END,
-			       COALESCE(allow_secret_injection, 0)
-			  FROM runners WHERE id = ?`, id).Scan(&name, &capsJSON, &mask, &injection)
+			       COALESCE(allow_secret_injection, 0), kind = 'server'
+			  FROM runners WHERE id = ?`, id).Scan(&name, &capsJSON, &mask, &injection, &pr.Local)
+		if !pr.Local {
+			trusted, terr := hostkeys.LoadTrusted(ctx, database, id)
+			if terr != nil {
+				return nil, fmt.Errorf("preview scope runners: %w", terr)
+			}
+			for _, h := range scopeHosts {
+				if trusted.State(h) == hostkeys.StateNone {
+					pr.HostsWithoutKey++
+				}
+			}
+		}
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			// Not registered. A binding already on the scope keeps its recorded
@@ -661,4 +679,30 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 		out.Runners = append(out.Runners, pr)
 	}
 	return out, nil
+}
+
+// runnersServingScopeAgency lists the registered runners that pass the claim's
+// agency rule for a scope: they serve one of its agencies. Agents and the local
+// runner alike, in name order.
+func runnersServingScopeAgency(ctx context.Context, database *sql.DB, scopeID string) ([]PreviewRunnerRef, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT rn.id, rn.name, rn.kind = 'server', COALESCE(rn.status, '')
+		  FROM runners rn
+		 WHERE EXISTS (SELECT 1 FROM scope_agencies sa
+		                 JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+		                WHERE sa.scope_id = ? AND ra.runner_id = rn.id)
+		 ORDER BY rn.name, rn.id`, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PreviewRunnerRef
+	for rows.Next() {
+		var r PreviewRunnerRef
+		if err := rows.Scan(&r.RunnerID, &r.Name, &r.Local, &r.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
