@@ -12,7 +12,16 @@
 // Token-agnostic like the install-cmd builders (D6): callers pass a usable
 // plaintext token or a "<TOKEN>" placeholder.
 
-import { INVALID_INSTANCE_COMMAND, RUNNER_INSTALL_SCRIPT_PATH, instanceInvalid, validInstanceName } from "./runner-install-cmd";
+import {
+  INVALID_INSTANCE_COMMAND,
+  INVALID_LIMITS_COMMAND,
+  LIMIT_FIELDS,
+  RUNNER_INSTALL_SCRIPT_PATH,
+  instanceInvalid,
+  limitsInvalid,
+  validInstanceName,
+  type UnitLimits,
+} from "./runner-install-cmd";
 import { RUN_TYPES, RUNNER_ONLY_TYPES } from "../runtypes";
 
 export const ENV_EXAMPLE_PATH = "/cronomicon-runner.env.example";
@@ -57,6 +66,10 @@ export interface ProvisionOptions {
   // <hostname>-<instance>. Ignored unless it is a valid instance name, and by
   // the docker artifact (a container has one agent).
   instance?: string;
+  // Resource limits for the agent's unit (2.3.1): the install command's
+  // --memory-max / --cpu-quota / --tasks-max. The installer writes them into
+  // the UNIT, so the env file and the container command do not carry them.
+  limits?: UnitLimits;
   // Empty ⇒ auto-detect (D1: 1B): the agent claims the four shell types and
   // probes its host for ansible and terraform at startup. Non-empty is an
   // explicit narrowing override (-c).
@@ -210,6 +223,8 @@ function shellArg(v: string): string {
   return /^[A-Za-z0-9@%+=:,._/-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
 }
 
+const LIMIT_INSTALL_FLAG = { memoryMax: "--memory-max", cpuQuota: "--cpu-quota", tasksMax: "--tasks-max" } as const;
+
 // provisionOneLiner emits the runner-install.sh invocation matching the same
 // choices, using the script's flags so the install completes in one pass. As of
 // Phase 3 that includes checkout + vault: --allow-checkout / --checkout-repos
@@ -218,6 +233,7 @@ function shellArg(v: string): string {
 // server). Only sandbox caps + max jobs remain env-only (Phase 4 kills those).
 export function provisionOneLiner(o: ProvisionOptions): string {
   if (instanceInvalid(o.instance)) return INVALID_INSTANCE_COMMAND;
+  if (limitsInvalid(o.limits)) return INVALID_LIMITS_COMMAND;
   const inst = instanceOf(o);
   const parts = [
     `curl -fsSL ${o.origin}${RUNNER_INSTALL_SCRIPT_PATH} | sudo bash -s --`,
@@ -228,6 +244,10 @@ export function provisionOneLiner(o: ProvisionOptions): string {
     `-n ${o.name ? shellArg(o.name) : inst ? `$(hostname)-${inst}` : "$(hostname)"}`,
   ];
   if (inst) parts.push(`--instance ${inst}`);
+  for (const field of LIMIT_FIELDS) {
+    const v = (o.limits?.[field] ?? "").trim();
+    if (v) parts.push(`${LIMIT_INSTALL_FLAG[field]} ${v}`);
+  }
   // No -c in detect mode: the agent probes the host's toolchains at startup.
   if (o.capabilities.length > 0) parts.push(`-c ${o.capabilities.join(",")}`);
   parts.push(`--download`);

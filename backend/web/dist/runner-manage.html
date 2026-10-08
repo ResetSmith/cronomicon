@@ -2183,10 +2183,27 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
 
 <p>The managed set is: <strong>max jobs</strong> (<code>maxConcurrent</code>), the three <strong>sandbox caps</strong> (<code>MemoryMax</code>/<code>CPUQuota</code>/<code>TasksMax</code>), the <strong>checkout policy</strong> (<code>allowCheckout</code> + the repo <code>checkoutRepos</code> allowlist), and a subtract-only <strong>capability mask</strong> (remove run-types from what the runner will claim). Each field is tri-state: set it to override the runner's local value, or leave it blank/<em>inherit</em> to keep the local value. The secrets these depend on — the checkout deploy token and the vault password — are <strong>never</strong> managed here; they stay in runner-local custody (installed at §3 / <code>runner-install.html</code>), so the server never holds secret bytes.</p>
 
-<blockquote><p><strong>The sandbox caps need a sandbox.</strong> They cap each run in a <code>systemd-run</code> scope of its own, and systemd lets only <code>root</code> create one. An agent set up by the installer runs as its own user: its row shows <em>Unsandboxed</em>, the caps are stored and never applied, and the drawer says so beside the fields. To bound such an agent, limit its <strong>unit</strong>, which covers the agent and all its runs together, on its machine and with no restart:</p>
+<blockquote><p><strong>The sandbox caps need a sandbox.</strong> They cap each run in a <code>systemd-run</code> scope of its own, and systemd lets only <code>root</code> create one. An agent set up by the installer runs as its own user: its row shows <em>Unsandboxed</em>, the caps are stored and never applied, and the drawer says so beside the fields. What bounds such an agent is a limit on its <strong>unit</strong>, below.</p></blockquote>
+
+<h3>Unit limits — memory, CPU and tasks for an agent and all its runs</h3>
+
+<p>A limit on the agent's systemd unit bounds the agent and everything it runs, together. On a machine with several agents it is what keeps one agency's runaway playbook from taking the machine from the next. The installer sets limits when it is asked to (<a href="./runner-install.html">Runner Install Guide</a> §3); to set, change or remove them on an agent that is already installed:</p>
+
+<ol>
+<li>Open the runner's <strong>⚙ Edit</strong> and go to <strong>Unit limits</strong>, at the bottom.</li>
+<li>Fill in what you want to change: <strong>Memory</strong> as a whole number with <code>K</code>, <code>M</code>, <code>G</code> or <code>T</code> (<code>4G</code>), <strong>CPU</strong> as a percentage of one CPU (<code>200%</code> is two), <strong>Tasks</strong> as a count of processes and threads. Type <code>none</code> to remove a limit. An empty field leaves that limit as it is.</li>
+<li>Copy the command and run it <strong>as root on the runner's machine</strong>.</li>
+</ol>
+
+<p>The command takes effect at once, with no restart of the agent and no effect on runs in flight beyond the new limit, and it is kept across restarts and reboots. It prints the unit's limits when it has run. <strong>Saving the drawer does not apply this section, and the app does not show a unit's present limits</strong>: the server has no way onto the machine, and the agent, which is not root, may read its unit's limits but not change them. So the app prepares the command and you run it, as with the upgrade command (§3).</p>
+
+<p>The command names the runner by its <strong>ID</strong>, not by a unit name. On the machine it looks for the agent whose identity file holds that ID — the machine's first agent or an <code>--instance</code> — and changes that agent's unit only. Pasted on a machine where the runner is not installed, it changes nothing and says so. By hand, the same thing is:</p>
+
 <div class="codeblock"><pre><code>sudo systemctl set-property cronomicon-runner.service MemoryMax=4G CPUQuota=200% TasksMax=1024
+sudo systemctl set-property cronomicon-runner.service MemoryMax=infinity CPUQuota= TasksMax=infinity   # remove all three
 systemctl show cronomicon-runner.service -p MemoryMax -p CPUQuotaPerSecUSec -p TasksMax</code></pre></div>
-<p>Use <code>cronomicon-runner-&lt;name&gt;.service</code> for an instance. The values are kept in <code>/etc/systemd/system.control/&lt;unit&gt;.d/</code> and win over the unit file's. <a href="./runner-install.html">Runner Install Guide</a> §3 has the install-time flags and what happens to a run that reaches a limit.</p></blockquote>
+
+<p>Use <code>cronomicon-runner-&lt;name&gt;.service</code> for an instance. A CPU limit is removed with an empty value, not with <code>infinity</code>, which RHEL 8's systemd refuses. The values are kept in <code>/etc/systemd/system.control/&lt;unit&gt;.d/</code> and win over the unit file's, so a limit set here replaces one the installer wrote. <a href="./runner-install.html">Runner Install Guide</a> §3 says what happens to a run that reaches a limit.</p>
 
 <p>Each write <strong>bumps a version</strong>; the agent echoes the version it has <strong>applied</strong> as its poll ack, so the row shows a <strong>pending dot</strong> (<em>● pending</em> beside <em>Managed settings</em>) until the change round-trips — typically one poll cycle. The <strong>capability mask is enforced server-side at claim</strong> (a masked run-type is simply never assigned to the runner) and honored agent-side too. Managed overrides do <strong>not</strong> touch the config digest, so changing one never triggers a drift re-registration (§4).</p>
 

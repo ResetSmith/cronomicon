@@ -20,8 +20,9 @@ self-check that passed on the very unit it exists to catch, and a per-run
 sandbox that an installed agent has never had. The first is fixed. The second
 cannot be given to an agent that is not root, so this release says so
 everywhere it was promised, and adds the limit that does work: one on the
-agent's unit. Nothing changes in the server but one sentence in the Runners
-view. Schema (v1280) and runner protocol (14) are unchanged.
+agent's unit, set at install and changed afterwards with a command the Runners
+view builds. The server's API is untouched: the changes in the app are in the
+Runners view alone. Schema (v1280) and runner protocol (14) are unchanged.
 
 **Upgrading.** Nothing is converted and nothing has to be done first. Upgrade
 the agents with the server (**Copy upgrade command** on a runner's row): the
@@ -41,17 +42,31 @@ one machine on purpose.
   `TasksMax=`. They bound the agent and everything it runs, together. Any other
   shape of value is refused before anything is installed, and without the flags
   the unit is exactly the one the installer wrote before. With the one-click
-  form the flags follow the pipe: `… | sudo bash -s -- --memory-max 4G`. The
-  *Add a Runner* helper does not write them.
-- **The same limits on an agent that is already installed**, with no restart:
-  `sudo systemctl set-property cronomicon-runner.service MemoryMax=4G
-  CPUQuota=200% TasksMax=1024` (`cronomicon-runner-<name>.service` for an
-  instance). The guides give the command and how to read the values back.
-  Checked on RHEL 8.10 (systemd 239, the older cgroup layout): the kernel
-  receives all three, a child of the service is held to them, and
+  form the flags follow the pipe: `… | sudo bash -s -- --memory-max 4G`.
+- **Add a Runner offers the limits.** *Resource limits* (memory, CPU, tasks)
+  sit beside *Instance name* in *Add a Runner* and in the advanced install
+  helper, and every form of the generated install command carries what was
+  typed. The fields take what the installer takes; while one does not, no
+  command is shown, so a command that silently lacked a limit cannot be copied.
+  They are written into the unit, so the generated `runner.env` and the
+  container command do not carry them.
+- **A command to change an installed agent's limits, built in the app.** A
+  runner's **⚙ Edit** has a *Unit limits* section: type the new limits (or
+  `none` to remove one, or leave a field empty to keep what the unit has) and
+  copy the command. Run as root on the runner's machine, it finds that
+  runner's agent by its ID, so it needs no unit name and changes nothing on a
+  machine where the runner is not installed. It applies at once, with no
+  restart, and is kept across restarts. **The app prepares the command and
+  does not apply it**: the server has no way onto the machine, and an agent
+  that is not root can change its own unit no more than it can create a
+  sandbox. By hand it is `sudo systemctl set-property <unit> MemoryMax=4G
+  CPUQuota=200% TasksMax=1024`.
+- Checked on RHEL 8.10 (systemd 239, the older cgroup layout): the kernel
+  receives all three limits, a child of the service is held to them, and
   `set-property` changes them on the running unit. **The memory limit bounds
   RAM**: on a machine with swap a run that goes over it is pushed out to swap
-  and slows down, and is not killed.
+  and slows down, and is not killed. The app does not show a unit's present
+  limits; the command prints them when it has run.
 
 ### Changed
 
@@ -62,8 +77,8 @@ one machine on purpose.
   same in its `sandbox` check.
 - **The runner's settings drawer says when the sandbox caps do nothing.** On a
   runner that reports no sandbox, the *Sandbox caps* fields carry a warning and
-  the command that does limit it. The fields still save: a runner that gains a
-  sandbox applies them.
+  point at *Unit limits*, below them. The fields still save: a runner that
+  gains a sandbox applies them.
 - **The guides no longer promise a per-run sandbox on an installed agent.** The
   runner security guide said *Run as non-root, sandboxed*; the install guide,
   the manage guide, the administrator manual, the reference unit and the
