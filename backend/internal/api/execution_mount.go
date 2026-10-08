@@ -1121,6 +1121,32 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		}
 	}
 
+	// GC follow-up (v2.2.3) — the per-run targetHost override is held to the
+	// scope's host list, as targetHosts[] always was. The contract calls the
+	// single-host form "a one-element targetHosts", but only the list was
+	// checked: the single host was copied onto the run as given, so anyone who
+	// may trigger a job in a scope could send its body to ANY manually authored
+	// host record by name, with that record's key. Same 422, same code.
+	//
+	// Narrow in the same two ways as the check above. It applies to the
+	// OVERRIDE, not to the host the job itself declares (that was authored
+	// against the scope; validating it here would refuse configurations that are
+	// already live, and is LR-71's to do in 2.3.0). And an actor who may run
+	// unbound already reaches every host, so there is nothing to enforce.
+	if body.TargetHost != "" && scope != "" && (jr.Host == nil || body.TargetHost != *jr.Host) &&
+		!id.CanUnbound(auth.PermTriggerJobs) {
+		members, err := execspec.ScopeHosts(r.Context(), s.db, scope)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if !slices.Contains(members, body.TargetHost) {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "scope_membership",
+				"host "+body.TargetHost+" is not a member of scope "+scope)
+			return
+		}
+	}
+
 	// Per-run reference additions (V2-11, stored-reference additions only) —
 	// validated and gated BEFORE any enqueue work. A reference is a grant over
 	// stored secret/key material, so attaching one to a run needs the same
@@ -1903,7 +1929,7 @@ func (s *Server) pauseJob(w http.ResponseWriter, r *http.Request) {
 	// going. The 404 above and the 403 here are deliberately different: 404 hides
 	// the existence of an out-of-scope job (no oracle), while a caller who can
 	// already SEE this job learns plainly that they lack the verb.
-	if !s.requireCan(w, r, id, auth.PermKillJobs, jobScope) {
+	if !s.requirePauseAuthority(w, r, id, jobScope) {
 		return
 	}
 
@@ -1956,7 +1982,7 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 	// going. The 404 above and the 403 here are deliberately different: 404 hides
 	// the existence of an out-of-scope job (no oracle), while a caller who can
 	// already SEE this job learns plainly that they lack the verb.
-	if !s.requireCan(w, r, id, auth.PermKillJobs, jobScope) {
+	if !s.requirePauseAuthority(w, r, id, jobScope) {
 		return
 	}
 
@@ -1980,6 +2006,32 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}())
 	httpx.JSON(w, http.StatusOK, jr)
+}
+
+// requirePauseAuthority is the verb gate of pauseJob and resumeJob: killJobs on
+// the job's own scope, and on a job with NO scope, killJobs unbound.
+//
+// The second half was missing until 2.2.3. requireCan(perm, "") is satisfied by
+// every grant that carries the verb — the empty scope is "covered" by all of
+// them (Q-F7) — so an operator of one agency could pause, and resume, a job
+// that belongs to no agency: stop the platform's own scheduled work, or restart
+// what a global administrator had paused. Every other execution route already
+// treated the empty scope as the unbound case (runJob, killJob, the workflow
+// gate, pending-run cancel); these two were the ones that did not.
+func (s *Server) requirePauseAuthority(w http.ResponseWriter, r *http.Request, id auth.Identity, jobScope string) bool {
+	if jobScope != "" {
+		return s.requireCan(w, r, id, auth.PermKillJobs, jobScope)
+	}
+	if id.CanUnbound(auth.PermKillJobs) {
+		return true
+	}
+	if s.auth != nil {
+		s.auth.AuditDenied(r, id.Email, "insufficient_scope", auth.AllScopes,
+			auditDetails(r, "pause or resume of an unscoped job ("+auth.PermKillJobs+" required unbound)"))
+	}
+	httpx.Fail(w, http.StatusForbidden, "forbidden",
+		"this job has no scope, so it belongs to no one agency; only an unrestricted operator may pause or resume it")
+	return false
 }
 
 func (s *Server) killJob(w http.ResponseWriter, r *http.Request) {

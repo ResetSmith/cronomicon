@@ -10,6 +10,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/envref"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/sshkeys"
 	"golang.org/x/crypto/ssh"
@@ -40,7 +41,12 @@ var errNoAuth = errors.New("host has no auth credential or authKeyEnvVar configu
 // NOT deprecated: it is how inventory/git-imported hosts (which name keys in their
 // Ansible vars) authenticate in-app, and it mirrors how the out-of-process runner
 // resolves keys by name locally. Never logs key material.
-func loadSigner(ctx context.Context, db *sql.DB, cfg *config.Config, sec *secrets.Service, credID, key string) (ssh.Signer, error) {
+//
+// guard says on whose behalf the key is loaded (see keyGuard). With a checked
+// guard every lookup — by credential id and by name alike — goes through the
+// agency-checked resolver the runner path has always used, so the key a run
+// connects with is one its agency may use.
+func loadSigner(ctx context.Context, db *sql.DB, cfg *config.Config, sec *secrets.Service, credID, key string, guard keyGuard) (ssh.Signer, error) {
 	// A vault-source ssh_credential resolves through this executor's configured
 	// Vault client (P2.4); nil when Vault is unconfigured (stored keys still work).
 	var vault secrets.VaultClient
@@ -48,10 +54,22 @@ func loadSigner(ctx context.Context, db *sql.DB, cfg *config.Config, sec *secret
 		vault = sec.Vault()
 	}
 	if credID != "" {
+		if guard.checked {
+			ok, err := runref.KeyIDUsable(ctx, db, credID, guard.agencies)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, errKeyNotUsable
+			}
+		}
 		return sshkeys.ResolveSigner(ctx, db, cfg, vault, credID)
 	}
 	if key == "" {
 		return nil, errNoAuth
+	}
+	if guard.checked {
+		return loadSignerChecked(ctx, db, cfg, sec, vault, key, guard)
 	}
 
 	// Derived-reference routing (W3): a prefixed name routes DETERMINISTICALLY to
@@ -100,6 +118,109 @@ func loadSigner(ctx context.Context, db *sql.DB, cfg *config.Config, sec *secret
 		return signer, err
 	}
 	return nil, fmt.Errorf("no key material found for %q", key)
+}
+
+// keyGuard says on whose behalf a key is being loaded.
+//
+// Until v2.2.3 this path asked nobody: a credential id was loaded as given, and
+// a name was looked up with `LIMIT 1` across every agency and every scope. A
+// host record is written by the administrator of ITS scope's agency, and its
+// key reference is free text (an id any session can list, or a name in the
+// scope's inventory), so that administrator could point their host at another
+// agency's key and their runs would authenticate with it. The runner path never
+// had the hole — it resolves keys through runref with the run's agency
+// snapshot. checked makes this path ask the same question.
+//
+// The zero value is unchecked. It is for a record only a global administrator
+// can write: a bastion, and the probe of a manually authored host.
+type keyGuard struct {
+	checked  bool
+	scope    string   // the run's scope (the secret and variable lookups are scoped)
+	agencies []string // the run's agency NAMES, as runs.agencies_json holds them
+}
+
+// errKeyNotUsable is deliberately the same sentence whether the key does not
+// exist or belongs to another agency: a host record must not be usable as a
+// probe for which keys another agency holds.
+var errKeyNotUsable = errors.New("the SSH key this host names is not one this run's agency may use " +
+	"(it belongs to another agency, or no longer exists) — use a key of the scope's own agency, or a shared one")
+
+// loadSignerChecked is loadSigner's name path under a checked guard: the same
+// routing by prefix, with each lookup made by runref.LookupEntityID — the row
+// dispatch would inject for this run's scope and agencies, an agency's own row
+// before a shared one, and nothing of another agency's.
+func loadSignerChecked(ctx context.Context, db *sql.DB, cfg *config.Config, sec *secrets.Service, vault secrets.VaultClient, key string, guard keyGuard) (ssh.Signer, error) {
+	lookup := func(kind runref.Kind, name string) (string, bool, error) {
+		return runref.LookupEntityID(ctx, db, kind, name, guard.scope, guard.agencies)
+	}
+	fromSecret := func(name string) (ssh.Signer, bool, error) {
+		id, found, err := lookup(runref.KindSecret, name)
+		if err != nil || !found || sec == nil {
+			return nil, false, err
+		}
+		pem, rerr := sec.Reveal(ctx, id)
+		if rerr != nil {
+			return nil, true, fmt.Errorf("reveal stored key %q: %w", name, rerr)
+		}
+		if pem == "" {
+			return nil, false, nil
+		}
+		signer, perr := ssh.ParsePrivateKey([]byte(pem))
+		return signer, true, perr
+	}
+	fromVar := func(name string) (ssh.Signer, bool, error) {
+		id, found, err := lookup(runref.KindVar, name)
+		if err != nil || !found {
+			return nil, false, err
+		}
+		var val sql.NullString
+		if err := db.QueryRowContext(ctx, `SELECT value FROM env_vars WHERE id = ?`, id).Scan(&val); err != nil || !val.Valid || val.String == "" {
+			return nil, false, nil
+		}
+		signer, perr := ssh.ParsePrivateKey([]byte(val.String))
+		return signer, true, perr
+	}
+
+	if section, bare, ok := envref.Split(key); ok {
+		switch section {
+		case envref.SectionKey:
+			id, found, err := lookup(runref.KindKey, bare)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, errKeyNotUsable
+			}
+			return sshkeys.ResolveSigner(ctx, db, cfg, vault, id)
+		case envref.SectionSecret:
+			signer, found, err := fromSecret(bare)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, errKeyNotUsable
+			}
+			return signer, nil
+		case envref.SectionVariable:
+			signer, found, err := fromVar(bare)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, errKeyNotUsable
+			}
+			return signer, nil
+		default:
+			return nil, fmt.Errorf("reference %q (run context) does not resolve to key material", key)
+		}
+	}
+	if signer, found, err := fromSecret(key); err != nil || found {
+		return signer, err
+	}
+	if signer, found, err := fromVar(key); err != nil || found {
+		return signer, err
+	}
+	return nil, errKeyNotUsable
 }
 
 // signerFromSecret resolves a private key stored in the secrets table by row key.
@@ -213,7 +334,8 @@ func (s *Service) dial(ctx context.Context, t target, signer ssh.Signer) (*ssh.C
 	// both failed auth for distinct-key bastions and leaked the target key.
 	bSigner := signer
 	if b.AuthKeyEnvVar != "" || b.AuthCredentialID != "" {
-		bSigner, err = loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar)
+		// Unguarded: a bastion record is a global administrator's to write (GC-7).
+		bSigner, err = loadSigner(ctx, s.db, s.cfg, s.sec, b.AuthCredentialID, b.AuthKeyEnvVar, keyGuard{})
 		if err != nil {
 			return nil, nil, fmt.Errorf("dial bastion %s: %w", t.Via, err)
 		}

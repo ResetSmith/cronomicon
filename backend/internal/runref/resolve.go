@@ -630,6 +630,31 @@ func lookupKeyID(ctx context.Context, database *sql.DB, label string, runAgencie
 	return win.id, true, nil
 }
 
+// KeyIDUsable reports whether a run in the given agencies may use the SSH
+// credential with this id: the key belongs to no agency (it is shared), or to
+// one of the run's. It is lookupKeyID's membership clause for a caller that
+// already holds an id — a host record names its key by id, and an id says
+// nothing about whose key it is.
+//
+// A credential id that matches no row reports false: there is nothing to use.
+func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, runAgencies []string) (bool, error) {
+	var n int
+	err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM ssh_credentials c
+		WHERE c.id = ?
+		  AND (
+		    NOT EXISTS (SELECT 1 FROM ssh_credential_agencies ca WHERE ca.credential_id = c.id)
+		    OR EXISTS (
+		      SELECT 1 FROM ssh_credential_agencies ca
+		      JOIN agencies a ON a.id = ca.agency_id
+		      WHERE ca.credential_id = c.id AND a.name IN (SELECT value FROM json_each(?)))
+		  )`, credentialID, marshalNames(runAgencies)).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("resolve key agencies %q: %w", credentialID, err)
+	}
+	return n > 0, nil
+}
+
 func keyInAgencies(ctx context.Context, database *sql.DB, label string, runAgencies []string) (bool, error) {
 	var members int
 	err := database.QueryRowContext(ctx, `

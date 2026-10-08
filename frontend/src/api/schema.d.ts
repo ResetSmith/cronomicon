@@ -508,7 +508,9 @@ export interface paths {
          * Set a job's reference bindings (full replace)
          * @description Replaces the job's declared reference-binding set. A binding is a
          *     least-privilege access control over secrets, so the gate is ManageEnvVars
-         *     (+ CSRF), not the any-user tags gate. Each binding's name must be a POSIX
+         *     (+ CSRF), not the any-user tags gate — held on the job's own scope, by the
+         *     same grant (v2.2.3): holding it for another agency and merely reading this
+         *     job is a 403. A job with no scope needs it on every agency. Each binding's name must be a POSIX
          *     identifier (the derived-reference charset) and secret names may not be a
          *     reserved KEK name — a violation is 422.
          */
@@ -3388,7 +3390,16 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update an SSH host */
+        /**
+         * Update an SSH host
+         * @description A record imported for a scope is changed by that scope's agency; a manually
+         *     authored record is a global administrator's. The SSH key named by
+         *     `authCredentialId` must be one the record's own agency may use — a key of
+         *     that agency or a shared one — or the write is refused 422
+         *     `unknown_credential`, with the same answer for another agency's key and
+         *     for an id that matches nothing (v2.2.3). The in-app SSH executor makes the
+         *     same check when it connects, for a key named by id or by name.
+         */
         put: operations["updateSshHost"];
         post?: never;
         /** Delete an SSH host */
@@ -3524,7 +3535,13 @@ export interface paths {
         /** List SSH key credentials */
         get: operations["listSshCredentials"];
         put?: never;
-        /** Create an SSH key credential */
+        /**
+         * Create an SSH key credential
+         * @description A Vault-backed credential (`source: vault`, or any `vaultRef`) names a path
+         *     on the installation's one Vault connection, so creating one, or changing a
+         *     credential into one, needs `configureApp` on every agency (403 otherwise),
+         *     as a Vault-backed secret does (v2.2.3). The same holds on update.
+         */
         post: operations["createSshCredential"];
         delete?: never;
         options?: never;
@@ -8700,6 +8717,9 @@ export interface operations {
                      * @description Target a single host instead of a scope fan-out (EX.5). Defaults to
                      *     the job's declared host. Legacy single-host form; prefer targetHosts
                      *     for one-or-many selection (equivalent to a one-element targetHosts).
+                     *     A host that differs from the job's own must be a member of the run's
+                     *     scope, or the request is refused 422 `scope_membership` (v2.2.3);
+                     *     a caller who may run unbound jobs is not held to that.
                      */
                     targetHost?: string;
                     /**

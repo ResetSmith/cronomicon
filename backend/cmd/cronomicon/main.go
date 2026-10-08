@@ -58,7 +58,7 @@ var errIdentityNotReady = errors.New("identity provider not ready")
 // tags); a release build still overrides all three via -ldflags. Kept in sync with
 // the top CHANGELOG.md entry.
 var (
-	version   = "2.2.2"
+	version   = "2.2.3"
 	commit    = "none"
 	buildDate = "unknown"
 )
@@ -188,6 +188,7 @@ func run() error {
 	// changed for THIS installation — the same report `cronomicon preflight`
 	// prints, for the operator who upgraded without running it.
 	logUpgradeReport(context.Background(), pool, logger)
+	logHostKeyReport(context.Background(), pool, logger, cfg.SSHExecutorEnabled)
 
 	// RB-7: load the role→permission matrix into its process cache. requirePerm is
 	// mount-time middleware with no context and no DB handle, so authorization reads

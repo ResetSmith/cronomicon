@@ -65,7 +65,15 @@ type VaultSecret struct {
 	Agencies   []string
 }
 
-// Report is the 2.2.2 section.
+// HostKey is a host record whose SSH key belongs to an agency other than the
+// one whose runs reach the host (the 2.2.3 section). Scope is "" for a manually
+// authored record, which every scope resolves.
+type HostKey struct {
+	Host, Scope, Key string
+	KeyAgencies      []string
+}
+
+// Report is the 2.2.2 section, and the one 2.2.3 added.
 type Report struct {
 	// GlobalAdminGroups are the AD groups holding an all-agencies grant whose
 	// role carries configureApp and manageRoles — who can still change the
@@ -74,6 +82,9 @@ type Report struct {
 	AgencyGrants      []AgencyGrant
 	ServiceAccounts   []ServiceAccount
 	VaultSecrets      []VaultSecret
+	// HostKeys are the host records the in-app SSH executor will stop
+	// connecting for, or will connect for one agency's runs only (2.2.3).
+	HostKeys []HostKey
 }
 
 // HasGlobalAdmin reports whether anyone can administer the installation.
@@ -81,7 +92,8 @@ func (r Report) HasGlobalAdmin() bool { return len(r.GlobalAdminGroups) > 0 }
 
 // Quiet reports whether the upgrade changes nothing for this installation.
 func (r Report) Quiet() bool {
-	return r.HasGlobalAdmin() && len(r.AgencyGrants) == 0 && len(r.ServiceAccounts) == 0 && len(r.VaultSecrets) == 0
+	return r.HasGlobalAdmin() && len(r.AgencyGrants) == 0 && len(r.ServiceAccounts) == 0 && len(r.VaultSecrets) == 0 &&
+		len(r.HostKeys) == 0
 }
 
 func loadRoles(ctx context.Context, db *sql.DB) (map[string]perms, error) {
@@ -192,7 +204,50 @@ func Build(ctx context.Context, db *sql.DB) (Report, error) {
 	if rep.VaultSecrets, err = vaultSecrets(ctx, db); err != nil {
 		return rep, fmt.Errorf("read secrets: %w", err)
 	}
+	if rep.HostKeys, err = hostKeys(ctx, db); err != nil {
+		return rep, fmt.Errorf("read host records: %w", err)
+	}
 	return rep, nil
+}
+
+// hostKeys lists the host records that name, by credential id, an SSH key
+// which belongs to an agency: a record imported for a scope whose key belongs
+// to none of that scope's agencies (2.2.3 refuses it for every run), and a
+// manually authored record whose key belongs to an agency at all (2.2.3 loads
+// it for that agency's runs only). A key in no agency is shared and is not
+// listed. A key named by NAME in a scope's inventory is not listed either: a
+// name resolves when the run connects, for the run's own agency.
+func hostKeys(ctx context.Context, db *sql.DB) ([]HostKey, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT h.hostname, COALESCE(s.name,''), c.label, a.name
+		  FROM ssh_hosts h
+		  JOIN ssh_credentials c ON c.id = h.auth_credential_id
+		  JOIN ssh_credential_agencies ca ON ca.credential_id = c.id
+		  JOIN agencies a ON a.id = ca.agency_id
+		  LEFT JOIN scopes s ON s.id = h.scope_id
+		 WHERE h.scope_id IS NULL
+		    OR NOT EXISTS (
+		         SELECT 1 FROM ssh_credential_agencies ca2
+		           JOIN scope_agencies sa ON sa.agency_id = ca2.agency_id
+		          WHERE ca2.credential_id = c.id AND sa.scope_id = h.scope_id)
+		 ORDER BY h.hostname, s.name, c.label, a.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HostKey
+	for rows.Next() {
+		var host, scope, key, agency string
+		if err := rows.Scan(&host, &scope, &key, &agency); err != nil {
+			return nil, err
+		}
+		if n := len(out); n > 0 && out[n-1].Host == host && out[n-1].Scope == scope && out[n-1].Key == key {
+			out[n-1].KeyAgencies = append(out[n-1].KeyAgencies, agency)
+			continue
+		}
+		out = append(out, HostKey{Host: host, Scope: scope, Key: key, KeyAgencies: []string{agency}})
+	}
+	return out, rows.Err()
 }
 
 // serviceAccounts lists the active accounts whose creator, judged by the AD
@@ -381,5 +436,28 @@ func (r Report) Write(w io.Writer) {
 			}
 			p("  %s in %s — %s", s.Key, scope, strings.Join(s.Agencies, ", "))
 		}
+	}
+	p("")
+	p("Cronomicon 2.2.3 — host keys")
+	p("")
+	p("From 2.2.3 the in-app SSH executor loads a host's SSH key only for a run whose")
+	p("agency may use that key: the agency's own key, or a shared one (a key in no")
+	p("agency). Runner agents have always worked this way.")
+	p("")
+	if len(r.HostKeys) == 0 {
+		p("No host record names another agency's key.")
+		return
+	}
+	p("Host records that name an agency's key (%d). If the SSH executor is enabled,", len(r.HostKeys))
+	p("give each a key of its own agency, or make the key shared, before upgrading:")
+	for _, h := range r.HostKeys {
+		owners := strings.Join(h.KeyAgencies, ", ")
+		if h.Scope == "" {
+			p("  %s (written by hand, used by every scope) — key %s belongs to %s:", h.Host, h.Key, owners)
+			p("      only runs of %s will connect; every other agency's runs fail for this host.", owners)
+			continue
+		}
+		p("  %s in scope %s — key %s belongs to %s, not to this scope's agency:", h.Host, h.Scope, h.Key, owners)
+		p("      runs will fail for this host.")
 	}
 }
