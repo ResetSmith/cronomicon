@@ -383,7 +383,7 @@ describe("the host keys dialog", () => {
     expect(await screen.findByText(FP("a"))).toBeTruthy();
     expect(screen.getByText(FP("b"))).toBeTruthy();
     expect(screen.getByText(FP("q"))).toBeTruthy();
-    expect(screen.getByText(/Differs from the key the server pins for this host/)).toBeTruthy();
+    expect(screen.getByText(/Differs from the key approved for the server \(the local runner\) for this host/)).toBeTruthy();
     // The dry run wrote nothing; the commit names the one ticked row.
     expect(posted("/runners/{runnerId}/host-keys/provide")).toHaveLength(1);
     expect(posted("/runners/{runnerId}/host-keys/provide")[0].body).toEqual({ lines: [paste], dryRun: true });

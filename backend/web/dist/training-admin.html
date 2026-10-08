@@ -2590,6 +2590,10 @@
     <p>Two modules carry more weight than the rest. <strong>A2</strong> and <strong>A4</strong> are where an
         administrator's mistakes are expensive — one strands work where nothing can run it, the other
         locks people out or hands them everything. Slow down on both.</p>
+    <p>Two kinds of administrator appear throughout. A <strong>global administrator</strong> holds a role
+        on every agency and looks after the installation. An <strong>agency administrator</strong> holds
+        one on a single agency and manages what that agency owns: its scopes, its hosts, its secrets, its
+        service accounts and its own agents. Where it matters, each module says which is meant.</p>
 </div>
 
 <div class="tr-progress" id="tr-progress" hidden>
@@ -2623,6 +2627,25 @@
         hosts from both sources at once</strong>. Hosts imported from a Git inventory carry a read-only
     badge; hosts you add in the app are yours to edit. When a name exists in both, <strong>the Cronomicon
         entry wins</strong>.</p>
+
+<details class="tr-reveal">
+    <summary>A scope belongs to one agency, and so does each host record</summary>
+    <div class="tr-body">
+        <p>Every scope is in <strong>exactly one agency</strong>. A scope you create is born in an agency
+            you administer — the form asks which when you administer several — and that agency's
+            administrators manage it from then on. A scope with no department of its own belongs to the
+            <strong>Global</strong> agency, which only a global administrator changes. A scope that
+            arrives from Git starts there too, until a global administrator gives it to its agency; sync
+            never moves it afterwards.</p>
+        <p>Moving a scope is a deliberate act, made with the <strong>Agency</strong> select on the scope's
+            own row, and it takes authority on both sides: over the agency the scope is in, and over the
+            one it is going to. The scope's agency decides which runners may take its runs, so a move is
+            not a relabelling (A2).</p>
+        <p>Host records and bastions follow the same rule. The ones you write by hand under
+            <strong>Settings &rarr; SSH Targets</strong> belong to an agency, and only that agency's
+            administrators change them; a host imported with a scope's inventory is simply its scope's.</p>
+    </div>
+</details>
 
 <details class="tr-reveal">
     <summary>Why the Cronomicon entry wins, and how to use that</summary>
@@ -2680,101 +2703,148 @@
 <details class="tr-reveal">
     <summary>This scope's hosts sit behind a firewall the server cannot cross</summary>
     <div class="tr-body">
-        <p><span class="tr-answer">A runner inside the firewall, bound to the scope — not a host-list change</span></p>
-        <p>Reachability is not a property of the host list. Which department's runners may take the work
-            is the agency (A2, the next module); which of those runners actually reaches these hosts is
-            the scope's runner binding (A3).</p>
+        <p><span class="tr-answer">An agent inside the firewall, bound to the scope — not a host-list change</span></p>
+        <p>Reachability is not a property of the host list. Which runners may take the work is settled by
+            the scope's agency (A2, the next module); which of those runners actually reaches these hosts
+            is the scope's runner binding (A3). Here the server cannot reach them, so the runner has to be
+            an agent the scope's agency owns, sitting on the far side of the firewall.</p>
     </div>
 </details>
 
 <h2 id="a2-agencies-and-network-isolation">A2 · Agencies and network isolation</h2>
 
-<p>An <strong>agency</strong> is a network-isolation zone. It answers one question: <em>which runners are
-        allowed to execute this work?</em> And the answer is enforced as a hard boundary, not a
-    preference.</p>
+<p>An <strong>agency</strong> is a department's isolation zone. It answers two questions at once:
+    <em>whose is this?</em> and <em>which runners are allowed to execute this work?</em> The answer to
+    the second is enforced as a hard boundary, not a preference.</p>
 
 <p>Two facts do most of the work:</p>
 
 <div class="tr-buckets">
     <div class="tr-bucket">
-        <h4>A run carries agencies</h4>
-        <p>Snapshotted when the run is enqueued, from the scope it is bound to. Changing the scope's
-            agencies later does not retroactively move runs already queued.</p>
+        <h4>A run carries its agency</h4>
+        <p>Snapshotted when the run is enqueued, from the scope it is bound to. Moving the scope to
+            another agency later does not retroactively move runs already queued. A run with no scope
+            carries <strong>Global</strong>.</p>
     </div>
     <div class="tr-bucket">
-        <h4>A runner belongs to agencies</h4>
-        <p>Set by you, in the app. <strong>Never self-declared by the agent</strong> — a runner cannot
-            talk its way into an agency by claiming membership.</p>
+        <h4>A runner serves agencies</h4>
+        <p>An agent serves exactly one: the agency that owns it, fixed by the registration token it
+            enrolled with. <strong>Never self-declared by the agent</strong> — a runner cannot talk its
+            way into an agency by claiming membership. Only the local runner serves a list (A3).</p>
     </div>
 </div>
 
+<h3>Global is an agency, and everything has exactly one</h3>
+
+<p>There is no such thing as "no agency". What belongs to no department belongs to
+    <strong>Global</strong>, which is an agency like the others with one property of its own: a row in
+    Global is every agency's to <em>use</em> and a global administrator's to <em>change</em>. Any
+    department's job can bind a Global secret; only a global administrator can edit it.</p>
+
+<p>And every scope, secret, variable, SSH key, host record, bastion and runner belongs to
+    <strong>exactly one</strong> agency. Nothing new is shared between two departments by listing both. (A scope, secret, variable or SSH key that two departments shared before this rule existed keeps working as it was, and is listed under Notices until it is moved to one.)</p>
+
+<details class="tr-reveal">
+    <summary>Giving something to another agency is a move, and it needs both sides</summary>
+    <div class="tr-body">
+        <p>You move a row with the control on the row itself: the <strong>Agency</strong> select on a
+            scope, <strong>Move to another agency</strong> on a secret, a variable or an SSH key. A move
+            needs the permission on the agency the row is in <em>and</em> on the agency it is going to.
+            That is what stops one department from taking another's row, or from pushing something of its
+            own into a department that never asked for it.</p>
+        <p>A move carries ownership with it, and it is refused when the target agency already owns
+            something of that name in the same scope — rather than leave two rows a job could not tell
+            apart.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Scopes that were shared before this rule existed</summary>
+    <div class="tr-body">
+        <p>An upgraded installation may hold scopes that sat in several agencies at once. They keep
+            working exactly as they did. Nothing is moved for you, because which department a shared
+            scope really belongs to is a decision, not something Cronomicon can work out.</p>
+        <p>Each one is listed in the Notices inbox as <em>A scope in several agencies</em> until you move
+            it to one. The same holds for a secret, a variable or an SSH key that two departments shared:
+            it keeps resolving for both, and is listed as <em>Shared by several agencies</em>. Two more
+            notices come from the upgrade alone: <em>In no agency</em>, for a row that ended up in none
+            and that only a global administrator can re-home, and <em>An agency was renamed by the
+            upgrade</em>, when a department was already called Global. A3 covers the inbox.</p>
+    </div>
+</details>
+
 <h3>The dispatch rule, exactly</h3>
 
-<p>It is disjoint in <em>both</em> directions, and the second half is the one people miss:</p>
+<p>It has no fallback in <em>either</em> direction, and the second half is the one people miss:</p>
 
 <ol class="tr-legend">
-    <li><strong>A run that carries agencies</strong> can only be claimed by a runner that belongs to at
-        least one of them.</li>
-    <li><strong>A run that carries no agencies</strong> can only be claimed by a runner that belongs to
-        <strong>no agencies at all</strong> — the general pool.</li>
+    <li><strong>A run is claimed only by a runner that serves the run's agency.</strong> A Finance run
+        goes to a runner that serves Finance, and to no other.</li>
+    <li><strong>A run that belongs to Global</strong> — a job with no scope, or a scope that is Global's —
+        is claimed only by a runner that <strong>serves Global</strong>. It is not picked up by whichever
+        department's runner happens to be idle.</li>
 </ol>
 
-<p>So putting a runner into an agency does not add capability to it. It <em>removes</em> that runner from
-    the general pool. This is deliberate: an isolation boundary that leaks in one direction is not an
-    isolation boundary.</p>
+<p>So Global is not a pool that every runner drains, and a department's agent is not spare capacity for
+    anyone else. A runner that serves only Global does not take Finance's runs either. This is deliberate:
+    an isolation boundary that leaks in one direction is not an isolation boundary.</p>
+
+<p>The agency is the first of several conditions a runner must meet before it takes a run; A3 lists the
+    rest. It is the one that nothing else can widen.</p>
 
 <h3>Check yourself</h3>
 
 <div class="tr-scenario">
     <h4>Scenario A1</h4>
-    <p class="tr-setup">You have one runner, doing general work happily. A new isolated network needs
-        automation, so you create the agency <strong>dmz</strong> and add your existing runner to it,
-        expecting it to handle both.</p>
-    <p class="tr-ask">What happens to the general work it was doing?</p>
+    <p class="tr-setup">The <strong>Finance</strong> agency has one agent, and it is doing Finance's work
+        happily. A new isolated network that belongs to the <strong>Tax</strong> agency needs automation,
+        and you would like the Finance agent to take Tax's runs as well.</p>
+    <p class="tr-ask">How do you make that happen?</p>
 
     <details class="tr-opt" data-verdict="wrong">
-        <summary>Nothing — it now does general work and dmz work</summary>
+        <summary>Add Tax to the agent on its Runners row, so that it serves both</summary>
         <div class="tr-body">
-            <p>No, and this is the assumption that causes the outage. Agency membership is not additive
-                capability.</p>
+            <p>No, and the row offers nothing to do it with. An agent has no list to edit: it serves
+                exactly the agency that owns it. One <em>agent</em> holding two departments' keys and reaching two departments' networks is precisely what an agency exists to prevent. Two agents on one machine are a different thing: each runs as its own OS user and holds only its own agency's keys.</p>
         </div>
     </details>
 
     <details class="tr-opt" data-verdict="right">
-        <summary>It stops. Runs with no agency can only go to a runner with no agencies at all.</summary>
+        <summary>You do not. A second agent is enrolled, with a registration token minted for Tax</summary>
         <div class="tr-body">
-            <p>Correct. The moment that runner joined an agency it left the general pool, and every
-                run with no agency now has nowhere to go — they queue rather than fail, which is why this can go
-                unnoticed for a while.</p>
-            <p>The fix is a second runner. A runner is a small binary; needing two is the intended shape,
-                not a limitation.</p>
+            <p>Correct. There are no shared agents. The token decides the owner, and the owner is what the
+                agent serves. Tax's own administrators can mint that token and enrol that agent; it does
+                not take a global administrator.</p>
+            <p>An agent is a small binary. One per agency is the intended shape, not a limitation. It need not be a machine each: a second agent runs beside the first on the same host, under an OS user, a unit and directories of its own, when the install command is given an <strong>Instance name</strong> (<code>--instance</code>; the runner install guide has the procedure). A container runs one agent, so two agencies there are two containers.</p>
+            <p>The one runner that serves a list of agencies is the local runner, the server itself. It is
+                no help here: it runs shell jobs only, and the server cannot reach an isolated network.</p>
         </div>
     </details>
 
     <details class="tr-opt" data-verdict="wrong">
-        <summary>General runs fail immediately with "no runner available"</summary>
+        <summary>Have the agent register again and declare both agencies</summary>
         <div class="tr-body">
-            <p>No — they <strong>queue</strong>, which is worse for your Tuesday because nothing alerts as
-                loudly as a failure would. The signal is a stuck-run indicator and a growing queue, not a
-                red row.</p>
+            <p>No. An agent never declares what it serves. If it could, any machine holding the agent
+                binary could enrol itself into the department of its choice. The registration token
+                carries the agency, and a token carries exactly one.</p>
         </div>
     </details>
 
-    <p class="tr-takeaway"><strong>Takeaway:</strong> joining an agency removes a runner from the general
-        pool. Plan runner coverage per agency, and keep at least one runner in the general pool if
-        anything still needs it.</p>
+    <p class="tr-takeaway"><strong>Takeaway:</strong> an agent serves exactly the agency that owns it. Plan
+        runner coverage per agency: every agency whose work needs an agent needs one of its own.</p>
 </div>
 
 <div class="tr-scenario">
     <h4>Scenario A2</h4>
     <p class="tr-setup">A job bound to a <strong>dmz</strong> scope has been queued for twenty minutes. The
-        dmz runner shows as <strong>offline</strong>.</p>
-    <p class="tr-ask">Can you get the run moving by pointing the job at a scope with no agency?</p>
+        dmz agency's only agent shows as <strong>offline</strong>.</p>
+    <p class="tr-ask">Can you get the run moving by pointing the job at a scope in another agency, one
+        whose runner is up?</p>
 
     <details class="tr-opt" data-verdict="wrong">
-        <summary>Yes — re-binding the job releases the queued run to the general pool</summary>
+        <summary>Yes — re-binding the job releases the queued run to the other agency's runner</summary>
         <div class="tr-body">
-            <p>No. The run snapshotted its agencies when it was enqueued, so the run that is already
+            <p>No. The run snapshotted its agency when it was enqueued, so the run that is already
                 waiting keeps waiting. Editing the definition changes what happens <em>next time</em>.</p>
         </div>
     </details>
@@ -2782,11 +2852,11 @@
     <details class="tr-opt" data-verdict="right">
         <summary>No — and you should not want to. Fix the runner.</summary>
         <div class="tr-body">
-            <p>Correct on both counts. The queued run keeps the agencies it was enqueued with, and the
+            <p>Correct on both counts. The queued run keeps the agency it was enqueued with, and the
                 boundary exists because those hosts are isolated for a reason. Routing round it is
                 precisely the thing agencies prevent.</p>
-            <p>The right move is to bring the runner back. Offline runners re-admit themselves
-                automatically on their next successful poll, so often the answer is fixing the network or
+            <p>The right move is to bring the agent back. An offline agent re-admits itself
+                automatically on its next successful poll, so often the answer is fixing the network or
                 the service on that host and waiting.</p>
         </div>
     </details>
@@ -2794,29 +2864,186 @@
     <details class="tr-opt" data-verdict="wrong">
         <summary>Yes, after cancelling and re-triggering the run</summary>
         <div class="tr-body">
-            <p>Mechanically this would enqueue a fresh run with the new binding — but it would run
-                department-isolated work outside its isolation zone. If you find yourself here, the
-                question to escalate is whether the scope's agency is right, not how to bypass it.</p>
+            <p>Mechanically this would enqueue a fresh run under the other scope — against that scope's
+                hosts, taken by that agency's runner. Whatever that run does, it is not the dmz work, and
+                the other agency's runner cannot reach the dmz hosts anyway. If you find yourself here,
+                the question to escalate is whether the scope's agency is right, not how to bypass
+                it.</p>
         </div>
     </details>
 
-    <p class="tr-takeaway"><strong>Takeaway:</strong> a run's agencies are fixed at enqueue. Agencies are an
+    <p class="tr-takeaway"><strong>Takeaway:</strong> a run's agency is fixed at enqueue. Agencies are an
         isolation guarantee — when one blocks you, that is the feature.</p>
 </div>
 
 <h2 id="a3-runners">A3 · Runners</h2>
 
-<p>A runner is a small external binary that polls Cronomicon for work. You need one when the server cannot
-    reach the targets directly, when the work must execute inside an isolated network, or when a job
-    watches for arriving files.</p>
+<p>A <strong>runner</strong> is what takes a run and carries it out. There is one way a run happens: it is
+    queued, and a runner claims it. Runners come in two kinds.</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>An agent</h4>
+        <p>A small external binary, <code>cronomicon-runner</code>, installed on a machine and polling
+            Cronomicon for work — usually inside the network its targets sit in. It runs whatever it has
+            the tools for, Ansible and Terraform included, and can watch for arriving files. It serves
+            exactly the agency that owns it.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>The local runner</h4>
+        <p>The Cronomicon server itself, running shell jobs over SSH from where it sits. It is one row in
+            the Runners view, marked <em>this server</em>. There is exactly one, and it cannot be
+            deregistered. It runs bash, perl, powershell and python, nothing else, and serves the
+            agencies listed on its setting.</p>
+    </div>
+</div>
+
+<p>You need an agent when the server cannot reach the targets directly, when the work is Ansible or
+    Terraform, when a job binds an SSH key, or when a job watches for arriving files.</p>
+
+<p><strong>Nobody chooses a runner.</strong> No field on a job, a script or a run says where it executes,
+    and the Run dialog offers nothing to pick. Where a scope's jobs run is decided in one place only — the
+    scope's runner binding, further down this module.</p>
 
 <figure class="shot">
     <img class="dark" src="manual/runners-dark.png" loading="lazy" width="1600" height="900"
-        alt="The Runners view: registered runners with their status, capability chips, agency membership and last heartbeat">
+        alt="The Runners view in an earlier release: registered runners with their status, capability chips, an agencies column reading general pool, and last heartbeat">
     <img class="light" src="manual/runners-light.png" loading="lazy" width="1600" height="900"
-        alt="The Runners view: registered runners with their status, capability chips, agency membership and last heartbeat">
-    <figcaption>The Runners view — status, capabilities, agencies.</figcaption>
+        alt="The Runners view in an earlier release: registered runners with their status, capability chips, an agencies column reading general pool, and last heartbeat">
+    <figcaption>The Runners view — status, capabilities, agency. This picture is of an earlier release: it
+        has no row for the local runner, and its agency column reads "general pool", which no longer
+        exists. Every runner now shows the agency it serves.</figcaption>
 </figure>
+
+<h3>Who takes a run</h3>
+
+<p>The first runner that asks takes a queued run — provided it is eligible. Every one of these must
+    hold:</p>
+
+<ol class="tr-legend">
+    <li><strong>Agency.</strong> The runner serves the agency of the run's scope. A run with no scope is
+        Global's.</li>
+    <li><strong>Scope binding.</strong> If the scope is bound to runners, the runner is one of them. The
+        local runner can be bound like any other.</li>
+    <li><strong>Capability.</strong> The runner can run the run type and satisfies the job's
+        <code>requires</code>. The local runner runs only the shell types and satisfies no
+        <code>requires</code> at all; Ansible and Terraform need an agent with the toolchain.</li>
+    <li><strong>Secret injection.</strong> A run that injects secrets needs a runner allowed to receive
+        them: an agent you have flagged, or the local runner, which resolves the references itself on
+        the server.</li>
+    <li><strong>SSH key bindings.</strong> A run that binds an SSH key — declared on the job, or added in
+        the Run dialog — is <em>never</em> taken by the local runner. A bound key is delivered as a file
+        on the machine that runs the job, and only an agent does that.</li>
+</ol>
+
+<p>Read the consequence slowly, because it is the one that surprises people after an upgrade. Where an
+    agent and the local runner both serve an agency and a scope is not bound, <strong>a shell job may be
+        taken by either</strong>, and not always the same one. A job that used to run from the server may
+    now be taken by an agent; one that used to run on an agent may now be taken by the server. If that
+    matters for a scope, bind it. That is the only control.</p>
+
+<details class="tr-reveal">
+    <summary>What a run does when no runner is eligible</summary>
+    <div class="tr-body">
+        <p>It waits, and History says why, in a sentence that names the unmet condition: <em>no online
+                runner serves Finance</em>, <em>no online runner can run ansible jobs</em>, <em>the local
+                runner would take this run and is not running</em>, and so on. Your operators are taught to
+            read that sentence and bring it to you.</p>
+        <p>One case is refused rather than left waiting. A shell job that binds an SSH key, on a scope
+            that <em>no registered agent</em> serves, can never start — so a manual run or an API trigger
+            is refused with <code>key_binding_requires_runner</code>, a scheduled fire leaves a skipped
+            row, and a workflow step fails. An agent that is merely offline is an ordinary wait.</p>
+    </div>
+</details>
+
+<h3>The local runner</h3>
+
+<details class="tr-reveal">
+    <summary>Turning it on, and what you are agreeing to</summary>
+    <div class="tr-body">
+        <p>The local runner lives under <strong>Settings &rarr; Local runner</strong>, which only a global
+            administrator sees. Three things are set there: its <strong>State</strong> (on or off), its
+            <strong>Runs at once</strong>, and what it <strong>Serves</strong>.</p>
+        <p>On a new installation it is <strong>off</strong> and serves only Global. Turn it on and the
+            server itself <strong>holds SSH private keys in memory and opens outbound SSH connections to
+                job targets</strong>, and it writes a loud warning to its log each time it starts claiming.
+            That is a real change to what the server is, which is why it is a decision and not a
+            default.</p>
+        <p>It starts claiming at once: queued shell runs of the agencies it serves, which no other runner
+            has taken, run from the server. Turn it off again and the runs it is carrying finish, it
+            claims nothing more, and nothing is failed — but a scope bound only to it stays closed until
+            it is back.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Its serve list — the one runner that has one</summary>
+    <div class="tr-body">
+        <p>An agent serves its owner and nothing else. The local runner is the exception: it serves every
+            agency on its <strong>Serves</strong> list, and a global administrator adds one with
+            <em>+ Serve an agency…</em>. Global's runs are the jobs with no scope and the jobs on Global's
+            own scopes.</p>
+        <p>Adding an agency means the server may take that agency's shell jobs — alongside the agency's
+            own agents, wherever a scope is not bound. Before you add one, be sure the server can reach
+            those hosts and that the department expects its jobs to run from the server.</p>
+        <p>Taking an agency off the list stops the claims and leaves the bindings: a scope of that agency
+            that is bound to the local runner stays bound, and waits.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Keeping the server out of it altogether</summary>
+    <div class="tr-body">
+        <p>Leave the local runner off, or go further and start the server with
+            <code>CRONOMICON_LOCAL_RUNNER=forbid</code>. That forces it off and locks the setting: the
+            State reads <em>Forbidden on this host</em> and nobody can turn it on from the app.</p>
+        <p>If the local runner is the only runner that could take a run and it is off or forbidden, the run
+            stays queued and History says exactly that. An agency whose shell jobs have nowhere to run is
+            also listed in the Notices inbox.</p>
+    </div>
+</details>
+
+<h3>An agent has an owner</h3>
+
+<p>An agent's <strong>owner</strong> is the agency whose administrators manage it. What it
+    <strong>serves</strong> is the agency whose runs it claims. For an agent those are one and the same
+    fact, and it is fixed when the agent enrols.</p>
+
+<details class="tr-reveal">
+    <summary>Enrolling one — and who can</summary>
+    <div class="tr-body">
+        <p>On the Runners view, <strong>+ Add Runner</strong> mints a single-use registration token and
+            builds the one line to paste on the host. The token is minted <em>for an agency</em>, and that agency becomes the agent's owner. An administrator of several agencies must choose one. A global administrator's picker <strong>starts on Global</strong>: set it to the department the agent is for, because an agent enrolled for Global serves Global only and cannot be handed to a department afterwards — the way back is to deregister it and enrol it again. The token is good for 24 hours and for one enrolment.</p>
+        <p>An agency's administrators mint tokens for their own agency and manage the agents it owns:
+            settings, tags, host keys, deregistering. They cannot touch another agency's. A token for
+            Global is a global administrator's to mint.</p>
+        <p>A department with no machine of its own is still served by an agent <em>it owns</em>: a global
+            administrator deploys one for it, on whatever host is available. There are no shared
+            agents.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Legacy placements — agents that served several agencies before</summary>
+    <div class="tr-body">
+        <p>An upgraded installation may have agents that served several agencies. Each is now a
+            <strong>legacy placement</strong>: it keeps working exactly as it did, it is owned by Global
+            so only a global administrator manages it, and it can be <em>narrowed and never widened</em>.
+            Its row carries a <em>Legacy placement</em> mark and it is listed in the Notices inbox.</p>
+        <p>Settle one in this order. The order is what keeps a bound scope from closing while you
+            work:</p>
+        <ol>
+            <li>Enrol an agent for each agency the old runner serves.</li>
+            <li>Re-bind each of that agency's scopes that is bound to the old runner to the new agent,
+                scope by scope.</li>
+            <li>Copy the approved host keys for that agency's hosts to the new agent — <em>Copy from a
+                    runner…</em> under its Trusted host keys.</li>
+            <li>Only then take the agency off the old runner, or deregister it.</li>
+        </ol>
+        <p>Taking an agency off cannot be undone, which is why it comes last. When the old runner is down
+            to a single agency, <em>Hand to</em> that agency makes it the owner and the notice clears.</p>
+    </div>
+</details>
 
 <h3>Three states, and one of them is not stored</h3>
 
@@ -2843,12 +3070,15 @@
             and a runner that recovers stops being degraded the instant it heartbeats.</p>
         <p>Recovery actions are available on degraded runners, not just online ones. A runner that has gone
             quiet is exactly the one you want to be able to act on.</p>
+        <p>These states are an agent's. The local runner does not heartbeat from anywhere — it is the
+            server — so its row reads offline for one reason only: it is turned off, or forbidden on the
+            host. Expand the row and it says which. It is never removed for being quiet.</p>
     </div>
 </details>
 
 <h3>Capabilities are flags you set, not claims the agent makes</h3>
 
-<p>A runner does only what it was started and configured to do. Two capabilities matter most, and both are
+<p>An agent does only what it was started and configured to do. Two capabilities matter most, and both are
     opt-in:</p>
 
 <details class="tr-reveal">
@@ -2861,7 +3091,7 @@
 </details>
 
 <details class="tr-reveal">
-    <summary><strong>File watching</strong> — the other reason to deploy a runner</summary>
+    <summary><strong>File watching</strong> — another reason to deploy an agent</summary>
     <div class="tr-body">
         <p>Also opt-in, with an allowlist of paths it may watch. The agent reports what it observed; the
             server decides whether that means a run. The agent never triggers anything itself.</p>
@@ -2876,9 +3106,10 @@
 <details class="tr-reveal">
     <summary><strong>Secret injection</strong> — a flag with teeth</summary>
     <div class="tr-body">
-        <p>A job that binds secret references may only be claimed by a runner you have flagged for secret
-            injection. An unflagged runner leaves such a run queued for an eligible one rather than
-            claiming it and failing.</p>
+        <p>A job that binds secret references may only be claimed by an agent you have flagged for secret
+            injection. An unflagged agent leaves such a run queued for an eligible runner rather than
+            claiming it and failing. The local runner needs no flag: it is the server, which holds the
+            secret store, and resolves the references without their leaving the process.</p>
         <p>Same shape as agency isolation: eligibility filters dispatch, so the wrong runner never sees the
             work.</p>
     </div>
@@ -2887,56 +3118,175 @@
 <details class="tr-reveal">
     <summary><strong>Scope binding</strong> — naming the runners that reach a scope's hosts</summary>
     <div class="tr-body">
-        <p>An agency says which department's runners may take a run; inside it, every runner is
-            interchangeable. When only some of them can reach a scope's hosts, you <strong>bind the scope
-                to those runners</strong>: Scopes, expand the scope, Runners, <em>Bind runners</em>. From
-            then on only the bound runners claim that scope's runs. The binding narrows on top of the
-            agency rule; it never widens it.</p>
-        <p>Two things follow, and the dialog previews both before it lets you save. A job on a bound scope
-            with no executor of its own runs on the bound runners, with <em>their</em> keys and
-            <em>their</em> trusted host keys rather than the server's. And a job that insists on SSH from
-            the server is refused, rather than run from the wrong place.</p>
+        <p>An agency says which runners may take a run; among those, every eligible runner is
+            interchangeable. When only some of them should take a scope's runs — because only they reach
+            its hosts, or because the work must stay off the server — you <strong>bind the scope to those
+                runners</strong>: Scopes, expand the scope, Runners, <em>Bind runners…</em>. From then on
+            only the bound runners claim that scope's runs, on every path: manual, scheduled, workflow
+            step, reaction, file arrival. The binding narrows on top of the agency rule; it never widens
+            it.</p>
+        <p>This is the <em>only</em> way to say where a scope's jobs run. Bind the agent that reaches the
+            hosts to keep a scope's shell jobs off the server; bind the local runner to keep them on it. A
+            run on a bound scope uses the bound runner's keys and the host keys approved for <em>that</em>
+            runner. And the binding does not make a runner able: a scope bound only to the local runner
+            cannot run Ansible, or a job that binds an SSH key.</p>
+        <p>Binding takes authority over the <em>scope</em>, and a runner that serves the scope's agency.
+            It does not take authority over the runner.</p>
         <p><strong>A binding outlives its runner.</strong> Deregister a bound runner and the scope stays
-            bound to it by name: its runs wait, and each one says why. That is deliberate — the alternative
-            is a confined scope quietly reopening to its whole agency. You replace the runner, or restore
-            its placement when the host re-enrols.</p>
+            bound to it: its runs wait, and each one says why. That is deliberate — the alternative is a
+            confined scope quietly reopening to its whole agency. You replace the runner, or restore its
+            placement when the host enrols again.</p>
         <p>Runner <strong>tags</strong> play no part in this. They are labels for finding runners; nothing
             is dispatched on one. Before 2.2.0 a job could be pinned to a runner tag — that pin is gone,
-            and a <code>runner_tag</code> line left in a Git job file is ignored with a warning.</p>
+            and a <code>runner_tag</code> line left in a Git job file is ignored with a warning. An
+            <code>executor</code> line gets the same treatment (A6).</p>
     </div>
 </details>
 
 <details class="tr-reveal">
     <summary><strong>Host keys</strong> — what a runner trusts, and who said so</summary>
     <div class="tr-body">
-        <p>A runner connects only to hosts whose SSH key is in its own <code>known_hosts</code> file. You
-            fill that file from the Runners view: <strong>Scan keys</strong> has the runner scan a whole
-            scope, or a list of hosts, from where it sits — or takes lines you paste, or copies what
-            another runner trusts — and then shows every fingerprint for review before anything is
+        <p>A runner connects only to a host whose SSH key someone has <strong>approved</strong> for that
+            runner. That holds for the local runner exactly as for an agent, and nothing is trusted on
+            first contact: no runner captures a key the first time it sees a host. You approve keys from
+            the Runners view — expand the runner, <strong>Trusted host keys</strong>, then <strong>Scan
+                keys…</strong> to have the runner scan a whole scope or a list of hosts from where it
+            sits, <strong>Paste keys…</strong> to supply lines yourself, or <strong>Copy from a
+                runner…</strong> to carry what another runner trusts. Every route ends on the same
+            screen: each fingerprint, computed by the server, shown for review before anything is
             trusted.</p>
         <p>The review is the control. Compare each fingerprint with the host's own. A key that differs
             from one already trusted is marked <strong>Changed</strong> and is never ticked by select-all;
             approving it <em>replaces</em> the old key instead of leaving both trusted. A host behind a
-            bastion cannot be scanned, so its key is pasted.</p>
+            bastion cannot be scanned, so its key is pasted; the bastion itself is scanned, and is
+            verified like any other host, under its own address.</p>
         <p>Every approval, rejection and removal is recorded with the runner, the person and the source.
-            The runner also reports what its file really holds, so a key somebody put there by hand shows
-            up as <em>not approved here</em> instead of staying invisible.</p>
+            For an <strong>agent</strong>, approved keys are delivered to its own <code>known_hosts</code>
+            file, and the agent reports what that file really holds — so a key somebody put there by hand
+            shows up as <em>not approved here</em> instead of staying invisible. For the <strong>local
+                runner</strong> there is no file: the record of approvals <em>is</em> what the server
+            trusts, an approval is in force at once, and its keys are a global administrator's to
+            decide.</p>
+        <p>What it looks like when a key is missing: a run fails for that host with
+            <code>host_key_unverified</code>, and the message says where to approve one. <strong>Test
+                connection</strong> on Settings &rarr; SSH Targets answers <em>no approved key</em>
+            rather than quietly capturing the key it was shown — and there is no longer a pin to clear
+            there; replacing or removing a key is done in the runner's Host keys dialog. The Notices
+            inbox lists, scope by scope, the hosts the local runner takes runs for and has no approved
+            key for.</p>
+        <p>One limit to know: the local runner holds one key per address and key type. Two different
+            machines that share an address behind two different bastions cannot both be trusted by
+            it.</p>
     </div>
 </details>
 
 <details class="tr-reveal">
     <summary>Protocol version, and why an old runner is refused rather than half-served</summary>
     <div class="tr-body">
-        <p>Agent and server share a wire protocol version, and the server accepts only the current one. A
-            runner that is behind is <strong>refused on its next poll</strong>, with an error naming the
+        <p>Agent and server share a wire protocol version, and the server accepts only the current one. An
+            agent that is behind is <strong>refused on its next poll</strong>, with an error naming the
             version it needs, rather than being handed work whose newer fields it would silently drop. A
             dry run that applies for real is the failure this prevents.</p>
         <p>So a server upgrade that moves the protocol is a fleet upgrade. 2.2.0 moved it to 14: every
-            runner is upgraded with the server. A refused runner keeps its row and its identity, and
+            agent is upgraded with the server. A refused agent keeps its row and its identity, and
             <strong>Copy upgrade command</strong> on its row is the fix.</p>
         <p>The house rule for buttons still holds across the whole app: a precondition
             <strong>disables with a tooltip naming the fix</strong>; only irrelevance hides. A missing
             button is a mystery; a disabled one that says why is an instruction.</p>
+    </div>
+</details>
+
+<h3>The Notices inbox</h3>
+
+<p>The top bar carries a <strong>Notices</strong> button with a count. It opens an inbox of
+    <em>conditions that hold right now</em> and need a person — not a log of things that happened. Three
+    properties follow from that, and they are worth having straight before you open it:</p>
+
+<ol class="tr-legend">
+    <li><strong>A notice clears itself</strong> when its cause is put right. You do not mark it
+        done.</li>
+    <li><strong>Dismiss hides, it does not fix.</strong> It is for a notice you have read and are leaving
+        as it is, and it records who dismissed it. If the condition goes away and comes back, so does the
+        notice.</li>
+    <li><strong>You see your own agencies' notices.</strong> They are grouped by agency, and shown to that
+        agency's administrators. The install-wide ones are filed under Global and are a global
+        administrator's.</li>
+</ol>
+
+<p>Each notice names the place its remedy is made. What you will find there, by what it is about:</p>
+
+<details class="tr-reveal">
+    <summary>Where shell jobs run</summary>
+    <div class="tr-body">
+        <ul>
+            <li><em>Shell jobs that ran from the server may now run on an agent</em>, <em>…that ran on
+                    agents may now run from the server</em>, and <em>…that ran in two places may now run
+                    in either</em> — the upgrade recorded where each unbound scope's shell jobs used to
+                run, and both kinds of runner can now take them. The two are not the same place to run:
+                different keys, different approved host keys, and a run where only some hosts fail ends
+                as a warning on the server and as a failure on an agent. <strong>Bind the scope</strong>
+                to the runners that should serve it and the notice clears. If either is fine, dismiss
+                it.</li>
+            <li><em>The upgrade made the local runner serve an agency</em> — the server was running that
+                agency's shell jobs and would otherwise have stopped. Review Settings &rarr; Local runner:
+                leave the agency on the list, or take it off once an agent of its own serves it.</li>
+            <li><em>An agency's shell jobs have no runner</em> — no agent of its own, and the local runner
+                does not serve it. Enrol an agent for the agency, or have a global administrator add it to
+                the local runner's list.</li>
+            <li><em>A shell job requires what no agent has</em> — a job's <code>requires</code> is read
+                for shell jobs too, and the local runner satisfies none. Enrol an agent that has it, or
+                drop the requirement.</li>
+        </ul>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Lines left in Git that no longer do anything</summary>
+    <div class="tr-body">
+        <ul>
+            <li><em>Jobs in Git still declare an executor, which is ignored</em> — one notice per agency,
+                naming the jobs. Remove the <code>executor</code> line from each job's file, or from its
+                script's sidecar when the job took it from there. It clears at the next sync.</li>
+            <li><em>A runner-tag pin that could not be converted</em> — a job was pinned to a runner tag
+                before scopes could be bound and the pin had no binding to become, or its Git file still
+                says <code>runner_tag</code> and its scope is not bound. The notice gives the reason.
+                Bind the scope to its runners; for a leftover line, removing it will do as well.</li>
+        </ul>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Ownership that needs settling</summary>
+    <div class="tr-body">
+        <ul>
+            <li><em>A scope in several agencies</em> — move the scope to one agency.</li>
+            <li><em>A runner that serves agencies it is not owned by</em> — a legacy placement. Narrow
+                it, or replace it with agents each agency owns, in the order given earlier in this
+                module.</li>
+            <li><em>A job's target host is not in its scope</em> — fix the job, or add the host to the
+                scope.</li>
+            <li><em>A host record or bastion names a key its owner cannot use</em> — pick another key,
+                or move the key or the record.</li>
+            <li><em>A Vault path outside its agency's prefixes</em> — add the prefix to the agency, or
+                correct the path (A5).</li>
+        </ul>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Host keys for the local runner</summary>
+    <div class="tr-body">
+        <ul>
+            <li><em>The local runner has no approved key for some hosts</em> — it takes a scope's runs
+                and would fail on those hosts. Approve their keys under Runners, on the local runner's
+                row, in Trusted host keys.</li>
+            <li><em>Two records for one address had different host keys</em> — raised by the upgrade,
+                which carried the keys the server already held into the local runner's approved keys and
+                could keep only one per address. If it is one machine whose key changed, scan it and
+                approve the current key. If it is two machines sharing an address behind different
+                bastions, the server can serve only one of them: run the other's scope on an agent inside
+                that network.</li>
+        </ul>
     </div>
 </details>
 
@@ -2950,46 +3300,113 @@
 <p>Access is not "a role" plus "some scopes" held separately. It is a <strong>grant</strong>: an AD group,
     a role, and where that role applies — one row, one package.</p>
 
-<p>The rule that follows is the single most important thing here: <strong>a permission and a scope must
-        come from the same grant.</strong> Cronomicon never combines the verb from one grant with the
-    territory of another.</p>
+<p>The rule that follows is the single most important thing here: <strong>a permission and the agency it
+        applies to must come from the same grant.</strong> Cronomicon never combines the verb from one
+    grant with the territory of another.</p>
 
-<h3>The six permissions</h3>
+<h3>The seven permissions</h3>
 
 <ol class="tr-legend">
     <li><strong>Trigger jobs</strong> — start a run.</li>
-    <li><strong>Kill jobs</strong> — stop one that is going.</li>
-    <li><strong>Manage env vars</strong> — env vars and secrets.</li>
-    <li><strong>Publish schedule</strong> — push definitions to GitLab.</li>
-    <li><strong>Configure app</strong> — settings, scopes, agencies, runners.</li>
-    <li><strong>Manage roles</strong> — roles and grants. The one that can grant itself away.</li>
+    <li><strong>Kill jobs</strong> — stop, pause and resume.</li>
+    <li><strong>Manage variables &amp; secrets</strong> — variables, secrets and their bindings.</li>
+    <li><strong>Publish to GitLab</strong> — push definitions to the repository.</li>
+    <li><strong>Configure application</strong> — on an agency: its scopes, its host records and its
+        agents. On every agency: the installation's settings as well.</li>
+    <li><strong>Manage roles &amp; access</strong> — roles and grants. The one that can grant itself
+        away.</li>
+    <li><strong>Create jobs &amp; workflows</strong> — author jobs and workflows in the app, within the
+        agencies the grant reaches.</li>
 </ol>
 
-<p>Four roles come built in — <strong>admin</strong> (all six), <strong>approver</strong> (trigger, kill,
-    publish), <strong>operator</strong> (trigger, kill) and <strong>viewer</strong> (none, read-only) — and
-    you can define your own from the same six.</p>
+<p>Four roles come built in — <strong>admin</strong> (all seven), <strong>approver</strong> (trigger,
+    kill, publish), <strong>operator</strong> (trigger, kill) and <strong>viewer</strong> (none,
+    read-only) — and a global administrator can define more from the same seven.</p>
 
 <h3>Where a grant applies</h3>
 
 <div class="tr-buckets">
     <div class="tr-bucket">
         <h4>All scopes</h4>
-        <p>Unrestricted. The role's permissions apply everywhere, including to anything created
-            tomorrow.</p>
+        <p>Unrestricted: every agency, Global included, and anything created tomorrow. Whoever holds a
+            permission this way is a <strong>global administrator</strong> for it.</p>
     </div>
     <div class="tr-bucket">
         <h4>One agency</h4>
-        <p>The role applies to that agency's scopes, and follows as the agency's membership changes.</p>
+        <p>The role applies to what that agency owns — its scopes and everything bound to them — and
+            follows as scopes move in and out of the agency.</p>
     </div>
     <div class="tr-bucket">
         <h4>No grant</h4>
-        <p><strong>Zero access.</strong> Not "everything" — nothing.</p>
+        <p><strong>Zero access.</strong> Not "everything": such a person sees what belongs to Global and
+            can change nothing.</p>
     </div>
 </div>
 
-<p>That third one is the trap: an empty scope list does not mean unrestricted. It fails closed. Some
+<p>That third one is the trap: an empty grant does not mean unrestricted. It fails closed. Some
     schedulers treat an empty restriction list as "no restriction"; Cronomicon does not, and nothing you
     have carried over from such a tool should assume it.</p>
+
+<p>A grant names one agency or all of them. It never names Global on its own: what belongs to Global is
+    changed only by someone whose grant covers every agency.</p>
+
+<h3>Global administrators and agency administrators</h3>
+
+<p>Those two shapes of grant give two kinds of administrator, and the second kind is meant to be
+    self-sufficient. A department should not need to raise a ticket with the people who run the
+    installation to do its own housekeeping.</p>
+
+<div class="tr-buckets">
+    <div class="tr-bucket">
+        <h4>An agency administrator</h4>
+        <p>Manages what the agency owns: creates scopes in it and moves scopes into it, keeps its host
+            records and bastions, writes its secrets — Vault-backed ones inside the agency's Vault paths —
+            mints its service accounts, grants its own people access, and enrols and manages
+            <strong>its own agents</strong>.</p>
+    </div>
+    <div class="tr-bucket">
+        <h4>A global administrator</h4>
+        <p>Changes the installation and whatever belongs to Global: the Installation settings, the
+            agency catalog and each agency's Vault paths, the role definitions, the local runner, Git
+            sync, and anything a row in Global is.</p>
+    </div>
+</div>
+
+<details class="tr-reveal">
+    <summary>The three rules an agency administrator grants access under</summary>
+    <div class="tr-body">
+        <p>An agency administrator who holds <em>Manage roles &amp; access</em> can grant and revoke
+            access for their own agency, and mint its service accounts, under three rules:</p>
+        <ul>
+            <li><strong>Own agencies only.</strong> A grant on another department is not theirs to
+                write.</li>
+            <li><strong>Never all scopes.</strong> Only a global administrator hands out an unrestricted
+                grant.</li>
+            <li><strong>No amplification.</strong> They cannot grant a permission they do not themselves
+                hold on that agency.</li>
+        </ul>
+        <p>The role definitions themselves are shared by every agency, so editing one is a global
+            administrator's job.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Settings shows each of them a different page</summary>
+    <div class="tr-body">
+        <p>Settings is in two groups. <strong>Agency</strong> holds what an agency's administrators change
+            for themselves: Users &amp; Access, Service Accounts, SSH Targets and the Recycle Bin.
+            <strong>Installation</strong> holds what only a global administrator changes: General,
+            Notifications, GitLab Connection, Vault, Observability, Log Storage, Audit &amp; Compliance
+            and Local runner.</p>
+        <p>The Installation group is not greyed out for an agency administrator — it is not there. A
+            whole section that can never apply to its reader is irrelevance, and irrelevance hides. So
+            when you write instructions for a department, do not send them to an Installation section;
+            they will land somewhere else. Each section has its own address, which makes linking to the
+            right one easy.</p>
+        <p>The Recycle Bin is the odd one in the Agency group: it is listed there, and it is still a
+            global administrator's to use.</p>
+    </div>
+</details>
 
 <p>One more thing that catches people: <strong>AD group names are case-sensitive.</strong>
     <code>Finance-Ops</code> and <code>finance-ops</code> are different groups, and a grant against the
@@ -3052,9 +3469,15 @@
     <details class="tr-opt" data-verdict="right">
         <summary>A scope containing only what that job targets, an agency for it, and a grant against that</summary>
         <div class="tr-body">
-            <p>Correct. There is deliberately no per-job permission — the unit of access is the scope,
-                reached through an agency. Narrowing access means narrowing the territory, which also
+            <p>Correct. There is deliberately no per-job permission — a grant names an agency, and reaches
+                the scopes that agency owns. Narrowing access means narrowing the territory, which also
                 narrows the blast radius of anything that goes wrong.</p>
+            <p>Count what the new agency needs before you promise a date, because an agency is a real
+                zone and not a label. A global administrator creates it. It needs a <strong>runner that
+                    serves it</strong> — an agent enrolled for it, or the local runner with the agency
+                added to its list — or the contractor's run will wait for ever. And the secrets and keys
+                the job binds must be the new agency's or Global's; Finance's are not usable from
+                it.</p>
             <p>If that feels like a lot of structure for one contractor, that is the system telling you
                 something true: one job's worth of access is unusual, and it is worth being deliberate
                 about.</p>
@@ -3070,22 +3493,30 @@
         </div>
     </details>
 
-    <p class="tr-takeaway"><strong>Takeaway:</strong> the unit of access is the scope. Narrow the territory,
-        not the job list.</p>
+    <p class="tr-takeaway"><strong>Takeaway:</strong> the unit of access is the agency and the scopes it
+        owns. Narrow the territory, not the job list.</p>
 </div>
 
 <div class="tr-scenario">
     <h4>Scenario A5</h4>
-    <p class="tr-setup">Tidying up, you remove the last grant that gives anyone <strong>manage
-            roles</strong> across all scopes.</p>
+    <p class="tr-setup">Tidying up the role definitions, you open the built-in <strong>admin</strong> role
+        and untick <strong>Manage roles &amp; access</strong>.</p>
     <p class="tr-ask">What happens?</p>
 
     <details class="tr-opt" data-verdict="right">
-        <summary>Cronomicon refuses — it will not let you remove the last unrestricted administrator</summary>
+        <summary>Cronomicon refuses — the admin role cannot give that permission up</summary>
         <div class="tr-body">
             <p>Correct. There is a guard for exactly this, because the failure is unrecoverable from inside
-                the app: nobody left could grant the permission back.</p>
+                the app: the permission you would be removing is the one that reaches this screen, so
+                nobody left could put it back. The box is locked on the admin role, and the server refuses
+                the change whatever the screen does. The same guard stops you clearing it from the last
+                role of any name that still holds it.</p>
             <p>It is the one place where the system overrules an administrator, and it earns it.</p>
+            <p>Know where the guard stops, though. It protects the <em>role</em>. It does not count
+                <em>grants</em>: revoke the last grant that gives anybody the admin role on all scopes and
+                Cronomicon lets you. The way back from that is outside the app — the administrator
+                manual's first-run chapter describes it — so read a grant twice before you delete
+                it.</p>
         </div>
     </details>
 
@@ -3109,11 +3540,23 @@
         cannot be reopened from inside.</p>
 </div>
 
-<h3>One operational note</h3>
+<h3>Two operational notes</h3>
 
-<p>Changing roles or grants <strong>revokes existing sessions</strong>. People will be asked to sign in
-    again, and their new access takes effect immediately rather than whenever their session happened to
-    expire. Worth saying out loud before you make a change during business hours.</p>
+<p><strong>A change to roles or grants is in force at once.</strong> Within seconds, on the person's very
+    next click — nobody is signed out, and nobody has to sign in again to pick it up. That cuts both ways:
+    a grant you revoke stops working while its holder is mid-task, so say it out loud before you make a
+    change during business hours.</p>
+
+<p>There is one change Cronomicon cannot see: someone removed from a group at your identity provider keeps
+    that group until they next sign in. For that, a global administrator has <em>Sign out everyone
+        else…</em> on the menu under their own name. And upgrading from a release before this behaviour
+    signs everyone out once, on its own.</p>
+
+<p><strong>Ask a confused user to open My access.</strong> It is on the menu under their name at the foot
+    of the sidebar, and it shows what Cronomicon actually resolved for them: each grant that reaches them,
+    with its role, the agency it is on, what it permits and the group it came through — and, separately,
+    the groups of theirs that no grant names. That last list is where a mis-cased group name shows up,
+    which is the usual answer to "I was added to the group and nothing changed".</p>
 
 <h2 id="a5-secrets-variables-and-credentials">A5 · Secrets, variables and credentials</h2>
 
@@ -3137,6 +3580,59 @@
         <p>A first-class key for connecting to hosts, with its own rotation and usage tracking.</p>
     </div>
 </div>
+
+<details class="tr-reveal">
+    <summary>Each one belongs to an agency</summary>
+    <div class="tr-body">
+        <p>A secret, a variable and an SSH key each belong to <strong>exactly one agency</strong>, chosen
+            when the row is created, and that agency's administrators manage it. One that belongs to
+            <strong>Global</strong> is usable by every agency's jobs and changed only by a global
+            administrator — the right home for a value everybody needs and nobody should edit.</p>
+        <p>To hand a row to another department, use <strong>Move to another agency</strong> on the row. It
+            takes authority over both agencies, and it is refused when the target already owns something
+            of that name in the same scope.</p>
+        <p>The consequence for a run: a job resolves a reference from its own scope's agency, and from
+            Global. A run with no scope belongs to Global, so a row that a department owns resolves for
+            nobody there — such a run is refused, and the answer is to run the job against a scope.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Vault paths are divided between agencies</summary>
+    <div class="tr-body">
+        <p>The installation has one Vault connection, and a global administrator divides it. Each agency
+            has a list of <strong>Vault paths</strong> — path prefixes, on its row under Scopes &rarr;
+            Agencies — and the agency's administrators may name any path inside one of them for the
+            secrets and keys the agency owns. An agency with no prefix cannot create a Vault-backed
+            secret or key; any it already owns keep working, and cannot be edited until a path that covers
+            them is assigned. Global has no list: its rows are a global administrator's and have no path
+            limit.</p>
+        <p>The rule is applied when a reference is <strong>written</strong> and when a row is
+            <strong>moved</strong> — a path outside the agency's prefixes is refused there and then. It is
+            never applied at run time: a job does not start failing because somebody edited a prefix
+            list. What already falls outside is listed in the Notices inbox instead, as <em>A Vault path
+                outside its agency's prefixes</em>, until you add the prefix or correct the path.</p>
+        <p>A prefix covers whole path segments, and case matters. <code>secret/data/tax</code> covers
+            <code>secret/data/tax/db</code>; it does not cover <code>secret/data/tax-audit/db</code>.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>An SSH key does two different jobs — and only one of them works on the local runner</summary>
+    <div class="tr-body">
+        <p><strong>Connecting as it.</strong> A host record, a job or a single run can name the key a
+            runner logs in with. That works on every runner, the local runner included.</p>
+        <p><strong>Binding it.</strong> A job can also bind a key as a reference, so that the script gets
+            the key <em>as a file</em> on the machine that runs it. Only an agent can do that. The local
+            runner never takes a run that binds a key: such a run waits for an agent that serves its
+            scope, and when no registered agent does, it is refused —
+            <code>key_binding_requires_runner</code> — rather than queued for a runner that does not
+            exist.</p>
+        <p>So before a department binds a key on a shell job, it needs an agent of its own. If all it
+            wanted was to log in with the department's key, that is <em>Connect as</em>, and needs
+            none.</p>
+    </div>
+</details>
 
 <details class="tr-reveal">
     <summary>Jobs bind names, never values</summary>
@@ -3193,7 +3689,9 @@
     <div class="tr-body">
         <ul>
             <li><strong>Compose</strong> — build a job by binding a script to a scope, schedules, variables
-                and declared run inputs.</li>
+                and declared run inputs. There is no field for where the job runs: the composer shows a
+                one-line <em>Runs on</em> note, worked out from the run type and from whether the job
+                binds an SSH key, and that is all.</li>
             <li><strong>Workflow Editor</strong> — compose a workflow from job steps, with a visual
                 canvas.</li>
             <li><strong>Schedule Builder</strong> — author schedules, with a cron helper.</li>
@@ -3227,6 +3725,24 @@
     </div>
 </details>
 
+<details class="tr-reveal">
+    <summary>Two lines a Git job may still carry, and what happens to them</summary>
+    <div class="tr-body">
+        <p>Older job files, and script sidecars, may say <code>executor:</code> or
+            <code>runner_tag:</code>. Both once decided where a job ran. Neither is read any more: where a
+            job runs is decided by its scope's agency and the scope's runner binding (A3), and by nothing
+            on the job.</p>
+        <p>Neither line is an error, whatever its value — sync does not fail and the job still runs. Each
+            is <strong>ignored with a warning</strong>, in the sync log and from
+            <code>cronomicon validate</code>. The Notices inbox lists the jobs that still say
+            <code>executor</code>, and the ones that say <code>runner_tag</code> on a scope that is not
+            bound.</p>
+        <p>Do not leave them there. A line that reads <code>executor: ssh</code> looks like a promise that
+            the job stays on the server, and it is not one. If an author meant it, the promise is kept by
+            binding the scope; then remove the line, and the notice clears at the next sync.</p>
+    </div>
+</details>
+
 <h2 id="a7-external-triggers-and-what-cronomicon-does-not-do-yet">A7 · External triggers, and what Cronomicon does not do yet</h2>
 
 <p>Two things administrators get asked about, in one module: letting other systems start jobs, and the
@@ -3239,7 +3755,9 @@
     <div class="tr-body">
         <p>A service account carries a role and a territory exactly like a person does, and its actions are
             audited under its own name. There is no second, weaker authorization vocabulary for machines —
-            which means everything you know from A4 applies unchanged.</p>
+            which means everything you know from A4 applies unchanged. That includes who may mint one:
+            an agency's administrators create service accounts for their own agency, under the same three
+            rules as any grant.</p>
         <p>The token is shown once, at creation. Treat that moment accordingly.</p>
     </div>
 </details>
@@ -3298,8 +3816,10 @@
 
 <div class="tr-intro">
     <p><strong>That is the administrator course.</strong> Scopes and the host overlay, agencies as a hard
-        boundary, runners and their opt-in capabilities, grants and the same-grant rule, the four kinds of
-        secret, what the app will and will not author, and the current gaps.</p>
+        boundary with Global among them, the two kinds of runner and the rule that decides which takes a
+        run, approved host keys, the Notices inbox, grants and the same-grant rule, what an agency
+        administers for itself, the four kinds of secret, what the app will and will not author, and the
+        current gaps.</p>
     <p><strong>Next:</strong> the administrator manual documents every setting in detail, and the runner
         guides cover installation, configuration and hardening.</p>
 </div>

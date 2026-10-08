@@ -142,7 +142,7 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/schedule-defs/{name}":                              {clsComposeAdmin, "a reusable schedule has no owner"},
 	"DELETE /api/v1/schedule-defs/{name}":                           {clsComposeAdmin, "a reusable schedule has no owner"},
 	"PUT /api/v1/schedule-tags/{name}":                              {clsOpen, "any signed-in user; a schedule has no scope to read-check until it has an owner"},
-	"PUT /api/v1/scopes/{scopeId}/runners":                          {clsObject, "requireScopeAgency, plus the runner gate for each runner added"},
+	"PUT /api/v1/scopes/{scopeId}/runners":                          {clsObject, "requireScopeAgency; each runner added must serve the scope's agency, and no authority over the runner is asked (LR-62)"},
 	"POST /api/v1/scopes/{scopeId}/runners/preview":                 {clsObject, "requireScopeAgency"},
 	"POST /api/v1/scope-runners/replace":                            {clsObject, "the replacement runner, and every scope the old one is bound to (GC-6)"},
 	"POST /api/v1/notices/dismiss":                                  {clsObject, "configureApp on each notice's agency (a global administrator for Global's); a retired pin by its scope"},

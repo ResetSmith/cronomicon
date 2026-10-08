@@ -27,12 +27,17 @@ configuration knob may live under a reserved prefix.
 | `CRONOMICON_KEY_*` | SSH Keys | user | **file path** to key material on the executing host |
 | `CRONOMICON_RUN_*` | dispatcher | Cronomicon (fixed set) | read-only run **context** |
 
-**The `CRONOMICON_RUN_*` fixed set** (injected into every run by the executor; not
+**The `CRONOMICON_RUN_*` fixed set** (injected into every run by the runner that
+takes it; not
 bindable, never from a store row — a run's own metadata, always log-safe):
 `CRONOMICON_RUN_ID` (run/trace id), `CRONOMICON_RUN_JOB` (job name), `CRONOMICON_RUN_JOB_SOURCE`
-(`git`|`cronomicon`), `CRONOMICON_RUN_SCOPE` (`""` = global), `CRONOMICON_RUN_TYPE` (run type),
-`CRONOMICON_RUN_TRIGGERED_BY` (actor), `CRONOMICON_RUN_EXECUTOR` (`ssh`|`runner`). Both
-executors inject them.
+(`git`|`cronomicon`), `CRONOMICON_RUN_SCOPE` (`""` = no scope: the run is the Global
+agency's), `CRONOMICON_RUN_TYPE` (run type),
+`CRONOMICON_RUN_TRIGGERED_BY` (actor), `CRONOMICON_RUN_EXECUTOR` (`ssh`|`runner`). An agent
+and the local runner both inject them. `CRONOMICON_RUN_EXECUTOR` is `ssh` when the
+local runner (this server) runs the job and `runner` when an agent does. Since
+v2.3.0 nothing chooses between the two, so this is the one place a script can
+tell which kind of runner took it.
 
 **Derived references (rows are never renamed).** Rows keep their bare names
 (`ansible_rh8_key`, `NWD_BECOME_PASS`); the reference is derived at use time by
@@ -114,7 +119,7 @@ A write failure is reported (rate-limited) to the process log and never stops th
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_AUTH_MODE` | `trusted-header` | `trusted-header\|oidc`. |
-| `CRONOMICON_TRUSTED_PROXIES` | _(empty)_ | **req** in trusted-header mode — CIDR/IP allowlist of the reverse proxy. **Fail-closed: empty ⇒ refuse to boot** (unless `CRONOMICON_DEV_AUTH`). In the compose stack this is Traefik's static internal IP, e.g. `172.28.0.2/32`. |
+| `CRONOMICON_TRUSTED_PROXIES` | _(empty)_ | **req** in trusted-header mode — CIDR/IP allowlist of the reverse proxy. **Fail-closed: empty ⇒ refuse to boot** (unless `CRONOMICON_DEV_AUTH`). Give the proxy a stable internal address and list exactly that, e.g. `172.28.0.2/32`. |
 | `CRONOMICON_TRUSTED_HEADER_USER` | `Remote-User` | Header-name override. |
 | `CRONOMICON_TRUSTED_HEADER_EMAIL` | `Remote-Email` | Header-name override. |
 | `CRONOMICON_TRUSTED_HEADER_NAME` | `Remote-Name` | Header-name override. |
@@ -165,7 +170,7 @@ Only consulted when `CRONOMICON_AUTH_MODE=oidc`.
 | `CRONOMICON_GITLAB_TOKEN` | _(empty)_ | Read token for private repos; unauthenticated clone if empty. Secret. |
 | `CRONOMICON_GITLAB_WEBHOOK_SECRET` | _(empty)_ | Validates `X-Gitlab-Token` on the webhook. Secret. |
 | `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | The GitOps branch used for **both** sync-read and publish-write — there is one branch, not a read/write pair. Empty ⇒ fall back to the DB-backed `gitlab_config.write_branch` (**Settings → GitLab**), then `main`. Resolved **fresh per operation**, so a DB-side change applies without a restart; setting it here pins the branch and the panel value is ignored. |
-| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | Out-of-band bootstrap registration token. Multi-use, env-configured; unlike UI-minted tokens (single-use per install) it is never consumed. Secret. |
+| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | Out-of-band bootstrap registration token. Multi-use, env-configured; unlike UI-minted tokens (single-use per install) it is never consumed. Since v2.3.0 a registration token decides which agency owns the agent it enrols, and this one names none: an agent that registers with it is owned by, and serves, the **Global** agency. To enrol an agent for a department, mint a token for that agency under Runners. Secret. |
 | `CRONOMICON_AGENT_DIR` | `/usr/share/cronomicon/agents` | Directory of runner-agent binaries + `SHA256SUMS` served unauthenticated at `GET /agents/{filename}` (the container image bakes them in). Missing dir ⇒ clean 404 with a build-it-yourself hint — bare-metal deploys can point this at their own build output. |
 
 ### Stale-runner reaper
@@ -174,25 +179,40 @@ Only consulted when `CRONOMICON_AUTH_MODE=oidc`.
 crashed runner would otherwise stay `online` forever and its `running` runs hang
 forever. A background sweep runs **once a minute** (not configurable) and applies the
 two windows below in order: mark offline, reconcile that runner's orphaned runs to
-`failure` / `queued_reason=runner_lost`, then deregister.
+`failure` / `queued_reason=runner_lost`, then deregister. Both windows apply to
+agents only. The local runner (below) is this process: it is never marked offline
+or deregistered by the sweep, and its orphaned runs are reconciled by its own
+reaper (`CRONOMICON_SSH_EXECUTOR_STALE_AFTER`).
 
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_RUNNER_OFFLINE_AFTER` | `5m` | Go duration. An `online`/`draining` runner whose last heartbeat is older than this is marked **offline**. Agents poll once a minute, so the default is ≈5 missed polls. Shortening it below the poll interval will flap runners offline between polls. |
 | `CRONOMICON_RUNNER_DEREGISTER_AFTER` | `336h` (14 days) | Go duration. A runner that stays **offline** this long is fully removed — its tokens revoked and its row deleted (its placement is snapshotted first, see `backup-restore.md`). "Offline since" is derived from `last_seen_at` (or `registered_at` when it never polled), so this window is measured from the last heartbeat, not from the moment it was marked offline. A host that comes back later must re-register. |
 
-## Local runner (the in-process SSH engine; opt-in)
+## Local runner (this server running shell jobs itself; opt-in)
 
-Off by default. Turned on, **this process holds SSH private keys and opens
-outbound SSH to job targets** itself, rather than handing the work to a runner
-agent — so it changes the server's blast radius, and it logs a loud warning
-while on. Left off, `executor='ssh'` runs simply queue and are never claimed.
+The **local runner** is the server running shell jobs (`bash`, `perl`,
+`powershell`, `python`) over SSH from its own process. It is a row in the
+runner list and claims queued runs by the same rules as an agent: nothing on a
+job, a script or a run chooses it. Off on a new installation. Turned on, **this
+process holds SSH private keys and opens outbound SSH to job targets** itself,
+rather than handing the work to a runner agent — so it changes the server's
+blast radius, and it logs a loud warning each time it starts. It connects only
+to hosts whose key an operator has approved for it (Runners → Local runner →
+Host keys; nothing is captured on first connect), and never takes a run that
+binds an SSH key.
 
-Since v2.3.0 it is the **local runner**: a row in the runner list, turned on and
-off under **Settings → Local runner** by a global administrator, with a
-confirmation and an audit entry, and no restart. The environment decides only
-two things now: whether it is forbidden outright, and the values it starts with
-the first time v2.3.0 runs.
+Left off, a run that only the local runner could take stays queued, and History
+says why (*the local runner would take this run and is not running*). A shell
+run that an agent serving the scope's agency can take is taken by that agent.
+
+It is turned on and off under **Settings → Local runner** by a global
+administrator, with a confirmation and an audit entry, and no restart; the
+same setting holds how many runs it executes at once and which agencies it
+serves. The environment decides only two things: whether it is forbidden
+outright, and the values it starts with the first time v2.3.0 runs. (Before
+v2.3.0 this was the "SSH executor", switched on by the environment and chosen
+per job; the three `CRONOMICON_SSH_EXECUTOR_*` names keep that spelling.)
 
 | Var | Default | Notes |
 |---|---|---|
@@ -330,8 +350,12 @@ The Vault client (AppRole, KV v2) stays a no-op stub unless `CRONOMICON_VAULT_AD
 **and** both role/secret IDs are present (env **or** DB `vault_config`); then
 vault-source **secrets** and vault-source **SSH credentials** resolve live through
 one shared client, and the SPA shows the vault path option. No Vault configured ⇒
-local-KEK only. Operator guidance: the
-administrator manual's Vault section.
+local-KEK only. There is one connection and one credential for the whole
+installation; since v2.3.0 what keeps agencies apart on it is a setting, not
+an environment variable: an agency's secret or key may name only a path inside
+the prefixes a global administrator assigned to that agency (Scopes →
+Agencies), checked when the path is written or the row is moved. Operator
+guidance: the administrator manual's Vault section.
 
 | Var | Default | Notes |
 |---|---|---|

@@ -664,11 +664,16 @@
 <details class="tr-reveal">
     <summary><strong>3.</strong> There is no agent on most machines</summary>
     <div class="tr-body">
-        <p>Cronomicon connects over SSH from the server. No agent to install on each target, no per-machine
+        <p>Cronomicon reaches a target over SSH. No agent to install on each target, no per-machine
             licence, and no "Unlicensed Agents" count to watch.</p>
-        <p>Runner agents do exist, but for different reasons than you are used to: reaching networks the
-            server cannot reach, and watching directories for files. If your work does not involve either,
-            you may never see one.</p>
+        <p>What makes the connection is a <strong>runner</strong>, and there are two kinds. The
+            <strong>local runner</strong> is the Cronomicon server itself, running shell jobs. An
+            <strong>agent</strong> is a small program your administrators install on a machine of their
+            own — usually inside a network the server cannot reach — and one agent serves a whole
+            department's hosts, not one machine. Agents also run Ansible and Terraform and watch
+            directories for files, none of which the local runner does.</p>
+        <p>Nobody chooses which runner takes a run: not the job, not you. M4 shows where the Run dialog
+            tells you who will.</p>
     </div>
 </details>
 
@@ -703,7 +708,7 @@
     <summary><strong>6.</strong> Every run is reproducible, by trace ID</summary>
     <div class="tr-body">
         <p>Cronomicon snapshots what actually ran: a hash of the script's content at execution time, the
-            effective environment, the scope, the target hosts, and which executor carried it out. Each run
+            effective environment, the scope, the target hosts, and which runner took it. Each run
             carries a <strong>trace ID</strong> that ties the log, the audit record and the activity entry
             together.</p>
         <p>Practically: when someone asks "what did this job do on the 3rd", there is an exact answer, and
@@ -740,10 +745,15 @@
     </details>
 
     <details class="tr-map">
-        <summary><span class="tr-from">Agent</span><span class="tr-arrow">&rarr;</span><span class="tr-to">SSH executor, or a Runner</span><span class="tr-flag tr-flag-win">simpler</span></summary>
+        <summary><span class="tr-from">Agent</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Runner</span><span class="tr-flag tr-flag-win">simpler</span></summary>
         <div class="tr-body">
-            <p>By default there is no agent: Cronomicon connects over SSH. Runner agents exist for networks
-                the server cannot reach directly, and for watching directories for arriving files.</p>
+            <p>Nothing is installed on a target: a run is taken by a <strong>runner</strong>, which connects
+                to the targets over SSH. A runner is either the <strong>local runner</strong> — the
+                Cronomicon server itself, for shell jobs — or an <strong>agent</strong> enrolled inside a
+                network the server cannot reach directly. Agents also run Ansible and Terraform, and watch
+                directories for arriving files.</p>
+            <p>The word "agent" survives, then, with a narrower meaning: a department has one or a few for
+                its network, not one on every machine.</p>
             <p>No licensing, so no unlicensed-agent count and no licence expiry to track.</p>
         </div>
     </details>
@@ -762,10 +772,12 @@
     <details class="tr-map">
         <summary><span class="tr-from">&mdash;</span><span class="tr-arrow"></span><span class="tr-to">Agency</span><span class="tr-flag tr-flag-new">new</span></summary>
         <div class="tr-body">
-            <p>A network-isolation zone. Jobs in one agency only ever dispatch to runners in that same
-                agency — the separation is hard, not a preference.</p>
+            <p>A department's isolation zone. Every scope belongs to exactly one agency, and a run is only
+                ever taken by a runner that serves its scope's agency — the separation is hard, not a
+                preference. What belongs to no department belongs to the <strong>Global</strong> agency,
+                and that includes a run of a job with no scope.</p>
             <p>Mostly an administrator's concern. As an operator you will see agency names on jobs and
-                runners and can otherwise ignore them.</p>
+                runners, and when a run waits, the reason often names one (M8).</p>
         </div>
     </details>
 
@@ -790,14 +802,14 @@
     <details class="tr-map">
         <summary><span class="tr-from">File dependency</span><span class="tr-arrow">&rarr;</span><span class="tr-to">File-arrival trigger</span><span></span></summary>
         <div class="tr-body">
-            <p>A runner watches a path and the server decides what an arrival means. A file must be
+            <p>An agent watches a path and the server decides what an arrival means. A file must be
                 <em>stable</em> — unchanged in size for a set period — before it counts, so a job cannot
                 start on a half-copied file.</p>
             <p>Every arrival leaves a row in the job's File Arrivals panel, including arrivals that did
                 <em>not</em> start a run and why. That panel is the answer to "the file landed, so why did
                 nothing happen?"</p>
-            <p>This is one of the two features that needs a runner — specifically, one where the files
-                land.</p>
+            <p>This needs an agent — specifically, one on the machine where the files land. The local
+                runner does not watch directories.</p>
         </div>
     </details>
 
@@ -873,11 +885,17 @@
     <details class="tr-map">
         <summary><span class="tr-from">Users / Admin</span><span class="tr-arrow">&rarr;</span><span class="tr-to">Roles and access grants</span><span></span></summary>
         <div class="tr-body">
-            <p>Access is granted as a package: a group of people, a role, and the scopes that role applies
-                to — together, in one grant. Being allowed to run jobs <em>somewhere</em> is not the same
-                as being allowed to run them <em>here</em>, and Cronomicon keeps those apart deliberately.</p>
-            <p>If a button is greyed out or a job is not in your list, this is usually why. The
-                administrator course covers it properly.</p>
+            <p>Access is granted as a package: a group of people, a role, and the agency that role applies
+                to — one agency, or every agency — together, in one grant. Being allowed to run jobs
+                <em>somewhere</em> is not the same as being allowed to run them <em>here</em>, and
+                Cronomicon keeps those apart deliberately.</p>
+            <p>If a button is greyed out or a job is not in your list, this is usually why. You can check
+                for yourself: click your name at the foot of the sidebar and open <strong>My
+                    access</strong>. It lists each grant that reaches you — the role, the agency it is on
+                and that agency's scopes, what it lets you do, and the group it comes through — and the
+                groups of yours that no grant names. A new grant is in force within seconds; there is no
+                need to sign out and in again.</p>
+            <p>The administrator course covers the rest properly.</p>
         </div>
     </details>
 
@@ -1166,6 +1184,14 @@
     </div>
 </details>
 
+<p>Two things are not in that list. Your <strong>name</strong>, at the foot of the sidebar, opens a small
+    menu: <strong>My access</strong> shows which agencies you hold which permissions in, and Sign out is
+    there too. And the top bar carries a <strong>Notices</strong> button with a count — an inbox of
+    conditions that need a person, such as an agency whose shell jobs have no runner to take them. It is
+    shown to the people who administer an agency, so as an operator you may not have it. It is still worth
+    knowing it exists: when a run waits for a reason outside your reach, the condition behind it is
+    usually already listed there for the administrator you escalate to.</p>
+
 <h2>M4 · Running a job</h2>
 
 <p>The Run dialog is where an intention becomes a run, so it is built to be read rather than clicked
@@ -1182,8 +1208,8 @@
 
     <div class="tr-walk-nav">
         <label for="tr-run-s1">1 · It opens</label>
-        <label for="tr-run-s2">2 · Where it runs</label>
-        <label for="tr-run-s3">3 · When to run</label>
+        <label for="tr-run-s2">2 · Targets and Method</label>
+        <label for="tr-run-s3">3 · Timing</label>
         <label for="tr-run-s4">4 · Advanced</label>
     </div>
 
@@ -1191,15 +1217,20 @@
         <div class="tr-walk-step">
             <figure class="shot">
                 <img class="dark" src="manual/training-run-collapsed-dark.png" loading="lazy" width="972" height="449"
-                    alt="The Run dialog as it opens: four collapsed sections — Run inputs, Where it runs, When to run, Advanced options — each with a summary, and a This run panel on the right">
+                    alt="The Run dialog as it opens, in an earlier layout: collapsed sections, each with a summary on its right, and a This run panel on the right">
                 <img class="light" src="manual/training-run-collapsed-light.png" loading="lazy" width="972" height="449"
-                    alt="The Run dialog as it opens: four collapsed sections — Run inputs, Where it runs, When to run, Advanced options — each with a summary, and a This run panel on the right">
+                    alt="The Run dialog as it opens, in an earlier layout: collapsed sections, each with a summary on its right, and a This run panel on the right">
+                <figcaption>The shape of the dialog. This picture is of an earlier layout: today's has five
+                    sections — Inputs, Targets, Method, Timing, Advanced — and no executor line.</figcaption>
             </figure>
             <h4>Everything is answered before you touch anything</h4>
-            <p>Four sections, all closed, each stating its own answer on the right: <em>none declared</em>,
-                <em>Production · Auto &rarr; SSH · all 5 hosts</em>, <em>now</em>, <em>defaults</em>. You can
-                read the entire run without opening a single one.</p>
-            <p>The <strong>This run</strong> panel repeats it as a sentence and then in full. It lists
+            <p>Five sections, all closed, each stating its own answer on the right: <strong>Inputs</strong>
+                <em>none declared</em>, <strong>Targets</strong> <em>Production · all 5 hosts</em>,
+                <strong>Method</strong> <em>on any runner</em>, <strong>Timing</strong> <em>now</em>,
+                <strong>Advanced</strong> <em>defaults</em>. You can read the entire run without opening a
+                single one.</p>
+            <p>The <strong>This run</strong> panel repeats it as a sentence — <em>nightly-db-backup · all 5
+                    hosts in Production · on any runner · now</em> — and then in full. It lists
                 <em>every</em> setting the run will use — not only the ones you changed — because the
                 question it answers is "what is about to happen", and a list of your edits does not answer
                 that.</p>
@@ -1208,31 +1239,45 @@
         <div class="tr-walk-step">
             <figure class="shot">
                 <img class="dark" src="manual/training-run-where-dark.png" loading="lazy" width="972" height="762"
-                    alt="The Where it runs section expanded, showing target scope, references, host and group limiting, executor choice between SSH and Runner, and connect-as identity">
+                    alt="An earlier layout of the Run dialog with its targeting and connection controls open: target scope, references, host and group limiting, a choice of executor that the dialog no longer has, and connect-as identity">
                 <img class="light" src="manual/training-run-where-light.png" loading="lazy" width="972" height="762"
-                    alt="The Where it runs section expanded, showing target scope, references, host and group limiting, executor choice between SSH and Runner, and connect-as identity">
+                    alt="An earlier layout of the Run dialog with its targeting and connection controls open: target scope, references, host and group limiting, a choice of executor that the dialog no longer has, and connect-as identity">
+                <figcaption>An earlier layout, with Targets and Method still one section. The Executor choice
+                    in this picture is gone: the dialog now states who takes the run and offers nothing to
+                    pick.</figcaption>
             </figure>
-            <h4>Targeting and connection, in one place</h4>
-            <p>The scope, then two ways to narrow within it — specific hosts, or inventory groups — then how
-                Cronomicon connects: which executor, and which identity to connect as.</p>
-            <p>On a scope an administrator has bound to runners, the executor is decided for you: SSH is
-                disabled, with the reason, and the run goes to the bound runners. There is nothing to pick
-                and no way to send it somewhere else.</p>
-            <p>Both narrowing controls name the scope and count what is available (<em>5 available</em>), so
-                you are choosing from a known set rather than typing hostnames and hoping. Leave them alone
-                and the run uses the whole scope, which is M5's first lesson.</p>
+            <h4>Which machines, then how they are reached</h4>
+            <p><strong>Targets</strong> is which machines: the scope, then two ways to narrow within it —
+                specific hosts, or inventory groups. Both name the scope and count what is available
+                (<em>5 available</em>), so you are choosing from a known set rather than typing hostnames
+                and hoping. Leave them alone and the run uses the whole scope, which is M5's first
+                lesson.</p>
+            <p><strong>Method</strong> is how they are reached, and it opens with <strong>Runs on</strong>
+                — a statement, not a control. Nobody picks the runner: not the job, not you. The run is
+                queued and the first runner that is allowed to take it does. Runs on tells you which
+                runners those are.</p>
+            <p><em>Any runner that serves this scope</em> is an ordinary shell job: an agent or the local
+                runner may take it, whichever asks first. <em>Any agent that serves this scope</em> is
+                Ansible or Terraform, which need an agent's own tools, or a run that binds an SSH key,
+                which only an agent can deliver as a file. And <strong>runners named outright</strong>
+                mean an administrator has bound this scope to those runners, so no other runner takes its
+                runs.</p>
+            <p>Under it, <strong>Connect as</strong> lets you override the login and the key for this run
+                only. That is the one thing in Method you can change.</p>
         </div>
 
         <div class="tr-walk-step">
             <figure class="shot">
                 <img class="dark" src="manual/training-run-when-dark.png" loading="lazy" width="972" height="808"
-                    alt="The When to run section expanded, offering Now — enqueue immediately — or At a specific time">
+                    alt="An earlier layout of the Run dialog with its timing section open, offering Now — enqueue immediately — or At a specific time">
                 <img class="light" src="manual/training-run-when-light.png" loading="lazy" width="972" height="808"
-                    alt="The When to run section expanded, offering Now — enqueue immediately — or At a specific time">
+                    alt="An earlier layout of the Run dialog with its timing section open, offering Now — enqueue immediately — or At a specific time">
+                <figcaption>The two timing choices, unchanged. The section is titled Timing now, and the
+                    Executor choice above it in this picture no longer exists.</figcaption>
             </figure>
             <h4>Now, or later</h4>
-            <p>An ad-hoc run does not have to be immediate. <strong>At a specific time</strong> parks the
-                run and releases it when the time arrives.</p>
+            <p>An ad-hoc run does not have to be immediate. Under <strong>Timing</strong>, <strong>At a
+                    specific time</strong> parks the run and releases it when the time arrives.</p>
             <p>Worth knowing: a deferred run is not a schedule. It is one run, waiting. If the conditions
                 for releasing it have not cleared within about a day it is recorded as missed rather than
                 firing at a time that no longer makes sense.</p>
@@ -1241,20 +1286,48 @@
         <div class="tr-walk-step">
             <figure class="shot">
                 <img class="dark" src="manual/training-run-advanced-dark.png" loading="lazy" width="972" height="846"
-                    alt="The Advanced options section expanded on a bash job, explaining that the options are Ansible-specific and that per-run environment overrides live under Run inputs">
+                    alt="An earlier layout of the Run dialog with its Advanced section open on a bash job, explaining that the options are Ansible's and where per-run environment overrides live">
                 <img class="light" src="manual/training-run-advanced-light.png" loading="lazy" width="972" height="846"
-                    alt="The Advanced options section expanded on a bash job, explaining that the options are Ansible-specific and that per-run environment overrides live under Run inputs">
+                    alt="An earlier layout of the Run dialog with its Advanced section open on a bash job, explaining that the options are Ansible's and where per-run environment overrides live">
+                <figcaption>The Advanced section on a bash job, at the foot of an earlier layout. Disregard the
+                    Executor choice higher up: there is none today.</figcaption>
             </figure>
-            <h4>Advanced options tell you when they do not apply</h4>
+            <h4>Advanced tells you when it does not apply</h4>
             <p>For an Ansible run this is where check mode, diff, verbosity, tags and become live. For this
-                bash job it says so plainly — <em>nothing to set for a bash run</em> — and points at where
-                the thing you were probably looking for actually is.</p>
+                bash job it says so plainly — <em>Nothing to set for a bash run</em> — and points at where
+                the thing you were probably looking for actually is: per-run environment overrides are
+                under <strong>Inputs</strong>.</p>
             <p>A section that explains its own emptiness is worth more than one that hides.</p>
         </div>
     </div>
 </div>
 
-<h3>Two things to carry away</h3>
+<h3>Three things to carry away</h3>
+
+<details class="tr-reveal">
+    <summary>You do not choose the runner — a rule does, and you can read it</summary>
+    <div class="tr-body">
+        <p>A run is queued, and the first runner that asks <em>and is allowed to</em> takes it. Allowed
+            means all of these at once:</p>
+        <ul>
+            <li>the runner <strong>serves the agency</strong> of the run's scope — and a run with no scope
+                belongs to the Global agency;</li>
+            <li>if an administrator has <strong>bound the scope to runners</strong>, it is one of
+                them;</li>
+            <li>it <strong>can run the type</strong>: the local runner runs bash, perl, powershell and
+                python, and nothing else — Ansible and Terraform need an agent;</li>
+            <li>it <strong>may receive what the run carries</strong>: an agent takes a run with bound
+                secrets only if an administrator has flagged it for secret injection, and a run that
+                binds an SSH key is never taken by the local runner.</li>
+        </ul>
+        <p>One consequence to keep in mind. Where an agent and the local runner both serve an agency and
+            the scope is not bound, a shell job may be taken by <em>either</em>, and not always the same
+            one. If a job only works from one of them — it relies on a file on the agent's own disk, say —
+            that is settled by an administrator binding the scope to the right runner. Nothing on the job,
+            and nothing in this dialog, can do it.</p>
+        <p>When no runner is allowed, the run waits, and says why. M8 covers reading that.</p>
+    </div>
+</details>
 
 <details class="tr-reveal">
     <summary>Anything you change shows up as a deviation</summary>
@@ -1317,9 +1390,9 @@
     <div class="tr-body">
         <p>For a single run you can narrow to specific hosts, or to inventory groups. This narrows only —
             it can never reach past the scope.</p>
-        <p>For Ansible jobs this becomes the <code>--limit</code> the playbook runs under, computed the
-            same way for both executors so an Ansible run and an SSH run of the same selection reach the
-            same machines.</p>
+        <p>For Ansible jobs this becomes the <code>--limit</code> the playbook runs under; for a shell job
+            it is the list of hosts the runner connects to. One rule computes both, so an Ansible run and a
+            shell run of the same selection reach the same machines.</p>
         <p>One deliberate behaviour worth knowing: if your selection resolves to <em>nothing</em>, the run
             targets nothing. It does not fall back to the whole scope. A selection that matched nothing is
             far more likely to be a mistake than an instruction to run everywhere.</p>
@@ -1518,13 +1591,13 @@
 <details class="tr-reveal">
     <summary><strong>6. A file arriving</strong></summary>
     <div class="tr-body">
-        <p>Your file dependencies. A runner watches a path; the file must be <em>stable</em> — unchanged in
+        <p>Your file dependencies. An agent watches a path; the file must be <em>stable</em> — unchanged in
             size for a set period — before it counts, so nothing starts on a half-copied file.</p>
         <p>Every arrival is recorded in the job's <strong>File Arrivals</strong> panel, including arrivals
             that did not start a run and the reason. When someone says "the file landed and nothing
             happened", that panel is the answer rather than the beginning of an investigation.</p>
-        <p>This is one of the two things that needs a runner — specifically one on the machine where the
-            files land.</p>
+        <p>This needs an agent — specifically one on the machine where the files land. The local runner
+            does not watch directories.</p>
     </div>
 </details>
 
@@ -1633,15 +1706,16 @@
 <figure class="shot tr-hotspot">
     <span class="tr-shotbox">
         <img class="dark" src="manual/training-history-dark.png" loading="lazy" width="1390" height="250"
-            alt="The History page: six tabs across the top, a search box, filters for type, result, trigger and stopped, a Columns button, and the executions table with job name, trace ID, type, executor, schedule, timings, user, duration and result">
+            alt="The History page: six tabs across the top, a search box, filters for type, result, trigger and stopped, a Columns button, and the executions table with job name, trace ID, type, a column headed Executor in this earlier picture and Runner today, schedule, timings, user, duration and result">
         <img class="light" src="manual/training-history-light.png" loading="lazy" width="1390" height="250"
-            alt="The History page: six tabs across the top, a search box, filters for type, result, trigger and stopped, a Columns button, and the executions table with job name, trace ID, type, executor, schedule, timings, user, duration and result">
+            alt="The History page: six tabs across the top, a search box, filters for type, result, trigger and stopped, a Columns button, and the executions table with job name, trace ID, type, a column headed Executor in this earlier picture and Runner today, schedule, timings, user, duration and result">
         <a class="tr-pin" href="#hist-1" style="left: 8%; top: 12%;" aria-label="Point 1: the tabs">1</a>
         <a class="tr-pin" href="#hist-2" style="left: 22%; top: 31%;" aria-label="Point 2: search">2</a>
         <a class="tr-pin" href="#hist-3" style="left: 69%; top: 31%;" aria-label="Point 3: filters">3</a>
         <a class="tr-pin" href="#hist-4" style="left: 32%; top: 52%;" aria-label="Point 4: the trace ID column">4</a>
     </span>
-    <figcaption>History, filtered to successful runs.</figcaption>
+    <figcaption>History, filtered to successful runs. The column headed Executor in this picture is the
+        Runner column today; point 5 below says what it holds.</figcaption>
 </figure>
 
 <ol class="tr-legend">
@@ -1660,6 +1734,12 @@
         one identifier that ties the run's row, its log, its audit records and its activity entry together.
         When you escalate, send the trace ID — it saves the next person every question they were about to
         ask.</li>
+    <li id="hist-5"><strong>The Runner column — not pinned above, because the picture still heads it
+            Executor.</strong> It names the runner that took each run: an agent by its name, or the local
+        runner when the server ran the job itself. The name is the run's own copy, so it still reads
+        correctly after that runner has been renamed or removed. A run that no runner has taken yet shows
+        a dash. An old run that the server carried out before runners worked this way reads
+        <em>Server (SSH)</em>.</li>
 </ol>
 
 <h3>The drill-in</h3>
@@ -1668,13 +1748,14 @@
 
 <figure class="shot">
     <img class="dark" src="manual/training-run-detail-dark.png" loading="lazy" width="1385" height="178"
-        alt="A run's expanded detail: trace ID, result, set-off links, executor, exit code, duration, queued, started and completed times, triggered by, schedule and scope">
+        alt="A run's expanded detail: trace ID, result, set-off links, a field labelled Executor in this earlier picture and Runner today, exit code, duration, queued, started and completed times, triggered by, schedule and scope">
     <img class="light" src="manual/training-run-detail-light.png" loading="lazy" width="1385" height="178"
-        alt="A run's expanded detail: trace ID, result, set-off links, executor, exit code, duration, queued, started and completed times, triggered by, schedule and scope">
-    <figcaption>One run, in full. The log follows beneath these fields.</figcaption>
+        alt="A run's expanded detail: trace ID, result, set-off links, a field labelled Executor in this earlier picture and Runner today, exit code, duration, queued, started and completed times, triggered by, schedule and scope">
+    <figcaption>One run, in full. The field labelled Executor in this picture is now Runner. The log
+        follows beneath these fields.</figcaption>
 </figure>
 
-<p>Most of it is self-explanatory. Four fields repay a closer look:</p>
+<p>Most of it is self-explanatory. Five fields repay a closer look:</p>
 
 <details class="tr-reveal">
     <summary><strong>Triggered by</strong> — who or what caused this</summary>
@@ -1699,6 +1780,20 @@
         <p>Two different times, and a gap between them is information. A run that queued at 02:00 and started
             at 02:47 was waiting — for a concurrency gate, for a runner, for the queue ahead of it. If a job
             "runs late", this pair tells you whether it started late or simply took a long time.</p>
+        <p>While a run is still waiting for a runner, its <strong>Result</strong> reads Queued with the
+            reason beside it. M8 lists the reasons and what each one is asking for.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary><strong>Runner</strong> — which runner took it</summary>
+    <div class="tr-body">
+        <p>The same name as the Runner column. Nobody chose it — the first runner allowed to take the run
+            did — so this field is the only place that tells you where a run's connections actually came
+            from. On a scope that both an agent and the local runner serve, two runs of one shell job can
+            show two different names here, and that is normal.</p>
+        <p>It earns its place when a job fails only some of the time: line the failures up against this
+            field before you look anywhere else.</p>
     </div>
 </details>
 
@@ -1753,8 +1848,10 @@
         failed every run since Tuesday.</li>
     <li><strong>What does the log say?</strong> Open the run, read the log, note the exit code. Most
         failures answer themselves here.</li>
-    <li><strong>Is it the job, or where it ran?</strong> Check <em>Where it runs</em> on the run record. A
-        job that fails on one host and succeeds on eleven is not a broken job.</li>
+    <li><strong>Is it the job, or where it ran?</strong> Check the <em>Scope</em> and the <em>Runner</em> on
+        the run record, and the host names in the log. A job that fails on one host and succeeds on eleven
+        is not a broken job. Nor is a shell job that fails only when one particular runner takes it: that
+        runner cannot reach the host, or has no approved host key for it.</li>
 </ol>
 
 <h3>What you can do about it</h3>
@@ -1781,6 +1878,63 @@
             and is there for whoever hits this at 3am next time.</p>
     </div>
 </div>
+
+<h3>A run that waits, and why</h3>
+
+<p>Not every problem is a failure. A run that sits at <strong>Queued</strong> has not gone wrong yet: no
+    runner has been allowed to take it. Cronomicon works out which condition is unmet and writes it down —
+    beside the run's Result in History, and on the job's own detail panel as <strong>Waiting
+        because</strong>. Read it before you inspect anything else; it names the one thing that is
+    missing, and usually who can supply it.</p>
+
+<details class="tr-reveal">
+    <summary>The reasons you will meet, and what each is asking for</summary>
+    <div class="tr-body">
+        <ul>
+            <li><em>no runner is online</em> — nothing at all can take work. Escalate.</li>
+            <li><em>no online runner can run ansible jobs</em> (or whichever type it names) — the type
+                needs a runner with the right tools, and none is up. For Ansible and Terraform that means
+                an agent.</li>
+            <li><em>no online runner serves Finance</em> (or whichever agency it names) — that department's
+                runners are down, or it has none. Its administrators.</li>
+            <li><em>this run belongs to Global (it has no scope, or its scope is Global's), and no online
+                    runner serves Global</em> — the job has no scope. Run it against a scope whose agency
+                has a runner — <strong>Target scope</strong>, under Targets in the Run dialog — or ask a
+                global administrator.</li>
+            <li><em>scope Production is bound to …, and no bound runner is …</em> — the scope is confined to
+                named runners and none of them can take the run: offline, deregistered, or no longer in
+                the scope's agency. The sentence ends by saying which.</li>
+            <li><em>the local runner would take this run and is not running — it is turned off, or
+                    forbidden on this host</em> — the server would take this run and is not running jobs, and no agent that could take it is online. A global administrator turns it on under Settings
+                &rarr; Local runner, or the department enrols an agent.</li>
+            <li><em>this job binds an SSH key, which the local runner cannot deliver, and no agent that
+                    could take the run is online</em> — the run must go to an agent, and the agent is
+                down.</li>
+            <li><em>this run carries credentials, and no eligible runner is flagged for secret
+                    injection</em> — an administrator has to flag an agent to receive secrets.</li>
+            <li><em>no eligible runner advertises …</em> — the job requires something, named in the
+                reason, that no runner in reach has.</li>
+        </ul>
+        <p>Almost every one of these is an administrator's to fix, not yours. Your part is to read the
+            reason, not re-run the job in hope, and pass the sentence on with the trace ID.</p>
+    </div>
+</details>
+
+<details class="tr-reveal">
+    <summary>Refused is different from waiting</summary>
+    <div class="tr-body">
+        <p>A run that no runner can take right now <strong>waits</strong>, whether the runner it needs is offline or was never set up; the reason beside it says which. One case is refused instead of left waiting, because nothing could ever take it.</p>
+        <p>It is this: a shell job that binds an SSH key, on a scope that no agent
+            serves. Pressing Run is refused on the spot, with a message that says the key can only be
+            delivered by an agent and that none serves the scope. The same job fired by its schedule
+            leaves a <strong>Skipped</strong> row carrying that reason; as a workflow step, the step
+            fails.</p>
+        <p>And one that looks like a failure rather than a wait: a host fails with <em>the local runner
+                has no approved host key for …</em>. A runner connects only to a machine whose host key an
+            administrator has approved for it; nothing is trusted on first contact. The message says where
+            the approval is made. That, too, goes to an administrator — with the host name.</p>
+    </div>
+</details>
 
 <h3>Stopping a run: the disposition</h3>
 
@@ -1874,6 +2028,46 @@
         Filter to Skipped and read the reason.</p>
 </div>
 
+<div class="tr-scenario">
+    <h4>Scenario 8</h4>
+    <p class="tr-setup">You ran a bash job twenty minutes ago and it is still <strong>Queued</strong>. In
+        History its Result reads: <em>the local runner would take this run and is not running — it is
+            turned off, or forbidden on this host</em>.</p>
+    <p class="tr-ask">What do you do?</p>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Run it again — the second run will get through</summary>
+        <div class="tr-body">
+            <p>No. The second run is judged by the same rule as the first, so now two runs are waiting for
+                the same thing. Nothing about pressing Run changes which runners exist.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="wrong">
+        <summary>Open the Run dialog and send it to a different runner</summary>
+        <div class="tr-body">
+            <p>No — there is nothing to choose. <strong>Runs on</strong> under Method is a statement of who
+                may take the run, not a control. Where a scope's jobs run is decided by an administrator
+                binding the scope to runners, never per run.</p>
+        </div>
+    </details>
+
+    <details class="tr-opt" data-verdict="right">
+        <summary>Send the reason and the trace ID to an administrator, and leave the run where it is</summary>
+        <div class="tr-body">
+            <p>Correct. The reason has already done the diagnosis: the server would take this run and is not running jobs, and no agent that could take it is online. A global administrator can turn the
+                local runner on, or the department's administrators can enrol an agent. Either way the
+                queued run is taken as soon as a runner is allowed to — you do not need to start it
+                again.</p>
+            <p>If the work is no longer wanted by the time that happens, stop the queued run. Otherwise
+                leave it.</p>
+        </div>
+    </details>
+
+    <p class="tr-takeaway"><strong>Takeaway:</strong> a waiting run tells you what it is waiting for. Read
+        the sentence, pass it on, and do not stack more runs behind it.</p>
+</div>
+
 <h3>When to escalate, and what to send</h3>
 
 <p>Escalate when the log points outside your reach — a credential, a firewall, a host that is down — or
@@ -1917,9 +2111,11 @@
         <p>The agent or agent environment becomes a scope. Check whether a suitable scope already exists
             before making another — scopes are shared, and a proliferation of near-identical ones is how
             targeting mistakes start.</p>
-        <p>Two follow-ups: does it need an <strong>agency</strong>, because the hosts sit in an isolated
-            network? And does it need a <strong>runner</strong> — which is true if the job watches for files,
-            or if the server cannot reach those hosts directly?</p>
+        <p>Two follow-ups. Which <strong>agency</strong> does the scope belong to? Every scope belongs to
+            exactly one, and that decides which runners may take its runs. And does the job need an
+            <strong>agent</strong> — which is true if it is Ansible or Terraform, watches for files, binds
+            an SSH key, or targets hosts the server cannot reach directly? If so, that agency's
+            administrators enrol one.</p>
     </div>
 </details>
 
@@ -1956,7 +2152,7 @@
         <p>Job prerequisites become <strong>reactions</strong>. Note which outcome each one should watch for
             — success, failure, stopped, or any — because Automate Schedule dependencies and Cronomicon
             reactions do not always express this the same way.</p>
-        <p>File dependencies become <strong>file-arrival triggers</strong>, and need a runner where the files
+        <p>File dependencies become <strong>file-arrival triggers</strong>, and need an agent where the files
             land. Anything triggered by an outside system becomes an API trigger, which means a service
             account and setting the job to allow external triggering.</p>
     </div>
@@ -1986,7 +2182,7 @@
     <summary><strong>8. Who may run it?</strong> &rarr; an access grant</summary>
     <div class="tr-body">
         <p>Usually an administrator's job, but you are the one who knows which team owns this. Access is
-            granted as a package — a group, a role, and the scopes it applies to — so "who may run this" and
+            granted as a package — a group, a role, and the agency it applies to — so "who may run this" and
             "where they may run it" are answered together.</p>
     </div>
 </details>
@@ -2011,8 +2207,9 @@
             <ul>
                 <li><strong>Script</strong> — the shell script, committed to the finance repository, run
                     type bash.</li>
-                <li><strong>Scope</strong> — one containing <code>fin-batch-01</code>. Because it watches for
-                    files, it needs a <strong>runner</strong> on that host.</li>
+                <li><strong>Scope</strong> — one containing <code>fin-batch-01</code>, in the finance
+                    agency. Because the job watches for files, it needs an <strong>agent</strong> on that
+                    host, enrolled for that agency.</li>
                 <li><strong>Schedule</strong> — <code>30 23 * * 1-5</code>. The weekday part came out of the
                     Fiscal calendar and into the cron expression.</li>
                 <li><strong>Working calendar</strong> — the fiscal <em>holidays</em> only, as a skip
@@ -2048,8 +2245,9 @@
 
 <div class="tr-intro">
     <p><strong>That is the operator course.</strong> You know the model, where definitions live, how to
-        find your way around, how to run a job and read what it will do before you commit, how wide a run
-        reaches, the six ways a run can start, how to read a result, and what to do when one goes wrong.</p>
+        find your way around, how to run a job and read what it will do before you commit — including
+        which runners may take it — how wide a run reaches, the six ways a run can start, how to read a
+        result, why a run may wait, and what to do when one goes wrong.</p>
     <p><strong>Next:</strong> the user manual documents every screen and field in detail — it will make
         much more sense now than it would have an hour ago. If you administer Cronomicon as well as operate
         it, the administrator course covers scopes, agencies, runners, access grants and secrets.</p>

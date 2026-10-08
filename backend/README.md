@@ -4,8 +4,11 @@ Go backend for Cronomicon (single static binary, single process). Serves
 the API + embedded frontend from one container, backed by SQLite.
 
 > Two binaries: `cmd/cronomicon` (server) and `cmd/cronomicon-runner` (the
-> out-of-process runner agent). The release of record is the top entry of
-> `../CHANGELOG.md`; the layout below maps the main packages.
+> out-of-process runner agent). A run is queued and a **runner** claims it: an
+> agent, or the server itself as the **local runner** (shell jobs over SSH,
+> `internal/sshexec`). Both claim through one statement, `runner.Claim`. The
+> release of record is the top entry of `../CHANGELOG.md`; the layout below maps
+> the main packages.
 
 ## Layout
 
@@ -16,8 +19,13 @@ internal/
   db/               SQLite open, golang-migrate, retention sweep, UUIDv7 ids
     migrations/     numbered NNN_name.{up,down}.sql
   auth/             OIDC RP + trusted-header SSO, session cookie + CSRF, runner bearer,
-                    role derivation, ResolveGrants (the single access resolver)
+                    and the grant snapshot (snapshot.go): grants are resolved per
+                    request from access_grants, never read from the cookie
   api/              net/http router, health/readiness, per-feature mount files
+  runner/           agent registration, the one claim (poll.go), host-key review + ledger
+  sshexec/          the local runner: shell jobs over SSH from this process
+  execspec/         the claim rule's shared pieces, target and host-record resolution
+  agent/            the cronomicon-runner agent
   httpx/            error envelope + JSON helpers
 web/                embedded frontend build (dist/) — produced by Vite
 openapi.yaml        the contract (canonical, single-owner)
@@ -30,7 +38,7 @@ make build      # CGO_ENABLED=1 (mattn/go-sqlite3 needs cgo)
 make test       # go test -race ./...  (the gate)
 make test-fast  # no -race — inner loop only, not the gate
 make run        # serves :8080
-make verify     # tidy + vet + race-enabled test + build (mirrors CI)
+make verify     # tidy + vet + race-enabled test + build (run before pushing; there is no CI)
 make vuln       # govulncheck — needs network, so NOT part of verify
 make deadcode   # unreachable-symbol report (tests as roots) — advisory, not a gate
 ```
@@ -53,7 +61,8 @@ frontend generates a client (`npm run gen`).
 | `CRONOMICON_COOKIE_SECURE` | `true` | set `false` for local HTTP |
 | `CRONOMICON_DEV_AUTH` | `false` | **dev only** — exposes `GET /auth/dev-login`, a one-click bypass that mints a synthetic admin session without the identity provider. Never enable in a deployed environment. |
 | `CRONOMICON_DEV_SEED` | `false` | **dev only** — loads representative demo data into an *empty* DB on boot so every view renders. No-op once the DB has data. |
-| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | — | shared runner registration token |
+| `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | — | multi-use runner registration token. It names no agency, so an agent it enrols is owned by, and serves, Global; a token minted in the app names the agency |
+| `CRONOMICON_LOCAL_RUNNER` | — | `forbid` keeps this server from ever running jobs itself (the local runner reads as off and cannot be turned on in the app). Unset or `allow` leaves it to **Settings → Local runner**; any other value refuses to start. The three `CRONOMICON_SSH_EXECUTOR_*` names are covered in `deploy/env-matrix.md` |
 | `CRONOMICON_KEK_FILE` / `CRONOMICON_KEK` | — | stored-secret KEK: mounted file preferred, env fallback. **Back up separately from the DB.** |
 | `CRONOMICON_RETENTION_RUNS_DAYS` / `_CHANGELOG_DAYS` / `_LOG_FILES_DAYS` | `90` / `365` / `90` | Retention **bootstrap defaults only** — they seed the `auditCompliance` settings blob on the first boot that finds it unset; afterwards the twelve per-table knobs in Settings → Audit & Compliance are authoritative (the knobs with no env var — `auditLogFiles`, `recycleBin`, `definitionRevisions`, `runnerPlacementHistory`, `archivedLogFiles`, `hostKeyLedger` — start at their own defaults). `_LOG_FILES_DAYS` reaps **on-disk run logs**. |
 | `CRONOMICON_BACKUP_S3_BUCKET` | — | nightly VACUUM-INTO upload target; empty disables upload |
@@ -122,6 +131,7 @@ degrade gracefully — the server boots and serves with them absent.
 - **CI-time validation:** `deploy/ci-validate-template.yml` is the
   drop-in `.gitlab-ci.yml` snippet for the job-definitions repo that runs
   `cronomicon validate` on every MR (fail-fast, line-numbered; opt-in MR-comment
-  job included). Operator walkthrough — copy, pin `CRONOMICON_IMAGE`, read a
-  failure — in **`deploy/README.md` → "CI Setup"**. The CLI is covered by an
+  job included). The template's header comments say how to use it: copy it into
+  the repository's `.gitlab-ci.yml` and pin `CRONOMICON_IMAGE` to the version
+  the deployment runs. The CLI is covered by an
   e2e test (`cmd/cronomicon/validate_test.go`).
