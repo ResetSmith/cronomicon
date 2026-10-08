@@ -205,19 +205,19 @@ function StatusCell({ r }: { r: ReviewRow }) {
     );
   }
   if (r.status === "changed") {
-    const whose = r.previousSource === "server" ? "the key the server pins for this host" : "the key this runner trusts now";
+    const whose = r.previousSource === "server" ? "the key approved for the server (the local runner) for this host" : "the key this runner trusts now";
     return (
       <div>
         <Chip tone="danger">Changed</Chip>
         <div style={{ marginTop: 3, fontSize: c.fontXs, color: c.textSec }}>
           Differs from {whose}:
           <div style={{ ...mono(), wordBreak: "break-all" }}>{r.previousFingerprint}</div>
-          {r.previousSource !== "server" && r.matchedServerPin && <div>It matches the server's pin.</div>}
+          {r.previousSource !== "server" && r.matchedServerPin && <div>It matches the key approved for the server.</div>}
         </div>
       </div>
     );
   }
-  if (r.status === "match") return <Chip tone="success" title="The same key the server itself has pinned for this host">Matches server</Chip>;
+  if (r.status === "match") return <Chip tone="success" title="The same key that is approved for the server itself (the local runner) for this host">Matches server</Chip>;
   if (r.status === "trusted") return <Chip tone="muted" title="This runner already trusts exactly this key">Already trusted</Chip>;
   return <Chip tone="info" title="Nothing is known about this host's key yet">New</Chip>;
 }

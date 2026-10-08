@@ -2774,9 +2774,9 @@ export function RunDialog({
         </div>
       </FormField>
 
-      {/* CA — per-run "connect as" identity. Hidden for runner-only run types
-          (ansible/terraform), where identity belongs to the inventory/toolchain
-          and the server 422s these fields. */}
+      {/* CA — per-run "connect as" identity. Offered for the shell types and for
+          ansible (RP-10: delivered as connection extra-vars, which beat the
+          inventory); hidden for terraform, where the server 422s these fields. */}
       {identityCapable && (
         <FormField
           label="Connect as"

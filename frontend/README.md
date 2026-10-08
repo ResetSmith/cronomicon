@@ -4,7 +4,7 @@ Operator UI — **React + TypeScript + Vite**. Builds into `../backend/web/dist`
 which the Go binary embeds and serves. The API client is **generated from
 the canonical `backend/openapi.yaml`** — never hand-write request/response types.
 
-> Typed client + auth shell (OIDC session + CSRF) + theme, with sixteen view
+> Typed client + auth shell (OIDC session + CSRF) + theme, with seventeen view
 > components under `src/views/`. The routes are declared in `src/App.tsx`, and
 > the user manual describes each screen.
 
@@ -26,6 +26,10 @@ server proxies API + auth routes to it.
 - `src/api/client.ts` — `openapi-fetch` typed client; sends the session cookie
   (`credentials: include`) and the CSRF token header on writes.
 - `src/auth.tsx` — fetches `/me`; unauthenticated → Login → `/api/v1/auth/login`.
+- `src/api/access.ts` — `useMyAccess` / `agenciesFor`: which agencies the user
+  holds a permission in (`GET /me/access`). It fills an owner picker or words a
+  reason; it is never the gate. A yes/no comes from `/capabilities` or a
+  per-row flag.
 - `src/components/Shell.tsx` — sidebar nav + routed outlet.
 - `src/views/*` — per-view components calling the typed client.
 - `src/theme.ts` — design tokens (palette, type scale, radii, faces).
@@ -67,7 +71,7 @@ The production frontend uses **no global store or external state library** (no R
 
 | Context | Provider · hook | Holds |
 |---|---|---|
-| `auth.tsx` | `AuthProvider` · `useAuth()` | Current user (`Me`), loading state. Capability gating reads the server's `/capabilities` flags plus per-row `canRun`/`canKill`; a hardcoded client-side role list would be wrong the moment custom roles exist |
+| `auth.tsx` | `AuthProvider` · `useAuth()` | Current user (`Me`), loading state. Capability gating reads the server's `/capabilities` flags plus per-row flags (`canRun`/`canKill`/`canPause` on a job, `canManage`/`canReviewHostKeys` on a runner); a hardcoded client-side role list would be wrong the moment custom roles exist, and so would comparing agency ids in a view |
 | `theme-context.tsx` | `ThemeProvider` | Light/dark mode |
 | `timezone-context.tsx` | `TimezoneProvider` | Application timezone for rendering timestamps |
 

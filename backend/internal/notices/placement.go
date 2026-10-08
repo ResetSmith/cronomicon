@@ -101,7 +101,7 @@ const shellTypesSQL = `('bash','perl','powershell','python')`
 // either engine: it is the same job, and it is not the same environment.
 const engineDifference = "The two are not the same place to run: an agent connects with the keys in its own key directory " +
 	"(or one delivered to it) and trusts the hosts in its own reviewed known_hosts; the server connects with the keys " +
-	"stored in Cronomicon and the host keys kept with the SSH targets. A run across several hosts where some fail ends " +
+	"stored in Cronomicon and trusts the host keys approved for the local runner. A run across several hosts where some fail ends " +
 	"as a warning on the server and as a failure on an agent. "
 
 const bindRemedy = "To decide where they run, bind the scope to the runners that should serve it (Scopes → the scope → Bind runners)."

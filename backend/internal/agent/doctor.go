@@ -149,7 +149,7 @@ func Doctor(ctx context.Context, cfg Config, quick bool) ([]Check, bool) {
 		} else if n, err := countKnownHostsEntries(cfg.KnownHostsFile); err != nil {
 			add("known-hosts", CheckWarn, cfg.KnownHostsFile+": "+err.Error())
 		} else if n == 0 {
-			add("known-hosts", CheckWarn, cfg.KnownHostsFile+" is empty — Scan & approve the targets, or ssh-keyscan them in, before the first run")
+			add("known-hosts", CheckWarn, cfg.KnownHostsFile+" is empty — approve the targets' host keys in the Runners view (Trusted host keys → Scan keys), or ssh-keyscan them in, before the first run")
 		} else {
 			add("known-hosts", CheckPass, fmt.Sprintf("%s (%d host key(s))", cfg.KnownHostsFile, n))
 		}
@@ -350,7 +350,7 @@ func DoctorAuth(ctx context.Context, cfg Config, name, target string) ([]Check, 
 	if derr != nil {
 		switch {
 		case isHostKeyError(derr):
-			add("auth-dial", CheckFail, "host key not in known_hosts (or mismatch) — Scan & approve "+dialAddr(host, host, port)+" in the Runners view, then retry")
+			add("auth-dial", CheckFail, "host key not in known_hosts (or mismatch) — approve the key of "+dialAddr(host, host, port)+" in the Runners view (Trusted host keys → Scan keys), then retry")
 		case isAuthError(derr):
 			add("auth-dial", CheckFail, "permission denied — the target's authorized_keys for this user does not accept this key: "+derr.Error())
 		default:
