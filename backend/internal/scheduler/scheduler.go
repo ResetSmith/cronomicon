@@ -470,8 +470,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	}
 
 	// Job-level env (JC10/JC11): the BASE layer beneath the firing schedule's env
-	// (schedule wins on key collision, Q-JC9). Read fresh per fire — like
-	// ResolveExecutor below — so an edit takes effect without waiting for the next
+	// (schedule wins on key collision, Q-JC9). Read fresh per fire, so an edit takes effect without waiting for the next
 	// scheduler reload. NULL/empty job-env ⇒ MergeJSON returns the schedule env
 	// unchanged (R2 no-op).
 	//

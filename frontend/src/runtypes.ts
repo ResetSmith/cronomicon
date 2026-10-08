@@ -1,20 +1,18 @@
-// Run-type ↔ executor rules shared across the run path (Jobs RunDialog) and the
-// authoring path (JobComposer). Kept in one module so the two surfaces never
-// drift on which run-types are runner-only (JC6).
-
-export type Executor = "ssh" | "runner";
+// Run-type rules shared across the run path (Jobs RunDialog) and the authoring
+// path (JobComposer). Kept in one module so the two surfaces never drift on
+// which run types only an agent can run (JC6).
 
 // RP-5 — the closed run-type vocabulary (openapi.yaml RunType), in the ONE
-// display order every dropdown/filter uses: the ssh-family shells first, then
-// the runner-only local toolchains. Pinned against the OpenAPI enum by
+// display order every dropdown/filter uses: the shells first, then the
+// agent-only local toolchains. Pinned against the OpenAPI enum by
 // runtypes.test.ts so a backend addition fails the build loudly instead of
 // silently missing from a picker.
 export const RUN_TYPES = ["bash", "perl", "powershell", "python", "ansible", "terraform"] as const;
 export type RunType = (typeof RUN_TYPES)[number];
 
-// Run-types that can only execute on a runner agent (they need the local
-// ansible/terraform toolchain); the in-app SSH executor cannot run them (R5.2).
-// The backend resolveExecutor 422s ssh×these, so the UI treats it as a hard lock.
+// Run types only an agent can run: they need the local ansible/terraform
+// toolchain, which the local runner (the server, over SSH) does not have
+// (R5.2). The claim's capability rule enforces it; the UI only words it.
 export const RUNNER_ONLY_TYPES = new Set<string>(["ansible", "terraform"]);
 
 export const isRunnerOnly = (type?: string | null): boolean => !!type && RUNNER_ONLY_TYPES.has(type);

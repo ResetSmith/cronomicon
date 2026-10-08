@@ -559,10 +559,6 @@ func entityOwner(ctx context.Context, database *sql.DB, table, id string) string
 	return owner
 }
 
-func containsID(ids []string, want string) bool {
-	return slices.Contains(ids, want)
-}
-
 // ── Agency-scoped membership (RB-22) ─────────────────────────────────────────
 //
 // The inverse write axis. SetAgencyMembership replaces ONE ENTITY's agency list;

@@ -3,7 +3,7 @@ import { c } from "../theme";
 import { Btn, CopyText, statusLabel, statusTone } from "./ui";
 import { fmtDuration } from "../utils/datetime";
 import {
-  executorLabel,
+  runnerLabel,
   frac,
   groupMarks,
   inWindow,
@@ -590,7 +590,7 @@ function Readout({
               proportion to their content, so a wider window opens the table
               out rather than leaving a packed block beside dead space; the
               View-run column anchors the right edge. A projection has no
-              trigger, executor or trace, so those heads are omitted for a
+              trigger, runner or trace, so those heads are omitted for a
               future group rather than labelling empty columns. */}
           {(() => {
             const past = group.tense === "past";
@@ -617,7 +617,7 @@ function Readout({
                     <th scope="col" style={head}>Status</th>
                     <th scope="col" style={head}>{past ? "Started" : "Fires"}</th>
                     {past && <th scope="col" style={head}>Trigger</th>}
-                    {past && <th scope="col" style={head}>Executor</th>}
+                    {past && <th scope="col" style={head}>Runner</th>}
                     {past && <th scope="col" style={head}>Duration</th>}
                     {past && <th scope="col" style={head}>Trace</th>}
                     {past && runHref && <th scope="col" style={{ ...head, paddingRight: 0, textAlign: "right" }}><span style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>Open</span></th>}
@@ -639,7 +639,7 @@ function Readout({
                       </td>
                       <td style={{ ...quiet, fontFamily: c.mono }}>{(timeInZone ?? stampInZone)(m.at)}</td>
                       {past && <td style={{ ...quiet, ...cap }} title={triggerLabel(m) || undefined}>{triggerLabel(m)}</td>}
-                      {past && <td style={{ ...quiet, ...cap }} title={executorLabel(m) || undefined}>{executorLabel(m)}</td>}
+                      {past && <td style={{ ...quiet, ...cap }} title={runnerLabel(m) || undefined}>{runnerLabel(m)}</td>}
                       {past && <td style={{ ...quiet, fontFamily: c.mono }}>{m.durationMs != null ? fmtDuration(m.durationMs) : ""}</td>}
                       {past && (
                         <td style={{ ...quiet, fontFamily: c.mono }}>

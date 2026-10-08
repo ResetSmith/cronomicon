@@ -84,7 +84,7 @@ const renderDialog = (job: Job) => {
   // such a job call openOptions() first, exactly as an operator must.
   // RD5 — "Where it runs" is now two sections. openOptions opens BOTH (the old
   // fold's whole content), which satisfies the RV gate (Targets) and reaches the
-  // executor/identity/pin controls (Method). openInputs reaches References.
+  // runner/identity statements (Method). openInputs reaches References.
   const openTargets = () => fireEvent.click(q.getByRole("button", { name: /^▶ Targets|Targets/ }));
   const openMethod = () => fireEvent.click(q.getByRole("button", { name: /Method/ }));
   const openInputs = () => fireEvent.click(q.getByRole("button", { name: /^▶ Inputs|Inputs/ }));
@@ -246,7 +246,7 @@ describe("RunDialog — run inputs", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
 
-    expect(onRun.mock.calls[0][2]).toEqual({ REPLICAS: "3" });
+    expect(onRun.mock.calls[0][1]).toEqual({ REPLICAS: "3" });
   });
 
   // T3.3/JR-Q10 — a `block` job must HIDE the escape, not offer one the server will
@@ -296,7 +296,7 @@ describe("RunDialog — run inputs", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
 
-    const audit = onRun.mock.calls[0][6];
+    const audit = onRun.mock.calls[0][5];
     expect(audit?.promptAcknowledged).toBe(true);
     // TARGET_ENV has no value at all, so it contributes no provenance entry.
     expect(audit?.promptAnswers).toEqual({ REPLICAS: "default" });
@@ -310,7 +310,7 @@ describe("RunDialog — run inputs", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
 
-    expect(onRun.mock.calls[0][6]?.promptAcknowledged).toBe(false);
+    expect(onRun.mock.calls[0][5]?.promptAcknowledged).toBe(false);
   });
 });
 
@@ -442,24 +442,23 @@ describe("RunDialog — the recap line", () => {
   const recap = (q: ReturnType<typeof within>) =>
     (q.getByText("deploy-api").parentElement as HTMLElement).textContent ?? "";
 
-  it("states target, executor and timing for a default run", () => {
+  it("states target, runner and timing for a default run", () => {
     const { q } = renderDialog(makeJob([]));
 
     const line = recap(q);
     expect(line).toContain("deploy-api");
     expect(line).toContain("Prod");
-    expect(line).toContain("via SSH");
+    // LR-50 — nobody picks an executor; the line names who may take the run.
+    expect(line).toContain("on any runner");
+    expect(line).not.toContain("via ");
     expect(line).toContain("now");
   });
 
-  it("follows the executor live", () => {
-    const { q } = renderDialog(makeJob([]));
-    fireEvent.click(q.getByRole("button", { name: /Targets/ }));
-    fireEvent.click(q.getByRole("button", { name: /Method/ }));
+  it("names an agent for a run type only an agent can run", () => {
+    const ansible = { id: 2, name: "deploy-api", type: "ansible", scope: "Prod", prompts: [] } as unknown as Job;
+    const { q } = renderDialog(ansible);
 
-    expect(recap(q)).toContain("via SSH");
-    fireEvent.click(q.getByText("Runner", { selector: "div" }));
-    expect(recap(q)).toContain("via Runner");
+    expect(recap(q)).toContain("on an agent");
   });
 
   it("carries the missing-answer count", () => {
@@ -492,14 +491,16 @@ describe("RunDialog — section structure (RU)", () => {
   });
 
   // RD5 — RU-7's Targeting/Connection subheadings became the Targets and Method
-  // sections: Targets owns the scope picker, Method owns the executor.
-  it("splits Targets (scope) from Method (executor)", () => {
+  // sections: Targets owns the scope picker, Method says who takes the run.
+  it("splits Targets (scope) from Method (who runs it)", () => {
     const { q, openTargets, openMethod } = renderDialog(makeJob([]));
     openTargets();
     expect(q.getByText("Target scope")).toBeTruthy();
-    expect(q.queryByText("Executor")).toBeNull();
+    expect(q.queryByText("Runs on")).toBeNull();
     openMethod();
-    expect(q.getByText("Executor")).toBeTruthy();
+    expect(q.getByText("Runs on")).toBeTruthy();
+    // LR-50 — the executor is not a field any more, here or anywhere.
+    expect(q.queryByText("Executor")).toBeNull();
   });
 
   // RU-5 — the override editor is inside Run inputs, not Advanced.
@@ -521,7 +522,7 @@ describe("RunDialog — section structure (RU)", () => {
     fireEvent.click(runBtn());
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
 
-    expect(onRun.mock.calls[0][6]?.reviewedSections).toContain("when-to-run");
+    expect(onRun.mock.calls[0][5]?.reviewedSections).toContain("when-to-run");
   });
 
   it("omits when-to-run when the section was never opened", async () => {
@@ -531,7 +532,7 @@ describe("RunDialog — section structure (RU)", () => {
     fireEvent.click(runBtn());
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
 
-    expect(onRun.mock.calls[0][6]?.reviewedSections ?? []).not.toContain("when-to-run");
+    expect(onRun.mock.calls[0][5]?.reviewedSections ?? []).not.toContain("when-to-run");
   });
 });
 
@@ -667,7 +668,7 @@ describe("RunDialog — rail layout (RU)", () => {
 
     fireEvent.click(q.getByRole("button", { name: /Confirm & run/ }));
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][6]?.reviewedSections).toContain("confirmation");
+    expect(onRun.mock.calls[0][5]?.reviewedSections).toContain("confirmation");
   });
 
   // RS-3 — the rail renders the SUMMARY now, not the deviations list. The bug it
@@ -801,7 +802,7 @@ describe("RunDialog — SSH↔Ansible parity (RP)", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
 
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][3]).toEqual(["web-2"]);
+    expect(onRun.mock.calls[0][2]).toEqual(["web-2"]);
   });
 
   // RP-2 — the group helper hardcoded "Ansible:" for every runner run, so a
@@ -834,8 +835,8 @@ describe("RunDialog — SSH↔Ansible parity (RP)", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
     // ...and only the raw pattern travels.
-    expect(onRun.mock.calls[0][3]).toBeUndefined();
-    expect(onRun.mock.calls[0][5]).toBe("webservers:!quarantine");
+    expect(onRun.mock.calls[0][2]).toBeUndefined();
+    expect(onRun.mock.calls[0][4]).toBe("webservers:!quarantine");
   });
 
   it("locks out the raw --limit while a host subset is picked", () => {
@@ -900,7 +901,7 @@ describe("RunDialog — SSH↔Ansible parity (RP)", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
 
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][8]).toEqual({ sshUser: "deploy", sshCredential: undefined });
+    expect(onRun.mock.calls[0][7]).toEqual({ sshUser: "deploy", sshCredential: undefined });
   });
 
   // RP-Q2 — terraform keeps the block hidden: its providers authenticate, so
@@ -912,23 +913,28 @@ describe("RunDialog — SSH↔Ansible parity (RP)", () => {
     expect(q.queryByText("Connect as")).toBeNull();
   });
 
-  // RP-3 — a job with no pinned executor resolves to a concrete one here, and
-  // the dialog says the resolution is the job's Auto default rather than a pin.
-  it("names an Auto job's executor resolution instead of presenting it as pinned", () => {
-    const auto = { id: 4, name: "deploy", type: "bash", scope: "Prod", prompts: [] } as unknown as Job;
-    const { q } = renderFor(auto);
+  // LR-50 — the Method section states the claim rule and offers no choice. A
+  // job row that still carries an executor from before 2.3.0 reads the same as
+  // one that never had it: the stored value is read by nothing.
+  it("states who takes a shell run and offers no executor to pick", () => {
+    for (const executor of [undefined, "ssh", "runner"]) {
+      const job = { id: 4, name: "deploy", type: "bash", scope: "Prod", executor, prompts: [] } as unknown as Job;
+      const { q } = renderFor(job);
 
-    expect(q.getByText(/resolved from the job's Auto default/)).toBeTruthy();
-    expect(q.getByRole("button", { name: /Auto → SSH/ })).toBeTruthy();
+      expect(q.getByText("Any runner that serves this scope")).toBeTruthy();
+      expect(q.getByText(/an agent, or the local runner \(this server, over SSH\)/)).toBeTruthy();
+      expect(q.queryByRole("button", { name: /^SSH/ })).toBeNull();
+      expect(q.queryByRole("button", { name: /^Runner/ })).toBeNull();
+      expect(q.queryByText(/Auto/)).toBeNull();
+      cleanup();
+    }
   });
 
-  it("drops the Auto wording once the operator picks an executor", () => {
-    const auto = { id: 4, name: "deploy", type: "bash", scope: "Prod", prompts: [] } as unknown as Job;
-    const { q } = renderFor(auto);
+  it("says an agent takes a run type that needs the local toolchain", () => {
+    const { q } = renderFor(ansibleJob());
 
-    fireEvent.click(q.getByRole("button", { name: /^Runner/ }));
-
-    expect(q.queryByText(/resolved from the job's Auto default/)).toBeNull();
+    expect(q.getByText("Any agent that serves this scope")).toBeTruthy();
+    expect(q.getByText(/The local runner \(this server\) does not run ansible/)).toBeTruthy();
   });
 });
 
@@ -983,7 +989,7 @@ describe("RunDialog — advanced ansible options (Phase 3)", () => {
     fireEvent.click(runBtn());
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][9]).toBeUndefined();
+    expect(onRun.mock.calls[0][8]).toBeUndefined();
   });
 
   it("submits the options an operator set", async () => {
@@ -997,7 +1003,7 @@ describe("RunDialog — advanced ansible options (Phase 3)", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
 
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    const opts = onRun.mock.calls[0][9];
+    const opts = onRun.mock.calls[0][8];
     expect(opts?.ansibleCheck).toBe(true);
     expect(opts?.ansibleTags).toEqual(["certs", "config"]);
     expect(opts?.ansibleSkipTags).toEqual(["reboot"]);
@@ -1077,7 +1083,7 @@ describe("RunDialog — section review gate (RV)", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
 
-    expect(onRun.mock.calls[0][6]?.reviewedSections).toEqual(["variables", "targets", "method", "advanced", "confirmation"]);
+    expect(onRun.mock.calls[0][5]?.reviewedSections).toEqual(["variables", "targets", "method", "advanced", "confirmation"]);
   });
 
   it("records only what was actually visited", async () => {
@@ -1090,7 +1096,7 @@ describe("RunDialog — section review gate (RV)", () => {
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
 
-    expect(onRun.mock.calls[0][6]?.reviewedSections).toEqual(["variables", "targets", "method", "confirmation"]);
+    expect(onRun.mock.calls[0][5]?.reviewedSections).toEqual(["variables", "targets", "method", "confirmation"]);
   });
 });
 
@@ -1108,7 +1114,7 @@ describe("RunDialog — run confirmation (RC)", () => {
 
     fireEvent.click(q.getByRole("button", { name: "Confirm & run" }));
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][6]?.reviewedSections).toContain("confirmation");
+    expect(onRun.mock.calls[0][5]?.reviewedSections).toContain("confirmation");
   });
 
   it("opens the deviation window instead when settings differ from the job's defaults", async () => {
@@ -1137,9 +1143,9 @@ describe("RunDialog — run confirmation (RC)", () => {
 
     fireEvent.click(q.getByRole("button", { name: "Confirm & run" }));
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][3]).toEqual(["web-1"]);
+    expect(onRun.mock.calls[0][2]).toEqual(["web-1"]);
     // The confirmation is part of the audit record.
-    expect(onRun.mock.calls[0][6]?.reviewedSections).toContain("confirmation");
+    expect(onRun.mock.calls[0][5]?.reviewedSections).toContain("confirmation");
   });
 
   // RC-3 — every declared input is restated in the window, defaults included.
@@ -1279,7 +1285,7 @@ describe("RunDialog — per-run reference additions", () => {
     fireEvent.click(runBtn());
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][7]).toEqual([{ kind: "var", name: "REGION" }]);
+    expect(onRun.mock.calls[0][6]).toEqual([{ kind: "var", name: "REGION" }]);
   });
 
   it("removing an addition drops it from the submitted run", async () => {
@@ -1298,7 +1304,7 @@ describe("RunDialog — per-run reference additions", () => {
     fireEvent.click(runBtn());
     fireEvent.click(runBtn()); // RC-2 — the last button is now the window's Confirm & run
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    expect(onRun.mock.calls[0][7]).toBeUndefined();
+    expect(onRun.mock.calls[0][6]).toBeUndefined();
   });
 
   it("hides the add controls without ManageEnvVars", async () => {
@@ -1315,10 +1321,10 @@ describe("RunDialog — per-run reference additions", () => {
     expect(q.queryByLabelText(/Add a stored/)).toBeNull();
   });
 
-  it("warns that an added key gets the run refused on the SSH executor", async () => {
+  it("warns that an added key makes a shell run an agent's only", async () => {
     caps = { manageEnvVars: true, configureApp: false };
     knownKeys = ["deploy"];
-    const { q, openInputs, openOptions } = renderDialog(makeJob([])); // makeJob executor: ssh
+    const { q, openInputs, openOptions } = renderDialog(makeJob([])); // a bash job
     openInputs();
     openOptions();
 
@@ -1328,19 +1334,26 @@ describe("RunDialog — per-run reference additions", () => {
     fireEvent.change(nameSelect, { target: { value: "deploy" } });
 
     await q.findByText("CRONOMICON_KEY_deploy");
-    expect(q.getByText(/This run will be refused.*cannot deliver SSH keys/)).toBeTruthy();
+    expect(q.getByText(/binds an SSH key, which only an agent can deliver.*refused if there is none/s)).toBeTruthy();
+    // ...and "Runs on" follows it. A dialog that went on saying "any runner …
+    // or the local runner" beside that notice would contradict itself: the
+    // claim never gives a key-bound run to the local runner (LR-47).
+    expect(q.getByText("Any agent that serves this scope")).toBeTruthy();
+    expect(q.queryByText("Any runner that serves this scope")).toBeNull();
+    expect(q.getByText(/The local runner \(this\s+server\) does not take a run that binds one/)).toBeTruthy();
+    expect((q.getByText("deploy-api").parentElement as HTMLElement).textContent).toContain("on an agent");
   });
 
-  // KB — the server refuses a key-bound run that resolved to ssh with 422
-  // key_binding_requires_runner. The dialog shows the message and stays open; it
-  // must NOT silently force the runner executor the way invalid_executor does,
-  // because binding the key as a Secret is the other legitimate way out.
+  // LR-47 — the server refuses a key-bound shell run that no agent can take
+  // with 422 key_binding_requires_runner. The dialog shows the message, which
+  // names both ways out, and stays open.
   it("shows the key-binding refusal inline and keeps the dialog open", async () => {
     const onDone = vi.fn();
     const onRun = vi.fn<OnRun>(async () => ({
       ok: false,
       code: "key_binding_requires_runner",
-      message: "this job binds SSH key CRONOMICON_KEY_deploy, which only a runner can deliver; this run resolved to the ssh executor — run it on a runner, or bind the key as a Secret and write the file in the job body",
+      message:
+        "this job binds SSH key CRONOMICON_KEY_deploy, which only an agent can deliver as a file, and no agent serves this job's scope — enrol an agent for the scope's agency, or bind the key as a Secret and write the file in the job body",
     }));
     const { container } = render(
       <RunDialog job={makeJob([])} scopes={[]} busy={false} onCancel={vi.fn()} onRun={onRun} onDone={onDone} />,
@@ -1355,7 +1368,7 @@ describe("RunDialog — per-run reference additions", () => {
     const confirm = q.queryByRole("button", { name: /Confirm/ });
     if (confirm) fireEvent.click(confirm);
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
-    await q.findByText(/only a runner can deliver/);
+    await q.findByText(/only an agent can deliver/);
     expect(onDone).not.toHaveBeenCalled();
     expect(q.getByText(/bind the key as a Secret/)).toBeTruthy();
   });

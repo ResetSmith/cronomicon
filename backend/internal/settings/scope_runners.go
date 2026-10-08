@@ -130,31 +130,6 @@ func scopeRunnerIDs(ctx context.Context, q interface {
 	return out, rows.Err()
 }
 
-// ScopeRunnersDelta reports which runner ids a full-replace of a scope's
-// bindings would ADD and REMOVE. The API authorizes each added runner
-// individually before the write (a denial names the runner); removal needs no
-// per-runner authority — it is an edit to the scope's own overlay.
-func ScopeRunnersDelta(ctx context.Context, database *sql.DB, scopeID string, runnerIDs []string) (added, removed []string, err error) {
-	current, err := scopeRunnerIDs(ctx, database, scopeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	want := map[string]bool{}
-	for _, id := range normalizeIDs(runnerIDs) {
-		want[id] = true
-		if !current[id] {
-			added = append(added, id)
-		}
-	}
-	for id := range current {
-		if !want[id] {
-			removed = append(removed, id)
-		}
-	}
-	sort.Strings(removed)
-	return added, removed, nil
-}
-
 // SetScopeRunners replaces a scope's bound-runner set. An empty set clears the
 // binding and returns the scope to unrestricted dispatch.
 //

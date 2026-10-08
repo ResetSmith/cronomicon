@@ -419,13 +419,6 @@ func (s *Service) claimSlot(ctx, runCtx context.Context) (*claimedRun, error) {
 	return run, nil
 }
 
-func sleep(ctx context.Context, d time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(d):
-	}
-}
-
 type claimedRun struct {
 	traceID      string
 	jobName      string

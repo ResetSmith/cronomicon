@@ -1300,8 +1300,8 @@ export interface paths {
          *     claims a run via /poll. The manifest carries everything the agent needs
          *     to execute — the resolved command (interpreter + body), the run's env
          *     snapshot, and the target host references — resolved through the same
-         *     source of truth the in-app SSH executor uses, so the two paths can't
-         *     drift.
+         *     source of truth the local runner uses, so an agent and the server
+         *     can't drift.
          *
          *     Credential model b (D1): host *references only*. The manifest never
          *     carries decrypted private-key bytes; authKeyEnvVar is the NAME of the
@@ -1622,7 +1622,7 @@ export interface paths {
         /**
          * Import an cronomicon scope's inventory hosts into ssh_hosts (M5, cap C)
          * @description Materializes an CRONOMICON-source scope's parsed inventory hosts into ssh_hosts
-         *     (source=cronomicon, scope_id) so the in-app SSH executor can dial them. Keyed by
+         *     (source=cronomicon, scope_id) so the local runner can dial them. Keyed by
          *     (scope_id, hostname): an existing row is updated when overwrite is set, else
          *     skipped. Git scopes auto-import via sync (409 here). Requires a usable
          *     (non-degraded) projection. CSRF required.
@@ -3512,7 +3512,7 @@ export interface paths {
         /**
          * Update per-run log storage config
          * @description A new local log directory applies **immediately** — no restart (LU-5).
-         *     The save re-points the runner log writers, the SSH executor, the SSH
+         *     The save re-points the agents' log writers, the local runner, the SSH
          *     connection-test writer, and (unless pinned via `CRONOMICON_LOG_FILE`) the
          *     process log. In-flight runs keep writing to the file handle they already
          *     opened, and existing log files are **not** moved — the read path resolves
@@ -4717,8 +4717,8 @@ export interface components {
             type?: components["schemas"]["RunType"];
             /**
              * @description Name of the Script this job references (B-Git). null ⇒ legacy inline
-             *     body. When set, run_type/command/script/scriptPath/executor on this Job
-             *     are denormalized from the referenced script at sync time (Decision 7).
+             *     body. When set, run_type/command/script/scriptPath on this Job are
+             *     denormalized from the referenced script at sync time (Decision 7).
              */
             readonly scriptRef?: string | null;
             /** @description Names of first-class schedules (A10a) this job references; expanded into the runtime schedule cache at sync. */
@@ -4885,13 +4885,6 @@ export interface components {
             /** @description Repo-relative script file, read from the synced clone (EX.1). */
             readonly scriptPath?: string | null;
             /**
-             * @description What the job's definition says its executor is (EX.3). **Not read
-             *     since v2.3.0** (LR-42): every run is written for the runner executor
-             *     and where it runs is decided when it is claimed. Kept for display.
-             * @enum {string|null}
-             */
-            readonly executor?: "runner" | "ssh" | null;
-            /**
              * @description What happens when this job fires while one of its own runs is still active. `Allow` overlaps. `Forbid` loses the fire, recorded as a skipped run. `Queue` (QP) parks it and promotes it when the gate clears, up to a small per-key cap; beyond the cap it falls back to Forbid's behaviour and says so in the run's reason.
              *
              *     `Replace` was removed in v0.57.29: it was accepted and stored for releases but no code ever branched on it, so a Replace job behaved exactly as Allow. Existing rows were coerced to Allow, which changes nothing about how they ran.
@@ -4935,11 +4928,16 @@ export interface components {
              */
             readonly requires?: string[];
         };
-        /** @description Request body for composing (POST) or editing (PUT) an cronomicon-source job (A11). */
+        /**
+         * @description Request body for composing (POST) or editing (PUT) an cronomicon-source job (A11).
+         *     An `executor` property was accepted here until v2.3.0. It is not part
+         *     of the body any more; one that is sent is ignored, like any unknown
+         *     property.
+         */
         JobComposeInput: {
             /** @description Job name (slug, [a-z0-9][a-z0-9_-]*). Immutable on edit. */
             name?: string;
-            /** @description Name of the Git Script to bind (its run_type/body/executor are denormalized onto the job). */
+            /** @description Name of the Git Script to bind (its run_type and body are denormalized onto the job). */
             scriptRef: string;
             /**
              * @description AF-1 — REQUIRED, and an empty string is a valid answer. A job's scope
@@ -5016,11 +5014,6 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
-            /**
-             * @description Optional per-job executor override; defaults to the referenced script's executor.
-             * @enum {string}
-             */
-            executor?: "ssh" | "runner";
             /** @description Names of first-class schedules to bind (A10a). */
             scheduleRefs?: string[];
             /** @description Inline named schedules (cron + optional env). */
@@ -5111,9 +5104,9 @@ export interface components {
         };
         /**
          * @description The reusable executable unit (B-Git). Parsed from scripts/<name>.yaml and
-         *     cached read-only; jobs reference it via scriptRef. run_type, the body
-         *     (command/script/scriptPath), and the default executor describe the CODE and
-         *     live here rather than on the Job. Read-only over the API.
+         *     cached read-only; jobs reference it via scriptRef. run_type and the body
+         *     (command/script/scriptPath) describe the CODE and live here rather than
+         *     on the Job. Read-only over the API.
          */
         Script: {
             readonly name?: string;
@@ -5134,11 +5127,6 @@ export interface components {
              * @enum {string}
              */
             readonly sourceKind?: "command" | "script" | "file";
-            /**
-             * @description Default executor (optional). null ⇒ resolved from run_type at trigger.
-             * @enum {string|null}
-             */
-            readonly executor?: "runner" | "ssh" | null;
             /** @description sha256:-prefixed hex digest of the resolved body (Decision 8); snapshotted on runs for reproducibility. */
             readonly contentHash?: string;
             /** @description scripts/<name>.yaml in Git. */
@@ -6024,8 +6012,8 @@ export interface components {
                 hosts?: string[];
                 /**
                  * @description M3 — inventory GROUP names the operator limited this run to. Expanded
-                 *     to member hosts on the SSH executor; passed as ansible --limit on a
-                 *     runner run.
+                 *     to member hosts for a shell run; passed as ansible --limit on an
+                 *     ansible run.
                  */
                 groups?: string[];
                 /**
@@ -6134,6 +6122,17 @@ export interface components {
             readonly killedBy?: string | null;
             /** @description UUID of the runner that executed this run — an agent's */
             readonly runnerId?: string | null;
+            /**
+             * @description The name of the runner that took this run — an agent's, or the
+             *     local runner's for a run the server took — as it was when the run
+             *     was claimed. It is the run's own copy: it stays after the runner is
+             *     deregistered (when `runnerId` becomes null) and does not follow a
+             *     later rename. null for a run nobody has claimed, for a run claimed
+             *     before v2.3.0 whose runner was gone by the upgrade, and for a run
+             *     from before v2.3.0 that the in-app SSH executor ran
+             *     (`executor: ssh`), which had no runner.
+             */
+            readonly runnerName?: string | null;
             /**
              * @description HISTORICAL. The runner-tag pin this run was dispatched with, for runs
              *     produced before 2.2.0, when a job could pin itself to runners carrying
@@ -6629,6 +6628,11 @@ export interface components {
              *       bastion whose stored key differs from the one the server now
              *       trusts for the same address; it trusts one per address (subject:
              *       `host:<id>` or `bastion:<id>`).
+             *     - `leftover_executor_key` — jobs synced from Git (or the script
+             *       sidecars they take it from) still declare `executor`, which has
+             *       been ignored since v2.3.0; one notice per agency, naming the jobs
+             *       (subject: the agency's id). It clears when the line is removed
+             *       and the next sync stores no executor.
              *     - `legacy_placement` — a runner whose serve list is not exactly its
              *       owner: one that served several agencies before 2.3.0. It works as
              *       it did, is Global's, and can be narrowed and never widened; the
@@ -8112,15 +8116,6 @@ export interface components {
             readonly serverUtcOffsetMinutes?: number;
             /** @description Global concurrent-run cap. Per-job caps are an open S16 decision and not in the v1 contract. */
             maxConcurrent?: number;
-            /**
-             * @description **Not read since v2.3.0.** It was the global executor default
-             *     (R5.1); there is one executor now, and where a run goes is
-             *     decided when it is claimed. Stored and returned as before; the
-             *     field goes in a later release.
-             * @default ssh
-             * @enum {string}
-             */
-            defaultExecutor: "ssh" | "runner";
             jobTimeoutSeconds?: number;
             sessionPolicy?: {
                 /** @description FX-E4 — minutes before a session expires; 0 disables. Enforced by auth.readSession on top of the fixed 8-hour cookie ceiling. With reauth=false this is an IDLE cap: the clock runs from the last request and activity slides it. Settable since the field shipped; enforced since v1.0.5. */
@@ -9242,9 +9237,10 @@ export interface operations {
                      * @description F2 — restrict this run to a subset of the bound scope's hosts (one or
                      *     many). Every entry must be a member of the effective scope's inventory
                      *     or the run is rejected (422, code=scope_membership). Empty/omitted ⇒
-                     *     full-scope fan-out (today's default). Enforced for the SSH executor;
-                     *     best-effort for runner-executor runs whose agent resolves a local
-                     *     inventory (V2-12). Free-form open-host targeting (hosts outside any
+                     *     full-scope fan-out (today's default). Enforced when the local
+                     *     runner takes the run or the agent uses the Cronomicon inventory;
+                     *     best-effort for an agent that resolves a local inventory
+                     *     (V2-12). Free-form open-host targeting (hosts outside any
                      *     scope) is V2.
                      */
                     targetHosts?: string[];
@@ -9253,15 +9249,16 @@ export interface operations {
                      *     scope. Each must be a group in the scope's parsed projection or the
                      *     run is rejected (422, code=group_membership); if the projection is
                      *     unavailable (an unsupported inventory construct), all group targeting
-                     *     is rejected. Group members are expanded for the SSH executor and
-                     *     passed by NAME as `ansible --limit` for the runner — both executors
-                     *     target the identical set. Unions with targetHosts when both are given.
+                     *     is rejected. Group members are expanded to hosts for a shell
+                     *     run and passed by NAME as `ansible --limit` for an ansible
+                     *     run — both target the identical set. Unions with targetHosts
+                     *     when both are given.
                      */
                     targetGroups?: string[];
                     /**
                      * @description M3 — RAW `ansible --limit` passthrough for patterns the structured
                      *     projection can't model (e.g. complex set arithmetic). ANSIBLE runs
-                     *     only — rejected (422, code=invalid_executor) for any other run type,
+                     *     only — rejected (422, code=ansible_only) for any other run type,
                      *     which cannot honor a raw pattern. Takes precedence over the structured
                      *     host∪group limit. Exec-safe (a single argv element, no shell); its
                      *     content is the operator's responsibility.
@@ -9275,11 +9272,9 @@ export interface operations {
                      *     executor, and which runner takes it — an agent, or the server
                      *     itself as the local runner — is decided when it is claimed, by
                      *     agency, scope binding and capability. Nothing on a run or a job
-                     *     chooses. A value that is not one of the two is still 422
-                     *     `invalid_executor`; leave the field out.
-                     * @enum {string}
+                     *     chooses. The field is not checked; leave it out.
                      */
-                    executor?: "runner" | "ssh";
+                    executor?: string;
                     /** @description QP — claim priority for this run only. Higher is claimed first; ties break oldest-first. There is deliberately no job-spec default: a standing priority is how one job starves another permanently rather than merely going first today. */
                     priority?: number;
                     /**
@@ -9339,11 +9334,11 @@ export interface operations {
                      * @description CA — per-run stored SSH credential override, by LABEL (names only —
                      *     key bytes never ride the request or the run's audit envelope). The
                      *     selected key replaces each resolved target's configured key for
-                     *     THIS run: in-process signer resolution on the SSH executor;
-                     *     delivered-key-file resolution (D8, CRONOMICON_KEY_<label>) on runner
-                     *     ssh-family runs — such runs are claimable only by
-                     *     allow_secret_injection runners and refuse local-inventory runners
-                     *     (409). On an ansible run the delivered key file is passed as the
+                     *     THIS run: in-process signer resolution when the local runner
+                     *     takes the run; delivered-key-file resolution (D8,
+                     *     CRONOMICON_KEY_<label>) when an agent takes a shell run — an
+                     *     agent must be an allow_secret_injection runner to take it, and
+                     *     a local-inventory agent does not (409). On an ansible run the delivered key file is passed as the
                      *     `ansible_ssh_private_key_file` connection extra-var, beating the
                      *     inventory's key for every host (RP-Q1). Requires the
                      *     ManageEnvVars permission (403 without it) — selecting a key is a
@@ -9472,11 +9467,11 @@ export interface operations {
             };
             /**
              * @description Validation failed. `Error.code` distinguishes the cases:
-             *     `invalid_executor` — `executor` is not `runner` or `ssh` (the field
-             *     is ignored since v2.3.0, and still checked), or `ansibleLimit` was
-             *     given for a run type that is not ansible.
-             *     (`scope_requires_runner`, returned until v2.3.0 for an ssh asked of a
-             *     scope bound to runners, is retired: there is no executor to ask for.)
+             *     `ansible_only` — `ansibleLimit`, or one of the advanced ansible
+             *     options, was given for a run type that is not ansible.
+             *     (`invalid_executor` and `scope_requires_runner`, returned until
+             *     v2.3.0, are retired: there is no executor to ask for, and the
+             *     `executor` field of this body is ignored, whatever it holds.)
              *     `scope_membership` / `group_membership` — a
              *     targetHosts/targetGroups entry that is not a member of the effective scope's
              *     inventory (F2/M3). `prompt_required` (JR-Q5) — the job is
@@ -11251,8 +11246,8 @@ export interface operations {
                 from?: components["parameters"]["from"];
                 /** @description Exclusive ISO 8601 upper bound. */
                 to?: components["parameters"]["to"];
-                /** @description Sort column (TS-20). Unknown keys are a 400. Omitted ⇒ created_at DESC (unchanged default). Ordering is applied before pagination, with a created_at/id tiebreak so pages never shear. */
-                sort?: "job" | "type" | "executor" | "schedule" | "started" | "completed" | "user" | "duration" | "status";
+                /** @description Sort column (TS-20). Unknown keys are a 400. Omitted ⇒ created_at DESC (unchanged default). Ordering is applied before pagination, with a created_at/id tiebreak so pages never shear. `runner` orders by `runnerName`, with the pre-v2.3.0 `executor: ssh` runs together (as "Server (SSH)") and runs nobody took last; it replaced `executor` in v2.3.0, which is now an unknown key. */
+                sort?: "job" | "type" | "runner" | "schedule" | "started" | "completed" | "user" | "duration" | "status";
                 /** @description Direction for `sort` (TS-20): asc or desc, default asc. Ignored when no sort key is sent. Status-keyed sorts order by severity rank (worst first ascending), not alphabetically; empty cells sort last in both directions. Any other value is a 400. */
                 order?: components["parameters"]["sortOrder"];
                 page?: components["parameters"]["page"];

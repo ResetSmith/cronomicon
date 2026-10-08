@@ -863,10 +863,11 @@ func seedRun(exec func(string, ...any), r runRow) {
 		// Every run is the runner executor's (LR-42), and a running one is
 		// somebody's: without a runner on the row no sweep would ever close a
 		// seeded "running" run, and it would sit against the fleet cap for good.
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, schedule_name, env_json, started_at, created_at, job_uid, executor, runner_id)
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, schedule_name, env_json, started_at, created_at, job_uid, executor, runner_id, runner_name)
 		      VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?,
 		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner',
-		              (SELECT id FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1))`,
+		              (SELECT id FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1),
+		              (SELECT name FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1))`,
 			r.id, r.job, r.runType, scope, host, r.triggeredBy, r.triggerKind,
 			nullStr(r.scheduleName), nullStr(r.envJSON), iso(started), iso(r.created), r.job)
 	default:
@@ -877,9 +878,13 @@ func seedRun(exec func(string, ...any), r runRow) {
 		if r.status == "killed" {
 			killedBy = "bob@corp.example"
 		}
-		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, killed_by, schedule_name, env_json, started_at, completed_at, duration_ms, exit_code, created_at, job_uid, executor)
+		// A finished run names the runner that took it (migration 1280): the
+		// name is the run's own copy, as the claim would have left it, so the
+		// demo's History has a Runner column to show.
+		exec(`INSERT INTO runs (id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, killed_by, schedule_name, env_json, started_at, completed_at, duration_ms, exit_code, created_at, job_uid, executor, runner_name)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner')`,
+		              (SELECT uid FROM jobs WHERE name = ? AND source = 'git'), 'runner',
+		              (SELECT name FROM runners WHERE kind = 'agent' AND status = 'online' ORDER BY name LIMIT 1))`,
 			r.id, r.job, r.runType, scope, host, r.status, r.triggeredBy, r.triggerKind, killedBy,
 			nullStr(r.scheduleName), nullStr(r.envJSON),
 			iso(started), iso(completed), dur, exitFor(r.status), iso(r.created), r.job)

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"slices"
 	"sort"
@@ -177,16 +176,6 @@ func parseSingleKeyLine(line string) (hosts []string, key ssh.PublicKey, problem
 		return nil, nil, "@" + l.Marker + " lines are not accepted here; give the host's own key line"
 	}
 	return l.Hosts, l.Key, ""
-}
-
-// patternPort splits a known_hosts host into the bare host and its port.
-func patternPort(pattern string) (host string, port int) {
-	if h, p, err := net.SplitHostPort(pattern); err == nil {
-		if n, err := strconv.Atoi(p); err == nil {
-			return h, n
-		}
-	}
-	return strings.Trim(pattern, "[]"), 22
 }
 
 // keyClass is the classification of one candidate key against what is already

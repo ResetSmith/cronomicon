@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
-	"slices"
 	"sort"
 
 	"github.com/ResetSmith/cronomicon/internal/envref"
@@ -65,15 +64,6 @@ func loadStringSets(ctx context.Context, database *sql.DB, query string) (map[st
 		sort.Strings(out[k])
 	}
 	return out, nil
-}
-
-func intersects(a, b []string) bool {
-	for _, x := range a {
-		if slices.Contains(b, x) {
-			return true
-		}
-	}
-	return false
 }
 
 func scopeName(s string) string {

@@ -43,6 +43,7 @@ interface Run {
   scheduleName?: string | null;
   executor?: string | null;
   runnerId?: string | null;
+  runnerName?: string | null;
 }
 
 interface RunnerRow {
@@ -181,8 +182,9 @@ export function Dashboard() {
 
   const jobs = rows<Job>(jobsQ.data);
   const scoreRuns = rows<Run>(scoreRunsQ.data);
-  // SR-1 — a run row carries only the claiming runner's id; the name lives on
-  // the runners list, which every session may read. One small fetch, one map.
+  // SR-1 — the claiming runner's name. A run row carries its own copy since
+  // 2.3.0 (`runnerName`); the runners list is the fallback for a run claimed
+  // before that, whose row was stamped only if its runner was still registered.
   const runnerNames = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of rows<RunnerRow>(runnersQ.data)) if (r.id && r.name) m.set(r.id, r.name);
@@ -237,7 +239,7 @@ export function Dashboard() {
         triggeredBy: r.triggeredBy,
         scheduleName: r.scheduleName,
         executor: r.executor,
-        runnerName: r.runnerId ? (runnerNames.get(r.runnerId) ?? null) : null,
+        runnerName: r.runnerName ?? (r.runnerId ? (runnerNames.get(r.runnerId) ?? null) : null),
       });
     }
     for (const u of upcoming) {

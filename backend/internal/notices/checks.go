@@ -39,6 +39,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindNoRunnerForShellJobs, checkNoRunnerForShellJobs},
 		{KindHostKeyConflict, checkCarriedKeyConflicts},
 		{KindLocalRunnerHostKeys, checkLocalRunnerHostKeys},
+		{KindLeftoverExecutorKey, checkLeftoverExecutorKey},
 	} {
 		if err := c.run(ctx, database); err != nil {
 			errs = append(errs, c.name+": "+err.Error())

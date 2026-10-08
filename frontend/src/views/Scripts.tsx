@@ -503,7 +503,6 @@ function ScriptDetail({ listRow, tags, onSaveTags, tagErr, canCompose }: { listR
       </div>
       <div style={{ display: "flex", gap: 28, flexWrap: "wrap", fontSize: c.fontSm }}>
         <Field label="Run type" value={s.runType ?? "—"} mono />
-        <Field label="Executor" value={s.executor ?? "auto (from run type)"} />
         <Field label="Source file" value={s.sourcePath ?? "—"} mono />
         <Field label="Content hash" value={shortHash(s.contentHash)} mono title={s.contentHash ?? undefined} />
         <Field label="Synced" value={fmtWhen(s.syncedAt)} />

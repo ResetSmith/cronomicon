@@ -6,7 +6,7 @@ import {
   STEM_MAX,
   STEM_MIN,
   CLUSTER_MS,
-  executorLabel,
+  runnerLabel,
   frac,
   groupMarks,
   inWindow,
@@ -329,8 +329,8 @@ describe("axis", () => {
   });
 });
 
-// SR-1 — the readout's trigger and executor phrases.
-describe("triggerLabel / executorLabel", () => {
+// SR-1 — the readout's trigger and runner phrases.
+describe("triggerLabel / runnerLabel", () => {
   it("names the person for a manual run and the schedule for a scheduled one", () => {
     expect(triggerLabel({ triggerKind: "manual", triggeredBy: "ops@example.com" })).toBe("by ops@example.com");
     expect(triggerLabel({ triggerKind: "scheduled", scheduleName: "nightly" })).toBe("schedule nightly");
@@ -341,10 +341,12 @@ describe("triggerLabel / executorLabel", () => {
     expect(triggerLabel({ triggerKind: "promotion-adhoc" })).toBe("promotion-adhoc");
     expect(triggerLabel({})).toBe("");
   });
-  it("names the runner when it is known and only the executor when it is not", () => {
-    expect(executorLabel({ executor: "runner", runnerName: "nv-dmz-01" })).toBe("Runner · nv-dmz-01");
-    expect(executorLabel({ executor: "runner" })).toBe("Runner");
-    expect(executorLabel({ executor: "ssh" })).toBe("SSH");
-    expect(executorLabel({})).toBe("");
+  it("names the runner that took the run, and the server for a run from before 2.3.0", () => {
+    expect(runnerLabel({ executor: "runner", runnerName: "nv-dmz-01" })).toBe("nv-dmz-01");
+    // Unclaimed, or the runner is gone: nothing to name.
+    expect(runnerLabel({ executor: "runner" })).toBe("");
+    // The in-app SSH executor's runs had no runner.
+    expect(runnerLabel({ executor: "ssh" })).toBe("Server (SSH)");
+    expect(runnerLabel({})).toBe("");
   });
 });

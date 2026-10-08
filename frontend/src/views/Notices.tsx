@@ -39,6 +39,7 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   no_runner_for_shell_jobs: { title: "An agency's shell jobs have no runner", to: "/runners", toLabel: "Runners" },
   local_runner_host_keys: { title: "The local runner has no approved key for some hosts", to: "/runners", toLabel: "Runners" },
   host_key_conflict: { title: "Two records for one address had different host keys", to: "/settings?tab=targets", toLabel: "SSH Targets" },
+  leftover_executor_key: { title: "Jobs in Git still declare an executor, which is ignored", to: "/scopes", toLabel: "Scopes" },
 };
 
 export function Notices() {

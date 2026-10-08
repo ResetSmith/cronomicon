@@ -6,14 +6,12 @@ import type { components } from "../api/schema";
 
 // SB — the Run dialog on a scope that is bound to runners.
 //
-// The dialog ALWAYS sends an explicit executor. Before it knew about bindings
-// that made every manual run of a shell job on a bound scope a refusal: the job
-// defaults to SSH, the dialog sent "ssh", and the server answered
-// scope_requires_runner — for a run the operator had done nothing unusual to.
-// What these tests protect is the EXECUTOR REACHING THE WIRE: on a bound scope it
-// is "runner" whatever the job says, and SSH is not on offer; on an unbound scope
-// nothing has changed. The assertions are on the onRun arguments, because a
-// dialog that merely LOOKED right while still sending "ssh" is the bug.
+// Until 2.3.0 the dialog sent an executor, and on a bound scope had to send
+// "runner" or be refused. There is no executor to send any more (LR-50): the
+// claim decides who takes a run, and a binding is one of its rules. What these
+// tests protect is what the operator is TOLD — the runners a bound scope's run
+// goes to, by name, and the open rule on a scope nobody bound — and that no
+// executor reaches the wire either way.
 
 type BoundRunner = components["schemas"]["BoundRunner"];
 let scopeRows: { scope: string; boundRunners: BoundRunner[] }[] = [];
@@ -49,15 +47,14 @@ afterEach(() => {
   scopeRows = [];
 });
 
-// A shell job with no executor of its own — the common case, and the one that
-// used to be refused.
+// A shell job: the kind the local runner could take on a scope nobody bound.
 const makeJob = (over: Partial<Job> = {}): Job =>
   ({ id: 1, name: "deploy-api", type: "bash", scope: "dmz-web", ...over }) as unknown as Job;
 
-const renderDialog = (job: Job, onRunImpl?: OnRun) => {
+const renderDialog = (job: Job, onRunImpl?: OnRun, onDone: () => void = vi.fn()) => {
   const onRun = vi.fn<OnRun>(onRunImpl ?? (async () => ({ ok: true })));
   const { container } = render(
-    <RunDialog job={job} scopes={[]} busy={false} onCancel={vi.fn()} onRun={onRun} onDone={vi.fn()} />,
+    <RunDialog job={job} scopes={[]} busy={false} onCancel={vi.fn()} onRun={onRun} onDone={onDone} />,
   );
   const q = within(container);
   const runBtn = () => {
@@ -68,9 +65,8 @@ const renderDialog = (job: Job, onRunImpl?: OnRun) => {
     fireEvent.click(q.getByRole("button", { name: /Targets/ }));
     fireEvent.click(q.getByRole("button", { name: /Method/ }));
   };
-  // The executor cards are buttons whose first line is the label.
-  const card = (label: "SSH" | "Runner") =>
-    q.getAllByRole("button").find((b) => b.textContent?.startsWith(label)) as HTMLButtonElement;
+  // What the old executor cards were: buttons whose first line is the label.
+  const card = (label: "SSH" | "Runner") => q.getAllByRole("button").find((b) => b.textContent?.startsWith(label));
   // RC — every run takes two presses: the first arms the confirmation window,
   // the second commits.
   const run = async () => {
@@ -78,68 +74,58 @@ const renderDialog = (job: Job, onRunImpl?: OnRun) => {
     fireEvent.click(runBtn());
     await vi.waitFor(() => expect(onRun).toHaveBeenCalled());
   };
-  const sentExecutor = (call = 0) => onRun.mock.calls[call]?.[1];
-  return { onRun, q, container, openOptions, card, run, sentExecutor };
+ // The whole argument list, as text: an executor in ANY position would show.
+  const sent = (call = 0) => JSON.stringify(onRun.mock.calls[call] ?? []);
+  return { onRun, q, container, openOptions, card, run, sent };
 };
 
 describe("RunDialog — a scope bound to runners (SB)", () => {
-  it("sends the runner executor for a shell job with no executor of its own, and takes SSH off the table", async () => {
-    scopeRows = [{ scope: "dmz-web", boundRunners: [bound("runner-dmz-01")] }];
-    const { openOptions, card, run, sentExecutor, container } = renderDialog(makeJob());
-    openOptions();
-    // The binding arrives after mount; the card must follow it.
-    await vi.waitFor(() => expect(card("SSH").disabled).toBe(true));
-    expect(card("SSH").title).toMatch(/bound to runners/);
-    // The explanation names the scope and the runner, so a disabled card is not a mystery.
-    expect(container.textContent).toMatch(/Scope dmz-web is bound to runner-dmz-01/);
-    await run();
-    expect(sentExecutor()).toBe("runner");
-  });
-
-  it("sends the runner executor even when the JOB says ssh — that choice would be refused", async () => {
+  it("names the bound runners, offers no executor, and sends none", async () => {
     scopeRows = [{ scope: "dmz-web", boundRunners: [bound("runner-dmz-01"), bound("runner-dmz-02")] }];
-    const { openOptions, card, run, sentExecutor } = renderDialog(makeJob({ executor: "ssh" } as Partial<Job>));
+    // A job row that still carries an executor from before 2.3.0 changes nothing.
+    const { openOptions, card, run, sent, container, q } = renderDialog(makeJob({ executor: "ssh" } as Partial<Job>));
     openOptions();
-    await vi.waitFor(() => expect(card("SSH").disabled).toBe(true));
+    // The binding arrives after mount; the statement must follow it.
+    await vi.waitFor(() => expect(container.textContent).toMatch(/Scope dmz-web is bound to these runners/));
+    expect(q.getAllByText("runner-dmz-01").length).toBeGreaterThan(0);
+    expect(q.getAllByText("runner-dmz-02").length).toBeGreaterThan(0);
+    // The collapsed Method line and the recap name them too.
+    expect(container.textContent).toMatch(/on runner-dmz-01, runner-dmz-02/);
+    expect(card("SSH")).toBeUndefined();
+    expect(card("Runner")).toBeUndefined();
     await run();
-    expect(sentExecutor()).toBe("runner");
+    expect(sent()).not.toMatch(/"ssh"|"runner"/);
   });
 
-  it("changes nothing on a scope that is not bound", async () => {
+  it("states the open rule on a scope that is not bound", async () => {
     scopeRows = [{ scope: "dmz-web", boundRunners: [] }, { scope: "elsewhere", boundRunners: [bound("runner-x")] }];
-    const { openOptions, card, run, sentExecutor } = renderDialog(makeJob());
+    const { openOptions, card, run, sent, container } = renderDialog(makeJob());
     openOptions();
-    // Give the scope list time to land, then confirm it did not disable anything.
-    await vi.waitFor(() => expect(card("Runner")).toBeTruthy());
-    expect(card("SSH").disabled).toBe(false);
+    await vi.waitFor(() => expect(container.textContent).toMatch(/Any runner that serves this scope/));
+    // Another scope's binding is not this one's.
+    expect(container.textContent).not.toMatch(/runner-x/);
+    expect(container.textContent).toMatch(/on any runner/);
+    expect(card("SSH")).toBeUndefined();
     await run();
-    expect(sentExecutor()).toBe("ssh");
+    expect(sent()).not.toMatch(/"ssh"|"runner"/);
   });
 
-  it("recovers when the server refuses with scope_requires_runner — the binding was made after the dialog opened", async () => {
-    // The dialog's own view says unbound, so it sends ssh; the server knows better.
+  it("shows a refusal the server still makes and keeps the dialog open", async () => {
+    // The dialog cannot know every reason a run is refused (no agent serves the
+    // scope and the job binds a key, say). It shows the server's sentence.
     scopeRows = [{ scope: "dmz-web", boundRunners: [] }];
-    let calls = 0;
-    const { openOptions, run, sentExecutor, onRun, container, q } = renderDialog(makeJob(), async () => {
-      calls++;
-      return calls === 1
-        ? { ok: false, code: "scope_requires_runner", message: "scope dmz-web is bound to runners, so its jobs run on those runners" }
-        : { ok: true };
-    });
-    openOptions();
+    const onDone = vi.fn();
+    const { run, container } = renderDialog(
+      makeJob(),
+      async () => ({
+        ok: false,
+        code: "key_binding_requires_runner",
+        message: "this job binds SSH key CRONOMICON_KEY_deploy, which only an agent can deliver as a file",
+      }),
+      onDone,
+    );
     await run();
-    expect(sentExecutor(0)).toBe("ssh");
-    // The dialog stays open with the server's reason, and switches to the runner.
-    await vi.waitFor(() => expect(container.textContent).toMatch(/is bound to runners/));
-    // Re-query for each press: arming the confirmation re-renders the footer,
-    // so the element pressed first is not the one that commits.
-    const press = () => {
-      const buttons = q.getAllByRole("button");
-      fireEvent.click(buttons[buttons.length - 1]);
-    };
-    press();
-    press();
-    await vi.waitFor(() => expect(onRun).toHaveBeenCalledTimes(2));
-    expect(sentExecutor(1)).toBe("runner");
+    await vi.waitFor(() => expect(container.textContent).toMatch(/only an agent can deliver as a file/));
+    expect(onDone).not.toHaveBeenCalled();
   });
 });

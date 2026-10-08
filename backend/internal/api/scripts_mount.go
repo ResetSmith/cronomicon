@@ -145,7 +145,6 @@ type scriptRow struct {
 	// shipping the (blob) command/script columns (CC.11). Detail rows set it too
 	// for the on-expand body fetch; empty ⇒ none.
 	SourceKind  string  `json:"sourceKind,omitempty"`
-	Executor    *string `json:"executor,omitempty"`
 	ContentHash string  `json:"contentHash"`
 	SourcePath  *string `json:"sourcePath,omitempty"`
 	SyncedAt    string  `json:"syncedAt"`
@@ -384,9 +383,7 @@ func scanScript(sc rowScanner) (scriptRow, error) {
 	if scriptPath.Valid {
 		sr.ScriptPath = &scriptPath.String
 	}
-	if executor.Valid {
-		sr.Executor = &executor.String
-	}
+	_ = executor // scripts.executor is stored and no longer served or read (LR-42)
 	if sourcePath.Valid {
 		sr.SourcePath = &sourcePath.String
 	}
@@ -420,9 +417,7 @@ func scanScriptListRow(sc rowScanner) (scriptRow, error) {
 	if scriptPath.Valid {
 		sr.ScriptPath = &scriptPath.String
 	}
-	if executor.Valid {
-		sr.Executor = &executor.String
-	}
+	_ = executor // scripts.executor is stored and no longer served or read (LR-42)
 	if sourcePath.Valid {
 		sr.SourcePath = &sourcePath.String
 	}

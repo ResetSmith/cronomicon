@@ -385,10 +385,6 @@ func TestGlobalSettingsGetUpdate(t *testing.T) {
 	if gs.AppName != "Cronomicon" {
 		t.Fatalf("expected default appName=Cronomicon, got %q", gs.AppName)
 	}
-	// defaultExecutor defaults to ssh (R5.1).
-	if gs.DefaultExecutor != "ssh" {
-		t.Fatalf("expected default defaultExecutor=ssh, got %q", gs.DefaultExecutor)
-	}
 
 	// Update.
 	inp := GlobalSettings{
@@ -396,7 +392,6 @@ func TestGlobalSettingsGetUpdate(t *testing.T) {
 		Timezone:          "America/New_York",
 		MaxConcurrent:     5,
 		JobTimeoutSeconds: 1800,
-		DefaultExecutor:   "runner",
 	}
 	updated, err := UpdateGlobalSettings(ctx, pool, inp, "alice@example.com")
 	if err != nil {
@@ -408,15 +403,18 @@ func TestGlobalSettingsGetUpdate(t *testing.T) {
 	if updated.MaxConcurrent != 5 {
 		t.Errorf("maxConcurrent not persisted: %d", updated.MaxConcurrent)
 	}
-	if updated.DefaultExecutor != "runner" {
-		t.Errorf("defaultExecutor not persisted: %q", updated.DefaultExecutor)
+	// `defaultExecutor` is no longer a setting (2.3.0). A value stored by an
+	// earlier release is left where it is — the upgrade pass reads it once —
+	// and a save of the settings does not touch it.
+	if _, err := pool.Exec(`INSERT INTO settings (key, value) VALUES ('defaultExecutor', 'runner')`); err != nil {
+		t.Fatal(err)
 	}
-
-	// Invalid defaultExecutor is rejected (R5.1) and flagged as a validation error.
-	if _, err := UpdateGlobalSettings(ctx, pool, GlobalSettings{DefaultExecutor: "bogus"}, "alice@example.com"); err == nil {
-		t.Error("expected error for invalid defaultExecutor, got nil")
-	} else if !errors.Is(err, ErrValidation) {
-		t.Errorf("invalid defaultExecutor: want ErrValidation, got %v", err)
+	if _, err := UpdateGlobalSettings(ctx, pool, inp, "alice@example.com"); err != nil {
+		t.Fatalf("UpdateGlobalSettings: %v", err)
+	}
+	var stored string
+	if err := pool.QueryRow(`SELECT value FROM settings WHERE key = 'defaultExecutor'`).Scan(&stored); err != nil || stored != "runner" {
+		t.Errorf("the stored defaultExecutor after a settings save = %q (%v), want it left as it was", stored, err)
 	}
 
 	// Read back independently.

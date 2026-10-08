@@ -568,8 +568,9 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 	// Atomic claim: find the oldest queued, capability-matched, requirement-
 	// satisfied, agency-eligible, scope-bound, injection-gated run and
 	// transition it to running in a single UPDATE ... RETURNING (SQLite 3.35+).
-	// Placeholders in order: runner_id, started-at ts, caps (run_type), caps
-	// (requires⊆), agency runnerID, binding runnerID, injectFlag, localFlag.
+	// Placeholders in order: runner_id, runner_id (the name stamp), started-at
+	// ts, caps (run_type), caps (requires⊆), agency runnerID, binding runnerID,
+	// injectFlag, localFlag.
 	var (
 		traceID string
 		jobName string
@@ -582,7 +583,12 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 		-- true here. Left in place it would follow a run that waited and then
 		-- succeeded into History (the finalizers only ever overwrite it with
 		-- a reason of their own).
-		SET status = 'running', runner_id = ?, started_at = ?, queued_reason = NULL
+		-- runner_name is the run's own copy of the runner's name (migration
+		-- 1280): runner_id is ON DELETE SET NULL, and History must still say
+		-- which runner took a run after that runner is reaped or re-enrolled.
+		SET status = 'running', runner_id = ?,
+		    runner_name = (SELECT rn.name FROM runners rn WHERE rn.id = ?),
+		    started_at = ?, queued_reason = NULL
 		WHERE id = (
 			SELECT id FROM runs
 			WHERE status = 'queued' AND executor = 'runner'
@@ -681,7 +687,7 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			LIMIT 1
 		)
 		RETURNING id, job_name, run_type, scope`,
-		runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, injectFlag, localFlag,
+		runnerID, runnerID, ts, string(capsJSON), string(capsJSON), runnerID, runnerID, injectFlag, localFlag,
 	).Scan(&traceID, &jobName, &runType, &scope)
 
 	if errors.Is(err, sql.ErrNoRows) {

@@ -207,7 +207,6 @@ type jobComposeInput struct {
 	Scope        *string                `json:"scope"`
 	TargetHost   string                 `json:"targetHost"`
 	Env          map[string]string      `json:"env,omitempty"` // job-level env (JC10); merged beneath schedule + per-run override env at run time
-	Executor     string                 `json:"executor"`      // optional override; empty ⇒ script default
 	ScheduleRefs []string               `json:"scheduleRefs"`
 	Schedules    []composeScheduleEntry `json:"schedules"` // inline schedules
 	Enabled      *bool                  `json:"enabled"`
@@ -487,14 +486,10 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		return
 	}
 	sc.command, sc.script, sc.scriptPath = command.String, script.String, scriptPath.String
+	// The script's own `executor` is still copied onto the job's row, as it
+	// always was, and is no longer read by anything (LR-42). A composed job
+	// has no executor field of its own any more.
 	sc.executor = executor.String
-	if in.Executor != "" { // per-job executor override
-		if in.Executor != "ssh" && in.Executor != "runner" {
-			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid executor (want ssh|runner)")
-			return
-		}
-		sc.executor = in.Executor
-	}
 
 	// TG-4 — an ansible job's target host is passed verbatim to `--limit`, and
 	// AnsibleLimit REFUSES (drops) any name carrying a pattern metacharacter. A

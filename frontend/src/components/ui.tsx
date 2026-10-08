@@ -2369,49 +2369,6 @@ export function Section({
   );
 }
 
-// One executor option as a selectable card. Born in the Jobs Run dialog's picker
-// (R5.2); shared so the Job Composer offers the same surface. Disabled + tooltip
-// when the run-type's capability matrix forbids it.
-export function ExecutorChoice({
-  label,
-  sub,
-  selected,
-  disabled,
-  title,
-  onClick,
-}: {
-  label: string;
-  sub: string;
-  selected: boolean;
-  disabled?: boolean;
-  title?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      title={title}
-      style={{
-        flex: 1,
-        textAlign: "left",
-        padding: "9px 12px",
-        borderRadius: c.radiusChip,
-        border: `1px solid ${selected ? c.primary : c.border}`,
-        background: selected ? c.primaryBg : disabled ? c.panel2 : "transparent",
-        color: disabled ? c.textMuted : c.text,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.6 : 1,
-        fontFamily: "inherit",
-      }}
-    >
-      <div style={{ fontSize: c.fontSm, fontWeight: 600 }}>{label}</div>
-      <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 1 }}>{disabled ? "Unavailable" : sub}</div>
-    </button>
-  );
-}
-
 // RP-4 — the ONE form-field label idiom, shared by the Jobs Run dialog and the
 // Job Composer so the two authoring surfaces read as the same form. A function,
 // not a frozen const: the theme tokens (`c`) mutate in place on theme toggle,

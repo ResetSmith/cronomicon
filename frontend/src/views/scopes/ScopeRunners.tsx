@@ -4,6 +4,7 @@ import { useGet, rows } from "../../hooks";
 import type { components } from "../../api/schema";
 import { c } from "../../theme";
 import { Link } from "react-router-dom";
+import { isRunnerOnly } from "../../runtypes";
 import { AlertBanner, Btn, InlineLoading, Modal } from "../../components/ui";
 
 // Scope↔runner bindings — the UI (SB band).
@@ -624,9 +625,27 @@ export function BindingNotices({ dep }: { dep: number; onChanged?: () => void })
 // RunsOn is the job detail's answer to "where does this run": the bound runners
 // when the job's scope has any, each with the reason it is not serving if it is
 // not, and otherwise the plain statement that any eligible runner may take it.
-export function RunsOn({ bound, scope }: { bound: BoundRunner[]; scope?: string | null }) {
+export function RunsOn({ bound, scope, runType }: { bound: BoundRunner[]; scope?: string | null; runType?: string | null }) {
   if (bound.length === 0) {
-    return <span style={{ color: c.textSec }}>Any eligible runner</span>;
+    // Not a list of runners: who is eligible is decided at the claim (agency,
+    // capability, injection, key bindings), and no route gives a reader that
+    // answer for a scope. What can be said of every job is the rule: ansible
+    // and terraform need an agent's toolchain; a shell job is any runner's. The
+    // finer print is in the tooltip, because it is not true of every shell job
+    // (one that binds an SSH key is an agent's only — the field below says so).
+    const agent = isRunnerOnly(runType);
+    return (
+      <span
+        style={{ color: c.textSec }}
+        title={
+          agent
+            ? "This run type needs the local toolchain, which only an agent has."
+            : "An agent, or the local runner (this server) where it is switched on and serves the scope's agency. A job that binds an SSH key is taken by an agent only."
+        }
+      >
+        Any {agent ? "agent" : "runner"} that serves {scope ? "its scope" : "the Global agency"}
+      </span>
+    );
   }
   return (
     <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>

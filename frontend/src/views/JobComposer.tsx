@@ -6,7 +6,7 @@ import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows } from "../hooks";
 import { c } from "../theme";
 import { guideForRunType } from "../components/docLinks";
-import { EnvRowsEditor, Btn, ExecutorChoice, InfoBody, InfoToggle, Input, Select, SourceBadge, fieldLabelStyle, inputStyle, type EnvKV,
+import { EnvRowsEditor, Btn, InfoBody, InfoToggle, Input, Select, SourceBadge, fieldLabelStyle, inputStyle, type EnvKV,
   DocLink,
 } from "../components/ui";
 import { ComposeKeyPicker, ComposeReferencePicker, putBindings } from "../components/ReferenceBindings";
@@ -246,7 +246,7 @@ export function JobComposer() {
   const [scriptRef, setScriptRef] = useState(loadId ? "" : (search.get("script") ?? ""));
   // JC17 — the resolved Script object for the current scriptRef, lifted from the
   // ScriptPicker (which owns the catalog load + the GET /scripts/{name} prefill so
-  // an off-page or edit-loaded ref still resolves). Drives run-type/executor, the
+  // an off-page or edit-loaded ref still resolves). Drives the run type, the
   // lint indicator, and declared-variable hints below.
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
   // A3 — true when scriptRef points at a deleted/unknown script (the picker resolved
@@ -264,9 +264,8 @@ export function JobComposer() {
   const [sshUser, setSshUser] = useState("");
   const [sshCredential, setSshCredential] = useState("");
   const [becomePasswordSecret, setBecomePasswordSecret] = useState("");
-  const [executor, setExecutor] = useState("");
   // EV-6 parity — the job's declared SSH-key bindings (labels only), promoted to
-  // their own section beside Executor exactly as job detail promoted JobKeyField.
+  // their own section exactly as job detail promoted JobKeyField.
   // Draft-until-save like every other composer field: loaded from
   // /job-reference-bindings on edit, written back through putBindings AFTER the
   // job row saves (create mode has no jobId to write against until then).
@@ -353,7 +352,6 @@ export function JobComposer() {
       setSshUser(j.sshUser ?? "");
       setSshCredential(j.sshCredential ?? "");
       setBecomePasswordSecret(j.becomePasswordSecret ?? "");
-      setExecutor(j.executor ?? "");
       // JC10 — prefill job-level env for an exact round-trip (full-state resend).
       setJobEnvRows(Object.entries(j.env ?? {}).map(([key, value]) => ({ key, value })));
       // UDV1 — prefill declared prompts for an exact round-trip (full-state resend).
@@ -456,8 +454,9 @@ export function JobComposer() {
   });
   const inlineHasEnv = inlineSchedules.some((e) => e.env.some((r) => r.key.trim() !== ""));
 
-  // JC-P5 — run-type / executor awareness from the selected script. The SSH lock
-  // is hard (the backend 422s ssh × ansible/terraform at run time). selectedScript is
+  // JC-P5 — run-type awareness from the selected script: ansible and terraform
+  // need an agent's local toolchain, the shell types may also be taken by the
+  // local runner. Nothing is chosen here (2.3.0, LR-50). selectedScript is
   // resolved by the ScriptPicker (state above), so it works for off-page scripts too.
   const runType = selectedScript?.runType;
   const runnerOnly = isRunnerOnly(runType);
@@ -590,11 +589,6 @@ export function JobComposer() {
   // JC-P7 — count of complete inline schedules, for the effective-binding preview.
   const nInlineValid = inlineSchedules.filter((s) => s.name.trim() && s.cron.trim()).length;
 
-  // JC-P5 — runner-only run-types can't use SSH; drop a stale ssh override to runner.
-  useEffect(() => {
-    if (runnerOnly && executor === "ssh") setExecutor("runner");
-  }, [runnerOnly, executor]);
-
   // RP-10 — same shape for identity: re-binding the job to a script whose run
   // type can't carry one (terraform) hides the fields, and a hidden value would
   // otherwise still be submitted and 422 at save with no visible cause.
@@ -723,7 +717,6 @@ export function JobComposer() {
       // ssh-family job, whose remote env is built entirely from the manifest.
       envPassthrough: runnerOnly ? preserved.envPassthrough : [],
     };
-    if (executor) body.executor = executor;
     setKeyErr(null);
     // PUT/DELETE /jobs/{jobId} declare `header?: never` — the csrf middleware
     // injects the token, so pass NO header placeholder (only path + body).
@@ -795,7 +788,6 @@ export function JobComposer() {
     setTargetHost("");
     setSshUser("");
     setSshCredential("");
-    setExecutor("");
     setSshKeys([]);
     setLoadedKeys([]);
     setScheduleRefs([]);
@@ -1065,48 +1057,35 @@ export function JobComposer() {
         </div>
       )}
 
-      {/* Run-dialog parity — the same ExecutorChoice cards the Run modal uses,
-          plus the composer's third option: no override, resolved from the script. */}
-      <Field label="Executor">
-        <div style={{ display: "flex", gap: 8 }}>
-          <ExecutorChoice
-            label="Auto"
-            sub="From script / run type"
-            selected={executor === ""}
-            onClick={() => setExecutor("")}
-          />
-          <ExecutorChoice
-            label="SSH"
-            sub="In-app SSH"
-            selected={executor === "ssh"}
-            disabled={runnerOnly}
-            title={runnerOnly ? `SSH can't run ${runType} — it needs a runner with the local ${runType} toolchain.` : undefined}
-            onClick={() => setExecutor("ssh")}
-          />
-          <ExecutorChoice
-            label="Runner"
-            sub="Runner agent"
-            selected={executor === "runner"}
-            onClick={() => setExecutor("runner")}
-          />
-        </div>
-        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
-          {runnerOnly ? (
-            <>
-              <strong>{runType}</strong> needs a runner with the local toolchain — SSH can't run it.
-            </>
-          ) : executor === "" ? (
-            <>Resolved from the script at trigger time — shell run-types default to SSH.</>
-          ) : (
-            <>Will run via <strong>{executor === "ssh" ? "the in-app SSH executor" : "a runner agent"}</strong>.</>
-          )}
-        </div>
-      </Field>
+      {/* LR-50 — where the job runs is not authored on the job. One line says
+          the rule for the chosen script's run type, because an author used to
+          answer it here and would otherwise look for the field. */}
+      {runType && (
+        <Field label="Runs on">
+          <div style={{ fontSize: c.fontXs, color: c.textSec, maxWidth: "70ch" }}>
+            {runnerOnly ? (
+              <>
+                <strong>{runType}</strong> needs the local toolchain, so an agent that serves the job&rsquo;s scope takes
+                its runs.
+              </>
+            ) : sshKeys.length > 0 ? (
+              <>
+                This job binds an SSH key, which only an agent delivers as a file, so an agent that serves the
+                job&rsquo;s scope takes its runs.
+              </>
+            ) : (
+              <>
+                Whichever runner that serves the job&rsquo;s scope asks first takes a run: an agent, or the local runner
+                (this server, over SSH) where it is switched on and serves the scope&rsquo;s agency.
+              </>
+            )}{" "}
+            To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.
+          </div>
+        </Field>
+      )}
 
-      {/* EV-6 parity — SSH keys as their own section, directly after Executor (the
-          field they complete: one says how the job runs, the other what key
-          material the run gets). Same presentation as job detail's JobKeyField;
-          draft-until-save like the rest of the form. */}
+      {/* EV-6 parity — SSH keys as their own section. Same presentation as job
+          detail's JobKeyField; draft-until-save like the rest of the form. */}
       <Field
         label="SSH keys"
         info={
@@ -1124,7 +1103,7 @@ export function JobComposer() {
           </>
         }
       >
-        <ComposeKeyPicker keys={sshKeys} onChange={setSshKeys} scope={scope} executor={executor || null} canManage={canManageEnv} />
+        <ComposeKeyPicker keys={sshKeys} onChange={setSshKeys} scope={scope} runType={runType} canManage={canManageEnv} />
         {!canManageEnv && sshKeys.length === 0 && (
           <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
             Assigning keys needs the Manage Env Vars permission.
@@ -1672,7 +1651,7 @@ export function JobComposer() {
             "no scope"
           )}
           {" × "}
-          <strong>{executor || "auto"}</strong>
+          <strong>{!runType ? "a runner" : runnerOnly || sshKeys.length > 0 ? "an agent" : "any runner"}</strong>
           {sshKeys.length > 0 ? ` (+${sshKeys.length} SSH key${sshKeys.length === 1 ? "" : "s"})` : ""}
         </div>
       </div>

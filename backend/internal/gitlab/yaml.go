@@ -281,8 +281,11 @@ type JobYAML struct {
 		Command    string `yaml:"command"`    // inline one-liner
 		Script     string `yaml:"script"`     // inline multi-line body
 		ScriptPath string `yaml:"scriptPath"` // repo-relative file, read from the clone
-		// EX.3 — per-job executor default; empty → resolve from run_type.
-		Executor string `yaml:"executor"` // runner|ssh
+		// RETIRED (2.3.0, LR-48). This used to choose between the server's SSH
+		// executor and a runner agent. Still a field for the reason RunnerTag
+		// is: the decode is not strict, and deleting it would make the key
+		// vanish without the warning (executorRetired).
+		Executor string `yaml:"executor"`
 		// RETIRED (SB band). This used to pin the job's runs to runners carrying
 		// the tag; a job is now placed by its scope's runner binding. The field
 		// stays so that sync can WARN about a line still in someone's repository —
@@ -358,7 +361,7 @@ type ScriptYAML struct {
 		Command    string `yaml:"command"`    // inline one-liner
 		Script     string `yaml:"script"`     // inline multi-line body
 		ScriptPath string `yaml:"scriptPath"` // repo-relative file, read from the clone
-		Executor   string `yaml:"executor"`   // optional default executor: runner|ssh
+		Executor   string `yaml:"executor"`   // RETIRED (2.3.0): ignored with a warning, as on a Job
 		// Checkout project (ansible-update.md §7, RX.1). ProjectRoot is a
 		// repo-relative directory; Entry is the repo-relative playbook run from
 		// the checked-out tree. When ProjectRoot is set, the whole directory is
@@ -561,28 +564,44 @@ const jobRunnerTagRetired = "`runner_tag` is no longer used and is ignored: a jo
 	"is bound to (Scopes → Runners). Remove the line, and check that scope's binding if this job must stay " +
 	"on particular runners"
 
-// retiredJobKeyWarnings returns the non-fatal notes for a Job document that
-// still uses a key the product has retired. Anything that is not a parseable
-// Job yields nothing — its problems are validateYAMLBytes's to report.
+// executorRetired is the warning for a Job or a Script sidecar that still
+// carries `executor` (2.3.0, LR-48). Reported, never failed, for the reasons
+// jobRunnerTagRetired gives — and one of its own: `executor: runner` on a shell
+// job was how an author kept it OFF the server, and `executor: ssh` how they
+// kept it ON. Neither is true any more, and a key that vanished in silence
+// would leave them believing it.
+const executorRetired = "`executor` is no longer used and is ignored: every job is taken by whichever runner that " +
+	"serves its scope asks first — an agent, or the server itself as the local runner. Remove the line, and to " +
+	"decide where this job runs bind its scope to the runners that should serve it (Scopes → Runners)"
+
+// retiredJobKeyWarnings returns the non-fatal notes for a Job document, or a
+// Script sidecar, that still uses a key the product has retired. Anything that
+// is not parseable as one yields nothing — its problems are
+// validateYAMLBytes's to report.
 func retiredJobKeyWarnings(path string, data []byte) []ValidationError {
 	var j JobYAML
-	if err := yaml.Unmarshal(data, &j); err != nil || j.Kind != "Job" {
+	if err := yaml.Unmarshal(data, &j); err != nil || (j.Kind != "Job" && j.Kind != "Script") {
 		return nil
 	}
-	if strings.TrimSpace(j.Spec.RunnerTag) == "" {
-		return nil
-	}
-	// Point at the line. A plain scan is enough: the key is a scalar under spec,
-	// and a mapping key of that name anywhere else in a Job document is not a
-	// thing the format has.
-	line := 0
-	for i, l := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(l), "runner_tag:") {
-			line = i + 1
-			break
+	// Point at the line. A plain scan is enough: each key is a scalar under
+	// spec, and a mapping key of that name anywhere else in these documents is
+	// not a thing the format has.
+	lineOf := func(key string) int {
+		for i, l := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(l), key+":") {
+				return i + 1
+			}
 		}
+		return 0
 	}
-	return []ValidationError{{File: path, Line: line, Field: "spec.runner_tag", Message: jobRunnerTagRetired}}
+	var out []ValidationError
+	if j.Kind == "Job" && strings.TrimSpace(j.Spec.RunnerTag) != "" {
+		out = append(out, ValidationError{File: path, Line: lineOf("runner_tag"), Field: "spec.runner_tag", Message: jobRunnerTagRetired})
+	}
+	if strings.TrimSpace(j.Spec.Executor) != "" {
+		out = append(out, ValidationError{File: path, Line: lineOf("executor"), Field: "spec.executor", Message: executorRetired})
+	}
+	return out
 }
 
 func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
@@ -651,7 +670,7 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 
 	// EX.1 / B-Git — Job source validation: a job carries EITHER a script_ref
 	// (new) OR exactly one inline body (command/script/scriptPath, legacy), not
-	// both and not neither. scriptPath confined to the repo, executor enum.
+	// both and not neither. scriptPath confined to the repo.
 	if kindVal == "Job" {
 		var j JobYAML
 		if err := yaml.Unmarshal(data, &j); err == nil {
@@ -681,10 +700,10 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 				errs = append(errs, ValidationError{File: file, Field: "spec.scriptPath",
 					Message: "scriptPath must be a repo-relative path with no '..' escape"})
 			}
-			if j.Spec.Executor != "" && j.Spec.Executor != "runner" && j.Spec.Executor != "ssh" {
-				errs = append(errs, ValidationError{File: file, Field: "spec.executor",
-					Message: fmt.Sprintf("unknown executor %q (want runner|ssh)", j.Spec.Executor)})
-			}
+			// spec.executor is retired (2.3.0, LR-48): recognised, ignored, and
+			// reported as a WARNING by retiredJobKeyWarnings — never an error,
+			// not even for a value it never had, since no value is read (sync
+			// stores such a value as nothing: storableExecutor).
 			// CA-8 — the "connect as" username becomes an SSH auth string verbatim,
 			// so a bad charset is a hard error (unlike the credential label, whose
 			// existence is a sync-time WARNING — the repo may sync before the
@@ -713,8 +732,8 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 	}
 
 	// B-Git — Script source validation: exactly one of command/script/scriptPath,
-	// scriptPath confined to the repo, a valid run_type (it moves off Job onto
-	// Script), and the executor enum. Cross-reference resolution (does any job's
+	// scriptPath confined to the repo, and a valid run_type (it moves off Job
+	// onto Script). Cross-reference resolution (does any job's
 	// script_ref name a missing script) is repo-wide and lives in ValidateRepo /
 	// sync, not here — validateYAMLBytes only sees one file.
 	if kindVal == "Script" {
@@ -762,10 +781,7 @@ func validateYAMLBytes(file string, data []byte) ([]ValidationError, error) {
 				errs = append(errs, ValidationError{File: file, Field: "spec.run_type",
 					Message: fmt.Sprintf("unknown run_type %q", sc.Spec.RunType)})
 			}
-			if sc.Spec.Executor != "" && sc.Spec.Executor != "runner" && sc.Spec.Executor != "ssh" {
-				errs = append(errs, ValidationError{File: file, Field: "spec.executor",
-					Message: fmt.Sprintf("unknown executor %q (want runner|ssh)", sc.Spec.Executor)})
-			}
+			// spec.executor: retired, as on a Job (retiredJobKeyWarnings).
 		}
 	}
 
@@ -894,6 +910,14 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 				})
 			}
 			scriptNames[name] = true
+		}
+		// The retired-key notes, for a sidecar as for a job file below: a
+		// script's `executor` was the one a job that referenced it ran under.
+		if strings.TrimSpace(sc.Spec.Executor) != "" {
+			path := filepath.Join(dir, sc.SourcePath)
+			if data, rErr := os.ReadFile(path); rErr == nil { //nolint:gosec // a sidecar discoverScripts found under dir
+				warnings = append(warnings, retiredJobKeyWarnings(path, data)...)
+			}
 		}
 		// Project checks (§7): a project script (project_root set; discovery has
 		// already validated the root is in-repo and the entry is under it) must

@@ -30,6 +30,7 @@ reaction_depth = 0
 requires_json = <NULL>
 run_type = ansible
 runner_id = <NULL>
+runner_name = <NULL>
 runner_tag = <NULL>
 schedule_name = nightly
 scheduled_for = <NULL>
