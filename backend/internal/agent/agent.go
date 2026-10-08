@@ -210,7 +210,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			// Bounded: the server answers a stopping agent's poll at once, and an
 			// unreachable server must not keep the agent after its last run ends.
 			hb, cancel := context.WithTimeout(a.runParent, 2*stopHeartbeat)
-			a.pollOnce(hb)
+			a.pollOnce(hb) //nolint:contextcheck // deliberate: the drain's heartbeat outlives the cancelled signal context
 			cancel()
 		} else {
 			a.pollOnce(ctx)
@@ -505,7 +505,7 @@ func (a *Agent) dispatch(ctx context.Context, asn *runnerproto.PollAssignment) {
 	//
 	// The run's context descends from runParent, not from the poll's: a stop
 	// signal cancels the poll loop's context and must not reach a run (Run).
-	parent := a.runParent
+	parent := a.runParent //nolint:contextcheck // deliberate: a run outlives the stop signal (Run)
 	if parent == nil {
 		parent = ctx
 	}

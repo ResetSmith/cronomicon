@@ -13,6 +13,113 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.3.2] - 2026-10-08
+
+What 2.3.0 left open, closed before the next band of work begins. The first
+real jobs were run on installed agents (RHEL 8.10, the installer's hardened
+unit), and they ran; stopping an agent under one of them did not go as the
+unit, the log line and the guides had all said. Schema (v1280) and runner
+protocol (14) are unchanged.
+
+**Upgrading.** Nothing is converted. Upgrade the agents with the server
+(**Copy upgrade command** on a runner's row). **This upgrade is the last one
+that cuts runs off:** the agents being replaced are older and end their runs
+the moment they are stopped, so drain them first, or run the command when
+nothing is running. Runs that an older agent left shown as *running* are closed
+as failed (*runner lost*) when the upgraded agent first reports in. An agent in
+a container needs a longer stop timeout to drain (below).
+
+### Fixed
+
+- **Stopping an agent ended its runs and told the server nothing.** `systemctl
+  stop` and `restart` send `SIGTERM`. Every run's context was a child of the
+  signal's, so each run was killed at once and the upload of its log was
+  cancelled with it, while the agent logged *waiting for active runs to
+  finish*. The server never learned the outcome, and because a restarted agent
+  is back long before it counts as offline, nothing ever closed the run: it
+  stayed *running*. Seen on RHEL 8.10 with 2.3.1: a restart under a 40-second
+  job returned in one second, and the run was still shown as running minutes
+  later. The upgrade command restarts every agent on a machine, so every
+  upgrade did this to whatever was running. Now:
+  - **The first signal is a drain.** The agent claims no new work, keeps its
+    heartbeat, lets the runs in flight finish, uploads their logs and exits.
+    systemd waits for it as long as the unit's `TimeoutStopSec=300` allows.
+  - **A second signal cancels the runs.** Each still uploads its log, which
+    ends with *the runner agent was stopped before this run finished*.
+  - **A run's last log upload outlives the run's own cancellation**, so a
+    cancelled run is recorded as what it was instead of not at all.
+- **A run whose agent died stayed *running* for good.** A crash, an
+  out-of-memory kill, a reboot or a stop that ran out of time leaves the run
+  with no owner. Only the offline sweep closed a runner's runs, and it acts on
+  a runner that has been quiet for five minutes, which an agent that systemd
+  starts again never is. The first poll of an agent process now says that it
+  has just started, and the server closes every run it still shows as running
+  on that runner as failed (*runner lost*), with the usual notification.
+- **The upgrade notice about two host keys for one address never cleared.**
+  `host_key_conflict` stayed for as long as a record's old key differed from
+  the trusted one, so approving the host's current key, which is what the
+  notice told you to do, left it open. It now reports only a key that the
+  upgrade itself chose: once a person has approved a key for the address, the
+  notice resolves. Its text says what clears it in each case, dismissal
+  included (the server already holds the right key; two machines share the
+  address).
+
+### Changed
+
+- **An Ansible run with no scope says that it has no inventory.** A job with
+  no scope is sent none, so Ansible has only its implicit `localhost`: the
+  machine of the agent that took the run. A play for `localhost` runs there;
+  a play for `all` or any other host matches nothing, `ansible-playbook` exits
+  0, and the run is a success that did nothing. The run itself is unchanged.
+  Its log now carries the line `cronomicon: ansible: no inventory …`, and the
+  Ansible guide has the row.
+- **An unbound scope says who reviews which runner's host keys.** The host-key
+  coverage table needs a fixed set of runners, so a scope with none bound
+  showed nothing, and an agency's administrator whose runs failed
+  `host_key_unverified` on the local runner was not told that its keys are a
+  global administrator's to approve. The scope's row now says so, links to
+  Runners and Notices, and names the agency's own remedy: bind the scope to
+  its own agents.
+- **The generated `docker run` for an agent carries `--stop-timeout 300`.**
+  `docker stop` waits 10 seconds by default and then kills the container,
+  which would cut a drain short. In Compose the key is `stop_grace_period:
+  5m`. The install guide says so.
+- **The upgrade command says that it is waiting.** A restart now waits for
+  each agent's runs, up to five minutes, before the command reports.
+- The reference unit's comment on stopping, the manuals and the runner guides
+  describe the stop as it now is, and what an older agent does instead.
+
+### Not changed, and worth knowing
+
+- **A run still going when the stop times out is cut off.** systemd kills the
+  agent after `TimeoutStopSec` (five minutes as installed), and the run is
+  recorded as lost when the agent next starts. For longer work, **Drain** the
+  runner from the Runners view first: that deadline is an hour.
+- **No notice is raised for an installation that had the SSH executor off
+  when it upgraded to 2.3.0** (shell jobs that never ran can start on an agent
+  of their agency). `cronomicon preflight`, run before the upgrade, reports
+  it; nothing was added for it here.
+
+### For developers
+
+- Two poll query params, additive within protocol 14 and documented in
+  `openapi.yaml`: `started=1` (no poll of this process has been answered yet)
+  and `claim=0` (a stopping agent's heartbeat; no run is claimed and the
+  request is not held). `runnerproto.PollParamStarted`, `PollParamClaim`.
+- `Agent.Run` returns when its context is cancelled **and** its runs have
+  ended; `Agent.Abort` cancels them. A test that cancels the context with a
+  run in flight must end the run or call `Abort`, or `Run` does not return.
+- `internal/runner/e2e_stop_test.go` holds the three behaviours against the
+  real agent and the real handlers; the drain test fails on the old run
+  context.
+- A 409 on a log upload that carries no `persistedOffset` means the server has
+  closed the run; the agent stops instead of re-sending the log from zero.
+- The dev stack (`cronomicon-dev`, outside this repository) gained a git
+  server for test definitions and `scripts/e2e-vm-jobs.sh`, which installs
+  three agents on a test VM and runs shell and Ansible jobs on them, stops an
+  agent under a run and kills one. Run on RHEL 8.10 (kernel 4.18, systemd 239,
+  SELinux enforcing) against 2.3.1 and 2.3.2.
+
 ## [2.3.1] - 2026-10-08
 
 Two things found by running 2.3.0's agents on a real RHEL 8 machine: a

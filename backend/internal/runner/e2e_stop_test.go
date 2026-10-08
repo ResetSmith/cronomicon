@@ -58,7 +58,7 @@ func heldSSHServer(t *testing.T, clientPub ssh.PublicKey, started chan<- struct{
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 
 	var startOnce, downOnce sync.Once
 	go func() {
@@ -72,7 +72,7 @@ func heldSSHServer(t *testing.T, clientPub ssh.PublicKey, started chan<- struct{
 				if err != nil {
 					return
 				}
-				defer sshConn.Close()
+				defer func() { _ = sshConn.Close() }()
 				go ssh.DiscardRequests(reqs)
 				released := make(chan struct{})
 				connClosed := make(chan struct{})

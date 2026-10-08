@@ -13574,6 +13574,23 @@ export interface operations {
                  *     agent) ⇒ the server never sends settings.
                  */
                 settingsVersion?: number;
+                /**
+                 * @description Sent on every poll of an agent process until one has been answered
+                 *     (2.3.2). Such a process holds no run, so the server closes every run
+                 *     it still shows as running on this runner (failure, runner_lost):
+                 *     the runs of the process before it, which was killed, crashed or
+                 *     lost power and will never report on them. Absent ⇒ nothing is
+                 *     closed; an agent older than 2.3.2 never sends it.
+                 */
+                started?: "1";
+                /**
+                 * @description `claim=0` is sent by an agent that was told to stop and is
+                 *     finishing the runs it has in flight (2.3.2). The poll is still its
+                 *     heartbeat and still delivers control messages and settings, but no
+                 *     run is claimed for it and the request is not held. Absent ⇒ an
+                 *     ordinary poll.
+                 */
+                claim?: "0";
             };
             header?: never;
             path: {

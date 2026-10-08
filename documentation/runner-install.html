@@ -357,7 +357,7 @@ journalctl -u cronomicon-runner -f</code></pre>
 <pre><code># Persist identity + keys across restarts on a named volume.
 docker volume create cronomicon-runner-data
 
-docker run -d --name cronomicon-runner-01 --restart unless-stopped \
+docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeout 300 \
   -e CRONOMICON_RUNNER_SERVER=https://cronomicon.example.com \
   -e CRONOMICON_RUNNER_REGISTRATION_TOKEN=crn_reg_xxxxxxxxxxxx \
   -e CRONOMICON_RUNNER_NAME=runner-dc1-01 \
@@ -370,11 +370,13 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
 
 <p>The explicit <code>CRONOMICON_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent claims the four shell types and detects Ansible and Terraform in the <em>image</em> at startup (the image choice becomes the capability decision: the slim image claims <code>bash</code>, <code>perl</code>, <code>powershell</code> and <code>python</code>; the fat image claims those and <code>ansible</code> and <code>terraform</code>). Use the tag that matches your server's version (§2). For an ansible/terraform runner, swap in <code>ghcr.io/resetsmith/cronomicon-runner-fat</code> and either omit the var (detect) or set <code>CRONOMICON_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
 
+<p><strong><code>--stop-timeout 300</code> is what lets a container agent finish its work.</strong> When it is told to stop, an agent from 2.3.2 claims nothing new and finishes the runs it has in flight before it exits. <code>docker stop</code> waits only 10 seconds by default and then kills the container; with the flag it waits five minutes, as the installed unit does. In Compose the key is <code>stop_grace_period: 5m</code> on the runner's service. A run cut off by the kill is recorded as failed (<em>runner lost</em>) when the agent next starts.</p>
+
 <h3>Limits for a container agent</h3>
 
 <p>A container has no systemd unit, so the installer's <code>--memory-max</code>, <code>--cpu-quota</code> and <code>--tasks-max</code> (§3) do not apply to it, and it has no per-run sandbox either (§12). Its bound is the <strong>container's own limit</strong>, which covers the agent and everything it runs, together — the same thing a unit limit is on a host, since one container is one agent. A process inside the container cannot lift it. Without one, nothing stops an agent's Ansible or Terraform run from taking the Docker host's memory or CPU from the other containers on it.</p>
 
-<pre><code>docker run -d --name cronomicon-runner-01 --restart unless-stopped \
+<pre><code>docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeout 300 \
   --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 \
   -e CRONOMICON_RUNNER_SERVER=https://cronomicon.example.com \
   …</code></pre>

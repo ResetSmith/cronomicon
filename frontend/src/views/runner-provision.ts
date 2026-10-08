@@ -57,6 +57,14 @@ function layout(instance?: string) {
 const DEFAULT_DEST = layout();
 const STATE_DIR = DEFAULT_DEST.stateDir;
 
+/**
+ * How long `docker stop` waits for a container agent before it kills it, in
+ * seconds: the installed unit's TimeoutStopSec. An agent from 2.3.2 on finishes
+ * the runs it has in flight when it is told to stop, and Docker's own default
+ * of 10 seconds would cut that short.
+ */
+export const CONTAINER_STOP_SECONDS = 300;
+
 export interface ProvisionOptions {
   origin: string;
   token: string; // plaintext or "<TOKEN>"
@@ -372,7 +380,7 @@ export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string):
       : []),
     `docker volume create cronomicon-runner-data`,
     ``,
-    `docker run -d --name ${shellArg(name)} --restart unless-stopped \\`,
+    `docker run -d --name ${shellArg(name)} --restart unless-stopped --stop-timeout ${CONTAINER_STOP_SECONDS} \\`,
     ...(limitFlags.length > 0 ? [`  ${limitFlags.join(" ")} \\`] : []),
     ...env.map((e) => `  -e ${shellArg(e)} \\`),
     `  -v cronomicon-runner-data:${STATE_DIR} \\`,
