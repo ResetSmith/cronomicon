@@ -5338,7 +5338,10 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                     with no SSH, no restart, and no env edit. Use the <strong>⚙ Settings</strong> drawer &rarr;
                     <code>PATCH /api/v1/runners/{id}/settings</code> (ConfigureApp + CSRF, activity-audited; migration
                     560). Managed keys are <strong>tri-state overrides</strong> (present = the server wins; absent = the
-                    runner's local value holds): <code>maxConcurrent</code>; the three sandbox caps
+                    runner's local value holds): <code>maxConcurrent</code>; <code>pollIntervalSeconds</code> (from
+                    2.3.2: how often the agent asks for work when its last poll gave it none, 5 to 90 seconds; the
+                    agent's own default is 60, and an agent that is given a run asks for the next one at once whatever
+                    the interval); the three sandbox caps
                     (<code>sandboxMemoryMax</code>/<code>sandboxCpuQuota</code>/<code>sandboxTasksMax</code>), which
                     apply only on a runner that shows <em>Sandboxed</em>;
                     <code>allowCheckout</code>; <code>checkoutRepos</code>; and a <strong>subtract-only</strong>

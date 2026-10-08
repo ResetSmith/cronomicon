@@ -7409,6 +7409,17 @@ export interface components {
             checkoutRepos?: string[];
             /** @description Run-types to REMOVE from the runner's effective claim set (subtract-only). */
             capabilityMask?: components["schemas"]["RunType"][];
+            /**
+             * @description How often the agent asks for work when its last poll gave it none
+             *     (2.3.2). Overrides the interval in the agent's own configuration
+             *     (60 seconds unless set there) and takes effect on the poll that
+             *     delivers it, with no restart. The server holds a poll for up to 30
+             *     seconds waiting for work, so a value of 30 or less means the agent
+             *     is waiting on the server nearly all the time. Outside 5–90 is
+             *     refused (400): a runner that has not polled for two minutes is
+             *     shown as degraded. An agent older than 2.3.2 ignores the field.
+             */
+            pollIntervalSeconds?: number;
         };
         /**
          * @description A scanned target host key awaiting operator approval (Phase 5, D4). The

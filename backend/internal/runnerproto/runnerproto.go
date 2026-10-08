@@ -327,7 +327,22 @@ type PollSettingsValues struct {
 	AllowCheckout    *bool     `json:"allowCheckout,omitempty"`
 	CheckoutRepos    *[]string `json:"checkoutRepos,omitempty"`
 	CapabilityMask   []string  `json:"capabilityMask,omitempty"`
+	// PollIntervalSeconds (2.3.2) overrides the agent's own poll cadence: how
+	// often it asks for work when the last answer gave it none. Additive: an
+	// agent older than 2.3.2 drops the field and keeps its local interval.
+	// The server holds it within Min/MaxManagedPollIntervalSeconds.
+	PollIntervalSeconds *int `json:"pollIntervalSeconds,omitempty"`
 }
+
+// Bounds of a server-managed poll interval. The floor keeps an agent that is
+// answered at once (it is full, or draining) from asking many times a second.
+// The ceiling stays under the two minutes without a poll after which a runner
+// is shown as degraded, and well under the five after which it is offline and
+// its runs are closed as lost.
+const (
+	MinManagedPollIntervalSeconds = 5
+	MaxManagedPollIntervalSeconds = 90
+)
 
 // PollAssignment is returned when a run is claimed.
 type PollAssignment struct {

@@ -34,7 +34,8 @@ let SCOPES: unknown[] = [];
 let LOCAL_STATE: Record<string, unknown> = {};
 let HOST_KEYS: unknown = { inForce: [], history: [], knownHosts: { reportedAt: null, truncated: false, entries: [] }, pending: 0 };
 
-const { POST, PUT } = vi.hoisted(() => ({
+const { POST, PUT, PATCH } = vi.hoisted(() => ({
+  PATCH: vi.fn(async (_path: string, _init?: unknown) => ({ data: {} }) as { data?: unknown; error?: unknown }),
   POST: vi.fn(async (_path: string, _init?: unknown) => ({ data: { id: 1, token: "crn_reg_x", status: "pending" } }) as { data?: unknown; error?: unknown }),
   PUT: vi.fn(async (_path: string, _init?: unknown) => ({ data: [] }) as { data?: unknown; error?: unknown }),
 }));
@@ -56,6 +57,7 @@ vi.mock("../api/client", async (importOriginal) => {
       }),
       POST,
       PUT,
+      PATCH,
     } as unknown as typeof actual.api,
     fetchCapabilities: vi.fn(async () => ({ configureApp: true, ...CAPS })),
     fetchVersion: vi.fn(async () => ({ version: "2.3.0" })),
@@ -210,6 +212,40 @@ describe("Runners — owner and serves (MA-26)", () => {
   // v2.3.1 — the limit that does bound such a runner is on its systemd unit,
   // and neither the server nor the agent can set it. The drawer builds the
   // command for root on the machine, for THIS runner, and saves nothing.
+  // v2.3.2 — how often an agent asks for work is a managed setting. The agent's
+  // own interval lives in its configuration on its host; this is the one the
+  // server sends it, and the server refuses a value outside 5–90 seconds. The
+  // field says so before Save can be pressed.
+  it("sets a runner's poll interval, and holds it within the server's bounds", async () => {
+    PATCH.mockClear();
+    RUNNERS = [{ ...AGENT, managedSettings: { pollIntervalSeconds: 30 } }];
+    renderRunners();
+    await expand("fin-agent");
+    // The summary shows what is in force.
+    expect(await screen.findByText("30s")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
+    const field = (await screen.findByLabelText("Poll interval in seconds")) as HTMLInputElement;
+    expect(field.value).toBe("30");
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+
+    for (const bad of ["3", "120"]) {
+      fireEvent.change(field, { target: { value: bad } });
+      expect(screen.getByText(/a runner that has not asked\s+for two minutes is shown as degraded/)).toBeTruthy();
+      expect(save.disabled, `Save with an interval of ${bad}`).toBe(true);
+    }
+    fireEvent.click(save);
+    expect(PATCH).not.toHaveBeenCalled();
+
+    fireEvent.change(field, { target: { value: "15" } });
+    expect(screen.queryByText(/is shown as degraded/)).toBeNull();
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(PATCH).toHaveBeenCalledTimes(1));
+    const [path, init] = PATCH.mock.calls[0] as [string, { body: unknown }];
+    expect(path).toBe("/runners/{runnerId}/settings");
+    expect(init.body).toEqual({ pollIntervalSeconds: 15 });
+  });
+
   it("builds the command that sets a runner's unit limits, and sends nothing to the server", async () => {
     const id = "01a11cd7-2939-7abe-ae1b-8862a7262645";
     RUNNERS = [{ ...AGENT, id, toolchains: { sandboxed: false } }];

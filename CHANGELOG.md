@@ -29,8 +29,31 @@ nothing is running. Runs that an older agent left shown as *running* are closed
 as failed (*runner lost*) when the upgraded agent first reports in. An agent in
 a container needs a longer stop timeout to drain (below).
 
+### Added
+
+- **A runner's poll interval can be set from the app.** *Runners → the runner
+  → ⚙ Edit → Poll interval*, in seconds, from 5 to 90. It is how often the
+  agent asks for work when its last poll gave it none: 60 seconds unless the
+  agent's own configuration says otherwise, and until now changing it meant
+  editing a file on the agent's machine and restarting it. The value overrides
+  the agent's own, takes effect on the agent's next poll with no restart, and
+  reverts when cleared. The app cannot read the agent's own setting, so an
+  empty field reads *inherit*. A value outside the bounds is refused, in the
+  field before Save and by the server (400): a runner that has not polled for
+  two minutes is shown as degraded. An agent older than 2.3.2 ignores it.
+  `pollIntervalSeconds` in `PATCH /runners/{runnerId}/settings`.
+
 ### Fixed
 
+- **An agent took one run per poll interval.** It asked, started what it was
+  given, and waited for its next tick, a minute by default. The server has
+  always answered an assignment with "come back now" and the agent did not
+  read it. Five runs queued for an agent with five free slots therefore
+  started a minute apart, and a settings change made in the app was
+  acknowledged a minute late. An agent that is given a run and starts it now
+  asks for the next one at once, for as long as it has a free slot and there
+  is work; and it acknowledges new settings at once. An idle agent's cadence
+  is unchanged.
 - **Stopping an agent ended its runs and told the server nothing.** `systemctl
   stop` and `restart` send `SIGTERM`. Every run's context was a child of the
   signal's, so each run was killed at once and the upload of its log was
@@ -143,6 +166,13 @@ a container needs a longer stop timeout to drain (below).
   `TestPollOfAFullAgentClaimsNothing`).
 - `Agent.dispatch` no longer drops an assignment it cannot start: it calls
   `Agent.refuse`, which uploads a one-line log and a failure envelope.
+- `Agent.pollOnce` reports whether to poll again at once: only when a run was
+  STARTED or the settings version moved. A refused assignment does not, so an
+  agent facing a server that hands it work it cannot take does not fail one
+  queued run after another. `PollSettingsValues.PollIntervalSeconds` is
+  additive; the bounds are `runnerproto.Min/MaxManagedPollIntervalSeconds`,
+  mirrored by `POLL_INTERVAL_MIN/MAX_SECONDS` in `Runners.tsx` and the
+  `ManagedRunnerSettings` schema: change all three or none.
 - `Agent.Run` returns when its context is cancelled **and** its runs have
   ended; `Agent.Abort` cancels them. A test that cancels the context with a
   run in flight must end the run or call `Abort`, or `Run` does not return.

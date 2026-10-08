@@ -419,6 +419,37 @@ func TestRunnerAgentE2EFullAgentIsNotHandedWork(t *testing.T) {
 	}
 }
 
+// TestRunnerAgentE2EQueuedRunsStartTogether: an agent with free slots takes the
+// runs that are waiting one after another, at once. Until 2.3.2 it took one per
+// poll interval (a minute by default): the server answered each assignment
+// "come back now" and the agent waited for its next tick anyway.
+func TestRunnerAgentE2EQueuedRunsStartTogether(t *testing.T) {
+	h := newStopHarness(t, "burst-runner")
+	h.cfg.MaxConcurrent = 5
+	h.cfg.PollInterval = time.Minute // nothing below can be the next tick
+	second, third := h.queueRun(t), h.queueRun(t)
+	h.start(t)
+
+	running := func(id string) bool { st, _ := h.run(id); return st == "running" }
+	if !waitFor(t, 8*time.Second, func() bool { return running(h.traceID) && running(second) && running(third) }) {
+		a, _ := h.run(h.traceID)
+		b, _ := h.run(second)
+		c, _ := h.run(third)
+		t.Fatalf("three runs queued for an agent with five slots, 8s later: %s, %s, %s; want all running", a, b, c)
+	}
+	close(h.release)
+	if !waitFor(t, 10*time.Second, func() bool {
+		for _, id := range []string{h.traceID, second, third} {
+			if st, _ := h.run(id); st != "success" {
+				return false
+			}
+		}
+		return true
+	}) {
+		t.Fatal("the three runs did not all succeed")
+	}
+}
+
 // pollWith is pollAs with a query string.
 func pollWith(t *testing.T, svc *Service, runnerID, token, query string) (int, runnerproto.PollResponse) {
 	t.Helper()

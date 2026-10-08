@@ -214,7 +214,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	// The poll in flight when the signal arrives is cancelled by it (it may be
 	// held by the server for half a minute, and could come back with work).
 	// The polls after it must not be: they are the heartbeat of the drain.
+	interval := a.cfg.PollInterval
 	for {
+		again := false
 		if a.stopping {
 			// Bounded: the server answers a stopping agent's poll at once, and an
 			// unreachable server must not keep the agent after its last run ends.
@@ -222,7 +224,15 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.pollOnce(hb) //nolint:contextcheck // deliberate: the drain's heartbeat outlives the cancelled signal context
 			cancel()
 		} else {
-			a.pollOnce(ctx)
+			again = a.pollOnce(ctx)
+		}
+
+		// The cadence is the operator's when the server manages it (2.3.2), and
+		// takes effect on the poll that delivers it: no restart.
+		if d := a.settings.pollInterval(a.cfg.PollInterval); d != interval && d > 0 {
+			a.log.Info("poll interval changed", "from", interval, "to", d)
+			interval = d
+			ticker.Reset(d)
 		}
 
 		if a.isDrainingDone() {
@@ -232,11 +242,23 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 
 		if a.stopping {
-			wait := min(stopHeartbeat, a.cfg.PollInterval)
+			wait := min(stopHeartbeat, interval)
 			select {
 			case <-a.idle:
 			case <-time.After(wait):
 			}
+			continue
+		}
+
+		// A poll that gave the agent a run it started, or settings it applied,
+		// is followed by another at once (2.3.2). The server has always answered
+		// such a poll "come back now" (pollAfterMs: 0) and the agent never read
+		// it: it took ONE run per interval, so five queued runs on an agent with
+		// five free slots started a minute apart, and a settings change was
+		// acknowledged a minute late. This cannot spin: every pass through here
+		// started a run (which took a slot; a full agent is given none) or moved
+		// the settings version forward.
+		if again && ctx.Err() == nil {
 			continue
 		}
 
@@ -383,7 +405,7 @@ func (a *Agent) reregister(ctx context.Context, reason string) {
 // the effective maxConcurrent) and the loop returns immediately so the next
 // poll fires on cadence (R2.2). It echoes the applied managed-settings version
 // as the poll ack (Phase 4) and applies any settings the response carries.
-func (a *Agent) pollOnce(ctx context.Context) {
+func (a *Agent) pollOnce(ctx context.Context) (again bool) {
 	// An agent with no free slot asks for nothing (2.3.2). The server's claim
 	// does not know how many runs an agent holds, so a full agent that polled
 	// as usual was handed the next queued run, could not start it, and left it
@@ -440,6 +462,7 @@ func (a *Agent) pollOnce(ctx context.Context) {
 	// checkout policy takes effect on this very poll's assignment.
 	if a.settings.apply(pr.Settings) {
 		a.log.Info("applied server-managed settings", "version", pr.Settings.Version)
+		again = true // acknowledge it now, not an interval from now
 	}
 
 	// ET-D — refresh the watch set from EVERY poll that returns a body. The
@@ -451,9 +474,13 @@ func (a *Agent) pollOnce(ctx context.Context) {
 
 	a.handleControl(ctx, pr.Control)
 
-	if pr.Assignment != nil {
-		a.dispatch(ctx, pr.Assignment)
+	// Only a run that was STARTED asks for the next poll at once. One that was
+	// refused does not: against a server that hands a stopping or full agent
+	// work, asking again at once would fail one queued run after another.
+	if pr.Assignment != nil && a.dispatch(ctx, pr.Assignment) {
+		again = true
 	}
+	return again
 }
 
 // handleControl applies kill/drain/re-register control ops (R2.2, v4).
@@ -544,7 +571,7 @@ func (a *Agent) isDrainingDone() bool {
 
 // dispatch starts executing a claimed run, unless we're draining or out of
 // concurrency slots. It runs in a goroutine so the poll loop never blocks.
-func (a *Agent) dispatch(ctx context.Context, asn *runnerproto.PollAssignment) {
+func (a *Agent) dispatch(ctx context.Context, asn *runnerproto.PollAssignment) (started bool) {
 	// Honor the server-managed capability mask agent-side too (Phase 4). The
 	// server already refuses to assign a masked run-type; this catches a stale
 	// assignment that raced a mask change.
@@ -604,6 +631,7 @@ func (a *Agent) dispatch(ctx context.Context, asn *runnerproto.PollAssignment) {
 		}()
 		a.executeRun(runCtx, asn.TraceID, asn.LiveLog)
 	})
+	return true
 }
 
 // liveLogFlushInterval is how often a LiveLog run's pending buffer is flushed

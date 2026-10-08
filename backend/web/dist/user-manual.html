@@ -6644,7 +6644,10 @@ workflow step: job-level env → parent-workflow env → step inputs</pre>
                         reinstall command, and “up to date” compares version <em>strings</em>, so a locally-built agent
                         can read current while speaking an older protocol.</li>
                     <li><strong>⚙ Edit</strong> sits on the <em>Managed settings</em> section header — the thing it
-                        edits — and carries the pending-change dot.</li>
+                        edits — and carries the pending-change dot. From 2.3.2 the drawer also has a <strong>Poll
+                            interval</strong> (5 to 90 seconds): how often the runner asks for work when it has been
+                        given none. Lower means a queued run is picked up sooner; it takes effect without a
+                        restart.</li>
                 </ul>
                 <p>These are the runner's <strong>owner's</strong> to use. One exception: <strong>Scan keys</strong>
                     is also offered to an administrator of an agency the runner <em>serves</em> but does not belong

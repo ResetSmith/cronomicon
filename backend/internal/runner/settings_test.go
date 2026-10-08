@@ -239,6 +239,29 @@ func TestUpdateRunnerSettingsEndpoint(t *testing.T) {
 	if rec := patch(`{"capabilityMask":["not-a-runtype"]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad mask should 400, got %d", rec.Code)
 	}
+
+	// 2.3.2 — the poll interval is a managed setting, held between five seconds
+	// (an agent that is answered at once must not ask many times a second) and
+	// ninety (a runner unseen for two minutes is shown as degraded).
+	for _, bad := range []string{`{"pollIntervalSeconds":4}`, `{"pollIntervalSeconds":91}`, `{"pollIntervalSeconds":0}`, `{"pollIntervalSeconds":-30}`} {
+		if rec := patch(bad); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "between 5 and 90") {
+			t.Errorf("%s: %d %s, want 400 naming the bounds", bad, rec.Code, rec.Body.String())
+		}
+	}
+	for _, ok := range []string{`{"pollIntervalSeconds":5}`, `{"pollIntervalSeconds":90}`} {
+		if rec := patch(ok); rec.Code != http.StatusOK {
+			t.Errorf("%s: %d %s, want 200", ok, rec.Code, rec.Body.String())
+		}
+	}
+	_ = svc.db.QueryRow(`SELECT managed_settings FROM runners WHERE id = ?`, id).Scan(&raw)
+	if raw == nil || !strings.Contains(*raw, `"pollIntervalSeconds":90`) {
+		t.Errorf("stored managed settings = %v, want the interval in them", raw)
+	}
+	// On its own it is an opinion: not cleared to NULL as an empty set is.
+	stored, err := validateAndNormalize(runnerproto.PollSettingsValues{PollIntervalSeconds: new(30)})
+	if err != nil || stored == "" {
+		t.Errorf("an interval alone normalised to %q (%v); it must be stored", stored, err)
+	}
 }
 
 func TestManagedSettingsDoNotFlapDrift(t *testing.T) {
