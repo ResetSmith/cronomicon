@@ -82,6 +82,17 @@ func Doctor(ctx context.Context, cfg Config, quick bool) ([]Check, bool) {
 		add("path-dirs", CheckPass, "all $PATH directories responsive")
 	}
 
+	// A PATH lookup returns at all. The stat above can pass where this does not:
+	// on systemd 239 a unit that filters system calls without an error number
+	// kills the thread that makes the call Go's lookup tries first, and stat
+	// does not make that call. Whether the tool is found is beside the point.
+	// Costs nothing on a healthy host and one lookup deadline on a broken one.
+	if _, _, timedOut := lookPathBounded(ctx, localToolchainProbes[0].bins[0]); timedOut {
+		add("path-lookup", CheckFail, "a $PATH lookup did not return, so this agent cannot find ansible, terraform or systemd-run and will not claim them — "+lookupHint)
+	} else {
+		add("path-lookup", CheckPass, "$PATH lookups return")
+	}
+
 	// Identity file directory writable (persistence of the minted key).
 	idDir := filepath.Dir(cfg.IdentityFile)
 	if err := checkWritableDir(idDir); err != nil {
@@ -102,12 +113,14 @@ func Doctor(ctx context.Context, cfg Config, quick bool) ([]Check, bool) {
 
 	if !quick {
 		// Toolchains — the slow one (bounded probes may each hit their deadline
-		// on a broken host). detectCapabilities returns a clear error when it
-		// finds nothing.
-		if caps, _, err := detectCapabilities(ctx, cfg); err != nil {
-			add("toolchains", CheckFail, err.Error())
+		// on a broken host). Never a failure: an agent always has the shell
+		// types to claim, and a missing local toolchain shows as its absence
+		// from this list.
+		caps, tc := detectCapabilities(ctx, cfg)
+		if len(tc.Undetermined) > 0 {
+			add("toolchains", CheckWarn, "claims: "+strings.Join(caps, ", ")+" — could not look for: "+strings.Join(tc.Undetermined, ", ")+" (see path-lookup)")
 		} else {
-			add("toolchains", CheckPass, "detected: "+strings.Join(caps, ", "))
+			add("toolchains", CheckPass, "claims: "+strings.Join(caps, ", "))
 		}
 
 		// Tier-2 sandbox is informational: unsandboxed is a supported mode.

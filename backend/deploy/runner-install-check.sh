@@ -178,6 +178,25 @@ check "the default unit keeps its state directory closed to other users" unit_ha
 # toolchain and refuses to start. EPERM lets Go fall back.
 check "the hardened unit answers EPERM for a filtered syscall" unit_has "$unit_default" "SystemCallErrorNumber=EPERM"
 check "an instance's hardened unit does too" unit_has "$unit_tax" "SystemCallErrorNumber=EPERM"
+# The line lives in three places, and losing it from any one is the same hang:
+# the installer's unit (above), the probe that decides whether the installer
+# may harden at all, and the reference unit a manual install copies.
+check "the sandbox self-probe runs with the unit's filter and its EPERM answer" \
+  bash -c "sed -n '/systemd-run --quiet --pipe --wait --collect/,/then\$/p' '$SCRIPT' | grep -qF -- \"-p 'SystemCallFilter=@system-service' -p 'SystemCallErrorNumber=EPERM'\""
+REFERENCE_UNIT="$(dirname "$0")/cronomicon-runner.service"
+check "the reference unit answers EPERM for a filtered syscall" grep -qxF "SystemCallErrorNumber=EPERM" "$REFERENCE_UNIT"
+# cronomicon-runner.service is a second copy of the unit the installer writes.
+# They must carry the same directives, apart from two lines that are each in
+# one of them on purpose: the reference unit points at its own documentation,
+# and only the installer's runs the doctor before the agent starts.
+unit_directives() { grep -vE '^[[:space:]]*(#|$)' | grep -vE '^(Documentation|ExecStartPre)=' | sort; }
+if drift="$(diff <(unit_directives < "$REFERENCE_UNIT") <(unit_directives <<< "$unit_default"))"; then
+  echo "ok   the reference unit and the installer's unit carry the same directives"
+else
+  echo "FAIL the reference unit (<) and the installer's unit (>) differ:" >&2
+  echo "$drift" >&2
+  FAILURES=$((FAILURES + 1))
+fi
 check "an instance's unit keeps its state directory closed to other users" unit_has "$unit_tax" "StateDirectoryMode=0750"
 check "the default unit reads /etc/cronomicon-runner/runner.env" unit_has "$unit_default" "EnvironmentFile=-/etc/cronomicon-runner/runner.env"
 check "the default unit names no instance" bash -c "! grep -q 'cronomicon-runner-' <<< \"\$1\"" _ "$unit_default"

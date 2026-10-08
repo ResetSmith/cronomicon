@@ -57,13 +57,13 @@ COPY --from=build --chown=nonroot:nonroot /out/var/lib/cronomicon-runner /var/li
 VOLUME ["/var/lib/cronomicon-runner"]
 ENV CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
 
-# The four shell types, declared. An agent with no capabilities set probes its
-# own PATH for bash, perl, pwsh and python — and this image has none of them,
-# nor a shell: left to auto-detect it found nothing, refused to register and
-# restarted for ever. The probe asks the wrong machine here anyway: a shell job
-# on this agent runs on the TARGET, over SSH, with the target's interpreter.
-# Override the variable to narrow what the runner claims.
-ENV CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python
+# No CRONOMICON_RUNNER_CAPABILITIES here, on purpose. An agent that names none
+# claims the four shell types (bash, perl, powershell, python) whatever its own
+# host holds, because a shell job runs on the TARGET, over SSH, with the
+# target's interpreter — so this image, which has no interpreter and no shell,
+# claims exactly those four. Baking the variable in would override a narrower
+# list in a mounted -config file (env is applied above the file). Set it at run
+# time to narrow what the runner claims.
 
 # Config comes from CRONOMICON_RUNNER_* env (and/or -config file). Required at run:
 #   CRONOMICON_RUNNER_SERVER, CRONOMICON_RUNNER_REGISTRATION_TOKEN,

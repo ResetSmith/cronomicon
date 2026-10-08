@@ -437,3 +437,20 @@ describe("Host keys dialog — the local runner", () => {
     expect(screen.queryByText(/is not online, so it cannot scan/)).toBeNull();
   });
 });
+
+// An agent always has the shell types to claim, so one whose lookup for its
+// local toolchains never returned is online and looks healthy. The row is
+// where an operator would see that Ansible is missing, so the row says the
+// agent could not look — which is not the same as having none.
+describe("Runners — a toolchain the agent could not look for", () => {
+  it("says so on the row, and says nothing for an agent that simply has none", async () => {
+    RUNNERS = [
+      { ...AGENT, capabilities: ["bash", "perl", "powershell", "python"], toolchains: { undetermined: ["ansible", "terraform"] } },
+      { ...THEIRS, capabilities: ["bash", "perl", "powershell", "python"], toolchains: { checkout: false } },
+    ];
+    renderRunners();
+    const warning = await screen.findByText("could not check for ansible, terraform");
+    expect(warning.getAttribute("title")).toContain("SystemCallErrorNumber=EPERM");
+    expect(screen.getAllByText(/could not check for/).length).toBe(1);
+  });
+});

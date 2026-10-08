@@ -203,6 +203,29 @@ everything in the list below.
   first key for a host in their own scope and never replace one; on the local
   runner only a global administrator decides.
 
+- **An agent claims the shell types without looking at its own host.** With no
+  capabilities named, an agent claims `bash`, `perl`, `powershell` and `python`
+  whatever is installed where it runs: those jobs execute on the target, over
+  SSH, with the target's interpreter, and the local runner has always claimed
+  them this way. It probes its own host only for Ansible and Terraform, which
+  it runs itself. Before, it looked for `bash`, `perl`, `pwsh` and `python3` on
+  its own `$PATH`, so a Linux agent with no `pwsh` took no PowerShell run for a
+  Windows fleet until it was told to. **An agent that relied on that to stay
+  out of a type now claims it** after it is upgraded and restarted: name its
+  capabilities (`-c` / `CRONOMICON_RUNNER_CAPABILITIES`) to keep the type off
+  it. An agent that already names its capabilities is unchanged.
+- **An agent that cannot look for Ansible or Terraform says so.** A lookup on
+  its own `$PATH` that never returns (the RHEL 8 unit below, or a hung mount)
+  used to count as "not installed". Since the agent now starts regardless, it
+  would have come up looking healthy with those types quietly missing. It
+  reports the difference: the runner's row reads *could not check for ansible,
+  terraform*, the agent logs it at error level, and `cronomicon-runner doctor`
+  has a `path-lookup` check that fails with the fix, on every start too.
+- **The upgrade command watches each agent for 20 seconds.** A unit is reported
+  OK only when it is still running, as the same process, at the end of the
+  watch. One look at `is-active` passed an agent that was about to exit, and a
+  crash-looping one whenever the look landed while systemd had it up again.
+
 ### Removed
 
 - **The executor choice.** `executor` on a job, a script, the compose request
@@ -240,13 +263,19 @@ everything in the list below.
   lookup never returned: the agent logged *PATH lookup timed out*, found no
   capabilities and no sandbox, and with none configured refused to start. The
   installer's own probe did not catch it. The unit now sets
-  `SystemCallErrorNumber=EPERM`. For an agent installed earlier, run the
-  installer again or add that line as a drop-in.
+  `SystemCallErrorNumber=EPERM`. **An agent installed earlier gets the line
+  from the upgrade command** (Copy upgrade command on its row), which adds it
+  as a drop-in to every agent unit on the machine that filters system calls
+  without it, and says so. By hand: `systemctl edit <unit>`, `[Service]`,
+  `SystemCallErrorNumber=EPERM`, restart. Do not re-run the installer on an
+  enrolled agent for this: it needs a new registration token and writes
+  `runner.env` afresh.
 - **The slim runner image started with nothing it could do.** The image has no
-  shell, so an agent left to detect its capabilities found none, refused to
-  register and restarted for ever. It now declares the four shell types, which
-  run on the target, not in the image. With an older image, set
-  `CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python`.
+  shell and no interpreter, so an agent left to detect its capabilities found
+  none, refused to register and restarted for ever. An agent no longer looks
+  on its own host for the shell types (above), so the image claims the four of
+  them as it is, and no agent can start with nothing to claim. With an older
+  image, set `CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python`.
 - Runner API keys are revoked by runner id; two runners that declared the same
   name no longer share a revocation.
 - Output markers in an agent's log are parsed according to whether that run's

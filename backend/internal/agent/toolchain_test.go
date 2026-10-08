@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -41,11 +43,54 @@ func TestLookPathBounded(t *testing.T) {
 	dir := fakeRunTypeBins(t, "ansible-playbook")
 	t.Setenv("PATH", dir)
 
-	if _, ok := lookPathBounded(context.Background(), "ansible-playbook"); !ok {
+	if _, ok, late := lookPathBounded(context.Background(), "ansible-playbook"); !ok || late {
 		t.Error("lookPathBounded should find a binary that is on PATH")
 	}
-	if _, ok := lookPathBounded(context.Background(), "definitely-not-a-real-binary-xyz"); ok {
-		t.Error("lookPathBounded should report a missing binary as absent")
+	if _, ok, late := lookPathBounded(context.Background(), "definitely-not-a-real-binary-xyz"); ok || late {
+		t.Error("lookPathBounded should report a missing binary as absent, and not as a timeout")
+	}
+}
+
+// hangLookups makes every PATH lookup block until the test ends, as it does
+// under a unit whose syscall filter kills the looking thread (systemd 239) or
+// with a $PATH directory on a hung mount.
+func hangLookups(t *testing.T) {
+	t.Helper()
+	release := make(chan struct{})
+	prevLook, prevTimeout := lookPath, lookPathTimeout
+	lookPath = func(string) (string, error) { <-release; return "", exec.ErrNotFound }
+	lookPathTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { close(release); lookPath, lookPathTimeout = prevLook, prevTimeout })
+}
+
+func TestALookupThatNeverReturnsIsNotAnAbsentToolchain(t *testing.T) {
+	// The agent still starts (it has the shell types), so "could not look" has
+	// to be reported: otherwise an agent that has lost ansible this way is
+	// indistinguishable from one that never had it.
+	hangLookups(t)
+
+	types, undetermined := detectRunTypes(context.Background())
+	if want := []string{"bash", "perl", "powershell", "python"}; !slices.Equal(types, want) {
+		t.Errorf("claims %v, want exactly %v", types, want)
+	}
+	if want := []string{"ansible", "terraform"}; !slices.Equal(undetermined, want) {
+		t.Errorf("undetermined = %v, want %v", undetermined, want)
+	}
+
+	_, tc := detectCapabilities(context.Background(), Config{})
+	if want := []string{"ansible", "terraform"}; !slices.Equal(tc.Undetermined, want) {
+		t.Errorf("the registration detail reports %v as not looked for, want %v", tc.Undetermined, want)
+	}
+}
+
+func TestAnAbsentToolchainIsNotReportedAsUndetermined(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, undetermined := detectRunTypes(context.Background()); len(undetermined) != 0 {
+		t.Errorf("a lookup that answered \"not found\" was reported as unanswered: %v", undetermined)
+	}
+	_, tc := detectCapabilities(context.Background(), Config{})
+	if len(tc.Undetermined) != 0 {
+		t.Errorf("undetermined = %v on a host that simply has no toolchains", tc.Undetermined)
 	}
 }
 
@@ -96,10 +141,7 @@ func TestDetectCapabilities(t *testing.T) {
 		AllowCheckout:     true,
 		VaultPasswordFile: "/etc/cronomicon/vault.pw",
 	}
-	caps, tc, err := detectCapabilities(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	caps, tc := detectCapabilities(context.Background(), cfg)
 
 	want := map[string]bool{
 		"ansible": true, "terraform": true, // configured run-types preserved
@@ -131,10 +173,7 @@ func TestDetectCapabilitiesNoAnsible(t *testing.T) {
 	// flag-derived tokens (no shell-out needed for those).
 	t.Setenv("PATH", t.TempDir())
 	cfg := Config{Capabilities: []string{"bash", "perl"}, AllowCheckout: false}
-	caps, tc, err := detectCapabilities(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	caps, tc := detectCapabilities(context.Background(), cfg)
 	got := map[string]bool{}
 	for _, c := range caps {
 		got[c] = true
@@ -193,25 +232,24 @@ func TestDetectCapabilitiesPopulatesKeyNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := Config{Capabilities: []string{"bash"}, KeyDir: dir}
-	_, tc, err := detectCapabilities(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, tc := detectCapabilities(context.Background(), cfg)
 	if len(tc.KeyNames) != 1 || tc.KeyNames[0] != "ansible_rh8_key" {
 		t.Errorf("toolchains.KeyNames = %v, want [ansible_rh8_key]", tc.KeyNames)
 	}
 }
 
 func TestDetectRunTypes(t *testing.T) {
-	// bash + python3 + ansible-playbook on PATH; pwsh/perl/terraform absent.
-	// python (not python3) also present to prove the alternates dedupe.
-	fakeRunTypeBins(t, "bash", "python3", "python", "ansible-playbook")
+	// The four shell types come with every agent: they run on the targets, so
+	// this host's PATH does not decide them. Only bash and ansible-playbook
+	// are here; perl, pwsh, python and terraform are absent.
+	fakeRunTypeBins(t, "bash", "ansible-playbook")
 
 	got := map[string]bool{}
-	for _, rt := range detectRunTypes(context.Background()) {
+	types, _ := detectRunTypes(context.Background())
+	for _, rt := range types {
 		got[rt] = true
 	}
-	want := []string{"bash", "python", "ansible"}
+	want := []string{"bash", "perl", "powershell", "python", "ansible"}
 	for _, w := range want {
 		if !got[w] {
 			t.Errorf("missing detected run-type %q; got %v", w, got)
@@ -223,31 +261,64 @@ func TestDetectRunTypes(t *testing.T) {
 }
 
 func TestDetectCapabilitiesAutoDetect(t *testing.T) {
-	// Empty configured capabilities ⇒ the run-types are probed (D1: 1B).
-	fakeRunTypeBins(t, "bash", "pwsh")
+	// Empty configured capabilities ⇒ detectRunTypes decides (D1: 1B).
+	fakeRunTypeBins(t, "terraform")
 
-	caps, _, err := detectCapabilities(context.Background(), Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	caps, _ := detectCapabilities(context.Background(), Config{})
 	got := map[string]bool{}
 	for _, c := range caps {
 		got[c] = true
 	}
-	if !got["bash"] || !got["powershell"] {
-		t.Errorf("auto-detect must claim bash+powershell: %v", caps)
+	for _, rt := range []string{"bash", "perl", "powershell", "python", "terraform"} {
+		if !got[rt] {
+			t.Errorf("auto-detect must claim %q: %v", rt, caps)
+		}
 	}
-	if got["python"] || got["ansible"] {
-		t.Errorf("auto-detect must not claim absent toolchains: %v", caps)
+	if got["ansible"] {
+		t.Errorf("auto-detect must not claim a local toolchain this host lacks: %v", caps)
 	}
 }
 
-func TestDetectCapabilitiesAutoDetectNothing(t *testing.T) {
-	// Empty capabilities AND an empty PATH ⇒ zero run-types is an error (an
-	// unclaimable runner must not register).
+func TestDetectCapabilitiesAutoDetectOnABareHost(t *testing.T) {
+	// The slim runner image: no interpreter, no shell, nothing on PATH. It
+	// used to find no run-types, refuse to register and restart for ever. An
+	// agent dials its targets for shell jobs, so it claims them regardless.
 	t.Setenv("PATH", t.TempDir())
-	if _, _, err := detectCapabilities(context.Background(), Config{}); err == nil {
-		t.Fatal("expected an error when auto-detect finds no run-type toolchains")
+	caps, _ := detectCapabilities(context.Background(), Config{})
+	if want := []string{"bash", "perl", "powershell", "python"}; !slices.Equal(caps, want) {
+		t.Errorf("a bare host claims %v, want exactly %v", caps, want)
+	}
+}
+
+func TestExplicitCapabilitiesAreNotWidened(t *testing.T) {
+	// Naming capabilities is how an operator narrows: the shell types are a
+	// default for an agent that names none, never an addition to a list.
+	t.Setenv("PATH", t.TempDir())
+	caps, _ := detectCapabilities(context.Background(), Config{Capabilities: []string{"bash"}})
+	if want := []string{"bash"}; !slices.Equal(caps, want) {
+		t.Errorf("explicit capabilities became %v, want exactly %v", caps, want)
+	}
+}
+
+func TestLocalToolchainProbesCoverExactlyTheLocalRunTypes(t *testing.T) {
+	// A type is either run here (probed on this host) or on the targets
+	// (granted): a type in both lists, or in neither, is decided wrongly.
+	probed := map[string]bool{}
+	for _, p := range localToolchainProbes {
+		probed[p.runType] = true
+		if !localRunTypes[p.runType] {
+			t.Errorf("%q is probed on the agent's host but does not run there", p.runType)
+		}
+	}
+	for rt := range localRunTypes {
+		if !probed[rt] {
+			t.Errorf("%q runs on the agent's host but nothing probes for it", rt)
+		}
+	}
+	for _, rt := range shellRunTypes {
+		if localRunTypes[rt] {
+			t.Errorf("%q is granted as a shell type but runs on the agent's host", rt)
+		}
 	}
 }
 
@@ -256,16 +327,13 @@ func TestDetectedRunTypesFeedConfigDigest(t *testing.T) {
 	// digest so the server requests a redeclare (plan 2 Phase 1: detection
 	// changes ride the drift channel for free).
 	digest := func() string {
-		caps, _, err := detectCapabilities(context.Background(), Config{})
-		if err != nil {
-			t.Fatal(err)
-		}
+		caps, _ := detectCapabilities(context.Background(), Config{})
 		return runnerproto.ConfigDigest("r1", "Linux", caps, 5, "cronomicon", "test", runnerproto.ProtocolVersion)
 	}
 	binDir := fakeRunTypeBins(t, "bash")
 	before := digest()
-	// "Install" python, as a package manager would.
-	if err := os.WriteFile(filepath.Join(binDir, "python3"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	// "Install" terraform, as a package manager would.
+	if err := os.WriteFile(filepath.Join(binDir, "terraform"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if after := digest(); after == before {

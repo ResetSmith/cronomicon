@@ -2,11 +2,11 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +25,13 @@ type Toolchains struct {
 	// BecomeFile reports whether this runner can honor a server-delivered become
 	// password (RA-12): ansible-core >= 2.12, where --become-password-file landed.
 	BecomeFile bool `json:"becomeFile"`
+	// Undetermined names the local run-types this agent could not LOOK for: the
+	// PATH lookup did not return (lookupHint). That is not "not installed", and
+	// since an agent always has the shell types to claim it no longer stops the
+	// agent from starting — so it is reported, or an agent that has lost ansible
+	// this way looks exactly like one that never had it. Display-only; rides
+	// additionalProperties:true like KeyNames.
+	Undetermined []string `json:"undetermined,omitempty"`
 	// KeyNames is the set of credential NAMES this runner can resolve to a local
 	// key (key-map keys + key-dir basenames) — names only, NEVER paths or key
 	// material (R6/Phase 4). Display-only in the Runner detail so an operator sees
@@ -76,38 +83,61 @@ func declaredKeyNames(cfg Config) []string {
 // e.g. "ansible [core 2.16.3]" or "ansible-core 2.16.3".
 var ansibleCoreRe = regexp.MustCompile(`(?:core |ansible-core )(\d+\.\d+\.\d+[^\s\]]*)`)
 
-// runTypeProbes maps each run-type token to the executables whose presence on
-// PATH claims it (any one match suffices). Windows: when the OS story lands,
-// the powershell probe should also try "powershell.exe" (Windows PowerShell)
-// alongside pwsh (plan 2 §7.4) — Linux-only for now.
-var runTypeProbes = []struct {
+// shellRunTypes are the run-types an agent runs over SSH ON THE TARGET, with
+// the target's interpreter. An agent that names no capabilities claims all four
+// without looking at its own host: its PATH says nothing about a machine it
+// dials, and the name differs anyway (the remote invocation is `powershell` and
+// `python3`, execspec.ResolveCommand). Probing the agent for them left a
+// shell-less image with no capabilities at all, and kept an agent with no local
+// pwsh off every Windows fleet. The local runner's list is the same four
+// (settings.LocalRunnerCapabilities).
+var shellRunTypes = []string{"bash", "perl", "powershell", "python"}
+
+// localToolchainProbes maps each run-type that runs ON the agent host
+// (localRunTypes) to the executables whose presence on PATH claims it (any one
+// match suffices). These are the only types an agent's own host decides.
+var localToolchainProbes = []struct {
 	runType string
 	bins    []string
 }{
-	{"bash", []string{"bash"}},
-	{"perl", []string{"perl"}},
-	{"powershell", []string{"pwsh"}},
-	{"python", []string{"python3", "python"}},
 	{"ansible", []string{"ansible-playbook"}},
 	{"terraform", []string{"terraform"}},
 }
 
-// detectRunTypes probes PATH for the toolchains behind each run-type and
-// returns the tokens the host can satisfy (D1: 1B — unset capabilities means
-// "probe at startup" instead of a config error). The result is ordered by the
-// probe table; detectCapabilities dedupes + sorts downstream.
-func detectRunTypes(ctx context.Context) []string {
-	var types []string
-	for _, p := range runTypeProbes {
+// detectRunTypes returns the run-types an agent claims when it names none
+// (D1: 1B — unset capabilities means "decide at startup" instead of a config
+// error): every shell type, and each local toolchain found on PATH. It is
+// never empty, so an agent with nothing installed still registers.
+// detectCapabilities dedupes + sorts downstream.
+//
+// undetermined is the local run-types it could not look for: every lookup for
+// the type ran out its deadline and none found the toolchain. The type is not
+// claimed, and the caller says so — absent and unanswered are different facts.
+func detectRunTypes(ctx context.Context) (types, undetermined []string) {
+	types = slices.Clone(shellRunTypes)
+	for _, p := range localToolchainProbes {
+		found, timedOut := false, false
 		for _, bin := range p.bins {
-			if _, ok := lookPathBounded(ctx, bin); ok {
-				types = append(types, p.runType)
+			_, ok, late := lookPathBounded(ctx, bin)
+			if ok {
+				found = true
 				break
 			}
+			timedOut = timedOut || late
+		}
+		switch {
+		case found:
+			types = append(types, p.runType)
+		case timedOut:
+			undetermined = append(undetermined, p.runType)
 		}
 	}
-	return types
+	return types, undetermined
 }
+
+// lookupHint names the two known causes of a PATH lookup that does not return.
+// Shared by the agent's log line and the doctor's check.
+const lookupHint = "on systemd 239 (RHEL 8) the unit needs SystemCallErrorNumber=EPERM (the upgrade command adds it; or systemctl edit <unit>, [Service], SystemCallErrorNumber=EPERM); otherwise a $PATH directory is on a hung mount"
 
 // detectCapabilities augments the operator-configured run-type capabilities with
 // the flat tokens the runner can actually satisfy (RX.7), and returns the
@@ -117,32 +147,34 @@ func detectRunTypes(ctx context.Context) []string {
 //   - "vault"            iff -vault-password-file is configured (RX.13)
 //   - "collection:<fqcn>" per installed collection (skip-if-satisfied + gating)
 //
-// Empty configured capabilities means auto-detect (D1: 1B): the run-types are
-// probed from the host's PATH instead. That errors only when the probe yields
-// nothing — a runner with zero run-types can never claim work, so it must not
-// register. Set -capabilities / CRONOMICON_RUNNER_CAPABILITIES explicitly to
-// narrow ("this box has python but must not run python jobs").
+// Empty configured capabilities means auto-detect (D1: 1B): detectRunTypes
+// decides, and it always yields the shell types, so a runner can never come
+// out of here with nothing to claim. Set -capabilities /
+// CRONOMICON_RUNNER_CAPABILITIES explicitly to narrow ("this agent must not
+// run python jobs").
 //
 // Detection is best-effort: a missing ansible/ansible-galaxy simply yields no
 // toolchain tokens (the configured run-types still register). The token set is
 // deduped + sorted for a stable registration payload.
-func detectCapabilities(ctx context.Context, cfg Config) ([]string, Toolchains, error) {
+func detectCapabilities(ctx context.Context, cfg Config) ([]string, Toolchains) {
 	set := map[string]bool{}
 	for _, c := range cfg.Capabilities {
 		if c = strings.TrimSpace(c); c != "" {
 			set[c] = true
 		}
 	}
+	var tc Toolchains
 	if len(set) == 0 {
-		detected := detectRunTypes(ctx)
-		if len(detected) == 0 {
-			return nil, Toolchains{}, fmt.Errorf("capability auto-detect found no run-type toolchains on PATH — set -capabilities / CRONOMICON_RUNNER_CAPABILITIES explicitly")
-		}
+		detected, undetermined := detectRunTypes(ctx)
 		for _, rt := range detected {
 			set[rt] = true
 		}
+		if len(undetermined) > 0 {
+			tc.Undetermined = undetermined
+			slog.Error("could not look for local toolchains (the PATH lookup did not return) — this agent does NOT claim them, and their runs will stay queued",
+				"runTypes", undetermined, "hint", lookupHint)
+		}
 	}
-	var tc Toolchains
 
 	if core := detectAnsibleCore(ctx); core != "" {
 		tc.AnsibleCore = core
@@ -197,7 +229,7 @@ func detectCapabilities(ctx context.Context, cfg Config) ([]string, Toolchains, 
 		caps = append(caps, c)
 	}
 	sort.Strings(caps)
-	return caps, tc, nil
+	return caps, tc
 }
 
 // toolchainProbeTimeout hard-bounds each best-effort startup probe (ansible
@@ -257,26 +289,33 @@ func runProbeWithTimeout(ctx context.Context, d time.Duration, name string, args
 // entry; if one lives on a hung mount (stale NFS / autofs to an unreachable
 // server) that stat blocks uninterruptibly with no context to honor, so a bare
 // LookPath can wedge startup — this was the real registration hang.
-const lookPathTimeout = 3 * time.Second
+var lookPathTimeout = 3 * time.Second
+
+// lookPath is exec.LookPath, replaceable so a test can make a lookup that
+// never returns (the real one cannot be made to, portably).
+var lookPath = exec.LookPath
 
 // lookPathBounded is exec.LookPath with a hard deadline: abandoned on timeout it
 // reports "not found" (best-effort — the leaked goroutine unblocks if the mount
 // ever recovers), so a hung $PATH entry degrades a probe rather than hanging it.
-func lookPathBounded(ctx context.Context, bin string) (string, bool) {
+// timedOut tells the two "not found"s apart: the lookup answered no, or it
+// never answered.
+func lookPathBounded(ctx context.Context, bin string) (path string, found, timedOut bool) {
 	type result struct {
 		path string
 		err  error
 	}
 	ch := make(chan result, 1)
-	go func() { p, e := exec.LookPath(bin); ch <- result{p, e} }()
+	look := lookPath // read here, not in the goroutine that may outlive the call
+	go func() { p, e := look(bin); ch <- result{p, e} }()
 	tctx, cancel := context.WithTimeout(ctx, lookPathTimeout)
 	defer cancel()
 	select {
 	case r := <-ch:
-		return r.path, r.err == nil
+		return r.path, r.err == nil, false
 	case <-tctx.Done():
 		slog.Warn("PATH lookup timed out — treating tool as absent (a $PATH dir may be on a hung mount)", "bin", bin)
-		return "", false
+		return "", false, true
 	}
 }
 

@@ -73,6 +73,37 @@ func TestDoctorQuickPassesAgainstLiveServer(t *testing.T) {
 	}
 }
 
+// The quick doctor runs before every start (ExecStartPre), inside the unit.
+// A unit that kills the agent's PATH lookups passes every other check — the
+// directories stat fine — so the lookup itself is one, and its failure says
+// what to change.
+func TestDoctorQuickFailsWhenAPathLookupNeverReturns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
+	defer srv.Close()
+	cfg, err := Resolve([]string{"-server", srv.URL, "-name", "d",
+		"-registration-token", "crn_reg_x", "-identity-file", t.TempDir() + "/id.json"}, noEnv)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if checks, _ := Doctor(context.Background(), cfg, true); statusOf(checks, "path-lookup") != CheckPass {
+		t.Fatalf("path-lookup must pass on a host whose lookups return: %+v", checks)
+	}
+
+	hangLookups(t)
+	checks, ok := Doctor(context.Background(), cfg, true)
+	if ok {
+		t.Error("the doctor passed on a host whose PATH lookups never return")
+	}
+	if s := statusOf(checks, "path-lookup"); s != CheckFail {
+		t.Errorf("path-lookup = %s, want FAIL", s)
+	}
+	for _, c := range checks {
+		if c.Name == "path-lookup" && !strings.Contains(c.Detail, "SystemCallErrorNumber=EPERM") {
+			t.Errorf("the failure must name the fix: %q", c.Detail)
+		}
+	}
+}
+
 func statusOf(checks []Check, name string) CheckStatus {
 	for _, c := range checks {
 		if c.Name == name {

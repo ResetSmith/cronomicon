@@ -17,8 +17,9 @@ RUNNER_NAME_SET=0
 # one. Empty = the default agent, which is installed exactly as it always was.
 INSTANCE=""
 INSTANCE_SET=0
-# Empty = auto-detect: the agent probes the host's toolchains at startup and
-# claims the matching run-types. -c writes an explicit (narrowing) override.
+# Empty = auto-detect: the agent claims the four shell types (they run on the
+# targets) and, when this host has them, ansible and terraform. -c writes an
+# explicit (narrowing) override.
 CAPABILITIES=""
 BINARY_PATH=""
 DOWNLOAD=0
@@ -91,7 +92,9 @@ usage() {
   echo "                             letter, 14 characters at most. Without it the default"
   echo "                             agent is installed (or re-installed), as always."
   echo "  -c, --capabilities <list>  Comma-separated run-type capabilities. Default: omitted —"
-  echo "                             the agent auto-detects the host's toolchains at startup."
+  echo "                             auto-detect: the agent claims bash, perl, powershell and"
+  echo "                             python (they run on the targets), and ansible and"
+  echo "                             terraform when this host has them."
   echo "                             Set explicitly to narrow what this runner claims."
   echo "  -b, --binary <path>        Path to pre-built cronomicon-runner binary"
   echo "      --download             Download the cronomicon-runner binary from the server"
@@ -707,8 +710,8 @@ install -o root -g "$RUNNER_GROUP" -m 0640 /dev/null "${CONF_DIR}/runner.env"
   echo "CRONOMICON_RUNNER_SERVER=${SERVER_URL}"
   echo "CRONOMICON_RUNNER_REGISTRATION_TOKEN=${REG_TOKEN}"
   echo "CRONOMICON_RUNNER_NAME=${RUNNER_NAME}"
-  # No -c ⇒ omit the var entirely: the agent probes the host's toolchains at
-  # startup (unset = auto-detect; set explicitly to narrow).
+  # No -c ⇒ omit the var entirely (unset = auto-detect: the shell types, plus
+  # ansible and terraform when this host has them; set explicitly to narrow).
   [ -n "$CAPABILITIES" ] && echo "CRONOMICON_RUNNER_CAPABILITIES=${CAPABILITIES}"
   echo "CRONOMICON_RUNNER_INVENTORY=${INVENTORY}"
   echo "CRONOMICON_RUNNER_IDENTITY_FILE=${STATE_DIR}/identity.json"
@@ -897,8 +900,9 @@ fi
 if [ -n "$CAPABILITIES" ]; then
   echo "Capabilities: ${CAPABILITIES} (explicit override)"
 else
-  echo "Capabilities: auto-detect at agent startup (probed from this host's"
-  echo "              toolchains; pass -c to narrow the claimed run-types)"
+  echo "Capabilities: auto-detect at agent startup (bash, perl, powershell and"
+  echo "              python always; ansible and terraform when this host has"
+  echo "              them; pass -c to narrow the claimed run-types)"
 fi
 echo "Inventory:    ${INVENTORY}"
 [ -n "$KNOWN_HOSTS_LINE" ]     && echo "known_hosts:  ${KNOWN_HOSTS_DEST}"

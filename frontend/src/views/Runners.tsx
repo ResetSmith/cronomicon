@@ -113,6 +113,10 @@ interface Runner {
     // Credential NAMES the runner can resolve to a local key (R6/Phase 4);
     // display-only, names only. Absent until a post-Phase-4 agent re-declares.
     keyNames?: string[];
+    // Local run-types the agent could not LOOK for: its PATH lookup never
+    // returned. Not "not installed" — the agent does not claim them, and says
+    // why it cannot tell. Absent from an agent older than 2.3.0.
+    undetermined?: string[];
   } | null;
   // Server-managed operational overrides (Phase 4). settingsVersion >
   // settingsAckedVersion ⇒ a change is still propagating to the agent.
@@ -174,6 +178,12 @@ function toolchainSummary(tc: Runner["toolchains"]): string {
   if (tc.checkout) parts.push(tc.sandboxed ? "sandboxed" : "unsandboxed");
   return parts.join(" · ");
 }
+
+// What the row says when an agent could not look for its local toolchains. An
+// agent in this state is online and takes shell runs, so nothing else on the
+// row distinguishes it from one that simply has no Ansible.
+const UNDETERMINED_HOW =
+  "This agent's lookup for the toolchain on its own host never returned, so it does not claim the run type and those runs stay queued. On RHEL 8 (systemd 239) its unit needs SystemCallErrorNumber=EPERM: run Copy upgrade command on the host, which adds it. Otherwise a directory on the agent's PATH is on a hung mount. The agent's journal names the lookup.";
 
 type Run = components["schemas"]["Run"];
 
@@ -1372,6 +1382,11 @@ export function Runners() {
           {toolchainSummary(r.toolchains) && (
             <div style={{ color: c.textMuted, fontSize: c.fontXs, marginTop: 3 }}>{toolchainSummary(r.toolchains)}</div>
           )}
+          {(r.toolchains?.undetermined ?? []).length > 0 && (
+            <div title={UNDETERMINED_HOW} style={{ color: c.warning, fontSize: c.fontXs, fontWeight: 600, marginTop: 3, cursor: "help" }}>
+              could not check for {(r.toolchains?.undetermined ?? []).join(", ")}
+            </div>
+          )}
         </>
       ),
     },
@@ -2112,9 +2127,9 @@ export function Runners() {
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Run on the target host. <code>--download</code> fetches the agent binary from this server with
                   checksum verification (deployments without bundled binaries fall back to a local{" "}
-                  <code>cronomicon-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected from
-                  the host's toolchains at startup; add <code>-c</code> only to narrow them — see the Install
-                  Guide.{" "}
+                  <code>cronomicon-runner</code> / <code>-b &lt;path&gt;</code>). Capabilities are auto-detected at
+                  startup (the shell types always; Ansible and Terraform when the host has them); add{" "}
+                  <code>-c</code> only to narrow them — see the Install Guide.{" "}
                   <button
                     onClick={() => setShowTwoStep((v) => !v)}
                     style={{
@@ -2351,7 +2366,7 @@ export function Runners() {
               <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.6 }}>
                 Mint a <strong>single-use</strong> registration token, then paste one line on the runner host.
                 The server URL, token, and agent-binary download are baked into the script — no flags to carry,
-                and capabilities auto-detect from the host's toolchains.
+                and capabilities auto-detect at startup.
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <input
@@ -3016,9 +3031,10 @@ function ProvisionPanel({
             </div>
             <div style={hintStyle}>
               The run-types this runner claims — jobs of other types are never offered to it.{" "}
-              <strong>Auto-detect</strong> (recommended): the agent probes the host's toolchains at startup and
-              claims what it finds — install a toolchain later and a restart picks it up. <strong>Override</strong>{" "}
-              to narrow the claim set (e.g. the host has python but must not run python jobs). Solid buttons
+              <strong>Auto-detect</strong> (recommended): the agent claims bash, perl, powershell and python
+              whatever its host holds, and claims ansible and terraform when it finds them on its host at
+              startup — install one later and a restart picks it up. <strong>Override</strong>{" "}
+              to narrow the claim set (e.g. this agent must not run python jobs). Solid buttons
               (bash, perl, powershell, python) execute <strong>over SSH on the target hosts</strong>; the runner
               needs no local toolchain (slim container image). Dashed buttons (ansible, terraform) run{" "}
               <strong>local toolchains on the runner itself</strong> — use the fat image, or a host with the
@@ -3197,8 +3213,8 @@ function ProvisionPanel({
                     <>Image is derived from the capability pick ({dockerCmd.includes("-fat:") ? "fat" : "slim"});</>
                   ) : (
                     <>
-                      With auto-detect the agent claims the image's toolchains (slim shown; switch to{" "}
-                      <code>cronomicon-runner-fat</code> for ansible/terraform);
+                      With auto-detect the agent claims the shell types in either image (slim shown; switch to{" "}
+                      <code>cronomicon-runner-fat</code> to add ansible/terraform);
                     </>
                   )}{" "}
                   identity and keys persist on the named volume. Place any referenced files (known_hosts, keys,

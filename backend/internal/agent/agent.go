@@ -136,10 +136,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// re-declare automatically, Phase 5).
 	if a.configDigest == "" {
 		a.log.Info("detecting host capabilities for drift digest (resumed identity)")
-		caps, _, err := detectCapabilities(ctx, a.cfg)
-		if err != nil {
-			return err
-		}
+		caps, _ := detectCapabilities(ctx, a.cfg)
 		a.configDigest = a.declaredDigest(caps)
 		// Loud on purpose: this detected set is what drift detection will make
 		// the server adopt. If a toolchain probe failed transiently (e.g. the
@@ -210,13 +207,10 @@ func (a *Agent) registerOrResume(ctx context.Context) error {
 func (a *Agent) register(ctx context.Context) error {
 	// Detect the toolchain capability tokens + display detail at registration
 	// (RX.7). Best-effort: a runner without ansible still registers its configured
-	// run-types. With no configured run-types the whole set is probed from the
-	// host (D1: 1B), and a probe that finds nothing aborts the registration.
+	// run-types. With no configured run-types the agent claims the shell types
+	// and whichever local toolchains its host has (D1: 1B, detectRunTypes).
 	a.log.Info("detecting host capabilities (toolchain probes)")
-	caps, tc, err := detectCapabilities(ctx, a.cfg)
-	if err != nil {
-		return err
-	}
+	caps, tc := detectCapabilities(ctx, a.cfg)
 	a.log.Info("registering with server", "server", a.cfg.ServerURL, "capabilities", caps)
 	id, err := a.client.Register(ctx, a.cfg, caps, tc)
 	if err != nil {
@@ -362,15 +356,9 @@ func (a *Agent) handleControl(ctx context.Context, control []runnerproto.PollCon
 // and POSTs the declared set with the EXISTING runner API key; the identity
 // (id + key) is unchanged and nothing drains — active runs keep running.
 func (a *Agent) redeclare(ctx context.Context) {
-	caps, tc, err := detectCapabilities(ctx, a.cfg)
-	if err != nil {
-		// Auto-detect found nothing (toolchains vanished since startup?). Keep
-		// the current declaration rather than declaring an unclaimable runner.
-		a.log.Error("redeclare skipped", "error", err)
-		return
-	}
+	caps, tc := detectCapabilities(ctx, a.cfg)
 	a.configDigest = a.declaredDigest(caps) // keep poll digest in step with what we declare
-	err = a.client.Redeclare(ctx, a.id, a.cfg, caps, tc)
+	err := a.client.Redeclare(ctx, a.id, a.cfg, caps, tc)
 	switch {
 	case errors.Is(err, errReaped):
 		// Row gone between the op and this call (reaped/deregistered). The next
