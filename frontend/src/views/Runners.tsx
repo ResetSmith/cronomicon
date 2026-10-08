@@ -138,16 +138,16 @@ type RunTypeName = (typeof RUN_TYPES)[number];
 
 // The bounds the server holds a managed poll interval within
 // (runnerproto.Min/MaxManagedPollIntervalSeconds; openapi ManagedRunnerSettings).
-// The floor keeps an agent that is answered at once from asking many times a
-// second; the ceiling stays under the two minutes after which a runner is shown
-// as degraded.
-export const POLL_INTERVAL_MIN_SECONDS = 5;
+// The ceiling stays under the two minutes after which a runner is shown as
+// degraded. The floor is the server's own hold on a poll (below).
+export const POLL_INTERVAL_MIN_SECONDS = 30;
 export const POLL_INTERVAL_MAX_SECONDS = 90;
 // How long the server holds a poll waiting for work (runner.pollTimeout). The
 // interval is how often a poll STARTS, so an idle agent with a free slot is
-// connected for this much of every interval: at or below it, all the time.
-// That is why the field's values from the floor up to here behave alike for
-// picking work up, and the drawer says so.
+// connected for this much of every interval: at this value, all the time. A
+// lower interval would change nothing (an agent with a run in flight asks
+// again every few seconds whatever its interval), which is why this is also
+// the field's floor.
 export const POLL_HOLD_SECONDS = 30;
 
 // ManagedSettings is the tri-state override set edited in the Settings drawer.
@@ -2811,12 +2811,11 @@ function RunnerSettingsDrawer({
           How often the agent starts asking for work: {POLL_INTERVAL_MIN_SECONDS}–{POLL_INTERVAL_MAX_SECONDS} seconds.
           The agent's own setting is 60 unless its configuration says otherwise, and the app cannot read it. The
           server holds each request for up to {POLL_HOLD_SECONDS} seconds and hands over a run the moment one
-          arrives, so <strong>the longest a new run waits is this value less {POLL_HOLD_SECONDS}</strong>: about 30
-          seconds at 60, a minute at 90, and nothing at {POLL_HOLD_SECONDS} or below, where the agent is connected
-          all the time. Every value from {POLL_INTERVAL_MIN_SECONDS} to {POLL_HOLD_SECONDS} therefore picks work up
-          the same way; a lower one only makes an agent with no free slot check in more often, which is how soon
-          a Stop reaches one of its runs. An agent that is given a run asks for the next one at once, whatever
-          this is set to.
+          arrives, so <strong>the longest a new run waits is this value less {POLL_HOLD_SECONDS}</strong>: nothing at{" "}
+          {POLL_HOLD_SECONDS}, where the agent is connected all the time; about 30 seconds at 60; a minute at 90.
+          This does not decide how soon a <strong>Stop</strong> reaches a job, nor how fast a queue is taken: an
+          agent with a run in flight checks in every few seconds, and one that is given a run asks for the next at
+          once, whatever this is set to.
           {pollBad && (
             <div role="alert" style={{ color: c.danger, marginTop: 4 }}>
               Between {POLL_INTERVAL_MIN_SECONDS} and {POLL_INTERVAL_MAX_SECONDS} seconds: a runner that has not asked

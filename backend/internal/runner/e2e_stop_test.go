@@ -450,6 +450,35 @@ func TestRunnerAgentE2EQueuedRunsStartTogether(t *testing.T) {
 	}
 }
 
+// TestRunnerAgentE2EStopReachesAFullAgentQuickly: a kill is delivered as the
+// answer to a poll. A full agent's polls claim nothing and are not held by the
+// server, so without a heartbeat of its own a full agent would hear of a Stop
+// only at its next tick, a minute by default, while the operator's write had
+// already ended the run on the server and the job went on running on its
+// target. An agent with a run in flight asks again within seconds.
+func TestRunnerAgentE2EStopReachesAFullAgentQuickly(t *testing.T) {
+	h := newStopHarness(t, "busy-runner")
+	h.cfg.MaxConcurrent = 1          // full once the held run starts
+	h.cfg.PollInterval = time.Minute // nothing below can be the next tick
+	h.start(t)
+
+	// Let the poll that followed the assignment (answered at once: the agent is
+	// full) pass, so the kill below can only be delivered by a LATER poll.
+	time.Sleep(500 * time.Millisecond)
+	if _, err := h.svc.db.Exec(`INSERT INTO action_queue(run_id, op, created_at) VALUES (?, 'kill', ?)`, h.traceID, now()); err != nil {
+		t.Fatal(err)
+	}
+	began := time.Now()
+	select {
+	case <-h.torndown:
+	case <-time.After(15 * time.Second):
+		t.Fatal("15s after a Stop the run was still executing on a full agent: it waited for its next tick")
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Errorf("the Stop took %s to reach a full agent", took.Round(time.Millisecond))
+	}
+}
+
 // pollWith is pollAs with a query string.
 func pollWith(t *testing.T, svc *Service, runnerID, token, query string) (int, runnerproto.PollResponse) {
 	t.Helper()

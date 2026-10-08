@@ -32,15 +32,16 @@ a container needs a longer stop timeout to drain (below).
 ### Added
 
 - **A runner's poll interval can be set from the app.** *Runners → the runner
-  → ⚙ Edit → Poll interval*, in seconds, from 5 to 90. It is how often the
+  → ⚙ Edit → Poll interval*, in seconds, from 30 to 90. It is how often the
   agent starts asking for work: 60 seconds unless the agent's own
   configuration says otherwise, and until now changing it meant editing a file
   on the agent's machine and restarting it. The server holds each request for
   up to 30 seconds and hands over a run the moment one arrives, so **the
-  longest a new run waits is the interval less 30**: about 30 seconds at 60, a
-  minute at 90, nothing at 30 or below, where the agent is connected all the
-  time. Every value from 5 to 30 picks work up the same way; a lower one only
-  makes an agent with no free slot check in more often. The value overrides
+  longest a new run waits is the interval less 30**: nothing at 30, where the
+  agent is connected all the time; about 30 seconds at 60; a minute at 90.
+  Thirty is the lowest value offered because anything below it would behave
+  the same. The interval does not decide how soon a Stop reaches a job or how
+  fast a queue is taken: see the two fixes below. The value overrides
   the agent's own, takes effect on the agent's next poll with no restart, and
   reverts when cleared. The app cannot read the agent's own setting, so an
   empty field reads *inherit*. A value outside the bounds is refused, in the
@@ -59,6 +60,15 @@ a container needs a longer stop timeout to drain (below).
   asks for the next one at once, for as long as it has a free slot and there
   is work; and it acknowledges new settings at once. An idle agent's cadence
   is unchanged.
+- **A Stop could take half a minute to reach a running job.** A Stop is
+  delivered to an agent as the answer to its next poll, and the app records
+  the run as stopped at once: until the agent asks, the job goes on running on
+  its target behind a row that says it stopped. An agent between two polls
+  waited out the rest of its interval first, about 30 seconds at the default.
+  An agent with a run in flight now asks again at least every five seconds,
+  whatever its interval. (This matters more with the full-agent fix below: a
+  full agent's polls are no longer held by the server, so without it a Stop
+  on a full agent would have waited the whole interval.)
 - **Stopping an agent ended its runs and told the server nothing.** `systemctl
   stop` and `restart` send `SIGTERM`. Every run's context was a child of the
   signal's, so each run was killed at once and the upload of its log was

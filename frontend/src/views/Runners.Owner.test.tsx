@@ -214,7 +214,7 @@ describe("Runners — owner and serves (MA-26)", () => {
   // command for root on the machine, for THIS runner, and saves nothing.
   // v2.3.2 — how often an agent asks for work is a managed setting. The agent's
   // own interval lives in its configuration on its host; this is the one the
-  // server sends it, and the server refuses a value outside 5–90 seconds. The
+  // server sends it, and the server refuses a value outside 30–90 seconds. The
   // field says so before Save can be pressed.
   it("sets a runner's poll interval, and holds it within the server's bounds", async () => {
     PATCH.mockClear();
@@ -227,14 +227,14 @@ describe("Runners — owner and serves (MA-26)", () => {
     const field = (await screen.findByLabelText("Poll interval in seconds")) as HTMLInputElement;
     expect(field.value).toBe("30");
     // The field says what the number buys. The server holds a poll for 30
-    // seconds, so the wait for a new run is the interval LESS 30, and every
-    // value from the floor up to 30 behaves alike: without this sentence the
-    // range 5–90 reads as eighty-five different speeds.
+    // seconds, so the wait for a new run is the interval LESS 30 — which is why
+    // 30 is the floor (the agent is then connected all the time) — and it says
+    // what the number does NOT decide: how soon a Stop reaches a job.
     expect(screen.getByText("the longest a new run waits is this value less 30", { selector: "strong" })).toBeTruthy();
-    expect(screen.getByText(/Every value from 5 to 30 therefore picks work up\s+the same way/)).toBeTruthy();
+    expect(screen.getByText(/an\s+agent with a run in flight checks in every few seconds/)).toBeTruthy();
     const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
 
-    for (const bad of ["3", "120"]) {
+    for (const bad of ["29", "120"]) {
       fireEvent.change(field, { target: { value: bad } });
       expect(screen.getByText(/a runner that has not asked\s+for two minutes is shown as degraded/)).toBeTruthy();
       expect(save.disabled, `Save with an interval of ${bad}`).toBe(true);
@@ -242,14 +242,14 @@ describe("Runners — owner and serves (MA-26)", () => {
     fireEvent.click(save);
     expect(PATCH).not.toHaveBeenCalled();
 
-    fireEvent.change(field, { target: { value: "15" } });
+    fireEvent.change(field, { target: { value: "45" } });
     expect(screen.queryByText(/is shown as degraded/)).toBeNull();
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     await waitFor(() => expect(PATCH).toHaveBeenCalledTimes(1));
     const [path, init] = PATCH.mock.calls[0] as [string, { body: unknown }];
     expect(path).toBe("/runners/{runnerId}/settings");
-    expect(init.body).toEqual({ pollIntervalSeconds: 15 });
+    expect(init.body).toEqual({ pollIntervalSeconds: 45 });
   });
 
   it("builds the command that sets a runner's unit limits, and sends nothing to the server", async () => {

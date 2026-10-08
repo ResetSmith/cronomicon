@@ -114,10 +114,13 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 	}, nil
 }
 
-// stopHeartbeat is how often a stopping agent polls while its runs finish. The
-// server answers such a poll at once (it claims nothing for it), so this is
-// also how long a kill sent in that time waits to be delivered.
-const stopHeartbeat = 5 * time.Second
+// busyHeartbeat is the longest an agent with a run in flight goes without
+// asking the server anything, whatever its poll interval: a kill reaches an
+// agent only as the answer to a poll. A poll the server holds (an agent with a
+// free slot) is answered the moment a kill is queued; one it does not hold (a
+// full or stopping agent, which is handed no work) is answered at once, and
+// this is then how long a kill sent just afterwards waits to be delivered.
+const busyHeartbeat = 5 * time.Second
 
 // registerTimeout bounds the registration exchange, which a stop signal does
 // not interrupt (register).
@@ -220,7 +223,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		if a.stopping {
 			// Bounded: the server answers a stopping agent's poll at once, and an
 			// unreachable server must not keep the agent after its last run ends.
-			hb, cancel := context.WithTimeout(a.runParent, 2*stopHeartbeat)
+			hb, cancel := context.WithTimeout(a.runParent, 2*busyHeartbeat)
 			a.pollOnce(hb) //nolint:contextcheck // deliberate: the drain's heartbeat outlives the cancelled signal context
 			cancel()
 		} else {
@@ -242,7 +245,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 
 		if a.stopping {
-			wait := min(stopHeartbeat, interval)
+			wait := min(busyHeartbeat, interval)
 			select {
 			case <-a.idle:
 			case <-time.After(wait):
@@ -262,7 +265,22 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue
 		}
 
+		// An agent with a run in flight does not wait out its interval (2.3.2).
+		// A Stop is delivered as the answer to a poll, and the operator's write
+		// has already ended the run on the server: until the agent asks, the
+		// job goes on running on its target behind a row that says it stopped.
+		// This is not new for an agent between two held polls (up to its
+		// interval less the server's hold), but the full-agent change above made
+		// it the whole interval for a full agent, whose polls are no longer
+		// held. So: any run in flight, and the agent asks again within
+		// busyHeartbeat. An idle agent's cadence is untouched.
+		var busy <-chan time.Time
+		if a.busy() {
+			busy = time.After(min(busyHeartbeat, interval))
+		}
+
 		select {
+		case <-busy:
 		case <-ctx.Done():
 			n := a.startDrain("shutdown signal")
 			if n == 0 {
@@ -276,6 +294,13 @@ func (a *Agent) Run(ctx context.Context) error {
 			// A slot opened on an agent that had none: ask for work now.
 		}
 	}
+}
+
+// busy reports whether any run is in flight.
+func (a *Agent) busy() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.active) > 0
 }
 
 // full reports whether every concurrency slot is taken, by the same count and

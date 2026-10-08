@@ -240,15 +240,16 @@ func TestUpdateRunnerSettingsEndpoint(t *testing.T) {
 		t.Fatalf("bad mask should 400, got %d", rec.Code)
 	}
 
-	// 2.3.2 — the poll interval is a managed setting, held between five seconds
-	// (an agent that is answered at once must not ask many times a second) and
-	// ninety (a runner unseen for two minutes is shown as degraded).
-	for _, bad := range []string{`{"pollIntervalSeconds":4}`, `{"pollIntervalSeconds":91}`, `{"pollIntervalSeconds":0}`, `{"pollIntervalSeconds":-30}`} {
-		if rec := patch(bad); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "between 5 and 90") {
+	// 2.3.2 — the poll interval is a managed setting, held between thirty
+	// seconds (the server's own hold on a poll: at thirty an idle agent is
+	// connected all the time, and less would buy nothing) and ninety (a runner
+	// unseen for two minutes is shown as degraded).
+	for _, bad := range []string{`{"pollIntervalSeconds":29}`, `{"pollIntervalSeconds":91}`, `{"pollIntervalSeconds":0}`, `{"pollIntervalSeconds":-30}`} {
+		if rec := patch(bad); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "between 30 and 90") {
 			t.Errorf("%s: %d %s, want 400 naming the bounds", bad, rec.Code, rec.Body.String())
 		}
 	}
-	for _, ok := range []string{`{"pollIntervalSeconds":5}`, `{"pollIntervalSeconds":90}`} {
+	for _, ok := range []string{`{"pollIntervalSeconds":30}`, `{"pollIntervalSeconds":90}`} {
 		if rec := patch(ok); rec.Code != http.StatusOK {
 			t.Errorf("%s: %d %s, want 200", ok, rec.Code, rec.Body.String())
 		}

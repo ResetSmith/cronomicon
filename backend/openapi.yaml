@@ -11031,18 +11031,18 @@ components:
           description: Run-types to REMOVE from the runner's effective claim set (subtract-only).
         pollIntervalSeconds:
           type: integer
-          minimum: 5
+          minimum: 30
           maximum: 90
           description: |
             How often the agent STARTS a poll for work (2.3.2). Overrides the
             interval in the agent's own configuration (60 seconds unless set
             there) and takes effect on the poll that delivers it, with no
             restart. The server holds a poll for up to 30 seconds waiting for
-            work, so the longest a new run waits is this value less 30; at 30
-            or below the agent is connected all the time, and every value from
-            5 to 30 picks work up alike. A lower value only makes an agent with
-            no free slot (which is answered at once, not held) check in more
-            often, which bounds how soon a kill reaches it. Outside 5–90 is
+            work, so the longest a new run waits is this value less 30: at 30
+            the agent is connected all the time. Nothing lower is offered
+            because it would change nothing: an agent with a run in flight
+            asks again every few seconds whatever its interval, which is what
+            bounds how soon a kill reaches it. Outside 30–90 is
             refused (400): a runner that has not polled for two minutes is
             shown as degraded. An agent older than 2.3.2 ignores the field.
 

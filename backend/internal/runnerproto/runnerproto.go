@@ -334,13 +334,16 @@ type PollSettingsValues struct {
 	PollIntervalSeconds *int `json:"pollIntervalSeconds,omitempty"`
 }
 
-// Bounds of a server-managed poll interval. The floor keeps an agent that is
-// answered at once (it is full, or draining) from asking many times a second.
-// The ceiling stays under the two minutes without a poll after which a runner
-// is shown as degraded, and well under the five after which it is offline and
-// its runs are closed as lost.
+// Bounds of a server-managed poll interval. The interval is how often a poll
+// STARTS, and the server holds a poll for 30 seconds (runner.pollTimeout), so
+// the longest a new run waits is the interval less 30. The floor is that hold:
+// at 30 an idle agent is connected all the time, and a lower value would buy
+// nothing, since an agent with a run in flight asks again every few seconds
+// whatever its interval (agent.busyHeartbeat). The ceiling stays under the two
+// minutes without a poll after which a runner is shown as degraded, and well
+// under the five after which it is offline and its runs are closed as lost.
 const (
-	MinManagedPollIntervalSeconds = 5
+	MinManagedPollIntervalSeconds = 30
 	MaxManagedPollIntervalSeconds = 90
 )
 
