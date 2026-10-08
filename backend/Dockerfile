@@ -27,13 +27,15 @@ RUN npm ci
 # guides it bundles at build time (frontend/vite-manuals-plugin.js reads
 # ../documentation/*.html — user/administrator manuals + runner-*.html guides).
 # The plugin's FILES class also publishes backend/deploy/runner-install.sh to
-# /runner-install.sh (the Runners view's Download button + install one-liner) and
+# /runner-install.sh (the Runners view's Download button + install one-liner),
+# backend/deploy/runner-isolation-check.sh to /runner-isolation-check.sh and
 # backend/deploy/cronomicon-runner.env.example to /cronomicon-runner.env.example,
 # so those files must exist in this stage too — the plugin fails the build if a
 # FILES source is missing.
 COPY frontend/ ./
 COPY documentation/ /repo/documentation/
 COPY backend/deploy/runner-install.sh /repo/backend/deploy/runner-install.sh
+COPY backend/deploy/runner-isolation-check.sh /repo/backend/deploy/runner-isolation-check.sh
 COPY backend/deploy/cronomicon-runner.env.example /repo/backend/deploy/cronomicon-runner.env.example
 # ── Bundle the frontend. NOTE: `vite build`, not `npm run build` (v0.52.27).
 #

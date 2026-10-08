@@ -12,6 +12,11 @@ REG_TOKEN_SRC=""
 REG_TOKEN_STDIN=0
 REG_TOKEN_INLINE=0
 RUNNER_NAME=$(hostname)
+RUNNER_NAME_SET=0
+# --instance <name>: a SECOND (third, …) agent on a machine that already runs
+# one. Empty = the default agent, which is installed exactly as it always was.
+INSTANCE=""
+INSTANCE_SET=0
 # Empty = auto-detect: the agent probes the host's toolchains at startup and
 # claims the matching run-types. -c writes an explicit (narrowing) override.
 CAPABILITIES=""
@@ -34,15 +39,34 @@ CHECKOUT_TOKEN_STDIN=0
 VAULT_PASS_SRC=""
 VAULT_PASS_STDIN=0
 
-# Install destinations (fixed layout — matches the hardened unit's paths).
-STATE_DIR="/var/lib/cronomicon-runner"
-CONF_DIR="/etc/cronomicon-runner"
-KEYS_DEST="${STATE_DIR}/keys"
-KNOWN_HOSTS_DEST="${STATE_DIR}/known_hosts"
-CA_CERT_DEST="${CONF_DIR}/ca.pem"
-LOCAL_INVENTORY_DEST="${CONF_DIR}/inventory.json"
-CHECKOUT_TOKEN_DEST="${CONF_DIR}/checkout-token"
-VAULT_PASS_DEST="${CONF_DIR}/vault-pass"
+# Install destinations. Every name an install owns derives from ONE value, SVC:
+# the OS user and group, the systemd unit, the state directory and the config
+# directory. For the default agent SVC is "cronomicon-runner" and the layout is
+# the fixed one this script has always written. With --instance <name> it is
+# "cronomicon-runner-<name>", so a second agent on the machine gets a user, a
+# group, a unit and two directories of its own and shares only the binary.
+#
+# The separate user AND group are the isolation, not a convenience: /dev/shm,
+# where an agent writes key material for a run, is one directory for the whole
+# machine and is separated only by the owning user; and the files under the
+# config directory (the registration token, the checkout token, the vault
+# password) are readable by the group. There is deliberately no option to share
+# either between instances.
+set_layout() {
+  SVC="cronomicon-runner${1:+-$1}"
+  RUNNER_USER="$SVC"
+  RUNNER_GROUP="$SVC"
+  UNIT_FILE="/etc/systemd/system/${SVC}.service"
+  STATE_DIR="/var/lib/${SVC}"
+  CONF_DIR="/etc/${SVC}"
+  KEYS_DEST="${STATE_DIR}/keys"
+  KNOWN_HOSTS_DEST="${STATE_DIR}/known_hosts"
+  CA_CERT_DEST="${CONF_DIR}/ca.pem"
+  LOCAL_INVENTORY_DEST="${CONF_DIR}/inventory.json"
+  CHECKOUT_TOKEN_DEST="${CONF_DIR}/checkout-token"
+  VAULT_PASS_DEST="${CONF_DIR}/vault-pass"
+}
+set_layout ""
 
 # --- Helper: Print Usage ---
 usage() {
@@ -57,7 +81,15 @@ usage() {
   echo "                             hidden). Required when the token is a long-lived"
   echo "                             CRONOMICON_RUNNER_BOOTSTRAP_TOKEN rather than a spent"
   echo "                             single-use crn_reg_* value."
-  echo "  -n, --name <name>          Runner display name (default: hostname)"
+  echo "  -n, --name <name>          Runner display name (default: hostname, or"
+  echo "                             <hostname>-<instance> with --instance)"
+  echo "      --instance <name>      Install a SEPARATE agent beside the one this machine"
+  echo "                             already runs: its own OS user and group, state and"
+  echo "                             config directories and unit, all named"
+  echo "                             cronomicon-runner-<name>; the binary is shared. Lower-"
+  echo "                             case letters, digits and hyphens, starting with a"
+  echo "                             letter, 14 characters at most. Without it the default"
+  echo "                             agent is installed (or re-installed), as always."
   echo "  -c, --capabilities <list>  Comma-separated run-type capabilities. Default: omitted —"
   echo "                             the agent auto-detects the host's toolchains at startup."
   echo "                             Set explicitly to narrow what this runner claims."
@@ -82,13 +114,13 @@ usage() {
   echo "      --checkout-repos <csv> Allowlist of repo clone URLs the runner may check out"
   echo "      --checkout-token-file <path>"
   echo "                             Install a read-only deploy-token file to"
-  echo "                             ${CHECKOUT_TOKEN_DEST} (0640 root:cronomicon-runner)"
+  echo "                             ${CHECKOUT_TOKEN_DEST} (0640 root:${RUNNER_GROUP})"
   echo "      --checkout-token -     Prompt for the deploy token on stdin (input hidden) and"
   echo "                             write it to ${CHECKOUT_TOKEN_DEST}. NEVER pass the token"
   echo "                             as a flag value (visible in ps / shell history)."
   echo "      --vault-pass-file <path>"
   echo "                             Install an Ansible Vault password file to"
-  echo "                             ${VAULT_PASS_DEST} (0640 root:cronomicon-runner)"
+  echo "                             ${VAULT_PASS_DEST} (0640 root:${RUNNER_GROUP})"
   echo "      --vault-pass -         Prompt for the vault password on stdin (input hidden)."
   echo "  -h, --help                 Show this help message"
   exit "${1:-1}"
@@ -126,7 +158,8 @@ while [[ "$#" -gt 0 ]]; do
         *)  REG_TOKEN="$2"; REG_TOKEN_INLINE=1; shift ;;
       esac ;;
     --token-file) require_value "$1" "${2:-}"; REG_TOKEN_SRC="$2"; shift ;;
-    -n|--name) require_value "$1" "${2:-}"; RUNNER_NAME="$2"; shift ;;
+    -n|--name) require_value "$1" "${2:-}"; RUNNER_NAME="$2"; RUNNER_NAME_SET=1; shift ;;
+    --instance) require_value "$1" "${2:-}"; INSTANCE="$2"; INSTANCE_SET=1; shift ;;
     -c|--capabilities) require_value "$1" "${2:-}"; CAPABILITIES="$2"; shift ;;
     -b|--binary) require_value "$1" "${2:-}"; BINARY_PATH="$2"; shift ;;
     --download) DOWNLOAD=1 ;;
@@ -165,6 +198,32 @@ while [[ "$#" -gt 0 ]]; do
   esac
   shift
 done
+
+# --- Instance name (before anything else is derived from it) ---
+# It becomes part of an OS user name (32 characters at most; "cronomicon-runner-"
+# uses 18), of two paths and of a unit name, so the rule is the strictest of
+# those: lower-case letters, digits and hyphens, a letter first, 14 at most.
+# POSIX `case`, like the URL guard below, so it holds under sh/dash too. The
+# classes are SPELLED OUT, not written as a-z: a range follows the locale's
+# collation unless bash's globasciiranges is on (the default only from 5.0), so
+# on bash 4.4 under a UTF-8 locale `[a-z]` also matches upper-case and accented
+# letters, and such a name would become a user name and two paths. With only
+# these characters allowed, ${#INSTANCE} is a byte count as well.
+if [ "$INSTANCE_SET" = 1 ]; then
+  case "$INSTANCE" in
+    [!abcdefghijklmnopqrstuvwxyz]*|*[!abcdefghijklmnopqrstuvwxyz0123456789-]*)
+      echo "Error: --instance must be lower-case letters, digits and hyphens, starting with a letter (got: ${INSTANCE})." >&2
+      exit 1 ;;
+  esac
+  if [ "${#INSTANCE}" -gt 14 ]; then
+    echo "Error: --instance is at most 14 characters (got ${#INSTANCE}: ${INSTANCE}); it becomes part of an OS user name." >&2
+    exit 1
+  fi
+  set_layout "$INSTANCE"
+  # Two agents on one machine must not share a name: the app offers a
+  # re-enrolled runner its old placement by name.
+  [ "$RUNNER_NAME_SET" = 1 ] || RUNNER_NAME="$(hostname)-${INSTANCE}"
+fi
 
 # --- Required Arguments Validation ---
 if [ -z "$SERVER_URL" ]; then
@@ -371,7 +430,7 @@ if [ "$ALLOW_CHECKOUT" = 1 ] || [ -n "$CHECKOUT_REPOS" ] || [ -n "$CHECKOUT_TOKE
     echo "!!       Capability auto-detection will NOT claim 'ansible', so ansible jobs"
     echo "!!       will stay queued. Install the toolchain, then restart the service:"
     echo "!!         ${install_hint}"
-    echo "!!         sudo systemctl restart cronomicon-runner"
+    echo "!!         sudo systemctl restart ${SVC}"
   fi
 fi
 
@@ -448,24 +507,26 @@ if [ ! -x "$SHELL_PATH" ]; then
   SHELL_PATH="/bin/false"
 fi
 
-# --- Create cronomicon-runner System Account ---
-if ! getent group cronomicon-runner >/dev/null; then
-  echo ">> Creating group: cronomicon-runner"
-  groupadd --system cronomicon-runner
+# --- Create the System Account ---
+# One user and one group per install (see set_layout): the default agent's are
+# cronomicon-runner, an instance's are cronomicon-runner-<name>.
+if ! getent group "$RUNNER_GROUP" >/dev/null; then
+  echo ">> Creating group: ${RUNNER_GROUP}"
+  groupadd --system "$RUNNER_GROUP"
 fi
 
-if ! getent passwd cronomicon-runner >/dev/null; then
-  echo ">> Creating user: cronomicon-runner"
+if ! getent passwd "$RUNNER_USER" >/dev/null; then
+  echo ">> Creating user: ${RUNNER_USER}"
   useradd --system \
-          --gid cronomicon-runner \
+          --gid "$RUNNER_GROUP" \
           --home-dir "$STATE_DIR" \
           --shell "$SHELL_PATH" \
           --create-home \
-          cronomicon-runner
+          "$RUNNER_USER"
 else
-  echo ">> User cronomicon-runner already exists. Ensuring home directory is created..."
+  echo ">> User ${RUNNER_USER} already exists. Ensuring home directory is created..."
   mkdir -p "$STATE_DIR"
-  chown cronomicon-runner:cronomicon-runner "$STATE_DIR"
+  chown "${RUNNER_USER}:${RUNNER_GROUP}" "$STATE_DIR"
 fi
 
 # Set directory permissions
@@ -474,10 +535,12 @@ chmod 0750 "$STATE_DIR"
 # --- Create Config Directories ---
 echo ">> Creating configuration directories..."
 mkdir -p "$CONF_DIR"
-chown root:cronomicon-runner "$CONF_DIR"
+chown "root:${RUNNER_GROUP}" "$CONF_DIR"
 chmod 0750 "$CONF_DIR"
 
 # --- Install Binary ---
+# One binary for every agent on the machine: an instance's install replaces it
+# for all of them, which is why the upgrade command restarts every agent unit.
 echo ">> Installing binary to /usr/local/bin..."
 install -m 0755 "$BINARY_PATH" /usr/local/bin/cronomicon-runner
 
@@ -485,7 +548,7 @@ install -m 0755 "$BINARY_PATH" /usr/local/bin/cronomicon-runner
 KNOWN_HOSTS_LINE=""
 if [ -n "$KNOWN_HOSTS_SRC" ]; then
   echo ">> Installing known_hosts to ${KNOWN_HOSTS_DEST}..."
-  install -o cronomicon-runner -g cronomicon-runner -m 0640 "$KNOWN_HOSTS_SRC" "$KNOWN_HOSTS_DEST"
+  install -o "$RUNNER_USER" -g "$RUNNER_GROUP" -m 0640 "$KNOWN_HOSTS_SRC" "$KNOWN_HOSTS_DEST"
   KNOWN_HOSTS_LINE="CRONOMICON_RUNNER_KNOWN_HOSTS=${KNOWN_HOSTS_DEST}"
 fi
 
@@ -495,14 +558,14 @@ fi
 # Works without a runner.env hand-edit. --key-dir / --key-map / --generate-key
 # populate it; without them the dir is created empty. KEYS_PROVISIONED tracks
 # whether any actual key material landed (drives the post-install guidance).
-install -d -o cronomicon-runner -g cronomicon-runner -m 0700 "$KEYS_DEST"
+install -d -o "$RUNNER_USER" -g "$RUNNER_GROUP" -m 0700 "$KEYS_DEST"
 KEY_DIR_LINE="CRONOMICON_RUNNER_KEY_DIR=${KEYS_DEST}"
 KEY_MAP_LINE=""
 KEYS_PROVISIONED=0
 if [ -n "$KEY_DIR_SRC" ]; then
   echo ">> Copying keys from ${KEY_DIR_SRC} to ${KEYS_DEST}..."
   find "$KEY_DIR_SRC" -maxdepth 1 -type f -print0 | while IFS= read -r -d '' key_file; do
-    install -o cronomicon-runner -g cronomicon-runner -m 0600 "$key_file" "${KEYS_DEST}/$(basename "$key_file")"
+    install -o "$RUNNER_USER" -g "$RUNNER_GROUP" -m 0600 "$key_file" "${KEYS_DEST}/$(basename "$key_file")"
   done
   KEYS_PROVISIONED=1
 elif [ -n "$KEY_MAP_SPEC" ]; then
@@ -511,7 +574,7 @@ elif [ -n "$KEY_MAP_SPEC" ]; then
   for entry in "${KEY_MAP_ENTRIES[@]}"; do
     key_name="${entry%%=*}"
     key_path="${entry#*=}"
-    install -o cronomicon-runner -g cronomicon-runner -m 0600 "$key_path" "${KEYS_DEST}/${key_name}"
+    install -o "$RUNNER_USER" -g "$RUNNER_GROUP" -m 0600 "$key_path" "${KEYS_DEST}/${key_name}"
     INSTALLED_MAP="${INSTALLED_MAP:+${INSTALLED_MAP},}${key_name}=${KEYS_DEST}/${key_name}"
   done
   KEY_MAP_LINE="CRONOMICON_RUNNER_KEY_MAP=${INSTALLED_MAP}"
@@ -535,7 +598,7 @@ if [ -n "$GENERATE_KEY_NAME" ]; then
   fi
   echo ">> Generating ed25519 key ${gen_dest} (no passphrase)..."
   ssh-keygen -t ed25519 -N '' -C "cronomicon-runner:${GENERATE_KEY_NAME}" -f "$gen_dest" >/dev/null
-  chown cronomicon-runner:cronomicon-runner "$gen_dest" "${gen_dest}.pub"
+  chown "${RUNNER_USER}:${RUNNER_GROUP}" "$gen_dest" "${gen_dest}.pub"
   chmod 0600 "$gen_dest"
   chmod 0644 "${gen_dest}.pub"
   GENERATED_PUB="$(cat "${gen_dest}.pub")"
@@ -546,7 +609,7 @@ fi
 CA_CERT_LINE=""
 if [ -n "$CA_CERT_SRC" ]; then
   echo ">> Installing CA certificate to ${CA_CERT_DEST}..."
-  install -o root -g cronomicon-runner -m 0640 "$CA_CERT_SRC" "$CA_CERT_DEST"
+  install -o root -g "$RUNNER_GROUP" -m 0640 "$CA_CERT_SRC" "$CA_CERT_DEST"
   CA_CERT_LINE="CRONOMICON_RUNNER_CA_CERT=${CA_CERT_DEST}"
 fi
 
@@ -554,13 +617,13 @@ fi
 LOCAL_INVENTORY_LINE=""
 if [ -n "$LOCAL_INVENTORY_SRC" ]; then
   echo ">> Installing local inventory to ${LOCAL_INVENTORY_DEST}..."
-  install -o root -g cronomicon-runner -m 0640 "$LOCAL_INVENTORY_SRC" "$LOCAL_INVENTORY_DEST"
+  install -o root -g "$RUNNER_GROUP" -m 0640 "$LOCAL_INVENTORY_SRC" "$LOCAL_INVENTORY_DEST"
   LOCAL_INVENTORY_LINE="CRONOMICON_RUNNER_LOCAL_INVENTORY=${LOCAL_INVENTORY_DEST}"
 fi
 
 # --- Install Ansible secrets (Phase 3 — checkout deploy token, vault password) ---
-# Same custody posture as runner.env: 0640 root:cronomicon-runner, so the agent
-# (group cronomicon-runner) can read but the file is never world-readable. The
+# Same custody posture as runner.env: 0640 root:<the install's group>, so the
+# agent (in that group) can read but the file is never world-readable. The
 # server never sees these bytes. Two paths: install a file the operator staged,
 # or read one typed at a hidden prompt (echo off).
 #
@@ -568,7 +631,7 @@ fi
 # world-readable even briefly), then fills it.
 install_secret_file() {  # <src> <dest> <label>
   echo ">> Installing $3 to $2..."
-  install -o root -g cronomicon-runner -m 0640 "$1" "$2"
+  install -o root -g "$RUNNER_GROUP" -m 0640 "$1" "$2"
 }
 prompt_secret() {  # <dest> <label>
   local secret=""
@@ -580,7 +643,7 @@ prompt_secret() {  # <dest> <label>
     echo "Error: empty $2 — aborting (nothing written to $1)." >&2
     exit 1
   fi
-  install -o root -g cronomicon-runner -m 0640 /dev/null "$1"
+  install -o root -g "$RUNNER_GROUP" -m 0640 /dev/null "$1"
   printf '%s' "$secret" > "$1"
   unset secret
   echo ">> Wrote $2 to $1."
@@ -638,7 +701,7 @@ CHECKOUT_REPOS_LINE=""
 echo ">> Writing ${CONF_DIR}/runner.env..."
 # Create with final ownership/mode BEFORE writing — the file carries the
 # registration token, so it must never be world-readable, even briefly.
-install -o root -g cronomicon-runner -m 0640 /dev/null "${CONF_DIR}/runner.env"
+install -o root -g "$RUNNER_GROUP" -m 0640 /dev/null "${CONF_DIR}/runner.env"
 {
   echo "# Configuration for the Cronomicon runner agent (Ubuntu/RedHat VM instance)"
   echo "CRONOMICON_RUNNER_SERVER=${SERVER_URL}"
@@ -693,27 +756,35 @@ else
 fi
 
 # --- Generate Systemd Unit File ---
-echo ">> Writing /etc/systemd/system/cronomicon-runner.service..."
+# One heredoc writes the default agent's unit and an instance's, with the
+# install's names in it, so the two cannot drift. Each install has a whole unit
+# of its own rather than an instance of a template: the hardening block below is
+# decided per install by the probe above, and a shared template would let one
+# instance's install rewrite another's. The first and last blocks are UNQUOTED
+# heredocs (they carry the names); nothing else in them is expandable.
+UNIT_DESC="Cronomicon runner agent"
+[ -n "$INSTANCE" ] && UNIT_DESC="Cronomicon runner agent (${INSTANCE})"
+echo ">> Writing ${UNIT_FILE}..."
 {
-cat << 'EOF'
+cat << EOF
 # systemd unit for the Cronomicon runner agent.
 [Unit]
-Description=Cronomicon runner agent
+Description=${UNIT_DESC}
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=cronomicon-runner
-Group=cronomicon-runner
+User=${RUNNER_USER}
+Group=${RUNNER_GROUP}
 
 # Load runner config variables
-EnvironmentFile=-/etc/cronomicon-runner/runner.env
+EnvironmentFile=-${CONF_DIR}/runner.env
 # Optional Vault Agent sidecar, if you run one on the host: rendered secrets, if any.
 # The "-" makes this a no-op when the sidecar is not installed.
-EnvironmentFile=-/etc/cronomicon-runner/secrets.env
-Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json
-WorkingDirectory=/var/lib/cronomicon-runner
+EnvironmentFile=-${CONF_DIR}/secrets.env
+Environment=CRONOMICON_RUNNER_IDENTITY_FILE=${STATE_DIR}/identity.json
+WorkingDirectory=${STATE_DIR}
 
 # Preflight self-check. Non-fatal ('-'): logs a labeled PASS/FAIL report to the
 # journal right before the agent starts, so an env problem (unreachable/proxied
@@ -766,24 +837,27 @@ RestrictSUIDSGID=true
 EOF
 fi
 
-cat << 'EOF'
+cat << EOF
 
-StateDirectory=cronomicon-runner
-ReadWritePaths=/var/lib/cronomicon-runner
+StateDirectory=${SVC}
+# Without this systemd resets the state directory to 0755 at every start, and
+# another user on the machine (a second agent's, for one) can list it.
+StateDirectoryMode=0750
+ReadWritePaths=${STATE_DIR}
 
 [Install]
 WantedBy=multi-user.target
 EOF
-} > /etc/systemd/system/cronomicon-runner.service
+} > "$UNIT_FILE"
 
-chown root:root /etc/systemd/system/cronomicon-runner.service
-chmod 0644 /etc/systemd/system/cronomicon-runner.service
+chown root:root "$UNIT_FILE"
+chmod 0644 "$UNIT_FILE"
 
 # --- Systemd Reload & Start ---
 echo ">> Reloading systemd and starting service..."
 systemctl daemon-reload
-systemctl enable cronomicon-runner
-systemctl restart cronomicon-runner
+systemctl enable "$SVC"
+systemctl restart "$SVC"
 
 # --- Post-install self-check ---
 # Validate the environment (server reachable, token present, toolchains found)
@@ -791,11 +865,13 @@ systemctl restart cronomicon-runner
 # instead of surfacing later as a runner that never appears in the UI.
 if command -v runuser >/dev/null 2>&1; then
   echo ">> Running post-install self-check (cronomicon-runner doctor)..."
-  if runuser -u cronomicon-runner -- bash -c 'set -a; . /etc/cronomicon-runner/runner.env; set +a; exec /usr/local/bin/cronomicon-runner doctor'; then
+  # The config path is passed as an argument, not written into the command
+  # string, so the string is the same for every install.
+  if runuser -u "$RUNNER_USER" -- bash -c 'set -a; . "$1"; set +a; exec /usr/local/bin/cronomicon-runner doctor' _ "${CONF_DIR}/runner.env"; then
     echo ">> Self-check passed."
   else
     echo "!! Self-check reported issues (above) — the runner may not register until they are resolved."
-    echo "!! Re-run: sudo runuser -u cronomicon-runner -- bash -c 'set -a; . /etc/cronomicon-runner/runner.env; set +a; exec /usr/local/bin/cronomicon-runner doctor'"
+    echo "!! Re-run: sudo runuser -u ${RUNNER_USER} -- bash -c 'set -a; . ${CONF_DIR}/runner.env; set +a; exec /usr/local/bin/cronomicon-runner doctor'"
   fi
 fi
 
@@ -803,6 +879,10 @@ echo "=========================================================="
 echo " Cronomicon Runner Installed and Started Successfully!       "
 echo "=========================================================="
 echo "Runner Name:  ${RUNNER_NAME}"
+if [ -n "$INSTANCE" ]; then
+  echo "Instance:     ${INSTANCE} (user and group ${RUNNER_USER}, unit ${SVC}.service,"
+  echo "              ${STATE_DIR}, ${CONF_DIR})"
+fi
 if [ -n "$CAPABILITIES" ]; then
   echo "Capabilities: ${CAPABILITIES} (explicit override)"
 else
@@ -819,7 +899,7 @@ echo "Inventory:    ${INVENTORY}"
 [ -n "$CHECKOUT_REPOS_LINE" ]  && echo "Checkout repos: ${CHECKOUT_REPOS}"
 [ -n "$CHECKOUT_TOKEN_FILE_LINE" ] && echo "Checkout tok: ${CHECKOUT_TOKEN_DEST}"
 [ -n "$VAULT_PASS_LINE" ]      && echo "Vault pass:   ${VAULT_PASS_DEST}"
-echo "Status:       $(systemctl is-active cronomicon-runner)"
+echo "Status:       $(systemctl is-active "$SVC")"
 echo ""
 
 if [ -n "$GENERATE_KEY_NAME" ]; then
@@ -854,7 +934,7 @@ if [ -z "$KNOWN_HOSTS_LINE" ]; then
     echo "!!     NAME, or drop a key file into ${KEYS_DEST}"
     echo "!!     (CRONOMICON_RUNNER_KEY_DIR is already set for you).      !!"
   fi
-  echo "!!  Then: sudo systemctl restart cronomicon-runner            !!"
+  echo "!!  Then: sudo systemctl restart ${SVC}"
   echo "!!========================================================!!"
   echo ""
 elif [ "$KEYS_PROVISIONED" = 0 ]; then
@@ -866,8 +946,8 @@ elif [ "$KEYS_PROVISIONED" = 0 ]; then
 fi
 
 echo "To check runner status:"
-echo "  sudo systemctl status cronomicon-runner"
+echo "  sudo systemctl status ${SVC}"
 echo ""
 echo "To tail the service logs:"
-echo "  sudo journalctl -u cronomicon-runner -f"
+echo "  sudo journalctl -u ${SVC} -f"
 echo "=========================================================="

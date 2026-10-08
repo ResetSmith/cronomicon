@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, csrfHeader, errMsg, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
 import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../api/access";
@@ -22,6 +22,8 @@ import {
   installTwoStep,
   personalizedInstallOneLiner,
   personalizedInstallTwoStep,
+  INSTANCE_NAME_MAX,
+  validInstanceName,
 } from "./runner-install-cmd";
 import { AGENT_BIN_PATH, upgradeCommand } from "./runner-upgrade-cmd";
 import {
@@ -1524,6 +1526,10 @@ export function Runners() {
   // one baked-in line on the host.
   const [addOpen, setAddOpen] = useState(false);
   const [addShowTwoStep, setAddShowTwoStep] = useState(false);
+  // MA-24 — the instance name for a machine that already runs an agent. One
+  // value for both install helpers: it describes the machine being installed
+  // on, not the token.
+  const [instanceName, setInstanceName] = useState("");
   const [mintLabel, setMintLabel] = useState("");
   // LR-61 — a token names the agency that will OWN the agent it enrols. The
   // caller is offered the agencies they administer; a global administrator is
@@ -2083,6 +2089,7 @@ export function Runners() {
             )}
             {minted && (
               <div>
+                <InstanceNameField value={instanceName} onChange={setInstanceName} />
                 <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Install Command</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <code
@@ -2098,9 +2105,9 @@ export function Runners() {
                       wordBreak: "break-all",
                     }}
                   >
-                    {installOneLiner(origin, revealable && tokenRevealed ? token : "<TOKEN>")}
+                    {installOneLiner(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName)}
                   </code>
-                  <CopyButton text={installOneLiner(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                  <CopyButton text={installOneLiner(origin, token, undefined, instanceName)} ariaLabel="Copy the install command to clipboard" />
                 </div>
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Run on the target host. <code>--download</code> fetches the agent binary from this server with
@@ -2139,9 +2146,9 @@ export function Runners() {
                         wordBreak: "break-all",
                       }}
                     >
-                      {installTwoStep(origin, revealable && tokenRevealed ? token : "<TOKEN>")}
+                      {installTwoStep(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName)}
                     </code>
-                    <CopyButton text={installTwoStep(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                    <CopyButton text={installTwoStep(origin, token, undefined, instanceName)} ariaLabel="Copy the install command to clipboard" />
                   </div>
                 )}
               </div>
@@ -2375,12 +2382,13 @@ export function Runners() {
                 )}
               </div>
               <div>
+                <InstanceNameField value={instanceName} onChange={setInstanceName} />
                 <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Run this on the runner host (as root)</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <code style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, wordBreak: "break-all" }}>
-                    {personalizedInstallOneLiner(origin, token)}
+                    {personalizedInstallOneLiner(origin, token, instanceName)}
                   </code>
-                  <CopyButton text={personalizedInstallOneLiner(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                  <CopyButton text={personalizedInstallOneLiner(origin, token, instanceName)} ariaLabel="Copy the install command to clipboard" />
                 </div>
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Thirty seconds later the runner appears in the registry above with its detected run-types. The
@@ -2395,9 +2403,9 @@ export function Runners() {
                 {addShowTwoStep && (
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 8 }}>
                     <code style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                      {personalizedInstallTwoStep(origin, token)}
+                      {personalizedInstallTwoStep(origin, token, instanceName)}
                     </code>
-                    <CopyButton text={personalizedInstallTwoStep(origin, token)} ariaLabel="Copy the install command to clipboard" />
+                    <CopyButton text={personalizedInstallTwoStep(origin, token, instanceName)} ariaLabel="Copy the install command to clipboard" />
                   </div>
                 )}
               </div>
@@ -2478,6 +2486,53 @@ export function Runners() {
 // (Phase 4) and PATCHes them. Each override is optional: blank/inherit means
 // "no server opinion — use the runner's own local value". The change rides the
 // runner's next poll and applies in-memory (no restart).
+// MA-24 — the install helper's Instance name. Optional: a machine's first agent
+// is the default one and needs none. Filled in, every form of the command gains
+// `--instance <name>` and the runner is named <hostname>-<name>, so two agents
+// on one machine never share an OS user, a directory, a unit or a name. The
+// rule is the installer's own (runner-install-cmd.ts), checked here so a bad
+// name is refused on the page, not halfway through a paste on the host.
+function InstanceNameField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const name = value.trim();
+  const bad = name !== "" && !validInstanceName(name);
+  // The field can be on screen in more than one helper at once.
+  const fieldId = useId();
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label htmlFor={fieldId} style={{ ...fieldLabel(), minWidth: undefined, display: "block", marginBottom: 6 }}>
+        Instance name <span style={{ textTransform: "none", fontWeight: 400 }}>(optional)</span>
+      </label>
+      <input
+        id={fieldId}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="e.g. tax"
+        maxLength={INSTANCE_NAME_MAX + 8}
+        spellCheck={false}
+        autoComplete="off"
+        aria-invalid={bad}
+        aria-describedby={`${fieldId}-help`}
+        style={{ width: 220, padding: "7px 10px", background: c.panel2, border: `1px solid ${bad ? c.danger : c.borderStrong}`, borderRadius: c.radiusChip, fontSize: c.fontSm, fontFamily: c.mono, color: c.text }}
+      />
+      <div id={`${fieldId}-help`} style={{ fontSize: c.fontXs, color: bad ? c.danger : c.textSec, marginTop: 4, lineHeight: 1.5, maxWidth: "75ch" }}>
+        {bad ? (
+          <>
+            Lower-case letters, digits and hyphens, starting with a letter, {INSTANCE_NAME_MAX} characters at most. No
+            install command is shown until this is a valid name, or empty.
+          </>
+        ) : (
+          <>
+            Fill this in when the machine already runs an agent. The new one gets an OS user, a unit and directories of its own
+            (<code style={{ fontFamily: c.mono }}>cronomicon-runner-{name || "<name>"}</code>) and is named{" "}
+            <code style={{ fontFamily: c.mono }}>&lt;hostname&gt;-{name || "<name>"}</code>. An agent serves one agency, so a
+            machine that serves two runs two.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RunnerSettingsDrawer({
   runner,
   onClose,
@@ -2699,6 +2754,7 @@ function ProvisionPanel({
   const [exampleErr, setExampleErr] = useState<string | null>(null);
 
   const [name, setName] = useState("");
+  const [instance, setInstance] = useState("");
   // Default: no explicit capabilities — the agent auto-detects the host's
   // toolchains at startup (D1: 1B). The chips only appear under an explicit
   // "Override" toggle, and narrow what the runner claims.
@@ -2730,6 +2786,7 @@ function ProvisionPanel({
     origin,
     token,
     name: name.trim(),
+    instance: instance.trim() || undefined,
     capabilities: capsOverride ? caps : [],
     inventory,
     localInventorySrc: localInventorySrc.trim() || undefined,
@@ -2901,15 +2958,21 @@ function ProvisionPanel({
                 style={{ ...inputStyle, width: 200 }}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="$(hostname)"
+                placeholder={instance.trim() && validInstanceName(instance.trim()) ? `$(hostname)-${instance.trim()}` : "$(hostname)"}
               />
             </div>
             <div style={hintStyle}>
               The name shown in the registry — it must stay <strong>stable across restarts</strong> (the saved
-              identity file re-pairs to the same registry row by it). Empty ⇒ the host's hostname.{" "}
+              identity file re-pairs to the same registry row by it). Empty ⇒ the host's hostname, with the
+              instance name after it when one is given below.{" "}
               <strong>Max jobs, sandbox caps, and checkout policy are now set per-runner on its row</strong>{" "}
               (the <strong>⚙ Settings</strong> button) after it registers — and take effect on the next poll, no
               reinstall (v0.47.12).
+            </div>
+            {/* MA-24 — applies to the install command and the env file. The
+                container command ignores it: a container runs one agent. */}
+            <div style={{ marginTop: 12 }}>
+              <InstanceNameField value={instance} onChange={setInstance} />
             </div>
           </div>
 

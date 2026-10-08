@@ -491,8 +491,8 @@ func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 			detail += "To settle it, in this order: enrol an agent for each agency it serves; re-bind each of that agency's " +
 				"scopes that is bound to this runner to the new agent, scope by scope; copy the approved host keys for " +
 				"that agency's hosts to the new agent; then take the agency off this runner, or deregister it. An agent " +
-				"per agency means a machine or container per agency in this release; from 2.3.1 a second agent can run " +
-				"on the same machine (--instance)."
+				"per agency need not mean a machine per agency: a second agent can run beside the first on the same " +
+				"machine, under an OS user of its own (the install command's Instance name, --instance)."
 		}
 		found = append(found, Finding{AgencyID: agencyid.Global, Subject: id, Detail: detail})
 	}
