@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 	"io"
 	"log/slog"
 	"net/http"
@@ -447,6 +450,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// governed by the RF-Q2(a) rule: a restricted creator names at least one
 		// held agency, so the new key is born owned rather than born global —
 		// inherited per RA-9 when they hold configureApp on exactly one department.
+		if credentialNamesVault(inp.Source, inp.VaultRef) && !s.requireVaultKeyGlobal(w, r, id) {
+			return
+		}
 		agencyIDs, ok = s.requireCreationAgencies(w, r, id, auth.PermConfigureApp, agencyIDs, "SSH key")
 		if !ok {
 			return
@@ -524,6 +530,9 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		inp, _, err := decodeCredentialInput(r)
 		if err != nil {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+			return
+		}
+		if credentialNamesVault(inp.Source, inp.VaultRef) && !s.requireVaultKeyGlobal(w, r, id) {
 			return
 		}
 		c, err := keys.Update(r.Context(), r.PathValue("credentialId"), *inp, id.Email)
@@ -692,6 +701,32 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 // a stored write is refused too; it has no business being there.
 func secretNamesVault(source, vaultPath string) bool {
 	return source != "stored" || vaultPath != ""
+}
+
+// credentialNamesVault is secretNamesVault for an SSH credential. The key store
+// asks the opposite question from the secret store — a source that is exactly
+// "vault" is Vault, anything else is stored material — and the gate asks the
+// store's question, plus the one way to smuggle a reference past it: a
+// vaultRef on a write that says it is stored.
+func credentialNamesVault(source, vaultRef string) bool {
+	return source == "vault" || vaultRef != ""
+}
+
+// requireVaultKeyGlobal is requireVaultSourceGlobal for the SSH-key routes
+// (GC-8, completed in v2.2.3). A Vault-backed SSH credential names
+// a path on the installation's one Vault connection exactly as a Vault-backed
+// secret does, and what Vault returns for it is shipped to a runner as key
+// material — so "it is a key, not a secret" was a second door onto every
+// agency's Vault paths, open to an administrator of one. Using an existing
+// Vault-backed key is unchanged.
+func (s *Server) requireVaultKeyGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
+	if id.CanAgency(auth.PermConfigureApp, "") {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermConfigureApp, auth.AllScopes,
+		"a Vault-backed SSH key names a path on the installation's one Vault connection, "+
+			"which is not divided by agency — only an administrator of every agency may create or edit one")
+	return false
 }
 
 func (s *Server) requireVaultSourceGlobal(w http.ResponseWriter, r *http.Request, id auth.Identity) bool {
@@ -1402,6 +1437,9 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	if !s.requireHostKeyUsable(w, r, id, hid, inp.AuthCredentialID) {
+		return
+	}
 	h, err := settings.UpdateSshHost(r.Context(), s.db, hid, *inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "update_failed", err)
@@ -1412,6 +1450,70 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
+}
+
+// requireHostKeyUsable refuses a host-record write that names an SSH credential
+// the record's own agency may not use.
+//
+// requireHostOwner lets the administrator of a scope's agency edit the host
+// records imported for that scope, and the write took any credential id — ids
+// are listed to every session — so an administrator of one agency could point
+// their host at another agency's key and connect with it. The rule is the one a
+// run is held to (runref.KeyIDUsable): the key is shared (it belongs to no
+// agency) or belongs to one of the scope's agencies. A global administrator is
+// not bound by it; nor is a record with no scope, which only they can write.
+//
+// This is the authoring-time half. The key a host names by NAME, in its scope's
+// inventory, cannot be judged here — a name resolves at connect time — so the
+// control that actually closes the hole is the same check made by the SSH
+// executor when it loads the key (sshexec.keyGuard).
+//
+// An unknown credential id is a 422 here; it used to surface as a foreign-key
+// failure and a 500.
+func (s *Server) requireHostKeyUsable(w http.ResponseWriter, r *http.Request, id auth.Identity, hostID string, credentialID *string) bool {
+	if credentialID == nil || *credentialID == "" {
+		return true
+	}
+	var exists int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM ssh_credentials WHERE id = ?`, *credentialID).Scan(&exists); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if id.CanAgency(auth.PermConfigureApp, "") {
+		if exists == 0 {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_credential", "no SSH key has that id")
+			return false
+		}
+		return true
+	}
+	var scope sql.NullString
+	err := s.db.QueryRowContext(r.Context(),
+		`SELECT s.name FROM ssh_hosts h JOIN scopes s ON s.id = h.scope_id WHERE h.id = ?`, hostID).Scan(&scope)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true // no such host, or one with no scope: the handler's 404, or requireHostOwner's refusal
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	agencies, err := execspec.ScopeAgencies(r.Context(), s.db, scope.String)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	usable, err := runref.KeyIDUsable(r.Context(), s.db, *credentialID, agencies)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if !usable {
+		// One answer for "no such key" and "another agency's key": the refusal
+		// must not confirm which keys another agency holds.
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_credential",
+			"no SSH key with that id is usable by this host's agency — choose a key of the scope's own agency, or a shared one")
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleDeleteSshHost(w http.ResponseWriter, r *http.Request) {

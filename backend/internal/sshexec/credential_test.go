@@ -98,7 +98,7 @@ func TestLoadSigner_DualRead(t *testing.T) {
 	storeKey(t, pool, "NAME_KEY", namePEM) // plaintext env var
 
 	// 1. Credential id present → resolves to the credential's key.
-	got, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, credID, "")
+	got, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, credID, "", keyGuard{})
 	if err != nil {
 		t.Fatalf("credential resolve: %v", err)
 	}
@@ -108,12 +108,12 @@ func TestLoadSigner_DualRead(t *testing.T) {
 
 	// 2. Credential id present but missing → fatal, with NO fallthrough to the name
 	//    path even though a valid NAME_KEY is also supplied.
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "does-not-exist", "NAME_KEY"); err == nil {
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "does-not-exist", "NAME_KEY", keyGuard{}); err == nil {
 		t.Error("missing credential should be fatal (no fallthrough to the name path)")
 	}
 
 	// 3. No credential id → legacy name path resolves.
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "NAME_KEY"); err != nil {
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "NAME_KEY", keyGuard{}); err != nil {
 		t.Errorf("name fallback should resolve: %v", err)
 	}
 
@@ -122,13 +122,13 @@ func TestLoadSigner_DualRead(t *testing.T) {
 	      VALUES('bad', 'bad', 'stored', X'00', X'00', X'00', 0, 't')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "bad", "NAME_KEY"); err == nil {
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "bad", "NAME_KEY", keyGuard{}); err == nil {
 		t.Error("undecryptable credential should be fatal (no fallthrough)")
 	}
 
 	// 5. Derived reference (W3): CRONOMICON_KEY_<label> routes to ssh_credentials by
 	//    label — here to the same key the credID path resolves.
-	got5, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_KEY_cred")
+	got5, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_KEY_cred", keyGuard{})
 	if err != nil {
 		t.Fatalf("CRONOMICON_KEY_cred resolve: %v", err)
 	}
@@ -137,19 +137,19 @@ func TestLoadSigner_DualRead(t *testing.T) {
 	}
 
 	// 6. CRONOMICON_VAR_<name> routes to the env_vars (Variables) table.
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_VAR_NAME_KEY"); err != nil {
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_VAR_NAME_KEY", keyGuard{}); err != nil {
 		t.Errorf("CRONOMICON_VAR_NAME_KEY should resolve via env_vars: %v", err)
 	}
 
 	// 7. A prefixed reference that resolves to nothing is a HARD error — no fallback
 	//    to the bare chain (deterministic routing).
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_KEY_nonexistent"); err == nil {
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_KEY_nonexistent", keyGuard{}); err == nil {
 		t.Error("CRONOMICON_KEY_nonexistent should be fatal (no fallback)")
 	}
 
 	// 8. Section routing is exact: CRONOMICON_SECRET_NAME_KEY looks ONLY at the secrets
 	//    table, so a name that lives in env_vars does not resolve.
-	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_SECRET_NAME_KEY"); err == nil {
+	if _, err := loadSigner(ctx, svc.db, svc.cfg, svc.sec, "", "CRONOMICON_SECRET_NAME_KEY", keyGuard{}); err == nil {
 		t.Error("CRONOMICON_SECRET_NAME_KEY must not fall back to env_vars (deterministic routing)")
 	}
 }

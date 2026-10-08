@@ -435,8 +435,20 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		}
 	}
 
+	// Every key this run connects with must be one its agency may use (see
+	// keyGuard). The agencies are the run's FROZEN snapshot, as for reference
+	// injection, and are read here unconditionally: this is an isolation check,
+	// not part of the secrets-injection switch.
+	runAgencies, aerr := runref.RunAgencies(runCtx, s.db, r.traceID)
+	if aerr != nil {
+		sink.line("", "cronomicon: could not read this run's agencies: "+aerr.Error())
+		s.finalize(ctx, r, "failure", nil)
+		return
+	}
+	guard := keyGuard{checked: true, scope: r.scope, agencies: runAgencies}
+
 	cmd := remoteCommand(interp, body, r.envJSON, s.injectedEnv(r, resolved))
-	results := s.fanOut(execCtx, targets, cmd, sink)
+	results := s.fanOut(execCtx, targets, cmd, sink, guard)
 
 	// H2/DEC-2 parity with the runner log-ingest path (runner/log.go): an
 	// ::cronomicon-output:: value that carries an injected secret would propagate that
@@ -601,7 +613,7 @@ type hostResult struct {
 }
 
 // fanOut runs the command across targets with bounded parallelism (EX-D5).
-func (s *Service) fanOut(ctx context.Context, targets []target, cmd remotecmd.Rendered, sink *logSink) []hostResult {
+func (s *Service) fanOut(ctx context.Context, targets []target, cmd remotecmd.Rendered, sink *logSink, guard keyGuard) []hostResult {
 	results := make([]hostResult, len(targets))
 	sem := make(chan struct{}, s.fanout)
 	var wg sync.WaitGroup
@@ -611,7 +623,7 @@ func (s *Service) fanOut(ctx context.Context, targets []target, cmd remotecmd.Re
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			results[i] = s.runTarget(ctx, t, cmd, sink)
+			results[i] = s.runTarget(ctx, t, cmd, sink, guard)
 		})
 	}
 	wg.Wait()
@@ -619,13 +631,13 @@ func (s *Service) fanOut(ctx context.Context, targets []target, cmd remotecmd.Re
 }
 
 // runTarget connects to one host and runs the command, streaming output.
-func (s *Service) runTarget(ctx context.Context, t target, cmd remotecmd.Rendered, sink *logSink) hostResult {
+func (s *Service) runTarget(ctx context.Context, t target, cmd remotecmd.Rendered, sink *logSink, guard keyGuard) hostResult {
 	if t.ResolveErr != "" {
 		sink.line(t.Name, "cronomicon: "+t.ResolveErr)
 		return hostResult{host: t.Name, exitCode: -1, err: fmt.Errorf("%s", t.ResolveErr)}
 	}
 
-	signer, err := loadSigner(ctx, s.db, s.cfg, s.sec, t.AuthCredentialID, t.AuthKeyEnvVar)
+	signer, err := loadSigner(ctx, s.db, s.cfg, s.sec, t.AuthCredentialID, t.AuthKeyEnvVar, guard)
 	if err != nil {
 		sink.line(t.Name, "cronomicon: auth: "+err.Error())
 		return hostResult{host: t.Name, exitCode: -1, err: err}

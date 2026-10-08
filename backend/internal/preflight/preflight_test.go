@@ -156,3 +156,54 @@ func TestServiceAccountAboveItsCreatorsRunPermissionsIsFlagged(t *testing.T) {
 	}
 	t.Errorf("ops-bot carries triggerJobs and killJobs, which its creator does not hold: flagged = %v", rep.ServiceAccounts)
 }
+
+// 2.2.3 — the report names the host records the in-app SSH executor will stop
+// connecting for: a scope's record whose key belongs to another agency, and a
+// hand-written record whose key belongs to an agency at all. A record that
+// names its own agency's key, or a shared one, is not listed.
+func TestReportListsHostRecordsThatNameAnotherAgencysKey(t *testing.T) {
+	pool := seeded(t)
+	for _, q := range []string{
+		`INSERT INTO scopes (id,name,source,created_at) VALUES ('sc:fin','fin-hosts','cronomicon','t')`,
+		`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('sc:fin','ag:FIN')`,
+		`INSERT INTO ssh_credentials (id,label,source,created_at,last_modified_at) VALUES
+		   ('k-tax','tax_deploy','stored','t','t'), ('k-fin','fin_deploy','stored','t','t'), ('k-shared','shared_deploy','stored','t','t')`,
+		`INSERT INTO ssh_credential_agencies (credential_id, agency_id) VALUES ('k-tax','ag:TAX'), ('k-fin','ag:FIN')`,
+		`INSERT INTO ssh_hosts (id, hostname, port, source, scope_id, auth_credential_id, created_at) VALUES
+		   ('h1','fin-bad',22,'cronomicon','sc:fin','k-tax','t'),
+		   ('h2','fin-own',22,'cronomicon','sc:fin','k-fin','t'),
+		   ('h3','fin-shared',22,'cronomicon','sc:fin','k-shared','t'),
+		   ('h4','manual-tax',22,'cronomicon',NULL,'k-tax','t'),
+		   ('h5','manual-shared',22,'cronomicon',NULL,'k-shared','t')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	rep, err := preflight.Build(context.Background(), pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.HostKeys) != 2 {
+		t.Fatalf("host keys = %+v, want fin-bad and manual-tax only", rep.HostKeys)
+	}
+	if h := rep.HostKeys[0]; h.Host != "fin-bad" || h.Scope != "fin-hosts" || h.Key != "tax_deploy" || strings.Join(h.KeyAgencies, ",") != "Tax" {
+		t.Errorf("first = %+v", h)
+	}
+	if h := rep.HostKeys[1]; h.Host != "manual-tax" || h.Scope != "" || strings.Join(h.KeyAgencies, ",") != "Tax" {
+		t.Errorf("second = %+v", h)
+	}
+	if rep.Quiet() {
+		t.Error("a report with host-key findings must not be quiet")
+	}
+	var b strings.Builder
+	rep.Write(&b)
+	for _, want := range []string{"Cronomicon 2.2.3", "fin-bad in scope fin-hosts", "manual-tax (written by hand", "only runs of Tax will connect"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("report text lacks %q:\n%s", want, b.String())
+		}
+	}
+	if strings.Contains(b.String(), "fin-own") || strings.Contains(b.String(), "fin-shared") || strings.Contains(b.String(), "manual-shared") {
+		t.Errorf("a host with its own agency's key or a shared key was listed:\n%s", b.String())
+	}
+}

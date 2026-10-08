@@ -13,6 +13,107 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.2.3] - 2026-10-07
+
+Five ways an administrator or operator of one agency could still reach
+another's, or the installation's own jobs, found after 2.2.2 shipped while its
+code was being read for the next release. Each was reproduced against 2.2.2
+before it was closed. No new feature. Schema (v1210) and runner protocol (14)
+are unchanged.
+
+**Upgrading.** One of the five changes what the in-app SSH executor will
+connect with, so if `CRONOMICON_SSH_EXECUTOR_ENABLED` is on, run the report
+first:
+
+```bash
+cronomicon preflight            # new binary, existing database; read-only
+```
+
+Its new last section lists every host record that names an SSH key belonging
+to an agency other than the one whose runs use the host. Give each such host a
+key of its own agency, or make the key shared (remove its agency) if every
+agency is meant to use it. The server logs the same list once, at its first
+start on 2.2.3. Installations that do not use agencies see no change.
+
+### Security
+
+- **A Vault-backed SSH key is a global administrator's.** 2.2.2 made a
+  Vault-backed *secret* a global administrator's to create or edit, because
+  the installation has one Vault connection and a path on it is not divided
+  by agency. A Vault-backed SSH key names a path in exactly the same way, and
+  what Vault returns for it is delivered to a runner as key material, so an
+  administrator of one agency could read any path that connection reaches by
+  declaring it a key. Creating one, or changing a key into one, now needs
+  `configureApp` on every agency. Using an existing one is unchanged.
+- **A host uses only a key its agency may use.** A host record imported for a
+  scope is edited by that scope's agency, and it could name any SSH key: by
+  id (ids are listed to every session) or by name in the scope's inventory.
+  An administrator of one agency could point their host at another agency's
+  key, and their jobs, or "Test connection", would authenticate with it.
+  Saving a host now refuses a key that is neither the agency's own nor a
+  shared one, with the same answer for another agency's key and for one that
+  does not exist. And the in-app SSH executor resolves every key, by id and by
+  name, for the run's own agency, as runner agents always have.
+- **A per-run target host must be in the scope.** `targetHost` on a run
+  request was copied onto the run unchecked, although the list form,
+  `targetHosts`, was validated. Anyone allowed to trigger a job in a scope
+  could send it to any manually authored host record by name. It now answers
+  422 `scope_membership`, as the list does. The host a job itself declares is
+  not re-validated, and a global administrator is not held to the rule.
+- **Reference bindings need the permission on the job's own scope.** Replacing
+  a job's secret and key bindings asked for `manageEnvVars` held on any agency
+  and for the job to be readable. A secrets manager of one agency who could
+  only view another agency's job could empty its bindings, and its next run
+  would execute without its declared secrets. One grant must now carry both;
+  a job with no scope needs the permission on every agency.
+- **Pausing or resuming a job with no scope needs `killJobs` on every
+  agency.** A job with no scope belongs to no one agency, and every other
+  action on it already said so: running it unbound, stopping its unbound run
+  and cancelling its parked run are all an unrestricted operator's. Pause and
+  resume asked only for `killJobs` held somewhere, so an operator of one
+  agency could stop such a job's schedule, or restart one a global
+  administrator had paused. They now answer 403. A job in a scope is paused
+  by that scope's operators, as before. The Jobs list still offers the button
+  to an operator who will be refused; the next release corrects the flag
+  behind it.
+
+### Changed
+
+- **Runs on the in-app SSH executor resolve a host's key for the run's own
+  agency.** If a host record names a key that belongs to a different agency
+  from the scope the run is in, the run fails for that host with "the SSH key
+  this host names is not one this run's agency may use". A key named by label
+  resolves to the agency's own key before a shared one of the same label
+  (it was whichever row the database returned first), and a private key kept
+  as a secret or a variable must be global or belong to the run's scope.
+  Bastion records, which only a global administrator writes, are unaffected,
+  as are runner agents.
+- `cronomicon preflight` has a 2.2.3 section, "host keys".
+
+### Fixed
+
+- `PUT /ssh/hosts/{hostId}` with a credential id that matched nothing answered
+  500. It answers 422 `unknown_credential`.
+
+### For developers
+
+- `sshexec.keyGuard` says on whose behalf a key is loaded; the zero value is
+  unchecked and is for a record only a global administrator writes (a
+  bastion, the probe of a hand-written host). `runref.KeyIDUsable` is the
+  by-id form of the membership clause `lookupKeyID` applies by label.
+- Gates added: `requireVaultKeyGlobal`, `requireHostKeyUsable`,
+  `requirePauseAuthority`. Tests: five `TestGC_*` in
+  `internal/api/gate_closing_test.go`, and
+  `internal/sshexec/key_guard_test.go`.
+- `requireCan(perm, "")` is satisfied by every grant that carries the verb:
+  the empty scope is covered by all of them. A route that takes a job's or a
+  run's scope must treat the empty one as the unbound case and ask
+  `CanUnbound`; pause and resume were the two that did not.
+- Not closed here, by design: a job's own declared `target_host` is still not
+  checked against its scope, and a scope still resolves a hand-written host
+  record whatever agency wrote its key. Both need host records to have an
+  owner, which is the next release's.
+
 ## [2.2.2] - 2026-10-06
 
 An administrator of one agency can no longer change the installation or another

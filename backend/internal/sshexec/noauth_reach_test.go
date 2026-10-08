@@ -33,7 +33,7 @@ import (
 func TestNoAuthErrorNeverReachesCredMsg(t *testing.T) {
 	t.Run("loadSigner does produce it, for the executor", func(t *testing.T) {
 		svc, _ := probeFixture(t)
-		_, err := loadSigner(context.Background(), svc.db, svc.cfg, svc.sec, "", "")
+		_, err := loadSigner(context.Background(), svc.db, svc.cfg, svc.sec, "", "", keyGuard{})
 		if err == nil {
 			t.Fatal("loadSigner(\"\", \"\") returned no error — runTarget relies on this being an error")
 		}

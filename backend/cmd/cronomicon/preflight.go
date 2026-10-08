@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -123,5 +124,45 @@ func logUpgradeReport(ctx context.Context, pool *sql.DB, logger *slog.Logger) {
 	for _, s := range rep.ServiceAccounts {
 		logger.Warn("upgrade 2.2.2: review this service account — its creator could not mint it under the new rules",
 			"name", s.Name, "role", s.Role, "where", s.Where, "created_by", s.CreatedBy, "why", s.Why)
+	}
+}
+
+// hostKeyReportMarker records that the 2.2.3 host-key findings have been
+// logged. It is its own marker: an installation that already ran 2.2.2 has the
+// 2.2.2 marker set and would otherwise never hear about this.
+const hostKeyReportMarker = "upgradeReport.2.2.3"
+
+// logHostKeyReport says, once, which host records the in-app SSH executor will
+// no longer connect for (v2.2.3): a record whose key belongs to an agency other
+// than the one whose runs use the host. Silent when there are none, and when
+// the SSH executor is off there is nothing to break — it still says so, since
+// the switch may be turned on later.
+func logHostKeyReport(ctx context.Context, pool *sql.DB, logger *slog.Logger, sshExecutorEnabled bool) {
+	var seen string
+	if err := pool.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, hostKeyReportMarker).Scan(&seen); err == nil {
+		return
+	}
+	defer func() {
+		_, _ = pool.ExecContext(ctx, `
+			INSERT INTO settings (key, value, last_modified_by, last_modified_at)
+			VALUES (?, 'logged', 'upgrade', datetime('now'))
+			ON CONFLICT(key) DO NOTHING`, hostKeyReportMarker)
+	}()
+	rep, err := preflight.Build(ctx, pool)
+	if err != nil {
+		logger.Warn("upgrade report (2.2.3) could not be built — run `cronomicon preflight`", "error", err)
+		return
+	}
+	for _, h := range rep.HostKeys {
+		where := "scope " + h.Scope
+		effect := "runs fail for this host"
+		if h.Scope == "" {
+			where = "every scope (a manually authored record)"
+			effect = "only the key's own agency's runs connect"
+		}
+		logger.Warn("upgrade 2.2.3: this host record names an agency's SSH key, which the in-app SSH executor "+
+			"now loads only for that agency's runs — give the host a key of its own agency, or make the key shared",
+			"host", h.Host, "used_by", where, "key", h.Key, "key_agencies", strings.Join(h.KeyAgencies, ", "),
+			"effect", effect, "ssh_executor_enabled", sshExecutorEnabled)
 	}
 }
