@@ -40,6 +40,8 @@ describe("limitsCommand", () => {
     expect(refuse).toBeGreaterThan(-1);
     expect(act).toBeGreaterThan(refuse);
     expect(cmd).toContain("Nothing was changed.");
+    // The usual reason on a host that does run the runner: it is a container.
+    expect(cmd.slice(refuse, act)).toContain("limit the container instead");
     expect(cmd.slice(refuse, act)).toContain("exit 1");
   });
 

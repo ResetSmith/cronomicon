@@ -2868,6 +2868,15 @@ function RunnerSettingsDrawer({
             </div>
           </>
         )}
+        <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 10, lineHeight: 1.5, maxWidth: "80ch" }}>
+          <strong>If this runner is a container</strong>, it has no unit and the command above finds nothing to change. Limit
+          the container instead. In a compose file, on the runner's service:{" "}
+          <code style={{ fontFamily: c.mono }}>mem_limit</code>, <code style={{ fontFamily: c.mono }}>memswap_limit</code>,{" "}
+          <code style={{ fontFamily: c.mono }}>cpus</code>, <code style={{ fontFamily: c.mono }}>pids_limit</code>, then redeploy. For
+          a container started by hand:{" "}
+          <code style={{ fontFamily: c.mono }}>docker update --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 &lt;container&gt;</code>
+          , which applies at once and is lost when the container is recreated.
+        </div>
       </div>
 
     </Modal>
@@ -3127,15 +3136,16 @@ function ProvisionPanel({
             <div style={{ marginTop: 12 }}>
               <InstanceNameField value={instance} onChange={setInstance} />
             </div>
-            {/* 2.3.1 — the installer writes these into the UNIT, so they are in
-                the install command only. The env file has nowhere to carry
-                them, and a container is limited by its own runtime. */}
+            {/* 2.3.1 — the install command writes these into the UNIT; the
+                container command carries them as the runtime's own limits.
+                The env file has no variable for them. */}
             <div style={{ marginTop: 12 }}>
               <UnitLimitsFields value={limits} onChange={setLimits} />
               <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: -6, lineHeight: 1.5, maxWidth: "75ch" }}>
-                In the install command only. For a manual install put the same three lines in the unit; for a container use
-                the runtime's own limits (<code style={{ fontFamily: c.mono }}>--memory</code>,{" "}
-                <code style={{ fontFamily: c.mono }}>--cpus</code>, <code style={{ fontFamily: c.mono }}>--pids-limit</code>).
+                In the install command and the container command, not the env file. The container command writes them as{" "}
+                <code style={{ fontFamily: c.mono }}>--memory</code> (with swap off, so a run that goes over is stopped),{" "}
+                <code style={{ fontFamily: c.mono }}>--cpus</code> and <code style={{ fontFamily: c.mono }}>--pids-limit</code>. For
+                a manual install put the same three lines in the unit.
               </div>
             </div>
           </div>

@@ -2209,7 +2209,7 @@ less runner-isolation-check.sh        # read it first: it runs as root
 sudo bash runner-isolation-check.sh</code></pre></div></li>
 </ul>
 
-<blockquote><p><strong>A container is a machine of its own.</strong> The container install (§10) runs one agent per container; run two containers for two agencies. <code>--instance</code> is for systemd hosts.</p></blockquote>
+<blockquote><p><strong>A container is a machine of its own.</strong> The container install (§10) runs one agent per container; run two containers for two agencies. <code>--instance</code> is for systemd hosts, and so are the three limit flags: a container agent is limited by its runtime (§10, <em>Limits for a container agent</em>).</p></blockquote>
 
 <p>If you'd rather wire systemd up by hand (or need a non-default layout), skip the script and follow §9 instead.</p>
 
@@ -2404,6 +2404,37 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
   ghcr.io/resetsmith/cronomicon-runner:2.0.2</code></pre></div>
 
 <p>The explicit <code>CRONOMICON_RUNNER_CAPABILITIES</code> is optional here too — omit the line and the agent claims the four shell types and detects Ansible and Terraform in the <em>image</em> at startup (the image choice becomes the capability decision: the slim image claims <code>bash</code>, <code>perl</code>, <code>powershell</code> and <code>python</code>; the fat image claims those and <code>ansible</code> and <code>terraform</code>). Use the tag that matches your server's version (§2). For an ansible/terraform runner, swap in <code>ghcr.io/resetsmith/cronomicon-runner-fat</code> and either omit the var (detect) or set <code>CRONOMICON_RUNNER_CAPABILITIES=ansible,terraform</code> to narrow. Mount the runner's keys and (for <code>local</code> mode) its <code>inventory.json</code> into the volume / a bind mount. The images set <code>CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner/identity.json</code> by default, so the named volume gives you identity persistence for free.</p>
+
+<h3>Limits for a container agent</h3>
+
+<p>A container has no systemd unit, so the installer's <code>--memory-max</code>, <code>--cpu-quota</code> and <code>--tasks-max</code> (§3) do not apply to it, and it has no per-run sandbox either (§12). Its bound is the <strong>container's own limit</strong>, which covers the agent and everything it runs, together — the same thing a unit limit is on a host, since one container is one agent. A process inside the container cannot lift it. Without one, nothing stops an agent's Ansible or Terraform run from taking the Docker host's memory or CPU from the other containers on it.</p>
+
+<div class="codeblock"><pre><code>docker run -d --name cronomicon-runner-01 --restart unless-stopped \
+  --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 \
+  -e CRONOMICON_RUNNER_SERVER=https://cronomicon.example.com \
+  …</code></pre></div>
+
+<div class="tbl"><table>
+<thead><tr><th>On a systemd host (§3)</th><th><code>docker run</code></th><th>Compose, on the runner's service</th></tr></thead>
+<tbody>
+<tr><td><code>--memory-max 4G</code></td><td><code>--memory 4g --memory-swap 4g</code></td><td><code>mem_limit: 4g</code> and <code>memswap_limit: 4g</code></td></tr>
+<tr><td><code>--cpu-quota 200%</code></td><td><code>--cpus 2</code> (a count of CPUs: <code>150%</code> is <code>1.5</code>)</td><td><code>cpus: 2</code></td></tr>
+<tr><td><code>--tasks-max 1024</code></td><td><code>--pids-limit 1024</code></td><td><code>pids_limit: 1024</code></td></tr>
+</tbody>
+</table></div>
+
+<ul>
+<li><strong>Set the swap limit equal to the memory limit.</strong> Left out, Docker lets the container use as much swap again as its memory, and a run that goes over the limit is slowed where you meant it to stop. Equal, the container has no swap and the kernel kills what goes over. (On a systemd host the unit limit bounds RAM only, so there the same run is pushed to swap: §3.)</li>
+<li><strong>The advanced install helper writes them for you.</strong> Fill in <em>Resource limits</em> in the Runners view's <strong>Advanced: pre-authored install</strong> and the container command carries the flags in the middle column.</li>
+<li><strong>In a stack, put them in the compose file</strong>, not on the running container: a container is recreated from the file at every redeploy and takes its limits from it. A value of <code>0</code> means no limit, so a variable with that default leaves the limit off until it is set:
+<div class="codeblock"><pre><code>services:
+  cronomicon-runner:
+    mem_limit: ${CRONOMICON_RUNNER_MEMORY:-0}
+    memswap_limit: ${CRONOMICON_RUNNER_MEMORY:-0}   # equal to mem_limit: no swap
+    cpus: ${CRONOMICON_RUNNER_CPUS:-0}
+    pids_limit: ${CRONOMICON_RUNNER_PIDS:-0}</code></pre></div></li>
+<li><strong>To change a running container's limits</strong>, with no restart: <code>docker update --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 &lt;container&gt;</code>. It is kept across a restart of that container and <strong>lost when the container is recreated</strong>, so for a stack change the compose file and redeploy.</li>
+</ul>
 
 <hr />
 
