@@ -382,9 +382,21 @@ describe("BindingNotices — pins that could not become a binding", () => {
 });
 
 describe("RunsOn — the job detail's answer", () => {
-  it("says any eligible runner when the scope is not bound", () => {
-    const { container } = render(<RunsOn bound={[]} scope="dmz-web" />);
-    expect(container.textContent).toBe("Any eligible runner");
+  // LR-50 — the row states the claim rule, by run type: there is no executor
+  // beside it to say that a shell job may also be taken by the server.
+  it("states the rule when the scope is not bound: any runner for a shell job, an agent for a toolchain one", () => {
+    const shell = render(<RunsOn bound={[]} scope="dmz-web" runType="bash" />);
+    expect(shell.container.textContent).toBe("Any runner that serves its scope");
+    // The finer print — the server may be that runner; a key binding makes it
+    // an agent's only — is the tooltip's, since it is not true of every job.
+    expect(shell.container.querySelector("span")?.title).toMatch(/local runner \(this server\).*binds an SSH key is taken by an agent only/);
+    cleanup();
+    const ansible = render(<RunsOn bound={[]} scope="dmz-web" runType="ansible" />);
+    expect(ansible.container.textContent).toBe("Any agent that serves its scope");
+    cleanup();
+    // A job with no scope is the Global agency's.
+    const unscoped = render(<RunsOn bound={[]} scope="" runType="bash" />);
+    expect(unscoped.container.textContent).toBe("Any runner that serves the Global agency");
   });
 
   it("names the bound runners, why one is not serving, and the scope that binds them", () => {

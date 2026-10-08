@@ -1,6 +1,7 @@
 import { type CSSProperties, type ReactNode } from "react";
 import { c } from "../../theme";
-import { CopyText, Field as UIField, InlineLoading, statusLabel, statusTone } from "../../components/ui";
+import { CopyText, EmptyCell, Field as UIField, InlineLoading, statusLabel, statusTone } from "../../components/ui";
+import { runnerLabel } from "../../components/score-model";
 import { fmtInAppZone } from "../../utils/datetime";
 
 // ── formatting ──────────────────────────────────────────────────────────────
@@ -137,32 +138,30 @@ export function StatusBadge({ status }: { status?: string | null }) {
   );
 }
 
-// Executor badge — surfaces how a run was executed (R5.3). EX.10 introduced the
-// `ssh` variant as the extension point; `runner` is the new sibling. Subtle, pill-
-// shaped, tinted to match the existing chip vocabulary (cf. the workflow/Test chips).
-export function ExecutorBadge({ executor }: { executor?: string | null }) {
-  if (executor !== "ssh" && executor !== "runner") return null;
-  const isRunner = executor === "runner";
-  const color = isRunner ? c.primary : c.info;
+// Runner cell — which runner took a run (LR-50). It stands where the Executor
+// badge stood: every run is the runner executor's since 2.3.0, so "Runner" on
+// every row said nothing, and the name says where the run's connections came
+// from. A run from before 2.3.0 that the in-app SSH executor ran had no runner
+// and reads "Server (SSH)". The name is the run's own copy (migration 1280),
+// so it stays when the runner is deregistered; a run nobody has claimed shows
+// the empty cell.
+export function RunnerCell({ executor, runnerName }: { executor?: string | null; runnerName?: string | null }) {
+  const label = runnerLabel({ executor, runnerName });
+  if (!label) return <EmptyCell />;
+  const old = !runnerName;
   return (
     <span
-      title={isRunner ? "Executed by a runner agent" : "Executed by the in-app SSH executor"}
+      title={old ? "Ran from the server, by the in-app SSH executor (before v2.3.0)" : `Taken by runner ${label}`}
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "2px 7px",
-        // Chip, not pill: the executor is a *kind*, not a status (B-3/VU-17).
-        borderRadius: c.radiusChip,
-        fontSize: c.fontXs,
-        fontWeight: 600,
-        background: `${color}1a`,
-        color,
-        border: `1px solid ${color}30`,
+        fontSize: c.fontSm,
+        color: old ? c.textSec : c.text,
         whiteSpace: "nowrap",
-        letterSpacing: 0.3,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        display: "block",
       }}
     >
-      {isRunner ? "Runner" : "SSH"}
+      {label}
     </span>
   );
 }

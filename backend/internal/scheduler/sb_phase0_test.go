@@ -11,7 +11,8 @@ import (
 // invisible while job names were unique and both real once R2 let two agencies
 // hold same-named jobs. The tests here were written to pin each defect, and now
 // guard its fix: the run carries the job that was fired (9f7dfda), and the
-// executor is that job's own (execspec.ResolveExecutor).
+// executor is that job's own (execspec.ResolveExecutor then; since 2.3.0 no
+// producer resolves an executor at all, and the uid is what the run carries).
 //
 // A third characterization test lived here until the runner-tag pin was retired:
 // it showed a pinned shell job on a schedule being queued for ssh with its pin

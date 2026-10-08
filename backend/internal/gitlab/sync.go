@@ -1304,7 +1304,7 @@ type resolvedScript struct {
 	command     string
 	script      string
 	scriptPath  string
-	executor    string
+	executor    string // what is STORED: storableExecutor of the sidecar's value
 	description string
 	contentHash string
 	sourcePath  string
@@ -1312,6 +1312,22 @@ type resolvedScript struct {
 	warnings    string // JSON array of body-lint Warnings ("[]" when clean)
 	variables   string // JSON array of referenced env Variables ("[]" when none)
 	prompts     string // JR-Q6 — JSON array of DECLARED run inputs ("[]" when none)
+}
+
+// storableExecutor is what a retired `spec.executor` value becomes on its way
+// to `jobs.executor` / `scripts.executor` (2.3.0, LR-48). The key is read by
+// nothing, and validation no longer refuses a value it never had — but both
+// columns still carry CHECK (executor IN ('runner','ssh')), so a value outside
+// it would fail the INSERT and, with it, the whole sync. The two values the
+// key did have are kept, because the 2.3.0 upgrade pass and the
+// leftover_executor_key notice read them; anything else is stored as nothing
+// and reported by the warnings alone.
+func storableExecutor(v string) string {
+	switch v = strings.TrimSpace(v); v {
+	case execspec.ExecutorSSH, execspec.ExecutorRunner:
+		return v
+	}
+	return ""
 }
 
 // resolveBodyHash computes the Decision-8 content hash for an executable body
@@ -1350,12 +1366,19 @@ func (s *Service) resolveScripts(scripts []ScriptYAML) (map[string]resolvedScrip
 				Message: "compute content hash: " + err.Error()})
 			continue
 		}
+		// LR-48 — a sidecar's `executor` is retired with the job's. Said here
+		// for the script itself: one that only composed jobs reference, or none,
+		// would otherwise be named by no job's warning.
+		if v := strings.TrimSpace(sc.Spec.Executor); v != "" {
+			s.logWarn("git sync: script still declares executor, which is no longer read; remove the line",
+				"script", name, "source_path", sc.SourcePath, "executor", v)
+		}
 		out[name] = resolvedScript{
 			runType:     sc.Spec.RunType,
 			command:     sc.Spec.Command,
 			script:      sc.Spec.Script,
 			scriptPath:  sc.Spec.ScriptPath,
-			executor:    sc.Spec.Executor,
+			executor:    storableExecutor(sc.Spec.Executor),
 			description: sc.Spec.Description,
 			contentHash: ContentHash(raw),
 			sourcePath:  sc.SourcePath,
@@ -1677,12 +1700,22 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// inline body and hash it. Danglers were filtered by the caller, so a
 		// script_ref here is guaranteed present in `resolved`.
 		runType := j.Spec.RunType
-		command, script, scriptPath, executor := j.Spec.Command, j.Spec.Script, j.Spec.ScriptPath, j.Spec.Executor
+		command, script, scriptPath, executor := j.Spec.Command, j.Spec.Script, j.Spec.ScriptPath, storableExecutor(j.Spec.Executor)
+		// Where the stored executor came from, for the warning below.
+		executorFrom := "the job's file"
 		var scriptRef, contentHash, projectRoot string
 		if j.Spec.ScriptRef != "" {
 			rs := resolved[j.Spec.ScriptRef]
 			runType = rs.runType
-			command, script, scriptPath, executor = rs.command, rs.script, rs.scriptPath, rs.executor
+			command, script, scriptPath = rs.command, rs.script, rs.scriptPath
+			// The script's executor was the one a run read (Decision 7), so it is
+			// the one stored. A job that sets its own over a script that sets none
+			// keeps its own: the value was never read there, and is kept only so
+			// the leftover_executor_key notice names every job whose FILE still
+			// carries the line.
+			if rs.executor != "" {
+				executor, executorFrom = rs.executor, "its script's sidecar ("+rs.sourcePath+")"
+			}
 			scriptRef = j.Spec.ScriptRef
 			contentHash = rs.contentHash
 			// §7 — denormalize the checkout marker from the referenced script (the
@@ -1779,23 +1812,19 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			watches = nil
 		}
 		watchJSON := watchspec.Marshal(watches)
-		// SB — advisory-warn, like the checks above: a job that asks for the ssh
-		// executor on a scope bound to runners is refused at every fire
-		// (execspec.CodeScopeRequiresRunner), and a cron fire has nobody watching
-		// it. Saying so at sync is the earliest the author can hear about it. Not
-		// an error: the definition is valid, and whether its scope is bound is an
-		// operator's overlay that can change without a commit. An unreadable
-		// binding says nothing here — the fire-time check is the one that counts.
-		//
-		// `executor` is the value about to be STORED, which for a script_ref job
-		// is the script's and not this file's — it is the stored one the fire
-		// reads, so it is the one to warn about.
-		if executor == execspec.ExecutorSSH {
-			if bound, berr := execspec.ScopeIsBound(ctx, tx, j.Spec.Scope); berr == nil && bound {
-				s.logWarn("git sync: job asks for the ssh executor on a scope bound to runners; its runs will be "+
-					"refused until the executor line is removed or the scope is unbound",
-					"job", name, "source_path", j.SourcePath, "scope", j.Spec.Scope)
-			}
+		// LR-48 — `executor` is retired: stored (the 2.3.0 upgrade pass reads
+		// what jobs used to say) and read by nothing else. Said at sync, because
+		// the decode is not strict and the key would otherwise be ignored in
+		// silence; the inbox carries it too (notices: leftover_executor_key),
+		// since nobody reads a sync log. A value the key never had is stored as
+		// nothing (storableExecutor) and is validation's to report, by file and
+		// line.
+		if executor != "" {
+			s.logWarn("git sync: job still declares executor, which is no longer read — every job is taken by "+
+				"whichever runner that serves its scope asks first; remove the line, and bind the scope to the "+
+				"runners that should serve it",
+				"job", name, "source_path", j.SourcePath, "scope", j.Spec.Scope, "executor", executor,
+				"declared_in", executorFrom)
 		}
 		warnDeadline := strings.TrimSpace(j.Spec.MustFinishBy)
 		if warnDeadline != "" && !cronutil.ValidDeadline(warnDeadline) {

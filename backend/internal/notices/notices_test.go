@@ -355,3 +355,87 @@ func TestG2ChecksFindAndResolveTheirConditions(t *testing.T) {
 		}
 	}
 }
+
+// TestLeftoverExecutorKeyIsOneNoticePerAgency: `executor` is ignored since
+// 2.3.0 (LR-48). A Git job that still stores one is listed in a notice for the
+// agency whose scope it runs in — Global for a job with no scope, a scope the
+// catalog does not hold, or a scope in several agencies — because nobody reads
+// a sync log. Only Git jobs count (a composed job cannot be edited to carry
+// one any more, and its stored value is history), a binned job does not, and
+// the notice goes when the next sync stores no executor.
+func TestLeftoverExecutorKeyIsOneNoticePerAgency(t *testing.T) {
+	pool := open(t)
+	ctx := context.Background()
+	const ts = "2026-01-01T00:00:00Z"
+	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', ?), ('ag-tax', 'Tax', ?)`, ts, ts)
+	mustExec(t, pool, `INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-prod', 'cronomicon', ?), ('sc-two', 'legacy', 'cronomicon', ?)`, ts, ts)
+	mustExec(t, pool, `INSERT INTO scope_agencies VALUES ('sc-fin', 'ag-fin'), ('sc-two', 'ag-fin'), ('sc-two', 'ag-tax')`)
+	job := func(uid, name, source, scope, executor string, deleted bool) {
+		mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, executor, concurrency_policy, enabled, synced_at, deleted_at)
+		                   VALUES (?, ?, ?, 'bash', NULLIF(?, ''), NULLIF(?, ''), 'Allow', 1, 't', ?)`,
+			uid, name, source, scope, executor, map[bool]any{true: ts, false: nil}[deleted])
+	}
+	job("u1", "fin-ssh", "git", "fin-prod", "ssh", false)
+	job("u2", "fin-runner", "git", "fin-prod", "runner", false)
+	job("u3", "fin-plain", "git", "fin-prod", "", false)
+	job("u4", "fin-composed", "cronomicon", "fin-prod", "ssh", false)
+	job("u5", "fin-binned", "git", "fin-prod", "ssh", true)
+	job("u6", "no-scope", "git", "", "ssh", false)
+	job("u7", "shared-scope", "git", "legacy", "ssh", false)
+	job("u8", "ghost-scope", "git", "no-such", "runner", false)
+
+	if err := notices.RunChecks(ctx, pool); err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	got := openOf(t, pool, notices.KindLeftoverExecutorKey)
+	if len(got) != 2 {
+		t.Fatalf("leftover_executor_key = %v, want one for Finance and one for Global", got)
+	}
+	fin := got["ag-fin"]
+	if fin.AgencyID != "ag-fin" || !strings.Contains(fin.Detail, "2 of Finance's jobs") ||
+		!strings.Contains(fin.Detail, "fin-runner (runner), fin-ssh (ssh)") {
+		t.Errorf("Finance's notice = %+v, want its two Git jobs, by name and stored value", fin)
+	}
+	for _, absent := range []string{"fin-plain", "fin-composed", "fin-binned"} {
+		if strings.Contains(fin.Detail, absent) {
+			t.Errorf("Finance's notice names %s, which declares nothing a sync will store again: %s", absent, fin.Detail)
+		}
+	}
+	glob := got["global"]
+	if glob.AgencyID != "global" || !strings.Contains(glob.Detail, "3 jobs in Git that belong to no single agency") {
+		t.Errorf("Global's notice = %+v, want the three jobs no single agency answers for, said that way", glob)
+	}
+	for _, name := range []string{"no-scope", "shared-scope", "ghost-scope"} {
+		if !strings.Contains(glob.Detail, name) {
+			t.Errorf("Global's notice does not name %s: %s", name, glob.Detail)
+		}
+	}
+
+	// A long list names five and counts the rest; one job is said in the
+	// singular.
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		job("x-"+n, "fin-extra-"+n, "git", "fin-prod", "ssh", false)
+	}
+	mustExec(t, pool, `UPDATE jobs SET executor = NULL WHERE uid IN ('u6', 'u7')`)
+	if err := notices.RunChecks(ctx, pool); err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	got = openOf(t, pool, notices.KindLeftoverExecutorKey)
+	if d := got["ag-fin"].Detail; !strings.Contains(d, "7 of Finance's jobs") || !strings.Contains(d, ", and 2 more") ||
+		strings.Count(d, " (ssh)")+strings.Count(d, " (runner)") != 5 {
+		t.Errorf("a list of seven = %q, want five named and two counted", d)
+	}
+	if d := got["global"].Detail; !strings.HasPrefix(d, "One job in Git that belongs to no single agency still declares an executor: ghost-scope (runner).") {
+		t.Errorf("a list of one = %q, want the singular", d)
+	}
+
+	// The line is removed in Git and the next sync stores no executor.
+	mustExec(t, pool, `UPDATE jobs SET executor = NULL WHERE scope = 'fin-prod'`)
+	if err := notices.RunChecks(ctx, pool); err != nil {
+		t.Fatalf("RunChecks: %v", err)
+	}
+	got = openOf(t, pool, notices.KindLeftoverExecutorKey)
+	if _, still := got["ag-fin"]; still || len(got) != 1 {
+		t.Errorf("after Finance's jobs were cleaned up, open notices = %v, want only Global's", got)
+	}
+}

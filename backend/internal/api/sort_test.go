@@ -122,6 +122,79 @@ func TestListRunsSortParam(t *testing.T) {
 	}
 }
 
+// TestRunRowsNameTheRunnerThatTookThem: History shows a Runner where it showed
+// an Executor (2.3.0, LR-50). Every run is the runner executor's now, so the
+// row carries the NAME of the runner that took it — the run's own copy
+// (migration 1280), which outlives the runner. `sort=runner` orders by what
+// the column shows, runs nobody took last, and the old `sort=executor` key — a
+// column that says the same thing on every new row — is an unknown key.
+func TestRunRowsNameTheRunnerThatTookThem(t *testing.T) {
+	ts, pool := newTestServer(t)
+	client, _ := devLogin(t, ts.URL)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	at := func(i int) string { return base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339) }
+	seedRun(t, exec, "r1", "charlie", "success", 500, at(0))
+	seedRun(t, exec, "r2", "alpha", "success", 100, at(1))
+	seedRun(t, exec, "r3", "bravo", "success", 50, at(2)) // an old SSH-executor run: no runner
+	seedRun(t, exec, "r4", "delta", "queued", -1, at(3))  // queued for a runner, not yet claimed
+	exec(`INSERT INTO runners(id,name,status,registered_at,created_at) VALUES('rn-z','zulu-agent','online','t','t')`)
+	// What the claim writes: the id and the run's own copy of the name. r2's
+	// runner is already gone (runner_id is ON DELETE SET NULL); the name is not.
+	exec(`UPDATE runs SET runner_id = 'rn-z', runner_name = 'zulu-agent', executor = 'runner' WHERE id = 'r1'`)
+	exec(`UPDATE runs SET runner_id = NULL, runner_name = 'alpha-agent', executor = 'runner' WHERE id = 'r2'`)
+	exec(`UPDATE runs SET executor = 'runner' WHERE id = 'r4'`)
+
+	names := func() map[string]any {
+		out := map[string]any{}
+		for _, it := range getItems(t, client, ts.URL+"/api/v1/runs") {
+			out[it["jobName"].(string)] = it["runnerName"]
+		}
+		return out
+	}
+	if got := names(); got["charlie"] != "zulu-agent" || got["alpha"] != "alpha-agent" || got["bravo"] != nil || got["delta"] != nil {
+		t.Fatalf("runnerName by job = %v, want charlie=zulu-agent, alpha=alpha-agent, bravo and delta nil", got)
+	}
+
+	order := func(u string) string {
+		var out []string
+		for _, it := range getItems(t, client, ts.URL+u) {
+			out = append(out, it["jobName"].(string))
+		}
+		return fmt.Sprint(out)
+	}
+	// By what the column shows, in the database's byte order: "Server (SSH)"
+	// for the old SSH run (so those rows still sort together), alpha-agent,
+	// zulu-agent — and the run no runner has taken last in both directions.
+	if got := order("/api/v1/runs?sort=runner&order=asc"); got != "[bravo alpha charlie delta]" {
+		t.Errorf("runner asc = %s, want [bravo alpha charlie delta]", got)
+	}
+	if got := order("/api/v1/runs?sort=runner&order=desc"); got != "[charlie alpha bravo delta]" {
+		t.Errorf("runner desc = %s, want [charlie alpha bravo delta]", got)
+	}
+
+	// Deregistering the runner takes its row and the run's id, not the name.
+	exec(`DELETE FROM runner_agencies WHERE runner_id = 'rn-z'`)
+	exec(`DELETE FROM runners WHERE id = 'rn-z'`)
+	if got := names(); got["charlie"] != "zulu-agent" {
+		t.Errorf("after its runner was deregistered the run names %v, want zulu-agent still", got["charlie"])
+	}
+
+	resp, err := client.Get(ts.URL + "/api/v1/runs?sort=executor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("GET /runs?sort=executor = %d, want 400: the key is retired", resp.StatusCode)
+	}
+}
+
 func TestListChangeLogSortParam(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, _ := devLogin(t, ts.URL)

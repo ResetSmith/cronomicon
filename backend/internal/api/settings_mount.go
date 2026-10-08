@@ -2046,7 +2046,7 @@ func (s *Server) handleUpdateGeneralSettings(w http.ResponseWriter, r *http.Requ
 	}
 	gs, err := settings.UpdateGlobalSettings(r.Context(), s.db, inp, id.Email)
 	if err != nil {
-		// A bad input value (invalid timezone / defaultExecutor) is a 422, not a
+		// A bad input value (an invalid timezone) is a 422, not a
 		// 500 — the operator can fix it (timezone-update §6).
 		if errors.Is(err, settings.ErrValidation) {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())

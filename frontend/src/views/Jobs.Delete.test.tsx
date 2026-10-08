@@ -120,7 +120,7 @@ describe("Jobs — expanded-row Delete", () => {
     expandRow(q, "git-job");
     // The whole action strip is gated: canRun is false here (no session), so a
     // git row expands to detail with no actions at all.
-    await waitFor(() => expect(q.getByText("Executor")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("Run on")).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
     expect(q.queryByRole("link", { name: "Edit" })).toBeNull();
   });
@@ -132,7 +132,7 @@ describe("Jobs — expanded-row Delete", () => {
     // button proves the fetch landed and compose was genuinely off.
     await waitFor(() => expect(q.getByRole("link", { name: /Publish to GitLab/ })).toBeTruthy());
     expandRow(q, "cronomicon-job");
-    await waitFor(() => expect(q.getByText("Executor")).toBeTruthy());
+    await waitFor(() => expect(q.getByText("Run on")).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
   });
 

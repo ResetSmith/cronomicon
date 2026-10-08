@@ -41,11 +41,6 @@ type GlobalSettings struct {
 	MaxConcurrent     int            `json:"maxConcurrent"`
 	JobTimeoutSeconds int            `json:"jobTimeoutSeconds"`
 	SessionPolicy     *SessionPolicy `json:"sessionPolicy,omitempty"`
-	// DefaultExecutor is the global executor default applied when neither a
-	// per-trigger override nor a job's spec.executor is set (R5.1). ssh|runner;
-	// empty/unknown ⇒ falls through to the run-type capability default at
-	// trigger time (shell types ⇒ ssh, ansible/terraform ⇒ runner).
-	DefaultExecutor string `json:"defaultExecutor"`
 }
 
 // SessionPolicy is a nested object within GeneralSettings.
@@ -76,11 +71,10 @@ func GetGlobalSettings(ctx context.Context, database *sql.DB) (*GlobalSettings, 
 func UpdateGlobalSettings(ctx context.Context, database *sql.DB, inp GlobalSettings, actor string) (*GlobalSettings, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// defaultExecutor is an enum (R5.1): empty ⇒ reset to the ssh default; any
-	// other value must be one of ssh|runner.
-	if inp.DefaultExecutor != "" && inp.DefaultExecutor != "ssh" && inp.DefaultExecutor != "runner" {
-		return nil, fmt.Errorf("%w: invalid defaultExecutor %q (want ssh|runner)", ErrValidation, inp.DefaultExecutor)
-	}
+	// (`defaultExecutor` was a field here until 2.3.0. It is no longer part of
+	// the settings and is not written; the stored row, where there is one, is
+	// left alone — the 2.3.0 upgrade pass reads it once, to know where shell
+	// jobs used to run.)
 
 	// timezone must be a loadable IANA zone — this is the gate that keeps a bad
 	// value out of the scheduler/display path (timezone-update §6). Empty ⇒ the
@@ -114,7 +108,6 @@ func flattenGlobalSettings(s GlobalSettings) map[string]string {
 		"timezone":          s.Timezone,
 		"maxConcurrent":     fmt.Sprintf("%d", s.MaxConcurrent),
 		"jobTimeoutSeconds": fmt.Sprintf("%d", s.JobTimeoutSeconds),
-		"defaultExecutor":   s.DefaultExecutor,
 	}
 	if s.SessionPolicy != nil {
 		b, _ := json.Marshal(s.SessionPolicy)
@@ -129,7 +122,6 @@ func assembleGlobalSettings(kv map[string]string) *GlobalSettings {
 		Timezone:          kvStr(kv, "timezone", "UTC"),
 		MaxConcurrent:     kvInt(kv, "maxConcurrent", 10),
 		JobTimeoutSeconds: kvInt(kv, "jobTimeoutSeconds", 3600),
-		DefaultExecutor:   kvStr(kv, "defaultExecutor", "ssh"),
 	}
 	if raw, ok := kv["sessionPolicy"]; ok && raw != "" {
 		var sp SessionPolicy

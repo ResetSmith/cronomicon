@@ -16,7 +16,7 @@ import {
   Pager,
   SearchInput,
   StatusBadge,
-  ExecutorBadge,
+  RunnerCell,
   LostBadge,
   StoppedBadge,
   isRunnerLost,
@@ -68,7 +68,9 @@ interface Run {
   reactedToRunId?: string | null;
   reactionDepth?: number | null;
   triggerKind?: string | null;
-  runnerId?: number | null;
+  runnerId?: string | null;
+  /** The name of the runner that took the run — the run's own copy, kept after the runner is gone. */
+  runnerName?: string | null;
   workflowTraceId?: string | null;
   queuedAt?: string | null;
   startedAt?: string | null;
@@ -271,7 +273,7 @@ const COL_W: Record<string, number> = {
   job: 220,
   trace: 110,
   type: 110,
-  executor: 110,
+  runner: 150,
   schedule: 150,
   started: 150,
   completed: 150,
@@ -289,7 +291,7 @@ const COL_W: Record<string, number> = {
 const SORT_COLS: SortColumn<Run>[] = [
   { key: "job", get: (r) => r.jobName, type: "text" },
   { key: "type", get: (r) => r.type, type: "text" },
-  { key: "executor", get: (r) => r.executor, type: "text" },
+  { key: "runner", get: (r) => r.runnerName, type: "text" },
   { key: "schedule", get: (r) => r.scheduleName, type: "text" },
   { key: "started", get: (r) => r.startedAt, type: "date" },
   { key: "completed", get: (r) => r.completedAt, type: "date" },
@@ -397,7 +399,7 @@ export function ExecutionsTab() {
             // default; sent explicitly so the header state and the wire agree.
             ...(sort.sortKey
               ? {
-                  sort: sort.sortKey as "job" | "type" | "executor" | "schedule" | "started" | "completed" | "user" | "duration" | "status",
+                  sort: sort.sortKey as "job" | "type" | "runner" | "schedule" | "started" | "completed" | "user" | "duration" | "status",
                   order: sort.sortDir,
                 }
               : {}),
@@ -579,7 +581,10 @@ export function ExecutionsTab() {
       cell: (r) =>
         r.kind === "ssh-test" ? <span style={{ color: c.textSec, fontSize: c.fontSm }}>Test</span> : r.type ? <TypeBadge type={r.type} /> : <EmptyCell />,
     },
-    { key: "executor", label: "Executor", sortKey: "executor", width: COL_W.executor, fixed: true, cell: (r) => <ExecutorBadge executor={r.executor} /> },
+    // LR-50 — which runner took the run, where the Executor column was. The key
+    // is new on purpose: a stored column order that names "executor" drops it
+    // and gets this one at its default place (the CO-Q10 merge).
+    { key: "runner", label: "Runner", sortKey: "runner", width: COL_W.runner, cell: (r) => <RunnerCell executor={r.executor} runnerName={r.runnerName} /> },
     {
       key: "schedule",
       label: "Schedule",
@@ -859,13 +864,12 @@ function RunDetail({ traceId }: { traceId: string }) {
           <Field label="Set off">
             <TriggeredRunsLink runId={d.traceId} />
           </Field>
-          {d.executor && (
-            <Field label="Executor">
-              <span style={{ display: "inline-flex" }}>
-                <ExecutorBadge executor={d.executor} />
-              </span>
-            </Field>
-          )}
+          {/* Always present, as the Executor field was: "—" is the answer for a
+              run nobody has claimed, and a missing field would read as a
+              missing fact. */}
+          <Field label="Runner">
+            <RunnerCell executor={d.executor} runnerName={d.runnerName} />
+          </Field>
           {/* RT-3 — the pin this run was DISPATCHED with, frozen at trigger time.
               Deliberately its own field beside the runner that actually took it:
               one is intent, the other outcome. A run that waited an hour shows

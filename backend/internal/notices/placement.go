@@ -538,3 +538,74 @@ func checkLocalRunnerHostKeys(ctx context.Context, database *sql.DB) error {
 	}
 	return Reconcile(ctx, database, KindLocalRunnerHostKeys, found)
 }
+
+// KindLeftoverExecutorKey — Git job files (or their scripts' sidecars) that
+// still say `executor:`. The key is ignored since 2.3.0, and it used to mean
+// something: `ssh` kept a job on the server, `runner` kept it off. One notice
+// per agency, naming the jobs, so a repository with a hundred such lines is one
+// row in the inbox and not a hundred. Subject: the agency's id. It resolves
+// when a sync finds the lines gone.
+const KindLeftoverExecutorKey = "leftover_executor_key"
+
+func checkLeftoverExecutorKey(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `
+		WITH carrying AS (
+			SELECT j.name AS job, j.executor AS executor,
+			       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+			                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+			                  WHERE sc.name = j.scope), ?) AS agency
+			  FROM jobs j
+			 WHERE j.source = 'git' AND j.deleted_at IS NULL AND COALESCE(j.executor, '') <> ''
+		)
+		SELECT c.agency, COALESCE(a.name, c.agency), COUNT(*),
+		       (SELECT group_concat(job || ' (' || executor || ')', ', ') FROM (
+		            SELECT c2.job AS job, c2.executor AS executor FROM carrying c2
+		             WHERE c2.agency = c.agency ORDER BY c2.job LIMIT 5))
+		  FROM carrying c LEFT JOIN agencies a ON a.id = c.agency
+		 GROUP BY c.agency, a.name
+		 ORDER BY c.agency`, agencyid.Global)
+	if err != nil {
+		return err
+	}
+	var found []Finding
+	for rows.Next() {
+		var agency, name string
+		var n int
+		var jobs sql.NullString
+		if err := rows.Scan(&agency, &name, &n, &jobs); err != nil {
+			rows.Close()
+			return err
+		}
+		list := jobs.String
+		if n > 5 {
+			list += fmt.Sprintf(", and %d more", n-5)
+		}
+		// Global's notice is for the jobs no single agency answers for: no
+		// scope, a scope the catalog does not hold, or one in several agencies.
+		whose := fmt.Sprintf("%d of %s's jobs in Git still declare", n, name)
+		if n == 1 {
+			whose = fmt.Sprintf("One of %s's jobs in Git still declares", name)
+		}
+		if agency == agencyid.Global {
+			whose = fmt.Sprintf("%d jobs in Git that belong to no single agency still declare", n)
+			if n == 1 {
+				whose = "One job in Git that belongs to no single agency still declares"
+			}
+		}
+		found = append(found, Finding{
+			AgencyID: agency,
+			Subject:  agency,
+			Detail: whose + " an executor: " + list + ". The key is ignored since 2.3.0. " +
+				"It used to decide where a job ran — ssh from the server, runner on an agent — and no longer does: every " +
+				"job is taken by whichever runner that serves its scope asks first. Remove the line from each job's file, " +
+				"or from its script's sidecar when the job's own file has none (the job took it from there); to decide " +
+				"where these jobs run, bind their scopes to the runners that should serve them (Scopes → Runners).",
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	return Reconcile(ctx, database, KindLeftoverExecutorKey, found)
+}

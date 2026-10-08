@@ -145,6 +145,45 @@ func TestTheClaimClearsTheWaitingReason(t *testing.T) {
 	}
 }
 
+// The claim stamps the run with the runner's name as well as its id (migration
+// 1280): the id is ON DELETE SET NULL, and History must still say which runner
+// took a run after that runner is reaped or re-enrolled. The copy is the name
+// at the claim; a later rename does not rewrite what already ran.
+func TestTheClaimStampsTheRunnersNameAndItOutlivesTheRunner(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	insertRunner(t, svc, "r1", "dmz-agent-01", "online", []string{"bash"})
+	if _, err := svc.db.Exec(`
+		INSERT INTO runs(id, job_name, run_type, status, triggered_by, trigger_kind, executor, created_at)
+		VALUES ('run', 'j', 'bash', 'queued', 'test', 'manual', 'runner', ?)`, now()); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.claimRun(ctx, "r1", []string{"bash"}, false); err != nil || got == nil {
+		t.Fatalf("claim = %+v, %v", got, err)
+	}
+	stamp := func() (id, name sql.NullString) {
+		t.Helper()
+		if err := svc.db.QueryRow(`SELECT runner_id, runner_name FROM runs WHERE id = 'run'`).Scan(&id, &name); err != nil {
+			t.Fatal(err)
+		}
+		return id, name
+	}
+	if id, name := stamp(); id.String != "r1" || name.String != "dmz-agent-01" {
+		t.Fatalf("after the claim the run carries runner %q named %q, want r1 / dmz-agent-01", id.String, name.String)
+	}
+	if _, err := svc.db.Exec(`UPDATE runners SET name = 'renamed' WHERE id = 'r1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, name := stamp(); name.String != "dmz-agent-01" {
+		t.Errorf("a rename rewrote the run's copy: %q", name.String)
+	}
+	svc.deregisterRunner(ctx, "r1", "renamed")
+	if id, name := stamp(); id.Valid || name.String != "dmz-agent-01" {
+		t.Errorf("after the runner was deregistered the run carries id %q (valid %v) and name %q; want no id and the name kept",
+			id.String, id.Valid, name.String)
+	}
+}
+
 // A re-enrolled agent is offered its old placement by name. The local runner
 // never enrols, so the snapshot of an agent that was called what it is called
 // is not an offer to it.

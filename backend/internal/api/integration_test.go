@@ -836,10 +836,9 @@ func triggerRun(t *testing.T, client *http.Client, csrf, baseURL string, rowid i
 		t.Fatalf("POST /run: %v", err)
 	}
 	defer r.Body.Close()
+	// The run on a 202; the {code, message} of the refusal otherwise.
 	var out map[string]any
-	if r.StatusCode == http.StatusAccepted {
-		json.NewDecoder(r.Body).Decode(&out)
-	}
+	_ = json.NewDecoder(r.Body).Decode(&out) // an empty body leaves out nil
 	return r.StatusCode, out
 }
 
@@ -878,7 +877,7 @@ func TestRunTriggerWritesEveryRunForTheRunnerExecutor(t *testing.T) {
 // default (R5.1's precedence chain) — are no longer read. `executor` on the
 // request body is accepted for one more minor (LR-50) and changes nothing,
 // including the combinations that used to be refused (ssh on a toolchain run
-// type, R5.2). Only a value that is not one of the field's two is still told so.
+// type, R5.2) and values the field never had.
 func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 	ts, pool := newTestServer(t)
 	client, csrf := devLoginWithCSRF(t, ts)
@@ -900,9 +899,9 @@ func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 	code, run := triggerRun(t, client, csrf, ts.URL, sID, nil)
 	want("a job whose executor says ssh", code, run)
 	// The global default.
-	if _, err := settings.UpdateGlobalSettings(ctx, pool,
-		settings.GlobalSettings{DefaultExecutor: "ssh"}, "tester"); err != nil {
-		t.Fatalf("set global default: %v", err)
+	if _, err := pool.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES ('defaultExecutor', 'ssh')
+	                                     ON CONFLICT(key) DO UPDATE SET value = excluded.value`); err != nil {
+		t.Fatalf("set the old global default: %v", err)
 	}
 	gID := seedJob(t, pool, "global-bash", "bash", "")
 	code, run = triggerRun(t, client, csrf, ts.URL, gID, nil)
@@ -920,10 +919,9 @@ func TestRunTriggerIgnoresEveryExecutorChoice(t *testing.T) {
 	code, run = triggerRun(t, client, csrf, ts.URL, tfID, nil)
 	want("a terraform job whose executor says ssh", code, run)
 
-	// A value the field never had.
-	if code, _ := triggerRun(t, client, csrf, ts.URL, gID, map[string]any{"executor": "bogus"}); code != http.StatusUnprocessableEntity {
-		t.Errorf("bogus executor = %d, want 422", code)
-	}
+	// Ignored means ignored: not even a value the field never had is refused.
+	code, run = triggerRun(t, client, csrf, ts.URL, gID, map[string]any{"executor": "bogus"})
+	want("an executor the field never had", code, run)
 }
 
 // TestResyncScopes verifies the POST /api/v1/scopes/resync endpoint's basic

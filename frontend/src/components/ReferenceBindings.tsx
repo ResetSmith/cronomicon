@@ -5,6 +5,18 @@ import { useGet, rows } from "../hooks";
 import { c } from "../theme";
 import { Btn, InlineLoading, Section } from "./ui";
 import type { components } from "../api/schema";
+import { isRunnerOnly } from "../runtypes";
+
+// Who can deliver a bound SSH key (LR-47). A key is delivered as a FILE on the
+// machine that runs the job. An agent does that. The local runner — the server
+// running a shell job itself — connects from the server and cannot place a key
+// on the target, so it never takes a run that binds one. A shell run with a
+// key therefore waits for an agent that serves its scope, and is refused if
+// there is none. Ansible and terraform runs were always an agent's.
+const KEY_NEEDS_AGENT =
+  "An SSH key is delivered as a file by an agent only. The local runner (this server) does not take a run that binds one: " +
+  "a run of this job waits for an agent that serves its scope, and is refused if there is none. " +
+  "To use the key from the server, bind it as a Secret and write the file in the job body.";
 
 // Reference-binding UI (vault-integration.md P1.8). A job or script declares which
 // Env Vars references (Secrets / Variables / SSH Keys) it consumes; the dispatch
@@ -689,39 +701,38 @@ export function ReferenceBindingsEditor({
 
 // ── JobKeyField — the promoted SSH-key binding (EV-6) ────────────────────────
 // A declared key is not payload the way a secret or a variable is. It resolves to
-// key MATERIAL that the executor writes out as a key FILE for the run to use
+// key MATERIAL that an agent writes out as a key FILE for the run to use
 // (runref/resolve.go's Keys / D8), so it is what a playbook or script consumes as
 // CRONOMICON_KEY_<label> — and in practice it is single-valued, a second one only for a
 // bastion. It is also the one kind outside the References section's scope model:
 // ssh_credentials carries no scope column, so a key is agency-filtered rather than
 // scope-filtered and NEVER gets a resolved-scope pill (runref/validate.go — keys take
 // the !scoped branch, then an agency-membership check). Both facts argued for lifting
-// it out of the mixed list, beside Executor, rather than leaving it as one chip among
+// it out of the mixed list, beside Run on, rather than leaving it as one chip among
 // a dozen.
 //
 // It still IS an ordinary declared reference underneath, so the row keeps the derived
 // name visible. Writes go through putBindings, which preserves the secrets and
 // variables this field does not show.
 //
-// NOT gated on the executor. The tempting gate is backwards: it is the RUNNER path
-// that materializes a declared key (D8), while a run that resolves to the in-app
-// SSH executor is REFUSED at enqueue (KB — the executor cannot place a key on the
-// target). And with keys removed from the References editor below, a hidden field
-// would leave no way to declare one at all — so it always renders, and the
-// executor consequence is stated instead of guessed.
+// NOT gated on the run type or on who runs the job. Only an AGENT materializes
+// a declared key (D8); the local runner never takes a run that binds one
+// (LR-47). With keys removed from the References editor below, a hidden field
+// would leave no way to declare one at all — so it always renders, and that
+// consequence is stated instead of guessed.
 //
 // The component owns its grid cell (span 2): it is dropped straight into the job
 // overview grid and needs more room than a one-word field.
 export function JobKeyField({
   jobId,
   scope,
-  executor,
+  runType,
 }: {
   jobId: number;
   scope?: string | null;
-  // The job's executor, for the delivery caveat. null ⇒ resolved from the run type at
-  // trigger (shell types ⇒ ssh), which is exactly when the caveat can bite.
-  executor?: "runner" | "ssh" | null;
+  // The job's run type, for the delivery caveat: it applies to the shell types,
+  // which the local runner could otherwise take.
+  runType?: string | null;
 }) {
   const owner = useMemo<Owner>(() => ({ job: jobId }), [jobId]);
   const [refresh, setRefresh] = useState(0);
@@ -768,8 +779,8 @@ export function JobKeyField({
       {keys.length === 0 ? (
         <div style={{ fontSize: c.fontSm, color: c.textMuted, maxWidth: "70ch" }}>
           None declared — for a playbook or script that reads{" "}
-          <span style={{ fontFamily: c.mono }}>CRONOMICON_KEY_&lt;label&gt;</span>. In-app SSH auth uses the host record's
-          own key.
+          <span style={{ fontFamily: c.mono }}>CRONOMICON_KEY_&lt;label&gt;</span>. The connection to a host uses the
+          host record&rsquo;s own key, not one declared here.
         </div>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -784,18 +795,11 @@ export function JobKeyField({
         </ul>
       )}
       {/* The consequence an operator cannot infer from anywhere else in the UI:
-          only the runner path materializes a declared key, and a run that
-          resolves to the in-app SSH executor is refused at enqueue (KB) — the
-          executor connects from Cronomicon and cannot place a key on the target.
-          Stated here, where the key is declared, rather than discovered at the
-          Run button. EV-1: a consequence of current input stays inline. */}
-      {keys.length > 0 && executor !== "runner" && (
-        <div style={{ fontSize: c.fontXs, color: c.warning, marginTop: 4, maxWidth: "70ch" }}>
-          {executor == null
-            ? "Refused if a run resolves to the in-app SSH executor (this job's executor resolves at trigger)"
-            : "Refused on the in-app SSH executor — runs of this job are rejected unless overridden to a runner"}
-          {" — SSH keys are delivered on the runner path only. To use the key on the target, bind it as a Secret and write the file in the job body."}
-        </div>
+          only an agent materializes a declared key (KEY_NEEDS_AGENT). Stated
+          here, where the key is declared, rather than discovered at the Run
+          button. EV-1: a consequence of current input stays inline. */}
+      {keys.length > 0 && !isRunnerOnly(runType) && (
+        <div style={{ fontSize: c.fontXs, color: c.warning, marginTop: 4, maxWidth: "70ch" }}>{KEY_NEEDS_AGENT}</div>
       )}
       {/* The picker renders only while NO key is bound. Assigning the FIRST key must
           stay here — for a git-synced job this field is the only persistent authoring
@@ -855,14 +859,14 @@ export function ComposeKeyPicker({
   keys,
   onChange,
   scope,
-  executor,
+  runType,
   canManage,
 }: {
   keys: string[];
   onChange: (keys: string[]) => void;
   scope?: string | null;
-  /** The composer's executor choice; "" (auto) resolves at trigger — caveat-wise the same as null. */
-  executor?: string | null;
+  /** The chosen script's run type, for the delivery caveat (see KEY_NEEDS_AGENT). */
+  runType?: string | null;
   canManage: boolean;
 }) {
   const labels = useKnownKeys();
@@ -876,13 +880,12 @@ export function ComposeKeyPicker({
   const effScope = scope === undefined ? null : (scope ?? "");
   const { byKey: verdicts } = useReferenceValidation(bindings, effScope);
   const unbound = labels.filter((l) => !keys.includes(l));
-  const auto = !executor;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {keys.length === 0 ? (
         <div style={{ fontSize: c.fontSm, color: c.textMuted, maxWidth: "70ch" }}>
-          None declared — in-app SSH auth uses the host record's own key.
+          None declared — the connection to a host uses the host record&rsquo;s own key, not one declared here.
         </div>
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -896,15 +899,10 @@ export function ComposeKeyPicker({
           ))}
         </ul>
       )}
-      {/* KB — same consequence as JobKeyField: only the runner path materializes
-          a declared key; a run that resolves to the in-app SSH executor is refused. */}
-      {keys.length > 0 && executor !== "runner" && (
-        <div style={{ fontSize: c.fontXs, color: c.warning, maxWidth: "70ch" }}>
-          {auto
-            ? "Refused if a run resolves to the in-app SSH executor (this job's executor resolves at trigger)"
-            : "Refused on the in-app SSH executor — runs of this job are rejected unless overridden to a runner"}
-          {" — SSH keys are delivered on the runner path only. To use the key on the target, bind it as a Secret and write the file in the job body."}
-        </div>
+      {/* LR-47 — same consequence as JobKeyField: only an agent materializes a
+          declared key. */}
+      {keys.length > 0 && !isRunnerOnly(runType) && (
+        <div style={{ fontSize: c.fontXs, color: c.warning, maxWidth: "70ch" }}>{KEY_NEEDS_AGENT}</div>
       )}
       {canManage && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
@@ -1300,15 +1298,15 @@ export function ReferencePreflightPanel({
   added,
   onAdd,
   onRemove,
-  executor,
+  runType,
 }: {
   state: RunReferencePreflight;
   scope: string;
   added?: ReferenceBinding[];
   onAdd?: (b: ReferenceBinding) => void;
   onRemove?: (b: ReferenceBinding) => void;
-  /** The dialog's chosen executor, for the key-binding refusal notice (KB). */
-  executor?: "runner" | "ssh";
+  /** The job's run type, for the key-delivery notice (LR-47). */
+  runType?: string | null;
 }) {
   const { refs, declared, byKey, verdicts, loading, error, unresolved } = state;
   const editable = !!onAdd;
@@ -1340,11 +1338,12 @@ export function ReferencePreflightPanel({
   // point of a per-run alias ("run this job with THAT credential, under this name").
   const addable = (known[addKind] ?? []).filter((n) => !present.has(bkey({ kind: addKind, name: n, as: addAs.trim() })));
   const showAdd = editable && canManage;
-  // KB — a key reference (declared OR added) makes a run that resolves to the
-  // in-app SSH executor REFUSED (422 key_binding_requires_runner); say so where the
-  // executor is being chosen rather than letting the ✓ imply delivery. The
-  // validator cannot carry this: existence and delivery differ.
-  const keyCaveat = executor === "ssh" && refs.some((b) => b.kind === "key");
+  // LR-47 — a key reference (declared OR added) on a shell run needs an agent:
+  // the local runner will not take the run, and with no agent serving the scope
+  // it is refused (422 key_binding_requires_runner). Say so here rather than
+  // letting the ✓ imply delivery. The validator cannot carry this: existence
+  // and delivery differ.
+  const keyCaveat = !isRunnerOnly(runType) && refs.some((b) => b.kind === "key");
 
   if (refs.length === 0 && !showAdd) return null;
   const selectStyle: CSSProperties = {
@@ -1445,7 +1444,9 @@ export function ReferencePreflightPanel({
       )}
       {keyCaveat && (
         <div style={{ fontSize: c.fontXs, color: c.warning, marginTop: 4, maxWidth: "70ch" }}>
-          This run will be refused: it resolves to the in-app SSH executor, which cannot deliver SSH keys. Choose the runner executor, or bind the key as a Secret and write the file in the job body.
+          This run binds an SSH key, which only an agent can deliver as a file. It waits for an agent that serves this scope, and
+          is refused if there is none; the local runner (this server) will not take it. To use the key from the server, bind
+          it as a Secret and write the file in the job body.
         </div>
       )}
       {!loading && !error && (

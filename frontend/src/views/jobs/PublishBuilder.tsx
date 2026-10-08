@@ -26,7 +26,6 @@ interface JobDetail {
   description?: string | null;
   scope?: string | null;
   host?: string | null;
-  executor?: string | null;
   command?: string | null;
   script?: string | null;
   scriptPath?: string | null;
@@ -120,7 +119,7 @@ function jobSource(d: JobDetail): { kind: "command" | "script" | "scriptPath"; b
 
 // "Publish to GitLab" authoring mode for Jobs — reached from Jobs via the hidden
 // /jobs/publish route (mirrors how Jobs launches Compose). Authors a `kind: Job`
-// YAML (executor, scope→target_host, concurrency, timeout, retries, tags +
+// YAML (scope→target_host, concurrency, timeout, retries, tags +
 // schedules) and Git-publishes it via POST /schedules/publish with an If-Match
 // base_sha precondition (A2). The push audit lives in History → Schedule Pushes,
 // not here (single source of truth).
@@ -240,7 +239,6 @@ export function PublishBuilder() {
     // Preserved Gap B / definition fields (so a schedule edit never strips them).
     if (detail?.scope) y += `  scope: ${yamlScalar(detail.scope)}\n`;
     if (detail?.host) y += `  target_host: ${yamlScalar(detail.host)}\n`;
-    if (detail?.executor) y += `  executor: ${yamlScalar(detail.executor)}\n`;
     if (detail?.concurrencyPolicy) y += `  concurrency_policy: ${yamlScalar(detail.concurrencyPolicy)}\n`;
     if (detail?.concurrencyKey) y += `  concurrency_key: ${yamlScalar(detail.concurrencyKey)}\n`;
     if (detail?.timeoutSeconds) y += `  timeout_seconds: ${detail.timeoutSeconds}\n`;

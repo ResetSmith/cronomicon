@@ -10,7 +10,7 @@ import { DOC_LINKS } from "../components/docLinks";
 import { agencySuffix, ambiguousNames } from "../utils/disambiguate";
 import type { components } from "../api/schema";
 import { RefreshScope } from "../components/RefreshScope";
-import { Badge, Btn, ConfirmDialog, DerivedAgencies, Disclosure, EmptyCell, RefreshButton, EnvRowsEditor, ExecutorChoice, Field, FormField, HoverTr, InlineTags, KILL_OUTCOMES, Modal, Pager, Rule, SearchBar, Section, SkeletonRows, SourceBadge, TabBar, TableSurface, TagEditor, TagFilterSelect, Toast, TypeBadge, type KillOutcome, agencySortKey, inputStyle, jobStatusLabel, matchesTags, usePager,
+import { Badge, Btn, ConfirmDialog, DerivedAgencies, Disclosure, EmptyCell, RefreshButton, EnvRowsEditor, Field, FormField, HoverTr, InlineTags, KILL_OUTCOMES, Modal, Pager, Rule, SearchBar, Section, SkeletonRows, SourceBadge, TabBar, TableSurface, TagEditor, TagFilterSelect, Toast, TypeBadge, type KillOutcome, agencySortKey, inputStyle, jobStatusLabel, matchesTags, usePager,
   DocLink,
 } from "../components/ui";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
@@ -19,7 +19,7 @@ import { RevisionHistory } from "./RevisionHistory";
 import { RunAnalytics } from "../components/RunAnalytics";
 import { JobEffectiveReferences, JobKeyField, ReferencePreflightPanel, useRunReferencePreflight } from "../components/ReferenceBindings";
 import { FolderBrowser } from "../components/FolderBrowser";
-import { isIdentityCapable, isRunnerOnly, type Executor } from "../runtypes";
+import { isIdentityCapable, isRunnerOnly } from "../runtypes";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { RunInputsPanel, type InputState, type Provenance } from "./jobs/RunInputs";
 import { buildRunSummary, type SummaryAccent, type SummaryRow } from "./jobs/runSummary";
@@ -74,7 +74,7 @@ const jobDisplayPath = (j: Job) => {
 const jobName = (j: Job) => String(j.id ?? j.name);
 
 // Background poll cadence for the jobs list. A run executes asynchronously
-// (POST /run enqueues as "queued" and returns 202; the scheduler/executor then
+// (POST /run enqueues as "queued" and returns 202; a runner's claim then
 // drives queued→running→terminal), so without a periodic refetch a running job
 // never shows up in the Running tab until a manual reload. Polling silently
 // (see useGet's intervalMs) keeps the tab counts and rows live.
@@ -348,7 +348,6 @@ export function Jobs() {
     verb: "run" | "pause" | "resume" | "kill",
     runOpts?: {
       scope?: string;
-      executor?: Executor;
       env?: Record<string, string>;
       targetHosts?: string[];
       targetGroups?: string[];
@@ -386,7 +385,6 @@ export function Jobs() {
     const path = { jobId: job.id };
     const runBody: {
       scope?: string;
-      executor?: Executor;
       env?: Record<string, string>;
       targetHosts?: string[];
       targetGroups?: string[];
@@ -408,7 +406,6 @@ export function Jobs() {
       runAt?: string;
     } = {};
     if (runOpts?.scope) runBody.scope = runOpts.scope;
-    if (runOpts?.executor) runBody.executor = runOpts.executor;
     if (runOpts?.env && Object.keys(runOpts.env).length > 0) runBody.env = runOpts.env;
     if (runOpts?.targetHosts && runOpts.targetHosts.length > 0) runBody.targetHosts = runOpts.targetHosts;
     if (runOpts?.targetGroups && runOpts.targetGroups.length > 0) runBody.targetGroups = runOpts.targetGroups;
@@ -935,10 +932,9 @@ export function Jobs() {
           nameAmbiguous={ambiguousJobNames.has(runFor.name ?? "")}
           busy={busyId === runFor.id}
           onCancel={() => setRunFor(null)}
-          onRun={async (scope, executor, env, targetHosts, targetGroups, ansibleLimit, audit, references, identity, ansibleOpts) => {
+          onRun={async (scope, env, targetHosts, targetGroups, ansibleLimit, audit, references, identity, ansibleOpts) => {
             const res = await act(runFor, "run", {
               scope,
-              executor,
               env,
               targetHosts,
               targetGroups,
@@ -948,8 +944,8 @@ export function Jobs() {
               ...audit,
               ...identity,
             });
-            // Keep the dialog open on an invalid-executor rejection so the
-            // operator can pick a different executor; close on success.
+            // The dialog stays open on a refusal so the operator can correct it
+            // in place, and closes on success.
             return res;
           }}
           onDone={() => setRunFor(null)}
@@ -1076,11 +1072,11 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
   // Last edited, Working calendars…) are NOT run facts: they are absent for
   // unrelated reasons and keep the enumeration, which is where it earns its keep.
   const overview: { label: string; value: React.ReactNode; mono?: boolean; present: boolean; runFact?: boolean }[] = [
-    { label: "Executor", value: executorLabel(j), present: true },
-    // SB — "Run on" sits immediately after Executor: the two answer adjacent
-    // halves of where this runs. Always present, because "any eligible runner"
-    // is a real and useful answer rather than a missing value.
-    { label: "Run on", value: <RunsOn bound={boundRunners} scope={j.scope} />, present: true },
+    // "Run on" leads: it is the whole answer to where this job runs. There is no
+    // executor to name beside it any more (2.3.0, LR-50) — a run is taken by
+    // whichever runner may serve its scope. Always present, because "any runner
+    // that serves the scope" is a real and useful answer, not a missing value.
+    { label: "Run on", value: <RunsOn bound={boundRunners} scope={j.scope} runType={j.type} />, present: true },
     { label: "Next run", value: j.status === "paused" ? "—" : fmtWhen(j.nextRunAt), present: j.status !== "paused" && j.nextRunAt != null, runFact: true },
     // AR — a parked ad-hoc run someone scheduled from the Run dialog; distinct
     // from Next run (the standing-schedule projection). Cancel lives on
@@ -1150,13 +1146,13 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
               {overview.filter((f) => f.present).map((f, i) => (
                 <Fragment key={f.label}>
                   <Field label={f.label} value={f.value} mono={f.mono} />
-                  {/* EV-6 — the SSH key follows Executor, the field it completes:
-                      one says how the job runs, the other what key material the run
-                      gets (and whether that executor delivers it at all). It used to
-                      be one chip inside the mixed References list below, ranked
-                      equally with a dozen optional variables. */}
+                  {/* EV-6 — the SSH key follows Run on, the field it completes:
+                      one says which runners take the job, the other what key
+                      material the run gets (and that only an agent delivers it).
+                      It used to be one chip inside the mixed References list
+                      below, ranked equally with a dozen optional variables. */}
                   {i === 0 && jobId != null && (
-                    <JobKeyField jobId={jobId} scope={j.scope ?? ""} executor={j.executor ?? null} />
+                    <JobKeyField jobId={jobId} scope={j.scope ?? ""} runType={j.type} />
                   )}
                 </Fragment>
               ))}
@@ -1276,12 +1272,6 @@ function JobDetail({ jobId, fallback, tags, onSaveTags, tagErr, actions, canEdit
       </div>
     </div>
   );
-}
-
-function executorLabel(j: Job): string {
-  if (j.executor === "ssh") return "SSH (in-app)";
-  if (j.executor === "runner") return "Runner agent";
-  return "Auto (resolved at run)";
 }
 
 // A function, not a module-level const, so a theme toggle re-reads the active
@@ -1451,13 +1441,12 @@ function JobPrompts({ job }: { job: Job }) {
 
 
 
-// Run dialog: optional scope override + executor picker (R5.2). The API allows
-// running against a scope whose declared types exclude the job type (advisory
-// model) — we soft-warn. The executor picker enforces the capability matrix:
-// ansible/terraform are runner-only (SSH disabled with a tooltip); shell types
-// (bash/perl/powershell/python) accept either. The chosen executor is sent as the
-// `executor` field on POST /jobs/{jobId}/run; a 422 invalid_executor is
-// surfaced inline so the operator can correct it without losing the dialog.
+// Run dialog: optional scope override, targeting, identity and timing. There is
+// no executor to pick (2.3.0, LR-50): a run is taken by whichever runner may
+// serve its scope — the runners the scope is bound to when it names any, else
+// an agent for ansible/terraform (they need the local toolchain) and any runner,
+// agent or local, for the shell types. The dialog states that rule; it cannot
+// name the runner, because the claim decides it.
 //
 // RU-7 — a quiet label that groups controls INSIDE an open fold without adding a
 // second disclosure level to click through. Deliberately not a Disclosure: the
@@ -1488,7 +1477,6 @@ export function RunDialog({
   onCancel: () => void;
   onRun: (
     scope: string | undefined,
-    executor: Executor | undefined,
     env: Record<string, string> | undefined,
     targetHosts: string[] | undefined,
     targetGroups: string[] | undefined,
@@ -1523,28 +1511,11 @@ export function RunDialog({
   // the catalog decided (nameAmbiguous), because only it can see the collision.
   const runTitleName = nameAmbiguous ? `${job.name}${agencySuffix(job.agencies)}` : job.name;
   const runnerOnly = isRunnerOnly(job.type);
-  // RP-3 — a job whose executor is Auto (unset) still resolves to a concrete
-  // choice here (a run is always concrete), but the dialog SAYS so instead of
-  // presenting the resolution as if the job had pinned it.
-  const executorAuto = job.executor !== "ssh" && job.executor !== "runner";
   // SB — the runners the run's EFFECTIVE scope is bound to (`scope` is this
   // dialog's own state, so a per-run scope override is judged against the scope
-  // the run will actually use). A bound scope's work goes to those runners, and
-  // the server refuses a run that asks for SSH on one — so on a bound scope SSH
-  // is simply not on offer, exactly as it is not for a runner-only run type.
+  // the run will actually use). A bound scope's work goes to those runners.
   const { bound: boundRunners } = useBoundRunners(scope);
   const scopeBound = boundRunners.length > 0;
-  const sshUnavailable = runnerOnly || scopeBound;
-  // Default the picker: runner-only run-types and bound scopes force Runner;
-  // otherwise prefer the job's own executor when it's a concrete choice, else
-  // SSH (the shell default).
-  const defaultExecutor: Executor = sshUnavailable ? "runner" : job.executor === "runner" ? "runner" : "ssh";
-  // The operator's own choice, null until they make one. Derived rather than
-  // seeded into state: the binding arrives after mount and changes with the
-  // scope field, and a state seeded from the first render would keep saying SSH
-  // for a run the server is about to refuse.
-  const [executorChoice, setExecutor] = useState<Executor | null>(null);
-  const executor: Executor = sshUnavailable ? "runner" : executorChoice ?? defaultExecutor;
   const [runErr, setRunErr] = useState<string | null>(null);
   // F1 per-run env overrides + F2 host subset within the bound scope.
   const [envRows, setEnvRows] = useState<{ key: string; value: string }[]>([]);
@@ -1591,11 +1562,11 @@ export function RunDialog({
   // Hosts come from the effective scope (the override, else the job's own scope).
   const effScope = scope || job.scope || "";
   const scopeHosts = scopes.find((s) => s.scope === effScope)?.hosts ?? [];
-  // RP-1 — the host subset is offered for BOTH executors now: SSH connects to the
-  // selection; a runner run carries it as targetHosts, which the server folds into
-  // the ansible --limit (RunLimit) or the manifest target set. The per-executor
-  // truth ("cronomicon-inventory runners only", "terraform ignores it") lives in the
-  // helper line rather than in a hidden control.
+  // RP-1 — the host subset is offered for every run type: the run carries it as
+  // targetHosts, which becomes the connection list, the ansible --limit
+  // (RunLimit) or the manifest target set. The per-type truth ("an agent on its
+  // own inventory ignores it", "terraform ignores it") lives in the helper line
+  // rather than in a hidden control.
   const canPickHosts = scopeHosts.length > 0;
   // RB-26/RB-29 — a job with no declared scope carries no authority of its own, so
   // a RESTRICTED caller must bind one here. Without this the rule is discoverable
@@ -1604,9 +1575,9 @@ export function RunDialog({
   const jobUnscoped = !(job.scope ?? "");
   const mustBindScope = jobUnscoped && !unrestricted;
   const scopeMissing = mustBindScope && !scope;
-  // M3 — groups come from the effective scope's projection (NAMES only). Offered
-  // for BOTH executors: SSH expands group members to host targets, a runner passes
-  // the group names as ansible --limit. Both target the identical set.
+  // M3 — groups come from the effective scope's projection (NAMES only). A shell
+  // run expands group members to host targets; ansible takes the group names as
+  // --limit. Both target the identical set.
   const scopeGroups = scopes.find((s) => s.scope === effScope)?.groups ?? [];
   const canPickGroups = scopeGroups.length > 0;
   // Reset subsets whenever the effective scope changes (hosts/groups differ per scope).
@@ -1760,7 +1731,7 @@ export function RunDialog({
     const targetHosts = canPickHosts && limitHosts && !rawLimitActive ? pickedHosts : undefined;
     const targetGroups = canPickGroups && limitGroups && !rawLimitActive ? pickedGroups : undefined;
     const rawLimit =
-      executor === "runner" && job.type === "ansible" && rawLimitActive && !chipsActive ? ansibleLimit.trim() : undefined;
+      job.type === "ansible" && rawLimitActive && !chipsActive ? ansibleLimit.trim() : undefined;
     // T2.4 — record HOW the operator arrived here: where each declared input's value
     // came from, and whether they knowingly proceeded past an unfilled required one.
     // Purely descriptive — it never changes what the run does.
@@ -1770,7 +1741,6 @@ export function RunDialog({
     }
     const res = await onRun(
       scope && scope !== job.scope ? scope : undefined,
-      executor,
       Object.keys(env).length > 0 ? env : undefined,
       targetHosts,
       targetGroups,
@@ -1817,19 +1787,11 @@ export function RunDialog({
     );
     if (res.ok) {
       onDone();
-    } else if (res.code === "invalid_executor" || res.code === "scope_requires_runner") {
-      // Force the runner choice and keep the dialog open so the operator can retry.
-      // scope_requires_runner is the same remedy for a different reason: the
-      // run's scope is bound to runners. The dialog normally knows that before
-      // Run is pressed; this is the case where the binding was made in between.
-      setExecutor("runner");
-      setRunErr(res.message ?? "SSH cannot run this job — use the runner executor.");
     } else if (res.code === "key_binding_requires_runner") {
-      // KB — the run RESOLVED to the ssh executor and the job binds an SSH key the
-      // executor cannot deliver. Unlike invalid_executor this does NOT force the
-      // runner choice: a Secret binding is the other legitimate way out, and the
-      // server message names both. Keep the dialog open to retry either way.
-      setRunErr(res.message ?? "This job binds an SSH key, which only a runner can deliver — choose the runner executor or bind the key as a Secret.");
+      // LR-47 — the job binds an SSH key, which only an agent delivers, and no
+      // agent serves this scope. Nothing in the dialog fixes that except
+      // removing an added key reference; the server message names the ways out.
+      setRunErr(res.message ?? "This job binds an SSH key, which only an agent can deliver, and no agent serves this scope — enrol one, or bind the key as a Secret.");
     } else if (res.code === "prompt_required") {
       // The server refused a `block` job. Keep the dialog open with the message —
       // which names the offending inputs — so the operator can fill them in place.
@@ -1934,14 +1896,19 @@ export function RunDialog({
     added: addedRefs,
   });
   const unresolvedRefs = preflight.unresolved;
+  // LR-50 — who takes the run. Nothing here is a choice: it is the claim rule,
+  // stated before the claim. A bound scope names its runners. Otherwise an
+  // agent takes what only an agent can: ansible and terraform (the toolchain)
+  // and any run that binds an SSH key, declared on the job or added here
+  // (LR-47 — the local runner never takes one). Anything else is any runner's.
+  const bindsKey = preflight.refs.some((b) => b.kind === "key");
+  const agentOnly = runnerOnly || bindsKey;
+  const runsOnWord = scopeBound ? boundRunners.map((b) => b.name).join(", ") : agentOnly ? "an agent" : "any runner";
   useEffect(() => {
     if (unresolvedRefs > 0) setVarsOpen(true);
   }, [unresolvedRefs]);
 
   const namedOverrides = envRows.filter((r) => r.key.trim() !== "").length;
-  // RP-3 — while the selection still IS the job's Auto resolution, say so; the
-  // moment the operator picks the other card it is a concrete override.
-  const executorWord = executor === "ssh" ? "SSH" : "Runner";
   const targetsSummary = [
     effScope || "no scope",
     canPickGroups && limitGroups && pickedGroups.length > 0
@@ -1955,12 +1922,12 @@ export function RunDialog({
     .filter(Boolean)
     .join(" · ");
   const methodSummary = [
-    executorAuto && executor === defaultExecutor ? `Auto → ${executorWord}` : executorWord,
+    // The collapsed line names who takes the run — the bound runners when the
+    // scope names them: the section's job is that the facts which decide where
+    // a run goes stay visible while it is folded.
+    `on ${runsOnWord}`,
     sshUser.trim() ? `as ${sshUser.trim()}` : "",
     sshCredential ? `key ${sshCredential}` : "",
-    // SB — the collapsed line names the bound runners: the section's job is that
-    // the facts which decide where a run goes stay visible while it is folded.
-    scopeBound ? `on ${boundRunners.map((b) => b.name).join(", ")}` : "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -2028,19 +1995,13 @@ export function RunDialog({
   if (scope && scope !== (job.scope ?? "")) {
     deviations.push({ label: "Scope", detail: `${scope} — job default: ${job.scope || "(none)"}` });
   }
-  if (!runnerOnly && executor !== defaultExecutor) {
-    deviations.push({
-      label: "Executor",
-      detail: `${executorWord} — job default: ${executorAuto ? `Auto → ${defaultExecutor === "ssh" ? "SSH" : "Runner"}` : defaultExecutor === "ssh" ? "SSH" : "Runner"}`,
-    });
-  }
   if (canPickHosts && limitHosts && pickedHosts.length > 0 && !rawLimitActive) {
     deviations.push({ label: "Host subset", detail: `${pickedHosts.length} of ${scopeHosts.length}: ${pickedHosts.join(", ")}` });
   }
   if (canPickGroups && limitGroups && pickedGroups.length > 0 && !rawLimitActive) {
     deviations.push({ label: "Group subset", detail: pickedGroups.join(", ") });
   }
-  if (rawLimitActive && executor === "runner" && job.type === "ansible") {
+  if (rawLimitActive && job.type === "ansible") {
     deviations.push({ label: "Raw --limit", detail: ansibleLimit.trim() });
   }
   if (sshUser.trim() || sshCredential) {
@@ -2083,7 +2044,7 @@ export function RunDialog({
   // The one-sentence targeting phrase that leads the confirmation window. It reflects the EFFECTIVE selection — a subset or
   // raw --limit must not read as "all N hosts" while the row below says 1 of N.
   const hostsPhrase =
-    rawLimitActive && executor === "runner" && job.type === "ansible"
+    rawLimitActive && job.type === "ansible"
       ? `--limit ${ansibleLimit.trim()} in ${effScope || "no scope"}`
       : canPickHosts && limitHosts && pickedHosts.length > 0
         ? `${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} in ${effScope}`
@@ -2106,7 +2067,6 @@ export function RunDialog({
     rawLimitActive ||
     (canPickHosts && limitHosts && pickedHosts.length > 0) ||
     (canPickGroups && limitGroups && pickedGroups.length > 0);
-  const recapExecutorChanged = !runnerOnly && executor !== defaultExecutor;
 
   // RS-3 — the rail's summary. Built from the SAME derived values the recap
   // sentence and `deviations` read, so all three answer from one state and
@@ -2125,15 +2085,14 @@ export function RunDialog({
     // phrase states. A raw --limit branch passes none (the phrase carries the
     // literal itself).
     targetNames:
-      rawLimitActive && executor === "runner" && job.type === "ansible"
+      rawLimitActive && job.type === "ansible"
         ? []
         : canPickHosts && limitHosts && pickedHosts.length > 0
           ? pickedHosts
           : canPickGroups && limitGroups && pickedGroups.length > 0
             ? pickedGroups
             : [],
-    executorWord: executorAuto && !runnerOnly ? `Auto → ${executorWord}` : executorWord,
-    executorChanged: recapExecutorChanged,
+    runsOn: runsOnWord,
     sshUser,
     sshCredential,
     // From `jobDetail`, never `job` — the identity fields are detail-only on
@@ -2142,7 +2101,7 @@ export function RunDialog({
     jobSshUser: jobDetail.sshUser ?? "",
     jobSshCredential: jobDetail.sshCredential ?? "",
     identityCapable,
-    boundRunners: executor === "runner" ? boundRunners.map((b) => b.name) : [],
+    scopeBound,
     whenPhrase,
     deferred: !!runAt,
     ansCheck,
@@ -2197,9 +2156,7 @@ export function RunDialog({
         {hostsPhrase}
       </span>
       <span style={{ color: c.textMuted }}>·</span>
-      <span style={{ color: recapExecutorChanged ? c.warning : c.textSec, fontWeight: recapExecutorChanged ? 600 : 400 }}>
-        via {executorWord}
-      </span>
+      <span style={{ color: c.textSec }}>on {runsOnWord}</span>
       <span style={{ color: c.textMuted }}>·</span>
       <span style={{ color: runAt ? c.info : c.textSec, fontWeight: runAt ? 600 : 400 }}>{whenPhrase}</span>
       {ansCheck && (
@@ -2420,8 +2377,7 @@ export function RunDialog({
             deviation against the default it replaces. Everything here reads
             LIVE state, so it can never disagree with what Confirm submits. */}
         <div style={{ fontSize: c.fontSm, color: c.text, marginBottom: 12 }}>
-          <strong>{job.name}</strong> runs on {hostsPhrase} via{" "}
-          <strong>{executor === "ssh" ? "the in-app SSH executor" : "a runner agent"}</strong>
+          <strong>{job.name}</strong> runs on {hostsPhrase}, taken by <strong>{runsOnWord}</strong>
           {deviations.length > 0 ? (
             <>
               {" "}— with{" "}
@@ -2578,7 +2534,7 @@ export function RunDialog({
           added={addedRefs}
           onAdd={(b) => setAddedRefs((prev) => (prev.some((x) => x.kind === b.kind && x.name === b.name) ? prev : [...prev, b]))}
           onRemove={(b) => setAddedRefs((prev) => prev.filter((x) => !(x.kind === b.kind && x.name === b.name)))}
-          executor={executor}
+          runType={job.type}
         />
         </div>
 
@@ -2598,14 +2554,14 @@ export function RunDialog({
           That held only while it was collapsed: opening it made the pinned block
           taller than the modal's scrollport, and a sticky element pinned by its
           BOTTOM edge grows upward — so the opaque bar painted straight over "Answers
-          this run needs". The collapsed summary still states scope and executor, so
+          this run needs". The collapsed summary still states scope and runner, so
           the fact that must never be hidden is still never hidden; only the editing
           form scrolls, which is what an operator deliberately editing targeting
           expects.
 
           RU-11 — from here down, `helperMode="engaged"` splits the helper prose two
           ways, and the split is by CONSEQUENCE, not by length:
-            · what the control DOES (executor resolution, connect-as narrative,
+            · what the control DOES (connect-as narrative,
               host/group semantics, tags, verbosity, become, check mode, the raw
               --limit description) → engaged: shown on focus or when the control is
               non-default, hidden while it sits at its default. Nobody needs a
@@ -2626,12 +2582,9 @@ export function RunDialog({
           open={targetsOpen}
           onToggle={() => setTargetsOpen((o) => !o)}
         >
-      {/* RU-7 — two quiet subheadings, not two folds. RU-Q3 kept the executor and
-          Connect-as in this section (they answer "where does this run"), so the
-          length is mitigated by grouping rather than by relocation: TARGETING is
-          which machines, CONNECTION is how we reach them. The executor cards used
-          to sit BETWEEN the reference preflight and the host chips, splitting
-          targeting in half; connection now follows targeting whole. */}
+      {/* RU-7 — TARGETING is which machines; how they are reached (who takes the
+          run, and as whom it connects) is the Method section below, so targeting
+          reads whole. */}
       <div style={{ fontSize: c.fontXs, marginTop: 2, marginBottom: 10 }}>
         <DocLink href={DOC_LINKS.runTargeting}>How targeting decides a run&rsquo;s reach</DocLink>
       </div>
@@ -2664,8 +2617,8 @@ export function RunDialog({
       </FormField>
 
 
-      {/* F2/RP-1 — host subset within the bound scope, offered for BOTH executors.
-          What the selection actually does per run type lives in the helper line. */}
+      {/* F2/RP-1 — host subset within the bound scope, for every run type. What
+          the selection actually does per run type lives in the helper line. */}
       {canPickHosts && (
         <FormField
           label="Hosts"
@@ -2676,20 +2629,16 @@ export function RunDialog({
             !limitHosts
               ? job.type === "terraform"
                 ? "Terraform decides its own targets from its configuration; the scope chooses which runner takes the run."
-                : executor === "ssh"
-                  ? `Runs on all ${scopeHosts.length} host${scopeHosts.length === 1 ? "" : "s"} in ${effScope}.`
-                  : job.type === "ansible"
-                    ? `Targets the whole ${effScope} inventory (${scopeHosts.length} host${scopeHosts.length === 1 ? "" : "s"}); the playbook's hosts pattern applies.`
-                    : `Runs on all ${scopeHosts.length} host${scopeHosts.length === 1 ? "" : "s"} in ${effScope}.`
+                : job.type === "ansible"
+                  ? `Targets the whole ${effScope} inventory (${scopeHosts.length} host${scopeHosts.length === 1 ? "" : "s"}); the playbook's hosts pattern applies.`
+                  : `Runs on all ${scopeHosts.length} host${scopeHosts.length === 1 ? "" : "s"} in ${effScope}.`
               : subsetInvalid
                 ? "Select at least one host, or untick to run on the whole scope."
-                : executor === "ssh"
-                  ? `SSH: connects to the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"}.`
-                  : job.type === "ansible"
-                    ? `Ansible: passes the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} as --limit.`
-                    : job.type === "terraform"
-                      ? "Recorded on the run for audit — terraform does not consume host targeting."
-                      : `Runner: limits the run to the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} (honored by cronomicon-inventory runners).`
+                : job.type === "ansible"
+                  ? `Ansible: passes the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} as --limit.`
+                  : job.type === "terraform"
+                    ? "Recorded on the run for audit — terraform does not consume host targeting."
+                    : `Connects to the ${pickedHosts.length} selected host${pickedHosts.length === 1 ? "" : "s"} only (honored by the local runner and by agents that use the Cronomicon inventory).`
           }
         >
           <label
@@ -2715,9 +2664,8 @@ export function RunDialog({
         </FormField>
       )}
 
-      {/* M3 — group subset within the bound scope (both executors). RP-2 — the
-          helper is keyed on run type, not just executor: only ansible turns the
-          selection into --limit. */}
+      {/* M3 — group subset within the bound scope. RP-2 — the helper is keyed on
+          run type: only ansible turns the selection into --limit. */}
       {canPickGroups && (
         <FormField
           label="Groups"
@@ -2729,13 +2677,11 @@ export function RunDialog({
               ? "Target whole inventory groups instead of individual hosts."
               : groupSubsetInvalid
                 ? "Select at least one group, or untick to run on the whole scope."
-                : executor === "ssh"
-                  ? `SSH: expands ${pickedGroups.length} group${pickedGroups.length === 1 ? "" : "s"} to member hosts.`
-                  : job.type === "ansible"
-                    ? `Ansible: passes ${pickedGroups.length} group${pickedGroups.length === 1 ? "" : "s"} as --limit.`
-                    : job.type === "terraform"
-                      ? "Recorded on the run for audit — terraform does not consume group targeting."
-                      : `Runner: targets the ${pickedGroups.length} selected group${pickedGroups.length === 1 ? "" : "s"}' member hosts.`
+                : job.type === "ansible"
+                  ? `Ansible: passes ${pickedGroups.length} group${pickedGroups.length === 1 ? "" : "s"} as --limit.`
+                  : job.type === "terraform"
+                    ? "Recorded on the run for audit — terraform does not consume group targeting."
+                    : `Expands ${pickedGroups.length} group${pickedGroups.length === 1 ? "" : "s"} to ${pickedGroups.length === 1 ? "its" : "their"} member hosts.`
           }
         >
           <label
@@ -2767,9 +2713,9 @@ export function RunDialog({
         </Disclosure>
       </div>
 
-      {/* RD5 — Method: HOW the run reaches its targets. Executor, then the runner
-          pin, then Connect as — "which kind of executor", "which runner", "as
-          whom", in that order. Formerly the Connection half of "Where it runs". */}
+      {/* RD5 — Method: HOW the run reaches its targets. Who takes it, then
+          Connect as — "which runner", "as whom", in that order. Formerly the
+          Connection half of "Where it runs". */}
       <div style={{ marginTop: 14 }}>
         <Disclosure
           title="Method"
@@ -2777,56 +2723,54 @@ export function RunDialog({
           open={methodOpen}
           onToggle={() => setMethodOpen((o) => !o)}
         >
-      {/* RU-11 — RP-3's resolution sentence stays always-on for an Auto job: it is
-          not describing what the control does, it is disclosing a resolution the
-          operator never made and cannot otherwise see. Same for runnerOnly, which
-          explains a card that is disabled. Only a PINNED executor sitting at its
-          default gets the engaged treatment — there the sentence merely restates
-          the card that is already visibly selected. */}
+      {/* LR-50 — not a control: nobody chooses who runs a job, here or on the
+          job. It states the claim rule for THIS run's scope and type, always on,
+          because it is a fact the operator cannot otherwise see from the dialog
+          and it decides which machine the run's connections come from. */}
       <FormField
-        label="Executor"
-        helperMode="engaged"
-        active={sshUnavailable || executorAuto || executor !== defaultExecutor}
+        label="Runs on"
         helper={
-          runnerOnly ? (
+          scopeBound ? (
             <>
-              <strong>{job.type}</strong> requires a runner with the local toolchain — SSH is unavailable for this run-type.
+              Scope <strong>{scope}</strong> is bound to {boundRunners.length === 1 ? "this runner" : "these runners"}, so
+              no other runner takes the run.
+              {/* The binding narrows; it does not make a runner able. A scope
+                  bound only to the local runner cannot run what needs an agent,
+                  and the run would wait for good with nothing here saying why. */}
+              {runnerOnly ? (
+                <> A bound runner takes it only if it is an agent with the <strong>{job.type}</strong> toolchain.</>
+              ) : bindsKey ? (
+                <> It binds an SSH key, so a bound runner takes it only if it is an agent.</>
+              ) : null}{" "}
+              Change the binding on Scopes → Runners.
             </>
-          ) : scopeBound ? (
+          ) : runnerOnly ? (
             <>
-              Scope <strong>{scope}</strong> is bound to <strong>{boundRunners.map((b) => b.name).join(", ")}</strong>,
-              so this run goes to {boundRunners.length === 1 ? "that runner" : "those runners"} — SSH from the server is
-              unavailable for it.
+              <strong>{job.type}</strong> needs the local toolchain, so an agent that serves{" "}
+              {effScope ? <>scope <strong>{effScope}</strong></> : "the Global agency"} takes the run. The local runner
+              (this server) does not run {job.type}.
+            </>
+          ) : bindsKey ? (
+            <>
+              This run binds an SSH key, which only an agent delivers as a file, so an agent that serves{" "}
+              {effScope ? <>scope <strong>{effScope}</strong></> : "the Global agency"} takes it. The local runner (this
+              server) does not take a run that binds one.
             </>
           ) : (
             <>
-              Will run via <strong>{executor === "ssh" ? "the in-app SSH executor" : "a runner agent"}</strong>
-              {executorAuto && executor === defaultExecutor ? " (resolved from the job's Auto default)" : ""}.
+              Whichever runner that serves {effScope ? <>scope <strong>{effScope}</strong></> : "the Global agency"} asks
+              first takes the run: an agent, or the local runner (this server, over SSH) where it is switched on and
+              serves that agency. To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.
             </>
           )
         }
       >
-        <div style={{ display: "flex", gap: 8 }}>
-          <ExecutorChoice
-            label="SSH"
-            sub={executorAuto && defaultExecutor === "ssh" ? "In-app SSH · job default (Auto)" : "In-app SSH"}
-            selected={executor === "ssh"}
-            disabled={sshUnavailable}
-            title={
-              runnerOnly
-                ? `SSH can't run ${job.type} — it needs a runner with the local ${job.type} toolchain.`
-                : scopeBound
-                  ? `Scope ${scope} is bound to runners, so its jobs run on those — unbind the scope to use SSH.`
-                  : undefined
-            }
-            onClick={() => setExecutor("ssh")}
-          />
-          <ExecutorChoice
-            label="Runner"
-            sub={executorAuto && defaultExecutor === "runner" ? "Runner agent · job default (Auto)" : "Runner agent"}
-            selected={executor === "runner"}
-            onClick={() => setExecutor("runner")}
-          />
+        <div style={{ fontSize: c.fontSm, color: c.text }}>
+          {scopeBound ? (
+            <RunsOn bound={boundRunners} scope={scope} runType={job.type} />
+          ) : (
+            `Any ${agentOnly ? "agent" : "runner"} that serves ${effScope ? "this scope" : "the Global agency"}`
+          )}
         </div>
       </FormField>
 
@@ -2869,8 +2813,8 @@ export function RunDialog({
                 ) : (
                   <> Bastion hops are unaffected.</>
                 )}
-                {executor === "runner" && sshCredential && (
-                  <> The key is delivered to the runner for this run only — runners not flagged for secret injection (or using a local inventory) will not take it.</>
+                {sshCredential && (
+                  <> When an agent takes the run, the key is delivered to it for this run only — agents not flagged for secret injection (or using a local inventory) will not take it.</>
                 )}
               </>
             ) : jobDetail.sshUser || jobDetail.sshCredential ? (
@@ -2986,7 +2930,7 @@ export function RunDialog({
             RP-Q4 — mutually exclusive with the host/group pickers: each disables
             the other, because ansible's `:` unions patterns and any combination
             could broaden the target set past what either input says alone. */}
-        {executor === "runner" && job.type === "ansible" && (
+        {job.type === "ansible" && (
           <FormField
             label="Ansible --limit"
             helperMode="engaged"

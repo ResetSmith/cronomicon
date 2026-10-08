@@ -102,12 +102,13 @@ func TestSyncHoldsABoundScopeWithWaitingRuns(t *testing.T) {
 	}
 }
 
-// TestSyncWarnsWhenAJobAsksForSSHOnABoundScope: a git job with `executor: ssh`
-// on a scope bound to runners is refused at every fire, and nobody watches a
-// cron fire — so sync says it, by job and scope, as soon as it can see both
-// facts. The same job on a scope nobody bound draws no warning, and neither
-// does a job that sets no executor (it simply runs on the bound runners).
-func TestSyncWarnsWhenAJobAsksForSSHOnABoundScope(t *testing.T) {
+// TestSyncWarnsWhenAJobStillDeclaresAnExecutor: `executor` is retired (2.3.0,
+// LR-48). It is stored as it always was and read by nothing, so a job whose
+// author wrote it to keep the job on the server, or off it, is no longer kept
+// anywhere — and the decode is not strict, so without a warning the key would
+// be ignored in silence. Sync says it by job, whatever the scope's binding;
+// a job that stores no executor draws nothing.
+func TestSyncWarnsWhenAJobStillDeclaresAnExecutor(t *testing.T) {
 	svc, repo, remote := newSyncFixture(t)
 	ctx := context.Background()
 	var logs bytes.Buffer
@@ -126,11 +127,11 @@ func TestSyncWarnsWhenAJobAsksForSSHOnABoundScope(t *testing.T) {
 	gitCommitFile(t, repo, remote, "jobs/legacy.yaml", job("legacy", "dmz", "ssh"), "add legacy")
 	gitCommitFile(t, repo, remote, "jobs/plain.yaml", job("plain", "dmz", ""), "add plain")
 	gitCommitFile(t, repo, remote, "jobs/elsewhere.yaml", job("elsewhere", "open", "ssh"), "add elsewhere")
-	// A job that takes its body from a script takes its EXECUTOR from it too, so
-	// the stored executor — the one a fire reads — is the script's. `inherits`
-	// says nothing itself and is refused through its script; `overridden` says
-	// ssh itself, which is discarded in favour of a script that says nothing, so
-	// it simply runs on the bound runners and must not be warned about.
+	// A job that takes its body from a script took its EXECUTOR from it too, so
+	// the stored executor is the script's. `inherits` says nothing itself and is
+	// named through its script. `overridden` says ssh over a script that says
+	// nothing: that line was never read, and is stored all the same, so that the
+	// job whose FILE carries it is named here and in the notice.
 	script := func(name, executor string) string {
 		y := "apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: " + name +
 			"\nspec:\n  run_type: bash\n  command: echo hi\n"
@@ -152,32 +153,19 @@ func TestSyncWarnsWhenAJobAsksForSSHOnABoundScope(t *testing.T) {
 	gitCommitFile(t, repo, remote, "jobs/inherits.yaml", refJob("inherits", "over-ssh", ""), "add inherits")
 	gitCommitFile(t, repo, remote, "jobs/overridden.yaml", refJob("overridden", "no-opinion", "ssh"), "add overridden")
 
-	const warning = "asks for the ssh executor on a scope bound to runners"
-	if r := svc.SyncBlocking(ctx, "t"); r.Status == "failed" {
-		t.Fatalf("initial sync failed: %s", r.ErrorMessage)
-	}
-	if strings.Contains(logs.String(), warning) {
-		t.Fatalf("warned before any scope was bound:\n%s", logs.String())
-	}
-
-	if _, err := svc.db.Exec(`
-		INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_by, bound_at)
-		SELECT id, 'r-dmz', 'runner-dmz-01', 'ops@example', 'now' FROM scopes WHERE name='dmz'`); err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	logs.Reset()
+	const warning = "job still declares executor, which is no longer read"
 	// A warning is advice: the sync must still be a clean success, not "partial"
 	// (which would also suppress pruning for the whole subsystem).
 	if r := svc.SyncBlocking(ctx, "t"); r.Status != "success" {
-		t.Fatalf("sync after binding = %q, want success (%s)", r.Status, r.ErrorMessage)
+		t.Fatalf("sync = %q, want success (%s)", r.Status, r.ErrorMessage)
 	}
 	warned := map[string]bool{}
 	for _, line := range strings.Split(logs.String(), "\n") {
 		if !strings.Contains(line, warning) {
 			continue
 		}
-		if !strings.Contains(line, "scope=dmz") {
-			t.Errorf("warning does not name the scope: %s", line)
+		if !strings.Contains(line, "scope=") || !strings.Contains(line, "executor=ssh") {
+			t.Errorf("warning does not name the scope and the stored value: %s", line)
 		}
 		for _, name := range []string{"legacy", "plain", "elsewhere", "inherits", "overridden"} {
 			if strings.Contains(line, "job="+name+" ") {
@@ -185,7 +173,16 @@ func TestSyncWarnsWhenAJobAsksForSSHOnABoundScope(t *testing.T) {
 			}
 		}
 	}
-	if len(warned) != 2 || !warned["legacy"] || !warned["inherits"] {
-		t.Errorf("warned jobs = %v, want exactly legacy (its own executor) and inherits (its script's)", warned)
+	if len(warned) != 4 || warned["plain"] {
+		t.Errorf("warned jobs = %v, want every job but plain: legacy, elsewhere and overridden (their own line) and inherits (its script's)", warned)
+	}
+	if !strings.Contains(logs.String(), "script still declares executor") || !strings.Contains(logs.String(), "script=over-ssh") {
+		t.Errorf("the sidecar that carries the key is not named for itself:\n%s", logs.String())
+	}
+	for job, want := range map[string]string{"legacy": "ssh", "plain": "", "inherits": "ssh", "overridden": "ssh"} {
+		var got string
+		if err := svc.db.QueryRow(`SELECT COALESCE(executor, '') FROM jobs WHERE name = ? AND source = 'git'`, job).Scan(&got); err != nil || got != want {
+			t.Errorf("stored executor of %s = %q (%v), want %q", job, got, err, want)
+		}
 	}
 }

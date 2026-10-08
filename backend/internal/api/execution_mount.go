@@ -232,7 +232,6 @@ type jobRow struct {
 	Command           *string             `json:"command,omitempty"`
 	Script            *string             `json:"script,omitempty"`
 	ScriptPath        *string             `json:"scriptPath,omitempty"`
-	Executor          *string             `json:"executor,omitempty"`
 	ConcurrencyPolicy string              `json:"concurrencyPolicy,omitempty"`
 	ConcurrencyKey    *string             `json:"concurrencyKey,omitempty"`
 	TimeoutSeconds    *int64              `json:"timeoutSeconds,omitempty"`
@@ -782,9 +781,6 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	}
 	if j.scriptPath.Valid {
 		jr.ScriptPath = &j.scriptPath.String
-	}
-	if j.executor.Valid {
-		jr.Executor = &j.executor.String
 	}
 	if j.scriptRef.Valid {
 		jr.ScriptRef = &j.scriptRef.String
@@ -1415,18 +1411,13 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// decided at claim time by agency, scope binding and capability, and the
 	// server takes its share as the local runner. `executor` on the request
 	// body is accepted and IGNORED for one minor (LR-50) — a service-account
-	// caller may still send it — and `jobs.executor` is no longer read. With no
+	// caller may still send it; it is not even checked against its old two
+	// values, because nothing reads it — and `jobs.executor` is no longer
+	// read. With no
 	// capable runner an ansible or terraform run still enqueues and waits
 	// (A6.3), with the reason stamped on it.
 	jobSrc := s.defSource(r, "jobs", jobID)
 	executor := execspec.ExecutorRunner
-	// Ignored is not the same as unchecked: the field keeps its two values for
-	// as long as it is in the contract, so a typo is still told it is one.
-	if body.Executor != "" && body.Executor != execspec.ExecutorSSH && body.Executor != execspec.ExecutorRunner {
-		httpx.Fail(w, http.StatusUnprocessableEntity, execspec.CodeInvalidExecutor,
-			fmt.Sprintf("invalid executor %q (want ssh|runner — and the field is ignored since 2.3.0: leave it out)", body.Executor))
-		return
-	}
 
 	// LR-47 — a bound SSH key is delivered as a file on the machine that runs
 	// the job. An agent does that; the local runner connects FROM the server
@@ -1455,11 +1446,12 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// escape hatch for patterns the projection can't model, OD-15). It is honored
 	// solely by the ansible toolchain (exec_local appends --limit only for run-type
 	// ansible); any other run-type would silently swallow it, so gate on run-type,
-	// not just the executor — ansible always runs on a runner. It is exec-safe (each
+	// (422 `ansible_only`; the code was `invalid_executor` until 2.3.0, when
+	// there stopped being an executor to be invalid). It is exec-safe (each
 	// --limit value is a single argv element, no shell), so its content is the
 	// operator's responsibility and is not charset-validated.
 	if strings.TrimSpace(body.AnsibleLimit) != "" && jr.Type != "ansible" {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_executor",
+		httpx.Fail(w, http.StatusUnprocessableEntity, "ansible_only",
 			"ansibleLimit only applies to ansible runs")
 		return
 	}
@@ -1479,7 +1471,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	}
 	if ansOpts.Any() {
 		if jr.Type != "ansible" {
-			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_executor",
+			httpx.Fail(w, http.StatusUnprocessableEntity, "ansible_only",
 				"the advanced ansible options (check/diff/tags/verbosity/become/extra-vars) only apply to ansible runs")
 			return
 		}
@@ -4019,9 +4011,14 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	// created_at/id tiebreak keeps LIMIT/OFFSET pages from shearing under
 	// equal keys. Default order unchanged.
 	orderBy, sortErr := sortparam.OrderBy(q, map[string]string{
-		"job":       "job_name",
-		"type":      "run_type",
-		"executor":  "executor",
+		"job":  "job_name",
+		"type": "run_type",
+		// `executor` was a sort key until 2.3.0. Every run says the same thing
+		// there now, so the key is gone (400 bad_sort) and `runner` orders by
+		// what the Runner column shows: the name of the runner that took the
+		// run, or "Server (SSH)" for a run the in-app SSH executor ran before
+		// 2.3.0 — which keeps those rows together, as the old key did.
+		"runner":    "COALESCE(runner_name, CASE WHEN executor = 'ssh' THEN 'Server (SSH)' END)",
 		"schedule":  "schedule_name",
 		"started":   "started_at",
 		"completed": "completed_at",
@@ -4043,7 +4040,8 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		triggered_by, trigger_kind, killed_by, workflow_run_id,
 		started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
-		suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at ` +
+		suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
+		runner_name ` +
 		base + orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, pageSize, (page-1)*pageSize)
 
@@ -4104,7 +4102,8 @@ func (s *Server) fetchRunByID(r *http.Request, traceID string) map[string]any {
 		       triggered_by, trigger_kind, killed_by, workflow_run_id,
 		       started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		       script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
-		       suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at
+		       suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
+		       runner_name
 		FROM runs WHERE id = ?
 	`, traceID)
 	if err != nil {
@@ -4140,7 +4139,13 @@ type runRaw struct {
 	overrideJSON                                  sql.NullString // F3 ad-hoc override envelope (JSON object)
 	agenciesJSON                                  sql.NullString // T3.6 — the run's frozen agency SET snapshot (mig. 680); "[]" = general pool
 	runnerID                                      sql.NullString // UUID of the executing runner; NULL for SSH runs / deregistered runners
-	runnerTag                                     sql.NullString // RT-2 the pin frozen at trigger; NULL = unpinned. Intent, not outcome — see runnerID
+	// runnerName is the run's own copy of that runner's name, stamped at the
+	// claim (migration 1280), so it outlives the runner. It is what History
+	// shows where it showed an executor until 2.3.0 (LR-50): every run is the
+	// runner executor's now, and the useful fact is WHICH runner. NULL for a run
+	// nobody has claimed, and for one the in-app SSH executor ran before 2.3.0.
+	runnerName sql.NullString
+	runnerTag  sql.NullString // RT-2 the pin frozen at trigger; NULL = unpinned. Intent, not outcome — see runnerID
 	// suppressedByCalendar names the working calendar that suppressed this fire
 	// (CAL-29). NULL on every run that actually happened. The audit query filters
 	// on THIS, never on queued_reason's wording.
@@ -4169,7 +4174,8 @@ func scanRunRaw(rows *sql.Rows) (runRaw, bool) {
 		&rr.triggeredBy, &rr.triggerKind, &rr.killedBy, &rr.workflowRunID,
 		&rr.startedAt, &rr.completedAt, &rr.durationMs, &rr.exitCode, &rr.createdAt, &rr.scheduleName,
 		&rr.kind, &rr.executor, &rr.scriptRef, &rr.contentHash, &rr.jobSource, &rr.outputsJSON, &rr.overrideJSON, &rr.agenciesJSON, &rr.runnerID,
-		&rr.suppressedByCalendar, &rr.reactedToRunID, &rr.reactionDepth, &rr.runnerTag, &rr.jobUID, &rr.logArchivedAt); err != nil {
+		&rr.suppressedByCalendar, &rr.reactedToRunID, &rr.reactionDepth, &rr.runnerTag, &rr.jobUID, &rr.logArchivedAt,
+		&rr.runnerName); err != nil {
 		return runRaw{}, false
 	}
 	return rr, true
@@ -4351,6 +4357,7 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 		"triggeredBy":     nullStrVal(rr.triggeredBy),
 		"killedBy":        nullStrVal(rr.killedBy),
 		"runnerId":        nullStrVal(rr.runnerID),
+		"runnerName":      nullStrVal(rr.runnerName),
 		"workflowTraceId": nullStrVal(rr.workflowRunID),
 		"scheduleName":    nullStrVal(rr.scheduleName),
 		// CAL-29 — surfaced so History can show WHICH calendar suppressed a run,

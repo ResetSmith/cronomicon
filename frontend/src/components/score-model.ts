@@ -31,9 +31,9 @@ export interface Mark {
   triggeredBy?: string | null;
   /** The schedule entry that fired it, for a scheduled run. */
   scheduleName?: string | null;
-  /** "ssh" | "runner" — frozen on the run at trigger. */
+  /** History only since 2.3.0: "ssh" marks a run the in-app SSH executor ran before it. */
   executor?: string | null;
-  /** The runner that claimed it, when the executor was a runner and it is still registered. */
+  /** The runner that took it — an agent or the local runner; the run's own copy of the name. */
   runnerName?: string | null;
 }
 
@@ -52,11 +52,18 @@ export function triggerLabel(m: Pick<Mark, "triggerKind" | "triggeredBy" | "sche
   return kind || "";
 }
 
-/** SR-1 — "SSH" or "Runner · name"; the executor alone when the runner is unknown. */
-export function executorLabel(m: Pick<Mark, "executor" | "runnerName">): string {
-  if (!m.executor) return "";
-  if (m.executor === "ssh") return "SSH";
-  return m.runnerName ? `Runner · ${m.runnerName}` : "Runner";
+/** What an old SSH-executor run shows where a newer one names its runner. */
+export const SERVER_SSH = "Server (SSH)";
+
+/**
+ * SR-1 / LR-50 — which runner took a run. Every run is the runner executor's
+ * since 2.3.0, so the name is the whole answer; a run from before it that the
+ * in-app SSH executor ran had no runner and says so. Empty when nobody has
+ * claimed the run.
+ */
+export function runnerLabel(m: Pick<Mark, "executor" | "runnerName">): string {
+  if (m.runnerName) return m.runnerName;
+  return m.executor === "ssh" ? SERVER_SSH : "";
 }
 
 /** Marks that share an exact instant, collapsed into one drawable notehead. */
