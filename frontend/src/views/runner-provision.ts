@@ -12,7 +12,7 @@
 // Token-agnostic like the install-cmd builders (D6): callers pass a usable
 // plaintext token or a "<TOKEN>" placeholder.
 
-import { RUNNER_INSTALL_SCRIPT_PATH } from "./runner-install-cmd";
+import { INVALID_INSTANCE_COMMAND, RUNNER_INSTALL_SCRIPT_PATH, instanceInvalid, validInstanceName } from "./runner-install-cmd";
 import { RUN_TYPES, RUNNER_ONLY_TYPES } from "../runtypes";
 
 export const ENV_EXAMPLE_PATH = "/cronomicon-runner.env.example";
@@ -23,23 +23,40 @@ export const ENV_EXAMPLE_PATH = "/cronomicon-runner.env.example";
 export { RUN_TYPES };
 export const FAT_RUN_TYPES = RUNNER_ONLY_TYPES;
 
-// Installer-standard destination paths (runner-install.sh header constants).
-// The env artifact references these so it matches what the script installs.
-const STATE_DIR = "/var/lib/cronomicon-runner";
-const CONF_DIR = "/etc/cronomicon-runner";
-const DEST = {
-  knownHosts: `${STATE_DIR}/known_hosts`,
-  keysDir: `${STATE_DIR}/keys`,
-  caCert: `${CONF_DIR}/ca.pem`,
-  localInventory: `${CONF_DIR}/inventory.json`,
-  checkoutTokenFile: `${CONF_DIR}/checkout-token`,
-  vaultPasswordFile: `${CONF_DIR}/vault-pass`,
-} as const;
+// Installer-standard destination paths (runner-install.sh's set_layout). The
+// env artifact references these so it matches what the script installs. Every
+// path derives from one name: "cronomicon-runner" for a machine's default
+// agent, "cronomicon-runner-<instance>" for one installed with --instance
+// (MA-16) — a second agent has directories of its own.
+function layout(instance?: string) {
+  const name = (instance ?? "").trim();
+  const svc = name && validInstanceName(name) ? `cronomicon-runner-${name}` : "cronomicon-runner";
+  const stateDir = `/var/lib/${svc}`;
+  const confDir = `/etc/${svc}`;
+  return {
+    stateDir,
+    knownHosts: `${stateDir}/known_hosts`,
+    keysDir: `${stateDir}/keys`,
+    caCert: `${confDir}/ca.pem`,
+    localInventory: `${confDir}/inventory.json`,
+    checkoutTokenFile: `${confDir}/checkout-token`,
+    vaultPasswordFile: `${confDir}/vault-pass`,
+  } as const;
+}
+// The container artifacts: a container is a machine of its own and has only
+// the default layout.
+const DEFAULT_DEST = layout();
+const STATE_DIR = DEFAULT_DEST.stateDir;
 
 export interface ProvisionOptions {
   origin: string;
   token: string; // plaintext or "<TOKEN>"
   name: string; // "" ⇒ $(hostname) in the one-liner, runner-01 elsewhere
+  // MA-24 — set when the machine already runs an agent: the one-liner gains
+  // --instance, the env's paths are the instance's, and the default name is
+  // <hostname>-<instance>. Ignored unless it is a valid instance name, and by
+  // the docker artifact (a container has one agent).
+  instance?: string;
   // Empty ⇒ auto-detect: the agent probes the host's toolchains at startup
   // (D1: 1B). Non-empty is an explicit narrowing override (-c).
   capabilities: string[];
@@ -104,7 +121,8 @@ function commentVar(text: string, name: string): string {
 
 // keyMapDestSpec rewrites a NAME=path,... key-map to the installer's
 // destination paths (runner-install.sh copies each key to keys/<NAME>).
-export function keyMapDestSpec(spec: string): string {
+export function keyMapDestSpec(spec: string, instance?: string): string {
+  const DEST = layout(instance);
   return spec
     .split(",")
     .map((pair) => pair.trim())
@@ -119,10 +137,15 @@ export function keyMapDestSpec(spec: string): string {
 // generateRunnerEnv patches the operator's choices into the verbatim env
 // example (fetched from ENV_EXAMPLE_PATH). All annotations survive.
 export function generateRunnerEnv(exampleText: string, o: ProvisionOptions): string {
+  // No env file for a name the installer would refuse: the paths in it would be
+  // the DEFAULT agent's, on a machine where that agent already exists.
+  if (instanceInvalid(o.instance)) throw new Error("The instance name is not valid, so no env file is generated. Correct it above.");
+  const DEST = layout(o.instance);
+  const inst = instanceOf(o);
   let t = exampleText;
   t = setVar(t, "CRONOMICON_RUNNER_SERVER", o.origin);
   t = setVar(t, "CRONOMICON_RUNNER_REGISTRATION_TOKEN", o.token);
-  t = setVar(t, "CRONOMICON_RUNNER_NAME", o.name || "runner-01");
+  t = setVar(t, "CRONOMICON_RUNNER_NAME", o.name || (inst ? `runner-01-${inst}` : "runner-01"));
   if (o.capabilities.length > 0) {
     t = setVar(t, "CRONOMICON_RUNNER_CAPABILITIES", o.capabilities.join(","));
   } else {
@@ -133,7 +156,7 @@ export function generateRunnerEnv(exampleText: string, o: ProvisionOptions): str
     t = commentVar(t, "CRONOMICON_RUNNER_CAPABILITIES");
   }
   t = setVar(t, "CRONOMICON_RUNNER_INVENTORY", o.inventory);
-  t = setVar(t, "CRONOMICON_RUNNER_IDENTITY_FILE", `${STATE_DIR}/identity.json`);
+  t = setVar(t, "CRONOMICON_RUNNER_IDENTITY_FILE", `${DEST.stateDir}/identity.json`);
 
   if (o.maxConcurrent != null && o.maxConcurrent > 0 && o.maxConcurrent !== 5) {
     t = setVar(t, "CRONOMICON_RUNNER_MAX_CONCURRENT", String(o.maxConcurrent));
@@ -153,7 +176,7 @@ export function generateRunnerEnv(exampleText: string, o: ProvisionOptions): str
   if (o.keyMode === "key-dir") {
     t = setVar(t, "CRONOMICON_RUNNER_KEY_DIR", DEST.keysDir);
   } else if (o.keyMode === "key-map" && o.keyMapSpec) {
-    t = setVar(t, "CRONOMICON_RUNNER_KEY_MAP", keyMapDestSpec(o.keyMapSpec));
+    t = setVar(t, "CRONOMICON_RUNNER_KEY_MAP", keyMapDestSpec(o.keyMapSpec, o.instance));
   }
   if (o.caCertSrc) {
     t = setVar(t, "CRONOMICON_RUNNER_CA_CERT", DEST.caCert);
@@ -174,6 +197,13 @@ export function generateRunnerEnv(exampleText: string, o: ProvisionOptions): str
   return t;
 }
 
+// instanceOf is the instance name the options carry, or "" when there is none
+// or it is not one the installer would accept.
+function instanceOf(o: ProvisionOptions): string {
+  const name = (o.instance ?? "").trim();
+  return name && validInstanceName(name) ? name : "";
+}
+
 // shellArg quotes a value for a sh command line when it needs it.
 function shellArg(v: string): string {
   return /^[A-Za-z0-9@%+=:,._/-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`;
@@ -186,12 +216,17 @@ function shellArg(v: string): string {
 // install the secret files the operator staged (the bytes never transit the
 // server). Only sandbox caps + max jobs remain env-only (Phase 4 kills those).
 export function provisionOneLiner(o: ProvisionOptions): string {
+  if (instanceInvalid(o.instance)) return INVALID_INSTANCE_COMMAND;
+  const inst = instanceOf(o);
   const parts = [
     `curl -fsSL ${o.origin}${RUNNER_INSTALL_SCRIPT_PATH} | sudo bash -s --`,
     `-s ${o.origin}`,
     `-t ${shellArg(o.token)}`, // quotes the <TOKEN> placeholder; a real crn_reg_* passes verbatim
-    `-n ${o.name ? shellArg(o.name) : "$(hostname)"}`,
+    // Two agents on one machine must not share a name (restore placement
+    // matches by name), so an instance's default is <hostname>-<instance>.
+    `-n ${o.name ? shellArg(o.name) : inst ? `$(hostname)-${inst}` : "$(hostname)"}`,
   ];
+  if (inst) parts.push(`--instance ${inst}`);
   // No -c in detect mode: the agent probes the host's toolchains at startup.
   if (o.capabilities.length > 0) parts.push(`-c ${o.capabilities.join(",")}`);
   parts.push(`--download`);
@@ -206,7 +241,7 @@ export function provisionOneLiner(o: ProvisionOptions): string {
   if (o.checkout) parts.push(`--allow-checkout`);
   if (o.checkoutRepos) parts.push(`--checkout-repos ${shellArg(o.checkoutRepos)}`);
   // The *-file flags take a SOURCE path on the installing host; the installer
-  // copies it to the standard /etc/cronomicon-runner/{checkout-token,vault-pass}.
+  // copies it to the install's config directory ({checkout-token,vault-pass}).
   if (o.checkoutTokenFile) parts.push(`--checkout-token-file ${shellArg(o.checkoutTokenFile)}`);
   if (o.vaultPasswordFile) parts.push(`--vault-pass-file ${shellArg(o.vaultPasswordFile)}`);
   return parts.join(" ");
@@ -245,8 +280,8 @@ export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string):
   }
   // File-backed options live on the persistent volume in the container story.
   if (o.inventory === "local") env.push(`CRONOMICON_RUNNER_LOCAL_INVENTORY=${STATE_DIR}/inventory.json`);
-  if (o.knownHostsSrc) env.push(`CRONOMICON_RUNNER_KNOWN_HOSTS=${DEST.knownHosts}`);
-  if (o.keyMode === "key-dir") env.push(`CRONOMICON_RUNNER_KEY_DIR=${DEST.keysDir}`);
+  if (o.knownHostsSrc) env.push(`CRONOMICON_RUNNER_KNOWN_HOSTS=${DEFAULT_DEST.knownHosts}`);
+  if (o.keyMode === "key-dir") env.push(`CRONOMICON_RUNNER_KEY_DIR=${DEFAULT_DEST.keysDir}`);
   if (o.keyMode === "key-map" && o.keyMapSpec) env.push(`CRONOMICON_RUNNER_KEY_MAP=${keyMapDestSpec(o.keyMapSpec)}`);
   if (o.caCertSrc) env.push(`CRONOMICON_RUNNER_CA_CERT=${STATE_DIR}/ca.pem`);
   if (o.checkout) {

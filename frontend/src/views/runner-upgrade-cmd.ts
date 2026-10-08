@@ -2,6 +2,13 @@
 //
 // Upgrading an installed agent is binary-swap + restart: the runner keeps its
 // id, API key, config and unit — only /usr/local/bin/cronomicon-runner changes.
+//
+// The command upgrades a MACHINE, not a runner (MA-22). A machine may run
+// several agents (runner-install.sh --instance), each with a unit of its own,
+// and they all share the one binary. Restarting only the unit whose row the
+// operator happened to copy the command from would leave the others running the
+// old process against a new file, so every ENABLED agent unit is restarted and
+// each is reported.
 // Re-running runner-install.sh would also work but is the wrong tool: it creates
 // users, writes the unit, and needs a registration token the operator no longer
 // has.
@@ -21,8 +28,13 @@
 
 /** Where runner-install.sh installs the agent binary. */
 export const AGENT_BIN_PATH = "/usr/local/bin/cronomicon-runner";
-/** The systemd unit runner-install.sh writes and enables. */
+/** The systemd unit runner-install.sh writes and enables for the default agent. */
 export const AGENT_UNIT = "cronomicon-runner";
+/**
+ * Every agent unit a machine may have: the default agent's, and one per
+ * `--instance <name>` (cronomicon-runner-<name>.service). systemctl patterns.
+ */
+export const AGENT_UNIT_PATTERNS = [`${AGENT_UNIT}.service`, `${AGENT_UNIT}-*.service`] as const;
 
 /**
  * upgradeCommand returns the paste-once block that upgrades an installed agent
@@ -44,6 +56,13 @@ export const AGENT_UNIT = "cronomicon-runner";
  *     `mv -f` (atomic rename on the same filesystem). The RUNNING process keeps
  *     its own inode, so the swap can't corrupt the in-flight agent; the restart
  *     is what picks up the new code.
+ *   - every agent unit that is ENABLED OR RUNNING is restarted, and each is
+ *     checked and reported on its own line. Not every unit present: an
+ *     instance being removed is stopped and disabled first, and must not be
+ *     started again by an upgrade. But a unit that is running without being
+ *     enabled must not be left on the old process either. A machine where none
+ *     is found (an agent installed some other way) falls back to the default
+ *     unit, as this command always did.
  */
 export function upgradeCommand(origin: string): string {
   return [
@@ -79,11 +98,24 @@ export function upgradeCommand(origin: string): string {
     `install -m 0755 "\${DL}/\${FILE}" "\${BIN}.new"`,
     `mv -f "\${BIN}.new" "$BIN"`,
     ``,
-    `systemctl restart ${AGENT_UNIT}`,
+    `# One binary serves every agent on this machine, so every agent restarts:`,
+    `# the default unit and each --instance unit, when it is enabled or running.`,
+    `UNITS=$({ systemctl list-unit-files --no-legend ${AGENT_UNIT_PATTERNS.map((u) => `'${u}'`).join(" ")} 2>/dev/null | awk '$2 == "enabled" { print $1 }'; systemctl list-units --no-legend --plain --type=service --state=active ${AGENT_UNIT_PATTERNS.map((u) => `'${u}'`).join(" ")} 2>/dev/null | awk '{ print $1 }'; } | sort -u || true)`,
+    `if [ -z "$UNITS" ]; then UNITS="${AGENT_UNIT}.service"; fi`,
+    `UNITS=$(echo $UNITS)`,
+    ``,
+    `echo ">> Restarting: \${UNITS}"`,
+    `systemctl restart $UNITS || true`,
     `sleep 2`,
-    `systemctl is-active --quiet ${AGENT_UNIT} \\`,
-    `  && { echo ">> OK: $("$BIN" version 2>/dev/null || echo "restarted")"; } \\`,
-    `  || { echo ">> FAILED to start — roll back with: sudo mv -f \${BIN}.prev $BIN && sudo systemctl restart ${AGENT_UNIT}" >&2; exit 1; }`,
+    `NOT_UP=""`,
+    `for U in $UNITS; do`,
+    `  if systemctl is-active --quiet "$U"; then echo ">> OK: \${U}"; else echo ">> FAILED to start: \${U}" >&2; NOT_UP="\${NOT_UP} \${U}"; fi`,
+    `done`,
+    `if [ -n "$NOT_UP" ]; then`,
+    `  echo ">> Roll back with: sudo mv -f \${BIN}.prev $BIN && sudo systemctl restart \${UNITS}" >&2`,
+    `  exit 1`,
+    `fi`,
+    `echo ">> Now running: $("$BIN" version 2>/dev/null || echo "the published build")"`,
     `SH`,
   ].join("\n");
 }

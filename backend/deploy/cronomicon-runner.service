@@ -81,6 +81,9 @@ SystemCallFilter=~@privileged @resources
 # Only the identity/key state directory is writable; everything else is read-only
 # (ProtectSystem=strict). /var/lib/cronomicon-runner is created and owned by us.
 StateDirectory=cronomicon-runner
+# Without this systemd resets the state directory to 0755 at every start, and
+# another user on the machine (a second agent's, for one) can list it.
+StateDirectoryMode=0750
 ReadWritePaths=/var/lib/cronomicon-runner
 
 # Network: the agent only needs outbound HTTPS to the server and SSH to targets

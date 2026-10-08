@@ -229,3 +229,65 @@ describe("vocabulary", () => {
     expect(() => generateRunnerEnv(example, fullOpts())).not.toThrow();
   });
 });
+
+// MA-16/MA-24 — a second agent on a machine. The installer gives an instance a
+// user, a unit and directories of its own (cronomicon-runner-<name>); the
+// artifacts this form generates must point at THOSE, or a hand-placed env file
+// would make the second agent read the first one's keys and identity.
+describe("an instance", () => {
+  const withInstance = (over: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
+    ...defaultProvisionOptions("https://cronomicon.example.com"),
+    token: "crn_reg_abc",
+    instance: "tax",
+    ...over,
+  });
+
+  it("rides the install command, and names the runner <hostname>-<instance>", () => {
+    const cmd = provisionOneLiner(withInstance());
+    expect(cmd).toContain("-n $(hostname)-tax");
+    expect(cmd).toContain("--instance tax");
+    // An explicit name wins; the instance still applies.
+    const named = provisionOneLiner(withInstance({ name: "tax-agent" }));
+    expect(named).toContain("-n tax-agent");
+    expect(named).toContain("--instance tax");
+  });
+
+  it("points the env file at the instance's own directories", () => {
+    const env = generateRunnerEnv(example, withInstance({ knownHostsSrc: "/tmp/kh", keyMode: "key-dir", keyDirSrc: "/tmp/keys", caCertSrc: "/tmp/ca.pem" }));
+    expect(env).toContain("CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner-tax/identity.json");
+    expect(env).toContain("CRONOMICON_RUNNER_KNOWN_HOSTS=/var/lib/cronomicon-runner-tax/known_hosts");
+    expect(env).toContain("CRONOMICON_RUNNER_KEY_DIR=/var/lib/cronomicon-runner-tax/keys");
+    expect(env).toContain("CRONOMICON_RUNNER_CA_CERT=/etc/cronomicon-runner-tax/ca.pem");
+    // Nothing active in it points at the default agent's directories.
+    const active = env.split("\n").filter((l) => !l.trimStart().startsWith("#"));
+    expect(active.some((l) => /cronomicon-runner\/(identity|known_hosts|keys|ca\.pem)/.test(l))).toBe(false);
+    expect(keyMapDestSpec("prod=/k1", "tax")).toBe("prod=/var/lib/cronomicon-runner-tax/keys/prod");
+  });
+
+  it("changes nothing when it is absent", () => {
+    const base = withInstance({ instance: undefined });
+    for (const none of [undefined, "", "  "]) {
+      const o = withInstance({ instance: none });
+      expect(provisionOneLiner(o)).toBe(provisionOneLiner(base));
+      expect(generateRunnerEnv(example, o)).toBe(generateRunnerEnv(example, base));
+    }
+    expect(provisionOneLiner(base)).toContain("-n $(hostname) ");
+    expect(provisionOneLiner(base)).not.toContain("--instance");
+  });
+
+  // Not the default agent's artifacts: on the machine this field is for, those
+  // would overwrite the first agent's configuration.
+  it("generates nothing while the name is invalid", () => {
+    for (const bad of ["Tax", "x; rm -rf /", "tax-dept-east12"]) {
+      const o = withInstance({ instance: bad });
+      expect(provisionOneLiner(o).startsWith("#")).toBe(true);
+      expect(provisionOneLiner(o)).not.toContain("curl");
+      expect(() => generateRunnerEnv(example, o)).toThrow(/instance name is not valid/);
+    }
+  });
+
+  // A container is a machine of its own: one agent, the default layout.
+  it("is ignored by the container command", () => {
+    expect(provisionDockerRun(withInstance())).toBe(provisionDockerRun(withInstance({ instance: undefined })));
+  });
+});

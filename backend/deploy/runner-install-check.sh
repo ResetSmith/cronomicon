@@ -59,6 +59,7 @@ check "help lists --allow-checkout" bash -c "bash '$SCRIPT' --help | grep -q -- 
 check "help lists --checkout-repos" bash -c "bash '$SCRIPT' --help | grep -q -- --checkout-repos"
 check "help lists --checkout-token-file" bash -c "bash '$SCRIPT' --help | grep -q -- --checkout-token-file"
 check "help lists --vault-pass-file" bash -c "bash '$SCRIPT' --help | grep -q -- --vault-pass-file"
+check "help lists --instance" bash -c "bash '$SCRIPT' --help | grep -q -- --instance"
 
 # --- Required args ---
 check_rejects "missing --server rejected" "Server URL" \
@@ -91,6 +92,99 @@ check_rejects "-c with missing value rejected" "requires a value" \
   bash "$SCRIPT" -s https://x -t crn_reg_x -c
 check_rejects "unknown flag rejected" "Unknown parameter" \
   bash "$SCRIPT" -s https://x -t crn_reg_x --bogus
+
+# --- --instance: a second agent on one machine ---
+# The name becomes part of an OS user name, two paths and a unit name, so a bad
+# one is refused with the other flags, before the root gate and before anything
+# is created.
+check_rejects "--instance with an upper-case letter rejected" "lower-case letters" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance Tax
+check_rejects "--instance starting with a digit rejected" "starting with a letter" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance 2tax
+check_rejects "--instance starting with a hyphen rejected" "starting with a letter" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance -tax
+check_rejects "--instance with a slash rejected" "lower-case letters" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance a/b
+check_rejects "--instance with a dot rejected" "lower-case letters" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance a.b
+check_rejects "--instance longer than 14 characters rejected" "at most 14 characters" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance abcdefghijklmno
+# The same refusals under a UTF-8 locale with locale-collated ranges, which is
+# what bash older than 5.0 does by default: `[a-z]` would then accept "Tax".
+if locale -a 2>/dev/null | grep -qix 'en_US.utf-\?8'; then
+  check_rejects "--instance with an upper-case letter rejected under a collating locale" "lower-case letters" \
+    env LC_ALL=en_US.UTF-8 bash -O globasciiranges -c 'shopt -u globasciiranges; . "$0" -s https://x -t crn_reg_x --instance Tax' "$SCRIPT"
+  check_rejects "--instance with an accented letter rejected under a collating locale" "lower-case letters" \
+    env LC_ALL=en_US.UTF-8 bash -c 'shopt -u globasciiranges; . "$0" -s https://x -t crn_reg_x --instance taé' "$SCRIPT"
+fi
+check_rejects "--instance with an empty value rejected" "requires a value" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance ""
+check_rejects "--instance with no value rejected" "requires a value" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --instance
+if [ "$EUID" -ne 0 ]; then
+  check_rejects "a valid --instance (14 characters) reaches the root gate" "must be run as root" \
+    bash "$SCRIPT" -s https://x -t crn_reg_x --instance tax-dept-east1
+fi
+
+# The layout. Every name an install owns comes from set_layout; evaluate that
+# function alone (no root, nothing created) and compare what it derives.
+layout() {
+  (
+    eval "$(sed -n '/^set_layout() {$/,/^}$/p' "$SCRIPT")"
+    set_layout "$1"
+    echo "${RUNNER_USER}|${RUNNER_GROUP}|${UNIT_FILE}|${STATE_DIR}|${CONF_DIR}|${KEYS_DEST}|${CHECKOUT_TOKEN_DEST}"
+  )
+}
+expect_layout() {
+  local desc="$1" inst="$2" want="$3" got
+  got="$(layout "$inst")"
+  if [ "$got" = "$want" ]; then
+    echo "ok   ${desc}"
+  else
+    echo "FAIL ${desc}: got ${got}" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+# Without --instance the installer creates exactly what it always has.
+expect_layout "the default install's destinations are unchanged" "" \
+  "cronomicon-runner|cronomicon-runner|/etc/systemd/system/cronomicon-runner.service|/var/lib/cronomicon-runner|/etc/cronomicon-runner|/var/lib/cronomicon-runner/keys|/etc/cronomicon-runner/checkout-token"
+expect_layout "an instance has a user, group, unit and directories of its own" "tax" \
+  "cronomicon-runner-tax|cronomicon-runner-tax|/etc/systemd/system/cronomicon-runner-tax.service|/var/lib/cronomicon-runner-tax|/etc/cronomicon-runner-tax|/var/lib/cronomicon-runner-tax/keys|/etc/cronomicon-runner-tax/checkout-token"
+
+# The unit. Render the installer's own unit block for the default agent and for
+# an instance (it only writes to stdout here) and check each names its own
+# install and nothing of the other's.
+render_unit() {
+  (
+    eval "$(sed -n '/^set_layout() {$/,/^}$/p' "$SCRIPT")"
+    INSTANCE="$1"
+    # shellcheck disable=SC2034  # read by the unit block evaluated below
+    HARDENING_OK=1
+    set_layout "$INSTANCE"
+    eval "$(sed -n '/^UNIT_DESC="Cronomicon runner agent"$/,/^} > "\$UNIT_FILE"$/p' "$SCRIPT" \
+      | sed -e '/^echo ">> Writing /d' -e 's/^} > "\$UNIT_FILE"$/}/')"
+  )
+}
+unit_default="$(render_unit "")"
+unit_tax="$(render_unit "tax")"
+unit_has() { grep -qxF -- "$2" <<< "$1"; }
+check "the default unit runs as cronomicon-runner" unit_has "$unit_default" "User=cronomicon-runner"
+check "the default unit's state directory is unchanged" unit_has "$unit_default" "StateDirectory=cronomicon-runner"
+# systemd applies StateDirectoryMode at every start; left at its default (0755)
+# it undoes the installer's chmod 0750 and opens the directory to other users.
+check "the default unit keeps its state directory closed to other users" unit_has "$unit_default" "StateDirectoryMode=0750"
+check "an instance's unit keeps its state directory closed to other users" unit_has "$unit_tax" "StateDirectoryMode=0750"
+check "the default unit reads /etc/cronomicon-runner/runner.env" unit_has "$unit_default" "EnvironmentFile=-/etc/cronomicon-runner/runner.env"
+check "the default unit names no instance" bash -c "! grep -q 'cronomicon-runner-' <<< \"\$1\"" _ "$unit_default"
+check "an instance's unit runs as its own user" unit_has "$unit_tax" "User=cronomicon-runner-tax"
+check "an instance's unit runs as its own group" unit_has "$unit_tax" "Group=cronomicon-runner-tax"
+check "an instance's unit has its own state directory" unit_has "$unit_tax" "StateDirectory=cronomicon-runner-tax"
+check "an instance's unit confines writes to its own state" unit_has "$unit_tax" "ReadWritePaths=/var/lib/cronomicon-runner-tax"
+check "an instance's unit reads its own config" unit_has "$unit_tax" "EnvironmentFile=-/etc/cronomicon-runner-tax/runner.env"
+check "an instance's unit keeps its identity in its own state" unit_has "$unit_tax" "Environment=CRONOMICON_RUNNER_IDENTITY_FILE=/var/lib/cronomicon-runner-tax/identity.json"
+check "an instance's unit never points at the default agent's directories" \
+  bash -c "! grep -Eq '(/etc|/var/lib)/cronomicon-runner(/|\$)' <<< \"\$1\"" _ "$unit_tax"
+check "both units are hardened alike" bash -c "[ \"\$(grep -c '^Protect' <<< \"\$1\")\" = \"\$(grep -c '^Protect' <<< \"\$2\")\" ] && grep -q '^NoNewPrivileges=true' <<< \"\$2\"" _ "$unit_default" "$unit_tax"
 
 # --- Secrets are never accepted as a flag VALUE (ps/history exposure) ---
 check_rejects "--checkout-token with a value rejected" "refusing to read a secret" \
