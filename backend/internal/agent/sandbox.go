@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"os"
@@ -33,38 +34,83 @@ const sandboxProbeTimeout = 3 * time.Second
 // a reachable systemd manager (non-privileged containers, Alpine/OpenRC), so a
 // probe actually creates+collects a trivial scope and the result gates wrapping.
 // When unavailable the run executes unsandboxed and is reported as such.
+//
+// THE USUAL RESULT IS "UNAVAILABLE", and not for want of a manager. Creating a
+// scope is a request to the system manager, and polkit refuses it to a user
+// who is not root: "Interactive authentication required". The installed unit
+// runs the agent as its own unprivileged user, so on an ordinary systemd host
+// the probe fails, under any hardening and under none, while root passes it
+// under all of it (RHEL 8.10, systemd 239, 2026-10-08; an unprivileged user is
+// refused the same way by systemd 255). The permission
+// that would grant it is the one to manage units, which is more than an agent
+// should hold, so no rule is shipped. What bounds such an agent is a limit on
+// its unit (sandboxHint); the per-run scope is for an agent that runs as root.
+
+// sandboxHint is what to do about an agent that cannot create a scope. Shared
+// by the agent's startup line and the doctor's check.
+const sandboxHint = "an agent that does not run as root cannot create a scope (polkit refuses it), and one in a container has no systemd to ask, so its runs have no resource cap of their own; to bound this agent and everything it runs, limit its unit: systemctl set-property <unit> MemoryMax=… CPUQuota=… TasksMax=… (runner-install.sh: --memory-max, --cpu-quota, --tasks-max), or limit the container"
 
 // probeSandbox reports whether a usable `systemd-run --scope` is available: the
 // binary must exist AND be able to create a scope (a container can ship the
-// binary yet have no reachable manager). Non-Linux is always false. Best-effort
-// and quick — bounded by ctx.
-func probeSandbox(ctx context.Context) bool {
+// binary yet have no reachable manager, and an unprivileged agent is refused
+// one). Non-Linux is always false. Best-effort and quick — bounded by ctx.
+//
+// reason is why not, in systemd-run's own words where it gave any: the line
+// that tells a refused request from a missing manager from a missing binary.
+func probeSandbox(ctx context.Context) (ok bool, reason string) {
 	if runtime.GOOS != "linux" {
-		return false
+		return false, "not Linux"
 	}
 	pctx, cancel := context.WithTimeout(ctx, sandboxProbeTimeout)
 	defer cancel()
-	ok := runAbandonable(pctx, func() bool {
+	why := make(chan string, 1) // buffered: the probe may finish after it was abandoned
+	ok = runAbandonable(pctx, func() bool {
 		// exec.LookPath stats every $PATH entry; a dir on a hung mount (stale NFS
 		// / autofs to an unreachable server) blocks that stat uninterruptibly
 		// with no context to honor — THIS, not cmd.Run, was the real startup hang
 		// — so LookPath must run INSIDE the abandonable section, not before it.
 		if _, err := exec.LookPath("systemd-run"); err != nil {
+			why <- "systemd-run is not on $PATH"
 			return false
 		}
 		cmd := exec.CommandContext(pctx, "systemd-run", "--scope", "--quiet", "--collect", "--", "true")
 		cmd.Env = os.Environ()
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
 		// Kill the whole group and force-close pipes on cancel — same backstop as
 		// every other agent-spawned process (see exec_local_unix.go).
 		configureProcGroup(cmd)
 		cmd.WaitDelay = time.Second
-		return cmd.Run() == nil
+		err := cmd.Run()
+		if err != nil {
+			why <- probeFailure(stderr.String(), err)
+		}
+		return err == nil
 	})
-	if !ok && pctx.Err() != nil {
+	if ok {
+		return true, ""
+	}
+	if pctx.Err() != nil {
 		slog.Warn("sandbox probe did not finish within its deadline — treating systemd-run as unavailable; runner registers and runs unsandboxed",
 			"timeout", sandboxProbeTimeout)
+		return false, "systemd-run did not answer within " + sandboxProbeTimeout.String()
 	}
-	return ok
+	select {
+	case reason = <-why:
+	default:
+	}
+	return false, reason
+}
+
+// probeFailure is the first line systemd-run wrote when it could not create
+// the scope, or the error from running it when it wrote nothing.
+func probeFailure(stderr string, err error) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return err.Error()
 }
 
 // runAbandonable runs probe and reports its result, but is GUARANTEED to return

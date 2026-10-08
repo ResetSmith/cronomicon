@@ -127,10 +127,10 @@ func Doctor(ctx context.Context, cfg Config, quick bool) ([]Check, bool) {
 		// Tier-2 sandbox is informational: unsandboxed is a supported mode.
 		if cfg.NoSandbox {
 			add("sandbox", CheckWarn, "disabled (NoSandbox)")
-		} else if probeSandbox(ctx) {
+		} else if ok, why := probeSandbox(ctx); ok {
 			add("sandbox", CheckPass, "usable systemd-run scope")
 		} else {
-			add("sandbox", CheckWarn, "no usable systemd-run scope — runs execute unsandboxed")
+			add("sandbox", CheckWarn, "no usable systemd-run scope ("+why+") — runs execute unsandboxed; "+sandboxHint)
 		}
 
 		// Key custody (Phase 2): enumerate the NAMES the agent can resolve to a

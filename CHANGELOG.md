@@ -13,6 +13,87 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.3.1] - 2026-10-08
+
+Two things found by running 2.3.0's agents on a real RHEL 8 machine: a
+self-check that passed on the very unit it exists to catch, and a per-run
+sandbox that an installed agent has never had. The first is fixed. The second
+cannot be given to an agent that is not root, so this release says so
+everywhere it was promised, and adds the limit that does work: one on the
+agent's unit. Nothing changes in the server but one sentence in the Runners
+view. Schema (v1280) and runner protocol (14) are unchanged.
+
+**Upgrading.** Nothing is converted and nothing has to be done first. Upgrade
+the agents with the server (**Copy upgrade command** on a runner's row): the
+fixed self-check and the clearer startup line are in the agent. **If one
+machine runs agents for several agencies, give each agent's unit a limit**
+(below). Until you do, nothing stops one agency's Ansible or Terraform run from
+taking the machine's memory or CPU from the others. That was true of every
+release before this one; 2.3.0 is the first to put several agencies' agents on
+one machine on purpose.
+
+### Added
+
+- **Resource limits for an agent, set at install.** `runner-install.sh` takes
+  `--memory-max <size>` (a whole number with `K`, `M`, `G` or `T`),
+  `--cpu-quota <percent>` (of one CPU: `200%` is two) and `--tasks-max <n>`,
+  and writes them into the agent's unit as `MemoryMax=`, `CPUQuota=` and
+  `TasksMax=`. They bound the agent and everything it runs, together. Any other
+  shape of value is refused before anything is installed, and without the flags
+  the unit is exactly the one the installer wrote before. With the one-click
+  form the flags follow the pipe: `… | sudo bash -s -- --memory-max 4G`. The
+  *Add a Runner* helper does not write them.
+- **The same limits on an agent that is already installed**, with no restart:
+  `sudo systemctl set-property cronomicon-runner.service MemoryMax=4G
+  CPUQuota=200% TasksMax=1024` (`cronomicon-runner-<name>.service` for an
+  instance). The guides give the command and how to read the values back.
+  Checked on RHEL 8.10 (systemd 239, the older cgroup layout): the kernel
+  receives all three, a child of the service is held to them, and
+  `set-property` changes them on the running unit. **The memory limit bounds
+  RAM**: on a machine with swap a run that goes over it is pushed out to swap
+  and slows down, and is not killed.
+
+### Changed
+
+- **The agent says why it has no sandbox.** Its startup line read *no usable
+  systemd-run*, which sounds like a missing program. It now carries what
+  `systemd-run` answered (on an installed agent: *Interactive authentication
+  required*) and what to do instead, and `cronomicon-runner doctor` reports the
+  same in its `sandbox` check.
+- **The runner's settings drawer says when the sandbox caps do nothing.** On a
+  runner that reports no sandbox, the *Sandbox caps* fields carry a warning and
+  the command that does limit it. The fields still save: a runner that gains a
+  sandbox applies them.
+- **The guides no longer promise a per-run sandbox on an installed agent.** The
+  runner security guide said *Run as non-root, sandboxed*; the install guide,
+  the manage guide, the administrator manual, the reference unit and the
+  example `runner.env` described the per-run caps as what an agent has. Each
+  now says who gets them (an agent that runs as root) and points an ordinary
+  install at the unit limits. The uninstall steps remove the directory
+  `set-property` writes.
+
+### Fixed
+
+- **The agent's self-check passed on a unit that hangs its lookups, when the
+  host had no Ansible.** `doctor`'s `path-lookup` check (2.3.0) looked for
+  `ansible-playbook`. On systemd 239 a unit that filters system calls without
+  `SystemCallErrorNumber=EPERM` kills only a lookup that *finds* a file, so on
+  a host without Ansible the check answered at once and passed, while the
+  agent's lookup of `systemd-run` in the same unit never returned. It now looks
+  for the agent's own binary, which is always there. Seen on RHEL 8.10 with the
+  2.3.0 build; with this one the check fails there and names the fix, and
+  passes once the line is set.
+
+### Not changed, and worth knowing
+
+- **An agent that is not root still has no per-run sandbox**, as in every
+  release: systemd grants a new scope to `root` only, the installer's unit runs
+  the agent as a user of its own, and the permission that would change that is
+  the one to manage units, which an agent should not hold. Such an agent shows
+  *Unsandboxed*, does not advertise `sandboxed`, and a job that requires
+  `sandboxed` waits. Its runs do inherit the unit's filesystem and system-call
+  hardening.
+
 ## [2.3.0] - 2026-10-07
 
 Agencies own what is theirs, and the server is one more runner (LR band, with

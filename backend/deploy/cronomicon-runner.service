@@ -104,11 +104,28 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 # `systemd-run --scope` transient cgroup for resource caps (configure with
 # -sandbox-memory-max / -sandbox-cpu-quota / -sandbox-tasks-max, or their
 # CRONOMICON_RUNNER_SANDBOX_* env). Sandbox availability is probed at startup and
-# reported per-run; where no usable systemd manager exists the run is executed
-# and reported UNSANDBOXED. Creating scopes requires the agent to reach the
-# systemd manager — if the directives above prove too restrictive for that on
-# your host, the runs still inherit this unit's sandbox; they just lose the
-# per-run resource caps.
+# reported per-run; where the agent cannot create a scope the run is executed
+# and reported UNSANDBOXED.
+#
+# UNDER THIS UNIT IT CANNOT. Creating a scope is a request to the system
+# manager that polkit refuses to a user who is not root ("Interactive
+# authentication required"), and User= above is not root. The hardening is not
+# the cause (root creates a scope under all of it), and the permission that
+# would grant it is the one to manage units: more than an agent should hold.
+# So with this unit every local-toolchain run inherits the hardening and has
+# NO resource cap of its own: the -sandbox-* settings do nothing and the agent
+# does not advertise `sandboxed`.
+#
+# ── Resource limits ──────────────────────────────────────────────────────────
+# What does work is a limit on this unit: the agent and everything it runs,
+# together. On a machine with several agents, give each one limits so that no
+# agency's run can starve the others. runner-install.sh writes them with
+# --memory-max, --cpu-quota and --tasks-max; on an installed agent,
+# `systemctl set-property cronomicon-runner.service MemoryMax=4G …` sets them
+# without a restart. None is set by default.
+#   MemoryMax=4G
+#   CPUQuota=200%
+#   TasksMax=1024
 #
 # ── Egress allowlist (P5 — opt-in, commented) ────────────────────────────────
 # Restrict where this runner (and its ansible/terraform children) may connect.

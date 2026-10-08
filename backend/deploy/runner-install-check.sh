@@ -210,6 +210,54 @@ check "an instance's unit never points at the default agent's directories" \
   bash -c "! grep -Eq '(/etc|/var/lib)/cronomicon-runner(/|\$)' <<< \"\$1\"" _ "$unit_tax"
 check "both units are hardened alike" bash -c "[ \"\$(grep -c '^Protect' <<< \"\$1\")\" = \"\$(grep -c '^Protect' <<< \"\$2\")\" ] && grep -q '^NoNewPrivileges=true' <<< \"\$2\"" _ "$unit_default" "$unit_tax"
 
+# --- Resource limits: --memory-max, --cpu-quota, --tasks-max ---
+# An agent that is not root cannot cap its own runs, so the unit is where one
+# agent on a shared machine is kept from starving the next. The values go into
+# the unit file as given, so anything but the documented shape is refused.
+check "help lists --memory-max" bash -c "bash '$SCRIPT' --help | grep -q -- --memory-max"
+check "help lists --cpu-quota" bash -c "bash '$SCRIPT' --help | grep -q -- --cpu-quota"
+check "help lists --tasks-max" bash -c "bash '$SCRIPT' --help | grep -q -- --tasks-max"
+check_rejects "--memory-max with a second directive in it rejected" "whole number with K, M, G or T" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --memory-max "4G
+CPUQuota=1%"
+check_rejects "--memory-max with a two-letter unit rejected" "whole number with K, M, G or T" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --memory-max 4GB
+check_rejects "--memory-max 0 rejected" "whole number with K, M, G or T" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --memory-max 0
+check_rejects "--cpu-quota without a percent sign rejected" "percentage of one CPU" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --cpu-quota 200
+check_rejects "--cpu-quota that is not a number rejected" "percentage of one CPU" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --cpu-quota "2x%"
+check_rejects "--tasks-max that is not a whole number rejected" "a whole number" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --tasks-max 10%
+check_rejects "--tasks-max with no value rejected" "requires a value" \
+  bash "$SCRIPT" -s https://x -t crn_reg_x --tasks-max
+if [ "$EUID" -ne 0 ]; then
+  check_rejects "valid limits reach the root gate" "must be run as root" \
+    bash "$SCRIPT" -s https://x -t crn_reg_x --memory-max 4G --cpu-quota 200% --tasks-max 1024
+fi
+# No limit asked for, none written: the default unit is the one this script
+# always wrote (the comparison with the reference unit, above, holds that too).
+check "a unit with no limits asked for carries none" \
+  bash -c "! grep -Eq '^(MemoryMax|CPUQuota|TasksMax)=' <<< \"\$1\"" _ "$unit_default"
+unit_limited="$(MEMORY_MAX=4G CPU_QUOTA=200% TASKS_MAX=1024 render_unit "tax")"
+check "--memory-max is the unit's MemoryMax" unit_has "$unit_limited" "MemoryMax=4G"
+check "--cpu-quota is the unit's CPUQuota" unit_has "$unit_limited" "CPUQuota=200%"
+check "--tasks-max is the unit's TasksMax" unit_has "$unit_limited" "TasksMax=1024"
+check "the limits are in the [Service] section" \
+  bash -c "sed -n '/^\[Service\]\$/,/^\[Install\]\$/p' <<< \"\$1\" | grep -qx 'MemoryMax=4G'" _ "$unit_limited"
+unit_one_limit="$(CPU_QUOTA=150% render_unit "")"
+check "one limit alone writes only that one" \
+  bash -c "grep -qx 'CPUQuota=150%' <<< \"\$1\" && ! grep -Eq '^(MemoryMax|TasksMax)=' <<< \"\$1\"" _ "$unit_one_limit"
+# Apart from the limits, a limited unit is the unit it would have been.
+if drift="$(diff <(grep -vE '^(MemoryMax|CPUQuota|TasksMax)=' <<< "$unit_limited" | unit_directives) <(unit_directives <<< "$unit_tax"))"; then
+  echo "ok   limits add to the unit and change nothing else in it"
+else
+  echo "FAIL a unit with limits (<) differs from one without (>) in more than the limits:" >&2
+  echo "$drift" >&2
+  FAILURES=$((FAILURES + 1))
+fi
+
 # --- Secrets are never accepted as a flag VALUE (ps/history exposure) ---
 check_rejects "--checkout-token with a value rejected" "refusing to read a secret" \
   bash "$SCRIPT" -s https://x -t crn_reg_x --checkout-token ghp_secretvalue
