@@ -193,3 +193,54 @@ func TestReaperNullHeartbeatFallsBackToRegisteredAt(t *testing.T) {
 		t.Errorf("never-polled runner status = %q, want offline (registered_at fallback)", st)
 	}
 }
+
+// The reaper's two sweeps are for AGENTS. The local runner (kind `server`) is
+// this process: its status is its own engine's to write, a stalled in-process
+// heartbeat must not fail runs that are still executing, and its row is never
+// deleted — bindings, placements and ledger rows key on its id, and it is
+// offline for as long as it is turned off (LR-39).
+func TestReaperLeavesTheLocalRunnerAlone(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	base := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	svc.cfg.RunnerOfflineAfter = 5 * time.Minute
+	svc.cfg.RunnerDeregisterAfter = 336 * time.Hour
+	longAgo := base.Add(-60 * 24 * time.Hour).Format(time.RFC3339)
+
+	// Online with a heartbeat two months stale, holding a running run.
+	insertRunnerWithHeartbeat(t, svc, "local-on", "Local runner", "online", longAgo, longAgo)
+	if _, err := svc.db.Exec(`UPDATE runners SET kind = 'server' WHERE id = 'local-on'`); err != nil {
+		t.Fatal(err)
+	}
+	insertRunningRun(t, svc, "0190a000-0000-7000-8000-000000000001", "j", "s", "local-on", longAgo)
+	// And an agent with a stale heartbeat, for contrast (an hour: offline, not
+	// yet old enough to be deregistered in the same pass).
+	hourAgo := base.Add(-time.Hour).Format(time.RFC3339)
+	insertRunnerWithHeartbeat(t, svc, "agent-stale", "agent", "online", hourAgo, hourAgo)
+
+	withReaperNow(t, base)
+	svc.reapOnce(ctx)
+
+	if st, ok := runnerStatus(t, svc, "local-on"); !ok || st != "online" {
+		t.Errorf("the local runner = %q (exists=%v) after the sweep, want it untouched", st, ok)
+	}
+	var runStatus string
+	if err := svc.db.QueryRow(`SELECT status FROM runs WHERE runner_id = 'local-on'`).Scan(&runStatus); err != nil || runStatus != "running" {
+		t.Errorf("the local runner's run = %q (err %v), want still running: a stale heartbeat is not a lost runner", runStatus, err)
+	}
+	if st, ok := runnerStatus(t, svc, "agent-stale"); !ok || st != "offline" {
+		t.Errorf("the stale agent = %q (exists=%v), want offline", st, ok)
+	}
+
+	// Offline for two months: an agent is deregistered, the local runner is not.
+	if _, err := svc.db.Exec(`UPDATE runners SET status = 'offline', last_seen_at = ?`, longAgo); err != nil {
+		t.Fatal(err)
+	}
+	svc.reapOnce(ctx)
+	if _, ok := runnerStatus(t, svc, "local-on"); !ok {
+		t.Error("the local runner's row was deregistered for being off")
+	}
+	if _, ok := runnerStatus(t, svc, "agent-stale"); ok {
+		t.Error("the long-offline agent was not deregistered")
+	}
+}

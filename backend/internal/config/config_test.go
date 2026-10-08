@@ -169,3 +169,35 @@ func TestLogFileKeepAllowsZeroButNotNegative(t *testing.T) {
 		t.Errorf("LogFileKeep = %d, want 0 to survive as an explicit choice", c.LogFileKeep)
 	}
 }
+
+// CRONOMICON_LOCAL_RUNNER is a kill switch (LR-17), so a value that is not one
+// it knows stops the server instead of reading as "allowed".
+func TestLocalRunnerSwitchRefusesAValueItDoesNotKnow(t *testing.T) {
+	base := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("CRONOMICON_DEV_AUTH", "true")
+		t.Setenv("CRONOMICON_KEK", "YTM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM=")
+	}
+	for value, want := range map[string]bool{"forbid": true, " FORBID ": true, "": false, "allow": false} {
+		t.Run("value "+value, func(t *testing.T) {
+			base(t)
+			t.Setenv("CRONOMICON_LOCAL_RUNNER", value)
+			c, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if c.LocalRunnerForbid != want {
+				t.Errorf("LocalRunnerForbid = %v, want %v", c.LocalRunnerForbid, want)
+			}
+		})
+	}
+	for _, value := range []string{"forbidden", "true", "off", "no"} {
+		t.Run("typo "+value, func(t *testing.T) {
+			base(t)
+			t.Setenv("CRONOMICON_LOCAL_RUNNER", value)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "CRONOMICON_LOCAL_RUNNER") {
+				t.Fatalf("Load with %q = %v, want a refusal naming the variable", value, err)
+			}
+		})
+	}
+}

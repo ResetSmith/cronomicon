@@ -195,6 +195,19 @@ describe("ScopeRunnersDialog — choose, preview, save", () => {
     expect(dialog.getByText("deregistered — untick to remove")).toBeTruthy();
   });
 
+  // Until the local runner claims by the runner rule, a scope bound to it would
+  // send its jobs where nothing takes them; the server refuses the save, so the
+  // picker does not offer it — even when it serves the scope's agency.
+  it("does not offer the local runner as a binding target", async () => {
+    fleet = [
+      { id: "id-fin-1", name: "runner-fin-01", status: "online", agencies: [FIN] },
+      { id: "id-local", name: "Local runner", kind: "server", status: "online", agencies: [FIN] },
+    ];
+    const { dialog, box } = await open();
+    expect(box("runner-fin-01").disabled).toBe(false);
+    expect(dialog.queryByText("Local runner")).toBeNull();
+  });
+
   it("keeps Save disabled until something changed AND its preview has arrived, then sends the whole set", async () => {
     fleet = [{ id: "id-fin-1", name: "runner-fin-01", status: "online", agencies: [FIN] }];
     const ghost = br({ name: "runner-old", registered: false, status: "", eligible: false });
@@ -281,6 +294,8 @@ describe("ReplaceRunnerDialog — hand a runner's scopes over", () => {
     fleet = [
       { id: "id-old", name: "runner-old", status: "offline" },
       { id: "id-new", name: "runner-new", status: "online" },
+      // Never a replacement: nothing can be bound to it yet.
+      { id: "id-local", name: "Local runner", kind: "server", status: "online" },
     ];
     const onDone = vi.fn();
     render(<ReplaceRunnerDialog from={{ id: "id-old", name: "runner-old" }} onClose={vi.fn()} onDone={onDone} />);
@@ -288,6 +303,7 @@ describe("ReplaceRunnerDialog — hand a runner's scopes over", () => {
     const select = (await waitFor(() => dialog.getByRole("combobox"))) as HTMLSelectElement;
     // The runner being replaced is not offered as its own replacement.
     expect([...select.options].map((o) => o.value)).toEqual(["", "id-new"]);
+    expect(select.textContent).not.toContain("Local runner");
     const replace = () => dialog.getByRole("button", { name: "Replace" }) as HTMLButtonElement;
     expect(replace().disabled).toBe(true);
     fireEvent.change(select, { target: { value: "id-new" } });

@@ -690,8 +690,17 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 				return ErrUnknownAgency
 			}
 		}
-		if err := ValidateAgencySet(a.AgencyIDs); err != nil {
+		// Global beside another agency is refused for an agent (its list is its
+		// owner). The local runner is the one runner whose list may hold both
+		// (MA-11): it serves whoever a global administrator names.
+		local, err := IsLocalRunner(ctx, database, a.RunnerID)
+		if err != nil {
 			return err
+		}
+		if !local {
+			if err := ValidateAgencySet(a.AgencyIDs); err != nil {
+				return err
+			}
 		}
 	}
 	tx, err := database.BeginTx(ctx, nil)
@@ -705,7 +714,7 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 		// DRF-5: what was the set BEFORE, so an unchanged runner writes no row —
 		// the matrix UI posts every runner it shows, and a feed entry per
 		// untouched runner would drown the one that moved.
-		owner, before, err := runnerPlacement(ctx, tx, a.RunnerID)
+		owner, before, local, err := runnerPlacement(ctx, tx, a.RunnerID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrUnknownRunner // deregistered between the check above and here
 		}
@@ -713,8 +722,9 @@ func SetRunnerAgencies(ctx context.Context, database *sql.DB, assignments []Runn
 			return err
 		}
 		// MA-11: an agent serves exactly its owner; a legacy placement only
-		// shrinks. Judged against the list as it stands NOW, before the delete.
-		if err := CheckRunnerPlacement(false, owner, before, a.AgencyIDs); err != nil {
+		// shrinks; the local runner takes any non-empty list. Judged against
+		// the list as it stands NOW, before the delete.
+		if err := CheckRunnerPlacement(local, owner, before, a.AgencyIDs); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM runner_agencies WHERE runner_id=?`, a.RunnerID); err != nil {

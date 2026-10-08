@@ -170,6 +170,44 @@ func (s *Server) requireRunnerAgency(pathVar string, next http.Handler) http.Han
 	})
 }
 
+// agentOnly refuses a route for the LOCAL runner (kind `server`), inside the
+// owner gate, so only someone who may manage the runner learns which kind it
+// is. The local runner is this server: there is no agent to drain, re-declare,
+// reconfigure or test, it is turned on and off with its own setting
+// (PUT /local-runner), secret injection is fixed on for it (LR-46), and its row
+// is never deregistered (LR-39). Its host keys are still the server's own, kept
+// with the SSH targets, until they move to the runner's ledger (Phase C of the
+// local runner); until then the host-key routes refuse it too.
+//
+// 422 `local_runner`, with what to do instead.
+func (s *Server) agentOnly(pathVar string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.isAgent(w, r, r.PathValue(pathVar)) {
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
+// isAgent is agentOnly for a handler that runs its owner gate itself: call it
+// AFTER that gate, so someone who may not manage the runner gets the ordinary
+// 403 and not this. It writes the refusal and returns false for the local
+// runner.
+func (s *Server) isAgent(w http.ResponseWriter, r *http.Request, runnerID string) bool {
+	local, err := settings.IsLocalRunner(r.Context(), s.db, runnerID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if local {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner",
+			"this is the local runner — the server itself — so there is no agent here to act on. "+
+				"Turn it on or off, and set how many runs it takes, under Settings → Local runner; "+
+				"its host keys are managed with the SSH targets")
+		return false
+	}
+	return true
+}
+
 // requireRunnerOwnerOrHostKeyGuest is the owner gate with LR-63's one, narrow
 // exception, for the three routes that make up "review a host's key": queue a
 // scan of a scope, list what the scan found, approve or reject it.
@@ -401,6 +439,13 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/runners/{id}/owner",
 		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(s.handleSetRunnerOwner))))
 
+	// ── The local runner's switch (LR-1, LR-17, LR-43) ────────────────────
+	// Read by any session: the Runners view lists the row for everyone, and
+	// the two facts this adds (whether it is turned on, whether the host
+	// forbids it) explain why its jobs wait. Written by a global administrator.
+	mux.Handle("GET /api/v1/local-runner", s.auth.RequireSession(http.HandlerFunc(s.handleGetLocalRunner)))
+	mux.Handle("PUT /api/v1/local-runner", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleSetLocalRunner)))
+
 	// ── Runner: long-poll for work (A6.2, doubles as heartbeat) ───────────
 	// Path: GET /api/v1/runners/{id}/poll
 	mux.Handle("GET /api/v1/runners/{id}/poll",
@@ -408,27 +453,27 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 
 	// ── Drain (ConfigureApp + owning agency, RF-2 — see requireRunnerAgency) ──
 	mux.Handle("POST /api/v1/runners/{id}/drain",
-		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(svc.HandleDrain))))
+		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", http.HandlerFunc(svc.HandleDrain)))))
 
 	// ── Resync (ConfigureApp — fleet op; runner-install-update.md Phase 4) ─
 	// Sets resync_requested; the next poll delivers PollControl{Op:"re-register"}.
 	// (The protocol >= 4 gate and its 409 went with the floor in v1.5.40: every
 	// registered agent speaks the current protocol.)
 	mux.Handle("POST /api/v1/runners/{id}/resync",
-		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(svc.HandleResync))))
+		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", http.HandlerFunc(svc.HandleResync)))))
 
 	// ── Managed settings (ConfigureApp — fleet op; plan 2 Phase 4) ────────
 	// Replaces the runner's server-managed override set and bumps the version;
 	// the next poll delivers it to a settings-capable agent, applied in-memory.
 	mux.Handle("PATCH /api/v1/runners/{id}/settings",
-		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(svc.HandleUpdateRunnerSettings))))
+		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", http.HandlerFunc(svc.HandleUpdateRunnerSettings)))))
 
 	// ── Secret-injection trust flag (ConfigureApp; vault-integration.md P1.4) ──
 	// Operator grant permitting this runner to claim binding-bearing runs and
 	// receive injected secret material in the manifest. Operator-set, never
 	// self-declared.
 	mux.Handle("PUT /api/v1/runners/{id}/secret-injection",
-		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(svc.HandleSetSecretInjection))))
+		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", http.HandlerFunc(svc.HandleSetSecretInjection)))))
 
 	// ── Host-key scan & approve (plan 2 Phase 5, D4: 4A) ──────────────────
 	// Operator: queue a scan (delivered as a v5 keyscan op), list pending scanned
@@ -437,7 +482,7 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	// exception (requireRunnerOwnerOrHostKeyGuest); every other host-key route is
 	// the owner's alone.
 	hkGuest := func(h http.HandlerFunc) http.Handler {
-		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerOwnerOrHostKeyGuest("id", h))
+		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerOwnerOrHostKeyGuest("id", s.agentOnly("id", h)))
 	}
 	mux.Handle("POST /api/v1/runners/{id}/keyscan", hkGuest(svc.HandleKeyscan))
 	mux.Handle("GET /api/v1/runners/host-keys/pending",
@@ -453,7 +498,7 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	// reads the snapshot taken at deregistration); with no snapshot left, or an
 	// owner agency since deleted, it is a global administrator's.
 	hk := func(h http.HandlerFunc) http.Handler {
-		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", h))
+		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", h)))
 	}
 	mux.Handle("GET /api/v1/runners/{id}/host-keys", hk(svc.HandleRunnerHostKeys))
 	mux.Handle("GET /api/v1/runners/{id}/host-keys/pending", hkGuest(svc.HandleListRunnerPendingHostKeys))
@@ -514,11 +559,11 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 
 	// ── Deregister (ConfigureApp + owning agency, RF-2) ───────────────────
 	mux.Handle("DELETE /api/v1/runners/{id}",
-		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(svc.HandleDeregisterRunner))))
+		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", http.HandlerFunc(svc.HandleDeregisterRunner)))))
 
 	// ── Test Runner Connection (ConfigureApp + owning agency, RF-2) ───────
 	mux.Handle("POST /api/v1/runners/{id}/test",
-		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", http.HandlerFunc(svc.HandleTestRunner))))
+		s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", http.HandlerFunc(svc.HandleTestRunner)))))
 
 	// ── Runner: execution manifest (R1.2/D2) ──────────────────────────────
 	// Fetched after claim. Authorized by run ownership inside the handler (R1.4).
@@ -554,6 +599,11 @@ func (s *Server) handleAcceptRunnerPlacement(w http.ResponseWriter, r *http.Requ
 	if !s.requireRunnerOwner(w, r, id, r.PathValue("id")) {
 		return
 	}
+	// It never enrols, so it is never the runner an agent's old placement is
+	// restored to.
+	if !s.isAgent(w, r, r.PathValue("id")) {
+		return
+	}
 	var body struct {
 		HistoryID int64 `json:"historyId"`
 	}
@@ -586,6 +636,11 @@ func (s *Server) handleDismissRunnerPlacement(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !s.requireRunnerOwner(w, r, id, r.PathValue("id")) {
+		return
+	}
+	// It never enrols, so it is never the runner an agent's old placement is
+	// restored to.
+	if !s.isAgent(w, r, r.PathValue("id")) {
 		return
 	}
 	var body struct {
@@ -760,4 +815,70 @@ func (s *Server) handleSetRunnerOwner(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpx.Fail500(w, s.log, "update_failed", err)
 	}
+}
+
+func (s *Server) handleGetLocalRunner(w http.ResponseWriter, r *http.Request) {
+	lr, err := settings.GetLocalRunner(r.Context(), s.db, s.cfg.LocalRunnerForbid)
+	switch {
+	case errors.Is(err, settings.ErrNoLocalRunner):
+		httpx.Fail(w, http.StatusNotFound, "not_found", err.Error())
+	case err != nil:
+		httpx.Fail500(w, s.log, "db_error", err)
+	default:
+		httpx.JSON(w, http.StatusOK, lr)
+	}
+}
+
+// handleSetLocalRunner turns the local runner on or off and sets its
+// concurrency (LR-43, LR-44). The stored state changes first, in a transaction
+// with its audit row; the engine is then told, which starts the claim loop or
+// lets it drain. If the engine cannot be told (it reads the same stored state
+// at the next start), the answer says so rather than claiming it took effect.
+func (s *Server) handleSetLocalRunner(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	var body struct {
+		Enabled       *bool `json:"enabled"`
+		MaxConcurrent *int  `json:"maxConcurrent"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
+	if body.Enabled == nil && body.MaxConcurrent == nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error", "give enabled, maxConcurrent, or both")
+		return
+	}
+	lr, err := settings.SetLocalRunner(r.Context(), s.db, s.cfg.LocalRunnerForbid, body.Enabled, body.MaxConcurrent, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrLocalRunnerForbidden):
+		httpx.Fail(w, http.StatusConflict, "local_runner_forbidden", err.Error())
+		return
+	case errors.Is(err, settings.ErrNoLocalRunner):
+		httpx.Fail(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error", err.Error())
+		return
+	case err != nil:
+		httpx.Fail500(w, s.log, "update_failed", err)
+		return
+	}
+	if s.sshExec != nil {
+		// The engine outlives this request: it must not start its claim loop
+		// on a context that ends when the response is written.
+		if err := s.sshExec.Apply(context.WithoutCancel(r.Context())); err != nil {
+			s.log.Error("local runner: the setting was saved and the engine could not apply it", "error", err)
+			httpx.Fail(w, http.StatusInternalServerError, "apply_failed",
+				"the setting was saved, but the running server could not apply it; it takes effect at the next restart")
+			return
+		}
+		if fresh, ferr := settings.GetLocalRunner(r.Context(), s.db, s.cfg.LocalRunnerForbid); ferr == nil {
+			lr = fresh // the status the engine just wrote
+		}
+	}
+	httpx.JSON(w, http.StatusOK, lr)
 }

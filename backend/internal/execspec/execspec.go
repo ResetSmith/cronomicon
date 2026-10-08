@@ -621,6 +621,7 @@ func AgenciesHaveOnlineRunner(ctx context.Context, db *sql.DB, agencies []string
 			JOIN agencies a  ON a.id  = ra.agency_id
 			JOIN runners  rn ON rn.id = ra.runner_id
 			WHERE a.name IN (SELECT value FROM json_each(?)) AND rn.status = 'online'
+			  AND `+ClaimsByPollSQL("rn")+`
 		)`, MarshalAgencies(agencies)).Scan(&exists)
 	if err != nil {
 		return false, err
@@ -677,6 +678,7 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 		SELECT EXISTS(
 			SELECT 1 FROM runners rn
 			WHERE rn.status = 'online'
+			  AND `+ClaimsByPollSQL("rn")+`
 			  AND ? IN `+caps+`
 			  AND NOT EXISTS (
 			    SELECT 1 FROM json_each(?) je

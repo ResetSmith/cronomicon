@@ -71,12 +71,20 @@ func TestUpdateRunnerTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	var runners []struct {
+	var listed []struct {
 		ID   string   `json:"id"`
+		Kind string   `json:"kind"`
 		Tags []string `json:"tags"`
 	}
-	_ = json.NewDecoder(lresp.Body).Decode(&runners)
+	_ = json.NewDecoder(lresp.Body).Decode(&listed)
 	lresp.Body.Close()
+	// The agents: the local runner (kind `server`) is always listed beside them.
+	runners := listed[:0]
+	for _, r := range listed {
+		if r.Kind != "server" {
+			runners = append(runners, r)
+		}
+	}
 	if len(runners) != 1 || len(runners[0].Tags) != 2 {
 		t.Fatalf("list tags = %v, want 2 on the one runner", runners)
 	}

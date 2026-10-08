@@ -68,17 +68,20 @@ func CheckRunnerPlacement(local bool, owner string, before, after []string) erro
 	return nil
 }
 
-// runnerPlacement reads a runner's owner and serve list inside a transaction.
-func runnerPlacement(ctx context.Context, tx *sql.Tx, runnerID string) (owner string, serves []string, err error) {
-	if err = tx.QueryRowContext(ctx, `SELECT owner_agency FROM runners WHERE id = ?`, runnerID).Scan(&owner); err != nil {
-		return "", nil, err
+// runnerPlacement reads a runner's owner, its serve list and whether it is the
+// local runner, inside a transaction.
+func runnerPlacement(ctx context.Context, tx *sql.Tx, runnerID string) (owner string, serves []string, local bool, err error) {
+	var kind string
+	if err = tx.QueryRowContext(ctx, `SELECT owner_agency, kind FROM runners WHERE id = ?`, runnerID).Scan(&owner, &kind); err != nil {
+		return "", nil, false, err
 	}
 	serves, err = runnerAgencyIDs(ctx, tx, runnerID)
-	return owner, serves, err
+	return owner, serves, kind == RunnerKindServer, err
 }
 
-// IsLegacyPlacement reports whether a runner's serve list is anything but
-// exactly its owner (MA-9).
+// IsLegacyPlacement reports whether an AGENT's serve list is anything but
+// exactly its owner (MA-9). The local runner has a serve list by design and is
+// never one: ask only about agents.
 func IsLegacyPlacement(owner string, serves []string) bool {
 	return len(serves) != 1 || serves[0] != owner
 }
@@ -95,7 +98,7 @@ func SetRunnerOwner(ctx context.Context, database *sql.DB, runnerID, agencyID, a
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck
-	owner, serves, err := runnerPlacement(ctx, tx, runnerID)
+	owner, serves, local, err := runnerPlacement(ctx, tx, runnerID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrUnknownRunner
 	}
@@ -105,7 +108,9 @@ func SetRunnerOwner(ctx context.Context, database *sql.DB, runnerID, agencyID, a
 	if owner == agencyID {
 		return nil // already theirs
 	}
-	if owner != agencyid.Global || agencyID == agencyid.Global ||
+	// The local runner is Global's and stays Global's (MA-12): it is this
+	// server, and serves whoever a global administrator lists.
+	if local || owner != agencyid.Global || agencyID == agencyid.Global ||
 		len(serves) != 1 || serves[0] != agencyID {
 		return ErrOwnerChangeRefused
 	}

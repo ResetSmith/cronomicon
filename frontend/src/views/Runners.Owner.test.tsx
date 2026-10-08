@@ -31,6 +31,7 @@ let CAPS: Record<string, boolean> = {};
 let ACCESS: unknown = null;
 let TOKENS: unknown[] = [];
 let SCOPES: unknown[] = [];
+let LOCAL_STATE: Record<string, unknown> = {};
 
 const { POST, PUT } = vi.hoisted(() => ({
   POST: vi.fn(async (_path: string, _init?: unknown) => ({ data: { id: 1, token: "crn_reg_x", status: "pending" } }) as { data?: unknown; error?: unknown }),
@@ -48,6 +49,7 @@ vi.mock("../api/client", async (importOriginal) => {
         if (path === "/runners/registration-tokens") return { data: TOKENS };
         if (path === "/agencies") return { data: [GLOBAL, FIN, TAX] };
         if (path === "/scopes") return { data: SCOPES };
+        if (path === "/local-runner") return { data: LOCAL_STATE };
         return { data: { items: [] } };
       }),
       POST,
@@ -76,6 +78,7 @@ beforeEach(() => {
   ACCESS = null;
   TOKENS = [];
   SCOPES = [];
+  LOCAL_STATE = { runnerId: "r-local", enabled: false, forbidden: false, status: "offline", maxConcurrent: 4, serves: [GLOBAL] };
 });
 afterEach(() => {
   cleanup();
@@ -223,6 +226,113 @@ describe("Runners — owner and serves (MA-26)", () => {
     fireEvent.click(scan);
     expect(await screen.findByText(/is not your agency's runner, but it serves your agency/)).toBeTruthy();
     expect(screen.queryByText("Paste keys")).toBeNull();
+  });
+});
+
+// The local runner — this server running shell jobs itself (LR-38). It is listed
+// with the agents and has no agent: nothing on its row deregisters, drains,
+// re-declares, tests or upgrades it, and it points at where it is turned on.
+describe("Runners — the local runner's row (LR-38)", () => {
+  const LOCAL = { ...base, id: "r-local", name: "Local runner", kind: "server", status: "offline", ownerAgency: GLOBAL, agencies: [GLOBAL, FIN], allowSecretInjection: true };
+
+  it("badges it as this server, with a link to its settings where an agent has Test and Deregister", async () => {
+    RUNNERS = [LOCAL, AGENT];
+    renderRunners();
+    const row = (await screen.findByText("Local runner")).closest("tr")!;
+    expect(within(row).getByText("this server")).toBeTruthy();
+    expect(within(row).queryByRole("button", { name: "Test" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "Deregister" })).toBeNull();
+    expect((within(row).getByRole("link", { name: "Settings" }) as HTMLAnchorElement).getAttribute("href")).toBe("/settings?tab=localrunner");
+    // It serves more than its owner by design: not a legacy placement.
+    expect(within(row).queryByText("legacy")).toBeNull();
+    // The agent beside it keeps its own.
+    const agentRow = screen.getByText("fin-agent").closest("tr")!;
+    expect(within(agentRow).getByRole("button", { name: "Deregister" })).toBeTruthy();
+  });
+
+  it("shows what it serves, where that is changed, and none of the agent's sections", async () => {
+    RUNNERS = [{ ...LOCAL, status: "online" }];
+    renderRunners();
+    await expand("Local runner");
+    const sec = await agencySection();
+    expect(sec.getByText(/A global administrator chooses the agencies it serves under/)).toBeTruthy();
+    expect(sec.queryByRole("button", { name: /Stop serving/ })).toBeNull();
+    expect(sec.queryByText("Legacy placement")).toBeNull();
+    for (const name of ["Resync", "Drain", "Scan keys", "⚙ Edit"]) expect(screen.queryByRole("button", { name }), name).toBeNull();
+    // No scope can be bound to it yet, so it is not told to "bind it to a scope".
+    expect(screen.queryByText(/Scopes served/)).toBeNull();
+    expect(screen.queryByText(/Bind it to a scope/)).toBeNull();
+    expect(screen.queryByText("Copy upgrade command")).toBeNull();
+    expect(screen.getByText(/Always on\. This server is the secret store/)).toBeTruthy();
+    expect(screen.getByText(/verifies hosts against the keys kept with the SSH targets/)).toBeTruthy();
+  });
+});
+
+// The Settings section it is turned on in is a global administrator's. Nobody
+// else is linked to it (they would land somewhere else), and everyone can read
+// WHY its row is offline: turned off, or forbidden by the host.
+describe("Runners — the local runner, for someone who is not a global administrator", () => {
+  const LOCAL = { ...base, id: "r-local", name: "Local runner", kind: "server", status: "offline", ownerAgency: GLOBAL, agencies: [GLOBAL, FIN], canManage: false, canReviewHostKeys: false };
+
+  it("links nobody but a global administrator to Settings → Local runner", async () => {
+    CAPS = { configureAppGlobal: false };
+    RUNNERS = [LOCAL];
+    renderRunners();
+    const row = (await screen.findByText("Local runner")).closest("tr")!;
+    expect(within(row).queryByRole("link", { name: "Settings" })).toBeNull();
+    await expand("Local runner");
+    expect((await screen.findAllByText(/Settings → Local runner/)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: "Settings → Local runner" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "turn on the local runner" })).toBeNull();
+    expect(screen.getByText(/a global administrator can also turn on the local runner/)).toBeTruthy();
+  });
+
+  it("says whether it is turned off or forbidden on the host", async () => {
+    CAPS = { configureAppGlobal: false };
+    RUNNERS = [LOCAL];
+    const first = renderRunners();
+    await expand("Local runner");
+    expect(await screen.findByText(/It is turned off\./)).toBeTruthy();
+    first.unmount();
+
+    LOCAL_STATE = { ...LOCAL_STATE, forbidden: true };
+    renderRunners();
+    await expand("Local runner");
+    expect(await screen.findByText(/It is forbidden on this host \(CRONOMICON_LOCAL_RUNNER=forbid is set there\)/)).toBeTruthy();
+  });
+
+  it("links a global administrator from every mention", async () => {
+    RUNNERS = [{ ...LOCAL, canManage: true }];
+    renderRunners();
+    await expand("Local runner");
+    const links = await screen.findAllByRole("link", { name: "Settings → Local runner" });
+    expect(links.length).toBe(2);
+    for (const a of links) expect(a.getAttribute("href")).toBe("/settings?tab=localrunner");
+  });
+});
+
+describe("Runners — nothing to run a job (LR-38)", () => {
+  const OFF = { ...base, id: "r-local", name: "Local runner", kind: "server", status: "offline", ownerAgency: GLOBAL, agencies: [GLOBAL] };
+  const note = /Nothing can run a job yet: no agent is registered and the local runner is off\./;
+
+  it("says so when the local runner is off and no agent is registered, and points at both ways out", async () => {
+    RUNNERS = [OFF];
+    renderRunners();
+    expect(await screen.findByText(note)).toBeTruthy();
+    expect((screen.getByRole("link", { name: "turn on the local runner" }) as HTMLAnchorElement).getAttribute("href")).toBe("/settings?tab=localrunner");
+  });
+
+  it("says nothing once the local runner is on, or an agent exists", async () => {
+    RUNNERS = [{ ...OFF, status: "online" }];
+    const first = renderRunners();
+    await screen.findByText("Local runner");
+    expect(screen.queryByText(note)).toBeNull();
+    first.unmount();
+
+    RUNNERS = [OFF, AGENT];
+    renderRunners();
+    await screen.findByText("fin-agent");
+    expect(screen.queryByText(note)).toBeNull();
   });
 });
 

@@ -447,6 +447,8 @@ func checkVaultPathOutsidePrefix(ctx context.Context, database *sql.DB) error {
 // re-bind before narrowing.
 //
 // A runner with NO serve row is not this: it is damage, and checkOrphaned's.
+// Nor is the local runner, the one runner that has a serve list by design
+// (MA-14).
 func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT rn.id, rn.name, COALESCE(oa.name, rn.owner_agency),
@@ -455,7 +457,8 @@ func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 		             WHERE m.runner_id = rn.id ORDER BY a.name)),
 		       (SELECT COUNT(*) FROM runner_agencies m WHERE m.runner_id = rn.id)
 		  FROM runners rn LEFT JOIN agencies oa ON oa.id = rn.owner_agency
-		 WHERE EXISTS (SELECT 1 FROM runner_agencies m WHERE m.runner_id = rn.id)
+		 WHERE rn.kind <> 'server'
+		   AND EXISTS (SELECT 1 FROM runner_agencies m WHERE m.runner_id = rn.id)
 		   AND NOT ((SELECT COUNT(*) FROM runner_agencies m WHERE m.runner_id = rn.id) = 1
 		            AND EXISTS (SELECT 1 FROM runner_agencies m
 		                         WHERE m.runner_id = rn.id AND m.agency_id = rn.owner_agency))

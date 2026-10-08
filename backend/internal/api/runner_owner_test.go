@@ -532,13 +532,37 @@ func TestG3_TheRunnerListCarriesTheOwner(t *testing.T) {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"ownerAgency"`
-		LegacyPlacement   bool `json:"legacyPlacement"`
-		CanManage         bool `json:"canManage"`
-		CanReviewHostKeys bool `json:"canReviewHostKeys"`
+		LegacyPlacement   bool   `json:"legacyPlacement"`
+		CanManage         bool   `json:"canManage"`
+		CanReviewHostKeys bool   `json:"canReviewHostKeys"`
+		Kind              string `json:"kind"`
+		Name              string `json:"name"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("decode: %v (%s)", err, rec.Body)
 	}
+	// The local runner is listed with the agents: this server, Global's, of
+	// kind `server`, and never a legacy placement whatever it serves. It is
+	// asserted here and left out of the agents' table below.
+	agents := rows[:0]
+	var local int
+	for _, r := range rows {
+		if r.Kind != "server" {
+			if r.Kind != "agent" {
+				t.Errorf("%s: kind %q, want agent", r.ID, r.Kind)
+			}
+			agents = append(agents, r)
+			continue
+		}
+		local++
+		if r.Name != "Local runner" || r.OwnerAgency == nil || r.OwnerAgency.ID != "global" || r.LegacyPlacement {
+			t.Errorf("the local runner is listed as %+v (owner %+v), want Global's, not a legacy placement", r, r.OwnerAgency)
+		}
+	}
+	if local != 1 {
+		t.Fatalf("%d local runners listed, want exactly one", local)
+	}
+	rows = agents
 	// A viewer manages nothing and reviews nothing.
 	for _, r := range rows {
 		if r.CanManage || r.CanReviewHostKeys {

@@ -57,6 +57,17 @@ func effectiveCapsSQL(alias string) string {
 	                            ELSE '[]' END) em))`
 }
 
+// ClaimsByPollSQL is true of a runner (the runners row aliased `alias`) that
+// takes `executor='runner'` runs: an agent. The local runner (kind 'server',
+// Phase A of 2.3.0) has a row among the runners and, until Phase B gives the
+// engine the one claim path, still claims only `executor='ssh'` runs through
+// sshexec's own query. So until then it must not be counted by anything that
+// answers "can a runner take this run" or "may this scope be bound to that
+// runner": a scope bound to it would send its jobs to the runner executor and
+// nothing would ever claim them, with the two mirrors reporting that something
+// could. Phase B deletes this function and every use of it together.
+func ClaimsByPollSQL(alias string) string { return alias + `.kind <> 'server'` }
+
 // injectionGateArmed mirrors config.SecretsInjectionEnabled for the two
 // mirrors, which are called from places that hold no configuration (the run
 // writer, the workflow engine). True — the configuration's own default — until

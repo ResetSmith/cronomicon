@@ -174,8 +174,20 @@ type Config struct {
 
 	// SSH executor (execution-update.md EX.6). Opt-in: when enabled the app
 	// holds SSH private keys and opens outbound SSH to job targets. Default off.
+	//
+	// Since 2.3.0 that engine is the LOCAL RUNNER, turned on and off by an app
+	// setting (settings.LocalRunnerEnabled). These two are read ONCE, when the
+	// local runner's row is first created, as the seeds of that setting and of
+	// its concurrency (LR-44, LR-45): an upgrade that silently read "off" would
+	// stop production jobs.
 	SSHExecutorEnabled     bool
 	SSHExecutorConcurrency int
+	// LocalRunnerForbid is CRONOMICON_LOCAL_RUNNER=forbid (LR-17): the host says
+	// this process must never run jobs itself. The setting then reads off and
+	// cannot be turned on from the app. It is about RUNNING JOBS: a global
+	// administrator's "Test connection" on an SSH target still dials from here.
+	// Any value that is not forbid, allow or empty refuses to start (Load).
+	LocalRunnerForbid bool
 
 	// SecretsInjectionEnabled is the one-release kill-switch for dispatch-time
 	// reference injection (vault-integration.md D5). Default ON: when a run's
@@ -306,6 +318,7 @@ func Load() (*Config, error) {
 		GitLabWriteBranch:       env("CRONOMICON_GITLAB_WRITE_BRANCH", ""),
 		SSHExecutorEnabled:      envBool("CRONOMICON_SSH_EXECUTOR_ENABLED", false),
 		SSHExecutorConcurrency:  envInt("CRONOMICON_SSH_EXECUTOR_CONCURRENCY", 4),
+		LocalRunnerForbid:       strings.EqualFold(strings.TrimSpace(env("CRONOMICON_LOCAL_RUNNER", "")), "forbid"),
 		SecretsInjectionEnabled: envBool("CRONOMICON_SECRETS_INJECTION_ENABLED", true),
 		SSHExecutorStaleAfter:   envDuration("CRONOMICON_SSH_EXECUTOR_STALE_AFTER", 24*time.Hour),
 		MaxRunLogBytes:          envInt("CRONOMICON_MAX_RUN_LOG_BYTES", 512<<20),
@@ -324,6 +337,12 @@ func Load() (*Config, error) {
 
 	if c.SecretKEKVersion < 1 {
 		return nil, fmt.Errorf("invalid CRONOMICON_KEK_VERSION %d (must be >= 1)", c.SecretKEKVersion)
+	}
+	// A switch that exists to keep SSH keys off a host must not read a typo as
+	// "allowed": "forbidden", "true" or "off" would otherwise start a server
+	// its operator believes cannot run jobs.
+	if v := strings.TrimSpace(os.Getenv("CRONOMICON_LOCAL_RUNNER")); v != "" && !c.LocalRunnerForbid && !strings.EqualFold(v, "allow") {
+		return nil, fmt.Errorf("invalid CRONOMICON_LOCAL_RUNNER %q (want forbid, or allow, or leave it unset)", v)
 	}
 	if !validLogLevel(c.LogLevel) {
 		return nil, fmt.Errorf("invalid CRONOMICON_LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)

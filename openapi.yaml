@@ -4422,6 +4422,92 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /local-runner:
+    get:
+      tags: [Runners]
+      operationId: getLocalRunner
+      summary: The local runner — this server running shell jobs itself (v2.3.0)
+      description: |
+        The server can run shell jobs (bash, perl, powershell, python) itself,
+        over SSH, from inside its own process. Since v2.3.0 that engine is the
+        **local runner**: one row in the runner list, of kind `server`, owned by
+        Global. It claims what it is placed to serve like any other runner, and
+        it is the one runner with a serve list: a global administrator sets the
+        agencies it serves with `PUT /runner-agencies` (any non-empty set, which
+        may hold Global beside others).
+
+        The row always exists once the server has started; turned off, it is
+        `offline` and claims nothing. Any session may read this: the runner list
+        shows the row to everyone, and whether it is turned on is why its jobs
+        run or wait.
+      responses:
+        '200':
+          description: The local runner.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LocalRunner' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Runners]
+      operationId: setLocalRunner
+      summary: Turn the local runner on or off, and set its concurrency
+      description: |
+        A global administrator's (`configureApp` on every agency): turned on,
+        this server holds SSH private keys and opens connections to job targets.
+        Give `enabled`, `maxConcurrent`, or both; a field left out is unchanged.
+        Each change is recorded in the activity feed.
+
+        The change takes effect at once, without a restart. Turning **off**
+        drains: runs the local runner is running finish, it claims no more, and
+        queued runs it would have taken wait. A scope bound only to it stays
+        closed, as for any runner that is away.
+
+        409 `local_runner_forbidden` when turning it on and the host forbids it
+        (`CRONOMICON_LOCAL_RUNNER=forbid`). The on/off state is seeded once, at
+        the first start of v2.3.0, from the former
+        `CRONOMICON_SSH_EXECUTOR_ENABLED`, and the concurrency from
+        `CRONOMICON_SSH_EXECUTOR_CONCURRENCY`; after that the values here are
+        the truth. CSRF required.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                maxConcurrent:
+                  type: integer
+                  minimum: 1
+                  maximum: 64
+                  description: How many runs it executes at once.
+      responses:
+        '200':
+          description: The local runner as it now stands.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LocalRunner' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The host forbids the local runner (`local_runner_forbidden`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/Validation' }
+        '500':
+          description: |
+            `apply_failed`: the setting was SAVED, and the running server could
+            not act on it (it could not set the local runner up when it started,
+            or could not read the setting back). It takes effect at the next
+            restart; read the resource again for the state it is in now.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /runners/{runnerId}/owner:
     post:
       tags: [Runners]
@@ -6522,6 +6608,10 @@ paths:
         runner always serves at least one agency: an empty list is 422
         `agency_required`, and Global beside a named agency is 422 `global_mixed`
         (a runner that serves Global claims Global's runs and no department's).
+
+        The **local runner** (kind `server`) is the one runner with a serve list:
+        for it this route takes any non-empty set of agencies, Global beside
+        others included, from a global administrator.
 
         **An agent serves exactly the agency that owns it** (v2.3.0, MA-11), so
         this route no longer places one: the list written must be exactly the
@@ -10762,6 +10852,17 @@ components:
                 runner always speaks it — no row action is gated on this value.
             registeredAt: { type: string, format: date-time, readOnly: true }
             lastHeartbeatAt: { type: [string, 'null'], format: date-time, readOnly: true }
+            kind:
+              type: string
+              enum: [agent, server]
+              readOnly: true
+              description: |
+                `agent` for a runner that registered with a token. `server` for
+                the **local runner**: this server running shell jobs itself
+                (v2.3.0, see `GET /local-runner`). There is at most one. It is
+                never deregistered, has no agent to drain, re-declare, test or
+                reconfigure (those routes answer 422 `local_runner`), and is
+                turned on and off with `PUT /local-runner`.
             ownerAgency:
               type: object
               readOnly: true
@@ -11328,6 +11429,35 @@ components:
         agencyIds:
           type: array
           items: { type: string }
+
+    LocalRunner:
+      type: object
+      description: The local runner's switch and state (v2.3.0).
+      required: [runnerId, enabled, forbidden, status, maxConcurrent, capabilities, serves]
+      properties:
+        runnerId: { type: string, description: Its id in the runner list. }
+        enabled:
+          type: boolean
+          description: The effective state — the setting, unless the host forbids it.
+        forbidden:
+          type: boolean
+          description: |
+            The host set `CRONOMICON_LOCAL_RUNNER=forbid`: it is off and cannot
+            be turned on from the app.
+        status: { type: string, description: '`online` while it is claiming, `offline` otherwise.' }
+        maxConcurrent: { type: integer }
+        capabilities:
+          type: array
+          items: { type: string }
+          description: Fixed — the shell run types. The server image has no toolchains.
+        serves:
+          type: array
+          description: The agencies whose runs it claims.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
 
     RegistrationTokenInfo:
       type: object

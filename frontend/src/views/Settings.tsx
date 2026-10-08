@@ -13,6 +13,7 @@ import { AuditComplianceSection } from "./settings/AuditCompliance";
 import { ServiceAccountsSection } from "./settings/ServiceAccounts";
 import { RecycleBinSection } from "./settings/RecycleBin";
 import { GitlabSection, VaultSection, LogStorageSection, ObservabilitySection } from "./settings/Integrations";
+import { LocalRunnerSection } from "./settings/LocalRunner";
 import { TimezoneAlert } from "./settings/TimezoneAlert";
 
 // Settings — two groups since v2.3.0 (LR-86).
@@ -44,6 +45,9 @@ const SECTIONS = [
   { group: "Installation", key: "observability", label: "Observability", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "logstorage", label: "Log Storage", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "audit", label: "Audit & Compliance", requires: "configureAppGlobal", global: "configureAppGlobal" },
+  // This server running shell jobs itself: its switch, its concurrency and the
+  // agencies it serves (LR-1, LR-43).
+  { group: "Installation", key: "localrunner", label: "Local runner", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Agency", key: "users", label: "Users & Access", requires: "manageRoles", global: "manageRolesGlobal" },
   // ET-C: minting one IS granting a role, so it sits behind manageRoles rather
   // than configureApp — the same permission that edits access grants.
@@ -163,6 +167,7 @@ export function Settings() {
           {section === "users" && <UsersAccessSection />}
           {section === "serviceaccounts" && <ServiceAccountsSection canGrantEverywhere={isGlobal} />}
           {section === "audit" && <AuditComplianceSection canWrite={isGlobal} />}
+          {section === "localrunner" && <LocalRunnerSection canWrite={isGlobal} />}
           {section === "recyclebin" && <RecycleBinSection canWrite={isGlobal} />}
         </div>
       </div>

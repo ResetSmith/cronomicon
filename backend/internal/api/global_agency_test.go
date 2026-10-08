@@ -175,8 +175,14 @@ func TestGlobalAgency_ARowIsInGlobalOrADepartmentNeverBothNeverNeither(t *testin
 	}
 	// Adding a department's row to Global through Global's own editor is the
 	// mixed write by another door.
+	// (Global's list as it stands — the shared scope, r1, and the local runner,
+	// which is Global's from the first start — plus the row under test.)
+	var localID string
+	if err := pool.QueryRow(`SELECT id FROM runners WHERE kind = 'server'`).Scan(&localID); err != nil {
+		t.Fatalf("the local runner's row: %v", err)
+	}
 	rec = gateReq(t, h, http.MethodPut, "/api/v1/agencies/global/members", gRoot,
-		`{"members":[{"kind":"scope","id":"sc:shared"},{"kind":"runner","id":"r1"},{"kind":"secret","id":"`+sec.ID+`"}]}`)
+		`{"members":[{"kind":"scope","id":"sc:shared"},{"kind":"runner","id":"r1"},{"kind":"runner","id":"`+localID+`"},{"kind":"secret","id":"`+sec.ID+`"}]}`)
 	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "global_mixed" {
 		t.Errorf("adding FIN's secret to Global = %d %s, want 422 global_mixed (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}

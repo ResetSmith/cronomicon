@@ -2576,6 +2576,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/local-runner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The local runner — this server running shell jobs itself (v2.3.0)
+         * @description The server can run shell jobs (bash, perl, powershell, python) itself,
+         *     over SSH, from inside its own process. Since v2.3.0 that engine is the
+         *     **local runner**: one row in the runner list, of kind `server`, owned by
+         *     Global. It claims what it is placed to serve like any other runner, and
+         *     it is the one runner with a serve list: a global administrator sets the
+         *     agencies it serves with `PUT /runner-agencies` (any non-empty set, which
+         *     may hold Global beside others).
+         *
+         *     The row always exists once the server has started; turned off, it is
+         *     `offline` and claims nothing. Any session may read this: the runner list
+         *     shows the row to everyone, and whether it is turned on is why its jobs
+         *     run or wait.
+         */
+        get: operations["getLocalRunner"];
+        /**
+         * Turn the local runner on or off, and set its concurrency
+         * @description A global administrator's (`configureApp` on every agency): turned on,
+         *     this server holds SSH private keys and opens connections to job targets.
+         *     Give `enabled`, `maxConcurrent`, or both; a field left out is unchanged.
+         *     Each change is recorded in the activity feed.
+         *
+         *     The change takes effect at once, without a restart. Turning **off**
+         *     drains: runs the local runner is running finish, it claims no more, and
+         *     queued runs it would have taken wait. A scope bound only to it stays
+         *     closed, as for any runner that is away.
+         *
+         *     409 `local_runner_forbidden` when turning it on and the host forbids it
+         *     (`CRONOMICON_LOCAL_RUNNER=forbid`). The on/off state is seeded once, at
+         *     the first start of v2.3.0, from the former
+         *     `CRONOMICON_SSH_EXECUTOR_ENABLED`, and the concurrency from
+         *     `CRONOMICON_SSH_EXECUTOR_CONCURRENCY`; after that the values here are
+         *     the truth. CSRF required.
+         */
+        put: operations["setLocalRunner"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runners/{runnerId}/owner": {
         parameters: {
             query?: never;
@@ -4040,6 +4090,10 @@ export interface paths {
          *     runner always serves at least one agency: an empty list is 422
          *     `agency_required`, and Global beside a named agency is 422 `global_mixed`
          *     (a runner that serves Global claims Global's runs and no department's).
+         *
+         *     The **local runner** (kind `server`) is the one runner with a serve list:
+         *     for it this route takes any non-empty set of agencies, Global beside
+         *     others included, from a global administrator.
          *
          *     **An agent serves exactly the agency that owns it** (v2.3.0, MA-11), so
          *     this route no longer places one: the list written must be exactly the
@@ -7242,6 +7296,16 @@ export interface components {
             /** Format: date-time */
             readonly lastHeartbeatAt?: string | null;
             /**
+             * @description `agent` for a runner that registered with a token. `server` for
+             *     the **local runner**: this server running shell jobs itself
+             *     (v2.3.0, see `GET /local-runner`). There is at most one. It is
+             *     never deregistered, has no agent to drain, re-declare, test or
+             *     reconfigure (those routes answer 422 `local_runner`), and is
+             *     turned on and off with `PUT /local-runner`.
+             * @enum {string}
+             */
+            readonly kind?: "agent" | "server";
+            /**
              * @description The agency that OWNS the runner (v2.3.0): the one whose
              *     administrators manage it. Set by the registration token the
              *     agent enrolled with, never by the agent. `global` for one of
@@ -7712,6 +7776,28 @@ export interface components {
         RunnerAgencies: {
             runnerId: string;
             agencyIds: string[];
+        };
+        /** @description The local runner's switch and state (v2.3.0). */
+        LocalRunner: {
+            /** @description Its id in the runner list. */
+            runnerId: string;
+            /** @description The effective state — the setting, unless the host forbids it. */
+            enabled: boolean;
+            /**
+             * @description The host set `CRONOMICON_LOCAL_RUNNER=forbid`: it is off and cannot
+             *     be turned on from the app.
+             */
+            forbidden: boolean;
+            /** @description `online` while it is claiming, `offline` otherwise. */
+            status: string;
+            maxConcurrent: number;
+            /** @description Fixed — the shell run types. The server image has no toolchains. */
+            capabilities: string[];
+            /** @description The agencies whose runs it claims. */
+            serves: {
+                id?: string;
+                name?: string;
+            }[];
         };
         /**
          * @description A single-use registration token row (Phase 7, D6) — metadata and the
@@ -13518,6 +13604,86 @@ export interface operations {
              *     runner keeps its identity and needs no deregistration.
              */
             426: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getLocalRunner: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The local runner. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalRunner"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setLocalRunner: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled?: boolean;
+                    /** @description How many runs it executes at once. */
+                    maxConcurrent?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The local runner as it now stands. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalRunner"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The host forbids the local runner (`local_runner_forbidden`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["Validation"];
+            /**
+             * @description `apply_failed`: the setting was SAVED, and the running server could
+             *     not act on it (it could not set the local runner up when it started,
+             *     or could not read the setting back). It takes effect at the next
+             *     restart; read the resource again for the state it is in now.
+             */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

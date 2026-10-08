@@ -743,6 +743,16 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 		if named == 0 {
 			continue
 		}
+		if m.Kind == "runner" {
+			// The local runner is the one row that may hold Global beside
+			// named agencies (MA-14); PUT /runner-agencies allows the same
+			// list, and the invariant below still judges it.
+			if local, lerr := IsLocalRunner(ctx, database, m.ID); lerr != nil {
+				return nil, lerr
+			} else if local {
+				continue
+			}
+		}
 		if agencyID == agencyid.Global {
 			return nil, fmt.Errorf("%w: %s %s belongs to another agency", ErrGlobalMixed, t.label, m.ID)
 		}
@@ -768,7 +778,7 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 			if m.Kind != "runner" {
 				continue
 			}
-			owner, before, err := runnerPlacement(ctx, tx, m.ID)
+			owner, before, local, err := runnerPlacement(ctx, tx, m.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -782,7 +792,7 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 					}
 				}
 			}
-			if err := CheckRunnerPlacement(false, owner, before, after); err != nil {
+			if err := CheckRunnerPlacement(local, owner, before, after); err != nil {
 				return nil, fmt.Errorf("%w: runner %s", err, m.ID)
 			}
 		}
