@@ -32,7 +32,7 @@ const (
 // agency in the actor (carriedByUpgradeFor), because serverPin must be able to
 // tell: such a key is that agency's opinion, and is shown as "the server's
 // key" only to a runner that serves that agency.
-const carriedByUpgrade = "upgrade"
+const carriedByUpgrade = notices.CarriedByUpgradeActor
 
 func carriedByUpgradeFor(agencyID string) string {
 	if agencyID == "" || agencyID == agencyid.Global {

@@ -446,14 +446,32 @@ const (
 // did not carry because a different key was in force for the address.
 const CarriedKeyConflictNote = "a different key is trusted for this address"
 
+// CarriedByUpgradeActor is the ledger actor of a key the 2.3.0 upgrade carried
+// from a record (runner.CarryServerHostKeys); a department's record carries it
+// with ":agency:<id>" after it.
+const CarriedByUpgradeActor = "upgrade"
+
+// CarriedByUpgrade reports whether a ledger row's actor is the upgrade, as
+// against a person who reviewed a fingerprint.
+func CarriedByUpgrade(actor string) bool {
+	return actor == CarriedByUpgradeActor || strings.HasPrefix(actor, CarriedByUpgradeActor+":")
+}
+
 // checkCarriedKeyConflicts reports each record whose pre-2.3.0 key lost to
-// another for the same address, for as long as the record exists and the
-// server still trusts a different key there.
+// another for the same address, for as long as the record exists, the server
+// still trusts a different key there, and that key is one the upgrade chose.
+// Once a person has approved a key for the address the notice has done its
+// work and resolves (2.3.2: until then it stayed whatever the operator did).
 func checkCarriedKeyConflicts(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT c.kind, c.record_id, c.name, COALESCE(c.pattern, ''), COALESCE(c.fingerprint, ''),
 		       c.owner_agency, COALESCE(c.scope_id, ''),
 		       COALESCE((SELECT l.fingerprint FROM host_key_ledger l
+		                   JOIN runners rn ON rn.id = l.runner_id AND rn.kind = 'server'
+		                  WHERE l.host = c.pattern AND l.decision = 'approved' AND l.superseded_at IS NULL
+		                    AND l.key_type = substr(c.host_key, 1, instr(c.host_key, ' ') - 1)
+		                  ORDER BY l.id DESC LIMIT 1), ''),
+		       COALESCE((SELECT l.actor FROM host_key_ledger l
 		                   JOIN runners rn ON rn.id = l.runner_id AND rn.kind = 'server'
 		                  WHERE l.host = c.pattern AND l.decision = 'approved' AND l.superseded_at IS NULL
 		                    AND l.key_type = substr(c.host_key, 1, instr(c.host_key, ' ') - 1)
@@ -466,11 +484,11 @@ func checkCarriedKeyConflicts(ctx context.Context, database *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	type conflict struct{ kind, id, name, pattern, had, owner, scopeID, trusted string }
+	type conflict struct{ kind, id, name, pattern, had, owner, scopeID, trusted, trustedBy string }
 	var all []conflict
 	for rows.Next() {
 		var c conflict
-		if err := rows.Scan(&c.kind, &c.id, &c.name, &c.pattern, &c.had, &c.owner, &c.scopeID, &c.trusted); err != nil {
+		if err := rows.Scan(&c.kind, &c.id, &c.name, &c.pattern, &c.had, &c.owner, &c.scopeID, &c.trusted, &c.trustedBy); err != nil {
 			rows.Close()
 			return err
 		}
@@ -484,6 +502,14 @@ func checkCarriedKeyConflicts(ctx context.Context, database *sql.DB) error {
 	for _, c := range all {
 		if c.trusted == "" || c.trusted == c.had {
 			continue // the key was removed, or the record's own key is the trusted one now
+		}
+		if !CarriedByUpgrade(c.trustedBy) {
+			// A person has approved the key in force for this address, on a
+			// review screen that showed its fingerprint. The question this
+			// notice asks (which of the two keys is right?) has been answered,
+			// whichever key they chose (2.3.2). Until then the key in force is
+			// one the upgrade picked, by being the first it found.
+			continue
 		}
 		agency := c.owner
 		if c.scopeID != "" {
@@ -507,10 +533,13 @@ func checkCarriedKeyConflicts(ctx context.Context, database *sql.DB) error {
 			Subject:  c.kind + ":" + c.id,
 			Detail: fmt.Sprintf("Before 2.3.0 the server had its own host key stored on the %s %s (%s), and it is not the key "+
 				"the server now trusts for that address (%s; the server trusts %s). Each record used to hold its own key; "+
-				"the server now trusts ONE key per address, the first it found. If this is the same machine, its key "+
-				"changed between the two records being used: scan it and approve the current key (Runners → Local runner → "+
-				"Host keys). If these are two machines that share an address in different networks (behind different "+
-				"bastions), the server can serve only one of them: run the other's scope on an agent inside that network.",
+				"the server now trusts ONE key per address, and the upgrade kept the first it found. If this is the same "+
+				"machine, its key changed between the two records being used: scan it (Runners → Local runner → Host "+
+				"keys). A scan that shows a CHANGED key means the server holds the old one: approve the new key and this "+
+				"notice clears. A scan that shows the key as already trusted means the server holds the right one and "+
+				"nothing needs changing: dismiss this notice. If these are two machines that share an address in "+
+				"different networks (behind different bastions), the server can serve only one of them: run the other's "+
+				"scope on an agent inside that network, then dismiss this notice.",
 				what, c.name, c.had, c.pattern, c.trusted),
 		})
 	}
