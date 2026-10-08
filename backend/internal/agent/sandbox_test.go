@@ -102,10 +102,7 @@ func TestSandboxProvenance(t *testing.T) {
 func TestDetectCapabilitiesSandboxedToken(t *testing.T) {
 	// No ansible on PATH: only the flag-derived tokens matter here.
 	t.Setenv("PATH", t.TempDir())
-	caps, tc, err := detectCapabilities(context.Background(), Config{Capabilities: []string{"ansible"}, SandboxAvailable: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	caps, tc := detectCapabilities(context.Background(), Config{Capabilities: []string{"ansible"}, SandboxAvailable: true})
 	found := false
 	for _, c := range caps {
 		if c == "sandboxed" {
@@ -120,10 +117,7 @@ func TestDetectCapabilitiesSandboxedToken(t *testing.T) {
 	}
 
 	// Not available ⇒ no token.
-	caps2, tc2, err := detectCapabilities(context.Background(), Config{Capabilities: []string{"ansible"}, SandboxAvailable: false})
-	if err != nil {
-		t.Fatal(err)
-	}
+	caps2, tc2 := detectCapabilities(context.Background(), Config{Capabilities: []string{"ansible"}, SandboxAvailable: false})
 	for _, c := range caps2 {
 		if c == "sandboxed" {
 			t.Errorf("no sandbox ⇒ no `sandboxed` token: %v", caps2)

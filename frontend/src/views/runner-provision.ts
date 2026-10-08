@@ -57,8 +57,9 @@ export interface ProvisionOptions {
   // <hostname>-<instance>. Ignored unless it is a valid instance name, and by
   // the docker artifact (a container has one agent).
   instance?: string;
-  // Empty ⇒ auto-detect: the agent probes the host's toolchains at startup
-  // (D1: 1B). Non-empty is an explicit narrowing override (-c).
+  // Empty ⇒ auto-detect (D1: 1B): the agent claims the four shell types and
+  // probes its host for ansible and terraform at startup. Non-empty is an
+  // explicit narrowing override (-c).
   capabilities: string[];
   inventory: "cronomicon" | "local";
   // Source paths on the installing host (ride the one-liner's Phase-1 flags;
@@ -150,7 +151,7 @@ export function generateRunnerEnv(exampleText: string, o: ProvisionOptions): str
     t = setVar(t, "CRONOMICON_RUNNER_CAPABILITIES", o.capabilities.join(","));
   } else {
     // Detect mode: the var stays in the artifact but inactive (unset ⇒ the
-    // agent probes the host's toolchains at startup). commentVar, not removal —
+    // agent decides at startup). commentVar, not removal —
     // and assertVar keeps the drift guard alive on this branch too.
     assertVar(t, "CRONOMICON_RUNNER_CAPABILITIES");
     t = commentVar(t, "CRONOMICON_RUNNER_CAPABILITIES");
@@ -299,8 +300,8 @@ export function provisionDockerRun(o: ProvisionOptions, serverVersion?: string):
     `# referenced files (known_hosts, keys, inventory, tokens) on it first.`,
     ...(o.capabilities.length === 0
       ? [
-          `# Capabilities auto-detect from the image's toolchains at startup`,
-          `# (slim ⇒ SSH-onward run-types; use the -fat image for ansible/terraform).`,
+          `# Capabilities auto-detect at startup: every image claims the shell types`,
+          `# (they run on the targets); only the -fat image has ansible/terraform.`,
         ]
       : []),
     `docker volume create cronomicon-runner-data`,

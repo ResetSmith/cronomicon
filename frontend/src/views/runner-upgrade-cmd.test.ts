@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_BIN_PATH, AGENT_UNIT, AGENT_UNIT_PATTERNS, upgradeCommand } from "./runner-upgrade-cmd";
+import {
+  AGENT_BIN_PATH,
+  AGENT_UNIT,
+  AGENT_UNIT_PATTERNS,
+  RESTART_WATCH_SECONDS,
+  SYSCALL_DROPIN,
+  upgradeCommand,
+} from "./runner-upgrade-cmd";
 
 const ORIGIN = "https://cronomicon.example.com";
 
@@ -43,6 +50,41 @@ describe("upgradeCommand", () => {
     // still fail the command.
     expect(cmd.indexOf("systemctl restart $UNITS || true")).toBeLessThan(cmd.indexOf('if [ -n "$NOT_UP" ]; then'));
     expect(cmd).toMatch(/if \[ -n "\$NOT_UP" \]; then\n.*\n {2}exit 1\nfi/);
+  });
+
+  // One look at `is-active` passes an agent that is about to exit, and passes
+  // a crash-looping one whenever the look lands while systemd has it up again.
+  // The unit must be running at the end of the watch as the process it was at
+  // the start. Executed against a stand-in systemctl for a unit that stays up,
+  // one that restarts itself and one that never starts.
+  it("passes a unit only when it is still the same process after the watch", () => {
+    const cmd = upgradeCommand(ORIGIN);
+    expect(RESTART_WATCH_SECONDS).toBeGreaterThanOrEqual(15);
+    expect(cmd).toContain(`sleep ${RESTART_WATCH_SECONDS}`);
+    expect(cmd).toContain('systemctl show -p MainPID "$1"');
+    const restartAt = cmd.indexOf("systemctl restart $UNITS || true");
+    const startedAt = cmd.indexOf('STARTED="${STARTED} $(main_pid "$U")"');
+    const sleepAt = cmd.indexOf(`sleep ${RESTART_WATCH_SECONDS}`);
+    expect(startedAt).toBeGreaterThan(restartAt);
+    expect(sleepAt).toBeGreaterThan(startedAt);
+    // A process id of 0 at the start is a unit that did not start.
+    expect(cmd).toContain('elif [ "$WAS" = 0 ] || [ "$WAS" != "$(main_pid "$U")" ]; then');
+    expect(cmd).toContain('echo ">> FAILED to stay up: ${U} has restarted itself since the upgrade');
+  });
+
+  // A unit written before 2.3.0 filters system calls with no error number, and
+  // systemd 239 (RHEL 8) kills the agent's PATH lookups for it. The installer
+  // cannot be re-run on an enrolled agent, so the upgrade carries the line as a
+  // drop-in, before the restart, to the units that lack it and to no others.
+  it("adds SystemCallErrorNumber=EPERM to a unit that filters without it", () => {
+    const cmd = upgradeCommand(ORIGIN);
+    expect(SYSCALL_DROPIN).toBe("10-syscall-errno.conf");
+    expect(cmd).toContain(`grep -q '^SystemCallFilter=' <<<"$CONF" && ! grep -q '^SystemCallErrorNumber=' <<<"$CONF"`);
+    expect(cmd).toContain(
+      `printf '[Service]\\nSystemCallErrorNumber=EPERM\\n' > "/etc/systemd/system/\${U}.d/${SYSCALL_DROPIN}"`,
+    );
+    expect(cmd).toContain('if [ "$RELOAD" = 1 ]; then systemctl daemon-reload; fi');
+    expect(cmd.indexOf("systemctl daemon-reload")).toBeLessThan(cmd.indexOf("systemctl restart $UNITS || true"));
   });
 
   it("fetches the binary and its checksums from the given origin's /agents/", () => {

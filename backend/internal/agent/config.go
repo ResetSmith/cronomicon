@@ -50,8 +50,9 @@ type Config struct {
 	OS string
 	// Capabilities is the run-type vocabulary this runner claims (e.g.
 	// bash,perl,powershell or ansible,terraform). Only matching runs are claimed.
-	// Empty means auto-detect: the run-types are probed from the host's
-	// toolchains at startup (D1: 1B); set explicitly to narrow the claim set.
+	// Empty means auto-detect (D1: 1B): the four shell types, which run on the
+	// targets, plus ansible and terraform when this host has them; set
+	// explicitly to narrow the claim set.
 	Capabilities []string
 	// MaxConcurrent bounds simultaneously-executing runs on this agent.
 	MaxConcurrent int
@@ -256,7 +257,7 @@ func Resolve(args []string, getenv func(string) string) (Config, error) {
 		regToken          = fs.String("registration-token", cfg.RegistrationToken, "registration bearer token (single-use, minted per install)")
 		name              = fs.String("name", cfg.Name, "runner display name (stable across restarts)")
 		osFlag            = fs.String("os", cfg.OS, "runner OS: Linux or Windows")
-		capsFlag          = fs.String("capabilities", strings.Join(cfg.Capabilities, ","), "comma-separated run-type capabilities (empty = auto-detect from the host's toolchains; set to narrow)")
+		capsFlag          = fs.String("capabilities", strings.Join(cfg.Capabilities, ","), "comma-separated run-type capabilities (empty = the shell types, plus ansible and terraform when installed here; set to narrow)")
 		maxConc           = fs.Int("max-concurrent", cfg.MaxConcurrent, "max simultaneously-executing runs")
 		inventory         = fs.String("inventory", cfg.Inventory, "inventory mode: cronomicon or local")
 		identityFile      = fs.String("identity-file", cfg.IdentityFile, "path to persist {id, apiKey}")
@@ -371,9 +372,8 @@ func (c Config) validate() error {
 	if c.Name == "" {
 		return fmt.Errorf("runner name is required (-name / CRONOMICON_RUNNER_NAME)")
 	}
-	// Empty Capabilities is NOT an error: unset = auto-detect the run-types
-	// from the host's toolchains at startup (D1: 1B); set explicitly to narrow.
-	// detectCapabilities errors when the probe finds nothing.
+	// Empty Capabilities is NOT an error: unset = auto-detect at startup
+	// (D1: 1B, detectRunTypes); set explicitly to narrow.
 	if c.OS != "Linux" && c.OS != "Windows" {
 		return fmt.Errorf("os must be 'Linux' or 'Windows', got %q", c.OS)
 	}

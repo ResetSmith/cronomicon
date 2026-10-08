@@ -341,17 +341,23 @@ go test ./internal/api/ ./internal/auth/ ./internal/secrets/ -run \
   never declared by the agent) or touch other rows, and claim
   eligibility stays bounded by that agency; the remedy for a compromised key
   is Deregister, which revokes it immediately.
-- **Capability auto-detection broadens by default.** With `CRONOMICON_RUNNER_CAPABILITIES` unset, the agent probes the
-  host's PATH at startup (`bash`, `perl`, `pwsh`, `python3`/`python`,
-  `ansible-playbook`, `terraform`) and claims every run-type it finds — so
-  installing a toolchain on a runner host silently widens what that runner will
-  execute after its next restart (surfaced in the registry via the drift
-  resync, but not gated on approval). This is deliberate: the declared set is
-  still derived exclusively from the runner host's local state (never from the
-  server), and job routing remains bounded by agencies and scopes. The
-  narrowing lever is the explicit override: set `-capabilities` /
-  `CRONOMICON_RUNNER_CAPABILITIES` on hosts that carry toolchains they must not
-  execute for Cronomicon. The server-side subtract-only capability mask (above)
+- **Capability auto-detection broadens by default.** With `CRONOMICON_RUNNER_CAPABILITIES` unset, the agent claims the
+  four shell run-types (`bash`, `perl`, `powershell`, `python`) whatever its
+  own host holds, and probes its PATH at startup only for the two toolchains it
+  runs locally (`ansible-playbook`, `terraform`). A shell job is executed on
+  the TARGET, over SSH, with the target's interpreter, so the agent's host
+  never bounded those types: what bounds them is the hosts the agent can reach
+  and the keys it holds. (Before 2.3.0 the agent probed its own PATH for the
+  shell interpreters too, which made a missing local `pwsh` look like a
+  narrowing control; it never was one, and an agent that relied on it now
+  claims the type.) Installing ansible or terraform on a runner host still
+  silently widens what that runner will execute after its next restart
+  (surfaced in the registry via the drift resync, but not gated on approval).
+  This is deliberate: the declared set is still derived exclusively from the
+  runner host's local state (never from the server), and job routing remains
+  bounded by agencies and scopes. The narrowing lever is the explicit override:
+  set `-capabilities` / `CRONOMICON_RUNNER_CAPABILITIES` on an agent that must
+  not take a run-type. The server-side subtract-only capability mask (above)
   is the operator-controlled narrowing lever that survives host changes.
 - **Of the two durable log artifacts, `cronomicon.log` is NOT redacted and
   `audit.log` IS.** They are assessed together here because they share the

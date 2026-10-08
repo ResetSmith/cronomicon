@@ -4821,12 +4821,14 @@ ExecStart=/usr/local/bin/cronomicon-runner -config /etc/cronomicon-runner/config
                     runner whose capabilities include that run type. A run for a type that no online runner advertises
                     stays <em>queued</em> (&ldquo;no online runner can run {type} jobs&rdquo;). It does not fail.</p>
                 <p><strong>Capabilities auto-detect by default</strong>. With no <code>-c</code> /
-                    <code>CRONOMICON_RUNNER_CAPABILITIES</code>, the agent probes the host's toolchains at startup
-                    (<code>bash</code>, <code>perl</code>, <code>pwsh</code>, <code>python3</code>,
-                    <code>ansible-playbook</code>, <code>terraform</code>) and claims the applicable run-types. If you
-                    install a toolchain later, a service restart sends it through the config-drift resync. Set the flag
-                    explicitly only to <em>narrow</em> what a runner claims. The table above still applies to
-                    <em>containers</em>, where the image decides which toolchains exist to detect.</p>
+                    <code>CRONOMICON_RUNNER_CAPABILITIES</code>, the agent claims the four shell types
+                    (<code>bash</code>, <code>perl</code>, <code>powershell</code>, <code>python</code>) whatever its own
+                    host holds, because those jobs run on the targets with the target's interpreter. It probes its
+                    host at startup only for <code>ansible-playbook</code> and <code>terraform</code>, the two
+                    toolchains it runs locally, and claims each one it finds. If you install one later, a service
+                    restart sends it through the config-drift resync. Set the flag explicitly only to
+                    <em>narrow</em> what a runner claims. The table above still applies to
+                    <em>containers</em>, where the image decides whether Ansible and Terraform exist to detect.</p>
 
                 <h3>7.2 Installation &amp; registration</h3>
                 <p><strong>The registration token decides the owner.</strong> Each token is minted <em>for an
