@@ -168,3 +168,42 @@ func TestRunLocalToolchainSandboxedExec(t *testing.T) {
 	}
 	assertNoRunDirs(t, stateDir)
 }
+
+// An agent that is not root is refused its scope by polkit, and that is what
+// nearly every installed agent is. "No usable systemd-run" alone read as a
+// missing binary; the probe has to hand back what systemd-run said, so the
+// startup line and the doctor can tell a refusal from a missing manager.
+func TestProbeSandboxSaysWhyNot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the probe is Linux-only")
+	}
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	fake := func(script string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(binDir, "systemd-run"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if ok, why := probeSandbox(context.Background()); ok || !strings.Contains(why, "not on $PATH") {
+		t.Errorf("no systemd-run: probeSandbox() = %v, %q; want false and the missing binary named", ok, why)
+	}
+
+	const refusal = "Failed to start transient scope unit: Interactive authentication required."
+	fake("echo >&2\necho '" + refusal + "' >&2\necho 'a second line' >&2\nexit 1\n")
+	if ok, why := probeSandbox(context.Background()); ok || why != refusal {
+		t.Errorf("refused scope: probeSandbox() = %v, %q; want false and systemd-run's own first line", ok, why)
+	}
+
+	// A failure that says nothing: the exit status is all there is to report.
+	fake("exit 3\n")
+	if ok, why := probeSandbox(context.Background()); ok || !strings.Contains(why, "exit status 3") {
+		t.Errorf("silent failure: probeSandbox() = %v, %q; want false and the exit status", ok, why)
+	}
+
+	fake("exit 0\n")
+	if ok, why := probeSandbox(context.Background()); !ok || why != "" {
+		t.Errorf("scope created: probeSandbox() = %v, %q; want true and no reason", ok, why)
+	}
+}

@@ -109,20 +109,25 @@ func (a *Agent) Run(ctx context.Context) error {
 	// sandbox is disabled (no point probing). Propagate to both the agent's cfg
 	// (drives the advertised `sandboxed` token + toolchains) and the executor's
 	// cfg copy (drives per-run wrapping).
-	sb := false
+	sb, sbWhy := false, ""
 	if !a.cfg.NoSandbox {
 		a.log.Info("probing tier-2 sandbox availability (systemd-run)")
-		sb = probeSandbox(ctx)
+		sb, sbWhy = probeSandbox(ctx)
 	} else {
 		a.log.Info("sandbox probe skipped (NoSandbox set)")
+		sbWhy = "disabled (-no-sandbox)"
 	}
 	a.cfg.SandboxAvailable = sb
 	a.exec.cfg.SandboxAvailable = sb
 	if !sb {
+		// The reason and the remedy ride as attributes: "no usable systemd-run"
+		// alone read as a missing binary on hosts where the request was refused.
 		if a.cfg.AllowCheckout {
-			a.log.Warn("SANDBOX UNAVAILABLE — -allow-checkout is set but no usable systemd-run scope could be created; checkout runs will execute UNSANDBOXED (only their timeout applies). Each run is reported as unsandboxed; a job may require [sandboxed] to avoid landing here.")
+			a.log.Warn("SANDBOX UNAVAILABLE — -allow-checkout is set but no usable systemd-run scope could be created; checkout runs will execute UNSANDBOXED (only their timeout applies). Each run is reported as unsandboxed; a job may require [sandboxed] to avoid landing here.",
+				"reason", sbWhy, "hint", sandboxHint)
 		} else {
-			a.log.Info("tier-2 sandbox unavailable (no usable systemd-run) — local-toolchain runs execute unsandboxed")
+			a.log.Info("tier-2 sandbox unavailable (no usable systemd-run scope) — local-toolchain runs execute unsandboxed",
+				"reason", sbWhy, "hint", sandboxHint)
 		}
 	}
 

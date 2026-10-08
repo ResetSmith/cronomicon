@@ -185,6 +185,27 @@ describe("Runners — owner and serves (MA-26)", () => {
     expect(screen.queryByText("Trusted host keys")).toBeNull();
   });
 
+  // v2.3.1 — the sandbox caps ride on a per-run systemd scope, which an agent
+  // that is not root cannot create. The dialog where they are typed says so for
+  // a runner that reports no sandbox, and says nothing where there is one.
+  it("says the sandbox caps do nothing on a runner that reports no sandbox", async () => {
+    RUNNERS = [{ ...AGENT, toolchains: { sandboxed: false } }];
+    renderRunners();
+    await expand("fin-agent");
+    fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
+    expect(await screen.findByText(/This runner reports no sandbox, so these caps do nothing on it\./)).toBeTruthy();
+    expect(screen.getByText(/systemctl set-property <unit> MemoryMax=… CPUQuota=… TasksMax=…/)).toBeTruthy();
+  });
+
+  it("offers the sandbox caps without that warning on a runner that has a sandbox", async () => {
+    RUNNERS = [{ ...AGENT, toolchains: { sandboxed: true } }];
+    renderRunners();
+    await expand("fin-agent");
+    fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
+    expect(await screen.findByPlaceholderText("memory (2G)")).toBeTruthy();
+    expect(screen.queryByText(/these caps do nothing on it/)).toBeNull();
+  });
+
   it("leaves every control live when the server sent no per-row flag — unknown is not 'not yours'", async () => {
     CAPS = { configureAppGlobal: false };
     const { canManage: _m, canReviewHostKeys: _r, ...unflagged } = THEIRS;

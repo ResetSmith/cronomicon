@@ -39,6 +39,14 @@ CHECKOUT_TOKEN_SRC=""
 CHECKOUT_TOKEN_STDIN=0
 VAULT_PASS_SRC=""
 VAULT_PASS_STDIN=0
+# Resource limits on the agent's unit: this agent and everything it runs,
+# together. Empty = none, and the unit is written exactly as before. The agent
+# cannot cap its own runs one by one (its per-run `systemd-run --scope` needs a
+# privilege an agent that is not root does not have), so the unit is where a
+# machine that hosts several agents keeps one from starving the rest.
+MEMORY_MAX=""
+CPU_QUOTA=""
+TASKS_MAX=""
 
 # Install destinations. Every name an install owns derives from ONE value, SVC:
 # the OS user and group, the systemd unit, the state directory and the config
@@ -125,6 +133,16 @@ usage() {
   echo "                             Install an Ansible Vault password file to"
   echo "                             ${VAULT_PASS_DEST} (0640 root:${RUNNER_GROUP})"
   echo "      --vault-pass -         Prompt for the vault password on stdin (input hidden)."
+  echo "      --memory-max <size>    Limit the memory of this agent and everything it runs,"
+  echo "                             together (the unit's MemoryMax): a whole number with"
+  echo "                             K, M, G or T, e.g. 4G. Default: no limit."
+  echo "      --cpu-quota <percent>  Limit their CPU time (the unit's CPUQuota): a"
+  echo "                             percentage of ONE CPU, e.g. 200% for two. Default: no"
+  echo "                             limit."
+  echo "      --tasks-max <n>        Limit their processes and threads (the unit's"
+  echo "                             TasksMax), e.g. 1024. Default: systemd's own."
+  echo "                             Set these on a machine that runs several agents: an"
+  echo "                             agent that is not root cannot cap its runs itself."
   echo "  -h, --help                 Show this help message"
   exit "${1:-1}"
 }
@@ -193,6 +211,9 @@ while [[ "$#" -gt 0 ]]; do
         -*) VAULT_PASS_STDIN=1 ;;
         *)  reject_secret_value "--vault-pass" "--vault-pass-file" ;;
       esac ;;
+    --memory-max) require_value "$1" "${2:-}"; MEMORY_MAX="$2"; shift ;;
+    --cpu-quota) require_value "$1" "${2:-}"; CPU_QUOTA="$2"; shift ;;
+    --tasks-max) require_value "$1" "${2:-}"; TASKS_MAX="$2"; shift ;;
     -h|--help) usage 0 ;;
     # Strip any '=value' before echoing: a mistaken --checkout-token=SECRET must
     # not print the secret to stdout/logs (the =-form isn't a supported secret
@@ -226,6 +247,38 @@ if [ "$INSTANCE_SET" = 1 ]; then
   # Two agents on one machine must not share a name: the app offers a
   # re-enrolled runner its old placement by name.
   [ "$RUNNER_NAME_SET" = 1 ] || RUNNER_NAME="$(hostname)-${INSTANCE}"
+fi
+
+# --- Resource limits ---
+# Each value is written into the unit file as it is given, so each is held to
+# the one shape documented for it: a whole number and, for memory and CPU, one
+# closing character. The number's characters are spelled out for the reason
+# given above for --instance. A zero is refused: systemd reads MemoryMax=0 as
+# "no memory at all" and a zero quota or task count as an error, and neither is
+# what anyone means by it.
+check_limit() {  # check_limit <flag> <value> <closing characters, or ""> <what it must be>
+  local number="$2"
+  if [ -n "$3" ]; then
+    case "$2" in *["$3"]) number="${2%?}" ;; esac
+  fi
+  case "$number" in
+    ""|*[!0123456789]*|0*)
+      echo "Error: $1 must be $4 (got: $2)." >&2
+      exit 1 ;;
+  esac
+}
+if [ -n "$MEMORY_MAX" ]; then
+  check_limit --memory-max "$MEMORY_MAX" KMGT "a whole number with K, M, G or T, e.g. 4G"
+fi
+if [ -n "$CPU_QUOTA" ]; then
+  case "$CPU_QUOTA" in
+    *%) ;;
+    *) echo "Error: --cpu-quota must be a percentage of one CPU, e.g. 200% (got: ${CPU_QUOTA})." >&2; exit 1 ;;
+  esac
+  check_limit --cpu-quota "$CPU_QUOTA" % "a percentage of one CPU, e.g. 200%"
+fi
+if [ -n "$TASKS_MAX" ]; then
+  check_limit --tasks-max "$TASKS_MAX" "" "a whole number, e.g. 1024"
 fi
 
 # --- Required Arguments Validation ---
@@ -851,6 +904,19 @@ RestrictSUIDSGID=true
 EOF
 fi
 
+# Resource limits (--memory-max, --cpu-quota, --tasks-max). They bound this
+# agent and every process it starts, as one group: the agent cannot give each
+# run a cgroup of its own unless it runs as root. Nothing is written when none
+# was asked for, so a unit with no limits is the unit this script always wrote.
+if [ -n "${MEMORY_MAX:-}${CPU_QUOTA:-}${TASKS_MAX:-}" ]; then
+  echo ""
+  echo "# Resource limits: this agent and everything it runs, together."
+  echo "# To change them: systemctl set-property ${SVC}.service MemoryMax=… CPUQuota=… TasksMax=…"
+  [ -z "${MEMORY_MAX:-}" ] || echo "MemoryMax=${MEMORY_MAX}"
+  [ -z "${CPU_QUOTA:-}" ] || echo "CPUQuota=${CPU_QUOTA}"
+  [ -z "${TASKS_MAX:-}" ] || echo "TasksMax=${TASKS_MAX}"
+fi
+
 cat << EOF
 
 StateDirectory=${SVC}
@@ -896,6 +962,11 @@ echo "Runner Name:  ${RUNNER_NAME}"
 if [ -n "$INSTANCE" ]; then
   echo "Instance:     ${INSTANCE} (user and group ${RUNNER_USER}, unit ${SVC}.service,"
   echo "              ${STATE_DIR}, ${CONF_DIR})"
+fi
+if [ -n "${MEMORY_MAX}${CPU_QUOTA}${TASKS_MAX}" ]; then
+  echo "Limits:       memory ${MEMORY_MAX:-none}, CPU ${CPU_QUOTA:-none}, tasks ${TASKS_MAX:-systemd default}"
+  echo "              (this agent and all its runs together; change with"
+  echo "              systemctl set-property ${SVC}.service MemoryMax=… CPUQuota=… TasksMax=…)"
 fi
 if [ -n "$CAPABILITIES" ]; then
   echo "Capabilities: ${CAPABILITIES} (explicit override)"

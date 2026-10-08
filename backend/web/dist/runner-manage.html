@@ -2155,7 +2155,7 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
 
 <h3>Case B — you changed declared config (capabilities / name / os / maxConcurrent / inventory / toolchains)</h3>
 
-<blockquote><p><strong>Checkout-mode capabilities are declared too.</strong> The tokens a runner advertises — <code>ansible</code>, <code>checkout</code> (from <code>-allow-checkout</code>), <code>collection:&lt;fqcn&gt;</code> (installed collections), <code>vault</code> (from <code>-vault-password-file</code>), <code>sandboxed</code> (systemd-run available) — plus the detected toolchain versions on the Runners page are all captured <strong>at registration</strong>. So enabling checkout, provisioning a new collection, adding the vault file, or gaining a systemd sandbox does <strong>not</strong> reach the server on a plain restart: it needs a <strong>resync</strong> (or re-registration), same as any declared change below.</p></blockquote>
+<blockquote><p><strong>Checkout-mode capabilities are declared too.</strong> The tokens a runner advertises — <code>ansible</code>, <code>checkout</code> (from <code>-allow-checkout</code>), <code>collection:&lt;fqcn&gt;</code> (installed collections), <code>vault</code> (from <code>-vault-password-file</code>), <code>sandboxed</code> (the agent can create a per-run scope, which takes an agent that runs as root) — plus the detected toolchain versions on the Runners page are all captured <strong>at registration</strong>. So enabling checkout, provisioning a new collection, adding the vault file, or gaining a systemd sandbox does <strong>not</strong> reach the server on a plain restart: it needs a <strong>resync</strong> (or re-registration), same as any declared change below.</p></blockquote>
 
 <p>A plain restart will <strong>not</strong> propagate these — the agent resumes its identity and skips registration. To propagate:</p>
 
@@ -2182,6 +2182,11 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
 <p><strong>Managed settings are the exception to "declared config crosses the wire only at registration."</strong> A third category joins <em>declared</em> and <em>local</em>: a small set of <strong>server-managed operational overrides</strong> the runner's owner edits on its row — <strong>⚙ Edit</strong> on the <em>Managed settings</em> header opens a drawer — that ride to the agent <strong>over the poll channel</strong> and apply <strong>in-memory on the next poll</strong>. No SSH, no restart, no env edit.</p>
 
 <p>The managed set is: <strong>max jobs</strong> (<code>maxConcurrent</code>), the three <strong>sandbox caps</strong> (<code>MemoryMax</code>/<code>CPUQuota</code>/<code>TasksMax</code>), the <strong>checkout policy</strong> (<code>allowCheckout</code> + the repo <code>checkoutRepos</code> allowlist), and a subtract-only <strong>capability mask</strong> (remove run-types from what the runner will claim). Each field is tri-state: set it to override the runner's local value, or leave it blank/<em>inherit</em> to keep the local value. The secrets these depend on — the checkout deploy token and the vault password — are <strong>never</strong> managed here; they stay in runner-local custody (installed at §3 / <code>runner-install.html</code>), so the server never holds secret bytes.</p>
+
+<blockquote><p><strong>The sandbox caps need a sandbox.</strong> They cap each run in a <code>systemd-run</code> scope of its own, and systemd lets only <code>root</code> create one. An agent set up by the installer runs as its own user: its row shows <em>Unsandboxed</em>, the caps are stored and never applied, and the drawer says so beside the fields. To bound such an agent, limit its <strong>unit</strong>, which covers the agent and all its runs together, on its machine and with no restart:</p>
+<div class="codeblock"><pre><code>sudo systemctl set-property cronomicon-runner.service MemoryMax=4G CPUQuota=200% TasksMax=1024
+systemctl show cronomicon-runner.service -p MemoryMax -p CPUQuotaPerSecUSec -p TasksMax</code></pre></div>
+<p>Use <code>cronomicon-runner-&lt;name&gt;.service</code> for an instance. The values are kept in <code>/etc/systemd/system.control/&lt;unit&gt;.d/</code> and win over the unit file's. <a href="./runner-install.html">Runner Install Guide</a> §3 has the install-time flags and what happens to a run that reaches a limit.</p></blockquote>
 
 <p>Each write <strong>bumps a version</strong>; the agent echoes the version it has <strong>applied</strong> as its poll ack, so the row shows a <strong>pending dot</strong> (<em>● pending</em> beside <em>Managed settings</em>) until the change round-trips — typically one poll cycle. The <strong>capability mask is enforced server-side at claim</strong> (a masked run-type is simply never assigned to the runner) and honored agent-side too. Managed overrides do <strong>not</strong> touch the config digest, so changing one never triggers a drift re-registration (§4).</p>
 
@@ -2361,6 +2366,7 @@ sudo systemctl disable cronomicon-runner</code></pre></div>
 <div class="codeblock"><pre><code>sudo systemctl disable --now cronomicon-runner
 sudo rm -f /etc/systemd/system/cronomicon-runner.service
 sudo rm -rf /etc/systemd/system/cronomicon-runner.service.d   # a drop-in an upgrade added, if any
+sudo rm -rf /etc/systemd/system.control/cronomicon-runner.service.d   # limits set with set-property, if any
 sudo systemctl daemon-reload
 sudo rm -f /usr/local/bin/cronomicon-runner
 sudo rm -rf /etc/cronomicon-runner          # config (runner.env)
@@ -2383,6 +2389,7 @@ sudo systemctl disable --now cronomicon-runner-tax
 # 3. Remove what the install created.
 sudo rm -f /etc/systemd/system/cronomicon-runner-tax.service
 sudo rm -rf /etc/systemd/system/cronomicon-runner-tax.service.d   # a drop-in an upgrade added, if any
+sudo rm -rf /etc/systemd/system.control/cronomicon-runner-tax.service.d   # limits set with set-property, if any
 sudo systemctl daemon-reload
 sudo rm -rf /etc/cronomicon-runner-tax        # config
 sudo rm -rf /var/lib/cronomicon-runner-tax    # state: identity + keys + known_hosts

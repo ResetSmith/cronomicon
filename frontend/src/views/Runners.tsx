@@ -2685,7 +2685,23 @@ function RunnerSettingsDrawer({
           <input style={{ ...inputStyle, width: 100 }} value={sbCpu} onChange={(e) => setSbCpu(e.target.value)} placeholder="cpu (150%)" />
           <input style={{ ...inputStyle, width: 100 }} value={sbTasks} onChange={(e) => setSbTasks(e.target.value)} placeholder="tasks (512)" />
         </>,
-        <>Per-run cgroup MemoryMax / CPUQuota / TasksMax. Blank ⇒ the runner's own value (or uncapped).</>,
+        <>
+          Per-run cgroup MemoryMax / CPUQuota / TasksMax. Blank ⇒ the runner's own value (or uncapped).
+          {/* The caps ride on a per-run systemd scope, and only an agent that
+              runs as root can create one. On every other agent they are sent,
+              stored and never applied — which this dialog must say, since it is
+              where they are typed. */}
+          {runner.toolchains?.sandboxed === false && (
+            <>
+              {" "}
+              <strong style={{ color: c.warning }}>This runner reports no sandbox, so these caps do nothing on it.</strong> An agent
+              that does not run as root cannot cap its runs one by one. Limit the agent's unit on its machine instead:{" "}
+              <code style={{ fontFamily: c.mono }}>systemctl set-property &lt;unit&gt; MemoryMax=… CPUQuota=… TasksMax=…</code>{" "}
+              (or <code style={{ fontFamily: c.mono }}>--memory-max</code>, <code style={{ fontFamily: c.mono }}>--cpu-quota</code>,{" "}
+              <code style={{ fontFamily: c.mono }}>--tasks-max</code> at install).
+            </>
+          )}
+        </>,
       )}
 
       {row(
