@@ -190,9 +190,14 @@ for a in "${AGENTS[@]}"; do
       if systemctl is-enabled --quiet "${a}.service" 2>/dev/null; then ok "${a}.service is enabled"; else warn "${a}.service is not enabled (the upgrade command will not restart it)"; fi
       running_as="$(systemctl show -p MainPID --value "${a}.service" 2>/dev/null)"
       if [ -n "$running_as" ] && [ "$running_as" != 0 ]; then
-        puser="$(ps -o user= -p "$running_as" 2>/dev/null | tr -d ' ')"
-        # ps truncates a long user name to its uid; compare by uid.
-        if [ "$(ps -o uid= -p "$running_as" 2>/dev/null | tr -d ' ')" = "$(id -u "$a" 2>/dev/null)" ]; then
+        # The owner straight from /proc: no dependency on ps (a minimal host may
+        # not have it), and a uid, since a long user name is truncated in listings.
+        puid="$(awk '/^Uid:/ { print $2; exit }' "/proc/${running_as}/status" 2>/dev/null)"
+        puser="$(getent passwd "${puid:-x}" | cut -d: -f1)"
+        if [ -z "$puid" ]; then
+          # Gone between the two reads: a unit that keeps restarting.
+          warn "${a}.service's process (pid ${running_as}) exited while it was being checked: is the unit restarting? (journalctl -u ${a})"
+        elif [ "$puid" = "$(id -u "$a" 2>/dev/null)" ]; then
           ok "the running agent process (pid ${running_as}) is ${a}'s"
         else
           fail "the running agent process (pid ${running_as}) belongs to ${puser}, not ${a}"

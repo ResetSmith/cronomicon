@@ -725,12 +725,16 @@ install -o root -g "$RUNNER_GROUP" -m 0640 /dev/null "${CONF_DIR}/runner.env"
 } > "${CONF_DIR}/runner.env"
 
 # --- Sandbox self-probe ---
-# Some RHEL8/systemd hosts STALL filesystem access inside the hardened sandbox
-# (ProtectSystem/namespace/seccomp), so the agent's exec.LookPath/stat hang at
-# startup and it crash-loops before registering. Reproduce the sandbox in a
-# bounded transient unit and stat a file; if it stalls or fails, generate the
-# unit with REDUCED hardening so the runner can start. Force with
+# Some hosts cannot run the hardened sandbox at all. Reproduce it in a bounded
+# transient unit and stat a file; if that stalls or fails, generate the unit
+# with REDUCED hardening so the runner can start. Force with
 # CRONOMICON_INSTALL_MINIMAL_HARDENING=1.
+#
+# The stall this was first written for, on RHEL 8, had one cause that this
+# probe never saw (coreutils stat does not make the call): systemd 239's
+# syscall filter kills the thread that calls faccessat2, which Go's PATH lookup
+# does, so the AGENT hung where stat did not. The unit now answers EPERM for a
+# filtered call (SystemCallErrorNumber, below) and the probe runs with it.
 HARDENING_OK=1
 if [ -n "${CRONOMICON_INSTALL_MINIMAL_HARDENING:-}" ]; then
   HARDENING_OK=0
@@ -742,7 +746,7 @@ else
   if timeout 20 systemd-run --quiet --pipe --wait --collect \
        -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes \
        -p PrivateDevices=yes -p RestrictNamespaces=yes \
-       -p 'SystemCallFilter=@system-service' \
+       -p 'SystemCallFilter=@system-service' -p 'SystemCallErrorNumber=EPERM' \
        /usr/bin/stat /usr/bin/env >/dev/null 2>&1; then
     echo ">> Sandbox self-probe OK — full hardening will be applied."
   else
@@ -824,6 +828,13 @@ MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# A filtered call answers EPERM instead of killing the calling thread. The
+# agent is a Go program, and Go's PATH lookup first tries a system call
+# (faccessat2) that an older systemd's @system-service list does not know
+# (239, on RHEL 8, for one). Killed, that thread never answers: the lookup
+# hangs, the agent finds no bash, perl or python, and it refuses to start.
+# Told EPERM, Go falls back to the older call.
+SystemCallErrorNumber=EPERM
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 EOF
 else

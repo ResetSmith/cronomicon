@@ -106,7 +106,7 @@ export function upgradeCommand(origin: string): string {
     ``,
     `echo ">> Restarting: \${UNITS}"`,
     `systemctl restart $UNITS || true`,
-    `sleep 2`,
+    `sleep 5`,
     `NOT_UP=""`,
     `for U in $UNITS; do`,
     `  if systemctl is-active --quiet "$U"; then echo ">> OK: \${U}"; else echo ">> FAILED to start: \${U}" >&2; NOT_UP="\${NOT_UP} \${U}"; fi`,

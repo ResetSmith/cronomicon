@@ -173,6 +173,11 @@ check "the default unit's state directory is unchanged" unit_has "$unit_default"
 # systemd applies StateDirectoryMode at every start; left at its default (0755)
 # it undoes the installer's chmod 0750 and opens the directory to other users.
 check "the default unit keeps its state directory closed to other users" unit_has "$unit_default" "StateDirectoryMode=0750"
+# On systemd 239 a filtered syscall kills the calling thread; Go's PATH lookup
+# makes one the old filter list does not know, and the agent then finds no
+# toolchain and refuses to start. EPERM lets Go fall back.
+check "the hardened unit answers EPERM for a filtered syscall" unit_has "$unit_default" "SystemCallErrorNumber=EPERM"
+check "an instance's hardened unit does too" unit_has "$unit_tax" "SystemCallErrorNumber=EPERM"
 check "an instance's unit keeps its state directory closed to other users" unit_has "$unit_tax" "StateDirectoryMode=0750"
 check "the default unit reads /etc/cronomicon-runner/runner.env" unit_has "$unit_default" "EnvironmentFile=-/etc/cronomicon-runner/runner.env"
 check "the default unit names no instance" bash -c "! grep -q 'cronomicon-runner-' <<< \"\$1\"" _ "$unit_default"
