@@ -85,9 +85,10 @@ func Doctor(ctx context.Context, cfg Config, quick bool) ([]Check, bool) {
 	// A PATH lookup returns at all. The stat above can pass where this does not:
 	// on systemd 239 a unit that filters system calls without an error number
 	// kills the thread that makes the call Go's lookup tries first, and stat
-	// does not make that call. Whether the tool is found is beside the point.
+	// does not make that call. The file looked for has to EXIST (lookupCanary):
+	// a lookup for a tool that is not installed never reaches the killed call.
 	// Costs nothing on a healthy host and one lookup deadline on a broken one.
-	if _, _, timedOut := lookPathBounded(ctx, localToolchainProbes[0].bins[0]); timedOut {
+	if _, _, timedOut := lookPathBounded(ctx, lookupCanary()); timedOut {
 		add("path-lookup", CheckFail, "a $PATH lookup did not return, so this agent cannot find ansible, terraform or systemd-run and will not claim them — "+lookupHint)
 	} else {
 		add("path-lookup", CheckPass, "$PATH lookups return")

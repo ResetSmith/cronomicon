@@ -295,6 +295,31 @@ var lookPathTimeout = 3 * time.Second
 // never returns (the real one cannot be made to, portably).
 var lookPath = exec.LookPath
 
+// lookupCanary names a file whose lookup shows whether lookups return on this
+// host at all: this binary. It has to be a file that is THERE. exec.LookPath
+// stats each candidate first and asks whether it may be executed (faccessat2,
+// the call a systemd 239 filter with no error number kills the thread for)
+// only once the stat has succeeded, so a lookup for a tool that is not
+// installed answers "not found" at once under the very unit that hangs every
+// lookup that finds something. Looking for ansible-playbook passed on a host
+// without Ansible whose systemd-run lookup never returned (RHEL 8.10,
+// 2026-10-08). A name with a slash skips the $PATH walk and goes straight to
+// that question; the directories are the doctor's path-dirs check.
+//
+// The fallback is the first local toolchain, as before: no worse, and only
+// reached when the process cannot name or see its own file.
+func lookupCanary() string {
+	if exe, err := executable(); err == nil {
+		if _, err := os.Stat(exe); err == nil {
+			return exe
+		}
+	}
+	return localToolchainProbes[0].bins[0]
+}
+
+// executable is os.Executable, replaceable so a test can take it away.
+var executable = os.Executable
+
 // lookPathBounded is exec.LookPath with a hard deadline: abandoned on timeout it
 // reports "not found" (best-effort — the leaked goroutine unblocks if the mount
 // ever recovers), so a hung $PATH entry degrades a probe rather than hanging it.
