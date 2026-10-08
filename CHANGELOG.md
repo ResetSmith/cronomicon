@@ -33,9 +33,14 @@ a container needs a longer stop timeout to drain (below).
 
 - **A runner's poll interval can be set from the app.** *Runners → the runner
   → ⚙ Edit → Poll interval*, in seconds, from 5 to 90. It is how often the
-  agent asks for work when its last poll gave it none: 60 seconds unless the
-  agent's own configuration says otherwise, and until now changing it meant
-  editing a file on the agent's machine and restarting it. The value overrides
+  agent starts asking for work: 60 seconds unless the agent's own
+  configuration says otherwise, and until now changing it meant editing a file
+  on the agent's machine and restarting it. The server holds each request for
+  up to 30 seconds and hands over a run the moment one arrives, so **the
+  longest a new run waits is the interval less 30**: about 30 seconds at 60, a
+  minute at 90, nothing at 30 or below, where the agent is connected all the
+  time. Every value from 5 to 30 picks work up the same way; a lower one only
+  makes an agent with no free slot check in more often. The value overrides
   the agent's own, takes effect on the agent's next poll with no restart, and
   reverts when cleared. The app cannot read the agent's own setting, so an
   empty field reads *inherit*. A value outside the bounds is refused, in the

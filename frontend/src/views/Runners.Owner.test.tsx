@@ -226,6 +226,12 @@ describe("Runners — owner and serves (MA-26)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
     const field = (await screen.findByLabelText("Poll interval in seconds")) as HTMLInputElement;
     expect(field.value).toBe("30");
+    // The field says what the number buys. The server holds a poll for 30
+    // seconds, so the wait for a new run is the interval LESS 30, and every
+    // value from the floor up to 30 behaves alike: without this sentence the
+    // range 5–90 reads as eighty-five different speeds.
+    expect(screen.getByText("the longest a new run waits is this value less 30", { selector: "strong" })).toBeTruthy();
+    expect(screen.getByText(/Every value from 5 to 30 therefore picks work up\s+the same way/)).toBeTruthy();
     const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
 
     for (const bad of ["3", "120"]) {

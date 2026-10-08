@@ -7410,12 +7410,15 @@ export interface components {
             /** @description Run-types to REMOVE from the runner's effective claim set (subtract-only). */
             capabilityMask?: components["schemas"]["RunType"][];
             /**
-             * @description How often the agent asks for work when its last poll gave it none
-             *     (2.3.2). Overrides the interval in the agent's own configuration
-             *     (60 seconds unless set there) and takes effect on the poll that
-             *     delivers it, with no restart. The server holds a poll for up to 30
-             *     seconds waiting for work, so a value of 30 or less means the agent
-             *     is waiting on the server nearly all the time. Outside 5–90 is
+             * @description How often the agent STARTS a poll for work (2.3.2). Overrides the
+             *     interval in the agent's own configuration (60 seconds unless set
+             *     there) and takes effect on the poll that delivers it, with no
+             *     restart. The server holds a poll for up to 30 seconds waiting for
+             *     work, so the longest a new run waits is this value less 30; at 30
+             *     or below the agent is connected all the time, and every value from
+             *     5 to 30 picks work up alike. A lower value only makes an agent with
+             *     no free slot (which is answered at once, not held) check in more
+             *     often, which bounds how soon a kill reaches it. Outside 5–90 is
              *     refused (400): a runner that has not polled for two minutes is
              *     shown as degraded. An agent older than 2.3.2 ignores the field.
              */
