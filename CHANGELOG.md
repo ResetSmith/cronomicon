@@ -234,6 +234,19 @@ everything in the list below.
   unit**: run the installer again for it, or add a drop-in
   (`systemctl edit cronomicon-runner`, `[Service]`, `StateDirectoryMode=0750`)
   and restart it. `runner-isolation-check.sh` reports a host that needs it.
+- **An agent under the hardened unit could not see its own tools on RHEL 8.**
+  systemd 239 kills the thread that makes a system call its filter list does
+  not know, and the agent's lookup of a program on `$PATH` makes one. The
+  lookup never returned: the agent logged *PATH lookup timed out*, found no
+  capabilities and no sandbox, and with none configured refused to start. The
+  installer's own probe did not catch it. The unit now sets
+  `SystemCallErrorNumber=EPERM`. For an agent installed earlier, run the
+  installer again or add that line as a drop-in.
+- **The slim runner image started with nothing it could do.** The image has no
+  shell, so an agent left to detect its capabilities found none, refused to
+  register and restarted for ever. It now declares the four shell types, which
+  run on the target, not in the image. With an older image, set
+  `CRONOMICON_RUNNER_CAPABILITIES=bash,perl,powershell,python`.
 - Runner API keys are revoked by runner id; two runners that declared the same
   name no longer share a revocation.
 - Output markers in an agent's log are parsed according to whether that run's

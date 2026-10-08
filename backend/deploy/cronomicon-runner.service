@@ -77,6 +77,13 @@ MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# A filtered call answers EPERM instead of killing the calling thread. The
+# agent is a Go program, and Go's PATH lookup first tries a system call
+# (faccessat2) that an older systemd's @system-service list does not know
+# (239, on RHEL 8, for one). Killed, that thread never answers: the lookup
+# hangs, the agent finds no bash, perl or python, and it refuses to start.
+# Told EPERM, Go falls back to the older call.
+SystemCallErrorNumber=EPERM
 
 # Only the identity/key state directory is writable; everything else is read-only
 # (ProtectSystem=strict). /var/lib/cronomicon-runner is created and owned by us.
