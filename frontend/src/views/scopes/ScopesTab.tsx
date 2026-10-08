@@ -21,7 +21,7 @@ import {
   labelStyle,
   tdStyle,
   } from "../envvars/ui";
-import { BindingNotices, BoundRunnersCell, ScopeRunnersField, type BoundRunner } from "./ScopeRunners";
+import { BindingNotices, BoundRunnersCell, ScopeRunnersField, UnboundHostKeysNote, type BoundRunner } from "./ScopeRunners";
 import { ScopeKeyCoverage } from "../runners/HostKeys";
 
 
@@ -623,6 +623,16 @@ export function ScopesTab({
                           <div style={{ marginTop: 12 }}>
                             <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys on the bound runners</div>
                             <ScopeKeyCoverage scopeId={String(s.id)} bound={(s.boundRunners ?? []).length} canConfig={canEdit} />
+                          </div>
+                        )}
+                        {/* An unbound scope has no fixed set of runners to show
+                            coverage for. Say instead who reviews which runner's
+                            keys — to everyone who can open the row, because the
+                            reader who needs it is the one who cannot act. */}
+                        {s.id != null && (s.boundRunners ?? []).length === 0 && (
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ ...labelStyle(), marginBottom: 6 }}>Host keys</div>
+                            <UnboundHostKeysNote />
                           </div>
                         )}
                         {/* Tags are shown to everyone who can see the scope and

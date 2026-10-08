@@ -52,7 +52,7 @@ vi.mock("../../api/client", async (importOriginal) => {
   };
 });
 
-import { BindingNotices, BoundRunnersCell, ReplaceRunnerDialog, RunsOn, ScopeRunnersField, type BindableScope } from "./ScopeRunners";
+import { BindingNotices, BoundRunnersCell, ReplaceRunnerDialog, RunsOn, ScopeRunnersField, UnboundHostKeysNote, type BindableScope } from "./ScopeRunners";
 
 const br = (over: Partial<BoundRunner> & { name: string }): BoundRunner => ({
   runnerId: `id-${over.name}`,
@@ -402,5 +402,24 @@ describe("RunsOn — the job detail's answer", () => {
   it("names the bound runners, why one is not serving, and the scope that binds them", () => {
     const { container } = render(<RunsOn bound={[br({ name: "a" }), br({ name: "b", status: "offline" })]} scope="dmz-web" />);
     expect(container.textContent).toBe("ab· offlinebound to scope dmz-web");
+  });
+});
+
+describe("UnboundHostKeysNote — who reviews which runner's host keys", () => {
+  // An agency's administrator can do nothing about the local runner's keys
+  // (it is Global's), and until 2.3.2 the scope's row did not say so: the
+  // coverage table renders nothing for a scope with no bound runner.
+  it("says that the local runner's keys are a global administrator's, where to look, and the agency's own remedy", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <UnboundHostKeysNote />
+      </MemoryRouter>,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toMatch(/only a global administrator approves its host keys/);
+    expect(text).toMatch(/approved for that runner/);
+    expect(text).toMatch(/Binding this scope to the agency's own agents keeps its jobs off the local runner/);
+    const links = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toEqual(["/runners", "/notices"]);
   });
 });
