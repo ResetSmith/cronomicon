@@ -14,11 +14,36 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
-// hostKeyMeta derives the non-secret pin metadata (FU-1) from a stored
-// authorized-key line: whether a key is pinned, its SHA256 fingerprint for
-// out-of-band comparison, and its algorithm. The raw line is never returned. An
-// empty line ⇒ unpinned; a non-empty-but-unparseable line still reports pinned
-// (so the UI shows "pinned" rather than silently claiming unpinned).
+// The host key shown on a host record or a bastion is the one the LOCAL RUNNER
+// trusts for the address the record is dialled at: the key in force in its
+// ledger (host_key_ledger), approved by an operator or carried over by the
+// 2.3.0 upgrade. Until 2.3.0 it was a key stored on the record itself, captured
+// on the first connection; those columns are gone (migration 1270).
+//
+// trustedKeySQL is that key for a record, in authorized-key form ("type
+// base64"), or NULL. addrSQL and portSQL are the record's dial address and
+// port; the known_hosts host is built from them the way hostkeys.Pattern does
+// (the bare address on port 22, [address]:port otherwise).
+func trustedKeySQL(addrSQL, portSQL string) string {
+	pattern := `CASE WHEN COALESCE(NULLIF(` + portSQL + `, 0), 22) = 22 THEN ` + addrSQL +
+		` ELSE '[' || ` + addrSQL + ` || ']:' || ` + portSQL + ` END`
+	return `(SELECT substr(l.known_hosts_line, instr(l.known_hosts_line, ' ') + 1)
+	           FROM host_key_ledger l JOIN runners rn ON rn.id = l.runner_id AND rn.kind = 'server'
+	          WHERE l.host = ` + pattern + `
+	            AND l.decision = 'approved' AND l.superseded_at IS NULL
+	          ORDER BY l.id DESC LIMIT 1)`
+}
+
+var (
+	hostTrustedKeySQL    = trustedKeySQL(`COALESCE(NULLIF(ssh_hosts.address, ''), ssh_hosts.hostname)`, `ssh_hosts.port`)
+	bastionTrustedKeySQL = trustedKeySQL(`COALESCE(NULLIF(bastions.address, ''), bastions.name)`, `bastions.port`)
+)
+
+// hostKeyMeta derives the non-secret metadata (FU-1) from that key: whether
+// there is one, its SHA256 fingerprint for out-of-band comparison, and its
+// algorithm. The raw line is never returned. An empty line ⇒ none; a
+// non-empty-but-unparseable line still reports a key (so the UI does not
+// silently claim there is none).
 func hostKeyMeta(line string) (pinned bool, fingerprint, keyType string) {
 	if strings.TrimSpace(line) == "" {
 		return false, "", ""
@@ -44,10 +69,12 @@ type SshHost struct {
 	User             *string `json:"user"`
 	Status           string  `json:"status"`
 	LastCheckedAt    *string `json:"lastCheckedAt"`
-	// HostKey* expose the pinned SSH host key in a non-secret way (FU-1): whether
-	// a key is pinned, its SHA256 fingerprint for out-of-band comparison, and its
-	// algorithm. The raw known_hosts line is never surfaced. Derived from the
-	// stored ssh_hosts.host_key (empty ⇒ unpinned; TOFU-captured on first connect).
+	// HostKey* expose, in a non-secret way (FU-1), the host key the LOCAL RUNNER
+	// trusts for this record's address: whether it has one, its SHA256
+	// fingerprint for out-of-band comparison, and its algorithm. It is the key
+	// an operator approved for the local runner (Runners → Local runner → Host
+	// keys), or one the 2.3.0 upgrade carried over; nothing is captured on
+	// first connect any more. The field names predate that.
 	HostKeyPinned      bool   `json:"hostKeyPinned"`
 	HostKeyFingerprint string `json:"hostKeyFingerprint,omitempty"`
 	HostKeyType        string `json:"hostKeyType,omitempty"`
@@ -93,8 +120,8 @@ type SshBastion struct {
 	Zone             *string `json:"zone"`
 	Status           string  `json:"status"`
 	LastCheckedAt    *string `json:"lastCheckedAt"`
-	// HostKey* mirror SshHost — the non-secret pin metadata for the bastion's own
-	// host key (bastions.host_key, SU-4). See SshHost for semantics.
+	// HostKey* mirror SshHost — the key the local runner trusts for the
+	// bastion's own address (SU-4). See SshHost for semantics.
 	HostKeyPinned      bool   `json:"hostKeyPinned"`
 	HostKeyFingerprint string `json:"hostKeyFingerprint,omitempty"`
 	HostKeyType        string `json:"hostKeyType,omitempty"`
@@ -126,7 +153,7 @@ type SshBastionInput struct {
 func ListSshHosts(ctx context.Context, database *sql.DB) ([]SshHost, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, source, hostname, address, port, os, via, auth_key_env_var, auth_credential_id, username,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key,
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+hostTrustedKeySQL+`,
 		        scope_id, `+hostOwnerSQL+`, (SELECT name FROM agencies WHERE id = `+hostOwnerSQL+`)
 		 FROM ssh_hosts ORDER BY created_at`)
 	if err != nil {
@@ -148,7 +175,7 @@ func ListSshHosts(ctx context.Context, database *sql.DB) ([]SshHost, error) {
 func GetSshHost(ctx context.Context, database *sql.DB, id string) (*SshHost, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, source, hostname, address, port, os, via, auth_key_env_var, auth_credential_id, username,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key,
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+hostTrustedKeySQL+`,
 		        scope_id, `+hostOwnerSQL+`, (SELECT name FROM agencies WHERE id = `+hostOwnerSQL+`)
 		 FROM ssh_hosts WHERE id=?`, id)
 	if err != nil {
@@ -220,39 +247,6 @@ func scanSshHost(rows *sql.Rows) (*SshHost, error) {
 	}
 	h.HostKeyPinned, h.HostKeyFingerprint, h.HostKeyType = hostKeyMeta(hostKey.String)
 	return &h, nil
-}
-
-// ClearSshHostKey clears a pinned host key (FU-1) so the next connect re-captures
-// it via TOFU — the supported way to re-key a legitimately rotated host without a
-// raw SQL UPDATE. Status is reset to unverified so the UI reflects the re-pin
-// pending. Returns whether a row was updated (false ⇒ unknown id). Audited.
-func ClearSshHostKey(ctx context.Context, database *sql.DB, actor, id string) (bool, error) {
-	h, _ := GetSshHost(ctx, database, id)
-	res, err := database.ExecContext(ctx,
-		`UPDATE ssh_hosts SET host_key=NULL, status='unverified' WHERE id=?`, id)
-	if err != nil {
-		return false, fmt.Errorf("clear ssh host key: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n > 0 && h != nil {
-		audit(ctx, database, actor, "SSH Hosts", "host key cleared", h.Hostname, "")
-	}
-	return n > 0, nil
-}
-
-// ClearBastionHostKey mirrors ClearSshHostKey for a bastion's own host key.
-func ClearBastionHostKey(ctx context.Context, database *sql.DB, actor, id string) (bool, error) {
-	b, _ := GetBastion(ctx, database, id)
-	res, err := database.ExecContext(ctx,
-		`UPDATE bastions SET host_key=NULL, status='unverified' WHERE id=?`, id)
-	if err != nil {
-		return false, fmt.Errorf("clear bastion host key: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	if n > 0 && b != nil {
-		audit(ctx, database, actor, "Bastions", "host key cleared", b.Name, "")
-	}
-	return n > 0, nil
 }
 
 // SetSshHostStatus records the outcome of a connection test (ssh-update.md TC.3).
@@ -350,7 +344,7 @@ func DeleteSshHost(ctx context.Context, database *sql.DB, id, actor string) (boo
 func ListBastions(ctx context.Context, database *sql.DB) ([]SshBastion, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, name, address, port, username, auth_key_env_var, auth_credential_id, zone,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key,
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+bastionTrustedKeySQL+`,
 		        owner_agency, (SELECT name FROM agencies WHERE id = bastions.owner_agency)
 		 FROM bastions ORDER BY created_at`)
 	if err != nil {
@@ -372,7 +366,7 @@ func ListBastions(ctx context.Context, database *sql.DB) ([]SshBastion, error) {
 func GetBastion(ctx context.Context, database *sql.DB, id string) (*SshBastion, error) {
 	rows, err := database.QueryContext(ctx,
 		`SELECT id, name, address, port, username, auth_key_env_var, auth_credential_id, zone,
-		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, host_key,
+		        created_by, created_at, last_modified_by, last_modified_at, status, last_checked_at, `+bastionTrustedKeySQL+`,
 		        owner_agency, (SELECT name FROM agencies WHERE id = bastions.owner_agency)
 		 FROM bastions WHERE id=?`, id)
 	if err != nil {

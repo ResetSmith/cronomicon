@@ -424,3 +424,117 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 	rows.Close()
 	return Reconcile(ctx, database, KindNoRunnerForShellJobs, found)
 }
+
+// ── The server's own host keys (2.3.0, Phase C) ──────────────────────────────
+
+const (
+	// KindHostKeyConflict — the upgrade found a host record (or bastion) whose
+	// stored host key differs from the one the server now trusts for the same
+	// address. The server trusts one key per address; before 2.3.0 each record
+	// held its own. Subject: `host:<id>` or `bastion:<id>`. Filed under the
+	// record's agency.
+	KindHostKeyConflict = "host_key_conflict"
+	// KindLocalRunnerHostKeys — the local runner is on and takes a scope's
+	// runs, and has no approved key for some of the scope's hosts: its runs
+	// fail for those hosts (host_key_unverified). Until 2.3.0 the server
+	// captured a host's key on first connect; now a key is approved first.
+	// Subject: the scope's id. Filed under the scope's agency.
+	KindLocalRunnerHostKeys = "local_runner_host_keys"
+)
+
+// CarriedKeyConflictNote is the note the carry pass leaves on a parked key it
+// did not carry because a different key was in force for the address.
+const CarriedKeyConflictNote = "a different key is trusted for this address"
+
+// checkCarriedKeyConflicts reports each record whose pre-2.3.0 key lost to
+// another for the same address, for as long as the record exists and the
+// server still trusts a different key there.
+func checkCarriedKeyConflicts(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `
+		SELECT c.kind, c.record_id, c.name, COALESCE(c.pattern, ''), COALESCE(c.fingerprint, ''),
+		       c.owner_agency, COALESCE(c.scope_id, ''),
+		       COALESCE((SELECT l.fingerprint FROM host_key_ledger l
+		                   JOIN runners rn ON rn.id = l.runner_id AND rn.kind = 'server'
+		                  WHERE l.host = c.pattern AND l.decision = 'approved' AND l.superseded_at IS NULL
+		                    AND l.key_type = substr(c.host_key, 1, instr(c.host_key, ' ') - 1)
+		                  ORDER BY l.id DESC LIMIT 1), '')
+		  FROM carried_server_host_keys c
+		 WHERE c.note = ?
+		   AND ((c.kind = 'host' AND EXISTS (SELECT 1 FROM ssh_hosts h WHERE h.id = c.record_id))
+		     OR (c.kind = 'bastion' AND EXISTS (SELECT 1 FROM bastions b WHERE b.id = c.record_id)))
+		 ORDER BY c.id`, CarriedKeyConflictNote)
+	if err != nil {
+		return err
+	}
+	type conflict struct{ kind, id, name, pattern, had, owner, scopeID, trusted string }
+	var all []conflict
+	for rows.Next() {
+		var c conflict
+		if err := rows.Scan(&c.kind, &c.id, &c.name, &c.pattern, &c.had, &c.owner, &c.scopeID, &c.trusted); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var found []Finding
+	for _, c := range all {
+		if c.trusted == "" || c.trusted == c.had {
+			continue // the key was removed, or the record's own key is the trusted one now
+		}
+		agency := c.owner
+		if c.scopeID != "" {
+			// An imported record answers to its scope's one agency.
+			var a sql.NullString
+			if err := database.QueryRowContext(ctx, `
+				SELECT CASE WHEN COUNT(*) = 1 THEN MIN(agency_id) END FROM scope_agencies WHERE scope_id = ?`, c.scopeID).Scan(&a); err != nil {
+				return err
+			}
+			agency = agencyid.Global
+			if a.Valid && a.String != "" {
+				agency = a.String
+			}
+		}
+		what := "host record"
+		if c.kind == "bastion" {
+			what = "bastion"
+		}
+		found = append(found, Finding{
+			AgencyID: agency,
+			Subject:  c.kind + ":" + c.id,
+			Detail: fmt.Sprintf("Before 2.3.0 the server had its own host key stored on the %s %s (%s), and it is not the key "+
+				"the server now trusts for that address (%s; the server trusts %s). Each record used to hold its own key; "+
+				"the server now trusts ONE key per address, the first it found. If this is the same machine, its key "+
+				"changed between the two records being used: scan it and approve the current key (Runners → Local runner → "+
+				"Host keys). If these are two machines that share an address in different networks (behind different "+
+				"bastions), the server can serve only one of them: run the other's scope on an agent inside that network.",
+				what, c.name, c.had, c.pattern, c.trusted),
+		})
+	}
+	return Reconcile(ctx, database, KindHostKeyConflict, found)
+}
+
+// localRunnerHostKeysCheck is installed by the server at boot: which hosts of
+// which scopes the local runner would be asked to reach and has no approved key
+// for. It needs the scope's host plan and the runner's trust, which live in
+// packages this leaf does not import (hostkeys → execspec).
+var localRunnerHostKeysCheck func(ctx context.Context, database *sql.DB) ([]Finding, error)
+
+// SetLocalRunnerHostKeysCheck installs it.
+func SetLocalRunnerHostKeysCheck(fn func(ctx context.Context, database *sql.DB) ([]Finding, error)) {
+	localRunnerHostKeysCheck = fn
+}
+
+func checkLocalRunnerHostKeys(ctx context.Context, database *sql.DB) error {
+	if localRunnerHostKeysCheck == nil {
+		return nil // not installed (a test of this package alone): leave the notices as they are
+	}
+	found, err := localRunnerHostKeysCheck(ctx, database)
+	if err != nil {
+		return err
+	}
+	return Reconcile(ctx, database, KindLocalRunnerHostKeys, found)
+}

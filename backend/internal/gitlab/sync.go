@@ -2299,8 +2299,9 @@ func authKeyBindings(conns []inventory.HostConn) []string {
 
 // importGitHosts upserts ssh_hosts rows (source='git') from a scope's parsed
 // connection vars (M4 / §9). It is gated on a usable projection — a degraded
-// inventory can't be reliably imported. The upsert leaves host_key/status/
-// last_checked_at UNTOUCHED so a TOFU-captured key survives re-sync (§9.4), and
+// inventory can't be reliably imported. The upsert leaves status/
+// last_checked_at UNTOUCHED (§9.4; a host's approved key is the local runner's
+// and is keyed by address, not kept on the row), and
 // stamps synced_at=now so the prune-by-owner can reap rows dropped from inventory.
 // Best-effort: log-and-continue if the 400 schema isn't present (isolated tests).
 func (s *Service) importGitHosts(ctx context.Context, tx *sql.Tx, scopeID string, sc inventoryScope, now string) {
@@ -2309,8 +2310,8 @@ func (s *Service) importGitHosts(ctx context.Context, tx *sql.Tx, scopeID string
 		// are still in the file. A projection degrade is NOT a scopeErr, so the
 		// prune-by-owner still runs; re-stamp synced_at on this scope's EXISTING git
 		// rows so the prune leaves them, preserving their last-good connection detail
-		// AND any TOFU-captured host_key (OD-13/§9.4 — a captured key must survive a
-		// transient degrade, e.g. a host-range line or one bad [group:vars]).
+		// (OD-13/§9.4 — it must survive a transient degrade, e.g. a host-range line
+		// or one bad [group:vars]).
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE ssh_hosts SET synced_at=? WHERE scope_id=? AND source='git'`, now, scopeID); err != nil {
 			s.logWarn("ssh_hosts degrade re-stamp skipped", "name", sc.Name, "error", err)

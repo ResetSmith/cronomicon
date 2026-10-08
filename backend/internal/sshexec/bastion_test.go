@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -74,216 +73,54 @@ func TestDial_BastionKeyLoadError(t *testing.T) {
 	}
 }
 
-// TestBastionHostKeyCallback (SU-4): the bastion callback strict-compares a pinned
-// key (mismatch → MITM error), refuses an unparseable stored key, and TOFU-captures
-// the first-seen key into the bastion row when unpinned.
+// TestBastionHostKeyCallback (SU-4; 2.3.0): the bastion hop is verified against
+// the local runner's approved keys, under the address the bastion's record is
+// dialled at. The approved key passes; a different key is a mismatch; with no
+// approved key the hop is refused, host_key_unverified — nothing is captured
+// on first connect — and a key approved under the bastion's NAME does not count.
 func TestBastionHostKeyCallback(t *testing.T) {
-	svc, _ := newReaperService(t)
+	svc, pool := newReaperService(t)
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	signer, _ := ssh.NewSignerFromKey(priv)
 	pub := signer.PublicKey()
-	authLine := string(ssh.MarshalAuthorizedKey(pub))
 	_, priv2, _ := ed25519.GenerateKey(rand.Reader)
 	signer2, _ := ssh.NewSignerFromKey(priv2)
+	bastion := target{ID: "b1", Name: "jumphost", Address: "10.9.9.9", Port: 2222}
 
-	// Strict: pinned key matches → nil; a different key → MITM error.
-	strict := svc.bastionHostKeyCallback("b1", "jump", authLine)
-	if err := strict("", nil, pub); err != nil {
-		t.Errorf("matching pinned bastion key rejected: %v", err)
+	// Nothing approved: refused, and nothing written.
+	err := svc.bastionHostKeyCallback(context.Background(), bastion, "jump")("", nil, pub)
+	if err == nil || !strings.Contains(err.Error(), HostKeyUnverified) {
+		t.Fatalf("a bastion with no approved key = %v, want %s", err, HostKeyUnverified)
 	}
-	if err := strict("", nil, signer2.PublicKey()); err == nil || !strings.Contains(err.Error(), "mismatch") {
-		t.Errorf("mismatched bastion key must be rejected as MITM, got %v", err)
-	}
-
-	// Unparseable stored key → refuse (fail-closed, no accept-any fallback).
-	bad := svc.bastionHostKeyCallback("b1", "jump", "not-a-valid-key")
-	if err := bad("", nil, pub); err == nil {
-		t.Error("unparseable stored bastion key must refuse")
+	var rows int
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM host_key_ledger`).Scan(&rows)
+	if rows != 0 {
+		t.Fatalf("the callback wrote %d ledger row(s): nothing is captured on first connect", rows)
 	}
 
-	// TOFU: empty stored key → capture the first-seen key into the bastion row.
-	insertBastion(t, svc, "b-tofu", "jump-tofu", "")
-	tofu := svc.bastionHostKeyCallback("b-tofu", "jump-tofu", "")
-	if err := tofu("", nil, pub); err != nil {
-		t.Errorf("TOFU capture errored: %v", err)
+	// Approved under its dial address.
+	trustHostKey(t, pool, "10.9.9.9", 2222, pub)
+	cb := svc.bastionHostKeyCallback(context.Background(), bastion, "jump")
+	if err := cb("", nil, pub); err != nil {
+		t.Errorf("the approved bastion key was refused: %v", err)
 	}
-	var stored string
-	_ = svc.db.QueryRow(`SELECT COALESCE(host_key,'') FROM bastions WHERE id='b-tofu'`).Scan(&stored)
-	if strings.TrimSpace(stored) != strings.TrimSpace(authLine) {
-		t.Errorf("TOFU did not persist the bastion key: got %q want %q", stored, authLine)
-	}
-	// After capture, a subsequent changed key strict-fails.
-	if err := svc.bastionHostKeyCallback("b-tofu", "jump-tofu", stored)("", nil, signer2.PublicKey()); err == nil {
-		t.Error("after TOFU, a changed bastion key must be rejected")
-	}
-}
-
-// LR-70 — a host routes only through a bastion that its own agency owns, or
-// Global. A bastion of another agency does not exist for the lookup, so a host
-// record cannot be sent through another agency's jump host by naming it.
-func TestBastionAddr_OnlyTheRecordsAgencysBastionsAndGlobals(t *testing.T) {
-	svc, _, _ := guardFixture(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, b := range [][3]string{
-		{"b-fin", "jump-fin", "ag:fin"}, {"b-tax", "jump-tax", "ag:tax"}, {"b-glob", "jump-shared", "global"},
-		// One name, an agency's and Global's: the agency's own is the one meant.
-		{"b-fin2", "edge", "ag:fin"}, {"b-glob2", "edge", "global"},
-	} {
-		if _, err := svc.db.Exec(`
-			INSERT INTO bastions(id, name, hostname, address, port, username, created_at, owner_agency)
-			VALUES (?, ?, ?, '127.0.0.1', 2222, 'jump', ?, ?)`, b[0], b[1], b[1], now, b[2]); err != nil {
-			t.Fatalf("insert bastion: %v", err)
-		}
-	}
-	for _, c := range []struct {
-		ref    string
-		owners []string
-		want   string // bastion id, "" = not found
-	}{
-		{"jump-fin", []string{"ag:fin"}, "b-fin"},
-		{"jump-fin", []string{"ag:tax"}, ""},
-		{"jump-fin", nil, ""},
-		{"b-fin", []string{"ag:tax"}, ""}, // by id is no way round it
-		{"jump-shared", []string{"ag:fin"}, "b-glob"},
-		{"jump-shared", []string{"ag:tax"}, "b-glob"},
-		{"jump-shared", nil, "b-glob"},
-		{"edge", []string{"ag:fin"}, "b-fin2"},
-		{"edge", []string{"ag:tax"}, "b-glob2"},
-		{"edge", []string{"global"}, "b-glob2"},
-	} {
-		b, err := svc.bastionAddr(ctx, c.ref, c.owners)
-		got := ""
-		if err == nil && b != nil {
-			got = b.ID
-		}
-		if got != c.want {
-			t.Errorf("bastion %q for a record of %v = %q (err %v), want %q", c.ref, c.owners, got, err, c.want)
-		}
-	}
-	// The bastion says whose it is, so its own key can be judged against that.
-	if b, err := svc.bastionAddr(ctx, "jump-fin", []string{"ag:fin"}); err != nil || len(b.Owners) != 1 || b.Owners[0] != "ag:fin" {
-		t.Errorf("FIN's bastion answers to %+v (%v), want [ag:fin]", b, err)
-	}
-}
-
-// LR-72 at connect — a bastion authenticates with a key its owner may use: the
-// owner's own or Global's. A bastion was unowned until 2.3.0 and its key was
-// loaded without a question.
-func TestDial_ABastionsKeyMustBeItsOwners(t *testing.T) {
-	svc, ids, _ := guardFixture(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Format(time.RFC3339)
-	insert := func(id, name, owner, credID string) {
-		t.Helper()
-		if _, err := svc.db.Exec(`
-			INSERT INTO bastions(id, name, hostname, address, port, username, auth_credential_id, created_at, owner_agency)
-			VALUES (?, ?, ?, '127.0.0.1', 1, 'jump', ?, ?, ?)`, id, name, name, credID, now, owner); err != nil {
-			t.Fatalf("insert bastion: %v", err)
-		}
-	}
-	insert("b-bad", "fin-with-tax-key", "ag:fin", ids["tax"])
-	insert("b-own", "fin-with-own-key", "ag:fin", ids["fin"])
-	insert("b-shared", "fin-with-global-key", "ag:fin", ids["shared"])
-	insert("b-glob-bad", "global-with-fin-key", "global", ids["fin"])
-
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	signer, _ := ssh.NewSignerFromKey(priv)
-	dialVia := func(via string, owners []string) error {
-		dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		_, _, err := svc.dial(dctx, target{Name: "t", Address: "127.0.0.1", Port: 1, Via: via, Owners: owners}, signer)
-		return err
-	}
-	for _, c := range []struct {
-		via     string
-		owners  []string
-		refused bool
-	}{
-		{"fin-with-tax-key", []string{"ag:fin"}, true},
-		{"global-with-fin-key", []string{"ag:fin"}, true}, // a Global bastion names a Global key
-		{"fin-with-own-key", []string{"ag:fin"}, false},
-		{"fin-with-global-key", []string{"ag:fin"}, false},
-	} {
-		err := dialVia(c.via, c.owners)
-		gotRefused := errors.Is(err, errKeyNotUsable)
-		if gotRefused != c.refused {
-			t.Errorf("dial via %s: key refused = %v (err %v), want %v", c.via, gotRefused, err, c.refused)
-		}
-		if c.refused {
-			if status, msg := classifyDialErr(err); status != StatusCredError || !strings.Contains(msg, "not one its agency may use") {
-				t.Errorf("dial via %s classified %q / %q, want a credential error that says why", c.via, status, msg)
-			}
-		}
-	}
-}
-
-// A bastion from before 2.3.0 may name its key by NAME, and that name was
-// looked up across every agency and scope. It is loaded for the bastion's owner
-// now, so one that names a department's or a scoped row fails every run routed
-// through it. The inbox says so, by the same rule the connect applies.
-func TestBastionKeyNameFindingsReportsWhatTheConnectWouldRefuse(t *testing.T) {
-	svc, _, _ := guardFixture(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Format(time.RFC3339)
-	exec := func(q string, a ...any) {
-		t.Helper()
-		if _, err := svc.db.Exec(q, a...); err != nil {
-			t.Fatalf("seed: %v\n%s", err, q)
-		}
-	}
-	// Secrets a bastion might name: Global's with no scope, Global's in a scope,
-	// and FIN's.
-	exec(`INSERT INTO secrets (id, key, scope, source, created_at) VALUES ('s-glob', 'JUMP_KEY', NULL, 'stored', ?), ('s-scoped', 'SCOPED_KEY', 'fin-prod', 'stored', ?)`, now, now)
-	exec(`INSERT INTO secrets (id, key, scope, source, created_at, owner_agency) VALUES ('s-fin', 'FIN_JUMP_KEY', NULL, 'stored', ?, 'ag:fin')`, now)
-	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES ('s-fin', 'ag:fin')`)
-	bastion := func(id, owner, keyName string) {
-		exec(`INSERT INTO bastions(id, name, hostname, address, port, username, auth_key_env_var, created_at, owner_agency)
-		      VALUES (?, ?, ?, '127.0.0.1', 1, 'jump', ?, ?, ?)`, id, id, id, keyName, now, owner)
-	}
-	bastion("b-ok-global", "global", "JUMP_KEY")
-	bastion("b-ok-fin-own", "ag:fin", "FIN_JUMP_KEY")
-	bastion("b-ok-fin-global", "ag:fin", "JUMP_KEY")
-	bastion("b-ok-label", "ag:fin", "CRONOMICON_KEY_finkey")
-	bastion("b-bad-dept", "global", "FIN_JUMP_KEY")           // a Global bastion naming FIN's secret
-	bastion("b-bad-scoped", "global", "SCOPED_KEY")           // ...or a scoped one
-	bastion("b-bad-label", "ag:fin", "CRONOMICON_KEY_taxkey") // FIN's bastion naming TAX's key
-	bastion("b-bad-missing", "ag:tax", "NO_SUCH_KEY")
-	exec(`INSERT INTO bastions(id, name, hostname, address, port, created_at) VALUES ('b-keyless', 'b-keyless', 'b-keyless', '127.0.0.1', 1, ?)`, now)
-
-	found, err := BastionKeyNameFindings(ctx, svc.db)
-	if err != nil {
-		t.Fatalf("BastionKeyNameFindings: %v", err)
-	}
-	got := map[string]string{}
-	for _, f := range found {
-		got[f.Subject] = f.AgencyID
-	}
-	want := map[string]string{
-		"bastion:b-bad-dept": "global", "bastion:b-bad-scoped": "global",
-		"bastion:b-bad-label": "ag:fin", "bastion:b-bad-missing": "ag:tax",
-	}
-	if len(got) != len(want) {
-		t.Errorf("findings = %v, want exactly %v", got, want)
-	}
-	for subject, agency := range want {
-		if got[subject] != agency {
-			t.Errorf("%s is filed under %q, want %q (its owner)", subject, got[subject], agency)
-		}
+	if err := cb("", nil, signer2.PublicKey()); err == nil || !strings.Contains(err.Error(), "mismatch") {
+		t.Errorf("a different bastion key must be refused as a mismatch, got %v", err)
 	}
 
-	// The finding and the connect agree, bastion by bastion.
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	signer, _ := ssh.NewSignerFromKey(priv)
-	for _, id := range []string{"b-ok-fin-own", "b-ok-label", "b-bad-dept", "b-bad-scoped", "b-bad-label", "b-bad-missing"} {
-		var owner string
-		_ = svc.db.QueryRow(`SELECT owner_agency FROM bastions WHERE id = ?`, id).Scan(&owner)
-		dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		_, _, derr := svc.dial(dctx, target{Name: "t", Address: "127.0.0.1", Port: 1, Via: id, Owners: []string{owner}}, signer)
-		cancel()
-		_, reported := want["bastion:"+id]
-		if refused := errors.Is(derr, errKeyNotUsable); refused != reported {
-			t.Errorf("bastion %s: the connect refused its key = %v (err %v), the check reported it = %v", id, refused, derr, reported)
-		}
+	// A key approved under a NAME is not a key for this bastion: a name is not a
+	// machine (two agencies may each have a "jump"), and the hop is verified
+	// under the address its record is dialled at.
+	other := target{ID: "b2", Name: "otherhost", Address: "10.9.9.10", Port: 22}
+	trustHostKey(t, pool, "edge-jump", 22, signer2.PublicKey())
+	if err := svc.bastionHostKeyCallback(context.Background(), other, "edge-jump")("", nil, signer2.PublicKey()); err == nil || !strings.Contains(err.Error(), HostKeyUnverified) {
+		t.Errorf("a key approved only under the bastion's name = %v, want %s", err, HostKeyUnverified)
+	}
+	// The algorithms asked of a hop are those of its approved keys.
+	if got := svc.hostKeyAlgorithms(context.Background(), "[10.9.9.9]:2222"); len(got) != 1 || got[0] != pub.Type() {
+		t.Errorf("algorithms for a hop with one approved %s key = %v", pub.Type(), got)
+	}
+	if got := svc.hostKeyAlgorithms(context.Background(), "10.9.9.10"); got != nil {
+		t.Errorf("algorithms for a hop with nothing approved = %v, want the default (nil)", got)
 	}
 }

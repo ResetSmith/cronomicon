@@ -6052,22 +6052,6 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: A connection test is already in progress for this target. }
 
-  /ssh/hosts/{hostId}/host-key:
-    delete:
-      tags: [Settings]
-      operationId: clearSshHostKey
-      summary: Clear the pinned host key (re-key)
-      description: >-
-        Clears the target's pinned SSH host key so the next connect re-captures it
-        via TOFU (FU-1) — the supported way to re-key a legitimately rotated host
-        without a raw SQL UPDATE. Resets status to unverified. Audited.
-      parameters: [{ $ref: '#/components/parameters/hostId' }, { $ref: '#/components/parameters/csrf' }]
-      responses:
-        '204': { description: Pin cleared (or was already empty). }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
   /ssh/bastions:
     get:
       tags: [Settings]
@@ -6166,21 +6150,6 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: A connection test is already in progress for this target. }
-
-  /ssh/bastions/{bastionId}/host-key:
-    delete:
-      tags: [Settings]
-      operationId: clearBastionHostKey
-      summary: Clear the pinned bastion host key (re-key)
-      description: >-
-        Clears the bastion's pinned SSH host key so the next connect re-captures
-        it via TOFU (FU-1/SU-4). Resets status to unverified. Audited.
-      parameters: [{ $ref: '#/components/parameters/bastionId' }, { $ref: '#/components/parameters/csrf' }]
-      responses:
-        '204': { description: Pin cleared (or was already empty). }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
 
   /ssh/credentials:
     get:
@@ -9935,7 +9904,7 @@ components:
               name: { type: string }
               local:
                 type: boolean
-                description: The local runner (this server), not an agent. It has no known_hosts file, so `hostsWithoutKey` is always 0 for it.
+                description: The local runner (this server), not an agent.
               registered: { type: boolean }
               eligible:
                 type: boolean
@@ -10025,6 +9994,15 @@ components:
               agent that serves it advertises (subject: the job's uid).
             - `no_runner_for_shell_jobs` — an agency has shell jobs and no
               registered runner serving it can run them (subject: the agency's id).
+            - `local_runner_host_keys` — the local runner is on, takes a scope's
+              runs, and has no approved host key for some of the scope's hosts:
+              its runs fail for them, `host_key_unverified` (subject: the
+              scope's id). Until v2.3.0 the server captured a key on first
+              connect.
+            - `host_key_conflict` — the upgrade to v2.3.0 found a host record or
+              bastion whose stored key differs from the one the server now
+              trusts for the same address; it trusts one per address (subject:
+              `host:<id>` or `bastion:<id>`).
             - `legacy_placement` — a runner whose serve list is not exactly its
               owner: one that served several agencies before 2.3.0. It works as
               it did, is Global's, and can be narrowed and never widened; the
@@ -10899,7 +10877,18 @@ components:
                 (v2.3.0, see `GET /local-runner`). There is at most one. It is
                 never deregistered, has no agent to drain, re-declare, test or
                 reconfigure (those routes answer 422 `local_runner`), and is
-                turned on and off with `PUT /local-runner`.
+                turned on and off with `PUT /local-runner`. Its host keys are
+                reviewed and recorded through the same `/runners/{id}/host-keys…`
+                routes as an agent's, with two differences: it scans from the
+                server itself, and an approved key is in force at once — there
+                is no known_hosts file, so `…/resend` and
+                `…/known-hosts/refresh` answer 422 `local_runner` too. And its
+                keys are a global administrator's to decide, with no guest
+                exception: an administrator of an agency it serves may scan
+                their own scope with it and see what was found, and
+                `…/resolve-batch` answers them 403 `owner_required` — the
+                server's trust in a host is the same for every agency whose
+                runs it takes.
             ownerAgency:
               type: object
               readOnly: true
@@ -12366,18 +12355,23 @@ components:
               type: boolean
               readOnly: true
               description: >-
-                Whether the host's SSH host key is pinned (FU-1). Empty until the
-                first successful connect/test TOFU-captures it; thereafter a
-                changed key aborts the connection. Clear it (DELETE .../host-key)
-                to re-capture after a legitimate re-key.
+                Whether the LOCAL RUNNER has an approved host key for the address
+                this record is dialled at (FU-1; v2.3.0). The server connects only
+                to a host that has one: it is approved on the local runner's Host
+                keys screen (`/runners/{id}/host-keys…`, with the local runner's
+                id) after a scan or a paste, or was carried over by the upgrade
+                from the key the server had captured before v2.3.0. Nothing is
+                captured on first connect any more, and the former
+                `DELETE …/host-key` is gone: a key is replaced or removed where it
+                is approved. The field name predates this.
             hostKeyFingerprint:
               type: string
               readOnly: true
-              description: SHA256 fingerprint of the pinned host key, for out-of-band comparison. Absent when unpinned. Never the raw key line.
+              description: SHA256 fingerprint of that key, for out-of-band comparison. Absent when there is none. Never the raw key line.
             hostKeyType:
               type: string
               readOnly: true
-              description: Algorithm of the pinned host key (e.g. ssh-ed25519). Absent when unpinned.
+              description: Algorithm of that key (e.g. ssh-ed25519). Absent when there is none.
             scopeId:
               type: [string, 'null']
               readOnly: true
@@ -12436,15 +12430,15 @@ components:
             hostKeyPinned:
               type: boolean
               readOnly: true
-              description: Whether the bastion's own SSH host key is pinned (SU-4/FU-1). See SshHost.hostKeyPinned.
+              description: Whether the local runner has an approved host key for the bastion's own address (SU-4/FU-1). See SshHost.hostKeyPinned.
             hostKeyFingerprint:
               type: string
               readOnly: true
-              description: SHA256 fingerprint of the pinned bastion host key, for out-of-band comparison. Absent when unpinned.
+              description: SHA256 fingerprint of that key, for out-of-band comparison. Absent when there is none.
             hostKeyType:
               type: string
               readOnly: true
-              description: Algorithm of the pinned bastion host key. Absent when unpinned.
+              description: Algorithm of that key. Absent when there is none.
             ownerAgencyName:
               type: string
               readOnly: true
@@ -12482,11 +12476,16 @@ components:
       properties:
         status:
           type: string
-          enum: [verified, reachable, cred_error, conn_error]
+          enum: [verified, reachable, cred_error, conn_error, unverified]
           description: >-
-            verified = login OK; reachable = endpoint answered and host key
-            pinned, auth not tested (no key configured — the keyless tier);
-            cred_error = auth failed; conn_error = unreachable / host-key fail.
+            verified = login OK; reachable = endpoint answered and its host key
+            is the one approved, auth not tested (no key configured — the
+            keyless tier); cred_error = auth failed; conn_error = unreachable,
+            or the host presented a key other than the approved one;
+            unverified = the endpoint answered and the local runner has NO
+            approved host key for it. A test verifies and never captures
+            (v2.3.0): scan the host and approve its key on the local runner's
+            Host keys screen, then test again.
         message:
           type: string
           description: Operator-safe explanation (never key material).
@@ -12495,12 +12494,12 @@ components:
         hostKeyFingerprint:
           type: string
           description: >-
-            SHA256 fingerprint of the target's (or bastion's) host key as pinned
-            after this test (FU-1) — shown so the operator can compare it
-            out-of-band. Present on a verified result once a key is pinned.
+            SHA256 fingerprint of the host key the local runner trusts for the
+            target (or bastion) (FU-1) — shown so the operator can compare it
+            out-of-band. Present when it has one.
         hostKeyType:
           type: string
-          description: Algorithm of the pinned host key (e.g. ssh-ed25519).
+          description: Algorithm of that key (e.g. ssh-ed25519).
 
     SshCredentialInput:
       type: object

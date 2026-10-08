@@ -32,6 +32,7 @@ let ACCESS: unknown = null;
 let TOKENS: unknown[] = [];
 let SCOPES: unknown[] = [];
 let LOCAL_STATE: Record<string, unknown> = {};
+let HOST_KEYS: unknown = { inForce: [], history: [], knownHosts: { reportedAt: null, truncated: false, entries: [] }, pending: 0 };
 
 const { POST, PUT } = vi.hoisted(() => ({
   POST: vi.fn(async (_path: string, _init?: unknown) => ({ data: { id: 1, token: "crn_reg_x", status: "pending" } }) as { data?: unknown; error?: unknown }),
@@ -50,6 +51,7 @@ vi.mock("../api/client", async (importOriginal) => {
         if (path === "/agencies") return { data: [GLOBAL, FIN, TAX] };
         if (path === "/scopes") return { data: SCOPES };
         if (path === "/local-runner") return { data: LOCAL_STATE };
+        if (path === "/runners/{runnerId}/host-keys") return { data: HOST_KEYS };
         return { data: { items: [] } };
       }),
       POST,
@@ -79,6 +81,7 @@ beforeEach(() => {
   TOKENS = [];
   SCOPES = [];
   LOCAL_STATE = { runnerId: "r-local", enabled: false, forbidden: false, status: "offline", maxConcurrent: 4, serves: [GLOBAL] };
+  HOST_KEYS = { inForce: [], history: [], knownHosts: { reportedAt: null, truncated: false, entries: [] }, pending: 0 };
 });
 afterEach(() => {
   cleanup();
@@ -258,12 +261,36 @@ describe("Runners — the local runner's row (LR-38)", () => {
     expect(sec.getByText(/A global administrator chooses the agencies it serves under/)).toBeTruthy();
     expect(sec.queryByRole("button", { name: /Stop serving/ })).toBeNull();
     expect(sec.queryByText("Legacy placement")).toBeNull();
-    for (const name of ["Resync", "Drain", "Scan keys", "⚙ Edit"]) expect(screen.queryByRole("button", { name }), name).toBeNull();
+    for (const name of ["Resync", "Drain", "⚙ Edit"]) expect(screen.queryByRole("button", { name }), name).toBeNull();
     // It is bound to scopes like any runner, and its row says which.
     expect(screen.getByText(/Scopes served/)).toBeTruthy();
     expect(screen.queryByText("Copy upgrade command")).toBeNull();
     expect(screen.getByText(/Always on\. This server is the secret store/)).toBeTruthy();
-    expect(screen.getByText(/verifies hosts against the keys kept with the SSH targets/)).toBeTruthy();
+  });
+
+  // Its host keys are reviewed here like an agent's (2.3.0): it scans from this
+  // server, on or off; an approved key is in force at once; and there is no
+  // known_hosts file to send a key to or to read back.
+  it("shows the keys approved for it, in force, with no file to report and nothing to send again", async () => {
+    HOST_KEYS = {
+      inForce: [
+        { id: 7, host: "10.0.0.5", hostName: "web1", keyType: "ssh-ed25519", fingerprint: "SHA256:abc", source: "carried", actor: "upgrade", decidedAt: "2026-10-07T00:00:00Z", deliveredAt: "2026-10-07T00:00:00Z", presentInFile: false },
+      ],
+      history: [],
+      knownHosts: { reportedAt: null, truncated: false, entries: [] },
+      pending: 0,
+    };
+    RUNNERS = [LOCAL]; // offline: turned off
+    renderRunners();
+    await expand("Local runner");
+    expect(await screen.findByText("In force")).toBeTruthy();
+    expect(screen.getByText(/It connects only to a host that has one here/)).toBeTruthy();
+    // Scanning is not running a job: it works with the local runner turned off.
+    expect((screen.getByRole("button", { name: "Scan keys…" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Present in the runner's known_hosts file/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Send the key for/ })).toBeNull();
+    expect(screen.queryByText(/not in Local runner's known_hosts file/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove the key for web1" })).toBeTruthy();
   });
 });
 
@@ -392,5 +419,21 @@ describe("Runners — a registration token names the owner (LR-61)", () => {
     const gone = (await screen.findByText("old")).closest("tr")!;
     expect(within(gone).getByText("deleted agency")).toBeTruthy();
     expect(screen.getByTitle("Sort by For")).toBeTruthy();
+  });
+});
+
+// The Host keys dialog for the local runner: it scans from this server whether
+// it is turned on or not (scanning is not running a job), so an "offline" local
+// runner does not block a scan the way an offline agent does.
+describe("Host keys dialog — the local runner", () => {
+  it("lets a scan be queued while the local runner is turned off", async () => {
+    RUNNERS = [{ ...base, id: "r-local", name: "Local runner", kind: "server", status: "offline", ownerAgency: GLOBAL, agencies: [GLOBAL] }];
+    SCOPES = [{ id: "sc1", scope: "global-hosts", agencies: [GLOBAL], boundRunners: [] }];
+    renderRunners();
+    await expand("Local runner");
+    fireEvent.click(await screen.findByRole("button", { name: "Scan keys…" }));
+    const queue = (await screen.findByRole("button", { name: "Queue scan" })) as HTMLButtonElement;
+    expect(queue.title).toBe("");
+    expect(screen.queryByText(/is not online, so it cannot scan/)).toBeNull();
   });
 });

@@ -424,7 +424,6 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleUpdateSshHost))))
 	mux.Handle("DELETE /api/v1/ssh/hosts/{hostId}", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleDeleteSshHost))))
 	mux.Handle("POST /api/v1/ssh/hosts/{hostId}/test", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleTestSshHost))))
-	mux.Handle("DELETE /api/v1/ssh/hosts/{hostId}/host-key", s.requirePerm("configureApp", permConfigureApp)(s.requireHostOwner("hostId", http.HandlerFunc(s.handleClearSshHostKey))))
 
 	// ── Bastions (writes + test: ConfigureApp, PP-B1) ───────────────────────────
 	mux.Handle("GET /api/v1/ssh/bastions", s.auth.RequireSession(http.HandlerFunc(s.handleListBastions)))
@@ -434,7 +433,6 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/ssh/bastions/{bastionId}", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleUpdateBastion))))
 	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleDeleteBastion))))
 	mux.Handle("POST /api/v1/ssh/bastions/{bastionId}/test", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleTestBastion))))
-	mux.Handle("DELETE /api/v1/ssh/bastions/{bastionId}/host-key", s.requirePerm("configureApp", permConfigureApp)(s.requireBastionOwner("bastionId", http.HandlerFunc(s.handleClearBastionHostKey))))
 
 	// ── SSH Key Credentials (writes: ConfigureApp, SK-D6; first-class system SSH
 	// keys — ssh-keys-update.md SK.8). Private key material is never returned. ────
@@ -1792,25 +1790,6 @@ type sshTestResult struct {
 	HostKeyType        string `json:"hostKeyType,omitempty"`
 }
 
-// handleClearSshHostKey clears a target's pinned host key (FU-1 re-key).
-func (s *Server) handleClearSshHostKey(w http.ResponseWriter, r *http.Request) {
-	idn, ok := auth.IdentityFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-		return
-	}
-	ok, err := settings.ClearSshHostKey(r.Context(), s.db, idn.Email, r.PathValue("hostId"))
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	if !ok {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "host not found")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // failProbe maps the "couldn't run the test" sentinels to HTTP status codes.
 func failProbe(w http.ResponseWriter, log *slog.Logger, err error, kind string) {
 	switch {
@@ -2019,25 +1998,6 @@ func (s *Server) handleTestBastion(w http.ResponseWriter, r *http.Request) {
 	s.recordSSHTestRun(r.Context(), name, res, idn.Email)
 	s.log.Info("ssh bastion connection test", "bastion", name, "status", res.Status, "latencyMs", res.LatencyMs)
 	httpx.JSON(w, http.StatusOK, out)
-}
-
-// handleClearBastionHostKey clears a bastion's pinned host key (FU-1 re-key).
-func (s *Server) handleClearBastionHostKey(w http.ResponseWriter, r *http.Request) {
-	idn, ok := auth.IdentityFrom(r.Context())
-	if !ok {
-		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
-		return
-	}
-	ok, err := settings.ClearBastionHostKey(r.Context(), s.db, idn.Email, r.PathValue("bastionId"))
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return
-	}
-	if !ok {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "bastion not found")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── Global Settings handlers ─────────────────────────────────────────────────

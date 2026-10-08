@@ -54,6 +54,10 @@ type Coverage = components["schemas"]["ScopeHostKeyCoverage"];
 export interface KeyRunner {
   id: string;
   name: string;
+  /** The local runner: this server. Its trust store is the record itself — an
+   *  approved key is in force at once, and there is no known_hosts file to send
+   *  it to or to read back. */
+  local?: boolean;
 }
 
 interface ScopeLite {
@@ -71,6 +75,8 @@ interface RunnerLite {
   ownerAgency?: { id?: string; name?: string };
   /** Per-row authority from the server: false means the caller does not own this runner. */
   canManage?: boolean;
+  /** "server" for the local runner. */
+  kind?: string;
 }
 
 const isReachable = (status?: string | null) => status === "online" || status === "degraded";
@@ -396,9 +402,14 @@ export function HostKeysDialog({
   const scopesQ = useGet<unknown>(() => api.GET("/scopes"), []);
   const runnersQ = useGet<unknown>(() => api.GET("/runners"), []);
   const me = useMemo(() => rows<RunnerLite>(runnersQ.data).find((r) => r.id === runner.id), [runnersQ.data, runner.id]);
+  // The local runner: this server. Known from the caller, or from the list
+  // when the dialog was opened somewhere that does not know (the Scopes page).
+  const local = !!runner.local || me?.kind === "server";
   // A scan needs the runner to answer. Unknown (the list has not loaded, or the
   // runner is not in it) is not treated as offline: the server has the last word.
-  const reachable = !me || isReachable(me.status);
+  // The local runner scans from this server whether it is turned on or not:
+  // scanning is not running a job.
+  const reachable = local || !me || isReachable(me.status);
   // LR-63 — guest mode is the server's per-row answer about THIS runner, so it
   // holds wherever the dialog is opened from (the Runners page says so up
   // front; the Scopes page's coverage panel does not know, and need not).
@@ -502,7 +513,11 @@ export function HostKeysDialog({
     if (res.approved) parts.push(`${plural(res.approved, "key")} trusted`);
     if (res.rejected) parts.push(`${plural(res.rejected, "key")} rejected`);
     if (res.unchanged) parts.push(`${res.unchanged} already trusted`);
-    const tail = res.approved ? ` ${runner.name} receives ${res.approved === 1 ? "it" : "them"} on its next poll.` : "";
+    const tail = !res.approved
+      ? ""
+      : local
+        ? ` ${res.approved === 1 ? "It is" : "They are"} in force now.`
+        : ` ${runner.name} receives ${res.approved === 1 ? "it" : "them"} on its next poll.`;
     return (parts.join(", ") || "Nothing changed") + "." + tail;
   };
 
@@ -661,7 +676,13 @@ export function HostKeysDialog({
     ) : (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {err && <div role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
-        {guest && chosenChanged > 0 && (
+        {guest && local && (
+          <div role="alert" style={{ color: c.textSec, fontSize: c.fontSm }}>
+            These are waiting for a global administrator. The local runner is this server, and the keys it trusts are the same for
+            every agency it serves, so its keys are approved by a global administrator and not by one agency's.
+          </div>
+        )}
+        {guest && !local && chosenChanged > 0 && (
           <div role="alert" style={{ color: c.danger, fontSize: c.fontSm }}>
             {plural(chosenChanged, "selected key")} would replace a key {runner.name} already trusts. That is for the runner's owner
             to decide; untick {chosenChanged === 1 ? "it" : "them"} to trust the rest.
@@ -697,7 +718,7 @@ export function HostKeysDialog({
           {nothingLeft ? (
             <Btn primary onClick={onClose}>Done</Btn>
           ) : (
-            <Btn primary onClick={accept} disabled={busy || chosen.length === 0 || (reviewing === "paste" && hasErrors) || (guest && chosenChanged > 0)}>
+            <Btn primary onClick={accept} disabled={busy || chosen.length === 0 || (reviewing === "paste" && hasErrors) || (guest && chosenChanged > 0) || (guest && local)}>
               {busy ? "Working…" : `Trust ${plural(chosen.length, "key")} on ${runner.name}`}
             </Btn>
           )}
@@ -987,7 +1008,8 @@ export function PendingKeysBanner({ refreshKey, onChanged }: { refreshKey: numbe
 
 const when = (iso?: string | null) => (iso ? fmtInAppZone(iso) : "");
 
-function FileState({ k }: { k: LedgerRow }) {
+function FileState({ k, local }: { k: LedgerRow; local?: boolean }) {
+  if (local) return <Chip tone="success" title="The local runner verifies against this record directly: an approved key is in force at once">In force</Chip>;
   if (!k.deliveredAt) return <Chip tone="info" title="The runner receives it on its next poll">Not yet sent</Chip>;
   if (k.presentInFile === true) return <Chip tone="success">In the file</Chip>;
   if (k.presentInFile === false) {
@@ -1053,7 +1075,7 @@ export function TrustedHostKeys({
     return <div style={{ fontSize: c.fontSm, color: c.textSec }}>{q.error ? `Host keys could not be loaded: ${q.error}` : "No host-key record."}</div>;
   }
   const { inForce, history, knownHosts, pending } = q.data;
-  const missing = inForce.filter((k) => k.deliveredAt && k.presentInFile === false);
+  const missing = runner.local ? [] : inForce.filter((k) => k.deliveredAt && k.presentInFile === false);
   const subtle = (): CSSProperties => ({ fontSize: c.fontXs, color: c.textSec });
 
   return (
@@ -1091,8 +1113,18 @@ export function TrustedHostKeys({
       <div>
         <SectionLabel>Approved in Cronomicon ({inForce.length})</SectionLabel>
         <div style={{ ...subtle(), marginBottom: 8 }}>
-          Keys an operator approved for this runner. This is the record of who trusted what, and it is kept for as long as a key is
-          trusted.
+          {runner.local ? (
+            <>
+              Keys approved for the local runner — this server. It connects only to a host that has one here, verifies against
+              this record directly, and captures nothing on first connect. Keys the server had already captured before 2.3.0 were
+              carried over by the upgrade and are listed as <em>carried</em>.
+            </>
+          ) : (
+            <>
+              Keys an operator approved for this runner. This is the record of who trusted what, and it is kept for as long as a key
+              is trusted.
+            </>
+          )}
         </div>
         {inForce.length === 0 ? (
           <div style={{ fontSize: c.fontSm, color: c.textMuted }}>No keys have been approved for this runner.</div>
@@ -1122,9 +1154,9 @@ export function TrustedHostKeys({
                     </td>
                     <td style={dense()}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <FileState k={k} />
+                        <FileState k={k} local={runner.local} />
                         <span style={{ flex: 1 }} />
-                        {k.deliveredAt && k.presentInFile === false && (
+                        {!runner.local && k.deliveredAt && k.presentInFile === false && (
                           <Btn
                             small
                             disabled={busy}
@@ -1203,7 +1235,8 @@ export function TrustedHostKeys({
         )}
       </div>
 
-      {/* ── What the runner's own file holds ── */}
+      {/* ── What the runner's own file holds ── (an agent's; the local runner has none) */}
+      {!runner.local && (
       <div>
         <SectionLabel
           action={
@@ -1279,6 +1312,7 @@ export function TrustedHostKeys({
           </div>
         )}
       </div>
+      )}
 
       {removing && (
         <ConfirmDialog
@@ -1287,8 +1321,9 @@ export function TrustedHostKeys({
           busy={busy}
           message={
             <>
-              {runner.name} stops trusting <strong>{removing.hostName ?? removing.host}</strong> ({removing.keyType}) on its next poll, and
-              its runs on that host fail until a key is approved again. The removal is recorded.
+              {runner.name} stops trusting <strong>{removing.hostName ?? removing.host}</strong> ({removing.keyType}){" "}
+              {runner.local ? "at once" : "on its next poll"}, and its runs on that host fail until a key is approved again. The removal
+              is recorded.
             </>
           }
           onCancel={() => setRemoving(null)}
@@ -1296,7 +1331,7 @@ export function TrustedHostKeys({
             const k = removing;
             await act(
               () => api.POST("/runners/{runnerId}/host-keys/{ledgerId}/remove", path(k.id)),
-              `Removed. ${runner.name} drops the key on its next poll.`,
+              runner.local ? `Removed. ${runner.name} no longer trusts the key.` : `Removed. ${runner.name} drops the key on its next poll.`,
             );
             setRemoving(null);
           }}
@@ -1329,8 +1364,9 @@ export function TrustedHostKeys({
 /**
  * ScopeKeyCoverage shows, for a scope with bound runners, which of its hosts
  * each runner trusts — and offers the scan that fills the gaps. It renders
- * nothing for a scope with no bound runner: its jobs run from the server, whose
- * host keys are managed with its SSH targets.
+ * nothing for a scope with no bound runner: any runner of its agency may take
+ * its runs, each with its own trusted keys, and there is no fixed set to show
+ * (the inbox reports hosts the local runner has no key for).
  */
 export function ScopeKeyCoverage({ scopeId, bound, canConfig }: { scopeId: string; bound: number; canConfig: boolean }) {
   const q = useGet<Coverage>(

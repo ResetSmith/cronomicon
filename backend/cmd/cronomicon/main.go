@@ -33,6 +33,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
+	"github.com/ResetSmith/cronomicon/internal/hostkeys"
 	"github.com/ResetSmith/cronomicon/internal/logsink"
 	"github.com/ResetSmith/cronomicon/internal/logsync"
 	"github.com/ResetSmith/cronomicon/internal/notices"
@@ -202,6 +203,7 @@ func run() error {
 	// in the log of the boot that created it. The same checks run again whenever
 	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
 	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
+	notices.SetLocalRunnerHostKeysCheck(hostkeys.LocalRunnerMissingKeys)
 	if err := notices.RunChecks(context.Background(), pool); err != nil {
 		logger.Warn("notices: boot checks failed", "err", err)
 	}

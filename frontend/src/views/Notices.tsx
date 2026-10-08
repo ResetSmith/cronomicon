@@ -37,6 +37,8 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   agency_placed: { title: "The upgrade made the local runner serve an agency", to: "/settings?tab=localrunner", toLabel: "Local runner" },
   shell_job_requires: { title: "A shell job requires what no agent has", to: "/jobs", toLabel: "Jobs" },
   no_runner_for_shell_jobs: { title: "An agency's shell jobs have no runner", to: "/runners", toLabel: "Runners" },
+  local_runner_host_keys: { title: "The local runner has no approved key for some hosts", to: "/runners", toLabel: "Runners" },
+  host_key_conflict: { title: "Two records for one address had different host keys", to: "/settings?tab=targets", toLabel: "SSH Targets" },
 };
 
 export function Notices() {

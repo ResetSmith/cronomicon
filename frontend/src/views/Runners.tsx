@@ -1112,28 +1112,31 @@ function RunnerDetail({
           record names the hosts of the scopes this runner serves. Below the
           two columns, at full width: these are tables of fingerprints, and a
           fingerprint that wraps is one nobody compares. */}
-      {local && (
-        <Section title="Trusted host keys">
-          <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-            The local runner verifies hosts against the keys kept with the SSH targets (Settings → SSH Targets), as the server
-            always has.
-          </span>
-        </Section>
-      )}
-      {canConfig && !local && runner.id != null && (
+      {canConfig && runner.id != null && (
         <Section
           title="Trusted host keys"
           info={
-            <>
-              A runner connects only to hosts whose SSH key is in its <code>known_hosts</code> file. Keys are added by approving them
-              here, after the runner scans a scope or hosts, or after you paste lines you already have. Every approval, rejection and
-              removal is recorded with who made it.
-            </>
+            local ? (
+              <>
+                The local runner — this server — connects only to hosts whose SSH key has been approved for it here. Keys are added
+                by approving them after the server scans a scope or hosts, or after you paste lines you already have; an approved
+                key is in force at once. Nothing is captured on first connect. Every approval, rejection and removal is recorded
+                with who made it.
+              </>
+            ) : (
+              <>
+                A runner connects only to hosts whose SSH key is in its <code>known_hosts</code> file. Keys are added by approving
+                them here, after the runner scans a scope or hosts, or after you paste lines you already have. Every approval,
+                rejection and removal is recorded with who made it.
+              </>
+            )
           }
         >
           <TrustedHostKeys
-            runner={{ id: String(runner.id), name: runner.name }}
-            canScan={isReachable(runner.status)}
+            runner={{ id: String(runner.id), name: runner.name, local }}
+            // The local runner scans from this server, on or off: scanning is
+            // not running a job.
+            canScan={local || isReachable(runner.status)}
             // A runner that re-enrolled has a new id; what was approved for it
             // before sits under the old one, and can be copied back on review.
             previous={
@@ -1875,15 +1878,7 @@ export function Runners() {
                                 runner={r}
                                 serverVersion={serverBuild?.version}
                                 servedScopes={servedBy(r.id)}
-                                // No offer to copy host keys when the scopes went to
-                                // the local runner: it has no known_hosts of its own
-                                // to copy them into (it verifies against the keys kept
-                                // with the SSH targets), and its routes refuse the copy.
-                                successor={
-                                  handover && handover.from === String(r.id) && !runners.some((x) => String(x.id) === handover.to.id && isLocal(x))
-                                    ? handover.to
-                                    : null
-                                }
+                                successor={handover && handover.from === String(r.id) ? handover.to : null}
                                 onSuccessor={(to) => setHandover(to ? { from: String(r.id), to } : null)}
                                 canConfig={canConfig && (r.canManage ?? true)}
                                 canConfigAnywhere={canConfig}
@@ -1891,10 +1886,10 @@ export function Runners() {
                                 onScrollToToken={scrollToToken}
                                 onSaved={refetchList}
                                 actions={
-                                  // Nothing here is for the local runner: no agent
-                                  // to resync, drain or upgrade, and its host keys
-                                  // are the server's own until they move to its
-                                  // ledger. Irrelevance hides.
+                                  // Nothing here is for the local runner: there is no
+                                  // agent to resync, drain or upgrade. (Its host keys
+                                  // are in its own section below, like an agent's.)
+                                  // Irrelevance hides.
                                   isLocal(r) ? undefined : <>
                                 {/* FX-7 — these three are gated on the runner being
                                     REACHABLE, not on it being healthy. They were gated on

@@ -161,7 +161,6 @@ type Target struct {
 	Via              string // bastion id or name; empty ⇒ direct
 	AuthKeyEnvVar    string // key NAME (env-var / secret) — for inventory/git-imported + runner-resolved hosts; used when no credential
 	AuthCredentialID string // first-class ssh_credentials id; resolved before AuthKeyEnvVar (SK.5)
-	HostKey          string // stored known host key (authorized-key form); empty ⇒ TOFU
 	ResolveErr       string // non-empty ⇒ this target could not be resolved; reported as a per-host failure
 	// Owners are the ids of the agencies this record answers to (LR-70): its
 	// own owner for a record written by hand, its scope's agencies for one
@@ -446,7 +445,7 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 	// one it always was, with Global first among the hand-written: a global
 	// administrator's record still wins everywhere, deliberately.
 	row := db.QueryRowContext(ctx, `
-		SELECT h.id, h.hostname, h.address, h.port, h.username, h.via, h.auth_key_env_var, h.auth_credential_id, h.host_key,
+		SELECT h.id, h.hostname, h.address, h.port, h.username, h.via, h.auth_key_env_var, h.auth_credential_id,
 		       h.scope_id, h.owner_agency
 		FROM ssh_hosts h
 		WHERE h.hostname = ?
@@ -454,9 +453,9 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		ORDER BY `+HostRecordOrderSQL+`
 		LIMIT 1`, hostname, scope, scope)
 	var id, name, owner string
-	var address, user, via, authKeyEnvVar, authCredentialID, hostKey, scopeID sql.NullString
+	var address, user, via, authKeyEnvVar, authCredentialID, scopeID sql.NullString
 	var port sql.NullInt64
-	if err := row.Scan(&id, &name, &address, &port, &user, &via, &authKeyEnvVar, &authCredentialID, &hostKey, &scopeID, &owner); err != nil {
+	if err := row.Scan(&id, &name, &address, &port, &user, &via, &authKeyEnvVar, &authCredentialID, &scopeID, &owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -471,7 +470,6 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		Via:              via.String,
 		AuthKeyEnvVar:    authKeyEnvVar.String,
 		AuthCredentialID: authCredentialID.String,
-		HostKey:          hostKey.String,
 		Owners:           []string{owner},
 	}
 	if scopeID.Valid && scopeID.String != "" {
