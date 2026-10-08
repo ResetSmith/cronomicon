@@ -108,6 +108,9 @@ func makeEnvelope(exitCode int, start time.Time, endedAt time.Time, reason strin
 // lines while a partial flush is in flight, which is why success commits
 // exactly the bytes this attempt sent — never b.total(), which could by then
 // include lines the server has not seen.
+//
+// errRunClosed means the server has already closed the run (an operator
+// stopped it, or it was closed as lost) and accepts no more of its log.
 func streamLogs(ctx context.Context, c *Client, id Identity, traceID string,
 	b *logBuffer, budget int, partial bool) error {
 
@@ -134,6 +137,11 @@ func streamLogs(ctx context.Context, c *Client, id Identity, traceID string,
 			case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
 			}
 			continue
+		}
+		if res.runClosed {
+			// Not an offset to resume from: retrying would re-send the whole log
+			// to a server that has already decided this run's outcome.
+			return errRunClosed
 		}
 		if res.resumeMismatch {
 			// Server's persisted offset is the truth; replay from exactly there.

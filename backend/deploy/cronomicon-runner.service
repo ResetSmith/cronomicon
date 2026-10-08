@@ -51,6 +51,10 @@ ExecStart=/usr/local/bin/cronomicon-runner
 
 # Graceful drain on stop: SIGTERM makes the agent stop claiming new work and let
 # active runs finish. Give long-running ansible/terraform plays time to wind down.
+# (True of agents from 2.3.2. Before it, SIGTERM ended every run at once and the
+# server was told nothing.) A run still going after TimeoutStopSec is killed by
+# systemd; the agent's next start tells the server, which records it as lost. For
+# longer runs, drain the runner from the Runners view first and stop it after.
 KillSignal=SIGTERM
 TimeoutStopSec=300
 

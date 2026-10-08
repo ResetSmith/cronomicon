@@ -633,12 +633,13 @@ func TestRunnerAgentE2EKill(t *testing.T) {
 	// the observable end-to-end proof that the control op reached the agent and it
 	// cancelled the run's execution context (which signals + closes the session).
 	//
-	// Note on terminal status: on kill the agent's final log stream runs under the
-	// run's now-cancelled context, so it does NOT push a trailing envelope — the
-	// killed run is left 'running' for the server-side reaper (R3) to reconcile.
-	// We therefore assert the kill's direct effects (session torn down + control
-	// consumed) rather than a DB terminal status, which a separate reaper test
-	// owns.
+	// Note on terminal status: this test enqueues the kill directly, without the
+	// operator's stop route that writes the run's terminal state first. Since
+	// 2.3.2 the agent's final log flush outlives the run's cancelled context, so
+	// here it lands on a run still 'running' and closes it as a failure; behind
+	// the real route it is answered 409 and dropped. We assert the kill's direct
+	// effects (session torn down + control consumed) and only that the run did
+	// not succeed.
 	select {
 	case <-torndown:
 	case <-time.After(10 * time.Second):
