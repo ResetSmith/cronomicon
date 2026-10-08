@@ -115,6 +115,7 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/runners/register":                                 {clsAgent, "a single-use registration token"},
 	"POST /api/v1/runners/registration-tokens":                      {clsObject, "configureApp on the agency the token enrols an agent for (LR-61); Global's is a global administrator's"},
 	"DELETE /api/v1/runners/registration-tokens/{id}":               {clsObject, "requireRegistrationTokenAgency — the token's agency (LR-36)"},
+	"PUT /api/v1/local-runner":                                      {clsGlobal, "the local runner makes this server hold SSH keys and run jobs: install-wide (LR-43)"},
 	"POST /api/v1/runners/{id}/owner":                               {clsObject, "requireRunnerAgency, and the agency it is handed to (MA-12)"},
 	"POST /api/v1/runners/{id}/drain":                               {clsObject, "requireRunnerAgency"},
 	"POST /api/v1/runners/{id}/resync":                              {clsObject, "requireRunnerAgency"},

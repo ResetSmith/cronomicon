@@ -80,6 +80,10 @@ type runnerResponse struct {
 	LastHeartbeatAt     *string `json:"lastHeartbeatAt"`
 	DrainDeadlineAt     *string `json:"drainDeadlineAt,omitempty"`
 	RegistrationTokenID *int64  `json:"registrationTokenId,omitempty"`
+	// Kind is `agent` for a runner that registered with a token, `server` for
+	// the local runner: this server running shell jobs itself (LR-38). There is
+	// at most one, and it is never deregistered.
+	Kind string `json:"kind"`
 	// OwnerAgency is the agency that OWNS the runner (LR-58): the one whose
 	// administrators manage it. Set by the registration token, never by the
 	// agent. Populated by the list serializer.
@@ -322,14 +326,16 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 	}
 	// The owner, the same way: one grouped read, attached by id.
 	owners := map[string]agencyRef{}
+	kinds := map[string]string{}
 	if orows, oerr := s.db.QueryContext(r.Context(), `
-		SELECT rn.id, rn.owner_agency, COALESCE(a.name, '')
+		SELECT rn.id, rn.owner_agency, COALESCE(a.name, ''), rn.kind
 		  FROM runners rn LEFT JOIN agencies a ON a.id = rn.owner_agency`); oerr == nil {
 		for orows.Next() {
-			var rid string
+			var rid, kind string
 			var ar agencyRef
-			if err := orows.Scan(&rid, &ar.ID, &ar.Name); err == nil {
+			if err := orows.Scan(&rid, &ar.ID, &ar.Name, &kind); err == nil {
 				owners[rid] = ar
+				kinds[rid] = kind
 			}
 		}
 		orows.Close()
@@ -339,13 +345,19 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 	caller, hasCaller := auth.IdentityFrom(r.Context())
 	for i := range out {
 		out[i].Agencies = byRunner[out[i].ID]
+		out[i].Kind = kinds[out[i].ID]
+		if out[i].Kind == "" {
+			out[i].Kind = settings.RunnerKindAgent
+		}
 		if o, ok := owners[out[i].ID]; ok {
 			out[i].OwnerAgency = &o
 			serves := make([]string, 0, len(out[i].Agencies))
 			for _, a := range out[i].Agencies {
 				serves = append(serves, a.ID)
 			}
-			out[i].LegacyPlacement = settings.IsLegacyPlacement(o.ID, serves)
+			// The local runner has a serve list by design (MA-14); only an
+			// agent's can be a legacy placement.
+			out[i].LegacyPlacement = out[i].Kind != settings.RunnerKindServer && settings.IsLegacyPlacement(o.ID, serves)
 			// The same two questions the routes ask (api.requireRunnerOwner and
 			// requireRunnerOwnerOrHostKeyGuest), answered per row. A flag here
 			// only shapes the view; the routes decide.

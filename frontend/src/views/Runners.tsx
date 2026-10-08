@@ -57,6 +57,11 @@ interface Runner {
   protocolVersion?: number;
   lastHeartbeatAt?: string | null;
   registeredAt?: string;
+  // `agent` for a runner that registered with a token; `server` for the LOCAL
+  // RUNNER — this server running shell jobs itself (v2.3.0). There is at most
+  // one. It has no agent: nothing to deregister, drain, re-declare, test or
+  // upgrade, and it is turned on and off under Settings → Local runner.
+  kind?: "agent" | "server" | string;
   // What the runner SERVES: the agencies whose runs it claims. For an agent this
   // is exactly its owner (v2.3.0).
   agencies?: { id: string; name: string }[];
@@ -419,6 +424,48 @@ function ScopesServed({
   );
 }
 
+/** The local runner: this server itself, listed with the agents. */
+const isLocal = (r: Runner) => r.kind === "server";
+
+// Where the local runner is turned on and off and given the agencies it serves.
+const LOCAL_RUNNER_SETTINGS = "/settings?tab=localrunner";
+
+// Where the local runner is turned on and off. That Settings section is listed
+// for a global administrator only, so nobody else is LINKED to it (G4: do not
+// send an agency administrator to an Installation section — they would land on
+// some other section, or on "you don't administer anything here"). Everyone
+// else reads the same words, unlinked.
+function LocalRunnerSettingsLink({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  const [global, setGlobal] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetchCapabilities().then((caps) => {
+      if (live) setGlobal(!!caps.configureAppGlobal);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!global) return <>{children}</>;
+  return (
+    <Link to={LOCAL_RUNNER_SETTINGS} style={{ color: c.primary, ...style }}>
+      {children}
+    </Link>
+  );
+}
+
+// Why the local runner's row reads offline: turned off, or forbidden by the
+// host. The row's status cannot tell the two apart, and only one of them is
+// something a global administrator can change in the app.
+function LocalRunnerState() {
+  const q = useGet<components["schemas"]["LocalRunner"]>(() => api.GET("/local-runner"), []);
+  if (!q.data) return null;
+  if (q.data.forbidden) {
+    return <>It is forbidden on this host (CRONOMICON_LOCAL_RUNNER=forbid is set there), so it cannot be turned on from the app. </>;
+  }
+  return <>It is turned {q.data.enabled ? "on" : "off"}. </>;
+}
+
 // notOwnerWhy is the reason a control on a runner row is disabled for a caller
 // who holds configureApp somewhere and does not administer this runner's owner
 // (LR-59). "" when they may act. An older server sends no flag; the server
@@ -462,6 +509,7 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
   const owner = runner.ownerAgency;
   const serves = runner.agencies ?? [];
   const legacy = !!runner.legacyPlacement;
+  const local = isLocal(runner);
   const why = notOwnerWhy(runner);
   // Hand-over: Global's, serving exactly one agency that is not Global.
   const handTo = legacy && owner?.id === GLOBAL_AGENCY && serves.length === 1 && serves[0].id !== GLOBAL_AGENCY ? serves[0] : null;
@@ -527,11 +575,18 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
           )}
         </div>
       </div>
-      {!legacy && (
+      {local ? (
         <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
-          An agent serves the agency that owns it, set by the registration token it enrolled with. To serve another agency, enrol an
-          agent for that agency.
+          The local runner is this server. A global administrator chooses the agencies it serves under{" "}
+          <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>.
         </div>
+      ) : (
+        !legacy && (
+          <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
+            An agent serves the agency that owns it, set by the registration token it enrolled with. To serve another agency, enrol
+            an agent for that agency.
+          </div>
+        )
       )}
       {handTo && (
         <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -750,6 +805,7 @@ function RunnerDetail({
   const max = runner.maxConcurrent ?? 0;
   const sc = statusColor(runner.status);
   const sandboxed = tc == null || tc.sandboxed == null ? null : tc.sandboxed;
+  const local = isLocal(runner);
   const ms = runner.managedSettings ?? null;
   const pendingAck = (runner.settingsVersion ?? 0) > (runner.settingsAckedVersion ?? 0);
   const behind = !!(runner.version && serverVersion && runner.version !== serverVersion);
@@ -873,8 +929,18 @@ function RunnerDetail({
 
           {/* Managed settings summary (read-only) + Edit. The former standalone
               "Agent version" section is folded into the overview's Version field
-              (R4) — the upgrade chip carries the how-to as its tooltip. */}
-          <Section
+              (R4) — the upgrade chip carries the how-to as its tooltip.
+              Not for the local runner: there is no agent to push overrides to;
+              its one setting, how many runs at once, is on its card. */}
+          {local && (
+            <Section title="Settings">
+              <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                <LocalRunnerState />A global administrator turns it on or off, and sets how many runs it takes at once and the
+                agencies it serves, under <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>.
+              </span>
+            </Section>
+          )}
+          {!local && <Section
             title={
               <>
                 Managed settings
@@ -905,7 +971,7 @@ function RunnerDetail({
                 />
               </div>
             )}
-          </Section>
+          </Section>}
 
           {/* Full capabilities (incl. collection: tokens hidden in the compact row) */}
           <Section title={`Capabilities (${caps.length})`}>
@@ -942,6 +1008,10 @@ function RunnerDetail({
               where "these hosts are reached from here" belongs); what this
               runner's row owes the operator is the consequence — what stops if
               it goes away — and the one-step way to hand that over. */}
+          {/* Not for the local runner yet: no scope can be bound to it until it
+              claims by the runner rule (the server refuses the save), so "bind
+              it to a scope" would be advice nobody can follow. */}
+          {!local && (
           <Section
             title={`Scopes served${servedScopes.length ? ` (${servedScopes.length})` : ""}`}
             info={
@@ -954,6 +1024,7 @@ function RunnerDetail({
           >
             <ScopesServed runner={runner} scopes={servedScopes} canReplace={canConfigAnywhere} successor={successor} onSuccessor={onSuccessor} onSaved={onSaved} />
           </Section>
+          )}
 
           {/* Tags — operator-authored, editable inline like other catalog items */}
           <Section
@@ -977,8 +1048,14 @@ function RunnerDetail({
               </>
             }
           >
-            <SecretInjectionEditor runner={runner} canConfig={canConfig} onSaved={onSaved} />
-            {!!runner.allowSecretInjection && (
+            {local ? (
+              <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+                Always on. This server is the secret store: a run it executes gets its secrets without their leaving the process.
+              </span>
+            ) : (
+              <SecretInjectionEditor runner={runner} canConfig={canConfig} onSaved={onSaved} />
+            )}
+            {!local && !!runner.allowSecretInjection && (
               <div style={{ fontSize: c.fontXs, color: c.warning, background: c.warningBg, border: `1px solid ${c.warning}30`, borderRadius: c.radiusSurface, padding: "8px 10px", marginTop: 8, maxWidth: "70ch" }}>
                 ⚠ This runner receives resolved secret values in its manifests. Keep this enabled only for runners you
                 trust with the secrets in the scopes it serves.
@@ -1040,7 +1117,15 @@ function RunnerDetail({
           record names the hosts of the scopes this runner serves. Below the
           two columns, at full width: these are tables of fingerprints, and a
           fingerprint that wraps is one nobody compares. */}
-      {canConfig && runner.id != null && (
+      {local && (
+        <Section title="Trusted host keys">
+          <span style={{ color: c.textSec, fontSize: c.fontSm }}>
+            The local runner verifies hosts against the keys kept with the SSH targets (Settings → SSH Targets), as the server
+            always has.
+          </span>
+        </Section>
+      )}
+      {canConfig && !local && runner.id != null && (
         <Section
           title="Trusted host keys"
           info={
@@ -1218,7 +1303,16 @@ export function Runners() {
         <>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontWeight: 600 }}>{r.name}</span>
-            {(r.inventory === "cronomicon" || r.inventory === "local") && <InventoryChip mode={r.inventory} />}
+            {isLocal(r) ? (
+              <span
+                title="The local runner: this server running shell jobs itself. Turned on and off under Settings → Local runner."
+                style={{ fontSize: c.fontXs, fontWeight: 600, padding: "1px 6px", borderRadius: c.radiusChip, background: c.panel2, color: c.textSec, border: `1px solid ${c.border}` }}
+              >
+                this server
+              </span>
+            ) : (
+              (r.inventory === "cronomicon" || r.inventory === "local") && <InventoryChip mode={r.inventory} />
+            )}
           </div>
           {r.version && <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 1 }}>v{r.version}</div>}
           {(r.tags ?? []).length > 0 && (
@@ -1366,6 +1460,17 @@ export function Runners() {
         // Compact row keeps only Test + Deregister; the rest moved into the
         // expanded detail (v0.47.20). stopPropagation so a button click doesn't
         // also toggle the row.
+        // The local runner has no agent to test or deregister (irrelevance
+        // hides): its row links to where it is turned on and off instead.
+        isLocal(r) ? (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", justifyContent: "flex-end" }}>
+            {canConfigGlobal && (
+              <Link to={LOCAL_RUNNER_SETTINGS} style={{ fontSize: c.fontSm, color: c.primary, whiteSpace: "nowrap" }}>
+                Settings
+              </Link>
+            )}
+          </div>
+        ) : (
         <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
           <Btn small onClick={() => testRunner(r)} disabled={testingId === r.id || busy || !!notOwnerWhy(r)} title={notOwnerWhy(r) || undefined}>
             {testingId === r.id ? "Testing…" : "Test"}
@@ -1374,6 +1479,7 @@ export function Runners() {
             Deregister
           </Btn>
         </div>
+        )
       ),
     },
   ]);
@@ -1620,6 +1726,9 @@ export function Runners() {
   const degraded = runners.filter((r) => r.status === "degraded").length;
   const draining = runners.filter((r) => r.status === "draining").length;
   const offline = runners.filter((r) => r.status === "offline").length;
+  // Off, the local runner's row reads offline; an agent of any status counts as
+  // "there is something to look at" and gets its own row instead of this note.
+  const nothingRuns = runners.length > 0 && runners.every((r) => isLocal(r) && r.status === "offline");
 
   const token = minted?.token ?? "";
   // LB8: a usable, copyable plaintext exists only when freshly minted — the
@@ -1779,7 +1888,11 @@ export function Runners() {
                                 onScrollToToken={scrollToToken}
                                 onSaved={refetchList}
                                 actions={
-                                  <>
+                                  // Nothing here is for the local runner: no agent
+                                  // to resync, drain or upgrade, and its host keys
+                                  // are the server's own until they move to its
+                                  // ledger. Irrelevance hides.
+                                  isLocal(r) ? undefined : <>
                                 {/* FX-7 — these three are gated on the runner being
                                     REACHABLE, not on it being healthy. They were gated on
                                     `online`, which took Resync, Scan keys and Drain away
@@ -1850,6 +1963,38 @@ export function Runners() {
                         </Fragment>
                       );
                     })
+                    )}
+                    {/* The local runner is always listed, so the registry is never
+                        empty; what can be empty is the set of things that run
+                        jobs. With no agent and the local runner off, say so and
+                        point at both ways out (LR-38). */}
+                    {nothingRuns && (
+                      <tr>
+                        <td
+                          colSpan={cols.visible.length}
+                          style={{ color: c.textSec, padding: "16px 14px", textAlign: "center", fontSize: c.fontSm }}
+                        >
+                          Nothing can run a job yet: no agent is registered and the local runner is off.{" "}
+                          <button
+                            onClick={openAddRunner}
+                            style={{ background: "none", border: "none", padding: 0, color: c.primary, cursor: "pointer", fontSize: c.fontSm, textDecoration: "underline", fontFamily: "inherit" }}
+                          >
+                            Add Runner
+                          </button>{" "}
+                          to install an agent
+                          {canConfigGlobal ? (
+                            <>
+                              , or{" "}
+                              <Link to={LOCAL_RUNNER_SETTINGS} style={{ color: c.primary }}>
+                                turn on the local runner
+                              </Link>{" "}
+                              to have this server run shell jobs itself.
+                            </>
+                          ) : (
+                            <>; a global administrator can also turn on the local runner, so that this server runs shell jobs itself.</>
+                          )}
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>

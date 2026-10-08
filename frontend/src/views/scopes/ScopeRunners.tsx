@@ -45,6 +45,8 @@ export interface RunnerLite {
   name: string;
   status?: string | null;
   agencies?: { id: string; name: string }[];
+  /** "server" for the local runner; an agent otherwise. */
+  kind?: string;
 }
 
 const isReachable = (status?: string | null) => status === "online" || status === "degraded";
@@ -72,6 +74,12 @@ export function scopePoolName(scope: BindableScope): string {
 // decides what the picker offers, so an ineligible runner is shown disabled
 // with the reason instead of being offered and then refused. A scope that
 // lists no agency at all is damage, and no runner is eligible for it.
+// The local runner (kind "server") is not offered as a binding target: until it
+// claims by the runner rule, a scope bound to it would send its jobs where
+// nothing takes them, and the server refuses the save. It is left out of the
+// pickers, not shown disabled — there is nothing an operator could do about it.
+const bindable = (r: RunnerLite) => r.kind !== "server";
+
 function eligibleFor(scope: BindableScope, runner: RunnerLite): boolean {
   const scopeAgencies = new Set((scope.agencies ?? []).map((a) => a.id));
   return (runner.agencies ?? []).some((a) => scopeAgencies.has(a.id));
@@ -367,7 +375,7 @@ export function ScopeRunnersDialog({
   onSaved: (message: string) => void;
 }) {
   const runnersQ = useGet<unknown>(() => api.GET("/runners"), []);
-  const fleet = rows<RunnerLite>(runnersQ.data);
+  const fleet = rows<RunnerLite>(runnersQ.data).filter(bindable);
   const bound = scope.boundRunners ?? [];
   const initial = useMemo(() => bound.map((b) => b.runnerId).sort(), [bound]);
   const [selected, setSelected] = useState<string[]>(initial);
@@ -522,7 +530,7 @@ export function ReplaceRunnerDialog({
   onDone: (message: string, to: { id: string; name: string }) => void;
 }) {
   const runnersQ = useGet<unknown>(() => api.GET("/runners"), []);
-  const candidates = rows<RunnerLite>(runnersQ.data).filter((r) => String(r.id) !== from.id);
+  const candidates = rows<RunnerLite>(runnersQ.data).filter((r) => String(r.id) !== from.id && bindable(r));
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);

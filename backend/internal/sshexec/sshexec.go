@@ -66,6 +66,36 @@ type Service struct {
 	// can't stack parallel dials at the same host (ssh-update.md TC.2).
 	probeMu sync.Map
 
+	// The claim loop's lifecycle (Phase A of the local runner). The engine is
+	// started and stopped at runtime by the `localRunner.enabled` setting
+	// (Apply), so the loop has a context of its own: cancelling it stops
+	// CLAIMING, and the runs already claimed go on to finish under the process
+	// context (base). stopLoop is nil while the loop is not running. startErr
+	// is why Start could not set the local runner up, when it could not: Apply
+	// then reports it instead of answering "applied" for an engine that cannot
+	// run.
+	runMu    sync.Mutex
+	base     context.Context
+	stopLoop context.CancelFunc
+	localID  string
+	startErr error
+
+	// How many runs it takes at once. The bound and the count of runs in
+	// flight belong to the SERVICE, not to a loop: a loop that is stopped
+	// leaves its runs finishing, and the loop started after it must count them
+	// (off then on with four long runs in flight is still four, not eight).
+	// claimMu makes "is there a free slot" and "claim one" a single step, so
+	// two loop generations that overlap for an instant cannot both take the
+	// last slot. slotFree wakes a waiting loop when a run finishes.
+	bound    atomic.Int64
+	inflight atomic.Int64
+	claimMu  sync.Mutex
+	slotFree chan struct{}
+
+	// run executes one claimed run. It is s.execute everywhere but in the
+	// tests of the loop itself, which need a run that stays in flight.
+	run func(ctx context.Context, r claimedRun)
+
 	// shutdownWG, when set, tracks the claim loop, the orphan reaper, and every
 	// in-flight run goroutine so graceful shutdown can wait for them to finalize
 	// before the DB pool closes (PP-L15) — preventing a finalize/UPDATE from
@@ -117,7 +147,9 @@ func New(db *sql.DB, cfg *config.Config, log *slog.Logger, gitCacheDir, logDir s
 		gitCacheDir: gitCacheDir,
 		concurrency: conc,
 		fanout:      4, // EX-D5 bounded-parallel within a run
+		slotFree:    make(chan struct{}, 1),
 	}
+	svc.run = svc.execute
 	svc.SetLogDir(logDir)
 	return svc
 }
@@ -137,61 +169,231 @@ func (s *Service) LogDir() string {
 	return ""
 }
 
-// Start launches the claim loop when the executor is enabled. Disabled is the
-// default — a deploy that doesn't opt in behaves exactly as before (jobs queue,
-// never execute).
+// Start brings the engine up: it reconciles crash-orphaned runs, makes sure the
+// local runner's row exists, and starts claiming if the local runner is turned
+// on. Off is the default — a deploy that never turns it on behaves as before
+// (ssh runs queue, never execute).
 func (s *Service) Start(ctx context.Context) {
-	// Reconcile crash-orphaned runs BEFORE anything else, even when the executor
-	// is disabled: an executor='ssh' run still 'running' at process start has no
-	// live worker and permanently consumes a global concurrency slot until
+	// Reconcile crash-orphaned runs BEFORE anything else, even when the local
+	// runner is off: an executor='ssh' run still 'running' at process start has
+	// no live worker and permanently consumes a global concurrency slot until
 	// reconciled (PP-H2). Synchronous so a fast restart frees slots before the
 	// loop begins claiming. Safe under the single-instance invariant.
 	s.sweepOrphansOnStartup(ctx)
 
-	if !s.cfg.SSHExecutorEnabled {
-		s.log.Info("ssh executor disabled (CRONOMICON_SSH_EXECUTOR_ENABLED unset) — ssh runs will queue")
+	// The row always exists (LR-39): bindings, placements and ledger rows key
+	// on its id. Its switch and its concurrency are seeded ONCE from the names
+	// the SSH executor had until 2.3.0 (LR-44, LR-45), so an upgrade arrives in
+	// the state it was running in.
+	id, seeded, err := settings.EnsureLocalRunner(ctx, s.db, s.cfg.SSHExecutorEnabled, s.cfg.SSHExecutorConcurrency)
+	if err != nil {
+		s.log.Error("local runner: could not set up its row; it stays off", "error", err)
+		s.runMu.Lock()
+		s.startErr = fmt.Errorf("the local runner could not be set up when the server started: %w", err)
+		s.runMu.Unlock()
 		return
 	}
-	s.log.Warn("SSH executor ON — this process holds SSH private keys and has outbound SSH to job targets",
-		"concurrency", s.concurrency)
-	s.track(func() { s.loop(ctx) })
+	if seeded {
+		s.log.Info("local runner: first start — its on/off setting was taken from CRONOMICON_SSH_EXECUTOR_ENABLED; "+
+			"from now on it is changed in Settings, and CRONOMICON_LOCAL_RUNNER=forbid turns it off for good",
+			"enabled", s.cfg.SSHExecutorEnabled)
+	}
+	s.runMu.Lock()
+	s.base, s.localID = ctx, id
+	s.runMu.Unlock()
+
+	// The periodic orphan reaper runs whether or not the local runner is on: a
+	// run it started can outlive the switch being turned off.
 	s.track(func() { s.reapOrphansLoop(ctx) })
+	if err := s.Apply(ctx); err != nil {
+		s.log.Error("local runner: could not read its setting; it stays off", "error", err)
+	}
 }
 
-func (s *Service) loop(ctx context.Context) {
-	sem := make(chan struct{}, s.concurrency)
+// Apply brings the engine in line with the stored switch and concurrency: it
+// starts the claim loop, stops it, or restarts it with a new bound. It is
+// called at start and after every change of the setting (the API's PUT
+// /local-runner), so a change takes effect without a restart.
+//
+// Turning off DRAINS (LR-43): the loop stops claiming, and the runs it has
+// already claimed finish. Nothing is failed, and nothing goes through the
+// runner reaper's offline path, which would fail them as lost.
+//
+// A new bound needs no restart: the loop reads it before every claim. Lowering
+// it below what is in flight fails nothing; the loop claims again once enough
+// runs have finished.
+//
+// ctx bounds the reads and writes this call makes. The loop it starts lives
+// under the process context given to Start, never under ctx: ctx is a request's,
+// and the loop must outlive the request that turned it on.
+func (s *Service) Apply(ctx context.Context) error { //nolint:contextcheck // see above: the loop is the process's, not the caller's
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if s.startErr != nil {
+		return s.startErr
+	}
+	if s.base == nil || s.localID == "" {
+		return nil // never started (the probe-only instance): nothing to apply
+	}
+	// Read under the lock. Two changes applied at once must each act on what
+	// is stored when its turn comes, or the later reader can undo the earlier
+	// writer and leave the engine the opposite of the setting.
+	enabled, err := settings.LocalRunnerEnabled(ctx, s.db, s.cfg.LocalRunnerForbid)
+	if err != nil {
+		return err
+	}
+	conc := s.concurrency
+	if err := s.db.QueryRowContext(ctx, `SELECT max_concurrent FROM runners WHERE id = ?`, s.localID).Scan(&conc); err != nil {
+		return err
+	}
+	if conc <= 0 {
+		conc = 4
+	}
+	s.bound.Store(int64(conc))
+	running := s.stopLoop != nil
+	switch {
+	case enabled && !running:
+		loopCtx, cancel := context.WithCancel(s.base)
+		s.stopLoop = cancel
+		s.setLocalStatus(ctx, "online")
+		s.log.Warn("local runner ON — this process holds SSH private keys and has outbound SSH to job targets",
+			"concurrency", conc)
+		base := s.base
+		s.track(func() { s.loop(loopCtx, base) })
+		s.track(func() { s.heartbeat(loopCtx) })
+	case enabled:
+		// Already claiming; the new bound is in force from the next claim.
+	case running:
+		s.stopLoop()
+		s.stopLoop = nil
+		s.setLocalStatus(ctx, "offline")
+		s.log.Info("local runner OFF — it claims no more; runs it is running finish",
+			"in_flight", s.inflight.Load())
+	default:
+		s.setLocalStatus(ctx, "offline")
+		if s.cfg.LocalRunnerForbid {
+			s.log.Info("local runner forbidden on this host (CRONOMICON_LOCAL_RUNNER=forbid) — ssh runs will queue")
+		} else {
+			s.log.Info("local runner off — ssh runs will queue until it is turned on in Settings")
+		}
+	}
+	return nil
+}
+
+// setLocalStatus writes the local runner's status. Its row says "online" only
+// while the claim loop is running; the heartbeat keeps last_seen_at fresh so
+// the Runners view reads it as it reads an agent.
+func (s *Service) setLocalStatus(ctx context.Context, status string) {
+	ts := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE runners SET status = ?, last_seen_at = CASE WHEN ? = 'online' THEN ? ELSE last_seen_at END WHERE id = ?`,
+		status, status, ts, s.localID); err != nil {
+		s.log.Error("local runner: write status", "status", status, "error", err)
+	}
+}
+
+// heartbeatEvery is how often the local runner restates that it is on.
+var heartbeatEvery = 20 * time.Second
+
+// heartbeat keeps the local runner's row fresh while it is on. It is only a
+// freshness signal for the Runners view: the runner reaper skips the local
+// runner altogether, so a stalled heartbeat can never fail its runs.
+//
+// It restates the status as well as the time: the write Apply made when it
+// turned the runner on may have failed, and this is what puts the row right.
+// It writes under runMu and only while its loop's context is live, so a beat
+// that fires as the runner is turned off cannot land "online" after Apply
+// wrote "offline".
+func (s *Service) heartbeat(ctx context.Context) {
+	t := time.NewTicker(heartbeatEvery)
+	defer t.Stop()
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.runMu.Lock()
+			if ctx.Err() == nil {
+				s.setLocalStatus(ctx, "online")
+			}
+			s.runMu.Unlock()
+		}
+	}
+}
+
+// loop claims and runs. ctx is the CLAIM loop's context: cancelling it stops
+// claiming. runCtx is the process context: a run that was claimed executes
+// under it, so turning the local runner off lets it finish.
+func (s *Service) loop(ctx, runCtx context.Context) {
+	for {
+		run, err := s.claimSlot(ctx, runCtx)
+		if ctx.Err() != nil && run == nil {
 			return
 		}
-		sem <- struct{}{}
-		run, err := s.claim(ctx)
 		if err != nil {
 			s.log.Error("ssh executor claim", "error", err)
-			<-sem
-			sleep(ctx, 2*time.Second)
-			continue
 		}
 		if run == nil {
-			<-sem
-			sleep(ctx, 2*time.Second)
+			// Nothing to claim, no free slot, or a failed claim: wait for a
+			// run to finish or for the next look at the queue.
+			select {
+			case <-ctx.Done():
+				return
+			case <-s.slotFree:
+			case <-time.After(2 * time.Second):
+			}
 			continue
 		}
 		r := *run
 		runFn := func() {
-			defer func() { <-sem }()
+			defer func() {
+				s.inflight.Add(-1)
+				select {
+				case s.slotFree <- struct{}{}:
+				default:
+				}
+			}()
 			defer func() {
 				if rec := recover(); rec != nil {
 					s.log.Error("ssh executor panic", "trace_id", r.traceID, "panic", rec)
 					s.finalize(context.Background(), r, "failure", nil)
 				}
 			}()
-			s.execute(ctx, r)
+			s.run(runCtx, r)
 		}
 		// Track in-flight runs in the shutdown WaitGroup (PP-L15) so a graceful
 		// stop waits for them to finalize before the pool closes.
 		s.track(runFn)
 	}
+}
+
+// claimSlot claims one run if the local runner has a free slot, and counts it
+// as in flight before it returns. (nil, nil) means there was no slot, nothing
+// queued, or the loop has been stopped.
+//
+// The claim itself runs under the PROCESS context, not the loop's. The loop's
+// context is cancelled when the runner is turned off, and a statement cancelled
+// as it completes can report an error for an UPDATE that was applied: the run
+// would be 'running' with no worker, holding its concurrency key until the
+// stale-run reaper found it a day later. So the loop's context is consulted
+// before the claim, and never interrupts one.
+func (s *Service) claimSlot(ctx, runCtx context.Context) (*claimedRun, error) {
+	s.claimMu.Lock()
+	defer s.claimMu.Unlock()
+	if ctx.Err() != nil || s.inflight.Load() >= s.bound.Load() {
+		return nil, nil
+	}
+	run, err := s.claim(runCtx)
+	if err != nil {
+		if runCtx.Err() != nil {
+			return nil, nil // shutting down
+		}
+		return nil, err
+	}
+	if run != nil {
+		s.inflight.Add(1)
+	}
+	return run, nil
 }
 
 func sleep(ctx context.Context, d time.Duration) {

@@ -181,19 +181,25 @@ two windows below in order: mark offline, reconcile that runner's orphaned runs 
 | `CRONOMICON_RUNNER_OFFLINE_AFTER` | `5m` | Go duration. An `online`/`draining` runner whose last heartbeat is older than this is marked **offline**. Agents poll once a minute, so the default is ≈5 missed polls. Shortening it below the poll interval will flap runners offline between polls. |
 | `CRONOMICON_RUNNER_DEREGISTER_AFTER` | `336h` (14 days) | Go duration. A runner that stays **offline** this long is fully removed — its tokens revoked and its row deleted (its placement is snapshotted first, see `backup-restore.md`). "Offline since" is derived from `last_seen_at` (or `registered_at` when it never polled), so this window is measured from the last heartbeat, not from the moment it was marked offline. A host that comes back later must re-register. |
 
-## SSH executor (opt-in)
+## Local runner (the in-process SSH engine; opt-in)
 
-Off by default. When enabled, **this process holds SSH private keys and opens
+Off by default. Turned on, **this process holds SSH private keys and opens
 outbound SSH to job targets** itself, rather than handing the work to a runner
-agent — so enabling it changes the server's blast radius, and it logs a loud
-warning at startup while on. Left off, `executor='ssh'` runs simply queue and are
-never claimed.
+agent — so it changes the server's blast radius, and it logs a loud warning
+while on. Left off, `executor='ssh'` runs simply queue and are never claimed.
+
+Since v2.3.0 it is the **local runner**: a row in the runner list, turned on and
+off under **Settings → Local runner** by a global administrator, with a
+confirmation and an audit entry, and no restart. The environment decides only
+two things now: whether it is forbidden outright, and the values it starts with
+the first time v2.3.0 runs.
 
 | Var | Default | Notes |
 |---|---|---|
-| `CRONOMICON_SSH_EXECUTOR_ENABLED` | `false` | Master switch for the in-process SSH worker pool. `false` ⇒ the claim loop and the periodic orphan reaper never start and ssh runs stay queued. Note the **startup orphan sweep runs either way**: an `executor='ssh'` run left `running` by a crash holds a global concurrency slot until it is reconciled, so it is reconciled to `executor_lost` at boot whether or not the executor is enabled. |
-| `CRONOMICON_SSH_EXECUTOR_CONCURRENCY` | `4` | Simultaneous ssh runs claimed by this process. `≤ 0` is treated as the default rather than "unbounded" or "none". Within a single run, fan-out across targets is separately bounded. |
-| `CRONOMICON_SSH_EXECUTOR_STALE_AFTER` | `24h` | Go duration bounding the **periodic** orphan reaper, which runs once a minute while the executor is enabled: an `executor='ssh'` run still `running` longer than this is reconciled to failure (`executor_lost`). Keep it safely **above the longest plausible job** (its configured timeout) — this window is a safety net, not the crash-recovery path, and a value below a real job's runtime will kill live runs. `≤ 0` falls back to the default. |
+| `CRONOMICON_LOCAL_RUNNER` | _(unset)_ | Set to `forbid` to keep this server from ever running jobs itself: the **local runner** (the in-process SSH engine) then reads as off and cannot be turned on from the app. Unset (or `allow`), the decision is made under **Settings → Local runner**, which is where it is turned on and off since v2.3.0. Any other value refuses to start: a switch that keeps SSH keys off a host must not read a typo as "allowed". |
+| `CRONOMICON_SSH_EXECUTOR_ENABLED` | `false` | **A seed since v2.3.0, read once.** The first time v2.3.0 starts against a database, this becomes the initial value of the local runner's on/off setting, so an upgrade arrives in the state it was running in. After that the setting in the app is the truth and this is ignored. Note the **startup orphan sweep runs either way**: an `executor='ssh'` run left `running` by a crash holds a global concurrency slot until it is reconciled, so it is reconciled to `executor_lost` at boot whether or not the local runner is on. |
+| `CRONOMICON_SSH_EXECUTOR_CONCURRENCY` | `4` | **A seed since v2.3.0, read once**, with the switch above: the initial number of runs the local runner executes at the same time (`≤ 0` is treated as the default). It is changed afterwards under Settings → Local runner. Within a single run, fan-out across targets is separately bounded. |
+| `CRONOMICON_SSH_EXECUTOR_STALE_AFTER` | `24h` | Go duration bounding the **periodic** orphan reaper, which runs once a minute whether or not the local runner is on (a run it started can outlive the switch being turned off): an `executor='ssh'` run still `running` longer than this is reconciled to failure (`executor_lost`). Keep it safely **above the longest plausible job** (its configured timeout) — this window is a safety net, not the crash-recovery path, and a value below a real job's runtime will kill live runs. `≤ 0` falls back to the default. |
 
 ## Stored-secret encryption
 

@@ -64,6 +64,12 @@ func (s *Service) reapOnce(ctx context.Context) {
 // sweepOffline marks online/draining runners with a stale heartbeat as offline
 // and reconciles their orphaned runs (R3.1 + R3.2).
 //
+// Both sweeps are for AGENTS. The local runner (kind `server`) is this process:
+// its status is written by its own engine, its runs are reconciled by that
+// engine's sweeps, and its row is never deleted (LR-39) — it is offline for as
+// long as it is turned off, which is not a reason to deregister it, and a
+// stalled in-process heartbeat must not fail runs that are still executing.
+//
 // "stale heartbeat" uses last_seen_at when present (an RFC3339 UTC string, see
 // now() in service.go), falling back to registered_at for a runner that was
 // created long ago but never polled (NULL last_seen_at). Both are parsed with
@@ -74,7 +80,7 @@ func (s *Service) sweepOffline(ctx context.Context) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, last_seen_at, registered_at
 		FROM runners
-		WHERE status IN ('online','draining')`)
+		WHERE status IN ('online','draining') AND kind <> 'server'`)
 	if err != nil {
 		s.log.Error("reaper: query live runners", "error", err)
 		return
@@ -221,7 +227,7 @@ func (s *Service) sweepDeregister(ctx context.Context) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, last_seen_at, registered_at
 		FROM runners
-		WHERE status = 'offline'`)
+		WHERE status = 'offline' AND kind <> 'server'`)
 	if err != nil {
 		s.log.Error("reaper: query offline runners", "error", err)
 		return

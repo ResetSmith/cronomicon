@@ -31,8 +31,8 @@ func TestMigrateUpDown(t *testing.T) {
 	if dirty {
 		t.Fatal("schema is dirty after up")
 	}
-	if v != 1250 {
-		t.Fatalf("schema version = %d, want 1250", v)
+	if v != 1260 {
+		t.Fatalf("schema version = %d, want 1260", v)
 	}
 
 	// Core tables should exist.

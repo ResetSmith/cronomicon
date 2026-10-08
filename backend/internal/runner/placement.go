@@ -253,7 +253,11 @@ func suggestionsFor(ctx context.Context, q queryer) (map[string]*placementSugges
 		SELECT rn.id, rn.name, rn.owner_agency, COALESCE(ag.name, ''), rn.last_client_ip,
 		       EXISTS (SELECT 1 FROM runner_agencies ra
 		                WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency)
-		  FROM runners rn LEFT JOIN agencies ag ON ag.id = rn.owner_agency`)
+		  FROM runners rn LEFT JOIN agencies ag ON ag.id = rn.owner_agency
+		 -- An offer is made to an agent that re-enrolled. The local runner
+		 -- never enrols, so a snapshot of an agent that was called what it is
+		 -- called is not an offer to it.
+		 WHERE rn.kind <> 'server'`)
 	if err != nil {
 		return nil, fmt.Errorf("read runners: %w", err)
 	}

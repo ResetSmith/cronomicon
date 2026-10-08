@@ -58,7 +58,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-const INSTALLATION = ["General", "Notifications", "GitLab Connection", "Vault", "Observability", "Log Storage", "Audit & Compliance"];
+const INSTALLATION = ["General", "Notifications", "GitLab Connection", "Vault", "Observability", "Log Storage", "Audit & Compliance", "Local runner"];
 const AGENCY = ["Users & Access", "Service Accounts", "SSH Targets", "Recycle Bin"];
 
 const open = async (at = "/settings") => {

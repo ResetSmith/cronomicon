@@ -68,7 +68,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	count := func(where string, args ...any) (int, error) {
 		var n int
 		e := database.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM runners rn WHERE rn.status = 'online' AND `+where, args...).Scan(&n)
+			`SELECT COUNT(*) FROM runners rn WHERE rn.status = 'online' AND `+ClaimsByPollSQL("rn")+` AND `+where, args...).Scan(&n)
 		return n, e
 	}
 
