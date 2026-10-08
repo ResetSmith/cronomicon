@@ -38,7 +38,10 @@ make build      # CGO_ENABLED=1 (mattn/go-sqlite3 needs cgo)
 make test       # go test -race ./...  (the gate)
 make test-fast  # no -race — inner loop only, not the gate
 make run        # serves :8080
-make verify     # tidy + vet + race-enabled test + build (run before pushing; there is no CI)
+make verify     # tidy + vet + the installer's checks + race-enabled test + build (run before pushing; there is no CI)
+make installer-check  # deploy/runner-install-check.sh alone — no root, creates nothing; part of verify
+make images     # build the three published images locally and run each once — needs docker, NOT part of verify;
+                # run before tagging a release that touches a Dockerfile, the agent or the frontend
 make vuln       # govulncheck — needs network, so NOT part of verify
 make deadcode   # unreachable-symbol report (tests as roots) — advisory, not a gate
 ```

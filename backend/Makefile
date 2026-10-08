@@ -20,7 +20,7 @@ COMMIT     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS    := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildDate=$(BUILD_DATE)
 
-.PHONY: all build run dev stop test test-fast vet vuln lint tidy verify clean deadcode
+.PHONY: all build run dev stop test test-fast vet vuln lint tidy verify clean deadcode installer-check images
 
 # Local preview DB — kept outside /tmp so it survives reboots. The directory is
 # created on first use by the run/dev recipes below.
@@ -104,9 +104,57 @@ lint:
 tidy:
 	go mod tidy
 
-# Full local gate, mirrors CI (vet + race-enabled tests + build). Network-free:
-# `make vuln` is separate on purpose — see above.
-verify: tidy vet test build
+# runner-install.sh has no Go test: its safety net is deploy/runner-install-check.sh
+# (flag validation, the install layout, the unit it renders, the reference unit).
+# It needs no root and creates nothing: every refusal it checks happens before
+# the installer's root gate. Part of `verify` since 2.3.1. Until then it ran
+# only when someone remembered, and the installer is where the RHEL 8 unit line
+# and the limit flags live. Quiet when it passes; each failing check is named.
+installer-check:
+	@bash deploy/runner-install-check.sh >/dev/null && echo "runner-install-check: all checks passed"
+
+# Full local gate, mirrors CI (vet + the installer's checks + race-enabled tests
+# + build). Network-free: `make vuln` is separate on purpose — see above.
+verify: tidy vet installer-check test build
+
+# The three published images, built from the repository root with the build
+# arguments the tag workflow passes (.github/workflows/publish-images.yml), and
+# each one run once to say its version. Nothing else builds a Dockerfile before
+# a release: the workflow runs on a tag and `verify` cannot (it must work with
+# no docker and no network), so a Dockerfile change was first built BY the tag.
+# Run this before tagging a release that touches a Dockerfile, the agent or the
+# frontend. The tags are local (<image>:<version>-local); nothing is pushed.
+#
+#   make images                      # all three
+#   make images IMAGES=runner        # server | runner | runner-fat, space-separated
+#   make images DOCKER="sudo docker"
+#
+# The fat image is the long one (it installs ansible and terraform).
+DOCKER    ?= docker
+IMAGE_TAG ?= $(VERSION)-local
+IMAGES    ?= server runner runner-fat
+image_name_server     := cronomicon
+image_name_runner     := cronomicon-runner
+image_name_runner-fat := cronomicon-runner-fat
+image_file_server     := Dockerfile
+image_file_runner     := Dockerfile.runner
+image_file_runner-fat := Dockerfile.runner.fat
+
+images:
+	@for i in $(IMAGES); do \
+	  case "$$i" in \
+	    server)     name=$(image_name_server);     file=$(image_file_server) ;; \
+	    runner)     name=$(image_name_runner);     file=$(image_file_runner) ;; \
+	    runner-fat) name=$(image_name_runner-fat); file=$(image_file_runner-fat) ;; \
+	    *) echo "images: unknown image '$$i' (server, runner, runner-fat)" >&2; exit 2 ;; \
+	  esac; \
+	  echo ">> building $$name:$(IMAGE_TAG) from backend/$$file"; \
+	  $(DOCKER) build -f "$$file" \
+	    --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) \
+	    -t "$$name:$(IMAGE_TAG)" .. || exit 1; \
+	  said=$$($(DOCKER) run --rm "$$name:$(IMAGE_TAG)" version) || { echo "images: $$name:$(IMAGE_TAG) built but does not run" >&2; exit 1; }; \
+	  echo ">> $$name:$(IMAGE_TAG) says: $$said"; \
+	done
 
 clean:
 	rm -rf bin

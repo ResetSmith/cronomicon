@@ -120,15 +120,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.cfg.SandboxAvailable = sb
 	a.exec.cfg.SandboxAvailable = sb
 	if !sb {
-		// The reason and the remedy ride as attributes: "no usable systemd-run"
-		// alone read as a missing binary on hosts where the request was refused.
-		if a.cfg.AllowCheckout {
-			a.log.Warn("SANDBOX UNAVAILABLE — -allow-checkout is set but no usable systemd-run scope could be created; checkout runs will execute UNSANDBOXED (only their timeout applies). Each run is reported as unsandboxed; a job may require [sandboxed] to avoid landing here.",
-				"reason", sbWhy, "hint", sandboxHint)
-		} else {
-			a.log.Info("tier-2 sandbox unavailable (no usable systemd-run scope) — local-toolchain runs execute unsandboxed",
-				"reason", sbWhy, "hint", sandboxHint)
-		}
+		logNoSandbox(a.log, a.cfg.AllowCheckout, sbWhy)
 	}
 
 	if err := a.registerOrResume(ctx); err != nil {

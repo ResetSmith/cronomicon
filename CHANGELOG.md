@@ -121,6 +121,25 @@ one machine on purpose.
   `sandboxed` waits. Its runs do inherit the unit's filesystem and system-call
   hardening.
 
+### For developers
+
+- **`make verify` runs the installer's checks.** `deploy/runner-install-check.sh`
+  (flag validation, the layout and unit the installer derives, the reference
+  unit) is a step of the gate, and `make installer-check` runs it alone. It was
+  run by hand until now. It needs no root and creates nothing.
+- **`make images` builds the three published images locally**, from the
+  repository root with the build arguments the tag workflow passes, and runs
+  each once to say its version. Nothing built a Dockerfile before a tag. It
+  needs docker, so it is not part of `verify`: run it before tagging a release
+  that touches a Dockerfile, the agent or the frontend. `IMAGES=runner` builds
+  one; nothing is pushed.
+- `runner-install-cmd.test.ts` asks `runner-install.sh` itself about every limit
+  value in its table, so the helper's rule and the installer's cannot drift
+  apart unnoticed. It never runs as root: the installer validates before its
+  root gate, and the test is skipped where that gate is open.
+- The agent's startup line about having no sandbox is `logNoSandbox`, and a
+  test holds the flags its hint names to the ones the installer parses.
+
 ## [2.3.0] - 2026-10-07
 
 Agencies own what is theirs, and the server is one more runner (LR band, with

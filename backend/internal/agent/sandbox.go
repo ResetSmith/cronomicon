@@ -50,6 +50,21 @@ const sandboxProbeTimeout = 3 * time.Second
 // by the agent's startup line and the doctor's check.
 const sandboxHint = "an agent that does not run as root cannot create a scope (polkit refuses it), and one in a container has no systemd to ask, so its runs have no resource cap of their own; to bound this agent and everything it runs, limit its unit: systemctl set-property <unit> MemoryMax=… CPUQuota=… TasksMax=… (runner-install.sh: --memory-max, --cpu-quota, --tasks-max), or limit the container"
 
+// logNoSandbox is the agent's one startup line about having no per-run
+// sandbox. The reason and the remedy ride as attributes: "no usable
+// systemd-run" alone read as a missing program on hosts where the request had
+// been refused, which is nearly every installed agent. Loud (a warning) only
+// when checkout is on, where an operator must never assume runs are capped.
+func logNoSandbox(log *slog.Logger, allowCheckout bool, why string) {
+	if allowCheckout {
+		log.Warn("SANDBOX UNAVAILABLE — -allow-checkout is set but no usable systemd-run scope could be created; checkout runs will execute UNSANDBOXED (only their timeout applies). Each run is reported as unsandboxed; a job may require [sandboxed] to avoid landing here.",
+			"reason", why, "hint", sandboxHint)
+		return
+	}
+	log.Info("tier-2 sandbox unavailable (no usable systemd-run scope) — local-toolchain runs execute unsandboxed",
+		"reason", why, "hint", sandboxHint)
+}
+
 // probeSandbox reports whether a usable `systemd-run --scope` is available: the
 // binary must exist AND be able to create a scope (a container can ship the
 // binary yet have no reachable manager, and an unprivileged agent is refused
