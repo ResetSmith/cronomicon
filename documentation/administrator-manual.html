@@ -5282,9 +5282,11 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped \
                         runs as a user of its own. Such an agent shows <em>Unsandboxed</em>, does not advertise
                         <code>sandboxed</code>, and does not apply the sandbox caps. To limit it, put the limits on its
                         unit: <code>runner-install.sh --memory-max</code>, <code>--cpu-quota</code> and
-                        <code>--tasks-max</code>, or <code>systemctl set-property</code> on an installed agent. A unit
-                        limit applies to the agent and all its runs together. On a machine with more than one agent,
-                        give each agent a limit.</li>
+                        <code>--tasks-max</code> (<em>Add a Runner</em> has the fields), or
+                        <code>systemctl set-property</code> on an installed agent (the runner's
+                        <strong>⚙ Edit</strong> &rarr; <em>Unit limits</em> gives you the command to run on the
+                        machine). A unit limit applies to the agent and all its runs together. On a machine with
+                        more than one agent, give each agent a limit.</li>
                     <li><strong>One key, both engines.</strong> One provisioned SSH key serves bash/Go-SSH runs and
                         ansible runs. For a single-key run, the agent adds <code>--private-key &lt;path&gt;</code> to
                         <code>ansible-playbook</code> automatically and injects the <code>authKeyEnvVar</code> name into

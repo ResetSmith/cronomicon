@@ -24,8 +24,12 @@ import {
   personalizedInstallTwoStep,
   INSTANCE_NAME_MAX,
   validInstanceName,
+  validLimit,
+  type LimitField,
+  type UnitLimits,
 } from "./runner-install-cmd";
 import { AGENT_BIN_PATH, upgradeCommand } from "./runner-upgrade-cmd";
+import { NO_LIMIT, limitsCommand, validLimitChange } from "./runner-limits-cmd";
 import {
   ENV_EXAMPLE_PATH,
   RUN_TYPES,
@@ -1545,6 +1549,9 @@ export function Runners() {
   // value for both install helpers: it describes the machine being installed
   // on, not the token.
   const [instanceName, setInstanceName] = useState("");
+  // 2.3.1 — limits for the unit the installer writes. Like the instance name
+  // they describe the machine, so both install helpers share them.
+  const [unitLimits, setUnitLimits] = useState<UnitLimits>({});
   const [mintLabel, setMintLabel] = useState("");
   // LR-61 — a token names the agency that will OWN the agent it enrols. The
   // caller is offered the agencies they administer; a global administrator is
@@ -2105,6 +2112,7 @@ export function Runners() {
             {minted && (
               <div>
                 <InstanceNameField value={instanceName} onChange={setInstanceName} />
+                <UnitLimitsFields value={unitLimits} onChange={setUnitLimits} />
                 <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Install Command</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <code
@@ -2120,9 +2128,9 @@ export function Runners() {
                       wordBreak: "break-all",
                     }}
                   >
-                    {installOneLiner(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName)}
+                    {installOneLiner(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName, unitLimits)}
                   </code>
-                  <CopyButton text={installOneLiner(origin, token, undefined, instanceName)} ariaLabel="Copy the install command to clipboard" />
+                  <CopyButton text={installOneLiner(origin, token, undefined, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                 </div>
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Run on the target host. <code>--download</code> fetches the agent binary from this server with
@@ -2161,9 +2169,9 @@ export function Runners() {
                         wordBreak: "break-all",
                       }}
                     >
-                      {installTwoStep(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName)}
+                      {installTwoStep(origin, revealable && tokenRevealed ? token : "<TOKEN>", undefined, instanceName, unitLimits)}
                     </code>
-                    <CopyButton text={installTwoStep(origin, token, undefined, instanceName)} ariaLabel="Copy the install command to clipboard" />
+                    <CopyButton text={installTwoStep(origin, token, undefined, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                   </div>
                 )}
               </div>
@@ -2398,12 +2406,13 @@ export function Runners() {
               </div>
               <div>
                 <InstanceNameField value={instanceName} onChange={setInstanceName} />
+                <UnitLimitsFields value={unitLimits} onChange={setUnitLimits} />
                 <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Run this on the runner host (as root)</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <code style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, wordBreak: "break-all" }}>
-                    {personalizedInstallOneLiner(origin, token, instanceName)}
+                    {personalizedInstallOneLiner(origin, token, instanceName, unitLimits)}
                   </code>
-                  <CopyButton text={personalizedInstallOneLiner(origin, token, instanceName)} ariaLabel="Copy the install command to clipboard" />
+                  <CopyButton text={personalizedInstallOneLiner(origin, token, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                 </div>
                 <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5 }}>
                   Thirty seconds later the runner appears in the registry above with its detected run-types. The
@@ -2418,9 +2427,9 @@ export function Runners() {
                 {addShowTwoStep && (
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 8 }}>
                     <code style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                      {personalizedInstallTwoStep(origin, token, instanceName)}
+                      {personalizedInstallTwoStep(origin, token, instanceName, unitLimits)}
                     </code>
-                    <CopyButton text={personalizedInstallTwoStep(origin, token, instanceName)} ariaLabel="Copy the install command to clipboard" />
+                    <CopyButton text={personalizedInstallTwoStep(origin, token, instanceName, unitLimits)} ariaLabel="Copy the install command to clipboard" />
                   </div>
                 )}
               </div>
@@ -2501,6 +2510,81 @@ export function Runners() {
 // (Phase 4) and PATCHes them. Each override is optional: blank/inherit means
 // "no server opinion — use the runner's own local value". The change rides the
 // runner's next poll and applies in-memory (no restart).
+// 2.3.1 — resource limits for an agent's systemd unit: memory, CPU and tasks
+// for the agent and everything it runs, together. One group of three fields,
+// used where an install command is built (the installer's --memory-max,
+// --cpu-quota, --tasks-max) and, with `change`, in the settings drawer, where
+// the same three become a `systemctl set-property` command and a field may
+// also say `none` to remove a limit. The shapes are the installer's
+// (runner-install-cmd.ts): checked here so a bad value is refused on the page.
+const LIMIT_INPUTS: { field: LimitField; label: string; placeholder: string }[] = [
+  { field: "memoryMax", label: "Memory", placeholder: "e.g. 4G" },
+  { field: "cpuQuota", label: "CPU", placeholder: "e.g. 200%" },
+  { field: "tasksMax", label: "Tasks", placeholder: "e.g. 1024" },
+];
+
+function UnitLimitsFields({ value, onChange, change = false }: { value: UnitLimits; onChange: (v: UnitLimits) => void; change?: boolean }) {
+  const groupId = useId();
+  const ok = (f: LimitField) => {
+    const v = (value[f] ?? "").trim();
+    return change ? validLimitChange(f, v) : v === "" || validLimit(f, v);
+  };
+  const bad = LIMIT_INPUTS.some(({ field }) => !ok(field));
+  return (
+    <div style={{ marginBottom: 12 }} role="group" aria-labelledby={`${groupId}-label`}>
+      <div id={`${groupId}-label`} style={{ ...fieldLabel(), minWidth: undefined, display: "block", marginBottom: 6 }}>
+        {change ? "New limits" : "Resource limits"}{" "}
+        <span style={{ textTransform: "none", fontWeight: 400 }}>{change ? "(fill in what you want to change)" : "(optional)"}</span>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {LIMIT_INPUTS.map(({ field, label, placeholder }) => (
+          <label key={field} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.textSec }}>
+            {label}
+            <input
+              value={value[field] ?? ""}
+              onChange={(e) => onChange({ ...value, [field]: e.target.value })}
+              placeholder={placeholder}
+              spellCheck={false}
+              autoComplete="off"
+              aria-invalid={!ok(field)}
+              aria-describedby={`${groupId}-help`}
+              style={{ width: 110, padding: "7px 10px", background: c.panel2, border: `1px solid ${ok(field) ? c.borderStrong : c.danger}`, borderRadius: c.radiusChip, fontSize: c.fontSm, fontFamily: c.mono, color: c.text }}
+            />
+          </label>
+        ))}
+      </div>
+      <div id={`${groupId}-help`} style={{ fontSize: c.fontXs, color: bad ? c.danger : c.textSec, marginTop: 4, lineHeight: 1.5, maxWidth: "75ch" }}>
+        {bad ? (
+          <>
+            Memory is a whole number with K, M, G or T (<code style={{ fontFamily: c.mono }}>4G</code>); CPU is a percentage of one
+            CPU (<code style={{ fontFamily: c.mono }}>200%</code> is two); tasks is a whole number
+            {change && (
+              <>
+                ; or <code style={{ fontFamily: c.mono }}>{NO_LIMIT}</code> to remove a limit
+              </>
+            )}
+            . No command is shown until every field is valid, or empty.
+          </>
+        ) : change ? (
+          <>
+            Memory as <code style={{ fontFamily: c.mono }}>4G</code>, CPU as a percentage of one CPU (
+            <code style={{ fontFamily: c.mono }}>200%</code> is two), tasks as a count. Type{" "}
+            <code style={{ fontFamily: c.mono }}>{NO_LIMIT}</code> in a field to remove that limit; leave it empty to keep what the
+            unit has.
+          </>
+        ) : (
+          <>
+            For this agent and everything it runs, together: the unit's MemoryMax, CPUQuota and TasksMax. Set them when the
+            machine runs more than one agent, since an agent that is not root cannot cap its own runs and nothing else keeps one
+            agency's run from taking the machine from the next. Empty means no limit. They can be changed later from the runner's
+            ⚙ Edit.
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // MA-24 — the install helper's Instance name. Optional: a machine's first agent
 // is the default one and needs none. Filled in, every form of the command gains
 // `--instance <name>` and the runner is named <hostname>-<name>, so two agents
@@ -2567,6 +2651,10 @@ function RunnerSettingsDrawer({
   );
   const [repos, setRepos] = useState((ms.checkoutRepos ?? []).join("\n"));
   const [mask, setMask] = useState<RunTypeName[]>(ms.capabilityMask ?? []);
+  // 2.3.1 — not a managed setting: nothing here is saved or sent to the agent.
+  // The fields only build the command an administrator runs on the machine.
+  const [newLimits, setNewLimits] = useState<UnitLimits>({});
+  const limitsCmd = limitsCommand(runner.id ?? "", newLimits);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -2695,10 +2783,8 @@ function RunnerSettingsDrawer({
             <>
               {" "}
               <strong style={{ color: c.warning }}>This runner reports no sandbox, so these caps do nothing on it.</strong> An agent
-              that does not run as root cannot cap its runs one by one. Limit the agent's unit on its machine instead:{" "}
-              <code style={{ fontFamily: c.mono }}>systemctl set-property &lt;unit&gt; MemoryMax=… CPUQuota=… TasksMax=…</code>{" "}
-              (or <code style={{ fontFamily: c.mono }}>--memory-max</code>, <code style={{ fontFamily: c.mono }}>--cpu-quota</code>,{" "}
-              <code style={{ fontFamily: c.mono }}>--tasks-max</code> at install).
+              that does not run as root cannot cap its runs one by one. Limit the agent's unit instead:{" "}
+              <strong>Unit limits</strong>, below.
             </>
           )}
         </>,
@@ -2750,6 +2836,40 @@ function RunnerSettingsDrawer({
         <>Subtract-only: masked run-types are removed from what this runner will claim (server-enforced). Use it to quiesce a run-type without touching the host.</>,
       )}
 
+      {/* 2.3.1 — the limit that does bound an agent that is not root: one on
+          its systemd unit. The server cannot set it and neither can the agent
+          (systemd refuses both a new scope and a change to its own unit), so
+          this section prepares the command and root on the machine runs it,
+          as with the upgrade command. (This drawer is an agent's: the local
+          runner, which is the server's own process, is never offered it.) */}
+      <div style={{ marginTop: 18, paddingTop: 14, borderTop: `1px solid ${c.border}` }}>
+        <div style={{ fontSize: c.fontHead, fontWeight: 600, color: c.text, marginBottom: 4 }}>Unit limits</div>
+        <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.5, marginBottom: 10, maxWidth: "80ch" }}>
+          Memory, CPU and task limits on the agent's systemd unit bound the agent and everything it runs, together. They are
+          set <strong>on the runner's machine</strong>, not from here: fill in the limits and run the command there as root.
+          It takes effect at once, with no restart, and is kept across restarts. <strong>Save does not apply this section.</strong>
+        </div>
+        <UnitLimitsFields value={newLimits} onChange={setNewLimits} change />
+        {limitsCmd && (
+          <>
+            <div style={{ ...fieldLabel(), minWidth: undefined, marginBottom: 6 }}>Run this on the runner's machine</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <code
+                aria-label="Limits command"
+                style={{ flex: 1, padding: "10px 12px", background: c.panel2, border: `1px solid ${c.border}`, borderRadius: c.radiusSurface, fontSize: c.fontSm, fontFamily: c.mono, color: c.text, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 220, overflowY: "auto" }}
+              >
+                {limitsCmd}
+              </code>
+              <CopyButton text={limitsCmd} ariaLabel="Copy the limits command to clipboard" />
+            </div>
+            <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6, lineHeight: 1.5, maxWidth: "80ch" }}>
+              The command finds this runner's agent on the machine by its ID and changes that unit only. On a machine where
+              this runner is not installed it changes nothing and says so.
+            </div>
+          </>
+        )}
+      </div>
+
     </Modal>
   );
 }
@@ -2786,6 +2906,7 @@ function ProvisionPanel({
 
   const [name, setName] = useState("");
   const [instance, setInstance] = useState("");
+  const [limits, setLimits] = useState<UnitLimits>({});
   // Default: no explicit capabilities — the agent auto-detects the host's
   // toolchains at startup (D1: 1B). The chips only appear under an explicit
   // "Override" toggle, and narrow what the runner claims.
@@ -2818,6 +2939,7 @@ function ProvisionPanel({
     token,
     name: name.trim(),
     instance: instance.trim() || undefined,
+    limits,
     capabilities: capsOverride ? caps : [],
     inventory,
     localInventorySrc: localInventorySrc.trim() || undefined,
@@ -3004,6 +3126,17 @@ function ProvisionPanel({
                 container command ignores it: a container runs one agent. */}
             <div style={{ marginTop: 12 }}>
               <InstanceNameField value={instance} onChange={setInstance} />
+            </div>
+            {/* 2.3.1 — the installer writes these into the UNIT, so they are in
+                the install command only. The env file has nowhere to carry
+                them, and a container is limited by its own runtime. */}
+            <div style={{ marginTop: 12 }}>
+              <UnitLimitsFields value={limits} onChange={setLimits} />
+              <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: -6, lineHeight: 1.5, maxWidth: "75ch" }}>
+                In the install command only. For a manual install put the same three lines in the unit; for a container use
+                the runtime's own limits (<code style={{ fontFamily: c.mono }}>--memory</code>,{" "}
+                <code style={{ fontFamily: c.mono }}>--cpus</code>, <code style={{ fontFamily: c.mono }}>--pids-limit</code>).
+              </div>
             </div>
           </div>
 

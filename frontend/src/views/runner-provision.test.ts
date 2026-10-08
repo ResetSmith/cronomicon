@@ -291,3 +291,41 @@ describe("an instance", () => {
     expect(provisionDockerRun(withInstance())).toBe(provisionDockerRun(withInstance({ instance: undefined })));
   });
 });
+
+// 2.3.1 — limits for the unit the installer writes. They are the installer's
+// flags, so they are in the install command and nowhere else: the env file has
+// no variable for them, and a container is limited by its runtime.
+describe("resource limits", () => {
+  const withLimits = (over: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
+    ...defaultProvisionOptions("https://cronomicon.example.com"),
+    token: "crn_reg_abc",
+    limits: { memoryMax: "4G", cpuQuota: "200%", tasksMax: "1024" },
+    ...over,
+  });
+
+  it("ride the install command as the installer's three flags", () => {
+    expect(provisionOneLiner(withLimits())).toContain("--memory-max 4G --cpu-quota 200% --tasks-max 1024");
+    expect(provisionOneLiner(withLimits({ instance: "tax" }))).toContain("--instance tax --memory-max 4G --cpu-quota 200% --tasks-max 1024");
+    expect(provisionOneLiner(withLimits({ limits: { cpuQuota: "150%" } }))).toMatch(/ --cpu-quota 150%( |$)/);
+  });
+
+  it("change nothing when none is set", () => {
+    const base = provisionOneLiner(withLimits({ limits: undefined }));
+    expect(base).not.toMatch(/--(memory-max|cpu-quota|tasks-max)/);
+    expect(provisionOneLiner(withLimits({ limits: {} }))).toBe(base);
+    expect(provisionOneLiner(withLimits({ limits: { memoryMax: " ", cpuQuota: "", tasksMax: "" } }))).toBe(base);
+  });
+
+  it("yield no install command while one is not what the installer takes", () => {
+    for (const bad of ["4GB", "0", "4G; reboot", "$(id)"]) {
+      const cmd = provisionOneLiner(withLimits({ limits: { memoryMax: bad } }));
+      expect(cmd.startsWith("#"), bad).toBe(true);
+      expect(cmd).toMatch(/resource limit is not valid/);
+    }
+  });
+
+  it("are not in the env file or the container command", () => {
+    expect(generateRunnerEnv(example, withLimits())).toBe(generateRunnerEnv(example, withLimits({ limits: undefined })));
+    expect(provisionDockerRun(withLimits())).toBe(provisionDockerRun(withLimits({ limits: undefined })));
+  });
+});

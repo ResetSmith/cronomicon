@@ -194,7 +194,8 @@ describe("Runners — owner and serves (MA-26)", () => {
     await expand("fin-agent");
     fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
     expect(await screen.findByText(/This runner reports no sandbox, so these caps do nothing on it\./)).toBeTruthy();
-    expect(screen.getByText(/systemctl set-property <unit> MemoryMax=… CPUQuota=… TasksMax=…/)).toBeTruthy();
+    // And it points at what does limit the runner: the section below.
+    expect(screen.getByText("Unit limits", { selector: "strong" })).toBeTruthy();
   });
 
   it("offers the sandbox caps without that warning on a runner that has a sandbox", async () => {
@@ -204,6 +205,58 @@ describe("Runners — owner and serves (MA-26)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
     expect(await screen.findByPlaceholderText("memory (2G)")).toBeTruthy();
     expect(screen.queryByText(/these caps do nothing on it/)).toBeNull();
+  });
+
+  // v2.3.1 — the limit that does bound such a runner is on its systemd unit,
+  // and neither the server nor the agent can set it. The drawer builds the
+  // command for root on the machine, for THIS runner, and saves nothing.
+  it("builds the command that sets a runner's unit limits, and sends nothing to the server", async () => {
+    const id = "01a11cd7-2939-7abe-ae1b-8862a7262645";
+    RUNNERS = [{ ...AGENT, id, toolchains: { sandboxed: false } }];
+    renderRunners();
+    await expand("fin-agent");
+    fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
+    expect(await screen.findByText("Unit limits", { selector: "div" })).toBeTruthy();
+    expect(screen.getByText(/Save does not apply this section\./)).toBeTruthy();
+    // Nothing to run until a limit is typed.
+    expect(screen.queryByLabelText("Limits command")).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. 4G"), { target: { value: "4G" } });
+    fireEvent.change(screen.getByPlaceholderText("e.g. 200%"), { target: { value: "none" } });
+    const cmd = (await screen.findByLabelText("Limits command")).textContent ?? "";
+    expect(cmd).toContain(`RUNNER_ID="${id}"`);
+    expect(cmd).toContain('systemctl set-property "$UNIT" MemoryMax=4G CPUQuota=');
+    expect(cmd).not.toContain("TasksMax=");
+
+    // A value that is not a limit: no command, and the field group says why.
+    fireEvent.change(screen.getByPlaceholderText("e.g. 1024"), { target: { value: "lots" } });
+    await waitFor(() => expect(screen.queryByLabelText("Limits command")).toBeNull());
+    expect(screen.getByText(/No command is shown until every field is valid, or empty\./)).toBeTruthy();
+    expect(PUT).not.toHaveBeenCalled();
+  });
+
+  // v2.3.1 — Add Runner offers the installer's three limit flags, beside the
+  // instance name, and the copied command carries what was typed.
+  it("writes the limits typed in Add Runner into the install command, and none when a value is not valid", async () => {
+    RUNNERS = [AGENT];
+    renderRunners();
+    await screen.findByText("fin-agent");
+    fireEvent.click(screen.getByRole("button", { name: "+ Add Runner" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Mint & build command" }));
+    await screen.findByText(/\/install\/crn_reg_x \| sudo bash$/);
+    // The page's other install helper shows the same fields over the same
+    // values (they describe the machine); type into the dialog's, the last.
+    const field = (placeholder: string) => screen.getAllByPlaceholderText(placeholder).at(-1) as HTMLInputElement;
+
+    fireEvent.change(field("e.g. 4G"), { target: { value: "4G" } });
+    fireEvent.change(field("e.g. 1024"), { target: { value: "512" } });
+    expect(await screen.findByText(/\/install\/crn_reg_x \| sudo bash -s -- --memory-max 4G --tasks-max 512$/)).toBeTruthy();
+    fireEvent.change(field("e.g. tax"), { target: { value: "tax" } });
+    expect(await screen.findByText(/\| sudo bash -s -- --instance tax --memory-max 4G --tasks-max 512$/)).toBeTruthy();
+
+    fireEvent.change(field("e.g. 200%"), { target: { value: "200" } });
+    expect((await screen.findAllByText("# A resource limit is not valid, so no install command is shown. Correct it above.")).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/sudo bash -s -- --instance tax/)).toBeNull();
   });
 
   it("leaves every control live when the server sent no per-row flag — unknown is not 'not yours'", async () => {
