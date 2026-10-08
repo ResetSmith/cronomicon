@@ -145,11 +145,11 @@ func (s *Service) ProbeBastion(ctx context.Context, bastionID string) (ProbeResu
 	cfg := &ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		// SU-4: verify/pin the bastion host key (was InsecureIgnoreHostKey). The probe
-		// is the natural place to establish the pin via TOFU (or catch a mismatch).
-		HostKeyCallback: s.bastionHostKeyCallback(b.ID, b.Name, b.HostKey),
-		Timeout:         dialTimeout,
+		// SU-4: verify the bastion's host key. A test verifies and never
+		// captures: an unknown key is reported, with where to approve it.
+		Timeout: dialTimeout,
 	}
+	cfg.HostKeyCallback, cfg.HostKeyAlgorithms = s.bastionTrust(ctx, *b, "")
 	client, err := dialContext(ctx, b.DialAddr(), cfg)
 	if err != nil {
 		status, msg := classifyDialErr(err)
@@ -218,7 +218,8 @@ func reachConfig(inner ssh.HostKeyCallback, cap *reachCapture) *ssh.ClientConfig
 // through its bastion (which authenticates normally with its own key).
 func (s *Service) probeReachableHost(ctx context.Context, t target) (status, msg string) {
 	var cap reachCapture
-	cfg := reachConfig(s.hostKeyCallback(t), &cap)
+	cfg := reachConfig(s.hostKeyCallback(ctx, t), &cap)
+	_, cfg.HostKeyAlgorithms = s.hostTrust(ctx, t)
 	var err error
 	if t.Via == "" {
 		_, err = dialContext(ctx, t.DialAddr(), cfg)
@@ -237,7 +238,8 @@ func (s *Service) probeReachableHost(ctx context.Context, t target) (status, msg
 // probeReachableBastion runs the reachability tier against the bastion itself.
 func (s *Service) probeReachableBastion(ctx context.Context, b target) (status, msg string) {
 	var cap reachCapture
-	cfg := reachConfig(s.bastionHostKeyCallback(b.ID, b.Name, b.HostKey), &cap)
+	cfg := reachConfig(s.bastionHostKeyCallback(ctx, b, ""), &cap)
+	_, cfg.HostKeyAlgorithms = s.bastionTrust(ctx, b, "")
 	_, err := dialContext(ctx, b.DialAddr(), cfg)
 	if cap.key != nil {
 		return StatusReachable, reachableMsg(cap.key)
@@ -269,11 +271,11 @@ func (s *Service) reachViaBastion(ctx context.Context, t target, cfg *ssh.Client
 		bUser = "root"
 	}
 	bCfg := &ssh.ClientConfig{
-		User:            bUser,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(bSigner)},
-		HostKeyCallback: s.bastionHostKeyCallback(b.ID, t.Via, b.HostKey),
-		Timeout:         dialTimeout,
+		User:    bUser,
+		Auth:    []ssh.AuthMethod{ssh.PublicKeys(bSigner)},
+		Timeout: dialTimeout,
 	}
+	bCfg.HostKeyCallback, bCfg.HostKeyAlgorithms = s.bastionTrust(ctx, *b, t.Via)
 	bClient, err := dialContext(ctx, b.DialAddr(), bCfg)
 	if err != nil {
 		return fmt.Errorf("dial bastion %s: %w", t.Via, err)
@@ -335,6 +337,15 @@ func classifyDialErr(err error) (status, msg string) {
 		strings.Contains(es, "no supported methods remain"),
 		strings.Contains(es, "ssh: rejected"):
 		return StatusCredError, "authentication rejected — verify the key is authorized for the remote user"
+	case strings.Contains(es, HostKeyUnverified):
+		// Reached, and its key is not one an operator has approved. A test never
+		// captures a key (2.3.0): it says so, WHICH hop it was (a target behind a
+		// bastion can fail on either), and where the key is approved.
+		msg := "the local runner has no approved host key for it — scan it and approve its key under Runners → Local runner → Host keys"
+		if i := strings.Index(es, HostKeyUnverified+": "); i >= 0 {
+			msg = es[i+len(HostKeyUnverified)+2:]
+		}
+		return StatusUnverified, "reached, but " + msg
 	case strings.Contains(es, "host key mismatch"),
 		strings.Contains(es, "possible MITM"),
 		strings.Contains(es, "unparseable"):
@@ -434,12 +445,12 @@ func hostOwners(ctx context.Context, db *sql.DB, hostID string) ([]string, error
 
 func hostByID(ctx context.Context, db *sql.DB, id string) (*target, error) {
 	row := db.QueryRowContext(ctx, `
-		SELECT hostname, address, port, username, via, auth_key_env_var, auth_credential_id, host_key
+		SELECT hostname, address, port, username, via, auth_key_env_var, auth_credential_id
 		FROM ssh_hosts WHERE id = ? LIMIT 1`, id)
 	var name string
-	var address, user, via, authKeyEnvVar, authCredentialID, hostKey sql.NullString
+	var address, user, via, authKeyEnvVar, authCredentialID sql.NullString
 	var port sql.NullInt64
-	if err := row.Scan(&name, &address, &port, &user, &via, &authKeyEnvVar, &authCredentialID, &hostKey); err != nil {
+	if err := row.Scan(&name, &address, &port, &user, &via, &authKeyEnvVar, &authCredentialID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -458,7 +469,6 @@ func hostByID(ctx context.Context, db *sql.DB, id string) (*target, error) {
 		Via:              via.String,
 		AuthKeyEnvVar:    authKeyEnvVar.String,
 		AuthCredentialID: authCredentialID.String,
-		HostKey:          hostKey.String,
 		Owners:           owners,
 	}, nil
 }
@@ -467,12 +477,12 @@ func hostByID(ctx context.Context, db *sql.DB, id string) (*target, error) {
 // `address` column is the dial address; `name` is the display identifier.
 func bastionByID(ctx context.Context, db *sql.DB, id string) (*target, error) {
 	row := db.QueryRowContext(ctx, `
-		SELECT name, address, port, username, auth_key_env_var, auth_credential_id, host_key, owner_agency
+		SELECT name, address, port, username, auth_key_env_var, auth_credential_id, owner_agency
 		FROM bastions WHERE id = ? LIMIT 1`, id)
 	var name, owner string
-	var address, user, authKeyEnvVar, authCredentialID, hostKey sql.NullString
+	var address, user, authKeyEnvVar, authCredentialID sql.NullString
 	var port sql.NullInt64
-	if err := row.Scan(&name, &address, &port, &user, &authKeyEnvVar, &authCredentialID, &hostKey, &owner); err != nil {
+	if err := row.Scan(&name, &address, &port, &user, &authKeyEnvVar, &authCredentialID, &owner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -486,7 +496,6 @@ func bastionByID(ctx context.Context, db *sql.DB, id string) (*target, error) {
 		User:             user.String,
 		AuthKeyEnvVar:    authKeyEnvVar.String,
 		AuthCredentialID: authCredentialID.String,
-		HostKey:          hostKey.String,
 		Owners:           []string{owner},
 	}, nil
 }

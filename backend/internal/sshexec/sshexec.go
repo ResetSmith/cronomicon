@@ -209,6 +209,15 @@ func (s *Service) Start(ctx context.Context) {
 	// Before Apply, so the loop's first claim already sees the placements. A
 	// failure is logged and tried again at the next start: nothing was marked
 	// done.
+	// Once, likewise: the host keys this server had captured on first connect
+	// become the local runner's approved keys (runner.CarryServerHostKeys), so
+	// every host it was connecting to goes on being connected to now that it
+	// verifies against its ledger and captures nothing.
+	if _, cerr := runner.CarryServerHostKeys(ctx, s.db, s.log); cerr != nil {
+		s.log.Error("local runner: could not carry the server's host keys into its ledger; "+
+			"hosts it has no approved key for will fail host_key_unverified until this succeeds at a later start", "error", cerr)
+	}
+
 	wasOn, werr := settings.SSHExecutorWasOn(ctx, s.db)
 	if werr != nil {
 		s.log.Error("local runner: could not read what the SSH executor was for the upgrade pass", "error", werr)
@@ -661,21 +670,10 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		defer tcancel()
 	}
 
-	// SU-4 interim guard: a run that injects secrets must not route to an UNPINNED
-	// target over a bastion hop. Even with the bastion hop now host-key-verified, an
-	// unpinned target behind a bastion is only TOFU-trusted on first connect — a MITM
-	// there could impersonate the target and capture the injected secret. Refuse until
-	// the target host key is pinned (run once without secrets, or probe, to capture it).
-	if len(extraRedact) > 0 {
-		for _, t := range targets {
-			if t.Via != "" && t.HostKey == "" {
-				sink.line("", fmt.Sprintf(
-					"cronomicon: refusing to inject secrets over bastion %q to unpinned target %q — pin the target host key first (run once without secrets)", t.Via, t.Name))
-				s.finalizeReason(ctx, r, "failure", nil, "unpinned_bastion_target")
-				return
-			}
-		}
-	}
+	// (The SU-4 interim guard stood here: it refused to inject secrets over a
+	// bastion to a target whose key had only been captured on first connect.
+	// Nothing is captured on first connect any more. A target the local runner
+	// has no approved key for is not connected to, with or without secrets.)
 
 	// Every key this run connects with must be one its agency may use (see
 	// keyGuard). The agencies are the run's FROZEN snapshot, as for reference
@@ -719,7 +717,23 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		sink.line("", "cronomicon: job timed out")
 		status = "failure"
 	}
-	s.finalize(ctx, r, status, exit)
+	// A run that failed because the local runner has no approved key for a
+	// host says so where History shows it, as an agent's run does, and not
+	// only in its log: it is the one failure with a fixed remedy, and since
+	// 2.3.0 it is what a host the server has never connected to produces.
+	reason := ""
+	if status != "success" {
+		var unverified []string
+		for _, hr := range results {
+			if hr.err != nil && strings.Contains(hr.err.Error(), HostKeyUnverified) {
+				unverified = append(unverified, hr.host)
+			}
+		}
+		if len(unverified) > 0 {
+			reason = HostKeyUnverified + ": " + strings.Join(unverified, ", ")
+		}
+	}
+	s.finalizeReason(ctx, r, status, exit, reason)
 }
 
 // resolveReferences loads the run's declared reference bindings (from its job and,

@@ -1,12 +1,17 @@
 package api_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 )
@@ -118,10 +123,11 @@ func localRunnerID(t *testing.T, pool *sql.DB) string {
 }
 
 // The local runner has no agent: nothing to deregister, drain, re-declare,
-// reconfigure or test, secret injection is fixed on, and until its host keys
-// move to its own ledger the host-key routes are not its either. Each of those
+// reconfigure or test, secret injection is fixed on, it never enrols, and it
+// has no known_hosts file to be sent a line or asked to report. Each of those
 // routes says so (422 `local_runner`), to whoever may manage the runner — and
-// answers the ordinary 403 to anyone who may not.
+// answers the ordinary 403 to anyone who may not. Its host keys, though, are
+// reviewed and recorded like an agent's.
 func TestLocalRunner_AgentRoutesRefuseIt(t *testing.T) {
 	h, pool := gateServer(t)
 	id := localRunnerID(t, pool)
@@ -131,9 +137,7 @@ func TestLocalRunner_AgentRoutesRefuseIt(t *testing.T) {
 		{"PATCH", "/api/v1/runners/" + id + "/settings", `{}`},
 		{"PUT", "/api/v1/runners/" + id + "/secret-injection", `{"allow":false}`},
 		{"POST", "/api/v1/runners/" + id + "/test", `{}`},
-		{"POST", "/api/v1/runners/" + id + "/keyscan", `{"hosts":["10.0.0.1"]}`},
-		{"GET", "/api/v1/runners/" + id + "/host-keys", ``},
-		{"POST", "/api/v1/runners/" + id + "/host-keys/provide", `{"lines":["h ssh-ed25519 AAAA"]}`},
+		{"POST", "/api/v1/runners/" + id + "/host-keys/1/resend", `{}`},
 		{"POST", "/api/v1/runners/" + id + "/known-hosts/refresh", `{}`},
 		// It never enrols, so it is never offered an agent's old placement.
 		{"POST", "/api/v1/runners/" + id + "/placement", `{"historyId":1}`},
@@ -152,6 +156,14 @@ func TestLocalRunner_AgentRoutesRefuseIt(t *testing.T) {
 	// It is still there, with secret injection on (LR-46).
 	if n := count(t, pool, `SELECT COUNT(*) FROM runners WHERE id = ? AND allow_secret_injection = 1`, id); n != 1 {
 		t.Error("the local runner's row was removed, or its secret injection turned off")
+	}
+	// Its host keys are its owner's to read and decide, like an agent's — and
+	// an agency administrator's only by LR-63's exception, which is not this.
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/runners/"+id+"/host-keys", gRoot, ""); rec.Code != http.StatusOK {
+		t.Errorf("a global admin reading the local runner's host keys = %d (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/runners/"+id+"/host-keys", gFinAdmin, ""); rec.Code != http.StatusForbidden {
+		t.Errorf("an agency admin reading the local runner's host keys = %d, want 403", rec.Code)
 	}
 	// Tags are labels, and it may carry them like any runner.
 	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-tags/"+id, gRoot, `{"tags":["dc1"]}`); rec.Code/100 != 2 {
@@ -266,5 +278,129 @@ func TestLocalRunner_AWaitingRunSaysTheLocalRunnerIsOff(t *testing.T) {
 	}
 	if got := reason("run-ssh"); !strings.Contains(got, "SSH executor") {
 		t.Errorf("statusReason of a row frozen onto the SSH executor = %q, want it to say nothing will claim it", got)
+	}
+}
+
+// ecdsaHostKey is realHostKey with a key of another type.
+func ecdsaHostKey(t *testing.T, host string) (line, keyType, fingerprint string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ssh.NewPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return host + " " + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))), key.Type(), ssh.FingerprintSHA256(key)
+}
+
+// LR-63 lets an administrator of an agency a runner SERVES, but does not own,
+// approve the first key for a host of their own scope. "First" means the host
+// has no trusted key at all: a runner accepts any key in force for a host,
+// whichever type it negotiates, so a second key of ANOTHER type is not a first
+// key — it is a second way to be that host, and the owner's to decide.
+func TestHostKeyGuest_ASecondKeyOfAnotherTypeIsNotAFirstKey(t *testing.T) {
+	h, pool := ownerCast(t)
+	exec := mustExec(t, pool)
+	approve := func(who, id string) (int, string) {
+		t.Helper()
+		rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/r-legacy/host-keys/resolve-batch", who, `{"approve":["`+id+`"]}`)
+		return rec.Code, errCode(rec.Body.Bytes())
+	}
+	pending := func(id string, mk func(*testing.T, string) (string, string, string)) string {
+		line, keyType, fp := mk(t, "fin9.example")
+		exec(`INSERT INTO pending_host_keys (id, runner_id, host, key_type, fingerprint, known_hosts_line, scanned_at, scope_id, scope_name, host_name)
+		      VALUES (?, 'r-legacy', 'fin9.example', ?, ?, ?, '2026-01-01T00:00:00Z', 'sc:fin', 'fin-hosts', 'fin9.example')`, id, keyType, fp, line)
+		return fp
+	}
+	pending("pk-ed", realHostKey)
+	if code, ec := approve(gFinAdmin, "pk-ed"); code != 200 {
+		t.Fatalf("the guest approving the first key = %d %s, want 200", code, ec)
+	}
+	// An on-path attacker offers only ecdsa to the next scan.
+	pending("pk-ec", ecdsaHostKey)
+	if code, ec := approve(gFinAdmin, "pk-ec"); code != 403 || ec != "owner_required" {
+		t.Errorf("the guest adding a second key of another type = %d %s, want 403 owner_required", code, ec)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM host_key_ledger WHERE runner_id = 'r-legacy' AND host = 'fin9.example' AND decision = 'approved' AND superseded_at IS NULL`); n != 1 {
+		t.Errorf("%d keys in force for the host after the refusal, want the 1 the guest first approved", n)
+	}
+	// The owner may add it.
+	if code, ec := approve(gRoot, "pk-ec"); code != 200 {
+		t.Errorf("the owner adding the second key = %d %s, want 200", code, ec)
+	}
+}
+
+// The local runner's keys are a global administrator's to decide, with no
+// guest exception. The server's trust in a host is keyed by its address and is
+// the same for every agency whose runs it takes — it holds all their secrets —
+// so a key one agency's administrator approved would be the key the server
+// accepts when it connects to that address for any other. A guest may still
+// scan their own scope with it; what the scan finds waits for a global
+// administrator.
+func TestLocalRunner_ItsHostKeysAreAGlobalAdministratorsToDecide(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	id := localRunnerID(t, pool)
+	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, 'ag:FIN')`, id) // it serves FIN
+	exec(`INSERT INTO ssh_hosts (id, hostname, address, port, scope_id, source, created_by, created_at, last_modified_by, last_modified_at)
+	      VALUES ('h-fin1', 'fin1', '10.5.0.1', 22, 'sc:fin', 'git', 't', 't', 't', 't')`)
+	exec(`INSERT OR IGNORE INTO scope_hosts (scope_id, host) VALUES ('sc:fin', 'fin1')`)
+
+	// FIN may queue a scan of its own scope with it...
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/keyscan", gFinAdmin, `{"scopeId":"sc:fin"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("FIN scanning its own scope with the local runner = %d (%s), want 202", rec.Code, rec.Body)
+	}
+	// ...and nothing else: not typed hosts, not another agency's scope.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/keyscan", gFinAdmin, `{"hosts":["10.5.0.9"]}`); rec.Code != http.StatusForbidden {
+		t.Errorf("FIN scanning typed hosts from the server = %d, want 403", rec.Code)
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/keyscan", gFinAdmin, `{"scopeId":"sc:tax"}`); rec.Code == http.StatusAccepted {
+		t.Errorf("FIN scanning TAX's scope with the local runner = %d", rec.Code)
+	}
+
+	// A key found for FIN's host: FIN sees it and cannot approve it — not even
+	// a first key.
+	line, keyType, fp := realHostKey(t, "10.5.0.1")
+	exec(`INSERT OR REPLACE INTO pending_host_keys (id, runner_id, host, key_type, fingerprint, known_hosts_line, scanned_at, scope_id, scope_name, host_name)
+	      VALUES ('pk-local', ?, '10.5.0.1', ?, ?, ?, '2026-01-01T00:00:00Z', 'sc:fin', 'fin-hosts', 'fin1')`, id, keyType, fp, line)
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/runners/"+id+"/host-keys/pending", gFinAdmin, ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), fp) {
+		t.Errorf("FIN listing what its scan found = %d (%s), want the key", rec.Code, rec.Body)
+	}
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/host-keys/resolve-batch", gFinAdmin, `{"approve":["pk-local"]}`)
+	if rec.Code != http.StatusForbidden || errCode(rec.Body.Bytes()) != "owner_required" {
+		t.Fatalf("FIN approving a key on the local runner = %d %s, want 403 owner_required (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM host_key_ledger WHERE runner_id = ?`, id); n != 0 {
+		t.Fatalf("a refused approval wrote %d ledger row(s)", n)
+	}
+	for _, route := range []struct{ path, body string }{
+		{"/host-keys/provide", `{"lines":["` + line + `"],"dryRun":true}`},
+		{"/host-keys", ``},
+	} {
+		method := http.MethodPost
+		if route.body == "" {
+			method = http.MethodGet
+		}
+		if rec := gateReq(t, h, method, "/api/v1/runners/"+id+route.path, gFinAdmin, route.body); rec.Code != http.StatusForbidden {
+			t.Errorf("FIN on the local runner's %s = %d, want 403", route.path, rec.Code)
+		}
+	}
+
+	// A global administrator approves it, and it is in force at once.
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/host-keys/resolve-batch", gRoot, `{"approve":["pk-local"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a global administrator approving it = %d (%s)", rec.Code, rec.Body)
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM host_key_ledger WHERE runner_id = ? AND host = '10.5.0.1' AND decision = 'approved'
+	                         AND superseded_at IS NULL AND delivered_at IS NOT NULL AND confirmed_at IS NOT NULL`, id); n != 1 {
+		t.Errorf("after the approval, %d key(s) in force and settled for the host, want 1", n)
+	}
+	// The host record shows it.
+	rec = gateReq(t, h, http.MethodGet, "/api/v1/ssh/hosts", gRoot, "")
+	if !strings.Contains(rec.Body.String(), fp) {
+		t.Errorf("the host record does not show the key the local runner now trusts: %s", rec.Body)
 	}
 }

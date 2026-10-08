@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -17,8 +20,10 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/hostkeys"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/keyscan"
 	"github.com/ResetSmith/cronomicon/internal/knownhostsline"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
+	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // Host-key scan & approve (runner-install-update-2.md Phase 5, D4: 4A).
@@ -123,7 +128,9 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 				"this runner cannot serve that scope (a scope takes a runner that serves its agency; a scope that is Global's takes a runner that serves Global), so it cannot scan it")
 			return
 		}
-		plan, err := hostkeys.PlanScope(r.Context(), s.db, scopeName)
+		// The plan is the scanning runner's own: the server reaches a bastion
+		// through its record, an agent by the name it resolves itself.
+		plan, err := hostkeys.PlanScopeForRunner(r.Context(), s.db, scopeName, runnerID)
 		if err != nil {
 			s.log.Error("keyscan: expand scope", "error", err)
 			httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
@@ -137,10 +144,10 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 		for _, h := range plan {
 			// A bastion is dialled directly, so IT can be scanned even though
 			// the host behind it cannot — and the runner checks both keys.
-			if h.Via != "" && !bastions[h.Via] && validScanTarget(h.Via) {
-				bastions[h.Via] = true
-				hosts = append(hosts, h.Via)
-				targets = append(targets, target{h.Via, req.ScopeID, scopeName, h.Via + " (bastion)"})
+			if h.ViaTarget != "" && !bastions[h.ViaTarget] && validScanTarget(h.ViaTarget) {
+				bastions[h.ViaTarget] = true
+				hosts = append(hosts, h.ViaTarget)
+				targets = append(targets, target{h.ViaTarget, req.ScopeID, scopeName, h.Via + " (bastion)"})
 			}
 			if h.Target == "" {
 				skipped = append(skipped, skippedScanHost{Host: h.Host, Reason: h.NotScannable, Pattern: h.Pattern})
@@ -207,6 +214,22 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 	if hosts == nil {
 		hosts = []string{}
 	}
+	// The local runner has no agent to poll for the scan: the server is the
+	// runner, and scans from here.
+	if len(hosts) > 0 {
+		local, lerr := settings.IsLocalRunner(r.Context(), s.db, runnerID)
+		if lerr != nil {
+			// The hosts are queued; answering 202 for a scan nobody will run
+			// would leave the operator watching an empty review list.
+			s.log.Error("keyscan: is this the local runner", "runner_id", runnerID, "error", lerr)
+			httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+			return
+		}
+		if local {
+			// Detached from the request: the scan is why it answers 202.
+			s.startLocalScan(context.WithoutCancel(r.Context()), runnerID)
+		}
+	}
 	// hosts is what THIS request queued. A scope whose every host is unscannable
 	// queues nothing and still answers: the skipped list is the answer.
 	httpx.JSON(w, http.StatusAccepted, map[string]any{"hosts": hosts, "skipped": skipped})
@@ -249,12 +272,9 @@ type uploadHostKeysRequest struct {
 	Entries []scannedHostKey `json:"entries"`
 }
 
-type scannedHostKey struct {
-	Host           string `json:"host"`
-	KeyType        string `json:"keyType"`
-	Fingerprint    string `json:"fingerprint"`
-	KnownHostsLine string `json:"knownHostsLine"`
-}
+// scannedHostKey is one captured key: an agent's upload entry, or what the
+// server's own scan returns for the local runner. One shape (internal/keyscan).
+type scannedHostKey = keyscan.Key
 
 // HandleUploadHostKeys ingests the keys a runner scanned (runner-key auth) into
 // pending_host_keys for operator approval. A re-scan of the same (host, keyType)
@@ -274,9 +294,21 @@ func (s *Service) HandleUploadHostKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	inserted := s.ingestScannedKeys(r.Context(), runnerID, req.Entries)
+
+	httpx.JSON(w, http.StatusOK, map[string]any{"accepted": inserted})
+}
+
+// ingestScannedKeys records scanned keys as PENDING, for an operator to
+// review: an agent's upload and the server's own scan for the local runner end
+// here alike. Nothing is taken on the scanner's word — the line is parsed, the
+// key type and fingerprint are computed from the key, and the stored line is
+// rendered for the one host the key was scanned as. A re-scan of the same
+// (host, key type) replaces the pending row. Returns how many were recorded.
+func (s *Service) ingestScannedKeys(ctx context.Context, runnerID string, entries []scannedHostKey) int {
 	ts := now()
 	inserted := 0
-	for _, e := range req.Entries {
+	for _, e := range entries {
 		target := strings.TrimSpace(e.Host)
 		if !validScanTarget(target) {
 			continue // skip malformed entries rather than fail the whole upload
@@ -299,7 +331,7 @@ func (s *Service) HandleUploadHostKeys(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var scopeID, scopeName, hostName sql.NullString
-		if err := s.db.QueryRowContext(r.Context(), `
+		if err := s.db.QueryRowContext(ctx, `
 			SELECT scope_id, scope_name, host_name FROM host_key_scan_targets
 			 WHERE runner_id = ? AND target = ?`, runnerID, target).
 			Scan(&scopeID, &scopeName, &hostName); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -308,7 +340,7 @@ func (s *Service) HandleUploadHostKeys(w http.ResponseWriter, r *http.Request) {
 		// INSERT OR REPLACE on the (runner_id, host, key_type) unique index: a
 		// re-scan supersedes the prior pending row. Its earlier resolution, if it
 		// had one, is in the ledger.
-		if _, err := s.db.ExecContext(r.Context(), `
+		if _, err := s.db.ExecContext(ctx, `
 			INSERT OR REPLACE INTO pending_host_keys
 			  (id, runner_id, host, key_type, fingerprint, known_hosts_line, scanned_at,
 			   scope_id, scope_name, host_name)
@@ -318,12 +350,100 @@ func (s *Service) HandleUploadHostKeys(w http.ResponseWriter, r *http.Request) {
 			s.log.Error("insert pending host key", "runner_id", runnerID, "error", err)
 			continue
 		}
-		_, _ = s.db.ExecContext(r.Context(),
+		_, _ = s.db.ExecContext(ctx,
 			`DELETE FROM host_key_scan_targets WHERE runner_id = ? AND target = ?`, runnerID, target)
 		inserted++
 	}
 
-	httpx.JSON(w, http.StatusOK, map[string]any{"accepted": inserted})
+	return inserted
+}
+
+// localScanTimeout is the server's dial timeout for one host of a scan it
+// runs itself, the agent's own figure.
+const localScanTimeout = 15 * time.Second
+
+// scanLocally runs the scan queued for the local runner, in this process: the
+// local runner is the server, so the hosts are dialled from here, and each
+// captured key goes to the same pending list an agent's upload does. Hosts are
+// dialled concurrently and recorded one by one, as an agent does it — the
+// operator is watching the review screen fill, and one unreachable host must
+// not hold back the rest.
+func (s *Service) scanLocally(ctx context.Context, runnerID string) {
+	hosts := s.takeKeyscan(ctx, runnerID)
+	if len(hosts) == 0 {
+		return
+	}
+	var (
+		wg    sync.WaitGroup
+		found atomic.Int64
+		slots = make(chan struct{}, keyscan.Parallel)
+	)
+	for _, h := range hosts {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			k, err := scanHost(ctx, h, localScanTimeout)
+			if err != nil {
+				s.log.Warn("local runner: host-key scan failed", "host", h, "error", err)
+				return
+			}
+			found.Add(int64(s.ingestScannedKeys(ctx, runnerID, []scannedHostKey{k})))
+		}()
+	}
+	wg.Wait()
+	s.log.Info("local runner: host-key scan finished", "requested", len(hosts), "keys_for_review", found.Load())
+}
+
+// scanHost is keyscan.Scan, a variable so a test can stand in for the network.
+var scanHost = keyscan.Scan
+
+// startLocalScan runs the queued scan off the request that asked for it. The
+// scan outlives the request (it is why the request answers 202) and joins the
+// shutdown WaitGroup when there is one, so the pool is not closed under it.
+//
+// ONE worker, however many requests ask. A request only adds hosts to the
+// queue on the runner's row; if a worker is already draining it, those hosts
+// are taken on its next pass. Without this every request started its own eight
+// dials, and a loop of requests was an unbounded number of them from the
+// server's network position.
+func (s *Service) startLocalScan(base context.Context, runnerID string) {
+	if !s.localScanning.CompareAndSwap(false, true) {
+		return
+	}
+	run := func() {
+		for {
+			var queued int
+			_ = s.db.QueryRowContext(base, `
+				SELECT json_array_length(CASE WHEN json_valid(keyscan_requested) THEN keyscan_requested ELSE '[]' END)
+				  FROM runners WHERE id = ?`, runnerID).Scan(&queued)
+			if queued == 0 {
+				s.localScanning.Store(false)
+				// A request may have queued hosts between the read above and
+				// the flag going down, and found the flag still up: look once
+				// more, and take the work back if there is some.
+				var again int
+				_ = s.db.QueryRowContext(base, `
+					SELECT json_array_length(CASE WHEN json_valid(keyscan_requested) THEN keyscan_requested ELSE '[]' END)
+					  FROM runners WHERE id = ?`, runnerID).Scan(&again)
+				if again == 0 || !s.localScanning.CompareAndSwap(false, true) {
+					return
+				}
+				continue
+			}
+			// Every host gets its dial timeout, eight at a time, and no more.
+			budget := time.Duration(queued/keyscan.Parallel+2) * localScanTimeout
+			ctx, cancel := context.WithTimeout(base, budget)
+			s.scanLocally(ctx, runnerID)
+			cancel()
+		}
+	}
+	if s.shutdownWG != nil {
+		s.shutdownWG.Go(run)
+		return
+	}
+	go run()
 }
 
 // ── Operator: list pending & resolve ──────────────────────────────────────────

@@ -75,6 +75,10 @@ type Service struct {
 	notifier   notify.Notifier // optional (C.1); nil ⇒ no dispatch
 	shutdownWG *sync.WaitGroup // optional (PP-L15); tracks the reaper goroutine for graceful drain
 
+	// localScanning is up while the one worker that scans host keys for the
+	// local runner is running (startLocalScan).
+	localScanning atomic.Bool
+
 	// authSvc records authorization denials to the auth audit trail (LU-9). This
 	// package owns exactly one operator-facing authz decision — the scope gate on
 	// HandleGetLog — and it must land in the same table as internal/api's, or the

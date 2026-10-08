@@ -445,9 +445,8 @@ type PreviewRunner struct {
 	// HostsWithoutKey is how many of the scope's hosts this runner does not
 	// trust: neither approved here nor reported in its own known_hosts file.
 	// A run on such a host fails at the first connection. Compare with
-	// ScopeRunnersPreview.ScopeHosts. Always 0 for the local runner, which has
-	// no known_hosts file: it verifies against the keys kept with the SSH
-	// targets (until its keys move to the ledger).
+	// ScopeRunnersPreview.ScopeHosts. For the local runner, which has no file,
+	// it is the hosts with no key in force in its ledger.
 	HostsWithoutKey int `json:"hostsWithoutKey"`
 }
 
@@ -628,15 +627,23 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 			            THEN json_extract(managed_settings, '$.capabilityMask') END,
 			       COALESCE(allow_secret_injection, 0), kind = 'server'
 			  FROM runners WHERE id = ?`, id).Scan(&name, &capsJSON, &mask, &injection, &pr.Local)
-		if !pr.Local {
-			trusted, terr := hostkeys.LoadTrusted(ctx, database, id)
-			if terr != nil {
+		// For an agent, the keys approved for it and reported in its file; for
+		// the local runner, the keys in force in its ledger, which is its
+		// trust store.
+		trusted, terr := hostkeys.LoadTrusted(ctx, database, id)
+		if terr != nil {
+			return nil, fmt.Errorf("preview scope runners: %w", terr)
+		}
+		plan := scopeHosts
+		if pr.Local {
+			// The server reaches a bastion through its record, not by name.
+			if plan, terr = hostkeys.PlanScopeFor(ctx, database, sc.Scope, true); terr != nil {
 				return nil, fmt.Errorf("preview scope runners: %w", terr)
 			}
-			for _, h := range scopeHosts {
-				if trusted.State(h) == hostkeys.StateNone {
-					pr.HostsWithoutKey++
-				}
+		}
+		for _, h := range plan {
+			if trusted.State(h) == hostkeys.StateNone {
+				pr.HostsWithoutKey++
 			}
 		}
 		switch {

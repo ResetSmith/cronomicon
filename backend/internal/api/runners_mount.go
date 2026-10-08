@@ -175,9 +175,9 @@ func (s *Server) requireRunnerAgency(pathVar string, next http.Handler) http.Han
 // is. The local runner is this server: there is no agent to drain, re-declare,
 // reconfigure or test, it is turned on and off with its own setting
 // (PUT /local-runner), secret injection is fixed on for it (LR-46), and its row
-// is never deregistered (LR-39). Its host keys are still the server's own, kept
-// with the SSH targets, until they move to the runner's ledger (Phase C of the
-// local runner); until then the host-key routes refuse it too.
+// is never deregistered (LR-39). Its host keys ARE reviewed and recorded like
+// an agent's (its trust store is the ledger); only the two routes that talk to
+// an agent's known_hosts file refuse it.
 //
 // 422 `local_runner`, with what to do instead.
 func (s *Server) agentOnly(pathVar string, next http.Handler) http.Handler {
@@ -201,8 +201,9 @@ func (s *Server) isAgent(w http.ResponseWriter, r *http.Request, runnerID string
 	if local {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner",
 			"this is the local runner — the server itself — so there is no agent here to act on. "+
-				"Turn it on or off, and set how many runs it takes, under Settings → Local runner; "+
-				"its host keys are managed with the SSH targets")
+				"Turn it on or off, and set how many runs it takes, under Settings → Local runner. "+
+				"Its host keys are approved like an agent's (Host keys), and are in force the moment they are approved: "+
+				"there is no file to send them to or to report")
 		return false
 	}
 	return true
@@ -484,7 +485,7 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	// exception (requireRunnerOwnerOrHostKeyGuest); every other host-key route is
 	// the owner's alone.
 	hkGuest := func(h http.HandlerFunc) http.Handler {
-		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerOwnerOrHostKeyGuest("id", s.agentOnly("id", h)))
+		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerOwnerOrHostKeyGuest("id", h))
 	}
 	mux.Handle("POST /api/v1/runners/{id}/keyscan", hkGuest(svc.HandleKeyscan))
 	mux.Handle("GET /api/v1/runners/host-keys/pending",
@@ -500,6 +501,13 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	// reads the snapshot taken at deregistration); with no snapshot left, or an
 	// owner agency since deleted, it is a global administrator's.
 	hk := func(h http.HandlerFunc) http.Handler {
+		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", h))
+	}
+	// The local runner's host keys are reviewed and recorded here like an
+	// agent's (2.3.0, Phase C): its trust store IS the ledger. What it has no
+	// use for is the two routes that talk to an agent's FILE — re-sending a
+	// line to it, and asking it to report it.
+	hkAgent := func(h http.HandlerFunc) http.Handler {
 		return s.requirePerm("configureApp", permConfigureApp)(s.requireRunnerAgency("id", s.agentOnly("id", h)))
 	}
 	mux.Handle("GET /api/v1/runners/{id}/host-keys", hk(svc.HandleRunnerHostKeys))
@@ -507,8 +515,8 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/runners/{id}/host-keys/resolve-batch", hkGuest(svc.HandleResolveHostKeyBatch))
 	mux.Handle("POST /api/v1/runners/{id}/host-keys/provide", hk(svc.HandleProvideHostKeys))
 	mux.Handle("POST /api/v1/runners/{id}/host-keys/{ledgerId}/remove", hk(svc.HandleRemoveHostKey))
-	mux.Handle("POST /api/v1/runners/{id}/host-keys/{ledgerId}/resend", hk(svc.HandleResendHostKey))
-	mux.Handle("POST /api/v1/runners/{id}/known-hosts/refresh", hk(svc.HandleRequestKnownHosts))
+	mux.Handle("POST /api/v1/runners/{id}/host-keys/{ledgerId}/resend", hkAgent(svc.HandleResendHostKey))
+	mux.Handle("POST /api/v1/runners/{id}/known-hosts/refresh", hkAgent(svc.HandleRequestKnownHosts))
 	// Carrying keys reads one runner's record and writes another's trust, so it
 	// needs the gate for BOTH. The source rides the query (?from=) because a
 	// second path wildcard here cannot be told apart from the older

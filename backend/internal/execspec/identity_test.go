@@ -10,7 +10,7 @@ import (
 func TestApplyIdentityOverride(t *testing.T) {
 	base := func() []Target {
 		return []Target{
-			{Name: "web1", User: "hostuser", AuthCredentialID: "cred-host", Via: "bastion-1", HostKey: "hk"},
+			{Name: "web1", User: "hostuser", AuthCredentialID: "cred-host", Via: "bastion-1", Address: "10.0.0.1", Port: 2222},
 			{Name: "web2", User: "", AuthKeyEnvVar: "LEGACY_KEY"},
 			{Name: "gone", ResolveErr: "no SSH host record"},
 		}
@@ -66,8 +66,9 @@ func TestApplyIdentityOverride(t *testing.T) {
 
 	t.Run("routing and unresolved targets untouched", func(t *testing.T) {
 		out := ApplyIdentityOverride(base(), "deploy", "cred-override", "")
-		// CA-Q4 — the bastion hop and host-key trust are routing, not identity.
-		if out[0].Via != "bastion-1" || out[0].HostKey != "hk" {
+		// CA-Q4 — the bastion hop and the address (which is what host-key trust
+		// is keyed by) are routing, not identity.
+		if out[0].Via != "bastion-1" || out[0].Address != "10.0.0.1" || out[0].Port != 2222 {
 			t.Errorf("routing fields must be untouched: %+v", out[0])
 		}
 		if !reflect.DeepEqual(out[2], base()[2]) {

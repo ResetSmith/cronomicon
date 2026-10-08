@@ -3694,26 +3694,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/ssh/hosts/{hostId}/host-key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Clear the pinned host key (re-key)
-         * @description Clears the target's pinned SSH host key so the next connect re-captures it via TOFU (FU-1) — the supported way to re-key a legitimately rotated host without a raw SQL UPDATE. Resets status to unverified. Audited.
-         */
-        delete: operations["clearSshHostKey"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/ssh/bastions": {
         parameters: {
             query?: never;
@@ -3779,26 +3759,6 @@ export interface paths {
          */
         post: operations["testSshBastion"];
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ssh/bastions/{bastionId}/host-key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Clear the pinned bastion host key (re-key)
-         * @description Clears the bastion's pinned SSH host key so the next connect re-captures it via TOFU (FU-1/SU-4). Resets status to unverified. Audited.
-         */
-        delete: operations["clearBastionHostKey"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6580,7 +6540,7 @@ export interface components {
             runners: {
                 runnerId: string;
                 name: string;
-                /** @description The local runner (this server), not an agent. It has no known_hosts file, so `hostsWithoutKey` is always 0 for it. */
+                /** @description The local runner (this server), not an agent. */
                 local: boolean;
                 registered: boolean;
                 /** @description Whether the runner passes the agency rule for this scope; a save refuses one that does not. */
@@ -6660,6 +6620,15 @@ export interface components {
              *       agent that serves it advertises (subject: the job's uid).
              *     - `no_runner_for_shell_jobs` — an agency has shell jobs and no
              *       registered runner serving it can run them (subject: the agency's id).
+             *     - `local_runner_host_keys` — the local runner is on, takes a scope's
+             *       runs, and has no approved host key for some of the scope's hosts:
+             *       its runs fail for them, `host_key_unverified` (subject: the
+             *       scope's id). Until v2.3.0 the server captured a key on first
+             *       connect.
+             *     - `host_key_conflict` — the upgrade to v2.3.0 found a host record or
+             *       bastion whose stored key differs from the one the server now
+             *       trusts for the same address; it trusts one per address (subject:
+             *       `host:<id>` or `bastion:<id>`).
              *     - `legacy_placement` — a runner whose serve list is not exactly its
              *       owner: one that served several agencies before 2.3.0. It works as
              *       it did, is Global's, and can be narrowed and never widened; the
@@ -7328,7 +7297,18 @@ export interface components {
              *     (v2.3.0, see `GET /local-runner`). There is at most one. It is
              *     never deregistered, has no agent to drain, re-declare, test or
              *     reconfigure (those routes answer 422 `local_runner`), and is
-             *     turned on and off with `PUT /local-runner`.
+             *     turned on and off with `PUT /local-runner`. Its host keys are
+             *     reviewed and recorded through the same `/runners/{id}/host-keys…`
+             *     routes as an agent's, with two differences: it scans from the
+             *     server itself, and an approved key is in force at once — there
+             *     is no known_hosts file, so `…/resend` and
+             *     `…/known-hosts/refresh` answer 422 `local_runner` too. And its
+             *     keys are a global administrator's to decide, with no guest
+             *     exception: an administrator of an agency it serves may scan
+             *     their own scope with it and see what was found, and
+             *     `…/resolve-batch` answers them 403 `owner_required` — the
+             *     server's trust in a host is the same for every agency whose
+             *     runs it takes.
              * @enum {string}
              */
             readonly kind?: "agent" | "server";
@@ -8463,11 +8443,11 @@ export interface components {
             readonly status?: "verified" | "reachable" | "cred_error" | "conn_error" | "unverified";
             /** Format: date-time */
             readonly lastCheckedAt?: string | null;
-            /** @description Whether the host's SSH host key is pinned (FU-1). Empty until the first successful connect/test TOFU-captures it; thereafter a changed key aborts the connection. Clear it (DELETE .../host-key) to re-capture after a legitimate re-key. */
+            /** @description Whether the LOCAL RUNNER has an approved host key for the address this record is dialled at (FU-1; v2.3.0). The server connects only to a host that has one: it is approved on the local runner's Host keys screen (`/runners/{id}/host-keys…`, with the local runner's id) after a scan or a paste, or was carried over by the upgrade from the key the server had captured before v2.3.0. Nothing is captured on first connect any more, and the former `DELETE …/host-key` is gone: a key is replaced or removed where it is approved. The field name predates this. */
             readonly hostKeyPinned?: boolean;
-            /** @description SHA256 fingerprint of the pinned host key, for out-of-band comparison. Absent when unpinned. Never the raw key line. */
+            /** @description SHA256 fingerprint of that key, for out-of-band comparison. Absent when there is none. Never the raw key line. */
             readonly hostKeyFingerprint?: string;
-            /** @description Algorithm of the pinned host key (e.g. ssh-ed25519). Absent when unpinned. */
+            /** @description Algorithm of that key (e.g. ssh-ed25519). Absent when there is none. */
             readonly hostKeyType?: string;
             /** @description The scope a record was imported for; null on one written by hand (v2.3.0). */
             readonly scopeId?: string | null;
@@ -8504,11 +8484,11 @@ export interface components {
             readonly status?: "verified" | "reachable" | "cred_error" | "conn_error" | "unverified";
             /** Format: date-time */
             readonly lastCheckedAt?: string | null;
-            /** @description Whether the bastion's own SSH host key is pinned (SU-4/FU-1). See SshHost.hostKeyPinned. */
+            /** @description Whether the local runner has an approved host key for the bastion's own address (SU-4/FU-1). See SshHost.hostKeyPinned. */
             readonly hostKeyPinned?: boolean;
-            /** @description SHA256 fingerprint of the pinned bastion host key, for out-of-band comparison. Absent when unpinned. */
+            /** @description SHA256 fingerprint of that key, for out-of-band comparison. Absent when there is none. */
             readonly hostKeyFingerprint?: string;
-            /** @description Algorithm of the pinned bastion host key. Absent when unpinned. */
+            /** @description Algorithm of that key. Absent when there is none. */
             readonly hostKeyType?: string;
             /** @description The name of `ownerAgency`. */
             readonly ownerAgencyName?: string;
@@ -8529,19 +8509,19 @@ export interface components {
         /** @description Outcome of a "Test connection" probe (POST .../test). */
         SshTestResult: {
             /**
-             * @description verified = login OK; reachable = endpoint answered and host key pinned, auth not tested (no key configured — the keyless tier); cred_error = auth failed; conn_error = unreachable / host-key fail.
+             * @description verified = login OK; reachable = endpoint answered and its host key is the one approved, auth not tested (no key configured — the keyless tier); cred_error = auth failed; conn_error = unreachable, or the host presented a key other than the approved one; unverified = the endpoint answered and the local runner has NO approved host key for it. A test verifies and never captures (v2.3.0): scan the host and approve its key on the local runner's Host keys screen, then test again.
              * @enum {string}
              */
-            status: "verified" | "reachable" | "cred_error" | "conn_error";
+            status: "verified" | "reachable" | "cred_error" | "conn_error" | "unverified";
             /** @description Operator-safe explanation (never key material). */
             message?: string;
             /** @description Dial + auth round-trip in milliseconds. */
             latencyMs?: number;
             /** Format: date-time */
             checkedAt: string;
-            /** @description SHA256 fingerprint of the target's (or bastion's) host key as pinned after this test (FU-1) — shown so the operator can compare it out-of-band. Present on a verified result once a key is pinned. */
+            /** @description SHA256 fingerprint of the host key the local runner trusts for the target (or bastion) (FU-1) — shown so the operator can compare it out-of-band. Present when it has one. */
             hostKeyFingerprint?: string;
-            /** @description Algorithm of the pinned host key (e.g. ssh-ed25519). */
+            /** @description Algorithm of that key (e.g. ssh-ed25519). */
             hostKeyType?: string;
         };
         SshCredentialInput: {
@@ -15561,32 +15541,6 @@ export interface operations {
             };
         };
     };
-    clearSshHostKey: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path: {
-                hostId: components["parameters"]["hostId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Pin cleared (or was already empty). */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-        };
-    };
     listSshBastions: {
         parameters: {
             query?: never;
@@ -15730,32 +15684,6 @@ export interface operations {
                 };
                 content?: never;
             };
-        };
-    };
-    clearBastionHostKey: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path: {
-                bastionId: components["parameters"]["bastionId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Pin cleared (or was already empty). */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
         };
     };
     listSshCredentials: {

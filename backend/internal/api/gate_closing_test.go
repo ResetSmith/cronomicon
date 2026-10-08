@@ -335,13 +335,11 @@ func TestGC_HostAndBastionRecords(t *testing.T) {
 		// Global's and another agency's are not FIN's to touch.
 		{http.MethodPut, "/api/v1/ssh/hosts/h-manual", hostBody, true},
 		{http.MethodDelete, "/api/v1/ssh/hosts/h-manual", "", true},
-		{http.MethodDelete, "/api/v1/ssh/hosts/h-manual/host-key", "", true},
 		{http.MethodPost, "/api/v1/ssh/hosts/h-manual/test", "", true},
 		{http.MethodPut, "/api/v1/ssh/hosts/h-tax", hostBody, true},
 		{http.MethodDelete, "/api/v1/ssh/hosts/h-tax", "", true},
 		{http.MethodPut, "/api/v1/ssh/bastions/b-old", bastionBody, true},
 		{http.MethodDelete, "/api/v1/ssh/bastions/b-old", "", true},
-		{http.MethodDelete, "/api/v1/ssh/bastions/b-old/host-key", "", true},
 		{http.MethodPost, "/api/v1/ssh/bastions/b-old/test", "", true},
 		// Nor may it create one in Global, or in TAX.
 		{http.MethodPost, "/api/v1/ssh/hosts", `{"hostname":"x02","port":22,"ownerAgency":"global"}`, true},

@@ -11,7 +11,7 @@ import (
 )
 
 // TestImportGitHosts (M4 / §9): sync imports a git inventory's connection vars into
-// ssh_hosts (source='git'); a TOFU-captured host_key survives re-sync; and the
+// ssh_hosts (source='git'); a row's verified status survives re-sync; and the
 // prune-by-owner reaps a host dropped from inventory without touching operator rows.
 func TestImportGitHosts(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "import.db"))
@@ -48,7 +48,7 @@ func TestImportGitHosts(t *testing.T) {
 		}
 	}
 	get := func(host string) (address, user, key, source, syncedAt sql.NullString, hostKey sql.NullString) {
-		if err := pool.QueryRow(`SELECT address, username, auth_key_env_var, source, synced_at, host_key
+		if err := pool.QueryRow(`SELECT address, username, auth_key_env_var, source, synced_at, status
 		      FROM ssh_hosts WHERE hostname=?`, host).
 			Scan(&address, &user, &key, &source, &syncedAt, &hostKey); err != nil {
 			t.Fatalf("get %s: %v", host, err)
@@ -75,8 +75,10 @@ func TestImportGitHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// TOFU captures a host key on web1's git row.
-	if _, err := pool.Exec(`UPDATE ssh_hosts SET host_key='SSHKEYDATA' WHERE hostname='web1' AND source='git'`); err != nil {
+	// A connection test verifies web1's git row. (Until 2.3.0 this fixture
+	// stored a captured host key on the row; a host's key is the local runner's
+	// now, keyed by address, and the row carries only the test's outcome.)
+	if _, err := pool.Exec(`UPDATE ssh_hosts SET status='verified' WHERE hostname='web1' AND source='git'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,14 +87,14 @@ func TestImportGitHosts(t *testing.T) {
 		"[web]\nweb1 ansible_host=10.0.0.1 ansible_user=deploy\n[web:vars]\ncronomicon_auth_key_env_var=WEB_KEY\n")
 	sync(t, "2026-01-02T00:00:00Z")
 
-	// web1 git row: host_key preserved across re-sync, synced_at re-stamped.
+	// web1 git row: its verified status preserved across re-sync, synced_at re-stamped.
 	// (web1 now has 2 rows — git + cronomicon overlay — so query the git row explicitly.)
 	var gitKey, gitSynced string
-	if err := pool.QueryRow(`SELECT COALESCE(host_key,''), COALESCE(synced_at,'') FROM ssh_hosts WHERE hostname='web1' AND source='git'`).Scan(&gitKey, &gitSynced); err != nil {
+	if err := pool.QueryRow(`SELECT COALESCE(status,''), COALESCE(synced_at,'') FROM ssh_hosts WHERE hostname='web1' AND source='git'`).Scan(&gitKey, &gitSynced); err != nil {
 		t.Fatal(err)
 	}
-	if gitKey != "SSHKEYDATA" {
-		t.Errorf("web1 git host_key = %q, want it PRESERVED across re-sync", gitKey)
+	if gitKey != "verified" {
+		t.Errorf("web1 git status = %q, want it PRESERVED across re-sync", gitKey)
 	}
 	if gitSynced != "2026-01-02T00:00:00Z" {
 		t.Errorf("web1 synced_at = %q, want re-stamped to the second sync", gitSynced)
@@ -119,7 +121,7 @@ func TestImportGitHosts(t *testing.T) {
 
 // TestImportGitHosts_DegradePreserves: a TRANSIENT inventory degrade (e.g. a host
 // range) must NOT lose the scope's imported git rows or their TOFU-captured
-// host_key. The degrade re-stamps synced_at so the prune leaves them (OD-13/§9.4).
+// status. The degrade re-stamps synced_at so the prune leaves them (OD-13/§9.4).
 func TestImportGitHosts_DegradePreserves(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "degrade.db"))
 	if err != nil {
@@ -149,10 +151,10 @@ func TestImportGitHosts_DegradePreserves(t *testing.T) {
 		tx.Commit()
 	}
 
-	// First sync: clean. web1 imported as a git row; TOFU captures a key.
+	// First sync: clean. web1 imported as a git row; a test verifies it.
 	writeInvFile(t, filepath.Join(invDir, "prod.ini"), "[web]\nweb1 ansible_host=10.0.0.1\n")
 	sync("2026-01-01T00:00:00Z")
-	if _, err := pool.Exec(`UPDATE ssh_hosts SET host_key='SSHKEY' WHERE hostname='web1' AND source='git'`); err != nil {
+	if _, err := pool.Exec(`UPDATE ssh_hosts SET status='verified' WHERE hostname='web1' AND source='git'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -173,14 +175,14 @@ func TestImportGitHosts_DegradePreserves(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// web1's git row + its TOFU key MUST survive the degrade + prune.
+	// web1's git row + its verified status MUST survive the degrade + prune.
 	var key, synced string
-	if err := pool.QueryRow(`SELECT COALESCE(host_key,''), COALESCE(synced_at,'') FROM ssh_hosts WHERE hostname='web1' AND source='git'`).
+	if err := pool.QueryRow(`SELECT COALESCE(status,''), COALESCE(synced_at,'') FROM ssh_hosts WHERE hostname='web1' AND source='git'`).
 		Scan(&key, &synced); err != nil {
 		t.Fatalf("web1 git row was LOST on a transient degrade: %v", err)
 	}
-	if key != "SSHKEY" {
-		t.Errorf("web1 host_key = %q, want it PRESERVED through the degrade (OD-13)", key)
+	if key != "verified" {
+		t.Errorf("web1 status = %q, want it PRESERVED through the degrade (OD-13)", key)
 	}
 	if synced != "2026-01-02T00:00:00Z" {
 		t.Errorf("web1 synced_at = %q, want re-stamped by the degrade path", synced)

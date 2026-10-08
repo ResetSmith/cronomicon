@@ -157,11 +157,12 @@ func TestSSHExecutorInjectsReferences(t *testing.T) {
 
 	// Host + cronomicon job + the job's reference bindings.
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?)`,
+		host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -301,10 +302,11 @@ func TestSSHExecutorFailsClosedOnMissingBinding(t *testing.T) {
 		string(pemBytes), now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?,?)`, host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?)`, host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -380,10 +382,11 @@ func TestSSHExecutorFailsClosedOnAuditError(t *testing.T) {
 	if _, err := sec.Create(context.Background(), secrets.CreateInput{Key: "DB_PASS", Source: "stored", Scope: new(scope), Value: "resolvable"}, "tester"); err != nil {
 		t.Fatalf("create secret: %v", err)
 	}
-	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?,?)`, host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1','testhost',?,?,'tester','SSH_KEY',?)`, host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -483,11 +486,12 @@ func TestSSHExecutorFailsBeforeConnectingOnKeyBinding(t *testing.T) {
 		t.Fatalf("create credential: %v", err)
 	}
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?)`,
+		host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)

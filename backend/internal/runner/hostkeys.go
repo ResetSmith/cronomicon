@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net"
 	"net/http"
 	"slices"
@@ -95,6 +94,10 @@ var ErrReviewStale = errors.New("the keys changed after they were reviewed")
 // first key for a host and never changes one. Mapped 403 `owner_required`.
 var ErrHostKeyOwnersDecision = errors.New("this key would replace one the runner already trusts")
 
+// ErrHostKeyLocalRunnersOwner: a guest tried to decide a key on the local
+// runner. Its keys are a global administrator's alone (see resolveBatch).
+var ErrHostKeyLocalRunnersOwner = errors.New("the local runner's host keys are decided by a global administrator")
+
 // hostKeyScopesKey carries LR-63's limit through a request context.
 type hostKeyScopesKey struct{}
 
@@ -139,6 +142,11 @@ func (s *Service) failResolve(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusForbidden, "owner_required",
 			err.Error()+"; nothing was trusted. This runner is not your agency's: you may approve the first key "+
 				"for a host of your own scope, and replacing a trusted key is for the runner's owner")
+	case errors.Is(err, ErrHostKeyLocalRunnersOwner):
+		httpx.Fail(w, http.StatusForbidden, "owner_required",
+			"nothing was trusted. The local runner is this server, and the keys it trusts are the same for every "+
+				"agency it serves, so a global administrator approves them. What your scan found is waiting for one "+
+				"under Runners → Local runner → Host keys")
 	case errors.Is(err, ErrHostKeyUnverifiable):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "host_key_unverifiable",
 			err.Error()+"; reject it and scan the host again")
@@ -193,48 +201,43 @@ type keyClass struct {
 	MatchedServerPin bool
 }
 
-// serverPin returns the type and fingerprint of the key the SERVER pins for a
-// host (ssh_hosts.host_key, captured when the server itself connected), or ""
-// when it pins none. The host is looked up by its scope name when the decision
-// is for a scope, and otherwise by address and port.
+// serverPin is the key the SERVER trusts for a host: the key in force for the
+// local runner, by known_hosts host and key type. A key an agent scans is shown
+// beside it on the review screen ("matches the key the server trusts"), which
+// is evidence, never a decision: an operator still approves the fingerprint.
 //
-// Whose record it reads matters since records have owners (LR-69): the pin is
-// the "independent second opinion" that lets a key be approved by exception, so
-// a record another agency wrote for the same host name or address must not be
-// the one consulted — its administrator could pin any key they liked there.
-// For a scope, the record is the one that scope's runs would resolve
-// (execspec.HostRecordForScopeSQL). By address, it is a record the RUNNER's own
-// agencies could have written: imported for one of their scopes, hand-written
-// by one of them, or Global's.
-func serverPin(ctx context.Context, q hostkeys.Queryer, runnerID, hostName, scopeName, pattern string) (keyType, fingerprint string) {
-	var raw sql.NullString
-	if hostName != "" {
-		_ = q.QueryRowContext(ctx, `
-			SELECT h.host_key FROM ssh_hosts h
-			 WHERE h.hostname = ? AND COALESCE(h.host_key, '') <> ''
-			   AND `+execspec.HostRecordForScopeSQL+`
-			 ORDER BY `+execspec.HostRecordOrderSQL+`
-			 LIMIT 1`, hostName, scopeName, scopeName).Scan(&raw)
-	} else {
-		bare, port := patternPort(pattern)
-		_ = q.QueryRowContext(ctx, `
-			SELECT h.host_key FROM ssh_hosts h
-			 WHERE (h.address = ? OR (COALESCE(h.address, '') = '' AND h.hostname = ?))
-			   AND COALESCE(NULLIF(h.port, 0), 22) = ? AND COALESCE(h.host_key, '') <> ''
-			   AND ((h.scope_id IS NULL AND (h.owner_agency = ? OR h.owner_agency IN (
-			            SELECT ra.agency_id FROM runner_agencies ra WHERE ra.runner_id = ?)))
-			        OR EXISTS (SELECT 1 FROM scope_agencies sa JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
-			                    WHERE sa.scope_id = h.scope_id AND ra.runner_id = ?))
-			 ORDER BY h.last_modified_at DESC, h.id DESC LIMIT 1`, bare, bare, port, agencyid.Global, runnerID, runnerID).Scan(&raw)
-	}
-	if !raw.Valid || raw.String == "" {
-		return "", ""
-	}
-	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(raw.String))
-	if err != nil {
-		return "", ""
-	}
-	return pub.Type(), ssh.FingerprintSHA256(pub)
+// Until 2.3.0 the server kept a key per host record (ssh_hosts.host_key,
+// captured on first connect), and this read it through a third copy of the
+// "which record does this host resolve to" rule. The server's trust is the
+// local runner's ledger now, keyed like every runner's by the host pattern the
+// line carries, so the question needs no host record at all.
+//
+// WHOSE decision it reads still matters (LR-69). The pin is a second opinion
+// shown to whoever reviews a key for runnerID — it can reassure them, and it
+// can mark a key "changed", which a guest may not approve — so it must not be
+// an opinion another agency could have planted. An administrator of an agency
+// the local runner serves may approve a first key on it for a host of their
+// own agency's scope (LR-63), and two agencies can list the same address. So
+// a decision counts only if it was made for no scope at all (typed or pasted:
+// the local runner's owner, a global administrator) or for a scope of an agency
+// runnerID itself serves. A key the upgrade CARRIED from a record an agency
+// had written by hand is that agency's opinion (carriedByUpgradeFor), and
+// counts only for a runner that serves that agency.
+func serverPin(ctx context.Context, q hostkeys.Queryer, runnerID, pattern, keyType string) (fingerprint string) {
+	var fp sql.NullString
+	_ = q.QueryRowContext(ctx, `
+		SELECT l.fingerprint FROM host_key_ledger l
+		  JOIN runners rn ON rn.id = l.runner_id AND rn.kind = 'server'
+		 WHERE l.host = ? AND l.key_type = ?
+		   AND l.decision = 'approved' AND l.superseded_at IS NULL
+		   AND ((l.scope_id IS NULL AND l.actor NOT LIKE 'upgrade:agency:%')
+		        OR EXISTS (SELECT 1 FROM scope_agencies sa
+		                     JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+		                    WHERE sa.scope_id = l.scope_id AND ra.runner_id = ?)
+		        OR EXISTS (SELECT 1 FROM runner_agencies ra
+		                    WHERE ra.runner_id = ? AND l.actor = 'upgrade:agency:' || ra.agency_id))
+		 ORDER BY l.id DESC LIMIT 1`, pattern, keyType, runnerID, runnerID).Scan(&fp)
+	return fp.String
 }
 
 // classifyKey says how a candidate key relates to what is already trusted. What
@@ -251,8 +254,8 @@ func classifyKey(ctx context.Context, q hostkeys.Queryer, runnerID, pattern, hos
 		   AND decision = 'approved' AND superseded_at IS NULL
 		 ORDER BY id DESC LIMIT 1`, runnerID, pattern, keyType).Scan(&inForce)
 
-	pinType, pinFP := serverPin(ctx, q, runnerID, hostName, scopeName, pattern)
-	matched := pinType == keyType && pinFP == fingerprint
+	pinFP := serverPin(ctx, q, runnerID, pattern, keyType)
+	matched := pinFP != "" && pinFP == fingerprint
 
 	switch {
 	case inForce.Valid && inForce.String == fingerprint:
@@ -261,7 +264,7 @@ func classifyKey(ctx context.Context, q hostkeys.Queryer, runnerID, pattern, hos
 		return keyClass{Status: keyStatusChanged, PreviousFingerprint: inForce.String, PreviousSource: "runner", MatchedServerPin: matched}
 	case matched:
 		return keyClass{Status: keyStatusMatch, MatchedServerPin: true}
-	case pinType == keyType && pinFP != "":
+	case pinFP != "":
 		return keyClass{Status: keyStatusChanged, PreviousFingerprint: pinFP, PreviousSource: "server"}
 	default:
 		return keyClass{Status: keyStatusNew}
@@ -310,6 +313,42 @@ func writeLedger(ctx context.Context, tx *sql.Tx, batchID, runnerID, runnerName,
 			e.class.MatchedServerPin, prev, actor, ts, superseded); err != nil {
 			return fmt.Errorf("record host key decision: %w", err)
 		}
+	}
+	return settleLocalLedger(ctx, tx, runnerID, ts)
+}
+
+// settleLocalLedger makes the local runner's ledger rows say what is true of
+// them. An agent's approval is QUEUED until a poll delivers the line and
+// confirmed when the agent reports its file; a superseded key is untrusted
+// when the agent has removed the line. The local runner has no file and no
+// poll: its trust store IS the ledger (in force means approved and not
+// superseded), so an approval is delivered and confirmed the moment it is
+// written and a superseded key is untrusted the same moment. Stamped rather
+// than special-cased in every reader, so coverage, the ledger view and the
+// "to deliver" indexes all read the local runner's rows correctly as they are.
+// A no-op for an agent.
+func settleLocalLedger(ctx context.Context, tx *sql.Tx, runnerID, ts string) error {
+	var local bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT kind = 'server' FROM runners WHERE id = ?`, runnerID).Scan(&local); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // a deregistered agent's record; nothing to settle
+		}
+		return fmt.Errorf("settle host keys: %w", err)
+	}
+	if !local {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE host_key_ledger
+		   SET delivered_at = COALESCE(delivered_at, ?), confirmed_at = COALESCE(confirmed_at, ?)
+		 WHERE runner_id = ? AND decision = 'approved' AND superseded_at IS NULL`, ts, ts, runnerID); err != nil {
+		return fmt.Errorf("settle host keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE host_key_ledger SET untrusted_at = COALESCE(untrusted_at, ?)
+		 WHERE runner_id = ? AND decision = 'approved' AND superseded_at IS NOT NULL`, ts, runnerID); err != nil {
+		return fmt.Errorf("settle host keys: %w", err)
 	}
 	return nil
 }
@@ -464,6 +503,21 @@ func (s *Service) resolveBatch(ctx context.Context, runnerID string, approve, re
 	// their own agency. One that was not reads as "not pending": it is not on
 	// the list they were shown, and the refusal must not confirm it exists.
 	limit, limited := hostKeyScopes(ctx)
+	// On the LOCAL runner a guest decides nothing. The server's trust in a host
+	// is keyed by address and is the same for every agency whose runs it takes
+	// — it holds all their secrets — so a key approved by one agency's
+	// administrator would be the key the server accepts when it connects to
+	// that address for any other. A guest may still scan their own scope with
+	// it and see what was found; a global administrator approves.
+	if limited {
+		var local bool
+		if err := tx.QueryRowContext(ctx, `SELECT kind = 'server' FROM runners WHERE id = ?`, runnerID).Scan(&local); err != nil {
+			return res, err
+		}
+		if local {
+			return res, ErrHostKeyLocalRunnersOwner
+		}
+	}
 
 	ts := now()
 	var entries []ledgerEntry
@@ -521,6 +575,23 @@ func (s *Service) resolveBatch(ctx context.Context, runnerID string, approve, re
 				}
 				if limited && e.class.Status == keyStatusChanged {
 					return res, fmt.Errorf("%w (%s, %s)", ErrHostKeyOwnersDecision, e.host, e.keyType)
+				}
+				// "A first key" means the host has NONE, of any type. The
+				// classification above is per key type, so a host trusted by
+				// its ed25519 key would otherwise take a second, ecdsa key from
+				// a guest as "new" — and a runner accepts any key in force for
+				// a host, whichever type it negotiates.
+				if limited {
+					var held int
+					if err := tx.QueryRowContext(ctx, `
+						SELECT COUNT(*) FROM host_key_ledger
+						 WHERE runner_id = ? AND host = ? AND decision = 'approved' AND superseded_at IS NULL`,
+						runnerID, e.host).Scan(&held); err != nil {
+						return res, err
+					}
+					if held > 0 {
+						return res, fmt.Errorf("%w (%s already has a trusted key of another type)", ErrHostKeyOwnersDecision, e.host)
+					}
 				}
 				if e.class.Status == keyStatusChanged && !acknowledged[id] {
 					return res, fmt.Errorf("%w (%s, %s now replaces a trusted key)", ErrReviewStale, e.host, e.keyType)
@@ -767,11 +838,23 @@ func (s *Service) HandleProvideHostKeys(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// The local runner looks a host up by the address it dials, exactly; a
+	// hashed host names nothing it could look up, so such a line would be shown
+	// as trusted and never match. An agent's verifier reads hashed hosts.
+	local, lerr := settings.IsLocalRunner(r.Context(), s.db, runnerID)
+	if lerr != nil {
+		s.log.Error("provide host keys: is this the local runner", "error", lerr)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
+		return
+	}
 	var candidates []keyCandidate
 	seen := map[string]bool{}
 	bad := 0
 	for _, l := range lines {
 		for _, c := range parseProvidedLine(l) {
+			if c.Error == "" && c.Hashed && local {
+				c.Error = "a hashed host cannot be used by the local runner, which looks a host up by its address; paste the line with the host named"
+			}
 			if c.Error == "" {
 				key := c.Host + "\x00" + c.KeyType
 				if seen[key] {
@@ -1562,19 +1645,20 @@ func (s *Service) HandleScopeHostKeyCoverage(w http.ResponseWriter, r *http.Requ
 	}
 	cov.Runners = make([]coverageRunner, 0, len(bound))
 	for _, b := range bound {
-		// The local runner is left out. This table reads a runner's ledger and
-		// its known_hosts report, and the local runner has neither: it verifies
-		// against the keys kept with the SSH targets (until they move to the
-		// ledger). Listed, it would show every host as untrusted and offer a
-		// scan its routes refuse.
-		if local, lerr := settings.IsLocalRunner(ctx, s.db, b.RunnerID); lerr != nil {
-			fail(lerr)
-			return
-		} else if local {
-			continue
-		}
 		trusted, err := hostkeys.LoadTrusted(ctx, s.db, b.RunnerID)
 		if err != nil {
+			fail(err)
+			return
+		}
+		// Whether a runner trusts a host behind a bastion depends on how THAT
+		// runner reaches the bastion: an agent by the name it resolves, the
+		// local runner through the bastion's record. Same hosts, same order;
+		// each runner is judged on its own plan.
+		plan, err := hostkeys.PlanScopeForRunner(ctx, s.db, cov.Scope, b.RunnerID)
+		if err != nil || len(plan) != len(hosts) {
+			if err == nil {
+				err = errors.New("the scope's hosts changed while its coverage was being read")
+			}
 			fail(err)
 			return
 		}
@@ -1584,8 +1668,8 @@ func (s *Service) HandleScopeHostKeyCoverage(w http.ResponseWriter, r *http.Requ
 		if reported.Valid {
 			cr.ReportedAt = &reported.String
 		}
-		for i, h := range hosts {
-			cr.States[i] = trusted.State(h)
+		for i := range hosts {
+			cr.States[i] = trusted.State(plan[i])
 			if cr.States[i] == hostkeys.StateNone {
 				cr.Missing++
 			}

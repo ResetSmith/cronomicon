@@ -66,6 +66,10 @@ type ScopeHost struct {
 	// keys are. The bastion itself is dialled directly and can be scanned.
 	Via        string `json:"via,omitempty"`
 	ViaPattern string `json:"viaPattern,omitempty"`
+	// ViaTarget is what a scan of the bastion dials. For an agent it is Via
+	// itself (the agent resolves the name); for the local runner it is the
+	// bastion RECORD's address, which is what the server hops through.
+	ViaTarget string `json:"-"`
 }
 
 // Target is the string a scan is asked to dial for a host record, and the
@@ -87,12 +91,28 @@ func Target(t execspec.Target) string {
 // on the form goes through one function.
 func Pattern(target string) string { return knownhosts.Normalize(target) }
 
-// PlanScope expands a scope into its hosts. A host with no SSH host record has
-// no address on file — a runner reaches it by its inventory name, and a scope
-// scan leaves it out. A host reached through a bastion cannot be dialled
-// directly, and scanning through a bastion is not supported: its key has to be
-// provided. Both are returned, with the reason; nothing is dropped silently.
+// PlanScope expands a scope into its hosts, as an AGENT reaches them. A host
+// with no SSH host record has no address on file — a runner reaches it by its
+// inventory name, and a scope scan leaves it out. A host reached through a
+// bastion cannot be dialled directly, and scanning through a bastion is not
+// supported: its key has to be provided. Both are returned, with the reason;
+// nothing is dropped silently.
 func PlanScope(ctx context.Context, database *sql.DB, scopeName string) ([]ScopeHost, error) {
+	return PlanScopeFor(ctx, database, scopeName, false)
+}
+
+// UnresolvedBastion is the ViaPattern of a host whose bastion the server cannot
+// resolve. It is no known_hosts host and nothing can be trusted under it, so
+// such a host reads as untrusted — which it is: the server cannot reach it.
+const UnresolvedBastion = "\x00unresolved-bastion"
+
+// PlanScopeFor is PlanScope for one kind of runner. The two kinds reach a
+// bastion differently: an agent dials `via` as an address it resolves itself,
+// and the server (the local runner) hops through the bastion RECORD the name
+// stands for (execspec.BastionByRef), at that record's address and port. So for
+// the local runner the bastion's known_hosts host, and the target a scan of it
+// dials, come from the record — the machine the engine will actually verify.
+func PlanScopeFor(ctx context.Context, database *sql.DB, scopeName string, server bool) ([]ScopeHost, error) {
 	names, err := execspec.ScopeHosts(ctx, database, scopeName)
 	if err != nil {
 		return nil, err
@@ -107,8 +127,23 @@ func PlanScope(ctx context.Context, database *sql.DB, scopeName string) ([]Scope
 		case t == nil:
 			out = append(out, ScopeHost{Host: n, Pattern: Pattern(n),
 				NotScannable: "no SSH host record, so there is no address to scan"})
+		case t.Via != "" && server:
+			h := ScopeHost{Host: n, Pattern: Pattern(Target(*t)), Via: t.Via,
+				NotScannable: "reached through bastion " + t.Via + "; not scannable, provide the key"}
+			b, berr := execspec.BastionByRef(ctx, database, t.Via, t.Owners)
+			switch {
+			case errors.Is(berr, execspec.ErrNoBastion):
+				h.ViaPattern = UnresolvedBastion
+				h.NotScannable = "reached through bastion " + t.Via + ", which has no record this host's agency can use"
+			case berr != nil:
+				return nil, berr
+			default:
+				h.ViaTarget = Target(*b)
+				h.ViaPattern = Pattern(h.ViaTarget)
+			}
+			out = append(out, h)
 		case t.Via != "":
-			out = append(out, ScopeHost{Host: n, Pattern: Pattern(Target(*t)), Via: t.Via, ViaPattern: Pattern(t.Via),
+			out = append(out, ScopeHost{Host: n, Pattern: Pattern(Target(*t)), Via: t.Via, ViaPattern: Pattern(t.Via), ViaTarget: t.Via,
 				NotScannable: "reached through bastion " + t.Via + "; not scannable, provide the key"})
 		default:
 			tg := Target(*t)
@@ -116,6 +151,17 @@ func PlanScope(ctx context.Context, database *sql.DB, scopeName string) ([]Scope
 		}
 	}
 	return out, nil
+}
+
+// PlanScopeForRunner is PlanScopeFor with the kind read from the runner's row
+// (an id with no row is an agent's: a deregistered one).
+func PlanScopeForRunner(ctx context.Context, database *sql.DB, scopeName, runnerID string) ([]ScopeHost, error) {
+	var server bool
+	if err := database.QueryRowContext(ctx,
+		`SELECT kind = 'server' FROM runners WHERE id = ?`, runnerID).Scan(&server); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	return PlanScopeFor(ctx, database, scopeName, server)
 }
 
 // Trusted is what a runner is known to trust.
@@ -305,7 +351,7 @@ func wildcardMatch(pattern, s string) bool {
 // Missing counts the hosts of a scope a runner does not trust, with the scope's
 // host count, so a caller can say "3 of 12".
 func Missing(ctx context.Context, database *sql.DB, scopeName, runnerID string) (missing, total int, err error) {
-	hosts, err := PlanScope(ctx, database, scopeName)
+	hosts, err := PlanScopeForRunner(ctx, database, scopeName, runnerID)
 	if err != nil {
 		return 0, 0, err
 	}

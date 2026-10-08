@@ -150,11 +150,12 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	}
 	// SSH host record (strict host-key verification using the server's key).
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		"testhost", host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?)`,
+		"testhost", host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	// Job with an inline command + a queued ssh run targeting the host.
 	if _, err := pool.Exec(`INSERT INTO jobs(name, run_type, command, concurrency_policy, synced_at) VALUES('j1','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
@@ -262,11 +263,12 @@ func setupBlockingRun(t *testing.T, timeoutSeconds int) (*Service, *sql.DB) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		"testhost", host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', ?, ?, ?, 'tester', 'SSH_KEY', ?)`,
+		"testhost", host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, run_type, command, concurrency_policy, timeout_seconds, synced_at) VALUES('j1','bash','sleep 999','Allow',?,?)`,
 		timeoutSeconds, now); err != nil {
 		t.Fatal(err)

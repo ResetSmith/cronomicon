@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,8 +12,8 @@ import (
 	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 
+	"github.com/ResetSmith/cronomicon/internal/keyscan"
 	"github.com/ResetSmith/cronomicon/internal/knownhostsline"
 )
 
@@ -34,18 +32,13 @@ import (
 // type and fingerprint, never the file itself — so the server can show the
 // file's keys beside the ones it approved, and tell whether a delivery landed.
 
-// scannedHostKey is one host's captured key, uploaded for approval. JSON tags
-// match the server's upload contract (keyscan.go: scannedHostKey).
-type scannedHostKey struct {
-	Host           string `json:"host"`
-	KeyType        string `json:"keyType"`
-	Fingerprint    string `json:"fingerprint"`
-	KnownHostsLine string `json:"knownHostsLine"`
-}
+// scannedHostKey is one host's captured key, uploaded for approval. The scan
+// itself is internal/keyscan, shared with the server, which runs it in-process
+// for the local runner.
+type scannedHostKey = keyscan.Key
 
-// keyscanParallel bounds how many hosts are dialled at once. A scope scan can
-// name hundreds; an unreachable one costs a full dial timeout.
-const keyscanParallel = 8
+// keyscanParallel bounds how many hosts are dialled at once.
+const keyscanParallel = keyscan.Parallel
 
 // handleKeyscan scans the requested hosts and uploads each captured key as soon
 // as its host answers. Runs in its own goroutine (dispatched from handleControl)
@@ -88,45 +81,9 @@ func (a *Agent) handleKeyscan(ctx context.Context, hosts []string) {
 }
 
 // scanHostKey dials a target and captures its presented host key without
-// verifying. target may be "host" (default port 22) or "host:port". The
-// known_hosts line is keyed on the normalized dial address so it matches what
-// the run-time verifier (knownhosts.New) checks.
+// verifying (keyscan.Scan, with the agent's dial timeout).
 func scanHostKey(ctx context.Context, target string) (scannedHostKey, error) {
-	addr := target
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		addr = net.JoinHostPort(addr, "22") // bare host → default SSH port
-	}
-
-	var captured ssh.PublicKey
-	captureDone := errors.New("host key captured") // sentinel to abort after the key arrives
-	cfg := &ssh.ClientConfig{
-		User: "cronomicon-keyscan", // never authenticates; we only want the host key
-		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			captured = key
-			return captureDone
-		},
-		Timeout: sshDialTimeout,
-	}
-
-	d := net.Dialer{Timeout: sshDialTimeout}
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return scannedHostKey{}, err
-	}
-	defer conn.Close()
-	// The handshake returns our sentinel error once the host key is captured;
-	// that's expected — we never proceed to auth.
-	_, _, _, hErr := ssh.NewClientConn(conn, addr, cfg)
-	if captured == nil {
-		return scannedHostKey{}, fmt.Errorf("no host key presented by %s: %v", addr, hErr)
-	}
-
-	return scannedHostKey{
-		Host:           target,
-		KeyType:        captured.Type(),
-		Fingerprint:    ssh.FingerprintSHA256(captured),
-		KnownHostsLine: strings.TrimSpace(knownhosts.Line([]string{knownhosts.Normalize(addr)}, captured)),
-	}, nil
+	return keyscan.Scan(ctx, target, sshDialTimeout)
 }
 
 // handleTrustHosts appends approved known_hosts lines to the agent's trust

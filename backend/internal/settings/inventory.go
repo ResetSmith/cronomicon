@@ -398,12 +398,13 @@ func ImportScopeHosts(ctx context.Context, database *sql.DB, id string, hosts []
 				res.Skipped = append(res.Skipped, hc.Host)
 				continue
 			}
-			// If the dial address moved, the stored TOFU host_key + verification
-			// status belong to a DIFFERENT machine — clear them so the next dial
-			// re-TOFUs against the new endpoint rather than trusting a stale key.
+			// If the dial address moved, the verification status belongs to a
+			// DIFFERENT machine. (The host key needs nothing: trust is the local
+			// runner's, keyed by address, so the new address simply has none
+			// until its key is approved.)
 			if existingAddr.String != hc.Address {
 				if _, err := tx.ExecContext(ctx,
-					`UPDATE ssh_hosts SET host_key=NULL, status='unverified' WHERE id=?`, existingID); err != nil {
+					`UPDATE ssh_hosts SET status='unverified' WHERE id=?`, existingID); err != nil {
 					return nil, err
 				}
 			}

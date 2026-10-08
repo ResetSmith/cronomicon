@@ -3,10 +3,9 @@ package sshexec
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"net"
 	"time"
 
@@ -348,47 +347,6 @@ func signerFromEnvVar(ctx context.Context, db *sql.DB, key string) (ssh.Signer, 
 	return signer, true, perr
 }
 
-// hostKeyCallback returns a strict callback when a host key is stored, or a
-// TOFU-capture callback (writes the first-seen key, audited) when none is.
-// There is no insecure-ignore path (EX-D3).
-func (s *Service) hostKeyCallback(t target) ssh.HostKeyCallback {
-	if t.HostKey != "" {
-		expected, _, _, _, err := ssh.ParseAuthorizedKey([]byte(t.HostKey))
-		if err != nil {
-			// Stored key is unparseable → refuse rather than fall open.
-			return func(string, net.Addr, ssh.PublicKey) error {
-				return fmt.Errorf("stored host key for %q is unparseable", t.Name)
-			}
-		}
-		return func(_ string, _ net.Addr, presented ssh.PublicKey) error {
-			if string(presented.Marshal()) != string(expected.Marshal()) {
-				return fmt.Errorf("host key mismatch for %q (possible MITM)", t.Name)
-			}
-			return nil
-		}
-	}
-	// TOFU: capture the first-seen key and persist it, loudly.
-	return func(_ string, _ net.Addr, presented ssh.PublicKey) error {
-		authLine := string(ssh.MarshalAuthorizedKey(presented))
-		// Qualify the capture to the SPECIFIC row HostByName resolved (its id), so
-		// with M4 dual-source rows the key lands on the row the executor actually
-		// dialed — not every row sharing the hostname (§9.4). A target with no row id
-		// is a synthetic/unresolved one (no ssh_hosts row to write); skip the capture
-		// rather than do the unbounded `WHERE hostname` write the milestone exists to
-		// kill. (Bastion hops never use this callback — they pin no key.)
-		if t.ID == "" {
-			s.log.Warn("TOFU capture skipped: target carries no ssh_hosts row id", "host", t.Name)
-			return nil
-		}
-		if _, err := s.db.Exec(`UPDATE ssh_hosts SET host_key = ? WHERE id = ?`, authLine, t.ID); err != nil {
-			s.log.Error("TOFU host-key capture failed", "host", t.Name, "error", err)
-		} else {
-			s.log.Warn("TOFU host-key captured on first connect (verify out-of-band)", "host", t.Name, "type", presented.Type())
-		}
-		return nil
-	}
-}
-
 // dial opens an SSH client to the target — directly, or jumped through its
 // bastion (ProxyJump-style). The returned closer tears down both hops.
 func (s *Service) dial(ctx context.Context, t target, signer ssh.Signer) (*ssh.Client, func(), error) {
@@ -397,11 +355,11 @@ func (s *Service) dial(ctx context.Context, t target, signer ssh.Signer) (*ssh.C
 		user = "root"
 	}
 	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: s.hostKeyCallback(t),
-		Timeout:         dialTimeout,
+		User:    user,
+		Auth:    []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		Timeout: dialTimeout,
 	}
+	cfg.HostKeyCallback, cfg.HostKeyAlgorithms = s.hostTrust(ctx, t)
 
 	if t.Via == "" {
 		client, err := dialContext(ctx, t.DialAddr(), cfg)
@@ -441,12 +399,12 @@ func (s *Service) dial(ctx context.Context, t target, signer ssh.Signer) (*ssh.C
 	bCfg := &ssh.ClientConfig{
 		User: bUser,
 		Auth: []ssh.AuthMethod{ssh.PublicKeys(bSigner)},
-		// SU-4: verify the bastion host key (was InsecureIgnoreHostKey → first-connect
-		// MITM + secret exfil). Strict compare when bastions.host_key is pinned, else
-		// TOFU-capture the first-seen key — mirroring the target hostKeyCallback.
-		HostKeyCallback: s.bastionHostKeyCallback(b.ID, t.Via, b.HostKey),
-		Timeout:         dialTimeout,
+		// SU-4: verify the bastion hop like the target's, against the local
+		// runner's approved keys (it was InsecureIgnoreHostKey once, and then
+		// capture-on-first-connect).
+		Timeout: dialTimeout,
 	}
+	bCfg.HostKeyCallback, bCfg.HostKeyAlgorithms = s.bastionTrust(ctx, *b, t.Via)
 	bClient, err := dialContext(ctx, b.DialAddr(), bCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("dial bastion %s: %w", t.Via, err)
@@ -479,55 +437,11 @@ func dialContext(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.
 	return ssh.NewClient(c, chans, reqs), nil
 }
 
-// bastionAddr resolves a bastion reference to a dial address, user, and its own
-// auth-key env-var name. A host's `via` stores the bastion *name*, so we match
-// id / name / hostname, and prefer the `address` column for the actual dial
-// target (hostname can be a display name). The bastion's auth_key_env_var (when
-// set) lets dial() authenticate the hop with the BASTION's key rather than the
-// target's — matching ProbeBastion (PP-H4).
-//
-// LR-70: a host routes only through a bastion that the host record's own agency
-// owns, or Global. `owners` is the record's (execspec.Target.Owners); a bastion
-// of any other agency does not exist as far as this lookup is concerned, so a
-// record cannot be pointed through another agency's jump host by naming it. Of
-// two bastions that answer to one reference, the agency's own is taken before
-// Global's.
+// bastionAddr resolves a host record's `via` to the bastion the engine hops
+// through (execspec.BastionByRef: the record's own agency's bastion, or
+// Global's — LR-70).
 func (s *Service) bastionAddr(ctx context.Context, ref string, owners []string) (*target, error) {
-	ownersJSON, err := json.Marshal(append([]string{}, owners...))
-	if err != nil {
-		return nil, err
-	}
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, hostname, address, port, username, auth_key_env_var, auth_credential_id, host_key, owner_agency FROM bastions
-		WHERE (id = ? OR name = ? OR hostname = ?)
-		  AND (owner_agency = ? OR owner_agency IN (SELECT value FROM json_each(?)))
-		ORDER BY (owner_agency = ?) ASC, id LIMIT 1`, ref, ref, ref, agencyid.Global, string(ownersJSON), agencyid.Global)
-	var id, hostname, owner string
-	var address, username, authKey, authCredID, hostKey sql.NullString
-	var port sql.NullInt64
-	if err := row.Scan(&id, &hostname, &address, &port, &username, &authKey, &authCredID, &hostKey, &owner); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("bastion %q not found among this host's agency's bastions or Global's", ref)
-		}
-		return nil, err
-	}
-	dialHost := address.String
-	if dialHost == "" {
-		dialHost = hostname
-	}
-	// Reuse the Target type as the bastion carrier: DialAddr() applies the
-	// address→name and port→22 fallbacks, and ID/HostKey drive SU-4 pinning.
-	return &target{
-		ID:               id,
-		Name:             hostname,
-		Address:          dialHost,
-		Port:             int(port.Int64),
-		User:             username.String,
-		AuthKeyEnvVar:    authKey.String,
-		AuthCredentialID: authCredID.String,
-		HostKey:          hostKey.String,
-		Owners:           []string{owner},
-	}, nil
+	return execspec.BastionByRef(ctx, s.db, ref, owners)
 }
 
 // ownerKeyGuard is the keyGuard for a key that a RECORD names for itself — a
@@ -548,39 +462,4 @@ func ownerKeyGuard(ctx context.Context, db *sql.DB, ownerIDs []string) (keyGuard
 		g.agencies = append(g.agencies, name)
 	}
 	return g, nil
-}
-
-// bastionHostKeyCallback mirrors hostKeyCallback for the BASTION hop (SU-4): strict
-// compare when a key is pinned in bastions.host_key (mismatch → MITM error;
-// unparseable stored key → refuse), else TOFU-capture the first-seen key into the
-// bastion row. Replaces the prior InsecureIgnoreHostKey (accept-any) callback.
-func (s *Service) bastionHostKeyCallback(bastionID, name, storedKey string) ssh.HostKeyCallback {
-	if storedKey != "" {
-		expected, _, _, _, err := ssh.ParseAuthorizedKey([]byte(storedKey))
-		if err != nil {
-			return func(string, net.Addr, ssh.PublicKey) error {
-				return fmt.Errorf("stored host key for bastion %q is unparseable", name)
-			}
-		}
-		return func(_ string, _ net.Addr, presented ssh.PublicKey) error {
-			if string(presented.Marshal()) != string(expected.Marshal()) {
-				return fmt.Errorf("bastion host key mismatch for %q (possible MITM)", name)
-			}
-			return nil
-		}
-	}
-	// TOFU: capture the first-seen bastion key, loudly.
-	return func(_ string, _ net.Addr, presented ssh.PublicKey) error {
-		if bastionID == "" {
-			s.log.Warn("TOFU capture skipped: bastion carries no row id", "bastion", name)
-			return nil
-		}
-		authLine := string(ssh.MarshalAuthorizedKey(presented))
-		if _, err := s.db.Exec(`UPDATE bastions SET host_key = ? WHERE id = ?`, authLine, bastionID); err != nil {
-			s.log.Error("TOFU bastion host-key capture failed", "bastion", name, "error", err)
-		} else {
-			s.log.Warn("TOFU bastion host-key captured on first connect (verify out-of-band)", "bastion", name, "type", presented.Type())
-		}
-		return nil
-	}
 }

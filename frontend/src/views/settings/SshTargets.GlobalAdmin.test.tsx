@@ -122,10 +122,10 @@ describe("SSH Targets — an administrator of one agency (LR-69)", () => {
 
   it("leaves their own records' actions live, and disables another owner's with whose it is", async () => {
     await open(false);
-    for (const name of ["Test", "Clear pin", "Edit", "Remove"]) expect(button(rowOf("jump-fin"), name).disabled, name).toBe(false);
+    for (const name of ["Test", "Edit", "Remove"]) expect(button(rowOf("jump-fin"), name).disabled, name).toBe(false);
     for (const name of ["Test", "Edit", "Remove"]) expect(button(rowOf("fin-db.internal"), name).disabled, name).toBe(false);
 
-    for (const name of ["Test", "Clear pin", "Edit", "Remove"]) {
+    for (const name of ["Test", "Edit", "Remove"]) {
       const b = button(rowOf("jump-dmz"), name);
       expect(b.disabled, name).toBe(true);
       expect(b.title, name).toBe("This bastion is Global's — only a global administrator (a role on every agency) can change it.");
@@ -206,7 +206,7 @@ describe("SSH Targets — a global administrator", () => {
       expect(b.title, name).toBe("");
     }
     for (const r of ["jump-dmz", "jump-fin"]) {
-      for (const name of ["Test", "Clear pin", "Edit", "Remove"]) expect(button(rowOf(r), name).disabled, `${r} ${name}`).toBe(false);
+      for (const name of ["Test", "Edit", "Remove"]) expect(button(rowOf(r), name).disabled, `${r} ${name}`).toBe(false);
     }
     for (const name of ["Test", "Edit", "Remove"]) expect(button(rowOf("tax-db.internal"), name).disabled, name).toBe(false);
 
@@ -219,5 +219,21 @@ describe("SSH Targets — a global administrator", () => {
     fireEvent.click(button(screen, "Add"));
     await waitFor(() => expect(writes.some((w) => w.method === "POST" && w.path === "/ssh/hosts")).toBe(true));
     expect(writes.find((w) => w.path === "/ssh/hosts")!.body).toMatchObject({ hostname: "new-host", ownerAgency: "ag-tax" });
+  });
+
+  // The host key on a record is the one the LOCAL RUNNER trusts for its address
+  // (2.3.0). The server connects only to a host that has one, and captures
+  // nothing on first connect: a record without one says so, and where the key
+  // is approved. There is no "clear" here any more — a key is replaced or
+  // removed where it is approved.
+  it("shows whether the local runner has an approved key, and offers nothing that would capture or clear one", async () => {
+    await open(true);
+    // The fixture's hosts have no approved key; its bastions do.
+    const badge = rowOf("web-01.internal").getByText("⚠ no approved key");
+    expect(badge.getAttribute("title")).toMatch(/the server will not connect to it/);
+    expect(badge.getAttribute("title")).toMatch(/Runners → Local runner → Host keys/);
+    expect(badge.getAttribute("title")).toMatch(/Nothing is captured on first connect/);
+    expect(rowOf("jump-dmz").getByText("approved")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Clear pin" })).toBeNull();
   });
 });

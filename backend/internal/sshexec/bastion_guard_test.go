@@ -15,11 +15,13 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
 
-// TestSSHExecutorRefusesSecretsOverUnpinnedBastion (SU-4 interim guard): a run that
-// injects a secret and routes to an UNPINNED target over a bastion hop is failed
-// closed BEFORE any dial — an unpinned target behind a bastion is only TOFU-trusted
-// on first connect, a MITM window the injected secret must not cross.
-func TestSSHExecutorRefusesSecretsOverUnpinnedBastion(t *testing.T) {
+// TestSSHExecutorDoesNotConnectThroughAnUnapprovedBastion. The SU-4 interim guard
+// refused to inject secrets over a bastion to a target whose key had only been
+// captured on first connect. Nothing is captured on first connect since 2.3.0:
+// a hop the local runner has no approved key for is not connected to at all, so
+// a run that injects a secret fails there — before the target is reached, and
+// with the secret nowhere in the log.
+func TestSSHExecutorDoesNotConnectThroughAnUnapprovedBastion(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "guard.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +44,7 @@ func TestSSHExecutorRefusesSecretsOverUnpinnedBastion(t *testing.T) {
 	if _, err := sec.Create(context.Background(), secrets.CreateInput{Key: "DB_PASS", Source: "stored", Scope: new(scope), Value: secretVal}, "tester"); err != nil {
 		t.Fatalf("create secret: %v", err)
 	}
-	// Target routed VIA a bastion and NOT pinned (host_key NULL).
+	// Target routed VIA a bastion; no key is approved for either hop.
 	if _, err := pool.Exec(`INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, via, created_at)
 	      VALUES('h1','testhost','127.0.0.1',2222,'tester','SSH_KEY','jump',?)`, now); err != nil {
 		t.Fatal(err)
@@ -79,17 +81,14 @@ func TestSSHExecutorRefusesSecretsOverUnpinnedBastion(t *testing.T) {
 	if err := pool.QueryRow(`SELECT status, COALESCE(queued_reason,'') FROM runs WHERE id='run-1'`).Scan(&status, &reason); err != nil {
 		t.Fatal(err)
 	}
-	if status != "failure" {
-		t.Errorf("run status = %q, want failure (interim bastion guard)", status)
-	}
-	if reason != "unpinned_bastion_target" {
-		t.Errorf("run reason = %q, want unpinned_bastion_target", reason)
+	if status != "failure" && status != "warning" {
+		t.Errorf("run status = %q, want a failure: the bastion's key is not approved", status)
 	}
 	logStr := readLog(t, logDir, "run-1")
-	if !strings.Contains(logStr, "refusing to inject secrets over bastion") {
-		t.Errorf("expected the refusal notice in the log:\n%s", logStr)
+	if strings.Contains(logStr, "cmd: ") {
+		t.Errorf("the run reached the target and issued a command:\n%s", logStr)
 	}
-	// No dial happened, so the secret value must never appear.
+	// Nothing was sent to the target, so the secret value must never appear.
 	if strings.Contains(logStr, secretVal) {
 		t.Errorf("secret value leaked into the log:\n%s", logStr)
 	}

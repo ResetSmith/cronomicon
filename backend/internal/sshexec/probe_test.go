@@ -10,12 +10,15 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/hostkeys"
+	"github.com/ResetSmith/cronomicon/internal/knownhostsline"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"golang.org/x/crypto/ssh"
 )
@@ -59,15 +62,56 @@ func storeKey(t *testing.T, pool *sql.DB, name, pemBody string) {
 	}
 }
 
+// insertHost writes a host record. hostKey, when given (authorized-key form),
+// is APPROVED for the local runner under the record's address — where a host's
+// key lives since 2.3.0; it used to be a column on the record.
 func insertHost(t *testing.T, pool *sql.DB, id, addr string, port int, user, keyName, hostKey, via string) {
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, via, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, "host-"+id, addr, port, user, keyName, nullable(hostKey), nullable(via), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, via, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, "host-"+id, addr, port, user, keyName, nullable(via), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKeyLine(t, pool, addr, port, hostKey)
+}
+
+// trustHostKey approves key for the local runner under the address a record is
+// dialled at: the row an operator's approval, or the upgrade's carry, leaves in
+// the ledger. It creates the local runner's row if the test has not.
+func trustHostKey(t *testing.T, pool *sql.DB, addr string, port int, key ssh.PublicKey) {
+	t.Helper()
+	id, _, err := settings.EnsureLocalRunner(context.Background(), pool, true, 4)
+	if err != nil {
+		t.Fatalf("the local runner's row: %v", err)
+	}
+	target := addr
+	if port != 0 && port != 22 {
+		target = net.JoinHostPort(addr, strconv.Itoa(port))
+	}
+	pattern := hostkeys.Pattern(target)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := pool.Exec(`
+		INSERT INTO host_key_ledger (batch_id, runner_id, runner_name, host, key_type, fingerprint, known_hosts_line,
+		                             decision, source, actor, decided_at, delivered_at, confirmed_at)
+		VALUES ('test', ?, 'Local runner', ?, ?, ?, ?, 'approved', 'pasted', 'test', ?, ?, ?)`,
+		id, pattern, key.Type(), ssh.FingerprintSHA256(key), knownhostsline.Render(pattern, key), now, now, now); err != nil {
+		t.Fatalf("approve host key for %s: %v", pattern, err)
+	}
+}
+
+// trustHostKeyLine is trustHostKey for a key in authorized-key form; "" approves nothing.
+func trustHostKeyLine(t *testing.T, pool *sql.DB, addr string, port int, authorizedKey string) {
+	t.Helper()
+	if strings.TrimSpace(authorizedKey) == "" {
+		return
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(authorizedKey))
+	if err != nil {
+		t.Fatalf("fixture host key: %v", err)
+	}
+	trustHostKey(t, pool, addr, port, key)
 }
 
 func nullable(s string) any {
@@ -99,9 +143,21 @@ func TestProbeHost_Verified(t *testing.T) {
 	}
 }
 
-func TestProbeHost_VerifiedTOFU(t *testing.T) {
-	// No stored host_key ⇒ TOFU capture on first connect, still verified, and
-	// the captured key is persisted.
+// ledgerRows counts the local runner's ledger rows: a connection test must
+// never write one. It verifies; it does not capture.
+func ledgerRows(t *testing.T, pool *sql.DB) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(`SELECT COUNT(*) FROM host_key_ledger`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestProbeHost_UnknownKeyIsReportedNotCaptured(t *testing.T) {
+	// No approved key for the host: the test reaches it, says its key is not
+	// approved and where to approve it, and captures nothing. (Until 2.3.0 the
+	// first connection stored whatever key the host presented.)
 	svc, pool := probeFixture(t)
 	client, clientPEM := newKey(t)
 	addr, _ := testSSHServer(t, client.PublicKey(), "x")
@@ -111,13 +167,14 @@ func TestProbeHost_VerifiedTOFU(t *testing.T) {
 	insertHost(t, pool, "h1", host, atoiPort(port), "tester", "GOOD_KEY", "", "")
 
 	res, err := svc.ProbeHost(context.Background(), "h1")
-	if err != nil || res.Status != StatusVerified {
-		t.Fatalf("status = %q (%s) err=%v, want verified", res.Status, res.Message, err)
+	if err != nil || res.Status != StatusUnverified {
+		t.Fatalf("status = %q (%s) err=%v, want unverified", res.Status, res.Message, err)
 	}
-	var captured string
-	_ = pool.QueryRow(`SELECT COALESCE(host_key,'') FROM ssh_hosts WHERE id='h1'`).Scan(&captured)
-	if captured == "" {
-		t.Error("expected TOFU to capture and persist the host key")
+	if !strings.Contains(res.Message, "no approved host key") || !strings.Contains(res.Message, "Host keys") {
+		t.Errorf("message = %q, want it to say the key is not approved and where to approve it", res.Message)
+	}
+	if n := ledgerRows(t, pool); n != 0 {
+		t.Errorf("the test wrote %d ledger row(s): a test must not capture a key", n)
 	}
 }
 
@@ -239,10 +296,10 @@ func TestProbeHost_ConnError_DeadBastion(t *testing.T) {
 
 // ── Reachability tier (TT): keyless targets ──────────────────────────────────
 
-func TestProbeHost_Reachable_KeylessTOFU(t *testing.T) {
-	// A target with no credential and no key name gets the unauthenticated tier:
-	// the endpoint answers, the host key is TOFU-captured and persisted, and the
-	// probe reports reachable — never cred_error.
+func TestProbeHost_Keyless_UnknownKeyIsReportedNotCaptured(t *testing.T) {
+	// A target with no credential and no key name gets the unauthenticated tier.
+	// With no approved key for it, the endpoint answers and the probe says its
+	// key is not approved — never cred_error, and nothing is captured.
 	svc, pool := probeFixture(t)
 	client, _ := newKey(t)
 	addr, _ := testSSHServer(t, client.PublicKey(), "x")
@@ -254,16 +311,11 @@ func TestProbeHost_Reachable_KeylessTOFU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeHost err: %v", err)
 	}
-	if res.Status != StatusReachable {
-		t.Fatalf("status = %q (%s), want reachable", res.Status, res.Message)
+	if res.Status != StatusUnverified {
+		t.Fatalf("status = %q (%s), want unverified", res.Status, res.Message)
 	}
-	if !strings.Contains(res.Message, "authentication was not tested") {
-		t.Errorf("message = %q, want it to state auth was not tested", res.Message)
-	}
-	var captured string
-	_ = pool.QueryRow(`SELECT COALESCE(host_key,'') FROM ssh_hosts WHERE id='h1'`).Scan(&captured)
-	if captured == "" {
-		t.Error("expected the reachability tier to TOFU-capture and persist the host key")
+	if n := ledgerRows(t, pool); n != 0 {
+		t.Errorf("the reachability tier wrote %d ledger row(s): it must not capture a key", n)
 	}
 }
 
@@ -337,11 +389,12 @@ func TestProbeHost_Reachable_KeylessBastionHop(t *testing.T) {
 	}
 }
 
-func TestProbeBastion_Reachable_Keyless(t *testing.T) {
-	// A keyless bastion gets the same tier: reachable + its host key pinned.
+func TestProbeBastion_Keyless(t *testing.T) {
+	// A keyless bastion gets the same tier: unverified until its key is
+	// approved for the local runner, reachable once it is.
 	svc, pool := probeFixture(t)
 	client, _ := newKey(t)
-	addr, _ := testSSHServer(t, client.PublicKey(), "x")
+	addr, hostKey := testSSHServer(t, client.PublicKey(), "x")
 	host, port, _ := net.SplitHostPort(addr)
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -356,13 +409,17 @@ func TestProbeBastion_Reachable_Keyless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeBastion err: %v", err)
 	}
-	if res.Status != StatusReachable {
-		t.Fatalf("status = %q (%s), want reachable", res.Status, res.Message)
+	if res.Status != StatusUnverified {
+		t.Fatalf("status with no approved key = %q (%s), want unverified", res.Status, res.Message)
 	}
-	var captured string
-	_ = pool.QueryRow(`SELECT COALESCE(host_key,'') FROM bastions WHERE id='b1'`).Scan(&captured)
-	if captured == "" {
-		t.Error("expected the reachability tier to TOFU-capture the bastion host key")
+	if n := ledgerRows(t, pool); n != 0 {
+		t.Errorf("the test wrote %d ledger row(s): it must not capture the bastion's key", n)
+	}
+
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
+	res, err = svc.ProbeBastion(context.Background(), "b1")
+	if err != nil || res.Status != StatusReachable {
+		t.Fatalf("status with the key approved = %q (%s) err=%v, want reachable", res.Status, res.Message, err)
 	}
 }
 
@@ -392,8 +449,9 @@ func TestProbeBastion_Verified_UsesOwnKey(t *testing.T) {
 	// the bastion's OWN key/user, not a host's.
 	svc, pool := probeFixture(t)
 	client, clientPEM := newKey(t)
-	addr, _ := testSSHServer(t, client.PublicKey(), "x")
+	addr, hostKey := testSSHServer(t, client.PublicKey(), "x")
 	host, port, _ := net.SplitHostPort(addr)
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 
 	storeKey(t, pool, "BASTION_KEY", clientPEM)
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -417,8 +475,10 @@ func TestProbeBastion_CredError(t *testing.T) {
 	svc, pool := probeFixture(t)
 	serverClient, _ := newKey(t)
 	_, wrongPEM := newKey(t)
-	addr, _ := testSSHServer(t, serverClient.PublicKey(), "x")
+	addr, hostKey := testSSHServer(t, serverClient.PublicKey(), "x")
 	host, port, _ := net.SplitHostPort(addr)
+	// The bastion's host key is approved: what is wrong here is the credential.
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 
 	storeKey(t, pool, "BASTION_KEY", wrongPEM)
 	now := time.Now().UTC().Format(time.RFC3339)

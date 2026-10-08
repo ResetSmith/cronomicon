@@ -138,11 +138,12 @@ func TestSSHExecutorRefusesOutputLeakingSecret(t *testing.T) {
 	}
 
 	if _, err := pool.Exec(`
-		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, host_key, created_at)
-		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, ?)`,
-		host, atoiPort(port), string(ssh.MarshalAuthorizedKey(hostKey)), now); err != nil {
+		INSERT INTO ssh_hosts(id, hostname, address, port, username, auth_key_env_var, created_at)
+		VALUES('h1', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?)`,
+		host, atoiPort(port), now); err != nil {
 		t.Fatal(err)
 	}
+	trustHostKey(t, pool, host, atoiPort(port), hostKey)
 	if _, err := pool.Exec(`INSERT INTO jobs(name, source, run_type, command, concurrency_policy, synced_at)
 		VALUES('j1','cronomicon','bash','echo hi','Allow',?)`, now); err != nil {
 		t.Fatal(err)
