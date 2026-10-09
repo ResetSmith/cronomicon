@@ -52,8 +52,9 @@ type RunRow struct {
 	//     NOT taken. Those columns are what claimRun and the
 	//     manifest read to dispatch; a row that cannot be dispatched carries
 	//     none, exactly as the skipped writers always wrote.
-	// script_ref, content_hash and entity_code ARE still snapshotted: they
-	// say what the row was about, which History needs either way.
+	// script_ref, script_uid, content_hash and entity_code ARE still
+	// snapshotted: they say what the row was about, which History needs either
+	// way.
 	Terminal bool
 
 	// SuppressedByCalendar names the working calendar that vetoed a fire
@@ -153,7 +154,7 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			 entity_code, script_ref, content_hash,
 			 checkout_sha, checkout_entry, requires_json,
 			 reaction_depth, reacted_to_run_id, priority, scheduled_for,
-			 job_uid)
+			 job_uid, script_uid)
 		VALUES (?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
@@ -218,7 +219,13 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 				   FROM jobs WHERE uid = ?) END,
 			?, ?, ?, ?,
 			-- R2-1/R2-5: the identity, resolved once by resolveEnqueueUID.
-			NULLIF(?, ''))
+			NULLIF(?, ''),
+			-- 1290 (GR-5): WHICH script script_ref means, frozen beside it. Dispatch
+			-- finds the script's reference bindings from the run (the manifest,
+			-- the claim and its gates, the log redactor, the local runner), and a
+			-- name is a script in every repository that has one. NULL for a job
+			-- with no script, and for one whose script has gone.
+			(SELECT script_uid FROM jobs WHERE uid = ?))
 	`,
 		traceID, r.kindOrDefault(), r.JobName, src, r.RunType, nullStr(r.Scope), nullStr(r.TargetHost),
 		r.statusOrDefault(), nullStr(r.QueuedReason), r.TriggeredBy, r.TriggerKind,
@@ -228,7 +235,7 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 		r.EntityCode, uid, uid, uid,
 		snap, uid, snap, uid, snap, uid,
 		r.ReactionDepth, nullStr(r.ReactedToRunID), r.Priority, nullStr(r.ScheduledFor),
-		uid)
+		uid, uid)
 	if err != nil {
 		return "", fmt.Errorf("insert run: %w", err)
 	}

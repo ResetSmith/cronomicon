@@ -703,7 +703,10 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			                         THEN rb.owner_uid = runs.job_uid
 			                         ELSE rb.owner_source = COALESCE(NULLIF(runs.job_source, ''), 'git')
 			                              AND rb.owner_name = runs.job_name END)
-			           OR (rb.owner_kind = 'script' AND rb.owner_name = runs.script_ref))
+			           -- The script by the run's frozen script_uid, never by its
+			           -- name (1290): a name is a script in every repository that
+			           -- has one. NULL matches nothing.
+			           OR (rb.owner_kind = 'script' AND rb.owner_uid = runs.script_uid))
 			    )
 			  )
 			  -- LR-47: the local runner does not take a run that binds an SSH key

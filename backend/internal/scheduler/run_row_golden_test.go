@@ -51,10 +51,10 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 	mustExec(`INSERT OR REPLACE INTO git_sync_state (id, last_sha) VALUES (1, 'deadbeefcafe')`)
 	mustExec(`
 		INSERT INTO jobs (name, source, uid, run_type, scope, target_host, concurrency_policy, synced_at,
-		                  script_ref, content_hash, project_root, script_path,
+		                  script_ref, script_uid, content_hash, project_root, script_path,
 		                  requires_json, become_password_secret, env_json)
 		VALUES ('golden-job', 'git', 'uid-golden', 'ansible', 'prod', 'db-1.internal', 'Forbid', '2026-01-01T00:00:00Z',
-		        'scripts/site.yml', 'sha256:0123', 'playbooks/site', 'site.yml',
+		        'scripts/site.yml', 'uid-golden-script', 'sha256:0123', 'playbooks/site', 'site.yml',
 		        '["vault","collection:community.vmware"]', 'vault:become', '{"JOB_LEVEL":"1"}')`)
 	// entity_codes row so the entity_code subquery resolves to a value, not NULL.
 	mustExec(`INSERT INTO entity_codes (kind, source, name, uid, created_at) VALUES ('job', 'git', 'golden-job', 'uid-golden', '2026-01-01T00:00:00Z')`)

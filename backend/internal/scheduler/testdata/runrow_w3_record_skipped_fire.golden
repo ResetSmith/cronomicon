@@ -36,6 +36,7 @@ schedule_name = nightly
 scheduled_for = <NULL>
 scope = prod
 script_ref = scripts/site.yml
+script_uid = uid-golden-script
 sla_warned_at = <NULL>
 ssh_credential = <NULL>
 ssh_user = <NULL>

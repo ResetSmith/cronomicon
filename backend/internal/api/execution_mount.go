@@ -226,9 +226,13 @@ type jobRow struct {
 	// whole YAML from this response, so every persisted field it must echo back
 	// is returned here to avoid silent data loss on publish (Gap B). schedules
 	// carries the multi-entry list with per-entry next-run projections.
-	Description       *string             `json:"description,omitempty"`
-	Enabled           *bool               `json:"enabled,omitempty"`   // raw enabled flag (detail-only); list rows leave nil. Exact composer prefill (JC9).
-	ScriptRef         *string             `json:"scriptRef,omitempty"` // B-Git: name of the referenced Script (nil = legacy inline)
+	Description *string `json:"description,omitempty"`
+	Enabled     *bool   `json:"enabled,omitempty"`   // raw enabled flag (detail-only); list rows leave nil. Exact composer prefill (JC9).
+	ScriptRef   *string `json:"scriptRef,omitempty"` // B-Git: name of the referenced Script (nil = legacy inline)
+	// ScriptUID is WHICH script that name means (jobs.script_uid, migration
+	// 1290): the key its reference bindings are found by. Not on the wire: a
+	// client still names a script by scriptRef.
+	ScriptUID         string              `json:"-"`
 	Command           *string             `json:"command,omitempty"`
 	Script            *string             `json:"script,omitempty"`
 	ScriptPath        *string             `json:"scriptPath,omitempty"`
@@ -668,7 +672,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		concKey                               sql.NullString
 		tags                                  string
 		command, script, scriptPath, executor sql.NullString
-		scriptRef                             sql.NullString
+		scriptRef, scriptUID                  sql.NullString
 		timeoutSeconds                        sql.NullInt64
 		retries                               int
 		backoffSeconds                        int
@@ -688,7 +692,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT rowid, name, source, run_type, description, target_host, scope, schedule, enabled,
 		       concurrency_policy, concurrency_key, tags,
-		       command, script, script_path, executor, script_ref,
+		       command, script, script_path, executor, script_ref, script_uid,
 		       timeout_seconds, retries,
 		       COALESCE(backoff_seconds,0), COALESCE(continue_on_error,0),
 		       created_at, last_modified_at, env_json, source_path, prompts_json, requires_json,
@@ -698,7 +702,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		FROM jobs WHERE `+whereCol+` = ?
 	`, arg).Scan(&j.rowid, &j.name, &j.source, &j.runType, &j.description, &j.targetHost, &j.scope, &j.schedule,
 		&j.enabled, &j.concPolicy, &j.concKey, &j.tags,
-		&j.command, &j.script, &j.scriptPath, &j.executor, &j.scriptRef,
+		&j.command, &j.script, &j.scriptPath, &j.executor, &j.scriptRef, &j.scriptUID,
 		&j.timeoutSeconds, &j.retries,
 		&j.backoffSeconds, &j.continueOnError,
 		&j.createdAt, &j.lastModifiedAt, &j.envJSON, &j.sourcePath, &j.promptsJSON, &j.requiresJSON,
@@ -785,6 +789,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	if j.scriptRef.Valid {
 		jr.ScriptRef = &j.scriptRef.String
 	}
+	jr.ScriptUID = j.scriptUID.String
 	if j.sshUser.Valid && j.sshUser.String != "" {
 		jr.SSHUser = &j.sshUser.String
 	}
@@ -1187,7 +1192,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		if jr.ScriptRef != nil {
 			scriptRef = *jr.ScriptRef
 		}
-		owners := runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef)
+		owners := runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef, jr.ScriptUID)
 		blocked, berr := runref.UnboundRunBlocked(r.Context(), s.db, owners, scope, runAgencies)
 		if berr != nil {
 			httpx.Fail500(w, s.log, "db_error", berr)
@@ -1431,7 +1436,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			scriptRef = *jr.ScriptRef
 		}
 		keys, kerr := runref.KeyBindingsNeedAgent(r.Context(), s.db,
-			runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef), runRefs, jr.Type, scope)
+			runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef, jr.ScriptUID), runRefs, jr.Type, scope)
 		if kerr != nil {
 			httpx.Fail500(w, s.log, "db_error", kerr)
 			return
@@ -4041,7 +4046,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
 		suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
-		runner_name ` +
+		runner_name, script_uid ` +
 		base + orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, pageSize, (page-1)*pageSize)
 
@@ -4103,7 +4108,7 @@ func (s *Server) fetchRunByID(r *http.Request, traceID string) map[string]any {
 		       started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		       script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
 		       suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
-		       runner_name
+		       runner_name, script_uid
 		FROM runs WHERE id = ?
 	`, traceID)
 	if err != nil {
@@ -4134,6 +4139,7 @@ type runRaw struct {
 	scheduleName                                  sql.NullString
 	executor                                      sql.NullString
 	scriptRef, contentHash                        sql.NullString // §3.3 run reproducibility snapshot
+	scriptUID                                     sql.NullString // which script scriptRef meant (runs.script_uid, 1290)
 	jobSource                                     sql.NullString // A9 run origin (NULL ⇒ git)
 	outputsJSON                                   sql.NullString // A12 captured inter-job outputs (JSON map)
 	overrideJSON                                  sql.NullString // F3 ad-hoc override envelope (JSON object)
@@ -4175,7 +4181,7 @@ func scanRunRaw(rows *sql.Rows) (runRaw, bool) {
 		&rr.startedAt, &rr.completedAt, &rr.durationMs, &rr.exitCode, &rr.createdAt, &rr.scheduleName,
 		&rr.kind, &rr.executor, &rr.scriptRef, &rr.contentHash, &rr.jobSource, &rr.outputsJSON, &rr.overrideJSON, &rr.agenciesJSON, &rr.runnerID,
 		&rr.suppressedByCalendar, &rr.reactedToRunID, &rr.reactionDepth, &rr.runnerTag, &rr.jobUID, &rr.logArchivedAt,
-		&rr.runnerName); err != nil {
+		&rr.runnerName, &rr.scriptUID); err != nil {
 		return runRaw{}, false
 	}
 	return rr, true
@@ -4515,7 +4521,7 @@ func (c *runMapCaches) injectedRedactionValues(rr runRaw) ([]string, bool) {
 	if jobSrc == "" {
 		jobSrc = "git"
 	}
-	bindings, err := collectRunBindings(c.ctx, c.s.db, rr.jobName, jobSrc, rr.jobUID.String, rr.scriptRef.String, rr.overrideJSON.String)
+	bindings, err := collectRunBindings(c.ctx, c.s.db, rr.jobName, jobSrc, rr.jobUID.String, rr.scriptRef.String, rr.scriptUID.String, rr.overrideJSON.String)
 	if err != nil {
 		return nil, false // kinds unknown → fail closed
 	}
@@ -4565,10 +4571,15 @@ func (c *runMapCaches) injectedResolver() *runref.Resolver {
 // R2F-1: jobUID is the run's frozen job identity (runs.job_uid) — the masking
 // dictionary must be built from the bindings of the job that actually ran, not
 // from the union of every same-named job's.
-func collectRunBindings(ctx context.Context, db *sql.DB, jobName, jobSource, jobUID, scriptRef, overrideJSON string) ([]runref.Binding, error) {
+//
+// scriptUID is the run's frozen script identity (runs.script_uid, 1290), for the
+// same reason: a name may be a script in more than one repository. A run with a
+// name and no uid (its script was pruned before it was queued) has no script
+// bindings.
+func collectRunBindings(ctx context.Context, db *sql.DB, jobName, jobSource, jobUID, scriptRef, scriptUID, overrideJSON string) ([]runref.Binding, error) {
 	owners := []runref.Owner{{Kind: "job", Source: jobSource, Name: jobName, UID: jobUID}}
-	if scriptRef != "" {
-		owners = append(owners, runref.Owner{Kind: "script", Name: scriptRef})
+	if scriptUID != "" {
+		owners = append(owners, runref.Owner{Kind: "script", Name: scriptRef, UID: scriptUID})
 	}
 	sets := make([][]runref.Binding, 0, len(owners)+1)
 	for _, o := range owners {

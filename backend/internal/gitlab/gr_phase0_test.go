@@ -2,8 +2,9 @@ package gitlab
 
 // Phase R0 of 2.4.0 (GR, a repository per agency): today's behaviour, pinned.
 //
-// Each TestGR0_* test passes on the 2.3.2 code and names the phase of 2.4.0
-// that inverts it. No production code changes.
+// Each TestGR0_* test passed on the 2.3.2 code and names the phase of 2.4.0
+// that inverts it. A test a phase has inverted is renamed for that phase
+// (TestGR1_…) and says what it used to pin.
 //
 // There is nothing to take out before two repositories can meet in one
 // database. A Service is a URL and a clone directory; what makes the
@@ -30,7 +31,8 @@ import (
 )
 
 // grSecondRepo makes a second local remote and a Service that syncs it into
-// the SAME database as first, from its own clone directory.
+// the SAME database as first, from its own clone directory, as a repository of
+// its own ("repo-b"; the first Service is Global's).
 func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, string) {
 	t.Helper()
 	remote := t.TempDir()
@@ -42,6 +44,7 @@ func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, st
 		db:       first.db,
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		repoURL:  remote,
+		repoID:   "repo-b",
 		cloneDir: filepath.Join(t.TempDir(), "clone"),
 		Cfg:      &config.Config{GitLabWriteBranch: first.Cfg.GitLabWriteBranch},
 	}, repo, remote
@@ -132,11 +135,15 @@ func grJob(name, command string) string {
 		"\nspec:\n  run_type: bash\n  command: " + command + "\n"
 }
 
-// A second repository's sync deletes everything the first one supplied. Every
-// prune statement asks only "is this a Git row that this pass did not stamp?";
-// none asks whose repository the row came from, and the scripts prune does not
-// even ask for a Git row. Phase R3 (GR-13) inverts this: a sync prunes only
-// rows of ITS repository.
+// A second repository's sync deletes what the first one supplied, except its
+// scripts. Every prune statement but one asks only "is this a Git row that this
+// pass did not stamp?" and not whose repository the row came from. Phase R3
+// (GR-13) inverts this for the remaining kinds: a sync prunes only rows of ITS
+// repository.
+//
+// The scripts prune was the worst of them (it did not even ask for a Git row)
+// and is the first to be bounded: scripts carry their repository since Phase R1
+// (migration 1290), so the first repository's script now SURVIVES.
 func TestGR0_ASecondRepositorysSyncDeletesTheFirsts(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t) // jobs/keep.yaml
 	grCommitFiles(t, repoA, remoteA, map[string]string{
@@ -170,7 +177,15 @@ func TestGR0_ASecondRepositorysSyncDeletesTheFirsts(t *testing.T) {
 		t.Fatalf("the second repository's job was not imported (count %d)", n)
 	}
 	for kind, q := range has {
-		if n := grCount(t, a.db, q); n != 0 {
+		n := grCount(t, a.db, q)
+		if kind == "script" {
+			if n != 1 {
+				t.Errorf("the first repository's script did not survive the second repository's sync (count %d): "+
+					"the scripts prune is bounded by repository since Phase R1", n)
+			}
+			continue
+		}
+		if n != 0 {
 			t.Errorf("the first repository's %s survived the second repository's sync (count %d): "+
 				"today's prune is not expected to tell repositories apart. If this is now deliberate, "+
 				"Phase R3 has landed and this test is to be inverted", kind, n)
@@ -178,36 +193,75 @@ func TestGR0_ASecondRepositorysSyncDeletesTheFirsts(t *testing.T) {
 	}
 }
 
-// Two repositories that both hold scripts/deploy.sh own ONE scripts row
-// between them: the key is the name alone, and whichever synced last wins. A
-// job of the first repository that names deploy.sh now names the other
-// repository's script. Phase R1 (GR-5) inverts this: a uid, and one row per
-// repository and name.
-func TestGR0_TwoScriptsOfOneNameAreOneRow(t *testing.T) {
+// Two repositories that both hold scripts/deploy.sh hold a script EACH (Phase
+// R1, GR-5; this test pinned the opposite until then: one row keyed by the name,
+// carrying whichever body synced last). A script is unique by repository and
+// name and has a uid, and a job is joined to the script of its OWN repository.
+func TestGR1_TwoScriptsOfOneNameAreTwoScripts(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	gitCommitFile(t, repoA, remoteA, "scripts/deploy.sh", "#!/bin/bash\necho from-a\n", "a's deploy.sh")
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"scripts/deploy.sh": "#!/bin/bash\necho from-a\n",
+		"jobs/roll-a.yaml":  "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: roll-a\nspec:\n  script_ref: deploy.sh\n",
+	}, "a's deploy.sh and the job that uses it")
 	grSync(t, a, "first repository")
-	hashA := grString(t, a.db, `SELECT content_hash FROM scripts WHERE name='deploy.sh'`)
-	if hashA == "" {
-		t.Fatal("the first repository's script has no content hash")
+	script := func(repo, col string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT `+col+` FROM scripts WHERE repo_id=? AND name='deploy.sh'`, repo)
 	}
+	uidA, hashA := script("global", "uid"), script("global", "content_hash")
+	if uidA == "" || hashA == "" {
+		t.Fatalf("the first repository's script: uid %q, hash %q", uidA, hashA)
+	}
+	if got := grString(t, a.db, `SELECT script_uid FROM jobs WHERE source='git' AND name='roll-a'`); got != uidA {
+		t.Fatalf("roll-a is joined to script %q, want its own repository's %q", got, uidA)
+	}
+	// Aged, so that the second repository's prune would take the script if it
+	// could: the stamp has one-second resolution and the test must not pass by
+	// being quick.
+	grBackdate(t, a.db)
 
 	b, repoB, remoteB := grSecondRepo(t, a)
-	grCommitFiles(t, repoB, remoteB, map[string]string{"scripts/deploy.sh": "#!/bin/bash\necho from-b\n"}, "b's deploy.sh")
+	grCommitFiles(t, repoB, remoteB, map[string]string{
+		"scripts/deploy.sh": "#!/bin/bash\necho from-b\n",
+		"jobs/roll-b.yaml":  "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: roll-b\nspec:\n  script_ref: deploy.sh\n",
+	}, "b's deploy.sh and the job that uses it")
 	grSync(t, b, "second repository")
 
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM scripts WHERE name='deploy.sh'`); n != 1 {
-		t.Fatalf("scripts named deploy.sh = %d, want the one shared row", n)
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM scripts WHERE name='deploy.sh'`); n != 2 {
+		t.Fatalf("scripts named deploy.sh = %d, want one per repository", n)
 	}
-	hashB := grString(t, a.db, `SELECT content_hash FROM scripts WHERE name='deploy.sh'`)
+	uidB, hashB := script("repo-b", "uid"), script("repo-b", "content_hash")
+	if uidB == "" || uidB == uidA {
+		t.Errorf("the second repository's script uid = %q (the first's is %q): want its own", uidB, uidA)
+	}
 	if hashB == hashA {
-		t.Errorf("the row still carries the first repository's body after the second repository synced")
+		t.Errorf("the two scripts carry one body hash: the second repository's body was not stored as its own")
+	}
+	// The first repository's script is as it was: same uid, same body.
+	if got := script("global", "uid"); got != uidA {
+		t.Errorf("the first repository's script uid changed from %q to %q", uidA, got)
+	}
+	if got := script("global", "content_hash"); got != hashA {
+		t.Errorf("the first repository's script body was overwritten by the second repository's")
+	}
+	// Each job uses the script of its own repository, although both wrote the
+	// same name.
+	if got := grString(t, a.db, `SELECT script_uid FROM jobs WHERE source='git' AND name='roll-b'`); got != uidB {
+		t.Errorf("roll-b is joined to script %q, want its own repository's %q", got, uidB)
 	}
 
-	// And back again: the row follows whichever repository synced last.
-	grSync(t, a, "first repository again")
-	if got := grString(t, a.db, `SELECT content_hash FROM scripts WHERE name='deploy.sh'`); got != hashA {
-		t.Errorf("after the first repository synced again the row carries %q, want its own %q", got, hashA)
+	// An edit in one repository keeps that script's uid and touches nothing of
+	// the other's.
+	gitCommitFile(t, repoB, remoteB, "scripts/deploy.sh", "#!/bin/bash\necho from-b, edited\n", "edit b's deploy.sh")
+	grSync(t, b, "second repository again")
+	if got := script("repo-b", "uid"); got != uidB {
+		t.Errorf("an edit gave the second repository's script a new uid: %q, was %q", got, uidB)
+	}
+	if got := script("repo-b", "content_hash"); got == hashB {
+		t.Errorf("the edit did not reach the second repository's script")
+	}
+	if got := script("global", "content_hash"); got != hashA {
+		t.Errorf("an edit in the second repository changed the first repository's script")
 	}
 }
 
@@ -298,10 +352,15 @@ func TestGR0_TheSyncStateIsOneRow(t *testing.T) {
 	if got := grString(t, a.db, `SELECT last_sha FROM git_sync_state WHERE id = 1`); got != rb.SHA {
 		t.Errorf("git_sync_state.last_sha = %q, want the second repository's %q: the first repository's commit is no longer recorded anywhere", got, rb.SHA)
 	}
-	for _, table := range []string{"git_sync_events", "schedule_pushes", "jobs", "workflows", "schedules", "scripts", "scopes"} {
+	// scripts left this list with Phase R1 (migration 1290); schedules follow in
+	// the second half of R1, the rest in R2.
+	for _, table := range []string{"git_sync_events", "schedule_pushes", "jobs", "workflows", "schedules", "scopes"} {
 		if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'repo_id'`, table); n != 0 {
-			t.Errorf("%s already has a repo_id column: Phase R2 has landed and this test is to be inverted", table)
+			t.Errorf("%s already has a repo_id column: the phase that adds it has landed and this test is to be inverted", table)
 		}
+	}
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info('scripts') WHERE name = 'repo_id'`); n != 1 {
+		t.Errorf("scripts has no repo_id column: migration 1290 is missing")
 	}
 }
 

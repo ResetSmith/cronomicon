@@ -20,6 +20,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/watchspec"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
@@ -256,6 +257,10 @@ type jobComposeInput struct {
 // from the referenced Git Script onto the cronomicon job row.
 type composeScript struct {
 	runType, command, script, scriptPath, executor, contentHash string
+	// uid is the script the job's scriptRef resolved to (migration 1290). It is
+	// written to jobs.script_uid beside the name, and is what the job's
+	// script-declared reference bindings are found by.
+	uid string
 }
 
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
@@ -472,11 +477,17 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		return
 	}
 	// Resolve + denormalize the referenced Git Script (Decision 7).
+	//
+	// In Global's repository: a name is unique per repository since 1290, and
+	// Global's is the only one there is. Where an agency's in-app job looks a
+	// name up once agencies have repositories of their own is GR-16's rule (its
+	// own repository, then Global's) and arrives with them (Phase R4).
 	var sc composeScript
 	var command, script, scriptPath, executor sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT run_type, command, script, script_path, executor, content_hash FROM scripts WHERE name=?`, in.ScriptRef).
-		Scan(&sc.runType, &command, &script, &scriptPath, &executor, &sc.contentHash)
+		`SELECT uid, run_type, command, script, script_path, executor, content_hash
+		   FROM scripts WHERE repo_id = ? AND name = ?`, repoid.Global, in.ScriptRef).
+		Scan(&sc.uid, &sc.runType, &command, &script, &scriptPath, &executor, &sc.contentHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scriptRef does not resolve to any script: "+in.ScriptRef)
 		return
@@ -789,8 +800,8 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		                 command, script, script_path, executor, script_ref, content_hash,
 		                 created_by, created_at, last_modified_by, last_modified_at, env_json, prompts_json,
 		                 requires_json, prompt_enforcement, ssh_user, ssh_credential, env_passthrough,
-		                 become_password_secret, uid)
-		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		                 become_password_secret, uid, script_uid)
+		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET
 			run_type=excluded.run_type, description=excluded.description, scope=excluded.scope,
 			target_host=excluded.target_host, schedule=excluded.schedule, tags=excluded.tags,
@@ -802,7 +813,8 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 			concurrency_policy=excluded.concurrency_policy,
 			concurrency_key=excluded.concurrency_key, env_json=excluded.env_json, prompts_json=excluded.prompts_json,
 			command=excluded.command, script=excluded.script, script_path=excluded.script_path,
-			executor=excluded.executor, script_ref=excluded.script_ref, content_hash=excluded.content_hash,
+			executor=excluded.executor, script_ref=excluded.script_ref, script_uid=excluded.script_uid,
+			content_hash=excluded.content_hash,
 			last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at,
 			requires_json=excluded.requires_json, prompt_enforcement=excluded.prompt_enforcement,
 			ssh_user=excluded.ssh_user, ssh_credential=excluded.ssh_credential,
@@ -821,7 +833,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		// fresh uid, an edit collides on the existing one and lands in the DO
 		// UPDATE arm. (source, name) stopped being unique for cronomicon rows, so
 		// it can no longer be what an edit converges on.
-		uid)
+		uid, nullStrIf(sc.uid))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return

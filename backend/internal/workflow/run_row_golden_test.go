@@ -63,11 +63,11 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 	// waited for a runner that advertises a token it has no use for).
 	mustExec(`
 		INSERT INTO jobs (name, source, uid, run_type, scope, target_host, concurrency_policy, synced_at,
-		                  script_ref, content_hash, project_root, script_path,
+		                  script_ref, script_uid, content_hash, project_root, script_path,
 		                  requires_json, become_password_secret, env_json,
 		                  ssh_user, ssh_credential)
 		VALUES ('golden-job', 'git', 'uid-golden', 'ansible', 'prod', 'db-1.internal', 'Forbid', '2026-01-01T00:00:00Z',
-		        'scripts/site.sh', 'sha256:0123', 'playbooks/site', 'site.yml',
+		        'scripts/site.sh', 'uid-golden-script', 'sha256:0123', 'playbooks/site', 'site.yml',
 		        '["vault","collection:community.vmware"]', 'vault:become', '{"JOB_LEVEL":"1"}',
 		        'deploy', 'cred-1')`)
 	mustExec(`INSERT INTO entity_codes (kind, source, name, uid, created_at) VALUES ('job', 'git', 'golden-job', 'uid-golden', '2026-01-01T00:00:00Z')`)

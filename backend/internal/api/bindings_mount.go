@@ -13,6 +13,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
@@ -427,24 +428,20 @@ func (s *Server) putJobBindings(w http.ResponseWriter, r *http.Request) {
 	s.writeBindings(w, r, runref.Owner{Kind: "job", Source: jr.Source, Name: jr.Name, UID: jr.UID}, in, actor.Email, "Jobs", jr.Name)
 }
 
-// scriptExists reports whether a script row with this exact name is in the
-// catalog. Scripts are keyed by name only (no source dimension), so binding
-// owners use owner_source="".
-func (s *Server) scriptExists(r *http.Request, name string) bool {
-	var n int
-	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM scripts WHERE name = ?`, name).Scan(&n); err != nil {
-		return false
-	}
-	return n > 0
-}
+// A script's reference bindings are filed under its uid (migration 1290), so
+// both handlers below resolve the name first (Server.scriptUID: in Global's
+// repository, until a route can name another) and hand the store an owner that
+// carries the uid. An owner with the name alone reads nothing and cannot write.
+// owner_source stays "" for a script: it has no source dimension.
 
 func (s *Server) getScriptBindings(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !s.scriptExists(r, name) {
+	uid, found := s.scriptUID(r, name)
+	if !found {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
 		return
 	}
-	bs, err := runref.ListBindings(r.Context(), s.db, runref.Owner{Kind: "script", Name: name})
+	bs, err := runref.ListBindings(r.Context(), s.db, runref.Owner{Kind: "script", Name: name, UID: uid})
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -470,7 +467,8 @@ func (s *Server) putScriptBindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	if !s.scriptExists(r, name) {
+	uid, found := s.scriptUID(r, name)
+	if !found {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")
 		return
 	}
@@ -478,7 +476,7 @@ func (s *Server) putScriptBindings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.writeBindings(w, r, runref.Owner{Kind: "script", Name: name}, in, actor.Email, "Scripts", name)
+	s.writeBindings(w, r, runref.Owner{Kind: "script", Name: name, UID: uid}, in, actor.Email, "Scripts", name)
 }
 
 // scanScriptBindings scans a script's body and returns the reference bindings it
@@ -503,7 +501,7 @@ func (s *Server) scanScriptBindings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) loadScriptBody(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
 	var command, script, scriptPath sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT command, script, script_path FROM scripts WHERE name = ?`, name).
+		`SELECT command, script, script_path FROM scripts WHERE repo_id = ? AND name = ?`, repoid.Global, name).
 		Scan(&command, &script, &scriptPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "script not found")

@@ -360,11 +360,11 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// R2F-1 — jobUID is the row the resolution above actually landed on, so
 	// both the script lookup and the binding probes read THAT job, not a
 	// same-named sibling in another department.
-	var scriptRef sql.NullString
+	var scriptRef, scriptUID sql.NullString
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
-		jobUID.String, jobUID.String, spec.JobName, spec.JobSource).Scan(&scriptRef)
-	owners := runref.RunOwners(spec.JobSource, spec.JobName, jobUID.String, scriptRef.String)
+		`SELECT script_ref, script_uid FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
+		jobUID.String, jobUID.String, spec.JobName, spec.JobSource).Scan(&scriptRef, &scriptUID)
+	owners := runref.RunOwners(spec.JobSource, spec.JobName, jobUID.String, scriptRef.String, scriptUID.String)
 	// The scope alone decides: an unbound run carries ["Global"] since migration
 	// 1220, never the empty set this also used to ask for.
 	if scope == "" {

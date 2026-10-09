@@ -87,7 +87,7 @@ func RunBindsKeySQL(alias string) string {
 	                         THEN kb.owner_uid = ` + alias + `.job_uid
 	                         ELSE kb.owner_source = COALESCE(NULLIF(` + alias + `.job_source, ''), 'git')
 	                              AND kb.owner_name = ` + alias + `.job_name END)
-	            OR (kb.owner_kind = 'script' AND kb.owner_name = ` + alias + `.script_ref))))`
+	            OR (kb.owner_kind = 'script' AND kb.owner_uid = ` + alias + `.script_uid))))`
 }
 
 // runBindsKey is RunBindsKeySQL for one run.
@@ -125,7 +125,10 @@ func SetInjectionGateArmed(armed bool) { injectionGateArmed.Store(armed) }
 // credential (an implicit key binding, CA-3b) or its job or script declares
 // reference bindings. The job is identified by the run's frozen uid when it has
 // one (R2F-1: a same-named sibling's bindings must not decide this run's gate)
-// and by source and name for a run that predates the uid.
+// and by source and name for a run that predates the uid. The SCRIPT is
+// identified by the run's frozen script_uid and never by name (1290): a run
+// with no script_uid matches no script's bindings, which is the truth for a
+// run whose script had gone and the safe answer for anything else.
 func runNeedsInjectionRunner(ctx context.Context, database *sql.DB, runID string) (bool, error) {
 	if !injectionGateArmed.Load() {
 		return false, nil
@@ -140,7 +143,7 @@ func runNeedsInjectionRunner(ctx context.Context, database *sql.DB, runID string
 		                         THEN rb.owner_uid = r.job_uid
 		                         ELSE rb.owner_source = COALESCE(NULLIF(r.job_source, ''), 'git')
 		                              AND rb.owner_name = r.job_name END)
-		           OR (rb.owner_kind = 'script' AND rb.owner_name = r.script_ref))
+		           OR (rb.owner_kind = 'script' AND rb.owner_uid = r.script_uid))
 		  FROM runs r WHERE r.id = ?`, runID).Scan(&needs)
 	return needs, err
 }

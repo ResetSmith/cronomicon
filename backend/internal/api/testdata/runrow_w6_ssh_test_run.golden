@@ -36,6 +36,7 @@ schedule_name = <NULL>
 scheduled_for = <NULL>
 scope = <NULL>
 script_ref = <NULL>
+script_uid = <NULL>
 sla_warned_at = <NULL>
 ssh_credential = <NULL>
 ssh_user = <NULL>

@@ -31,6 +31,8 @@ func TestScriptsCatalog(t *testing.T) {
 	for _, jn := range []string{"nightly-backup", "weekly-backup"} {
 		seed(`INSERT INTO jobs(name, run_type, command, executor, script_ref, content_hash, synced_at)
 		      VALUES(?,'bash','pg_dump mydb','ssh','backup-db','sha256:aaa','2026-01-01T00:00:00Z')`, jn)
+		// What sync and the composer write beside the name (migration 1290).
+		seed(`UPDATE jobs SET script_uid = (SELECT uid FROM scripts WHERE name='backup-db') WHERE name = ?`, jn)
 	}
 
 	client := devLoginClient(t, ts)

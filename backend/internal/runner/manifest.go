@@ -579,16 +579,20 @@ func (s *Service) collectReferenceBindings(ctx context.Context, runID, jobName, 
 	// injected with a sibling department's credentials. ErrNoRows is tolerated
 	// (callers pass an empty runID on the pure-enumeration paths): the uid is then
 	// empty and the legacy name arm applies, exactly as before this band.
-	var overrideJSON, sshCred, jobUID sql.NullString
+	//
+	// script_uid is read here for the same reason (1290): the caller's scriptRef
+	// is a NAME, and a name is a script in every repository that has one. The
+	// run froze which one it meant when it was queued.
+	var overrideJSON, sshCred, jobUID, scriptUID sql.NullString
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT override_json, ssh_credential, job_uid FROM runs WHERE id = ?`, runID).Scan(&overrideJSON, &sshCred, &jobUID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		`SELECT override_json, ssh_credential, job_uid, script_uid FROM runs WHERE id = ?`, runID).Scan(&overrideJSON, &sshCred, &jobUID, &scriptUID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		// Fail like a binding read: the caller cannot prove the run is secret-free
 		// without knowing whether additions exist.
 		return nil, fmt.Errorf("load run overrides: %w", err)
 	}
 	owners := []runref.Owner{{Kind: "job", Source: js, Name: jobName, UID: jobUID.String}}
-	if scriptRef != "" {
-		owners = append(owners, runref.Owner{Kind: "script", Name: scriptRef})
+	if scriptUID.String != "" {
+		owners = append(owners, runref.Owner{Kind: "script", Name: scriptRef, UID: scriptUID.String})
 	}
 	sets := make([][]runref.Binding, 0, len(owners)+1)
 	for _, o := range owners {

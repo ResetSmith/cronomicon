@@ -201,6 +201,17 @@ func TestPreviewScopeRunners(t *testing.T) {
 	// restart binds a secret, so it needs an injection-flagged runner once it moves.
 	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
 	      VALUES('job','cronomicon','restart','u-shell','secret','DB_PASSWORD','t')`)
+	// pinned's SCRIPT binds a variable, so pinned needs one too. deploy names a
+	// script of the SAME NAME that is not the one with the binding (another
+	// repository's), so it does not. The preview finds a job's script by
+	// jobs.script_uid (migration 1290), never by the name: by name it would
+	// count deploy as well.
+	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, command, content_hash, synced_at)
+	      VALUES('uid-lib','global','lib.sh','bash','x','h','t'), ('uid-lib-other','repo-b','lib.sh','bash','x','h','t')`)
+	exec(`UPDATE jobs SET script_ref='lib.sh', script_uid='uid-lib' WHERE uid='u-runner'`)
+	exec(`UPDATE jobs SET script_ref='lib.sh', script_uid='uid-lib-other' WHERE uid='u-play'`)
+	exec(`INSERT INTO reference_bindings(owner_kind, owner_source, owner_name, owner_uid, ref_kind, ref_name, created_at)
+	      VALUES('script','','lib.sh','uid-lib','var','REGION','t')`)
 	exec(`INSERT INTO runs(id, job_name, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
 	      VALUES('run-ssh','restart','bash','dmz-web','queued','seed','manual','ssh','t')`)
 	// Parked runs frozen onto ssh count too — they are promoted onto it later.
@@ -284,8 +295,9 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if got := strings.Join(p.RunTypes, ","); got != "ansible,bash,python" {
 		t.Errorf("run types = %q, want ansible,bash,python", got)
 	}
-	if p.JobsNeedingInjection != 2 {
-		t.Errorf("jobs needing injection = %d, want 2 (restart's secret, legacy's key)", p.JobsNeedingInjection)
+	if p.JobsNeedingInjection != 3 {
+		t.Errorf("jobs needing injection = %d, want 3 (restart's secret, legacy's key, pinned's script's variable; "+
+			"not deploy, whose script only shares that script's name)", p.JobsNeedingInjection)
 	}
 	byID := map[string]PreviewRunner{}
 	for _, r := range p.Runners {

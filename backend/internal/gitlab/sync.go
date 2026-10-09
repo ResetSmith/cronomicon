@@ -26,6 +26,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/watchspec"
@@ -69,10 +70,15 @@ func (s *Service) installGuardedGitTransport() {
 
 // Service manages the Git clone and drives sync operations.
 type Service struct {
-	db            *sql.DB
-	log           *slog.Logger
-	cloneDir      string // path to the local git clone
-	repoURL       string // full GitLab HTTPS URL
+	db       *sql.DB
+	log      *slog.Logger
+	cloneDir string // path to the local git clone
+	repoURL  string // full GitLab HTTPS URL
+	// repoID is the repository this Service syncs (GR-3). Empty means Global's,
+	// which is the only repository an installation has until the repositories
+	// table arrives (2.4.0, Phase R2); read it through repo(). It is stamped on
+	// every script this Service writes and bounds the scripts it prunes.
+	repoID        string
 	token         string // CRONOMICON_GITLAB_TOKEN (may be empty — unauthenticated)
 	webhookSecret string
 	Cfg           *config.Config // added for KEK-based webhook secret decryption
@@ -160,6 +166,15 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	}
 
 	return false
+}
+
+// repo is the id of the repository this Service syncs: Global's, unless the
+// Service was built for another.
+func (s *Service) repo() string {
+	if s.repoID == "" {
+		return repoid.Global
+	}
+	return s.repoID
 }
 
 // SyncResult carries the outcome of a single sync attempt.
@@ -644,11 +659,11 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// any parse/resolve/cross-ref error keeps its stale rows for this cycle rather
 	// than wiping the catalog. prune() no-ops once dbErr is set so a real DB error
 	// still halts the chain.
-	prune := func(label, query string) int64 {
+	prune := func(label, query string, more ...any) int64 {
 		if dbErr != nil {
 			return 0
 		}
-		r, err := tx.ExecContext(ctx, query, nowStr)
+		r, err := tx.ExecContext(ctx, query, append([]any{nowStr}, more...)...)
 		if err != nil {
 			allErrs = append(allErrs, "prune "+label+": "+err.Error())
 			dbErr = err
@@ -714,9 +729,13 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if scriptsOK {
+		// This repository's scripts only (1290, GR-13). The statement used to ask
+		// neither for a Git row nor for a repository, so a second repository's
+		// sync deleted every script the first had supplied; the other kinds'
+		// prunes still do, until they carry a repository too (Phase R3).
 		prunedScripts = prune("scripts", `
 			DELETE FROM scripts
-			WHERE synced_at < ? AND source_path LIKE 'scripts/%'`)
+			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?`, s.repo())
 	} else {
 		skipped = append(skipped, "scripts")
 	}
@@ -1300,6 +1319,11 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 // read from the clone). It feeds both the scripts-table upsert and the
 // denormalization of fields onto referencing jobs (Decision 7).
 type resolvedScript struct {
+	// uid is the script's identity in the scripts table (migration 1290). It is
+	// empty until upsertScripts has written the row, which fills it in: a row
+	// that already existed keeps its uid, a new one is given one. upsertJobs
+	// reads it to stamp jobs.script_uid.
+	uid         string
 	runType     string
 	command     string
 	script      string
@@ -1393,7 +1417,15 @@ func (s *Service) resolveScripts(scripts []ScriptYAML) (map[string]resolvedScrip
 	return out, errs
 }
 
-// upsertScripts writes the resolved scripts into the scripts cache table.
+// upsertScripts writes the resolved scripts into the scripts cache table, and
+// records each row's uid back into resolved (see resolvedScript.uid).
+//
+// A script is unique by (repo_id, name) since migration 1290, and its uid is
+// its identity: an edit in Git updates the row and keeps the uid, so the
+// reference bindings filed under it and the jobs joined to it stay put. The uid
+// is therefore ABSENT from the DO UPDATE below, like tags. A script that was
+// pruned and comes back is a new row with a new uid, and its bindings went
+// with the old one (the cleanup trigger).
 //
 // NOTE: scripts.tags (migration 280) is deliberately ABSENT from both the column
 // list and the ON CONFLICT DO UPDATE SET below. Unlike warnings/variables (which
@@ -1416,11 +1448,11 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 			prompts = "[]"
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO scripts(name, description, run_type, command, script, script_path,
+			INSERT INTO scripts(uid, repo_id, name, description, run_type, command, script, script_path,
 			                    executor, content_hash, source_path, synced_at, warnings, variables,
 			                    project_root, prompts_json)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(name) DO UPDATE SET
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(repo_id, name) DO UPDATE SET
 				description=excluded.description,
 				run_type=excluded.run_type,
 				command=excluded.command,
@@ -1434,12 +1466,39 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 				variables=excluded.variables,
 				project_root=excluded.project_root,
 				prompts_json=excluded.prompts_json`,
-			name, nullStr(rs.description), rs.runType,
+			db.NewID(), s.repo(), name, nullStr(rs.description), rs.runType,
 			nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath),
 			nullStr(rs.executor), rs.contentHash, nullStr(rs.sourcePath), now, warnings, variables,
 			nullStr(rs.projectRoot), prompts)
 		if err != nil {
 			return fmt.Errorf("upsert script %q: %w", name, err)
+		}
+		// The blind upsert cannot say whether it inserted or updated, so the uid
+		// is read back: the minted one for a new script, the standing one for a
+		// script that was already there.
+		if err := tx.QueryRowContext(ctx,
+			`SELECT uid FROM scripts WHERE repo_id = ? AND name = ?`, s.repo(), name).Scan(&rs.uid); err != nil {
+			return fmt.Errorf("resolve uid for script %q: %w", name, err)
+		}
+		resolved[name] = rs
+		// An in-app job names its script and holds a copy of it. If the script
+		// had gone (the trigger cleared the job's script_uid) and is back, the
+		// job is joined to it again by the name its author wrote, which is what
+		// the name did by itself while a script WAS its name. Global's repository
+		// only: which repository an agency's in-app job resolves a name in is
+		// GR-16's rule, and it arrives with the repositories (Phase R4).
+		//
+		// "No script" is a NULL, or a uid that names no row: the composer reads
+		// the script before it opens its transaction, so a prune between the two
+		// can leave a job holding the uid of a script that has just gone, written
+		// after the trigger that would have cleared it had already run.
+		if s.repo() == repoid.Global {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE jobs SET script_uid = ?
+				  WHERE source = 'cronomicon' AND script_ref = ?
+				    AND (script_uid IS NULL OR script_uid NOT IN (SELECT uid FROM scripts))`, rs.uid, name); err != nil {
+				return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, err)
+			}
 		}
 	}
 	return nil
@@ -1703,9 +1762,12 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		command, script, scriptPath, executor := j.Spec.Command, j.Spec.Script, j.Spec.ScriptPath, storableExecutor(j.Spec.Executor)
 		// Where the stored executor came from, for the warning below.
 		executorFrom := "the job's file"
-		var scriptRef, contentHash, projectRoot string
+		var scriptRef, scriptUID, contentHash, projectRoot string
 		if j.Spec.ScriptRef != "" {
 			rs := resolved[j.Spec.ScriptRef]
+			// Which script the name means: the row upsertScripts wrote earlier in
+			// this transaction (1290). The name stays beside it, as authored.
+			scriptUID = rs.uid
 			runType = rs.runType
 			command, script, scriptPath = rs.command, rs.script, rs.scriptPath
 			// The script's executor was the one a run read (Decision 7), so it is
@@ -1875,8 +1937,8 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			                 source_path, synced_at, prompts_json, env_passthrough,
 			                 project_root, requires_json, prompt_enforcement,
 			                 ssh_user, ssh_credential, become_password_secret,
-			                 warn_after_seconds, must_finish_by, watch_json, uid)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			                 warn_after_seconds, must_finish_by, watch_json, uid, script_uid)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
 				run_type=excluded.run_type,
 				description=excluded.description,
@@ -1894,6 +1956,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 				script_path=excluded.script_path,
 				executor=excluded.executor,
 				script_ref=excluded.script_ref,
+				script_uid=excluded.script_uid,
 				content_hash=excluded.content_hash,
 				source_path=excluded.source_path,
 				synced_at=excluded.synced_at,
@@ -1927,7 +1990,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			nullIfZero(j.Spec.WarnAfterSeconds), nullStr(warnDeadline), watchJSON,
 			// AF-4a — see the schedules upsert: first-sight identity, preserved on
 			// conflict by omission from DO UPDATE.
-			db.NewID())
+			db.NewID(), nullStr(scriptUID))
 		if err != nil {
 			return fmt.Errorf("upsert job %q: %w", name, err)
 		}

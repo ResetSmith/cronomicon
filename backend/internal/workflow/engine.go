@@ -591,11 +591,11 @@ func (e *Engine) runJob(
 	// R2F-1 — jd.uid is the job resolveJobDef settled on (R2-3); read the
 	// script and the bindings off THAT identity, or a same-named sibling's
 	// credentials decide whether this step is allowed to run.
-	var stepScriptRef sql.NullString
+	var stepScriptRef, stepScriptUID sql.NullString
 	_ = e.db.QueryRowContext(ctx,
-		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
-		jd.uid, jd.uid, step.Name, jobSrc).Scan(&stepScriptRef)
-	stepOwners := runref.RunOwners(jobSrc, step.Name, jd.uid, stepScriptRef.String)
+		`SELECT script_ref, script_uid FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
+		jd.uid, jd.uid, step.Name, jobSrc).Scan(&stepScriptRef, &stepScriptUID)
+	stepOwners := runref.RunOwners(jobSrc, step.Name, jd.uid, stepScriptRef.String, stepScriptUID.String)
 	// An unbound step is Global's run (migration 1220): its agency set is
 	// ["Global"], never empty, so the guard is the scope alone. (It also asked
 	// for an empty set until 2.3.0, which Global being a row made never true —

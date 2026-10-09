@@ -501,13 +501,13 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 		                    WHERE (rb.owner_kind = 'job'
 		                            AND CASE WHEN COALESCE(j.uid, '') <> '' THEN rb.owner_uid = j.uid
 		                                     ELSE rb.owner_source = j.source AND rb.owner_name = j.name END)
-		                       OR (rb.owner_kind = 'script' AND rb.owner_name = j.script_ref))),
+		                       OR (rb.owner_kind = 'script' AND rb.owner_uid = j.script_uid))),
 		       EXISTS (SELECT 1 FROM reference_bindings kb
 		                WHERE kb.ref_kind = 'key'
 		                  AND ((kb.owner_kind = 'job'
 		                        AND CASE WHEN COALESCE(j.uid, '') <> '' THEN kb.owner_uid = j.uid
 		                                 ELSE kb.owner_source = j.source AND kb.owner_name = j.name END)
-		                       OR (kb.owner_kind = 'script' AND kb.owner_name = j.script_ref)))
+		                       OR (kb.owner_kind = 'script' AND kb.owner_uid = j.script_uid)))
 		  FROM jobs j
 		 WHERE j.scope = ? AND j.deleted_at IS NULL
 		 ORDER BY j.name, j.source`, sc.Scope)

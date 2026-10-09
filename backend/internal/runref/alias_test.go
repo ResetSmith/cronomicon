@@ -279,7 +279,7 @@ func TestAliasCollisionFailsClosed(t *testing.T) {
 func TestAliasValidationAndStorage(t *testing.T) {
 	pool := openDB(t)
 	ctx := context.Background()
-	owner := Owner{Kind: "script", Name: "s"}
+	owner := Owner{Kind: "script", Name: "s", UID: "uid-script-s"}
 
 	bad := []struct {
 		name string

@@ -423,7 +423,8 @@ type claimedRun struct {
 	traceID      string
 	jobName      string
 	jobSource    string // git | cronomicon (A9); resolves the job's denormalized body by (name,source)
-	scriptRef    string // referenced Script name (P1.3 script binding owner); "" ⇒ legacy inline body
+	scriptRef    string // referenced Script name as authored; "" ⇒ legacy inline body
+	scriptUID    string // WHICH script that name meant when the run was queued (runs.script_uid, 1290); keys the script's bindings
 	jobUID       string // the executed job's frozen identity (runs.job_uid, R2-1); keys the binding read (R2F-1)
 	runType      string
 	scope        string
@@ -470,12 +471,12 @@ func (s *Service) claim(ctx context.Context) (*claimedRun, error) {
 	// The rest of the row, by id. The run is already 'running' and this
 	// process is its only worker, so a failed read must not return an error
 	// and walk away: it is finalized here, with the cause.
-	var targetHost, envJSON, overrideJSON, jobSource, jobUID, scriptRef, triggeredBy, entityCode, sshUser, sshCred sql.NullString
+	var targetHost, envJSON, overrideJSON, jobSource, jobUID, scriptRef, scriptUID, triggeredBy, entityCode, sshUser, sshCred sql.NullString
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT job_source, job_uid, script_ref, target_host, triggered_by, env_json, override_json,
+		SELECT job_source, job_uid, script_ref, script_uid, target_host, triggered_by, env_json, override_json,
 		       entity_code, ssh_user, ssh_credential
 		  FROM runs WHERE id = ?`, c.TraceID).
-		Scan(&jobSource, &jobUID, &scriptRef, &targetHost, &triggeredBy, &envJSON, &overrideJSON,
+		Scan(&jobSource, &jobUID, &scriptRef, &scriptUID, &targetHost, &triggeredBy, &envJSON, &overrideJSON,
 			&entityCode, &sshUser, &sshCred); err != nil {
 		s.log.Error("local runner: claimed a run and could not read it; failing it", "trace_id", c.TraceID, "error", err)
 		s.finalizeReason(ctx, r, "failure", nil, "local_runner_read_failed")
@@ -484,6 +485,7 @@ func (s *Service) claim(ctx context.Context) (*claimedRun, error) {
 	r.jobSource = jobSource.String
 	r.jobUID = jobUID.String
 	r.scriptRef = scriptRef.String
+	r.scriptUID = scriptUID.String
 	r.targetHost = targetHost.String
 	r.triggeredBy = triggeredBy.String
 	r.envJSON = envJSON.String
@@ -749,8 +751,8 @@ func (s *Service) resolveReferences(ctx context.Context, r claimedRun) (resolved
 	// the ones the job that was ENQUEUED declared — not the union of every job
 	// sharing its name.
 	owners := []runref.Owner{{Kind: "job", Source: jobSource, Name: r.jobName, UID: r.jobUID}}
-	if r.scriptRef != "" {
-		owners = append(owners, runref.Owner{Kind: "script", Name: r.scriptRef})
+	if r.scriptUID != "" {
+		owners = append(owners, runref.Owner{Kind: "script", Name: r.scriptRef, UID: r.scriptUID})
 	}
 
 	seen := map[string]bool{}

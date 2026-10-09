@@ -36,6 +36,7 @@ schedule_name = <NULL>
 scheduled_for = <NULL>
 scope = prod
 script_ref = scripts/site.sh
+script_uid = uid-golden-script
 sla_warned_at = <NULL>
 ssh_credential = cred-1
 ssh_user = deploy

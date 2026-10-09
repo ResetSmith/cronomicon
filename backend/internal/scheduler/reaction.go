@@ -553,16 +553,16 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 		runType, scope, policy, concKey sql.NullString
 		jobEnv, targetHost              sql.NullString
 		sshUser, sshCred                sql.NullString
-		scriptRef                       sql.NullString
+		scriptRef, scriptUID            sql.NullString
 		jobUID                          sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT run_type, scope, concurrency_policy, concurrency_key,
-		       env_json, target_host, ssh_user, ssh_credential, script_ref, uid
+		       env_json, target_host, ssh_user, ssh_credential, script_ref, script_uid, uid
 		  FROM jobs
 		 WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END
 		   AND deleted_at IS NULL`, ownerUID, ownerUID, jobName, source).
-		Scan(&runType, &scope, &policy, &concKey, &jobEnv, &targetHost, &sshUser, &sshCred, &scriptRef, &jobUID)
+		Scan(&runType, &scope, &policy, &concKey, &jobEnv, &targetHost, &sshUser, &sshCred, &scriptRef, &scriptUID, &jobUID)
 	if err != nil {
 		// Includes ErrNoRows: a reaction whose owner was deleted or renamed. The
 		// delivery stays recorded; there is simply nothing to fire.
@@ -607,7 +607,7 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 	// enqueued. Unlike fire() this does not record a skipped run: the delivery
 	// row already carries the trail, and inventing a run to say "this did not
 	// run" would double-count the event in History.
-	owners := runref.RunOwners(source, jobName, jobUID.String, scriptRef.String)
+	owners := runref.RunOwners(source, jobName, jobUID.String, scriptRef.String, scriptUID.String)
 	blocked, berr := runref.UnboundRunBlocked(ctx, s.db, owners, scope.String, scopeAgencies)
 	if berr != nil {
 		return nil, fmt.Errorf("check unbound references for %q: %w", jobName, berr)

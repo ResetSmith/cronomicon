@@ -244,13 +244,17 @@ type Owner struct {
 	UID    string
 }
 
-// UIDKey is the identity the binding store keys this owner by: the job uid when
-// the caller resolved one, "" otherwise. A uid set on a SCRIPT owner is ignored
-// rather than written — scripts are name-identified permanently, and honouring a
-// stray uid would file a script's bindings under a job's identity where nothing
-// would ever read them back.
+// UIDKey is the identity the binding store keys this owner by: the uid of the
+// job or of the script, when the caller resolved one, "" otherwise.
+//
+// A script's uid is honoured since migration 1290 (2.4.0, GR-5). Until then a
+// script was its name and a uid set on a script owner was discarded here; now
+// two repositories may each hold a script of one name, and the name alone
+// would mean both. A script owner with NO uid matches nothing in the store
+// (see ownerMatch): there is no name-keyed namespace left for scripts to fall
+// back to, and falling back would read another repository's bindings.
 func (o Owner) UIDKey() string {
-	if o.Kind != "job" {
+	if o.Kind != "job" && o.Kind != "script" {
 		return ""
 	}
 	return o.UID

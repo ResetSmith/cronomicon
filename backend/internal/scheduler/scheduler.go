@@ -542,11 +542,11 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// R2F-1 — by identity, like every other per-fire read above: the script whose
 	// bindings this probe checks must be the one THIS job references, not a
 	// same-named sibling's.
-	var scriptRef sql.NullString
+	var scriptRef, scriptUID sql.NullString
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT script_ref FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
-		jobUID, jobUID, jobName, source).Scan(&scriptRef)
-	owners := runref.RunOwners(source, jobName, jobUID, scriptRef.String)
+		`SELECT script_ref, script_uid FROM jobs WHERE CASE WHEN ? != '' THEN uid = ? ELSE name = ? AND source = ? END`,
+		jobUID, jobUID, jobName, source).Scan(&scriptRef, &scriptUID)
+	owners := runref.RunOwners(source, jobName, jobUID, scriptRef.String, scriptUID.String)
 	blocked, berr := runref.UnboundRunBlocked(ctx, s.db, owners, scope, scopeAgencies)
 	if berr != nil {
 		s.log.Error("scheduler: check unbound references", "job", jobName, "err", berr)

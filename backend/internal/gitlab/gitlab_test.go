@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     ssh_user           TEXT,
     ssh_credential     TEXT,
     become_password_secret TEXT,
+    script_uid         TEXT, -- which script script_ref means (migration 1290)
     PRIMARY KEY (source, name)
 );
 
@@ -110,8 +111,12 @@ CREATE TABLE IF NOT EXISTS entity_codes (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_codes_live
     ON entity_codes(kind, source, name) WHERE deleted_at IS NULL;
 
+-- Mirrors migration 1290: a script has a uid and a repository, and its name
+-- is unique per repository.
 CREATE TABLE IF NOT EXISTS scripts (
-    name         TEXT PRIMARY KEY,
+    uid          TEXT PRIMARY KEY NOT NULL DEFAULT (lower(hex(randomblob(16)))),
+    repo_id      TEXT NOT NULL DEFAULT 'global',
+    name         TEXT NOT NULL,
     description  TEXT,
     run_type     TEXT NOT NULL,
     command      TEXT,
@@ -125,7 +130,8 @@ CREATE TABLE IF NOT EXISTS scripts (
     variables    TEXT NOT NULL DEFAULT '[]',
     prompts_json TEXT NOT NULL DEFAULT '[]',
     tags         TEXT NOT NULL DEFAULT '[]',
-    project_root TEXT
+    project_root TEXT,
+    UNIQUE (repo_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS workflows (
