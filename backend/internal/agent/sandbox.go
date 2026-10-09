@@ -88,7 +88,12 @@ func probeSandbox(ctx context.Context) (ok bool, reason string) {
 			why <- "systemd-run is not on $PATH"
 			return false
 		}
-		cmd := exec.CommandContext(pctx, "systemd-run", "--scope", "--quiet", "--collect", "--", "true")
+		// --no-ask-password: an agent that may not create a scope must be told
+		// so, not asked for a password. Without it, on a machine with a desktop
+		// session the request raises a polkit dialog that nobody answers: the
+		// probe waits out its deadline, and every start of an agent (each test
+		// that runs one, each `doctor`) raises another.
+		cmd := exec.CommandContext(pctx, "systemd-run", "--scope", "--quiet", "--collect", "--no-ask-password", "--", "true")
 		cmd.Env = os.Environ()
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -158,7 +163,9 @@ func sandboxWrap(cfg Config, argv []string) (wrapped []string, sandboxed bool) {
 	if cfg.NoSandbox || !cfg.SandboxAvailable || runtime.GOOS != "linux" || len(argv) == 0 {
 		return argv, false
 	}
-	out := []string{"systemd-run", "--scope", "--quiet", "--collect"}
+	// --no-ask-password as in probeSandbox: a run is never the place to be
+	// asked for a password, and a refusal must fail the wrapper at once.
+	out := []string{"systemd-run", "--scope", "--quiet", "--collect", "--no-ask-password"}
 	for _, p := range sandboxProps(cfg) {
 		out = append(out, "--property="+p)
 	}

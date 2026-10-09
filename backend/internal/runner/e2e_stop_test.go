@@ -198,6 +198,7 @@ func newStopHarness(t *testing.T, runnerName string) *stopHarness {
 		KnownHostsFile:    knownHosts,
 		LogRetryBudget:    5,
 		FanOut:            4,
+		NoSandbox:         true, // SSH runs only — skip the systemd-run startup probe, which asks the host's systemd for a scope
 	}
 	return h
 }

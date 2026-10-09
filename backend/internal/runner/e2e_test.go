@@ -273,6 +273,7 @@ func (h *e2eHarness) agentConfig(t *testing.T, name, authKeyEnvVar string) agent
 		KnownHostsFile:    h.knownHosts,
 		LogRetryBudget:    5,
 		FanOut:            4,
+		NoSandbox:         true, // SSH runs only — skip the systemd-run startup probe, which asks the host's systemd for a scope
 	}
 }
 
@@ -587,6 +588,7 @@ func TestRunnerAgentE2EKill(t *testing.T) {
 		KnownHostsFile:    knownHosts,
 		LogRetryBudget:    5,
 		FanOut:            4,
+		NoSandbox:         true, // as agentConfig: no systemd-run probe in a test
 	}
 	a, err := agent.New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
