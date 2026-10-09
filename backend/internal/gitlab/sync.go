@@ -574,7 +574,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		if strings.TrimSpace(sc.Spec.ProjectRoot) == "" {
 			continue
 		}
-		for _, f := range LintProject(s.cloneDir, sc.Spec.ProjectRoot) {
+		for _, f := range lintProjectWith(s.cloneDir, sc.Spec.ProjectRoot, s.readCloned) {
 			s.log.Warn("git sync: checkout project lint (advisory)",
 				"project", sc.Spec.ProjectRoot, "file", f.File, "detail", f.Message)
 		}
@@ -1274,7 +1274,23 @@ func (s *Service) gitAuth() *gogithttp.BasicAuth {
 // files always load. Submodules are fetched with the same token as the parent
 // repo via SubmoduleUpdateOptions.Auth; a repo with no .gitmodules yields an
 // empty list and is a no-op.
+//
+// Only for Global's repository. A submodule's URL is whatever .gitmodules
+// says, which is whatever a committer wrote, and it is fetched with the
+// repository's token. Global's committers are the installation's
+// administrators. An agency's are not, and the URL its connection may name is
+// held to an allowlist (GR-10) that a submodule's URL would walk around: an
+// agency's repository's submodules are not fetched, and the sync says so.
 func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, wt *gogit.Worktree, auth *gogithttp.BasicAuth) {
+	if s.repo() != repoid.Global {
+		if f, err := wt.Filesystem.Open(".gitmodules"); err == nil {
+			_ = f.Close()
+			s.logWarn("git sync: this repository declares submodules, which are fetched for the installation's own "+
+				"repository only; their files are not present and nothing in them is synced",
+				"file", ".gitmodules", "repo_id", s.repo())
+		}
+		return
+	}
 	// Sync submodule URLs from .gitmodules to .git/config (equivalent to git submodule sync).
 	// Since go-git does not sync them automatically on URL change, we manually synchronize
 	// the configured URL from .gitmodules.
@@ -1389,11 +1405,65 @@ type manifestFile struct {
 	data []byte
 }
 
+// fileReader reads one file by its path.
+type fileReader func(path string) ([]byte, error)
+
+// errLeavesRepository is what the contained reader answers for a file that is
+// not inside the repository once its symbolic links are followed.
+var errLeavesRepository = errors.New("is a symbolic link that leads out of the repository; not read")
+
+// errLinkNotFollowed is what it answers for a link whose target is not there.
+var errLinkNotFollowed = errors.New("is a symbolic link that cannot be followed; not read")
+
+// containedReader reads files of a clone, and only of that clone: a path
+// that, with its symbolic links followed, is outside root is refused.
+//
+// A repository can hold a symbolic link, and a link can point anywhere. Until
+// 2.4.0 only a script's BODY was read this way (execspec.SafeReadRepoFile);
+// job, schedule, workflow and inventory files were read with os.ReadFile, so a
+// committed link named `inventory/x.ini` was read from wherever it pointed,
+// and its content stored as a scope's inventory or quoted in a parse error.
+// With one repository whose committers are the installation's administrators
+// that reads nothing they could not read anyway. With a clone per agency side
+// by side in one directory (GR-12), it is one agency's committer reading
+// another agency's repository.
+//
+// A link that stays inside the repository is followed, as before.
+func containedReader(root string) fileReader {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		resolvedRoot = root
+	}
+	return func(path string) ([]byte, error) {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			// A link that cannot be followed. The error would name where it
+			// points, which is not this repository's reader's to be told.
+			if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+				return nil, errLinkNotFollowed
+			}
+			return nil, err
+		}
+		rel, err := filepath.Rel(resolvedRoot, resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+			return nil, errLeavesRepository
+		}
+		return os.ReadFile(resolved)
+	}
+}
+
+// readCloned reads one file of this Service's clone through the contained
+// reader. Everything a sync reads from the clone comes through here or
+// through execspec.SafeReadRepoFile.
+func (s *Service) readCloned(path string) ([]byte, error) {
+	return containedReader(s.cloneDir)(path)
+}
+
 // walkManifests recursively collects every .yaml/.yml file under dir so jobs,
 // workflows, and schedules can live in sub-folders (folder support). A missing
 // dir is not an error; a read failure is recorded but never aborts the walk,
 // mirroring discoverScripts' advisory model.
-func walkManifests(dir string) ([]manifestFile, []error) {
+func walkManifests(dir string, read fileReader) ([]manifestFile, []error) {
 	var out []manifestFile
 	var errs []error
 	werr := filepath.WalkDir(dir, func(p string, d os.DirEntry, e error) error {
@@ -1410,7 +1480,7 @@ func walkManifests(dir string) ([]manifestFile, []error) {
 		if !strings.HasSuffix(n, ".yaml") && !strings.HasSuffix(n, ".yml") {
 			return nil
 		}
-		data, rerr := os.ReadFile(p)
+		data, rerr := read(p)
 		if rerr != nil {
 			errs = append(errs, fmt.Errorf("read %s: %w", p, rerr))
 			return nil
@@ -1427,7 +1497,7 @@ func walkManifests(dir string) ([]manifestFile, []error) {
 
 func (s *Service) parseJobs() ([]JobYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "jobs")
-	files, errs := walkManifests(dir)
+	files, errs := walkManifests(dir, s.readCloned)
 	var jobs []JobYAML
 	for _, f := range files {
 		// Validate apiVersion/kind first.
@@ -1462,7 +1532,7 @@ func normalizeConcurrencyPolicy(p string) string { return cronutil.NormalizePoli
 
 func (s *Service) parseScripts() ([]ScriptYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "scripts")
-	return discoverScripts(dir)
+	return discoverScriptsWith(dir, s.readCloned)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1471,7 +1541,7 @@ func (s *Service) parseScripts() ([]ScriptYAML, []error) {
 
 func (s *Service) parseSchedules() ([]ScheduleYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "schedules")
-	files, errs := walkManifests(dir)
+	files, errs := walkManifests(dir, s.readCloned)
 	var scheds []ScheduleYAML
 	for _, f := range files {
 		valErrs, _ := validateYAMLBytes(f.path, f.data)
@@ -1498,7 +1568,7 @@ func (s *Service) parseSchedules() ([]ScheduleYAML, []error) {
 
 func (s *Service) parseWorkflows() ([]WorkflowYAML, []error) {
 	dir := filepath.Join(s.cloneDir, "workflows")
-	files, errs := walkManifests(dir)
+	files, errs := walkManifests(dir, s.readCloned)
 	var wfs []WorkflowYAML
 	for _, f := range files {
 		valErrs, _ := validateYAMLBytes(f.path, f.data)
@@ -1569,7 +1639,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
+		data, err := s.readCloned(path)
 		if err != nil {
 			continue
 		}
@@ -1589,7 +1659,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
+		data, err := s.readCloned(path)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("read %s: %w", path, err))
 			continue

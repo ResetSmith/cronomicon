@@ -25,12 +25,17 @@ import (
 // `cronomicon validate` / CI treats them as errors (fail), git sync surfaces them
 // as never-blocking warnings (SyncLintProjectWarnings).
 func LintProject(repoDir, projectRoot string) []ValidationError {
+	return lintProjectWith(repoDir, projectRoot, os.ReadFile)
+}
+
+// lintProjectWith is LintProject reading through read (see discoverScriptsWith).
+func lintProjectWith(repoDir, projectRoot string, read fileReader) []ValidationError {
 	var errs []ValidationError
 	rootAbs := filepath.Join(repoDir, filepath.FromSlash(projectRoot))
 
 	// requirements.yml pinning lint.
 	reqAbs := filepath.Join(rootAbs, "requirements.yml")
-	if data, err := os.ReadFile(reqAbs); err == nil {
+	if data, err := read(reqAbs); err == nil {
 		reqRel := filepath.ToSlash(filepath.Join(projectRoot, "requirements.yml"))
 		reqs, perr := ansiblereq.Parse(data)
 		if perr != nil {
@@ -45,7 +50,7 @@ func LintProject(repoDir, projectRoot string) []ValidationError {
 	}
 
 	// Tree secret-scan.
-	errs = append(errs, scanTreeForSecrets(repoDir, projectRoot)...)
+	errs = append(errs, scanTreeForSecrets(repoDir, projectRoot, read)...)
 	return errs
 }
 
@@ -54,7 +59,7 @@ func LintProject(repoDir, projectRoot string) []ValidationError {
 // whose content is (or contains) an Ansible Vault payload is exempt — its
 // secrets are encrypted. Env-lookup indirection is allowed (the same allowed
 // form the inventory guard accepts).
-func scanTreeForSecrets(repoDir, projectRoot string) []ValidationError {
+func scanTreeForSecrets(repoDir, projectRoot string, read fileReader) []ValidationError {
 	var errs []ValidationError
 	rootAbs := filepath.Join(repoDir, filepath.FromSlash(projectRoot))
 	_ = filepath.WalkDir(rootAbs, func(path string, d fs.DirEntry, walkErr error) error {
@@ -66,7 +71,7 @@ func scanTreeForSecrets(repoDir, projectRoot string) []ValidationError {
 		default:
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := read(path)
 		if err != nil {
 			return nil
 		}

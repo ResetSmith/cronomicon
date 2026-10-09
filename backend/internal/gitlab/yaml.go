@@ -1312,6 +1312,13 @@ type projectClaim struct {
 // synthesizes and filters, skipping files inside a claimed root. Correctness no
 // longer depends on visit order.
 func discoverScripts(dir string) ([]ScriptYAML, []error) {
+	return discoverScriptsWith(dir, os.ReadFile)
+}
+
+// discoverScriptsWith is discoverScripts reading through read: sync's contained
+// reader (containedReader), or os.ReadFile for `cronomicon validate`, which is
+// run by a person on a directory of their own.
+func discoverScriptsWith(dir string, read fileReader) ([]ScriptYAML, []error) {
 	var scripts []ScriptYAML
 	var errs []error
 
@@ -1331,7 +1338,7 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 		if ext := strings.ToLower(filepath.Ext(rel)); ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := read(path)
 		if err != nil {
 			return nil // pass 2 reports read errors
 		}
@@ -1393,7 +1400,7 @@ func discoverScripts(dir string) ([]ScriptYAML, []error) {
 
 		// 1. YAML files: Cronomicon Script wrappers, or raw Ansible playbooks.
 		if ext == ".yaml" || ext == ".yml" {
-			data, err := os.ReadFile(path)
+			data, err := read(path)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("read %s: %w", rel, err))
 				return nil
