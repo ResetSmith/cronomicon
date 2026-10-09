@@ -290,6 +290,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			n := a.startDrain("shutdown signal")
 			if n == 0 {
+				// No run, but perhaps a refusal still on its way to the server
+				// (refuse): leaving now would strand the run it is ending.
+				a.wg.Wait()
 				return ctx.Err()
 			}
 			a.log.Info("shutdown signal — claiming no new work and waiting for active runs to finish; "+
@@ -430,7 +433,7 @@ func (a *Agent) reregister(ctx context.Context, reason string) {
 	}
 	// A new id is a new runner as far as the server is concerned, and it knows
 	// nothing of this file until told.
-	go a.reportKnownHosts(ctx)
+	go a.reportKnownHosts(a.outlivingPoll(ctx)) //nolint:contextcheck // deliberate: see outlivingPoll
 }
 
 // pollOnce performs one poll and dispatches its assignment + control ops. It
@@ -516,6 +519,21 @@ func (a *Agent) pollOnce(ctx context.Context) (again bool) {
 	return again
 }
 
+// outlivingPoll is the context for work that a poll STARTS and does not wait
+// for: a host-key scan, a known_hosts report. It must not be the poll's own.
+// The heartbeat of a stopping agent has a context that ends the moment the poll
+// is answered (Run), and the server hands such an op over once and marks it
+// delivered: on the poll's context the scan was cancelled before it had dialled
+// anything, and an operator waited on a review screen for keys that never came.
+// Like a run, the work ends when it is done or the process exits. Before Run
+// has set runParent (a test that drives a poll by hand) it is ctx.
+func (a *Agent) outlivingPoll(ctx context.Context) context.Context {
+	if a.runParent != nil {
+		return a.runParent
+	}
+	return ctx
+}
+
 // handleControl applies kill/drain/re-register control ops (R2.2, v4).
 // Unknown ops are silently ignored (forward compat — an older agent talking to
 // a newer server must not crash on a new op).
@@ -534,7 +552,7 @@ func (a *Agent) handleControl(ctx context.Context, control []runnerproto.PollCon
 			// Scan + upload runs in its own goroutine so it never blocks the poll
 			// loop (dials can be slow / time out).
 			hosts := c.Hosts
-			go a.handleKeyscan(ctx, hosts)
+			go a.handleKeyscan(a.outlivingPoll(ctx), hosts) //nolint:contextcheck // deliberate: see outlivingPoll
 		case "untrust-hosts":
 			a.handleUntrustHosts(c.Entries)
 		case "trust-hosts":
@@ -543,7 +561,7 @@ func (a *Agent) handleControl(ctx context.Context, control []runnerproto.PollCon
 			// The server sends this AFTER any untrust/trust ops in the same
 			// poll, and those two are applied synchronously above, so the file
 			// is read as they left it. Only the upload leaves the poll loop.
-			go a.reportKnownHosts(ctx)
+			go a.reportKnownHosts(a.outlivingPoll(ctx)) //nolint:contextcheck // deliberate: see outlivingPoll
 		}
 	}
 }
@@ -683,13 +701,17 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 	if err != nil {
 		a.log.Error("fetch manifest", "trace_id", traceID, "error", err)
 		// Without a manifest we can't execute; stream a single failure line +
-		// envelope so the run terminates instead of hanging.
+		// envelope so the run terminates instead of hanging. A fetch that
+		// failed because the agent was told to stop a second time (Abort) says
+		// that, not "context canceled".
 		buf := &logBuffer{}
-		buf.writeLine("cronomicon: manifest fetch failed: " + err.Error())
-		buf.seal(makeEnvelope(1, time.Now(), time.Now(), ""))
-		if serr := streamLogs(ctx, a.client, a.id, traceID, buf, a.cfg.LogRetryBudget, false); serr != nil {
-			a.log.Error("stream logs (manifest failure)", "trace_id", traceID, "error", serr)
+		if errors.Is(context.Cause(ctx), errAgentStopped) {
+			buf.writeLine("cronomicon: the runner agent was stopped before this run started. Nothing was executed; run it again.")
+		} else {
+			buf.writeLine("cronomicon: manifest fetch failed: " + err.Error())
 		}
+		buf.seal(makeEnvelope(1, time.Now(), time.Now(), ""))
+		a.flushTerminal(ctx, traceID, buf)
 		return
 	}
 
@@ -731,12 +753,19 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 		flushWG.Wait()
 	}
 
-	// The terminal flush outlives the run's own cancellation (2.3.2). A run that
-	// was cancelled still has a log and an exit code, and the server has no
-	// other way to learn either: flushing on ctx sent nothing at all for a run
-	// the agent had just ended. Bounded, so a server that never answers cannot
-	// hold a stopping agent. For a run the server killed, it has already
-	// written the terminal state and answers 409; the budget ends that quickly.
+	a.flushTerminal(ctx, traceID, buf)
+}
+
+// flushTerminal uploads a run's sealed log: its tail and the envelope that ends
+// the run on the server. It outlives the run's own cancellation (2.3.2). A run
+// that was cancelled still has a log and an exit code, and the server has no
+// other way to learn either: flushing on ctx sent nothing at all for a run the
+// agent had just ended. That holds for a run that never got its manifest as
+// much as for one that ran, so both ends of executeRun come through here.
+// Bounded, so a server that never answers cannot hold a stopping agent. For a
+// run the server killed, it has already written the terminal state and answers
+// 409; the budget ends that quickly.
+func (a *Agent) flushTerminal(ctx context.Context, traceID string, buf *logBuffer) {
 	flush, stop := context.WithTimeout(context.WithoutCancel(ctx), terminalFlushTimeout)
 	defer stop()
 	switch err := streamLogs(flush, a.client, a.id, traceID, buf, a.cfg.LogRetryBudget, false); {

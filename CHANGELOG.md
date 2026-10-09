@@ -103,6 +103,9 @@ you upgrade by hand, needs the line added (below).
   - **The first signal is a drain.** The agent claims no new work, keeps its
     heartbeat, lets the runs in flight finish, uploads their logs and exits.
     systemd waits for it as long as the unit's `TimeoutStopSec=300` allows.
+    A host-key scan or a `known_hosts` report that the server asks for in
+    that time is still carried out, and an agent stopped with nothing in
+    flight first finishes reporting a run it has just refused.
   - **systemd signals the agent alone (`KillMode=mixed`).** An Ansible or
     Terraform run is the agent's own child process, in the unit's control
     group, and systemd's default sends `SIGTERM` to every process in the
@@ -120,7 +123,9 @@ you upgrade by hand, needs the line added (below).
     finished*. A run handed over between the two signals is refused instead of
     started, and a third signal is no longer swallowed.
   - **A run's last log upload outlives the run's own cancellation**, so a
-    cancelled run is recorded as what it was instead of not at all.
+    cancelled run is recorded as what it was instead of not at all. A run
+    cancelled before it had begun (its manifest still on the way) is ended
+    too, with *the runner agent was stopped before this run started*.
 - **A run whose agent died stayed *running* for good.** A crash, an
   out-of-memory kill, a reboot or a stop that ran out of time leaves the run
   with no owner. Only the offline sweep closed a runner's runs, and it acts on
@@ -234,6 +239,14 @@ you upgrade by hand, needs the line added (below).
   run in flight must end the run or call `Abort`, or `Run` does not return.
   `Abort` is sticky (`Agent.aborted`): `dispatch` refuses whatever arrives
   after it.
+- Work that a poll starts and does not wait for (a host-key scan, a
+  `known_hosts` report) takes `Agent.outlivingPoll(ctx)`, never the poll's
+  own context: a stopping agent's heartbeat poll has a context that ends
+  when the poll is answered, and the server hands a host-key op over once.
+  `Agent.flushTerminal` is the one upload that ends a run on the server, for
+  a run that ran and for one that never got its manifest; do not upload a
+  sealed log on the run's context. `internal/agent/stop_edges_test.go` holds
+  all three.
 - `KillMode=mixed` is in three places that must agree: the installer's unit,
   the reference unit (`runner-install-check.sh` compares the two and checks
   the line in each) and `KILLMODE_DROPIN` in `runner-upgrade-cmd.ts`, which is
