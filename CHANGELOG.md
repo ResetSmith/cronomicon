@@ -249,8 +249,13 @@ you upgrade by hand, needs the line added (below).
 - The dev stack (`cronomicon-dev`, outside this repository) gained a git
   server for test definitions and `scripts/e2e-vm-jobs.sh`, which installs
   three agents on a test VM and runs shell and Ansible jobs on them, stops an
-  agent under a run and kills one. Run on RHEL 8.10 (kernel 4.18, systemd 239,
-  SELinux enforcing) against 2.3.1 and 2.3.2.
+  agent under a shell run and under an Ansible play, and kills one. The play
+  is what shows `KillMode=mixed`: the restart waited 35 seconds and the play
+  finished, and a control pass with the unit set back to systemd's default
+  returned at once with the play cut off. It also runs the upgrade command
+  against a unit made to look like an older installer's, and checks that the
+  drop-in is written there and nowhere else. Run on RHEL 8.10 (kernel 4.18,
+  systemd 239, SELinux enforcing) against 2.3.1 and 2.3.2.
 
 ## [2.3.1] - 2026-10-08
 
