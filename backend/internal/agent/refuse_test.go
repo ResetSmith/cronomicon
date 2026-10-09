@@ -95,6 +95,11 @@ func TestAnAssignmentThatCannotStartIsReportedAsFailed(t *testing.T) {
 	}{
 		{"every slot taken", func(a *Agent) { a.active["t-held"] = func(error) {} }, "as many jobs as its limit allows"},
 		{"stopping", func(a *Agent) { a.draining = true }, "it is stopping and takes no new work"},
+		// Abort cancels the runs it finds. An assignment on its way back from a
+		// poll at that moment arrives after it, with a slot free and the drain
+		// not yet begun: started, it would run behind an Abort that never
+		// reaches it.
+		{"told to stop a second time", func(a *Agent) { a.Abort() }, "it is stopping and takes no new work"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newRefuseHarness(t, 1)

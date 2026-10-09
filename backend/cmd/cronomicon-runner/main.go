@@ -74,8 +74,10 @@ func main() {
 
 	// The first SIGINT/SIGTERM cancels ctx: the agent claims no new work and
 	// exits when its active runs have finished (a drain; systemd waits
-	// TimeoutStopSec for it). A second one cancels those runs, which still
-	// report their logs before the agent exits.
+	// TimeoutStopSec for it). Every one after it cancels those runs, which
+	// still report their logs before the agent exits. Every one, not only the
+	// second: the signals stay caught for the life of the process, so one that
+	// nothing read would be a stop the agent ignored.
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	ctx, stop := context.WithCancel(context.Background())
@@ -83,8 +85,9 @@ func main() {
 	go func() {
 		<-sigs
 		stop()
-		<-sigs
-		a.Abort()
+		for range sigs {
+			a.Abort()
+		}
 	}()
 
 	if err := a.Run(ctx); err != nil && ctx.Err() == nil {

@@ -53,7 +53,13 @@ type Agent struct {
 	mu       sync.Mutex
 	active   map[string]context.CancelCauseFunc
 	draining bool
-	wg       sync.WaitGroup
+	// aborted is set by Abort and never cleared: the agent was told to stop a
+	// second time. Abort cancels the runs in `active` at that moment, and a
+	// poll already on its way back can still carry an assignment; dispatch
+	// reads this so that such a run is refused instead of started behind an
+	// Abort that will never reach it.
+	aborted bool
+	wg      sync.WaitGroup
 
 	// runParent is the parent of every run's context: the process context with
 	// its cancellation removed (2.3.2). The signal that stops the agent ends
@@ -333,19 +339,21 @@ func (a *Agent) refuse(ctx context.Context, asn *runnerproto.PollAssignment, why
 	})
 }
 
-// Abort cancels every run in flight. It is what a second stop signal does:
-// the first one drains (Run), and an operator who will not wait sends another.
-// The runs end as cancelled and still upload their logs, so the server records
-// what happened to each instead of losing them.
+// Abort cancels every run in flight, and has the agent start no other. It is
+// what every stop signal after the first does: the first one drains (Run), and
+// an operator who will not wait sends another. The runs end as cancelled and
+// still upload their logs, so the server records what happened to each instead
+// of losing them. Calling it again is harmless: it cancels whatever is left.
 func (a *Agent) Abort() {
 	a.mu.Lock()
+	a.aborted = true
 	cancels := make([]context.CancelCauseFunc, 0, len(a.active))
 	for _, cancel := range a.active {
 		cancels = append(cancels, cancel)
 	}
 	a.mu.Unlock()
 	if len(cancels) > 0 {
-		a.log.Warn("second shutdown signal — cancelling active runs", "active_runs", len(cancels))
+		a.log.Warn("another shutdown signal — cancelling active runs", "active_runs", len(cancels))
 	}
 	for _, cancel := range cancels {
 		cancel(errAgentStopped)
@@ -618,7 +626,7 @@ func (a *Agent) dispatch(ctx context.Context, asn *runnerproto.PollAssignment) (
 	}
 	runCtx, cancel := context.WithCancelCause(parent)
 	a.mu.Lock()
-	if a.draining {
+	if a.draining || a.aborted {
 		a.mu.Unlock()
 		cancel(nil)
 		a.refuse(ctx, asn, "it is stopping and takes no new work")
