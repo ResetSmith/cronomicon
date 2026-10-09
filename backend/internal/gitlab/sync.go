@@ -1500,6 +1500,30 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 				return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, err)
 			}
 		}
+		// An in-app job follows its script (the owner's decision of 2026-10-09).
+		// A job holds a COPY of its script: the run type, the body or the path to
+		// it, the executor, the hash. upsertJobs rewrites that copy for a Git job
+		// on every sync; nothing rewrote it for a job built in the app, which went
+		// on running the body it had when it was last saved while the catalogue
+		// showed the new one. Every in-app job joined to this script
+		// (jobs.script_uid, 1290) now takes the copy as it is written here. A
+		// binned job too, so that restoring it does not bring an old body back.
+		// last_modified_* is left alone: nobody edited the job.
+		//
+		// The columns are exactly the ones the composer copies when the job is
+		// saved (api.writeComposedJob). project_root, the checkout marker, is NOT
+		// among them and is not written here: the composer has never copied it,
+		// so an in-app job on a project is not a checkout job, and making it one
+		// is a change of its own that this does not make.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE jobs
+			    SET run_type = ?, command = ?, script = ?, script_path = ?, executor = ?,
+			        content_hash = ?
+			  WHERE source = 'cronomicon' AND script_uid = ?`,
+			rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
+			rs.contentHash, rs.uid); err != nil {
+			return fmt.Errorf("refresh in-app jobs of script %q: %w", name, err)
+		}
 	}
 	return nil
 }
