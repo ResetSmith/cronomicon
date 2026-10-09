@@ -4,7 +4,8 @@ package gitlab
 //
 // Each TestGR0_* test passed on the 2.3.2 code and names the phase of 2.4.0
 // that inverts it. A test a phase has inverted is renamed for that phase
-// (TestGR1_…) and says what it used to pin.
+// (TestGR1_…) and says what it used to pin. The pins Phase R3 inverted are in
+// two_repos_test.go (TestGR3_…).
 //
 // There is nothing to take out before two repositories can meet in one
 // database. A Service is a URL and a clone directory; what makes the
@@ -142,65 +143,6 @@ func grSchedule(cron string) string {
 func grJob(name, command string) string {
 	return "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: " + name +
 		"\nspec:\n  run_type: bash\n  command: " + command + "\n"
-}
-
-// A second repository's sync deletes what the first one supplied, except its
-// scripts and its schedules. The other prune statements ask only "is this a Git
-// row that this pass did not stamp?" and not whose repository the row came
-// from. Phase R3 (GR-13) inverts this for the remaining kinds: a sync prunes
-// only rows of ITS repository.
-//
-// Scripts and schedules carry their repository since Phase R1 (migrations 1290
-// and 1300), so their prunes are bounded already and the first repository's
-// script and schedule now SURVIVE. (The scripts prune was the worst of the
-// eleven: it did not even ask for a Git row.)
-func TestGR0_ASecondRepositorysSyncDeletesTheFirsts(t *testing.T) {
-	a, repoA, remoteA := newSyncFixture(t) // jobs/keep.yaml
-	grCommitFiles(t, repoA, remoteA, map[string]string{
-		"workflows/nightly.yaml": grWorkflow,
-		"schedules/yearly.yaml":  grSchedule("0 3 1 1 *"),
-		"scripts/deploy.sh":      "#!/bin/bash\necho from-a\n",
-		"inventory/web.ini":      fmt.Sprintf(grScope, "web1", "10.0.0.1"),
-	}, "the first repository")
-	grSync(t, a, "first repository")
-
-	has := map[string]string{
-		"job":      `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='keep'`,
-		"workflow": `SELECT COUNT(*) FROM workflows WHERE source='git' AND name='nightly'`,
-		"schedule": `SELECT COUNT(*) FROM schedules WHERE source='git' AND name='yearly'`,
-		"script":   `SELECT COUNT(*) FROM scripts WHERE name='deploy.sh'`,
-		"scope":    `SELECT COUNT(*) FROM scopes WHERE source='git' AND name='web'`,
-	}
-	for kind, q := range has {
-		if n := grCount(t, a.db, q); n != 1 {
-			t.Fatalf("the first repository's %s was not imported (count %d)", kind, n)
-		}
-	}
-	grBackdate(t, a.db)
-
-	// The second repository holds one unrelated job and nothing else.
-	b, repoB, remoteB := grSecondRepo(t, a)
-	grCommitFiles(t, repoB, remoteB, map[string]string{"jobs/other.yaml": grJob("other", "echo other")}, "the second repository")
-	grSync(t, b, "second repository")
-
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='other'`); n != 1 {
-		t.Fatalf("the second repository's job was not imported (count %d)", n)
-	}
-	for kind, q := range has {
-		n := grCount(t, a.db, q)
-		if kind == "script" || kind == "schedule" {
-			if n != 1 {
-				t.Errorf("the first repository's %s did not survive the second repository's sync (count %d): "+
-					"its prune is bounded by repository since Phase R1", kind, n)
-			}
-			continue
-		}
-		if n != 0 {
-			t.Errorf("the first repository's %s survived the second repository's sync (count %d): "+
-				"today's prune is not expected to tell repositories apart. If this is now deliberate, "+
-				"Phase R3 has landed and this test is to be inverted", kind, n)
-		}
-	}
 }
 
 // Two repositories that both hold scripts/deploy.sh hold a script EACH (Phase
@@ -348,52 +290,6 @@ func TestGR1_TwoSchedulesOfOneNameAreTwoSchedules(t *testing.T) {
 	}
 }
 
-// The same for a job: (source, name) WHERE source='git'. Phase R3 (GR-4)
-// inverts this: (repo_id, name).
-func TestGR0_TwoJobsOfOneNameAreOneRow(t *testing.T) {
-	a, _, _ := newSyncFixture(t) // jobs/keep.yaml: echo hi
-	grSync(t, a, "first repository")
-
-	b, repoB, remoteB := grSecondRepo(t, a)
-	grCommitFiles(t, repoB, remoteB, map[string]string{"jobs/keep.yaml": grJob("keep", "echo from-b")}, "b's keep")
-	grSync(t, b, "second repository")
-
-	if n := jobCount(t, a.db, "keep"); n != 1 {
-		t.Fatalf("git jobs named keep = %d, want the one shared row", n)
-	}
-	if got := grString(t, a.db, `SELECT command FROM jobs WHERE source='git' AND name='keep'`); got != "echo from-b" {
-		t.Errorf("the shared job's command = %q, want the second repository's", got)
-	}
-}
-
-// A scope of one name in two repositories is one scope, and the second
-// repository's inventory replaces the first's hosts. Scope names stay unique
-// across the installation (I-2), so this one is not inverted but REFUSED from
-// Phase R4 on (GR-19): the second file is skipped with "name already in use".
-func TestGR0_TwoScopesOfOneNameAreOneScope(t *testing.T) {
-	a, repoA, remoteA := newSyncFixture(t)
-	gitCommitFile(t, repoA, remoteA, "inventory/web.ini", fmt.Sprintf(grScope, "web1", "10.0.0.1"), "a's scope")
-	grSync(t, a, "first repository")
-	hosts := `SELECT COUNT(*) FROM scope_hosts WHERE host=? AND scope_id=(SELECT id FROM scopes WHERE name='web')`
-	if n := grCount(t, a.db, hosts, "web1"); n != 1 {
-		t.Fatalf("the first repository's host was not imported (count %d)", n)
-	}
-
-	b, repoB, remoteB := grSecondRepo(t, a)
-	grCommitFiles(t, repoB, remoteB, map[string]string{"inventory/web.ini": fmt.Sprintf(grScope, "web2", "10.0.0.2")}, "b's scope")
-	grSync(t, b, "second repository")
-
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM scopes WHERE name='web'`); n != 1 {
-		t.Fatalf("scopes named web = %d, want one", n)
-	}
-	if n := grCount(t, a.db, hosts, "web2"); n != 1 {
-		t.Errorf("the second repository's host is not in the scope (count %d)", n)
-	}
-	if n := grCount(t, a.db, hosts, "web1"); n != 0 {
-		t.Errorf("the first repository's host is still in the scope (count %d): the second inventory was expected to replace it", n)
-	}
-}
-
 // Each repository has its own sync state, and a sync event says which
 // repository it was.
 //
@@ -417,8 +313,8 @@ func TestGR2_EachRepositoryHasItsOwnSyncState(t *testing.T) {
 	// A job says which repository it came from, at first sight. Read before the
 	// second repository syncs: a job's KEY is still the name alone, and the jobs
 	// prune is not bounded by repository, until Phase R3
-	// (TestGR0_TwoJobsOfOneNameAreOneRow, TestGR0_ASecondRepositorysSyncDeletesTheFirsts),
-	// so that sync may remove this one.
+	// (TestGR0_TwoJobsOfOneNameAreOneRow, TestGR0_ASecondRepositorysSyncDeletesTheFirsts,
+	// both inverted since, in two_repos_test.go), so that sync could remove this one.
 	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='keep'`); got != "global" {
 		t.Errorf("the first repository's job has repo_id %q, want global", got)
 	}

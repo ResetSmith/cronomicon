@@ -438,11 +438,11 @@ func (s *Service) logError(msg string, args ...any) {
 // for the warning — the prune statements apply the same predicate themselves.
 // A read error yields nil: the predicate in the DELETE is what protects the
 // rows, and a missing log line must not fail a sync.
-func heldBoundScopes(ctx context.Context, tx *sql.Tx, nowStr string) []string {
+func heldBoundScopes(ctx context.Context, tx *sql.Tx, nowStr, repoID string) []string {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT name FROM scopes
-		 WHERE synced_at < ? AND source = 'git' AND `+settings.BoundScopeBusySQL+`
-		 ORDER BY name`, nowStr)
+		 WHERE synced_at < ? AND source = 'git' AND repo_id = ? AND `+settings.BoundScopeBusySQL+`
+		 ORDER BY name`, nowStr, repoID)
 	if err != nil {
 		return nil
 	}
@@ -842,6 +842,13 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
+		if uErr := s.pointReactionsAtTheirUpstreams(ctx, tx); uErr != nil {
+			allErrs = append(allErrs, "resolve reaction upstreams: "+uErr.Error())
+			dbErr = uErr
+		}
+	}
+
+	if dbErr == nil {
 		if uErr := s.upsertScopes(ctx, tx, scopes, nowStr, sha); uErr != nil {
 			allErrs = append(allErrs, "upsert scopes: "+uErr.Error())
 			dbErr = uErr
@@ -884,24 +891,48 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	var prunedJobs, prunedWfs, prunedScripts, prunedScopes int64
 	var skipped []string
 
+	// Every prune below removes rows of THIS repository that this pass did not
+	// stamp, and no other repository's (GR-13). Until 2.4.0 there was one
+	// repository and the statements said `source = 'git'`: a second repository's
+	// sync would have deleted every definition the first had supplied.
+	//
+	// The satellites of a definition (its schedule entries, its pause) are found
+	// by the definition's uid, not by its name: two repositories may each have a
+	// `nightly`. A satellite row with NO owner uid predates the uid, when the one
+	// repository there was is the one that is Global's now, so only Global's sync
+	// still clears those by name.
+	repoID := s.repo()
+	legacyByName := 0
+	if repoID == repoid.Global {
+		legacyByName = 1
+	}
+
 	if jobsOK {
 		prune("job schedules", `
 			DELETE FROM definition_schedules
-			WHERE owner_source = 'git' AND owner_kind = 'job' AND owner_name IN (
-				SELECT name FROM jobs WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'jobs/%'
-			)`)
+			WHERE owner_kind = 'job' AND (
+				owner_uid IN (SELECT uid FROM jobs
+				               WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'jobs/%' AND repo_id = ?2)
+				OR (?3 = 1 AND owner_uid IS NULL AND owner_source = 'git' AND owner_name IN (
+					SELECT name FROM jobs
+					 WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'jobs/%' AND repo_id = ?2)))`,
+			repoID, legacyByName)
 		prunedJobs = prune("jobs", `
 			DELETE FROM jobs
-			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'jobs/%'`)
+			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'jobs/%' AND repo_id = ?`, repoID)
 		// PP-H9: clean paused_jobs orphaned by the prune above so a re-added
 		// same-named git job doesn't silently inherit a stale pause. Migration 200's
 		// AFTER DELETE trigger already does this per-row; this is order-independent
 		// defense-in-depth that survives a future trigger regression. Kept INSIDE
 		// the jobsOK gate so a parse-skipped subsystem keeps its valid pauses.
+		// By the owner's uid: a pause whose job is gone, whichever repository the
+		// job was in. (By name it kept an orphan whenever ANOTHER repository had a
+		// job of that name.) A pause with no owner uid is matched by name still.
 		pruneNoArg("orphaned job pauses", `
 			DELETE FROM paused_jobs
 			WHERE owner_kind = 'job' AND source = 'git'
-			  AND name NOT IN (SELECT name FROM jobs WHERE source = 'git')`)
+			  AND ((owner_uid IS NOT NULL AND owner_uid NOT IN (SELECT uid FROM jobs WHERE source = 'git'))
+			    OR (owner_uid IS NULL AND name NOT IN (SELECT name FROM jobs WHERE source = 'git')))`)
 	} else {
 		skipped = append(skipped, "jobs")
 	}
@@ -909,17 +940,22 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	if wfsOK {
 		prune("workflow schedules", `
 			DELETE FROM definition_schedules
-			WHERE owner_source = 'git' AND owner_kind = 'workflow' AND owner_name IN (
-				SELECT name FROM workflows WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'workflows/%'
-			)`)
+			WHERE owner_kind = 'workflow' AND (
+				owner_uid IN (SELECT uid FROM workflows
+				               WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'workflows/%' AND repo_id = ?2)
+				OR (?3 = 1 AND owner_uid IS NULL AND owner_source = 'git' AND owner_name IN (
+					SELECT name FROM workflows
+					 WHERE source = 'git' AND synced_at < ?1 AND source_path LIKE 'workflows/%' AND repo_id = ?2)))`,
+			repoID, legacyByName)
 		prunedWfs = prune("workflows", `
 			DELETE FROM workflows
-			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'workflows/%'`)
+			WHERE source = 'git' AND synced_at < ? AND source_path LIKE 'workflows/%' AND repo_id = ?`, repoID)
 		// PP-H9: workflow analog of the paused_jobs orphan sweep above.
 		pruneNoArg("orphaned workflow pauses", `
 			DELETE FROM paused_jobs
 			WHERE owner_kind = 'workflow' AND source = 'git'
-			  AND name NOT IN (SELECT name FROM workflows WHERE source = 'git')`)
+			  AND ((owner_uid IS NOT NULL AND owner_uid NOT IN (SELECT uid FROM workflows WHERE source = 'git'))
+			    OR (owner_uid IS NULL AND name NOT IN (SELECT name FROM workflows WHERE source = 'git')))`)
 	} else {
 		skipped = append(skipped, "workflows")
 	}
@@ -927,11 +963,10 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	if scriptsOK {
 		// This repository's scripts only (1290, GR-13). The statement used to ask
 		// neither for a Git row nor for a repository, so a second repository's
-		// sync deleted every script the first had supplied; the other kinds'
-		// prunes still do, until they carry a repository too (Phase R3).
+		// sync deleted every script the first had supplied.
 		prunedScripts = prune("scripts", `
 			DELETE FROM scripts
-			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?`, s.repo())
+			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?`, repoID)
 	} else {
 		skipped = append(skipped, "scripts")
 	}
@@ -943,7 +978,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		// above and for the same reason: the column arrived with this phase.
 		prune("schedules", `
 			DELETE FROM schedules
-			WHERE source = 'git' AND synced_at < ? AND repo_id = ?`, s.repo())
+			WHERE source = 'git' AND synced_at < ? AND repo_id = ?`, repoID)
 	} else {
 		skipped = append(skipped, "schedules")
 	}
@@ -957,7 +992,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		// through a commit instead. It is a deferral, not an override of Git: the
 		// scope goes on the first sync after its queue drains, and until then the
 		// warning below says which scopes are waiting and on what.
-		if held := heldBoundScopes(ctx, tx, nowStr); len(held) > 0 {
+		if held := heldBoundScopes(ctx, tx, nowStr, repoID); len(held) > 0 {
 			s.logWarn("git sync: scope removed from Git but kept this cycle — it is bound to runners and has runs "+
 				"waiting under its name; it will be pruned once they finish or are cancelled",
 				"scopes", strings.Join(held, ", "))
@@ -965,18 +1000,30 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		prune("scope hosts", `
 			DELETE FROM scope_hosts
 			WHERE scope_id IN (
-				SELECT id FROM scopes WHERE synced_at < ? AND source = 'git'
+				SELECT id FROM scopes WHERE synced_at < ? AND source = 'git' AND repo_id = ?
 				   AND NOT `+settings.BoundScopeBusySQL+`
-			)`)
+			)`, repoID)
 		// M4 — reap imported (git) ssh_hosts rows dropped from inventory this sync.
 		// Only source='git' rows; operator (cronomicon) overlays are never touched.
+		//
+		// The records of THIS repository's scopes, and not of a scope that is being
+		// held back above: a held scope is kept "hosts and all", and until 2.4.0
+		// this statement asked neither which scope a record belonged to nor whether
+		// that scope was held, so a held scope kept its host membership and lost
+		// the records its hosts are reached by (present defect 8). A record that
+		// belongs to no scope at all goes whichever repository is syncing.
 		prune("imported ssh hosts", `
 			DELETE FROM ssh_hosts
-			WHERE source = 'git' AND (synced_at IS NULL OR synced_at < ?)`)
+			WHERE source = 'git' AND (synced_at IS NULL OR synced_at < ?1)
+			  AND (scope_id IS NULL
+			       OR scope_id NOT IN (SELECT id FROM scopes)
+			       OR scope_id IN (SELECT id FROM scopes
+			                        WHERE source = 'git' AND repo_id = ?2
+			                          AND NOT (synced_at < ?1 AND `+settings.BoundScopeBusySQL+`)))`, repoID)
 		prunedScopes = prune("scopes", `
 			DELETE FROM scopes
-			WHERE synced_at < ? AND source = 'git'
-			  AND NOT `+settings.BoundScopeBusySQL)
+			WHERE synced_at < ? AND source = 'git' AND repo_id = ?
+			  AND NOT `+settings.BoundScopeBusySQL, repoID)
 	} else {
 		skipped = append(skipped, "scopes")
 	}
@@ -2277,7 +2324,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			                 ssh_user, ssh_credential, become_password_secret,
 			                 warn_after_seconds, must_finish_by, watch_json, uid, script_uid, repo_id)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
+			ON CONFLICT(repo_id, name) WHERE source = 'git' DO UPDATE SET
 				run_type=excluded.run_type,
 				description=excluded.description,
 				scope=excluded.scope,
@@ -2342,10 +2389,11 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// empty metadata name degrades to the target-host basename above, and the
 		// code must key on whatever actually lands in the jobs row.
 		// R2-5: the allocator keys on the uid; the row was just upserted, so its
-		// uid is authoritative here (the git pool is name-unique by constraint).
+		// uid is authoritative here (a Git name is unique within its repository
+		// by constraint, migration 1320, and this is THIS repository's row).
 		var jobUID string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT uid FROM jobs WHERE source='git' AND name = ?`, name).Scan(&jobUID); err != nil {
+			`SELECT uid FROM jobs WHERE source='git' AND repo_id = ? AND name = ?`, s.repo(), name).Scan(&jobUID); err != nil {
 			return fmt.Errorf("resolve uid for job %q: %w", name, err)
 		}
 		// SB — the notice list's half of the runner_tag warning above. A job whose
@@ -2357,19 +2405,28 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// line is the fix, and nobody should have to dismiss what they fixed.
 		// The migration's own rows are never deleted here; they record a pin that
 		// existed, whatever the YAML says now.
+		//
+		// "A row for this job" is one that names this job's uid, or names its NAME
+		// and no job that exists: the row of this job as it was before a prune
+		// and a return gave it a new uid, or one from before rows carried a uid.
+		// A row that names ANOTHER job of this name, which is another
+		// repository's, is that job's notice and neither suppresses nor is
+		// cleared by this one.
+		const thisJobsPin = `job_source = 'git' AND job_name = ?
+		                      AND (job_uid = ? OR job_uid IS NULL OR job_uid = ''
+		                           OR job_uid NOT IN (SELECT uid FROM jobs))`
 		if leftoverPinUnconfined {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO retired_runner_pins (job_uid, job_name, job_source, scope, runner_tag, reason, recorded_at)
 				SELECT ?, ?, 'git', ?, ?, 'leftover_git_key', ?
-				 WHERE NOT EXISTS (SELECT 1 FROM retired_runner_pins
-				                    WHERE job_source = 'git' AND job_name = ?)`,
-				jobUID, name, j.Spec.Scope, leftoverPin, now, name); err != nil {
+				 WHERE NOT EXISTS (SELECT 1 FROM retired_runner_pins WHERE `+thisJobsPin+`)`,
+				jobUID, name, j.Spec.Scope, leftoverPin, now, name, jobUID); err != nil {
 				return fmt.Errorf("record leftover runner_tag for job %q: %w", name, err)
 			}
 		} else if leftoverPin == "" {
 			if _, err := tx.ExecContext(ctx, `
 				DELETE FROM retired_runner_pins
-				 WHERE job_source = 'git' AND job_name = ? AND reason = 'leftover_git_key'`, name); err != nil {
+				 WHERE reason = 'leftover_git_key' AND `+thisJobsPin, name, jobUID); err != nil {
 				return fmt.Errorf("clear leftover runner_tag notice for job %q: %w", name, err)
 			}
 		}
@@ -2377,22 +2434,113 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		// tags rule) but must NOT mint a fresh log folder: re-point the surviving
 		// live registry row at the new identity before allocating, so Allocate
 		// finds it instead of opening a new era.
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE entity_codes SET uid = ? WHERE kind = ? AND source = 'git' AND name = ? AND deleted_at IS NULL`,
-			jobUID, entitycode.KindJob, name); err != nil {
-			return fmt.Errorf("re-point entity code for job %q: %w", name, err)
+		if err := s.entityCodeFor(ctx, tx, entitycode.KindJob, name, jobUID); err != nil {
+			return fmt.Errorf("entity code for job %q: %w", name, err)
 		}
-		if _, err := entitycode.Allocate(ctx, tx, entitycode.KindJob, "git", name, jobUID); err != nil {
-			return fmt.Errorf("allocate entity code for job %q: %w", name, err)
-		}
-		if err := writeDefinitionReactions(ctx, tx, "git", "job", name, j.Spec.Reactions); err != nil {
+		if err := s.writeDefinitionReactions(ctx, tx, "job", name, jobUID, j.Spec.Reactions); err != nil {
 			return fmt.Errorf("write reactions for job %q: %w", name, err)
 		}
-		if err := writeDefinitionSchedules(ctx, tx, "git", "job", name, entries); err != nil {
+		if err := s.writeDefinitionSchedules(ctx, tx, "job", name, jobUID, entries); err != nil {
 			return fmt.Errorf("write schedules for job %q: %w", name, err)
 		}
 	}
 	return nil
+}
+
+// entityCodeFor makes sure a Git definition has its log-folder code, and that
+// a definition which was pruned and has come back has the SAME one.
+//
+// LU-6 §5.6.1 — a prune/return cycle mints a FRESH uid (first-sight, the tags
+// rule) but must NOT mint a fresh log folder: the surviving live registry row
+// is re-pointed at the new identity before allocating, so Allocate finds it
+// instead of opening a new era.
+//
+// The surviving row is found by its name AMONG THIS REPOSITORY'S codes
+// (entity_codes.repo_id, migration 1320). By the name alone, two repositories
+// that each have a `nightly` would each take the other's code at every sync,
+// and the two jobs would take turns owning one log folder.
+func (s *Service) entityCodeFor(ctx context.Context, tx *sql.Tx, kind, name, uid string) error {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE entity_codes SET uid = ?
+		 WHERE kind = ? AND source = 'git' AND name = ? AND deleted_at IS NULL
+		   AND COALESCE(repo_id, 'global') = ?`,
+		uid, kind, name, s.repo()); err != nil {
+		return fmt.Errorf("re-point: %w", err)
+	}
+	if _, err := entitycode.Allocate(ctx, tx, kind, "git", name, uid); err != nil {
+		return fmt.Errorf("allocate: %w", err)
+	}
+	// Allocate does not know about repositories; the code it has just written
+	// (or found, from before the column) is stamped here.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE entity_codes SET repo_id = ?
+		 WHERE kind = ? AND uid = ? AND deleted_at IS NULL AND repo_id IS NULL`,
+		s.repo(), kind, uid); err != nil {
+		return fmt.Errorf("stamp the repository: %w", err)
+	}
+	return nil
+}
+
+// pointReactionsAtTheirUpstreams gives every reaction of this repository's
+// definitions the uid of the definition it watches, when that definition is
+// one of this repository's own. It runs once every job and workflow of the
+// sync has been written.
+//
+// A reaction row is written with its owner, in whatever order the files were
+// read, so an upstream that is written LATER in the same sync is not there to
+// be found: the reaction was left with no upstream uid until the next sync,
+// and the reaction engine then matches it by NAME. With one repository that
+// was only late. With two it is wrong: a reaction in one repository that
+// watches `nightly` would fire on the other repository's `nightly` as well.
+// The repository's own definition of the name comes first (GR-16); a name it
+// does not have is left as the writer resolved it.
+func (s *Service) pointReactionsAtTheirUpstreams(ctx context.Context, tx *sql.Tx) error {
+	repo := s.repo()
+	for _, kind := range []string{"job", "workflow"} {
+		table := ownerTable(kind)
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE reactions
+			   SET on_uid = (SELECT u.uid FROM `+table+` u
+			                  WHERE u.source = 'git' AND u.repo_id = ?1 AND u.name = reactions.on_name)
+			 WHERE on_kind = ?2 AND on_source = 'git' AND owner_source = 'git'
+			   AND (owner_uid IN (SELECT uid FROM jobs      WHERE source = 'git' AND repo_id = ?1)
+			     OR owner_uid IN (SELECT uid FROM workflows WHERE source = 'git' AND repo_id = ?1))
+			   AND EXISTS (SELECT 1 FROM `+table+` u
+			                WHERE u.source = 'git' AND u.repo_id = ?1 AND u.name = reactions.on_name)`,
+			repo, kind); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ownerTable is the table a definition of a kind lives in.
+func ownerTable(kind string) string {
+	if kind == "workflow" {
+		return "workflows"
+	}
+	return "jobs"
+}
+
+// clearOwnedRows deletes one Git definition's rows from a satellite table
+// (definition_schedules, reactions) before they are written afresh.
+//
+// By the owner's uid. Two repositories may each have a definition of one name,
+// and by the name each sync deleted the other's rows. A row with NO owner uid
+// predates the uid, when the one repository there was is the one that is
+// Global's now: only Global's sync clears those, by name, as it always did.
+func (s *Service) clearOwnedRows(ctx context.Context, tx *sql.Tx, table, ownerKind, ownerName, ownerUID string) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM `+table+` WHERE owner_kind = ? AND owner_uid = ?`, ownerKind, ownerUID); err != nil {
+		return err
+	}
+	if s.repo() != repoid.Global {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx,
+		`DELETE FROM `+table+` WHERE owner_source = 'git' AND owner_kind = ? AND owner_name = ? AND owner_uid IS NULL`,
+		ownerKind, ownerName)
+	return err
 }
 
 // writeDefinitionSchedules replaces all schedule rows for one definition
@@ -2422,10 +2570,15 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 //
 // Source-scoped replace (A9): only this owner's git rows are cleared, so a sync
 // can never wipe an operator's in-app reactions on the same definition name.
-func writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerSource, ownerKind, ownerName string, entries []ReactionEntry) error {
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM reactions WHERE owner_source = ? AND owner_kind = ? AND owner_name = ?`,
-		ownerSource, ownerKind, ownerName); err != nil {
+//
+// The owner is named by its uid, which the caller has just read (2.4.0, GR-13):
+// see clearOwnedRows. The UPSTREAM a reaction watches is still found by name:
+// among this repository's definitions first when it is a Git one, and
+// otherwise only when one definition of that source holds the name. (The rule
+// for a name that is in several places, GR-16, is Phase R4's.)
+func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerKind, ownerName, ownerUID string, entries []ReactionEntry) error {
+	const ownerSource = "git"
+	if err := s.clearOwnedRows(ctx, tx, "reactions", ownerKind, ownerName, ownerUID); err != nil {
 		return err
 	}
 	// Normalised again here rather than trusting the caller: this function is the
@@ -2448,31 +2601,29 @@ func writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerSource, owne
 			                      include_workflow_children, enabled, position,
 			                      owner_uid, on_uid)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END)`,
+				?,
+				COALESCE(
+					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = ? AND name = ?),
+					(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+ownerTable(e.OnKind)+` WHERE name = ? AND source = ?)))`,
 			ownerSource, ownerKind, ownerName, e.Name,
 			e.OnSourceOrDefault(), e.OnKind, e.OnName, e.OnOutcome,
 			e.DelaySeconds, e.MinIntervalSeconds, children, enabled, i,
-			ownerKind, ownerName, ownerSource, ownerName, ownerSource,
-			e.OnKind, e.OnName, e.OnSourceOrDefault(), e.OnName, e.OnSourceOrDefault()); err != nil {
+			ownerUID,
+			e.OnSourceOrDefault(), s.repo(), e.OnName,
+			e.OnName, e.OnSourceOrDefault()); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, ownerKind, ownerName string, entries []ScheduleEntry) error {
+func (s *Service) writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerKind, ownerName, ownerUID string, entries []ScheduleEntry) error {
+	const ownerSource = "git"
 	// Source-scoped replace (A9): only this owner's (source-qualified) rows are
 	// cleared, so a git sync can never wipe an operator's cronomicon bindings.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM definition_schedules WHERE owner_source = ? AND owner_kind = ? AND owner_name = ?`,
-		ownerSource, ownerKind, ownerName); err != nil {
+	// And only THIS owner's, by its uid (clearOwnedRows): not those of another
+	// repository's definition of the same name.
+	if err := s.clearOwnedRows(ctx, tx, "definition_schedules", ownerKind, ownerName, ownerUID); err != nil {
 		return err
 	}
 	for i, e := range entries {
@@ -2488,10 +2639,9 @@ func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, owne
 			INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, env, position, source_ref, start_at, end_at, interval, skip_calendars, only_calendars,
 				owner_uid, schedule_uid)
 			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END,
+				-- The owner, by the uid the caller has just read. It used to be looked
+				-- up here by NAME and kept only when one definition held that name.
+				?,
 				-- The schedule this entry was expanded from, by its uid (1300, GR-8).
 				-- It used to be looked up here by NAME and kept only when one
 				-- schedule held that name, so a name shared with an in-app schedule
@@ -2501,7 +2651,7 @@ func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, owne
 			ownerSource, ownerKind, ownerName, e.Name, e.Cron, envJSON, i, nullStr(e.SourceRef),
 			nullStr(e.StartAt), nullStr(e.EndAt), nullStr(e.Interval),
 			nullStr(calendar.MarshalNames(e.SkipCalendars)), nullStr(calendar.MarshalNames(e.OnlyCalendars)),
-			ownerKind, ownerName, ownerSource, ownerName, ownerSource,
+			ownerUID,
 			nullStr(e.SourceUID)); err != nil {
 			return err
 		}
@@ -2556,7 +2706,7 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid, repo_id)
 			VALUES(?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
+			ON CONFLICT(repo_id, name) WHERE source = 'git' DO UPDATE SET
 				description=excluded.description,
 				steps=excluded.steps,
 				schedule=excluded.schedule,
@@ -2575,21 +2725,16 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 		// LU-6: see upsertJobs. Same idempotent allocation, workflow kind.
 		var wfUID string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT uid FROM workflows WHERE source='git' AND name = ?`, name).Scan(&wfUID); err != nil {
+			`SELECT uid FROM workflows WHERE source='git' AND repo_id = ? AND name = ?`, s.repo(), name).Scan(&wfUID); err != nil {
 			return fmt.Errorf("resolve uid for workflow %q: %w", name, err)
 		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE entity_codes SET uid = ? WHERE kind = ? AND source = 'git' AND name = ? AND deleted_at IS NULL`,
-			wfUID, entitycode.KindWorkflow, name); err != nil {
-			return fmt.Errorf("re-point entity code for workflow %q: %w", name, err)
+		if err := s.entityCodeFor(ctx, tx, entitycode.KindWorkflow, name, wfUID); err != nil {
+			return fmt.Errorf("entity code for workflow %q: %w", name, err)
 		}
-		if _, err := entitycode.Allocate(ctx, tx, entitycode.KindWorkflow, "git", name, wfUID); err != nil {
-			return fmt.Errorf("allocate entity code for workflow %q: %w", name, err)
-		}
-		if err := writeDefinitionReactions(ctx, tx, "git", "workflow", name, wf.Spec.Reactions); err != nil {
+		if err := s.writeDefinitionReactions(ctx, tx, "workflow", name, wfUID, wf.Spec.Reactions); err != nil {
 			return fmt.Errorf("write reactions for workflow %q: %w", name, err)
 		}
-		if err := writeDefinitionSchedules(ctx, tx, "git", "workflow", name, entries); err != nil {
+		if err := s.writeDefinitionSchedules(ctx, tx, "workflow", name, wfUID, entries); err != nil {
 			return fmt.Errorf("write schedules for workflow %q: %w", name, err)
 		}
 	}
@@ -2614,9 +2759,20 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// a silent hijack. Skip the colliding git scope loudly; the operator renames
 		// one. (Names are unique, so an cronomicon row owning the name blocks the git one.)
 		var existingSource string
-		_ = tx.QueryRowContext(ctx, `SELECT source FROM scopes WHERE name=?`, sc.Name).Scan(&existingSource)
+		var existingRepo sql.NullString
+		_ = tx.QueryRowContext(ctx, `SELECT source, repo_id FROM scopes WHERE name=?`, sc.Name).Scan(&existingSource, &existingRepo)
 		if existingSource == "cronomicon" {
 			s.logWarn("git inventory name collides with an cronomicon-authored scope — skipping (rename one)", "name", sc.Name)
+			continue
+		}
+		// Nor a scope that ANOTHER repository supplies (GR-13). A scope's name is
+		// unique across the installation, so the upsert below would take the
+		// other repository's scope over: its hosts and inventory replaced by this
+		// file's, under the agency and the runner bindings the other one has. It
+		// is skipped, and says only that the name is in use: whose it is, is not
+		// this repository's to learn (GR-19; the notice for it is Phase R4's).
+		if existingSource == "git" && existingRepo.Valid && existingRepo.String != s.repo() {
+			s.logWarn("git inventory name is already in use — skipping (rename it)", "name", sc.Name, "repo_id", s.repo())
 			continue
 		}
 		// git_meta_json — {owner, sidecarPath, errors}. settings.applyGitMeta is
@@ -2659,9 +2815,11 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 			VALUES(?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(name) DO UPDATE SET
 				source=excluded.source,
-				-- The repository travels with the source (GR-3, 1310): this
-				-- statement can turn a scope built in the app into a Git one,
-				-- and a Git scope always says which repository it is from.
+				-- The repository travels with the source (GR-3, 1310). The row
+				-- this updates is one of this repository's own (the two checks
+				-- above skip a name held by a scope built in the app or by
+				-- another repository), so this only ever fills a row that has
+				-- none yet.
 				repo_id=excluded.repo_id,
 				source_path=excluded.source_path,
 				git_meta_json=excluded.git_meta_json,

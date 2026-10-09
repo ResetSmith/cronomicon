@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS entity_codes (
     created_at TEXT NOT NULL,
     deleted_at TEXT,
     -- R2-2 (migration 1020). Same fixture-drift caveat as everything else here.
-    uid        TEXT
+    uid        TEXT,
+    repo_id    TEXT -- migration 1320
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_codes_live
     ON entity_codes(kind, source, name) WHERE deleted_at IS NULL;
@@ -149,6 +150,10 @@ CREATE TABLE IF NOT EXISTS workflows (
     repo_id     TEXT, -- migration 1310
     PRIMARY KEY (source, name)
 );
+-- Migration 1320: a Git name is unique within its repository, and sync's
+-- upserts conflict on exactly these two.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_git_name ON jobs(repo_id, name) WHERE source = 'git';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_workflows_git_name ON workflows(repo_id, name) WHERE source = 'git';
 
 CREATE TABLE IF NOT EXISTS definition_schedules (
     owner_source TEXT NOT NULL DEFAULT 'git' CHECK (owner_source IN ('git','cronomicon')),
