@@ -163,14 +163,36 @@ func GetWebhookPolicy(ctx context.Context, database *sql.DB, repoID string) Webh
 	}
 }
 
+// maskPrefix is what every masked secret begins with.
+const maskPrefix = "••••"
+
 func maskSecret(val string) string {
 	if val == "" {
 		return ""
 	}
 	if len(val) <= 4 {
-		return "••••"
+		return maskPrefix
 	}
-	return "••••" + val[len(val)-4:]
+	return maskPrefix + val[len(val)-4:]
+}
+
+// isMaskedSecret reports whether a value handed to a write AS a secret is in
+// fact a mask: what a read returned in the secret's place (maskSecret), sent
+// back by a form that kept what it was given. A write treats it as it treats
+// an empty value, "keep the stored one".
+//
+// Until 2.4.0 a write encrypted whatever non-empty value it was handed. The
+// settings form holds the masked token the read returned and sends the whole
+// form back, so saving it without typing a new token replaced the stored token
+// with its own mask, and nothing showed it: the mask of the mask is the mask.
+// The API's contract was always "omit the field to keep the stored value"; this
+// makes the server hold to it against a client that does not.
+//
+// The test is the prefix, not equality with the stored secret's mask: a mask of
+// a token set by the environment, or of a token since rotated, is no more a
+// token than the current one's is. No real token begins with four bullets.
+func isMaskedSecret(val string) bool {
+	return strings.HasPrefix(val, maskPrefix)
 }
 
 // GetGitlabConfig reads a repository's connection. Global's reads as the
@@ -252,7 +274,7 @@ func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Co
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	var patEnc *string
-	if inp.Pat != "" {
+	if inp.Pat != "" && !isMaskedSecret(inp.Pat) {
 		token, err := secrets.EncryptString(appCfg, inp.Pat)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt PAT: %w", err)

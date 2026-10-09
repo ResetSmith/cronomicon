@@ -86,6 +86,12 @@ func GetObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *confi
 func UpdateObservabilityConfig(ctx context.Context, database *sql.DB, appCfg *config.Config, inp ObservabilityConfig, actor string) (*ObservabilityConfig, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	// The mask a read returned, sent back by the form: not a token. From here
+	// on it is what an omitted token is, "keep the stored one" (isMaskedSecret).
+	if isMaskedSecret(inp.BearerToken) {
+		inp.BearerToken = ""
+	}
+
 	switch inp.AuthType {
 	case "", "none", "bearer":
 		// Only these two: basic auth on the scrape path is a reverse-proxy job
