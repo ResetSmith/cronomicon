@@ -157,12 +157,20 @@ func snapshotRevision(ctx context.Context, tx *sql.Tx, kind, source, name, uid, 
 // detachedBindingsFromTombstone reads the bindings deleteScheduleDef captured
 // into the most recent tombstone for this schedule. A schedule binned before
 // this was recorded (or one no definition referenced) simply yields none.
-func detachedBindingsFromTombstone(ctx context.Context, tx *sql.Tx, name string) ([]scheduleBinding, error) {
+//
+// THIS schedule: the one with this uid. A name outlives the schedule that had
+// it: a schedule that was purged leaves its revisions, and a new schedule of
+// the same name starts a chain of its own. Read by name alone, the restore of
+// the new one could replay the OLD one's bindings (and now ties what it
+// replays to the restored schedule's uid). A tombstone with no uid, from
+// before revisions carried one, is still found by its name.
+func detachedBindingsFromTombstone(ctx context.Context, tx *sql.Tx, name, uid string) ([]scheduleBinding, error) {
 	var blob string
 	err := tx.QueryRowContext(ctx, `
 		SELECT snapshot_json FROM definition_revisions
 		 WHERE kind = ? AND source = 'cronomicon' AND name = ? AND action = ?
-		 ORDER BY revision_no DESC LIMIT 1`, revKindSchedule, name, revActionDeleted).Scan(&blob)
+		   AND (uid = ? OR uid IS NULL OR uid = '')
+		 ORDER BY (uid = ?) DESC, revision_no DESC LIMIT 1`, revKindSchedule, name, revActionDeleted, uid, uid).Scan(&blob)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -508,12 +516,12 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if kind == revKindSchedule {
-		bindings, err := detachedBindingsFromTombstone(r.Context(), tx, name)
+		bindings, err := detachedBindingsFromTombstone(r.Context(), tx, name, restoredUID)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		owners, err := restoreScheduleBindings(r.Context(), tx, bindings)
+		owners, err := restoreScheduleBindings(r.Context(), tx, bindings, restoredUID)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -657,13 +665,14 @@ func PurgeDefinition(ctx context.Context, database *sql.DB, logDir, kind, name s
 	}
 	if kind == revKindSchedule {
 		// Schedules have no delete trigger; their runtime expansions are keyed by
-		// source_ref, exactly as deleteScheduleDef cascades them.
+		// schedule_uid, exactly as deleteScheduleDef cascades them (1300). The
+		// arm that also took every entry with NO schedule uid and this NAME is
+		// gone: such an entry is one that could not be attributed to a single
+		// schedule, and a purge of one schedule must not delete the timing of a
+		// definition bound to another schedule of the same name.
 		if purgedUID.Valid && purgedUID.String != "" {
 			_, _ = tx.ExecContext(ctx,
-				`DELETE FROM definition_schedules WHERE schedule_uid=? OR (schedule_uid IS NULL AND source_ref=?)`,
-				purgedUID.String, name)
-		} else {
-			_, _ = tx.ExecContext(ctx, `DELETE FROM definition_schedules WHERE source_ref=?`, name)
+				`DELETE FROM definition_schedules WHERE schedule_uid=?`, purgedUID.String)
 		}
 	}
 

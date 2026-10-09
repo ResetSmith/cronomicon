@@ -247,7 +247,11 @@ CREATE TABLE IF NOT EXISTS schedules (
     interval         TEXT,
     skip_calendars   TEXT,
     only_calendars   TEXT,
-    PRIMARY KEY (source, name)
+    -- Mirrors migration 1300: a schedule has an owner and (from Git) a
+    -- repository, and its name is unique per source and owner.
+    owner_agency     TEXT NOT NULL DEFAULT 'global',
+    repo_id          TEXT,
+    UNIQUE (source, owner_agency, name)
 );
 
 CREATE TABLE IF NOT EXISTS git_sync_state (

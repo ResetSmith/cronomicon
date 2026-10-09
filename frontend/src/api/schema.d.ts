@@ -6645,6 +6645,18 @@ export interface components {
              *       the offer to restore a lost runner's bindings goes by name.
              *       Subject: `<agency id>:<name>`. Filed under the owning agency. It
              *       clears when one of them is renamed.
+             *     - `schedule_binding_ambiguous` — a job or workflow takes its timing
+             *       from a reusable schedule by name, and its entry is tied to no
+             *       schedule although a schedule of that name exists (v2.4.0).
+             *       Either the upgrade could not tell which of two same-named
+             *       schedules the entry was expanded from, and did not guess, or the
+             *       schedule it was bound to has been removed and another now holds
+             *       the name. It still fires, and follows no schedule's edits.
+             *       Subject: `<job|workflow>:<owner uid>:<entry name>`, with
+             *       `<source>:<owner name>` in place of the uid for an entry that
+             *       records no owner uid. Filed under the agency of the job's scope,
+             *       otherwise under Global. It clears when the definition is saved
+             *       again.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.

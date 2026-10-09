@@ -97,6 +97,10 @@ func TestScheduleUsedByProjectsOwnerIdentity(t *testing.T) {
 	      VALUES ('cronomicon','job','nightly','uid-fin','overnight','0 2 * * *','overnight')`)
 	exec(`INSERT INTO definition_schedules (owner_source,owner_kind,owner_name,owner_uid,name,cron,source_ref)
 	      VALUES ('git','job','nightly','uid-dss','overnight','0 2 * * *','overnight')`)
+	// An entry is tied to its schedule by uid (migration 1300); sync and the
+	// composer stamp it. The fixture writes rows by hand, so it does the same.
+	exec(`UPDATE schedules SET uid = 'uid-sched-' || name WHERE uid IS NULL`)
+	exec(`UPDATE definition_schedules SET schedule_uid = 'uid-sched-' || source_ref WHERE source_ref IS NOT NULL`)
 
 	rec := reqAs(t, h, http.MethodGet, "/api/v1/schedule-defs/overnight", "sec-admins", "")
 	if rec.Code != http.StatusOK {

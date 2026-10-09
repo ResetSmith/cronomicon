@@ -405,12 +405,13 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 				owner_uid, schedule_uid)
 			VALUES('cronomicon','workflow',?,?,?,?,?,?,?,?,?,?,?,
 				?,
-				(SELECT s.uid FROM schedules s WHERE s.name = ?
-				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,
+				-- The schedule the entry was expanded from, by uid (1300), as in
+				-- writeComposedJob.
+				?)`,
 			in.Name, e.Name, e.Cron, envJSON, i, nullStrIf(e.SourceRef),
 			windowArg(e.StartAt), windowArg(e.EndAt), windowArg(e.Interval),
 			nullStrIf(calendar.MarshalNames(e.SkipCalendars)), nullStrIf(calendar.MarshalNames(e.OnlyCalendars)),
-			uid, nullStrIf(e.SourceRef)); err != nil {
+			uid, nullStrIf(e.SourceUID)); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}

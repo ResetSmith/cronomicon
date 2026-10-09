@@ -1,15 +1,17 @@
 package api_test
 
-// Phase R0 of 2.4.0 read these four; these tests reproduce them, before the
-// schedules half of Phase R1 changes anything. Each passes on the code as it
-// is and is inverted by that phase. No production code changes.
+// Phase R0 of 2.4.0 read three defects of reusable schedules, and these tests
+// reproduced them (as TestGR0_…) before the schedules half of Phase R1 changed
+// anything. That half fixed them, and each test now says what is true instead:
+// TestGR1_…, with what it used to pin in its comment.
 //
-// They share one cause. A definition (a job or a workflow) that takes its
+// They shared one cause. A definition (a job or a workflow) that takes its
 // timing from a reusable schedule holds a COPY of it in definition_schedules,
 // with the schedule's NAME in source_ref. A Git schedule and an in-app
-// schedule may share a name. Every statement that goes from a schedule to the
-// definitions bound to it, or from a name to a schedule, goes by the bare
-// name.
+// schedule may share a name. Every statement that went from a schedule to the
+// definitions bound to it, or from a name to a schedule, went by the bare
+// name. Since migration 1300 an entry carries the uid of the schedule it was
+// expanded from, and those statements key on it.
 
 import (
 	"bytes"
@@ -110,60 +112,120 @@ func (a *grSchedAPI) gitScheduleWithJob(schedule, cron, job string) {
 	        VALUES('git', 'job', ?, ?, ?, 0, ?, ?, ?)`, job, schedule, cron, schedule, "j-"+job, "s-git-"+schedule)
 }
 
-// Present defect 12 (H12 of the plan) and 15. An in-app schedule is created
-// with the name of a Git schedule that a Git job is bound to. From then on the
-// in-app schedule counts that job as its user, refuses to be deleted because
-// of it, rewrites that job's timing when it is edited, and removes that job's
-// timing when it is force-deleted. Phase R1 (GR-8) inverts all four: the
-// in-app schedule has nothing to do with a definition bound to Git's.
-func TestGR0_AnInAppScheduleActsOnTheDefinitionsOfGitsScheduleOfThatName(t *testing.T) {
+// An in-app schedule has nothing to do with the definitions bound to Git's
+// schedule of the same name.
+//
+// Until Phase R1 (present defects 12 and 15; H12 of the plan) it did: it
+// counted Git's schedule's job as its user, refused to be deleted because of
+// it, rewrote that job's timing when it was edited, and removed that job's
+// timing when it was force-deleted.
+func TestGR1_AnInAppScheduleLeavesGitsScheduleOfThatNameAlone(t *testing.T) {
 	a := newGRSchedAPI(t)
 	a.gitScheduleWithJob("nightly", "0 0 1 * * *", "git-job")
 	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "nightly", "cron": "0 0 3 * * *"}, http.StatusCreated)
-	entry := func() (cron string, n int) {
-		n = a.count(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source='git' AND owner_name='git-job'`)
+	// An in-app job bound to the IN-APP schedule: the composer takes the in-app
+	// schedule of a name before Git's.
+	a.must(http.MethodPost, "/api/v1/jobs",
+		map[string]any{"name": "app-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"nightly"}}, http.StatusCreated)
+	entryOf := func(source, job string) (cron string, n int) {
+		n = a.count(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source=? AND owner_name=?`, source, job)
 		if n > 0 {
-			cron = a.str(`SELECT cron FROM definition_schedules WHERE owner_source='git' AND owner_name='git-job'`)
+			cron = a.str(`SELECT cron FROM definition_schedules WHERE owner_source=? AND owner_name=?`, source, job)
 		}
 		return
 	}
+	usedBy := func(source string) (int, []string) {
+		raw := a.must(http.MethodGet, "/api/v1/schedule-defs/nightly?source="+source, nil, http.StatusOK)
+		var def struct {
+			UsedByCount int `json:"usedByCount"`
+			UsedBy      []struct {
+				Name string `json:"name"`
+			} `json:"usedBy"`
+		}
+		_ = json.Unmarshal(raw, &def)
+		names := []string{}
+		for _, u := range def.UsedBy {
+			names = append(names, u.Name)
+		}
+		return def.UsedByCount, names
+	}
 
-	// 15: the in-app schedule, which nothing is bound to, reports the Git job.
-	raw := a.must(http.MethodGet, "/api/v1/schedule-defs/nightly?source=cronomicon", nil, http.StatusOK)
-	var def struct {
-		UsedByCount int `json:"usedByCount"`
+	// Each schedule counts its own user and not the other's.
+	if n, names := usedBy("cronomicon"); n != 1 || len(names) != 1 || names[0] != "app-job" {
+		t.Errorf("the in-app schedule is used by %v (count %d), want [app-job]", names, n)
 	}
-	_ = json.Unmarshal(raw, &def)
-	if def.UsedByCount != 1 {
-		t.Errorf("the in-app schedule's usedByCount = %d: today it is expected to count the Git schedule's job (1)", def.UsedByCount)
+	if n, names := usedBy("git"); n != 1 || len(names) != 1 || names[0] != "git-job" {
+		t.Errorf("Git's schedule is used by %v (count %d), want [git-job]", names, n)
 	}
-	// And refuses a plain delete on account of it.
-	if code, raw := a.do(http.MethodDelete, "/api/v1/schedule-defs/nightly", nil); code != http.StatusConflict {
-		t.Errorf("deleting the unused in-app schedule = %d (%s): today it is expected to be refused (409) because of the Git schedule's job", code, raw)
+	// The list agrees with the detail.
+	raw := a.must(http.MethodGet, "/api/v1/schedule-defs?pageSize=50", nil, http.StatusOK)
+	var list struct {
+		Items []struct {
+			Name        string `json:"name"`
+			Source      string `json:"source"`
+			UsedByCount int    `json:"usedByCount"`
+		} `json:"items"`
+	}
+	_ = json.Unmarshal(raw, &list)
+	for _, it := range list.Items {
+		if it.Name == "nightly" && it.UsedByCount != 1 {
+			t.Errorf("list: nightly (%s) usedByCount = %d, want 1 (by name it was 2)", it.Source, it.UsedByCount)
+		}
 	}
 
-	// 12: editing the in-app schedule rewrites the Git job's timing.
+	// Editing the in-app schedule reaches its own user and leaves Git's alone.
 	a.must(http.MethodPut, "/api/v1/schedule-defs/nightly", map[string]any{"cron": "0 0 5 * * *"}, http.StatusOK)
-	if cron, _ := entry(); cron != "0 0 5 * * *" {
-		t.Errorf("after editing the IN-APP schedule the Git job's entry is %q: today it is expected to have been rewritten to the in-app schedule's '0 0 5 * * *'", cron)
+	if cron, _ := entryOf("cronomicon", "app-job"); cron != "0 0 5 * * *" {
+		t.Errorf("the in-app job's entry is %q after its schedule was edited, want '0 0 5 * * *'", cron)
+	}
+	if cron, n := entryOf("git", "git-job"); n != 1 || cron != "0 0 1 * * *" {
+		t.Errorf("after editing the IN-APP schedule the Git job has %d entries at %q, want its own '0 0 1 * * *' untouched", n, cron)
 	}
 	if got := a.str(`SELECT cron FROM schedules WHERE source='git' AND name='nightly'`); got != "0 0 1 * * *" {
 		t.Errorf("the Git schedule itself was changed: %q", got)
 	}
 
-	// 12: force-deleting the in-app schedule removes the Git job's timing.
+	// The delete is refused on account of the in-app job, and names it alone.
+	code, body := a.do(http.MethodDelete, "/api/v1/schedule-defs/nightly", nil)
+	if code != http.StatusConflict {
+		t.Fatalf("deleting the in-app schedule while app-job uses it = %d, want 409", code)
+	}
+	if !bytes.Contains(body, []byte("app-job")) || bytes.Contains(body, []byte("git-job")) {
+		t.Errorf("the refusal should name app-job and not git-job: %s", body)
+	}
+	// Forced: the in-app job is detached, Git's keeps its timing.
 	a.must(http.MethodDelete, "/api/v1/schedule-defs/nightly?force=true", nil, http.StatusNoContent)
-	if _, n := entry(); n != 0 {
-		t.Errorf("after force-deleting the IN-APP schedule the Git job still has %d entries: today its entry is expected to be gone", n)
+	if _, n := entryOf("cronomicon", "app-job"); n != 0 {
+		t.Errorf("the force-delete left the in-app job bound (%d entries)", n)
+	}
+	if cron, n := entryOf("git", "git-job"); n != 1 || cron != "0 0 1 * * *" {
+		t.Errorf("after force-deleting the IN-APP schedule the Git job has %d entries at %q, want its own untouched", n, cron)
+	}
+	// Purging it from the recycle bin does not reach Git's either.
+	a.must(http.MethodDelete, "/api/v1/recycle-bin/schedule/nightly", nil, http.StatusOK, http.StatusNoContent)
+	if _, n := entryOf("git", "git-job"); n != 1 {
+		t.Errorf("purging the in-app schedule removed the Git job's entry (%d left)", n)
 	}
 }
 
-// Present defect 14. A job that ticks `weekly` is bound to whichever schedule
-// of that name sorts first by source, and a schedule in the recycle bin is not
-// left out: with the in-app `weekly` binned and Git's `weekly` live, the job
-// is expanded from the binned one. Phase R1 inverts it: a binned schedule is
-// never bound.
-func TestGR0_TheComposerBindsAJobToABinnedSchedule(t *testing.T) {
+// An in-app schedule with no user of its own is deleted without ceremony, even
+// when Git's schedule of that name is in use. (It used to be refused, 409, on
+// account of Git's schedule's job.)
+func TestGR1_AnUnusedInAppScheduleIsNotHeldByGitsUsers(t *testing.T) {
+	a := newGRSchedAPI(t)
+	a.gitScheduleWithJob("nightly", "0 0 1 * * *", "git-job")
+	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "nightly", "cron": "0 0 3 * * *"}, http.StatusCreated)
+	a.must(http.MethodDelete, "/api/v1/schedule-defs/nightly", nil, http.StatusNoContent)
+	if n := a.count(`SELECT COUNT(*) FROM definition_schedules WHERE owner_name='git-job'`); n != 1 {
+		t.Errorf("deleting the unused in-app schedule left the Git job with %d entries, want 1", n)
+	}
+}
+
+// A job that ticks `weekly` is bound to a LIVE schedule of that name. With the
+// in-app `weekly` in the recycle bin and Git's `weekly` live, it is Git's.
+// (Until Phase R1, present defect 14, it was the binned one: the lookup had no
+// filter for the recycle bin and took whichever source sorted first.)
+func TestGR1_TheComposerNeverBindsABinnedSchedule(t *testing.T) {
 	a := newGRSchedAPI(t)
 	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "weekly", "cron": "0 0 2 * * 1"}, http.StatusCreated)
 	a.must(http.MethodDelete, "/api/v1/schedule-defs/weekly", nil, http.StatusNoContent)
@@ -174,23 +236,28 @@ func TestGR0_TheComposerBindsAJobToABinnedSchedule(t *testing.T) {
 
 	a.must(http.MethodPost, "/api/v1/jobs",
 		map[string]any{"name": "weekly-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"weekly"}}, http.StatusCreated)
-	switch got := a.str(`SELECT cron FROM definition_schedules WHERE owner_name='weekly-job' AND name='weekly'`); got {
-	case "0 0 2 * * 1":
-		// Today: the binned in-app schedule's timing.
-	case "0 0 7 * * 1":
-		t.Errorf("the job was bound to the live Git schedule: this is fixed, and the test is to be inverted")
-	default:
-		t.Errorf("the job's entry is %q: neither schedule's timing", got)
+	if got := a.str(`SELECT cron FROM definition_schedules WHERE owner_name='weekly-job' AND name='weekly'`); got != "0 0 7 * * 1" {
+		t.Errorf("the job's entry is %q, want the live Git schedule's '0 0 7 * * 1'", got)
+	}
+	if got := a.str(`SELECT schedule_uid FROM definition_schedules WHERE owner_name='weekly-job' AND name='weekly'`); got != "s-git-weekly" {
+		t.Errorf("the job's entry is tied to %q, want the live Git schedule", got)
+	}
+
+	// With only a binned schedule of the name, there is nothing to bind.
+	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "gone", "cron": "0 0 2 * * 1"}, http.StatusCreated)
+	a.must(http.MethodDelete, "/api/v1/schedule-defs/gone", nil, http.StatusNoContent)
+	if code, body := a.do(http.MethodPost, "/api/v1/jobs",
+		map[string]any{"name": "gone-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"gone"}}); code != http.StatusUnprocessableEntity {
+		t.Errorf("binding a job to a schedule that is only in the recycle bin = %d (%s), want 422", code, body)
 	}
 }
 
-// Present defect 7. A schedule that is force-deleted remembers the definitions
-// it was detached from, and restoring it from the recycle bin binds them
-// again. The rows it writes back carry neither the owner's uid nor the
-// schedule's, so nothing that keys on a uid sees them: saving the owning job
-// again does not replace its entry, it adds a second one of the same name.
-// Phase R1 inverts it: a restored binding is a binding like any other.
-func TestGR0_ARestoredScheduleLeavesBindingsThatASaveDuplicates(t *testing.T) {
+// A schedule restored from the recycle bin binds its definitions again, and a
+// restored binding is a binding like any other: it carries its owner's uid and
+// the schedule's, so saving the owning job again replaces it. (Until Phase R1,
+// present defect 7, it carried neither, and the save added a second entry of
+// the same name.)
+func TestGR1_ARestoredSchedulesBindingsAreBindings(t *testing.T) {
 	a := newGRSchedAPI(t)
 	a.must(http.MethodPost, "/api/v1/schedule-defs", map[string]any{"name": "rs", "cron": "0 0 2 * * *"}, http.StatusCreated)
 	job := map[string]any{"name": "rs-job", "scriptRef": "backup-db", "scope": "", "scheduleRefs": []string{"rs"}}
@@ -198,9 +265,8 @@ func TestGR0_ARestoredScheduleLeavesBindingsThatASaveDuplicates(t *testing.T) {
 	entries := func() int {
 		return a.count(`SELECT COUNT(*) FROM definition_schedules WHERE owner_source='cronomicon' AND owner_name='rs-job' AND name='rs'`)
 	}
-	if n := entries(); n != 1 {
-		t.Fatalf("the bound job has %d entries, want 1", n)
-	}
+	schedUID := a.str(`SELECT uid FROM schedules WHERE source='cronomicon' AND name='rs'`)
+	jobUID := a.str(`SELECT uid FROM jobs WHERE source='cronomicon' AND name='rs-job'`)
 
 	a.must(http.MethodDelete, "/api/v1/schedule-defs/rs?force=true", nil, http.StatusNoContent)
 	if n := entries(); n != 0 {
@@ -210,20 +276,22 @@ func TestGR0_ARestoredScheduleLeavesBindingsThatASaveDuplicates(t *testing.T) {
 	if n := entries(); n != 1 {
 		t.Fatalf("the restore put back %d entries, want 1", n)
 	}
-	// The restored row has neither uid.
-	if n := a.count(`SELECT COUNT(*) FROM definition_schedules WHERE owner_name='rs-job' AND name='rs' AND owner_uid IS NULL AND schedule_uid IS NULL`); n != 1 {
-		t.Errorf("the restored entry carries a uid (rows with neither: %d): today it is expected to carry none", n)
+	if got := a.str(`SELECT owner_uid FROM definition_schedules WHERE owner_name='rs-job' AND name='rs'`); got != jobUID {
+		t.Errorf("the restored entry's owner_uid = %q, want the job's %q", got, jobUID)
+	}
+	if got := a.str(`SELECT schedule_uid FROM definition_schedules WHERE owner_name='rs-job' AND name='rs'`); got != schedUID {
+		t.Errorf("the restored entry's schedule_uid = %q, want the schedule's %q", got, schedUID)
+	}
+	// So the restored schedule sees its user again, and an edit reaches it.
+	a.must(http.MethodPut, "/api/v1/schedule-defs/rs", map[string]any{"cron": "0 0 9 * * *"}, http.StatusOK)
+	if got := a.str(`SELECT cron FROM definition_schedules WHERE owner_name='rs-job' AND name='rs'`); got != "0 0 9 * * *" {
+		t.Errorf("an edit of the restored schedule did not reach its restored binding: %q", got)
 	}
 
-	// The job is saved again, unchanged.
+	// The job is saved again, unchanged: one entry, not two.
 	id := a.count(`SELECT rowid FROM jobs WHERE source='cronomicon' AND name='rs-job'`)
 	a.must(http.MethodPut, "/api/v1/jobs/"+strconv.Itoa(id), job, http.StatusOK)
-	switch n := entries(); n {
-	case 2:
-		// Today: the save did not see the restored row, and added its own.
-	case 1:
-		t.Errorf("saving the job left one entry: this is fixed, and the test is to be inverted")
-	default:
-		t.Errorf("saving the job left %d entries", n)
+	if n := entries(); n != 1 {
+		t.Errorf("saving the job after a restore left %d entries of one name, want 1", n)
 	}
 }

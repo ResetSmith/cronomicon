@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -128,8 +129,11 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		       sc.source_path, sc.synced_at, sc.created_at, sc.last_modified_at, sc.tags,
 		       sc.start_at, sc.end_at, sc.interval, sc.skip_calendars, sc.only_calendars, sc.uid,
 		       -- FX-A4: binned owners cannot fire, so they are not "used by" anyone.
+		       -- By schedule_uid (1300): the entries expanded from THIS schedule.
+		       -- By the bare name a Git row and an in-app row of one name each
+		       -- counted both sets of users.
 		       (SELECT COUNT(*) FROM definition_schedules ds
-		         WHERE ds.source_ref = sc.name
+		         WHERE ds.schedule_uid = sc.uid
 		           AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
 		                            AND j2.source=ds.owner_source AND j2.name=ds.owner_name
 		                            AND j2.deleted_at IS NOT NULL)
@@ -164,7 +168,7 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 	}
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source = ? AND name = ?`, source, name)
+		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, agencyid.Global, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
@@ -172,7 +176,7 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// usedBy reverse index: jobs/workflows whose definition_schedules entries were
-	// expanded from this first-class schedule (exact, by source_ref — D1c).
+	// expanded from this first-class schedule (exact, by schedule_uid — D1c, 1300).
 	sd.UsedBy = []scheduleUsedBy{}
 	drows, err := s.db.QueryContext(r.Context(),
 		`SELECT owner_kind, owner_name, ds.owner_uid,
@@ -183,14 +187,14 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 		           JOIN agencies a        ON a.id = sa.agency_id
 		          WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name)
 		   FROM definition_schedules ds
-		  WHERE source_ref = ?
+		  WHERE schedule_uid = ?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
 		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
 		                     AND j2.deleted_at IS NOT NULL)
 		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
 		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
 		                     AND w2.deleted_at IS NOT NULL)
-		  ORDER BY owner_kind, owner_name`, name)
+		  ORDER BY owner_kind, owner_name`, sd.UID)
 	if err == nil {
 		defer drows.Close()
 		for drows.Next() {
@@ -227,7 +231,7 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 
 	// Decode/normalize/UPDATE + RowsAffected==0 → 404 is the shared skeleton (CC.12);
 	// composite (source,name) key. Audit stays BEFORE the re-fetch below.
-	if _, ok := s.writeTagsUpdate(w, r, "schedules", "source = ? AND name = ?", "schedule not found", source, name); !ok {
+	if _, ok := s.writeTagsUpdate(w, r, "schedules", "source = ? AND owner_agency = ? AND name = ?", "schedule not found", source, agencyid.Global, name); !ok {
 		return
 	}
 
@@ -240,7 +244,7 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	// GET /schedule-defs/{name}.
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source = ? AND name = ?`, source, name)
+		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, agencyid.Global, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
@@ -249,14 +253,14 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	sd.UsedBy = []scheduleUsedBy{}
 	drows, derr := s.db.QueryContext(r.Context(),
 		`SELECT owner_kind, owner_name FROM definition_schedules ds
-		  WHERE source_ref = ?
+		  WHERE schedule_uid = ?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
 		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
 		                     AND j2.deleted_at IS NOT NULL)
 		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
 		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
 		                     AND w2.deleted_at IS NOT NULL)
-		  ORDER BY owner_kind, owner_name`, name)
+		  ORDER BY owner_kind, owner_name`, sd.UID)
 	if derr == nil {
 		defer drows.Close()
 		for drows.Next() {

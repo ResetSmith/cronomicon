@@ -193,6 +193,10 @@ type composeScheduleEntry struct {
 	// the request contract); resolveComposeSchedules sets it for ref expansions so
 	// the definition_schedules.source_ref column is recorded for precise propagation.
 	SourceRef string `json:"-"`
+	// SourceUID is WHICH schedule that name means: the uid of the schedule this
+	// entry was expanded from (migration 1300, GR-8). Internal like SourceRef and
+	// set beside it; it is what definition_schedules.schedule_uid is written from.
+	SourceUID string `json:"-"`
 }
 
 // jobComposeInput is the request body for create/update (the JobComposeInput schema).
@@ -878,12 +882,14 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 				owner_uid, schedule_uid)
 			VALUES('cronomicon','job',?,?,?,?,?,?,?,?,?,?,?,
 				?,
-				(SELECT s.uid FROM schedules s WHERE s.name = ?
-				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,
+				-- The schedule the entry was expanded from, by uid (1300): the one
+				-- resolveComposeSchedules found, not "the schedule of that name if
+				-- only one has it".
+				?)`,
 			in.Name, e.Name, e.Cron, envJSON, i, nullStrIf(e.SourceRef),
 			windowArg(e.StartAt), windowArg(e.EndAt), windowArg(e.Interval),
 			nullStrIf(calendar.MarshalNames(e.SkipCalendars)), nullStrIf(calendar.MarshalNames(e.OnlyCalendars)),
-			uid, nullStrIf(e.SourceRef)); err != nil {
+			uid, nullStrIf(e.SourceUID)); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -951,11 +957,20 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 	}
 	for _, ref := range in.ScheduleRefs {
 		var cron string
-		var envJSON, refStart, refEnd, refInterval, refSkip, refOnly sql.NullString
+		// The uid is read as nullable: every schedule has had one since
+		// migration 1050, but the column itself allows NULL, and a row without
+		// one must bind as an entry tied to no schedule, not fail the save.
+		var refUID, envJSON, refStart, refEnd, refInterval, refSkip, refOnly sql.NullString
+		// Which schedule a name means: a LIVE one (a schedule in the recycle bin
+		// is never bound; until 1300 this had no such filter, and with an in-app
+		// schedule binned and Git's of the same name live the job was expanded
+		// from the binned one), the in-app one before Git's, as it has always
+		// been. The request carries names only; the order across repositories is
+		// GR-16's and arrives with them (Phase R4).
 		err := s.db.QueryRowContext(ctx,
-			`SELECT cron, env, start_at, end_at, interval, skip_calendars, only_calendars
-			   FROM schedules WHERE name=? ORDER BY source LIMIT 1`, ref).
-			Scan(&cron, &envJSON, &refStart, &refEnd, &refInterval, &refSkip, &refOnly)
+			`SELECT uid, cron, env, start_at, end_at, interval, skip_calendars, only_calendars
+			   FROM schedules WHERE name=? AND deleted_at IS NULL ORDER BY source LIMIT 1`, ref).
+			Scan(&refUID, &cron, &envJSON, &refStart, &refEnd, &refInterval, &refSkip, &refOnly)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "scheduleRef does not resolve to any schedule: " + ref
 		}
@@ -989,7 +1004,7 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 			return nil, "scheduleRef " + ref + ": " + cerr
 		}
 		out = append(out, composeScheduleEntry{
-			Name: ref, Cron: cron, Env: env, SourceRef: ref,
+			Name: ref, Cron: cron, Env: env, SourceRef: ref, SourceUID: refUID.String,
 			StartAt: refStartAt, EndAt: refEndAt, Interval: nullableOf(refInterval.String),
 			SkipCalendars: refSkipCals, OnlyCalendars: refOnlyCals,
 		})

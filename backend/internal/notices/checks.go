@@ -35,6 +35,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindVaultPathOutsidePrefix, checkVaultPathOutsidePrefix},
 		{KindLegacyPlacement, checkLegacyPlacement},
 		{KindRunnerNameShared, checkRunnerNameShared},
+		{KindScheduleBindingAmbiguous, checkScheduleBindingAmbiguous},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},
 		{KindNoRunnerForShellJobs, checkNoRunnerForShellJobs},

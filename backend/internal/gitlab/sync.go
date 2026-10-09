@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/config"
@@ -78,7 +79,12 @@ type Service struct {
 	// which is the only repository an installation has until the repositories
 	// table arrives (2.4.0, Phase R2); read it through repo(). It is stamped on
 	// every script this Service writes and bounds the scripts it prunes.
-	repoID        string
+	repoID string
+	// agencyID is the agency that repository belongs to (GR-1): every row it
+	// supplies is that agency's. Empty means Global, for the same reason; read
+	// it through agency(). It is stamped on the schedules this Service writes
+	// (schedules.owner_agency, migration 1300).
+	agencyID      string
 	token         string // CRONOMICON_GITLAB_TOKEN (may be empty — unauthenticated)
 	webhookSecret string
 	Cfg           *config.Config // added for KEK-based webhook secret decryption
@@ -175,6 +181,15 @@ func (s *Service) repo() string {
 		return repoid.Global
 	}
 	return s.repoID
+}
+
+// agency is the id of the agency this Service's repository belongs to:
+// Global, unless the Service was built for another's.
+func (s *Service) agency() string {
+	if s.agencyID == "" {
+		return agencyid.Global
+	}
+	return s.agencyID
 }
 
 // SyncResult carries the outcome of a single sync attempt.
@@ -743,9 +758,11 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	// git-source schedules only (source='cronomicon' rows are operator-authored and
 	// untouched — same guard as scopes; A9/§5.6).
 	if schedsOK {
+		// This repository's schedules only (1300, GR-13), like the scripts
+		// above and for the same reason: the column arrived with this phase.
 		prune("schedules", `
 			DELETE FROM schedules
-			WHERE source = 'git' AND synced_at < ?`)
+			WHERE source = 'git' AND synced_at < ? AND repo_id = ?`, s.repo())
 	} else {
 		skipped = append(skipped, "schedules")
 	}
@@ -1530,6 +1547,11 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 
 // resolvedSchedule is a first-class Schedule with its content hash computed (A10a).
 type resolvedSchedule struct {
+	// uid is the schedule's identity in the schedules table. Empty until
+	// upsertSchedules has written the row, which fills it in (the standing uid
+	// of a row that was there, a new one otherwise). mergeScheduleRefs copies it
+	// onto every entry expanded from this schedule.
+	uid         string
 	cron        string
 	env         map[string]string
 	description string
@@ -1665,10 +1687,16 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 			}
 			envJSON = string(b)
 		}
+		// A Git schedule is its repository's agency's, and unique by name within
+		// that owner (migration 1300, GR-6): two repositories may each supply a
+		// `nightly`. owner_agency and repo_id are written at first sight and are
+		// ABSENT from the update, like the uid: a repository's agency never
+		// changes (GR-2).
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO schedules(name, source, description, cron, env, content_hash, source_path, synced_at, start_at, end_at, interval, skip_calendars, only_calendars, uid)
-			VALUES(?, 'git', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(source, name) DO UPDATE SET
+			INSERT INTO schedules(name, source, description, cron, env, content_hash, source_path, synced_at, start_at, end_at, interval, skip_calendars, only_calendars, uid,
+			                      owner_agency, repo_id)
+			VALUES(?, 'git', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source, owner_agency, name) DO UPDATE SET
 				description=excluded.description,
 				cron=excluded.cron,
 				env=excluded.env,
@@ -1692,10 +1720,18 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 			// from DO UPDATE so a re-sync never re-mints it (same preservation-by-
 			// omission as tags). NEVER derived from the name: the whole point is
 			// an identity that survives what happens to names.
-			db.NewID())
+			db.NewID(), s.agency(), s.repo())
 		if err != nil {
 			return fmt.Errorf("upsert schedule %q: %w", name, err)
 		}
+		// The blind upsert cannot say whether it inserted or updated, so the uid
+		// is read back, for the entries expanded from this schedule below.
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(uid, '') FROM schedules WHERE source = 'git' AND owner_agency = ? AND name = ?`,
+			s.agency(), name).Scan(&rs.uid); err != nil {
+			return fmt.Errorf("resolve uid for schedule %q: %w", name, err)
+		}
+		resolved[name] = rs
 	}
 	return nil
 }
@@ -1720,7 +1756,7 @@ func mergeScheduleRefs(entries []ScheduleEntry, refs []string, resolved map[stri
 		// activation window is copied down with cron/env (AW-5) so the runtime
 		// row is self-contained — the scheduler never joins back to `schedules`.
 		entries = append(entries, ScheduleEntry{
-			Name: ref, Cron: rs.cron, Env: rs.env, SourceRef: ref,
+			Name: ref, Cron: rs.cron, Env: rs.env, SourceRef: ref, SourceUID: rs.uid,
 			StartAt: rs.startAt, EndAt: rs.endAt, Interval: rs.interval,
 			SkipCalendars: rs.skipCals, OnlyCalendars: rs.onlyCals,
 		})
@@ -2175,13 +2211,17 @@ func writeDefinitionSchedules(ctx context.Context, tx *sql.Tx, ownerSource, owne
 				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
 				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
 				END,
-				(SELECT s.uid FROM schedules s WHERE s.name = ?
-				   AND (SELECT COUNT(*) FROM schedules s2 WHERE s2.name = s.name) = 1))`,
+				-- The schedule this entry was expanded from, by its uid (1300, GR-8).
+				-- It used to be looked up here by NAME and kept only when one
+				-- schedule held that name, so a name shared with an in-app schedule
+				-- left every Git entry without one. The caller knows which schedule
+				-- it expanded: the one this sync wrote.
+				?)`,
 			ownerSource, ownerKind, ownerName, e.Name, e.Cron, envJSON, i, nullStr(e.SourceRef),
 			nullStr(e.StartAt), nullStr(e.EndAt), nullStr(e.Interval),
 			nullStr(calendar.MarshalNames(e.SkipCalendars)), nullStr(calendar.MarshalNames(e.OnlyCalendars)),
 			ownerKind, ownerName, ownerSource, ownerName, ownerSource,
-			nullStr(e.SourceRef)); err != nil {
+			nullStr(e.SourceUID)); err != nil {
 			return err
 		}
 	}

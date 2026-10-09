@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -164,8 +165,8 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		var exists int
 		var deleted sql.NullString
 		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='cronomicon' AND name=?`,
-			in.Name).Scan(&exists, &deleted)
+			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`,
+			agencyid.Global, in.Name).Scan(&exists, &deleted)
 		if exists > 0 {
 			msg := "an cronomicon schedule with this name already exists"
 			if deleted.Valid {
@@ -180,13 +181,23 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	now := time.Now().UTC().Format(time.RFC3339)
 	hash := gitlab.ScheduleContentHash(cron, in.Env, deref(startAt), deref(endAt), interval, skipCals, onlyCals)
 
-	// Owners that reference this schedule (by source_ref) — captured before the tx
-	// for the legacy-mirror recompute. The owner set is stable across an edit (no
-	// rows added/removed; only cron/env change), so a pre-tx read is correct.
+	// On an edit, WHICH schedule: its uid, resolved once from the name the route
+	// carries. Everything below that touches the schedule or the definitions
+	// bound to it keys on the uid (migration 1300, GR-8).
+	//
+	// Owners that reference this schedule (by schedule_uid) — captured before the
+	// tx for the legacy-mirror recompute. The owner set is stable across an edit
+	// (no rows added/removed; only cron/env change), so a pre-tx read is correct.
+	var editUID string
 	var owners []scheduleOwner
 	if !isCreate {
+		editUID = s.inAppScheduleUID(r.Context(), in.Name)
+		if editUID == "" {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
+			return
+		}
 		var err error
-		owners, err = collectScheduleOwners(r.Context(), s.db, in.Name)
+		owners, err = collectScheduleOwners(r.Context(), s.db, editUID)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -204,12 +215,16 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		if _, err := tx.ExecContext(r.Context(), `
 			INSERT INTO schedules(name, source, description, cron, env, content_hash,
 			                      start_at, end_at, interval, skip_calendars, only_calendars,
-			                      created_by, created_at, last_modified_by, last_modified_at, uid)
-			VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			                      created_by, created_at, last_modified_by, last_modified_at, uid,
+			                      owner_agency)
+			VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			in.Name, nullStrIf(in.Description), cron, envJSON, hash,
 			windowArg(startAt), windowArg(endAt), nullStrIf(interval),
 			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)),
-			actor, now, actor, now, db.NewID()); err != nil {
+			actor, now, actor, now, db.NewID(),
+			// An in-app schedule is Global's until its author can choose an owner
+			// (GR-6; the picker arrives with the screens). It has no repository.
+			agencyid.Global); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -219,24 +234,28 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 			                     start_at=?, end_at=?, interval=?,
 			                     skip_calendars=?, only_calendars=?,
 			                     last_modified_by=?, last_modified_at=?
-			WHERE source='cronomicon' AND name=?`,
+			WHERE uid=?`,
 			cron, envJSON, nullStrIf(in.Description), hash,
 			windowArg(startAt), windowArg(endAt), nullStrIf(interval),
 			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)),
-			actor, now, in.Name); err != nil {
+			actor, now, editUID); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		// Propagate to every referencing job/workflow (D1c). source_ref makes this
-		// exact — an inline entry that coincidentally shares the name is untouched.
+		// Propagate to every referencing job/workflow (D1c), by schedule_uid: the
+		// entries expanded from THIS schedule. It went by source_ref, the bare
+		// name, until 1300, and so rewrote the timing of the definitions bound to
+		// any other schedule of that name as well: Git's `nightly`, when the
+		// in-app `nightly` was edited (H12). An inline entry that coincidentally
+		// shares the name has no schedule_uid and is untouched, as before.
 		// The activation window rides along with cron/env (AW-4): a ref expansion is
 		// a copy of the catalog row, so an edited window must reach the runtime
 		// entries or the catalog and the scheduler would disagree.
 		if _, err := tx.ExecContext(r.Context(),
 			`UPDATE definition_schedules SET cron=?, env=?, start_at=?, end_at=?, interval=?,
-			                                 skip_calendars=?, only_calendars=? WHERE source_ref=?`,
+			                                 skip_calendars=?, only_calendars=? WHERE schedule_uid=?`,
 			cron, envJSON, windowArg(startAt), windowArg(endAt), nullStrIf(interval),
-			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)), in.Name); err != nil {
+			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)), editUID); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -256,7 +275,8 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		action = revActionCreated
 	}
 	var schedUID string
-	_ = tx.QueryRowContext(r.Context(), `SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, in.Name).Scan(&schedUID)
+	_ = tx.QueryRowContext(r.Context(),
+		`SELECT uid FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, agencyid.Global, in.Name).Scan(&schedUID)
 	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "cronomicon", in.Name, schedUID, actor, action, in); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -294,10 +314,18 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
+	// WHICH schedule: its uid, resolved once from the name the route carries.
+	// The referrers, the soft delete, the tombstone and the detach below all key
+	// on it (migration 1300, GR-8).
+	schedUID := s.inAppScheduleUID(r.Context(), name)
+	if schedUID == "" {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
+		return
+	}
 
 	// Capture referrers BEFORE deletion: needed for both the block-by-default 409
 	// and (when forced) the legacy-mirror recompute after the cascade detaches them.
-	owners, err := collectScheduleOwners(r.Context(), s.db, name)
+	owners, err := collectScheduleOwners(r.Context(), s.db, schedUID)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -334,8 +362,8 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := tx.ExecContext(r.Context(),
-		`UPDATE schedules SET deleted_at=?, deleted_by=? WHERE source='cronomicon' AND name=? AND deleted_at IS NULL`,
-		now, id.Email, name)
+		`UPDATE schedules SET deleted_at=?, deleted_by=? WHERE uid=? AND deleted_at IS NULL`,
+		now, id.Email, schedUID)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -344,16 +372,19 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusConflict, "conflict", "this schedule is already in the recycle bin")
 		return
 	}
-	// Cascade the ref-expanded runtime entries (exact, by source_ref — never an
-	// inline entry of the same name). These rows ARE the referrers' record that
+	// Cascade the ref-expanded runtime entries (exact, by schedule_uid — never an
+	// inline entry of the same name, and never an entry expanded from ANOTHER
+	// schedule of the same name, which the bare source_ref used to take with it:
+	// force-deleting the in-app `nightly` removed the timing of every definition
+	// bound to Git's, H12). These rows ARE the referrers' record that
 	// they reference this schedule — nothing else stores it — so they are read
 	// into the tombstone below before being removed, and restore replays them.
-	detached, err := collectScheduleBindings(r.Context(), tx, name)
+	detached, err := collectScheduleBindings(r.Context(), tx, schedUID)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	if _, err := tx.ExecContext(r.Context(), `DELETE FROM definition_schedules WHERE source_ref=?`, name); err != nil {
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM definition_schedules WHERE schedule_uid=?`, schedUID); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -365,9 +396,7 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var delSchedUID string
-	_ = tx.QueryRowContext(r.Context(), `SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, name).Scan(&delSchedUID)
-	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "cronomicon", name, delSchedUID, id.Email, revActionDeleted,
+	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "cronomicon", name, schedUID, id.Email, revActionDeleted,
 		map[string]any{"deletedAt": now, "deletedBy": id.Email, "detachedBindings": detached}); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -413,12 +442,17 @@ const (
 
 // scheduleSourceState reports whether a name is an editable cronomicon schedule, a
 // read-only git schedule, or absent — driving the 404 vs 409 vs proceed branch.
+//
+// Among Global's schedules: a name is unique per source AND owner since
+// migration 1300, and the schedule routes carry a name only. Until a route can
+// say which agency's schedule it means (2.4.0, Phase R6) it means Global's,
+// which is every schedule there is today.
 func (s *Server) scheduleSourceState(ctx context.Context, name string) scheduleState {
 	var cronomicon, git int
 	_ = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(CASE WHEN source='cronomicon' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN source='git'     THEN 1 ELSE 0 END), 0)
-		FROM schedules WHERE name=?`, name).Scan(&cronomicon, &git)
+		FROM schedules WHERE owner_agency=? AND name=?`, agencyid.Global, name).Scan(&cronomicon, &git)
 	switch {
 	case cronomicon > 0:
 		return scheduleCronomicon
@@ -427,6 +461,17 @@ func (s *Server) scheduleSourceState(ctx context.Context, name string) scheduleS
 	default:
 		return scheduleAbsent
 	}
+}
+
+// inAppScheduleUID resolves an in-app schedule's NAME to its uid, among
+// Global's (see scheduleSourceState). "" when there is none. Binned or live:
+// the callers decide what a binned schedule may have done to it.
+func (s *Server) inAppScheduleUID(ctx context.Context, name string) string {
+	var uid sql.NullString
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT uid FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`,
+		agencyid.Global, name).Scan(&uid)
+	return uid.String
 }
 
 type scheduleOwner struct{ source, kind, name string }
@@ -457,9 +502,15 @@ func diffOwners(all, live []scheduleOwner) []scheduleOwner {
 // cleared deleted_at alone would return a live catalog row that no definition
 // fires on any more.
 type scheduleBinding struct {
-	OwnerSource   string  `json:"ownerSource"`
-	OwnerKind     string  `json:"ownerKind"`
-	OwnerName     string  `json:"ownerName"`
+	OwnerSource string `json:"ownerSource"`
+	OwnerKind   string `json:"ownerKind"`
+	OwnerName   string `json:"ownerName"`
+	// OwnerUID is WHICH definition (migration 1300). The name alone does not say:
+	// two agencies may each own an in-app job of one name, and a restore that
+	// went by the name could not tell whose binding this was. Absent from a
+	// tombstone written before 2.4.0; see restoreScheduleBindings for what a
+	// restore does then.
+	OwnerUID      string  `json:"ownerUid,omitempty"`
 	Name          string  `json:"name"`
 	Cron          string  `json:"cron"`
 	Env           *string `json:"env,omitempty"`
@@ -473,13 +524,13 @@ type scheduleBinding struct {
 }
 
 // collectScheduleBindings reads every runtime entry expanded from a first-class
-// schedule (exact, by source_ref), whole. Drained before return.
-func collectScheduleBindings(ctx context.Context, tx *sql.Tx, scheduleName string) ([]scheduleBinding, error) {
+// schedule (exact, by schedule_uid), whole. Drained before return.
+func collectScheduleBindings(ctx context.Context, tx *sql.Tx, scheduleUID string) ([]scheduleBinding, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT owner_source, owner_kind, owner_name, name, cron, env, position, source_ref,
-		       start_at, end_at, interval, skip_calendars, only_calendars
-		  FROM definition_schedules WHERE source_ref=?
-		 ORDER BY owner_kind, owner_name, position`, scheduleName)
+		SELECT owner_source, owner_kind, owner_name, name, cron, env, position, COALESCE(source_ref, ''),
+		       start_at, end_at, interval, skip_calendars, only_calendars, COALESCE(owner_uid, '')
+		  FROM definition_schedules WHERE schedule_uid=?
+		 ORDER BY owner_kind, owner_name, position`, scheduleUID)
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +540,7 @@ func collectScheduleBindings(ctx context.Context, tx *sql.Tx, scheduleName strin
 		var b scheduleBinding
 		var env, startAt, endAt, interval, skipCal, onlyCal sql.NullString
 		if err := rows.Scan(&b.OwnerSource, &b.OwnerKind, &b.OwnerName, &b.Name, &b.Cron, &env,
-			&b.Position, &b.SourceRef, &startAt, &endAt, &interval, &skipCal, &onlyCal); err != nil {
+			&b.Position, &b.SourceRef, &startAt, &endAt, &interval, &skipCal, &onlyCal, &b.OwnerUID); err != nil {
 			return nil, err
 		}
 		for _, p := range []struct {
@@ -522,7 +573,20 @@ func collectScheduleBindings(ctx context.Context, tx *sql.Tx, scheduleName strin
 // the outcome depend on the order the operator happened to restore in — schedule
 // first silently lost the link, owner first kept it — with nothing telling them
 // which they had chosen.
-func restoreScheduleBindings(ctx context.Context, tx *sql.Tx, bindings []scheduleBinding) ([]scheduleOwner, error) {
+//
+// A restored binding is a binding like any other (migration 1300): it carries
+// its owner's uid and the schedule's. It used to carry neither. Nothing that
+// keys on a uid saw such a row, so the next save of the owning definition did
+// not replace it and added a second entry of the same name, and "OR IGNORE"
+// ignored nothing, because a row with no owner uid is outside the unique index.
+// scheduleUID is the schedule being restored. The owner is the one the
+// tombstone names by uid (scheduleBinding.OwnerUID, captured at the delete
+// since 2.4.0), so that two same-named definitions each get their own binding
+// back. A tombstone written before 2.4.0 has the owner's name only: the uid is
+// taken when the name is exactly one definition, and when it is two the
+// binding is put back under the name as it always was. It is never skipped
+// for being ambiguous: a skipped binding is a job that silently stops firing.
+func restoreScheduleBindings(ctx context.Context, tx *sql.Tx, bindings []scheduleBinding, scheduleUID string) ([]scheduleOwner, error) {
 	seen := map[scheduleOwner]bool{}
 	var owners []scheduleOwner
 	for _, b := range bindings {
@@ -530,23 +594,62 @@ func restoreScheduleBindings(ctx context.Context, tx *sql.Tx, bindings []schedul
 		if b.OwnerKind == "workflow" {
 			table = "workflows"
 		}
-		var n int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM `+table+` WHERE source=? AND name=?`,
-			b.OwnerSource, b.OwnerName).Scan(&n); err != nil {
-			return nil, err
-		}
-		if n == 0 {
-			continue
+		// Which definition the binding goes back to.
+		ownerUID := b.OwnerUID
+		if ownerUID != "" {
+			// The tombstone says: the definition with this uid, if it is still
+			// there (binned counts, FX-A2; hard-deleted does not).
+			var n int
+			//nolint:gosec // table is a package-local constant chosen by the kind switch
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table+` WHERE uid=?`, ownerUID).Scan(&n); err != nil {
+				return nil, err
+			}
+			if n == 0 {
+				continue
+			}
+		} else {
+			// A tombstone written before 2.4.0 names its owner by NAME only.
+			var n int
+			var only sql.NullString
+			//nolint:gosec // table is a package-local constant chosen by the kind switch
+			if err := tx.QueryRowContext(ctx,
+				`SELECT COUNT(*), MAX(uid) FROM `+table+` WHERE source=? AND name=?`,
+				b.OwnerSource, b.OwnerName).Scan(&n, &only); err != nil {
+				return nil, err
+			}
+			switch {
+			case n == 0:
+				continue
+			case n == 1:
+				ownerUID = only.String
+			default:
+				// Two definitions hold the name and the tombstone cannot say
+				// which was meant. The binding is put back as it always was,
+				// under the name and with no owner uid, so that nothing stops
+				// firing because of an upgrade: skipping it would silently
+				// take the timing away from a job that had it. It is the one
+				// case a restore still leaves a row without an owner uid, and
+				// it is not written twice.
+				var have int
+				if err := tx.QueryRowContext(ctx, `
+					SELECT COUNT(*) FROM definition_schedules
+					 WHERE owner_uid IS NULL AND owner_source=? AND owner_kind=? AND owner_name=? AND name=?`,
+					b.OwnerSource, b.OwnerKind, b.OwnerName, b.Name).Scan(&have); err != nil {
+					return nil, err
+				}
+				if have > 0 {
+					continue
+				}
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO definition_schedules
 				(owner_source, owner_kind, owner_name, name, cron, env, position, source_ref,
-				 start_at, end_at, interval, skip_calendars, only_calendars)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 start_at, end_at, interval, skip_calendars, only_calendars, owner_uid, schedule_uid)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?, ''),?)`,
 			b.OwnerSource, b.OwnerKind, b.OwnerName, b.Name, b.Cron, strOrNil(b.Env), b.Position,
 			b.SourceRef, strOrNil(b.StartAt), strOrNil(b.EndAt), strOrNil(b.Interval),
-			strOrNil(b.SkipCalendars), strOrNil(b.OnlyCalendars)); err != nil {
+			strOrNil(b.SkipCalendars), strOrNil(b.OnlyCalendars), ownerUID, scheduleUID); err != nil {
 			return nil, err
 		}
 		o := scheduleOwner{source: b.OwnerSource, kind: b.OwnerKind, name: b.OwnerName}
@@ -593,14 +696,14 @@ func liveScheduleOwners(ctx context.Context, db *sql.DB, owners []scheduleOwner)
 }
 
 // collectScheduleOwners returns the distinct definitions whose schedule entries were
-// expanded from a given first-class schedule (exact, by source_ref). Rows are fully
+// expanded from a given first-class schedule (exact, by schedule_uid). Rows are fully
 // drained before return (no nested-iterator hold on the pool). Deliberately
 // UNFILTERED by deleted_at — see liveScheduleOwners for why its two consumers
 // want different sets.
-func collectScheduleOwners(ctx context.Context, db *sql.DB, scheduleName string) ([]scheduleOwner, error) {
+func collectScheduleOwners(ctx context.Context, db *sql.DB, scheduleUID string) ([]scheduleOwner, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT DISTINCT owner_source, owner_kind, owner_name FROM definition_schedules
-		 WHERE source_ref=? ORDER BY owner_kind, owner_name`, scheduleName)
+		 WHERE schedule_uid=? ORDER BY owner_kind, owner_name`, scheduleUID)
 	if err != nil {
 		return nil, err
 	}
@@ -654,7 +757,7 @@ func scheduleEnvJSON(env map[string]string) any {
 func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name string, status int) {
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source='cronomicon' AND name=?`, name)
+		FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, agencyid.Global, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -666,14 +769,14 @@ func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name s
 		// Schedules UI renders directly. Missing it meant a save reported a binned
 		// owner as a user while a GET on the same resource a moment later did not.
 		`SELECT owner_kind, owner_name FROM definition_schedules ds
-		  WHERE source_ref=?
+		  WHERE schedule_uid=?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'
 		                     AND j2.source=ds.owner_source AND j2.name=ds.owner_name
 		                     AND j2.deleted_at IS NOT NULL)
 		    AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
 		                     AND w2.source=ds.owner_source AND w2.name=ds.owner_name
 		                     AND w2.deleted_at IS NOT NULL)
-		  ORDER BY owner_kind, owner_name`, name)
+		  ORDER BY owner_kind, owner_name`, sd.UID)
 	if err == nil {
 		defer drows.Close()
 		for drows.Next() {

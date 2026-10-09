@@ -32,7 +32,8 @@ import (
 
 // grSecondRepo makes a second local remote and a Service that syncs it into
 // the SAME database as first, from its own clone directory, as a repository of
-// its own ("repo-b"; the first Service is Global's).
+// its own ("repo-b", belonging to the agency "ag-b"; the first Service is
+// Global's).
 func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, string) {
 	t.Helper()
 	remote := t.TempDir()
@@ -45,6 +46,7 @@ func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, st
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		repoURL:  remote,
 		repoID:   "repo-b",
+		agencyID: "ag-b",
 		cloneDir: filepath.Join(t.TempDir(), "clone"),
 		Cfg:      &config.Config{GitLabWriteBranch: first.Cfg.GitLabWriteBranch},
 	}, repo, remote
@@ -136,14 +138,15 @@ func grJob(name, command string) string {
 }
 
 // A second repository's sync deletes what the first one supplied, except its
-// scripts. Every prune statement but one asks only "is this a Git row that this
-// pass did not stamp?" and not whose repository the row came from. Phase R3
-// (GR-13) inverts this for the remaining kinds: a sync prunes only rows of ITS
-// repository.
+// scripts and its schedules. The other prune statements ask only "is this a Git
+// row that this pass did not stamp?" and not whose repository the row came
+// from. Phase R3 (GR-13) inverts this for the remaining kinds: a sync prunes
+// only rows of ITS repository.
 //
-// The scripts prune was the worst of them (it did not even ask for a Git row)
-// and is the first to be bounded: scripts carry their repository since Phase R1
-// (migration 1290), so the first repository's script now SURVIVES.
+// Scripts and schedules carry their repository since Phase R1 (migrations 1290
+// and 1300), so their prunes are bounded already and the first repository's
+// script and schedule now SURVIVE. (The scripts prune was the worst of the
+// eleven: it did not even ask for a Git row.)
 func TestGR0_ASecondRepositorysSyncDeletesTheFirsts(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t) // jobs/keep.yaml
 	grCommitFiles(t, repoA, remoteA, map[string]string{
@@ -178,10 +181,10 @@ func TestGR0_ASecondRepositorysSyncDeletesTheFirsts(t *testing.T) {
 	}
 	for kind, q := range has {
 		n := grCount(t, a.db, q)
-		if kind == "script" {
+		if kind == "script" || kind == "schedule" {
 			if n != 1 {
-				t.Errorf("the first repository's script did not survive the second repository's sync (count %d): "+
-					"the scripts prune is bounded by repository since Phase R1", n)
+				t.Errorf("the first repository's %s did not survive the second repository's sync (count %d): "+
+					"its prune is bounded by repository since Phase R1", kind, n)
 			}
 			continue
 		}
@@ -265,24 +268,76 @@ func TestGR1_TwoScriptsOfOneNameAreTwoScripts(t *testing.T) {
 	}
 }
 
-// The same for a reusable schedule: the key is (source, name), so two
-// repositories' schedules of one name are one row and the last sync decides
-// when every definition that names it fires. Phase R1 (GR-6) inverts this:
-// uniqueness becomes (source, owner_agency, name).
-func TestGR0_TwoSchedulesOfOneNameAreOneRow(t *testing.T) {
+// Two repositories that both hold schedules/yearly.yaml hold a schedule EACH
+// (Phase R1, GR-6; this test pinned the opposite until then: one row keyed by
+// (source, name), whose timing was whichever repository synced last, for every
+// definition bound to it). A schedule belongs to its repository's agency and is
+// unique by source, owner and name, and a definition's entry is tied to the
+// schedule of its OWN repository by uid.
+func TestGR1_TwoSchedulesOfOneNameAreTwoSchedules(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
-	gitCommitFile(t, repoA, remoteA, "schedules/yearly.yaml", grSchedule("0 3 1 1 *"), "a's schedule")
+	boundJob := func(name string) string {
+		return "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: " + name +
+			"\nspec:\n  run_type: bash\n  command: echo hi\n  scheduleRefs:\n    - yearly\n"
+	}
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"schedules/yearly.yaml": grSchedule("0 3 1 1 *"),
+		"jobs/bound-a.yaml":     boundJob("bound-a"),
+	}, "a's schedule and a job bound to it")
 	grSync(t, a, "first repository")
+	sched := func(owner, col string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT `+col+` FROM schedules WHERE source='git' AND owner_agency=? AND name='yearly'`, owner)
+	}
+	entry := func(job, col string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT `+col+` FROM definition_schedules WHERE owner_source='git' AND owner_name=?`, job)
+	}
+	uidA := sched("global", "uid")
+	if got := sched("global", "repo_id"); got != "global" {
+		t.Errorf("the first repository's schedule has repo_id %q, want global", got)
+	}
+	if got := entry("bound-a", "schedule_uid"); got != uidA {
+		t.Fatalf("bound-a's entry is tied to %q, want its own repository's schedule %q", got, uidA)
+	}
+	cronA := entry("bound-a", "cron")
+	// Aged, so that the second repository's prune would take the schedule if it
+	// could: the test must not pass by being quick.
+	grBackdate(t, a.db)
 
 	b, repoB, remoteB := grSecondRepo(t, a)
-	grCommitFiles(t, repoB, remoteB, map[string]string{"schedules/yearly.yaml": grSchedule("0 4 2 2 *")}, "b's schedule")
+	grCommitFiles(t, repoB, remoteB, map[string]string{
+		"schedules/yearly.yaml": grSchedule("0 4 2 2 *"),
+		"jobs/bound-b.yaml":     boundJob("bound-b"),
+	}, "b's schedule and a job bound to it")
 	grSync(t, b, "second repository")
 
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM schedules WHERE source='git' AND name='yearly'`); n != 1 {
-		t.Fatalf("git schedules named yearly = %d, want the one shared row", n)
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM schedules WHERE source='git' AND name='yearly'`); n != 2 {
+		t.Fatalf("git schedules named yearly = %d, want one per repository", n)
 	}
-	if got := grString(t, a.db, `SELECT cron FROM schedules WHERE source='git' AND name='yearly'`); got != "0 4 2 2 *" {
-		t.Errorf("the shared schedule's cron = %q, want the second repository's", got)
+	uidB := sched("ag-b", "uid")
+	if uidB == "" || uidB == uidA {
+		t.Errorf("the second repository's schedule uid = %q (the first's is %q): want its own", uidB, uidA)
+	}
+	if got := sched("ag-b", "repo_id"); got != "repo-b" {
+		t.Errorf("the second repository's schedule has repo_id %q, want repo-b", got)
+	}
+	// Each keeps its own timing.
+	if got := sched("global", "cron"); got != "0 3 1 1 *" {
+		t.Errorf("the first repository's schedule now fires at %q: the second repository's overwrote it", got)
+	}
+	if got := sched("ag-b", "cron"); got != "0 4 2 2 *" {
+		t.Errorf("the second repository's schedule fires at %q, want its own", got)
+	}
+	if got := sched("global", "uid"); got != uidA {
+		t.Errorf("the first repository's schedule uid changed from %q to %q", uidA, got)
+	}
+	// And each job is bound to the schedule of its own repository.
+	if got := entry("bound-b", "schedule_uid"); got != uidB {
+		t.Errorf("bound-b's entry is tied to %q, want its own repository's schedule %q", got, uidB)
+	}
+	if got := entry("bound-b", "cron"); got == cronA {
+		t.Errorf("bound-b fires at the FIRST repository's timing (%q)", got)
 	}
 }
 
@@ -352,15 +407,17 @@ func TestGR0_TheSyncStateIsOneRow(t *testing.T) {
 	if got := grString(t, a.db, `SELECT last_sha FROM git_sync_state WHERE id = 1`); got != rb.SHA {
 		t.Errorf("git_sync_state.last_sha = %q, want the second repository's %q: the first repository's commit is no longer recorded anywhere", got, rb.SHA)
 	}
-	// scripts left this list with Phase R1 (migration 1290); schedules follow in
-	// the second half of R1, the rest in R2.
-	for _, table := range []string{"git_sync_events", "schedule_pushes", "jobs", "workflows", "schedules", "scopes"} {
+	// scripts and schedules left this list with Phase R1 (migrations 1290 and
+	// 1300); the rest follow in R2.
+	for _, table := range []string{"git_sync_events", "schedule_pushes", "jobs", "workflows", "scopes"} {
 		if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'repo_id'`, table); n != 0 {
 			t.Errorf("%s already has a repo_id column: the phase that adds it has landed and this test is to be inverted", table)
 		}
 	}
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info('scripts') WHERE name = 'repo_id'`); n != 1 {
-		t.Errorf("scripts has no repo_id column: migration 1290 is missing")
+	for _, table := range []string{"scripts", "schedules"} {
+		if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'repo_id'`, table); n != 1 {
+			t.Errorf("%s has no repo_id column: its Phase R1 migration is missing", table)
+		}
 	}
 }
 

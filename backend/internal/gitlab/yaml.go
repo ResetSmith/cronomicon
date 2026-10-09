@@ -100,6 +100,12 @@ type ScheduleEntry struct {
 	// neither parsed from YAML nor serialized; mergeScheduleRefs sets it so
 	// writeDefinitionSchedules can record definition_schedules.source_ref.
 	SourceRef string `yaml:"-" json:"-"`
+	// SourceUID is WHICH schedule that name means: the uid of the first-class
+	// schedule this entry was expanded from (migration 1300, GR-8). Internal like
+	// SourceRef, and set beside it. It is what definition_schedules.schedule_uid
+	// is written from, so that a schedule finds the entries expanded from IT and
+	// not those of another schedule of the same name.
+	SourceUID string `yaml:"-" json:"-"`
 }
 
 // scheduleNameRe constrains schedule entry names to a slug form.
