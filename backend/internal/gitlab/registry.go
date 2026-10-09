@@ -58,7 +58,7 @@ type Registry struct {
 
 	mu             sync.Mutex
 	services       map[string]*Service
-	onSyncComplete func(ctx context.Context, sha string)
+	onSyncComplete func(ctx context.Context, generation string)
 	// base is the context every Service's lifetime descends from: the process's,
 	// so that a shutdown stops them all.
 	base   context.Context
@@ -80,7 +80,7 @@ func NewRegistry(database *sql.DB, log *slog.Logger, cfg *config.Config) *Regist
 
 // SetOnSyncComplete installs the hook every Service calls after a sync (the
 // scheduler's reload). Set it before Start.
-func (r *Registry) SetOnSyncComplete(f func(ctx context.Context, sha string)) {
+func (r *Registry) SetOnSyncComplete(f func(ctx context.Context, generation string)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.onSyncComplete = f

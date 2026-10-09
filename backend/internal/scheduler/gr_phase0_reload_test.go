@@ -26,9 +26,6 @@ func TestAReloadThatFailsLeavesTheEntriesFiring(t *testing.T) {
 	ctx := context.Background()
 	seedJobRow(t, pool, "j", 1)
 	seedSchedule(t, pool, "job", "j", "default", "0 2 * * *", 0)
-	if _, err := pool.ExecContext(ctx, `UPDATE git_repos SET last_sha = 'sha1' WHERE id = 'global'`); err != nil {
-		t.Fatal(err)
-	}
 	s := New(pool, quietLog(), nil)
 	if err := s.Reload(ctx); err != nil {
 		t.Fatal(err)
@@ -52,9 +49,9 @@ func TestAReloadThatFailsLeavesTheEntriesFiring(t *testing.T) {
 		t.Errorf("the entry left by the failed reload fires next at %s, was %s", got, firstNext)
 	}
 	// The hook and the backstop, with nothing changed: still one entry.
-	s.ReloadIfChanged(gone, "sha1")
-	s.ReloadIfChanged(ctx, "sha1")
-	s.ReloadIfChanged(ctx, s.currentSHA(ctx))
+	s.ReloadIfChanged(gone, s.currentGeneration(ctx))
+	s.ReloadIfChanged(ctx, s.currentGeneration(ctx))
+	s.ReloadIfChanged(ctx, s.currentGeneration(ctx))
 	if n := len(s.cr.Entries()); n != 1 {
 		t.Errorf("entries after the hook and the backstop = %d, want 1", n)
 	}
@@ -152,9 +149,6 @@ func TestATimezoneRebuildWhoseReloadFailsIsRetriedByTheBackstop(t *testing.T) {
 	ctx := context.Background()
 	seedJobRow(t, pool, "j", 1)
 	seedSchedule(t, pool, "job", "j", "default", "0 2 * * *", 0)
-	if _, err := pool.ExecContext(ctx, `UPDATE git_repos SET last_sha = 'sha1' WHERE id = 'global'`); err != nil {
-		t.Fatal(err)
-	}
 	s := New(pool, quietLog(), nil)
 	if err := s.Reload(ctx); err != nil {
 		t.Fatal(err)
@@ -174,7 +168,7 @@ func TestATimezoneRebuildWhoseReloadFailsIsRetriedByTheBackstop(t *testing.T) {
 		t.Fatalf("entries in the new engine after its reload failed = %d, want 0 (this test is about what happens next)", n)
 	}
 	// The backstop's pass, with the commit and the tables as they were.
-	s.ReloadIfChanged(ctx, s.currentSHA(ctx))
+	s.ReloadIfChanged(ctx, s.currentGeneration(ctx))
 	if n := len(s.cr.Entries()); n != 1 {
 		t.Errorf("entries after the backstop's pass = %d, want the schedule back", n)
 	}

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +33,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envmerge"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/notify"
-	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
@@ -57,7 +57,7 @@ type Scheduler struct {
 
 	mu                sync.Mutex
 	loc               *time.Location       // effective app zone the engine fires in (never nil)
-	loadedSHA         string               // git SHA the current cron entries were loaded from
+	loadedGeneration  string               // definitions generation the current cron entries were loaded at
 	loadedFingerprint string               // DB fingerprint of the loaded job/workflow definitions
 	reloads           int                  // count of reloads (for testing reload gating)
 	wfFirer           WorkflowFirer        // set via SetWorkflowFirer; nil ⇒ workflows don't fire
@@ -129,7 +129,7 @@ func (s *Scheduler) RebuildWithLocation(ctx context.Context, newLoc *time.Locati
 		// the backstop compares is forgotten: its next pass finds a difference
 		// and reloads. Without this it found none, and the engine stayed empty.
 		s.mu.Lock()
-		s.loadedSHA, s.loadedFingerprint = "", ""
+		s.loadedGeneration, s.loadedFingerprint = "", ""
 		s.mu.Unlock()
 		s.log.Error("scheduler: timezone rebuild reload failed; engine started, entries reload via backstop", "zone", newLoc.String(), "err", reloadErr)
 		return reloadErr
@@ -178,8 +178,8 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	return nil
 }
 
-// backstopLoop periodically reloads if the git SHA advanced, as a fallback for a
-// missed/failed onSyncComplete callback.
+// backstopLoop periodically reloads if the definitions generation advanced or
+// the tables changed, as a fallback for a missed/failed onSyncComplete callback.
 func (s *Scheduler) backstopLoop(ctx context.Context) {
 	t := time.NewTicker(reloadBackstopInterval)
 	defer t.Stop()
@@ -188,33 +188,37 @@ func (s *Scheduler) backstopLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.ReloadIfChanged(ctx, s.currentSHA(ctx))
+			s.ReloadIfChanged(ctx, s.currentGeneration(ctx))
 		}
 	}
 }
 
-// currentSHA reads the last-synced git SHA of Global's repository (empty if
-// unknown). One repository's SHA is half of the reload gate until a generation
-// counter that any repository's sync advances replaces it (GR-29, Phase R3).
-func (s *Scheduler) currentSHA(ctx context.Context) string {
-	var sha sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT last_sha FROM git_repos WHERE id = ?`, repoid.Global).Scan(&sha)
-	return sha.String
+// currentGeneration reads the definitions generation: a counter that every
+// sync of every repository advances in its transaction (GR-29, migration
+// 1330). Empty if it cannot be read. Until 2.4.0 this half of the reload gate
+// was the commit of the last sync, of the one repository there was.
+func (s *Scheduler) currentGeneration(ctx context.Context) string {
+	var n sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT n FROM definitions_generation WHERE id = 1`).Scan(&n); err != nil || !n.Valid {
+		return ""
+	}
+	return strconv.FormatInt(n.Int64, 10)
 }
 
-// ReloadIfChanged reloads only when sha differs from the SHA the current cron
-// entries were loaded from, or if the database-level fingerprint has drifted.
-// This is the onSyncComplete hook — it avoids tearing down and re-adding all
-// entries on every no-op poll. An empty sha forces a reload.
-func (s *Scheduler) ReloadIfChanged(ctx context.Context, sha string) {
+// ReloadIfChanged reloads only when generation differs from the one the
+// current cron entries were loaded at, or if the database-level fingerprint has
+// drifted. This is the onSyncComplete hook — it avoids tearing down and
+// re-adding all entries when nothing changed. An empty generation forces a
+// reload.
+func (s *Scheduler) ReloadIfChanged(ctx context.Context, generation string) {
 	fp := s.dbFingerprint(ctx)
 
 	s.mu.Lock()
-	cur := s.loadedSHA
+	cur := s.loadedGeneration
 	curFP := s.loadedFingerprint
 	s.mu.Unlock()
 
-	if sha != "" && sha == cur && fp == curFP {
+	if generation != "" && generation == cur && fp == curFP {
 		return
 	}
 	if err := s.Reload(ctx); err != nil {
@@ -262,7 +266,7 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 	fp := s.dbFingerprint(ctx)
 
 	s.mu.Lock()
-	s.loadedSHA = s.currentSHA(ctx)
+	s.loadedGeneration = s.currentGeneration(ctx)
 	s.loadedFingerprint = fp
 	s.reloads++
 	s.mu.Unlock()

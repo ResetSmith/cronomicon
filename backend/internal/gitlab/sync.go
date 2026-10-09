@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -117,16 +118,17 @@ type Service struct {
 	// and before anything is parsed. Tests use it to act "during a sync".
 	afterFetch func()
 
-	// onSyncComplete, when set, is invoked at the end of a successful sync with
-	// the synced HEAD SHA so the scheduler can reload newly-synced schedules
-	// immediately (it self-gates on SHA change). Optional — nil is a no-op.
-	onSyncComplete func(ctx context.Context, sha string)
+	// onSyncComplete, when set, is invoked at the end of a sync that committed,
+	// with the definitions generation that sync advanced to, so the scheduler can
+	// reload newly-synced schedules immediately (it compares the generation with
+	// the one it loaded at). Optional — nil is a no-op.
+	onSyncComplete func(ctx context.Context, generation string)
 }
 
 // SetOnSyncComplete installs the post-sync hook (wired in main.go to the
-// scheduler's SHA-gated reload). Passing a func value avoids an api→scheduler
-// import edge.
-func (s *Service) SetOnSyncComplete(f func(ctx context.Context, sha string)) {
+// scheduler's generation-gated reload). Passing a func value avoids an
+// api→scheduler import edge.
+func (s *Service) SetOnSyncComplete(f func(ctx context.Context, generation string)) {
 	s.onSyncComplete = f
 }
 
@@ -1067,6 +1069,22 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		}
 	}
 
+	// The definitions generation (GR-29, migration 1330): one more, in this
+	// transaction, whichever repository this is. It is what the scheduler
+	// reloads on. It was the commit of the one repository; with a repository per
+	// agency there is no one commit, and a sync of an agency's repository at an
+	// unchanged commit of Global's must still be seen.
+	var generation int64
+	if dbErr == nil {
+		dbErr = tx.QueryRowContext(ctx, `
+			INSERT INTO definitions_generation (id, n) VALUES (1, 1)
+			ON CONFLICT(id) DO UPDATE SET n = n + 1
+			RETURNING n`).Scan(&generation)
+		if dbErr != nil {
+			allErrs = append(allErrs, "advance the definitions generation: "+dbErr.Error())
+		}
+	}
+
 	if dbErr == nil {
 		if commitErr := tx.Commit(); commitErr != nil {
 			allErrs = append(allErrs, "commit transaction: "+commitErr.Error())
@@ -1085,7 +1103,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	_ = s.recordSyncEvent(ctx, triggeredBy, res)
 
 	// Notify the scheduler so freshly-synced schedules take effect at once. The
-	// callback self-gates on SHA change, so a no-op poll (same SHA) is cheap.
+	// callback compares the generation with the one it loaded at.
 	//
 	// Only when the sync COMMITTED, and on a context that cannot end. The
 	// scheduler's reload removes every cron entry and then reads them back; run
@@ -1095,7 +1113,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// its Service is stopped (a connection was saved, GR-11) or its caller goes
 	// away (a scope resync), and its transaction is where the cancellation lands.
 	if s.onSyncComplete != nil && dbErr == nil {
-		s.onSyncComplete(context.WithoutCancel(ctx), sha)
+		s.onSyncComplete(context.WithoutCancel(ctx), strconv.FormatInt(generation, 10))
 	}
 	return res
 }
