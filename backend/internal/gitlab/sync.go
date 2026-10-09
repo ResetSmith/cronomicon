@@ -1732,6 +1732,38 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 			return fmt.Errorf("resolve uid for schedule %q: %w", name, err)
 		}
 		resolved[name] = rs
+		// An in-app definition bound to this schedule follows its edits (2.4.0,
+		// present defect 13). A definition holds a COPY of its schedule's timing.
+		// The Git definitions' copies are rewritten further down this sync, with
+		// the definitions themselves; an in-app definition's was written when it
+		// was last saved and by nothing since, so it went on firing at the old
+		// time after the schedule was edited in Git, where an in-app schedule's
+		// edit has always reached its users (D1c). The same columns that edit
+		// propagates, found the same way: by schedule_uid.
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE definition_schedules
+			   SET cron=?, env=?, start_at=?, end_at=?, interval=?, skip_calendars=?, only_calendars=?
+			 WHERE schedule_uid = ? AND owner_source = 'cronomicon'`,
+			rs.cron, envJSON, nullStr(rs.startAt), nullStr(rs.endAt), nullStr(rs.interval),
+			nullStr(calendar.MarshalNames(rs.skipCals)), nullStr(calendar.MarshalNames(rs.onlyCals)),
+			rs.uid); err != nil {
+			return fmt.Errorf("propagate schedule %q to in-app definitions: %w", name, err)
+		}
+		// The legacy display mirror (jobs/workflows.schedule, the lowest-position
+		// cron) of each owner just touched, as the in-app edit recomputes it.
+		for kind, table := range map[string]string{"job": "jobs", "workflow": "workflows"} {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE `+table+`
+				   SET schedule = (SELECT d.cron FROM definition_schedules d
+				                    WHERE d.owner_kind = ? AND d.owner_uid = `+table+`.uid
+				                    ORDER BY d.position LIMIT 1)
+				 WHERE source = 'cronomicon'
+				   AND uid IN (SELECT owner_uid FROM definition_schedules
+				                WHERE schedule_uid = ? AND owner_kind = ? AND owner_source = 'cronomicon')`,
+				kind, rs.uid, kind); err != nil {
+				return fmt.Errorf("refresh the schedule column of in-app %ss bound to %q: %w", kind, name, err)
+			}
+		}
 	}
 	return nil
 }

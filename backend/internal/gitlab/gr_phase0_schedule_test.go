@@ -4,18 +4,20 @@ import (
 	"testing"
 )
 
-// Present defect 13, reproduced before the schedules half of Phase R1 changes
-// anything. It passes on the code as it is. No production code changes.
+const grYearlyGitJob = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: git-job\nspec:\n  run_type: bash\n  command: echo hi\n  scheduleRefs:\n    - yearly\n"
+
+// An in-app definition follows its Git schedule.
 //
 // A definition bound to a reusable schedule holds a COPY of it in
 // definition_schedules. Sync writes that copy afresh for a Git job or workflow
-// on every sync. Nothing writes it for a job built in the app: the in-app edit
-// of an in-app schedule propagates to its users, but a Git edit of a Git
-// schedule reaches only the Git definitions. So an in-app job bound to Git's
-// `nightly` goes on firing at the old time after `nightly` is changed in Git,
-// and goes on firing at all after `nightly` is removed from Git, on a
-// reference that now names nothing.
-func TestGR0_AGitSchedulesEditDoesNotReachInAppDefinitions(t *testing.T) {
+// on every sync, and the in-app edit of an in-app schedule propagates to its
+// users. Until this test was inverted
+// (TestGR0_AGitSchedulesEditDoesNotReachInAppDefinitions pinned the opposite;
+// present defect 13) nothing wrote it for a definition built in the app and
+// bound to a GIT schedule, which went on firing at the old time after the
+// schedule was changed in Git. Sync now carries the edit to every in-app entry
+// tied to the schedule by its uid, and to nothing else.
+func TestAnInAppDefinitionFollowsItsGitSchedule(t *testing.T) {
 	svc, repo, remote := newSyncFixture(t)
 	exec := func(q string, args ...any) {
 		t.Helper()
@@ -25,39 +27,102 @@ func TestGR0_AGitSchedulesEditDoesNotReachInAppDefinitions(t *testing.T) {
 	}
 	grCommitFiles(t, repo, remote, map[string]string{
 		"schedules/yearly.yaml": grSchedule("0 3 1 1 *"),
-		"jobs/git-job.yaml":     "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: git-job\nspec:\n  run_type: bash\n  command: echo hi\n  scheduleRefs:\n    - yearly\n",
+		"jobs/git-job.yaml":     grYearlyGitJob,
 	}, "a schedule and a Git job bound to it")
 	grSync(t, svc, "first sync")
 	sched := grString(t, svc.db, `SELECT uid FROM schedules WHERE source='git' AND name='yearly'`)
-	cronOf := func(source, owner string) string {
+	first := grString(t, svc.db, `SELECT cron FROM definition_schedules WHERE owner_source='git' AND owner_name='git-job'`)
+	entry := func(ownerUID, name string) string {
 		t.Helper()
-		if grCount(t, svc.db, `SELECT COUNT(*) FROM definition_schedules WHERE owner_source=? AND owner_name=?`, source, owner) == 0 {
-			return "(no entry)"
-		}
-		return grString(t, svc.db, `SELECT cron FROM definition_schedules WHERE owner_source=? AND owner_name=?`, source, owner)
+		return grString(t, svc.db, `SELECT cron FROM definition_schedules WHERE owner_uid=? AND name=?`, ownerUID, name)
 	}
-	first := cronOf("git", "git-job")
+	bind := func(kind, ownerUID, owner, name string, position int, ref, schedUID any) {
+		t.Helper()
+		exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid)
+		      VALUES('cronomicon', ?, ?, ?, ?, ?, ?, ?, ?)`, kind, owner, name, first, position, ref, ownerUID, schedUID)
+	}
 
-	// An in-app job bound to the same Git schedule, as the composer writes it:
-	// a copy of the schedule's timing, its name, and its uid.
-	exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at) VALUES('j-app', 'app-job', 'cronomicon', 'bash', 'echo hi', 't')`)
-	exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid)
-	      VALUES('cronomicon', 'job', 'app-job', 'yearly', ?, 0, 'yearly', 'j-app', ?)`, first, sched)
+	// An in-app job bound to the Git schedule, as the composer writes it: a copy
+	// of the schedule's timing, its name, and its uid. Its display column
+	// mirrors its first entry.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, schedule, synced_at) VALUES('j-app', 'app-job', 'cronomicon', 'bash', 'echo hi', ?, 't')`, first)
+	bind("job", "j-app", "app-job", "yearly", 0, "yearly", sched)
+	// An inline entry of the same job: its own timing, no schedule.
+	bind("job", "j-app", "app-job", "own", 1, nil, nil)
+	// An in-app workflow bound to it.
+	exec(`INSERT INTO workflows(uid, name, source, steps, schedule, synced_at) VALUES('w-app', 'app-flow', 'cronomicon', '[]', ?, 't')`, first)
+	bind("workflow", "w-app", "app-flow", "yearly", 0, "yearly", sched)
+	// A job in the recycle bin bound to it: restored, it fires at once.
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at, deleted_at) VALUES('j-bin', 'binned-job', 'cronomicon', 'bash', 'echo hi', 't', '2026-01-01T00:00:00Z')`)
+	bind("job", "j-bin", "binned-job", "yearly", 0, "yearly", sched)
+	// What must NOT follow: an entry of that name tied to ANOTHER schedule (an
+	// in-app `yearly`), and one tied to none (the ambiguous entry of 1300).
+	exec(`INSERT INTO schedules(uid, name, source, cron, content_hash, owner_agency) VALUES('s-app', 'yearly', 'cronomicon', ?, 'h', 'global')`, first)
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, schedule, synced_at) VALUES('j-other', 'other-job', 'cronomicon', 'bash', 'echo hi', ?, 't')`, first)
+	bind("job", "j-other", "other-job", "yearly", 0, "yearly", "s-app")
+	exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at) VALUES('j-untied', 'untied-job', 'cronomicon', 'bash', 'echo hi', 't')`)
+	bind("job", "j-untied", "untied-job", "yearly", 0, "yearly", nil)
 
 	// The schedule is edited in Git.
 	gitCommitFile(t, repo, remote, "schedules/yearly.yaml", grSchedule("0 4 2 2 *"), "edit the schedule")
 	grSync(t, svc, "sync after the edit")
-	second := cronOf("git", "git-job")
+	second := grString(t, svc.db, `SELECT cron FROM definition_schedules WHERE owner_source='git' AND owner_name='git-job'`)
 	if second == first {
 		t.Fatalf("the Git job's entry did not follow the edit (%q)", second)
 	}
-	switch got := cronOf("cronomicon", "app-job"); got {
-	case first:
-		// Today: the in-app job still fires at the old time.
-	case second:
-		t.Errorf("the in-app job follows the Git schedule's edit: this is fixed, and the test is to be inverted")
-	default:
-		t.Errorf("the in-app job's entry is %q: neither the old timing nor the new", got)
+	for _, c := range []struct{ uid, what string }{
+		{"j-app", "the in-app job"}, {"w-app", "the in-app workflow"}, {"j-bin", "the in-app job in the recycle bin"},
+	} {
+		if got := entry(c.uid, "yearly"); got != second {
+			t.Errorf("%s still fires at %q after its Git schedule was edited, want %q", c.what, got, second)
+		}
+	}
+	if got := grString(t, svc.db, `SELECT COALESCE(schedule,'') FROM jobs WHERE uid='j-app'`); got != second {
+		t.Errorf("the in-app job's schedule column = %q, want its first entry's new timing %q", got, second)
+	}
+	if got := grString(t, svc.db, `SELECT COALESCE(schedule,'') FROM workflows WHERE uid='w-app'`); got != second {
+		t.Errorf("the in-app workflow's schedule column = %q, want %q", got, second)
+	}
+	if got := entry("j-app", "own"); got != first {
+		t.Errorf("the job's inline entry was rewritten to %q", got)
+	}
+	if got := entry("j-other", "yearly"); got != first {
+		t.Errorf("an entry tied to the in-app schedule of that name followed Git's edit: %q", got)
+	}
+	if got := grString(t, svc.db, `SELECT COALESCE(schedule,'') FROM jobs WHERE uid='j-other'`); got != first {
+		t.Errorf("the schedule column of a job bound to another schedule was rewritten: %q", got)
+	}
+	if got := entry("j-untied", "yearly"); got != first {
+		t.Errorf("an entry tied to no schedule followed Git's edit: %q", got)
+	}
+	// Nothing else about the entries moved.
+	if n := grCount(t, svc.db, `SELECT COUNT(*) FROM definition_schedules WHERE owner_source='cronomicon'`); n != 6 {
+		t.Errorf("in-app entries after the sync = %d, want the six there were", n)
+	}
+	if n := grCount(t, svc.db, `SELECT COUNT(*) FROM definition_schedules WHERE owner_source='cronomicon' AND schedule_uid=?`, sched); n != 3 {
+		t.Errorf("in-app entries tied to the Git schedule = %d, want 3", n)
+	}
+}
+
+// The other half of present defect 13, NOT changed and still the owner's to
+// decide: when a schedule leaves Git, the in-app definitions bound to it go on
+// firing at the timing they have, holding the uid of a schedule that is gone.
+// This passes on the code as it is.
+func TestGR0_AnInAppDefinitionOutlivesItsPrunedGitSchedule(t *testing.T) {
+	svc, repo, remote := newSyncFixture(t)
+	grCommitFiles(t, repo, remote, map[string]string{
+		"schedules/yearly.yaml": grSchedule("0 3 1 1 *"),
+		"jobs/git-job.yaml":     grYearlyGitJob,
+	}, "a schedule and a Git job bound to it")
+	grSync(t, svc, "first sync")
+	sched := grString(t, svc.db, `SELECT uid FROM schedules WHERE source='git' AND name='yearly'`)
+	first := grString(t, svc.db, `SELECT cron FROM definition_schedules WHERE owner_source='git' AND owner_name='git-job'`)
+	if _, err := svc.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, synced_at) VALUES('j-app', 'app-job', 'cronomicon', 'bash', 'echo hi', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid)
+	      VALUES('cronomicon', 'job', 'app-job', 'yearly', ?, 0, 'yearly', 'j-app', ?)`, first, sched); err != nil {
+		t.Fatal(err)
 	}
 
 	// The schedule leaves Git (and the Git job with it, or the sync would
@@ -69,15 +134,15 @@ func TestGR0_AGitSchedulesEditDoesNotReachInAppDefinitions(t *testing.T) {
 	if n := grCount(t, svc.db, `SELECT COUNT(*) FROM schedules WHERE name='yearly'`); n != 0 {
 		t.Fatalf("the schedule was not pruned (count %d)", n)
 	}
-	switch got := cronOf("cronomicon", "app-job"); got {
-	case first:
+	switch n := grCount(t, svc.db, `SELECT COUNT(*) FROM definition_schedules WHERE owner_uid='j-app'`); n {
+	case 1:
 		// Today: the in-app job still fires, bound to a schedule that is gone.
-		if ref := grString(t, svc.db, `SELECT source_ref FROM definition_schedules WHERE owner_name='app-job'`); ref != "yearly" {
-			t.Errorf("the orphaned entry's source_ref = %q", ref)
+		if got := grString(t, svc.db, `SELECT cron || ' ' || source_ref || ' ' || schedule_uid FROM definition_schedules WHERE owner_uid='j-app'`); got != first+" yearly "+sched {
+			t.Errorf("the orphaned entry is %q, want it as it was: %q", got, first+" yearly "+sched)
 		}
-	case "(no entry)":
+	case 0:
 		t.Errorf("the in-app job was detached when its schedule left Git: this has been decided and built, and the test is to be re-read")
 	default:
-		t.Errorf("the in-app job's entry is %q after its schedule was pruned", got)
+		t.Errorf("the in-app job has %d entries after its schedule was pruned", n)
 	}
 }
