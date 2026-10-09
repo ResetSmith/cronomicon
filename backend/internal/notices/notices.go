@@ -62,6 +62,13 @@ const (
 	// left of one after narrowing. It works as it did; it is Global's, can be
 	// narrowed and never widened. Subject: the runner's id. Filed under Global.
 	KindLegacyPlacement = "legacy_placement"
+	// KindGitSyncProblems — a repository whose last sync reported errors about
+	// its files, or could not fetch it (2.4.0, GR-30). The rows are in
+	// git_sync_problems, warnings among them; the notice counts both and
+	// quotes the first few errors. Warnings alone open none.
+	// Written and resolved by the sync itself, in its transaction, not by a
+	// check. Subject: the repository's id. Filed under the repository's agency.
+	KindGitSyncProblems = "git_sync_problems"
 )
 
 // Notice is one row of the inbox.

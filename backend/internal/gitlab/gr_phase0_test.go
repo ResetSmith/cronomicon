@@ -37,6 +37,12 @@ import (
 // Global's).
 func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, string) {
 	t.Helper()
+	return grRepo(t, first, "repo-b", "ag-b")
+}
+
+// grRepo is grSecondRepo for a repository of any id and agency.
+func grRepo(t *testing.T, first *Service, id, agency string) (*Service, *gogit.Repository, string) {
+	t.Helper()
 	remote := t.TempDir()
 	repo, err := gogit.PlainInit(remote, false)
 	if err != nil {
@@ -45,16 +51,16 @@ func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, st
 	// Its row of git_repos (migration 1310), with its branch: the environment's
 	// branch override, which the first Service's fixture uses, is Global's
 	// repository's alone (GR-21), so a second repository reads its own row.
-	if _, err := first.db.Exec(`INSERT OR REPLACE INTO git_repos (id, agency_id, url, branch) VALUES ('repo-b', 'ag-b', ?, ?)`,
-		remote, first.Cfg.GitLabWriteBranch); err != nil {
-		t.Fatalf("the second repository's row: %v", err)
+	if _, err := first.db.Exec(`INSERT OR REPLACE INTO git_repos (id, agency_id, url, branch) VALUES (?, ?, ?, ?)`,
+		id, agency, remote, first.Cfg.GitLabWriteBranch); err != nil {
+		t.Fatalf("the repository %s's row: %v", id, err)
 	}
 	return &Service{
 		db:       first.db,
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		repoURL:  remote,
-		repoID:   "repo-b",
-		agencyID: "ag-b",
+		repoID:   id,
+		agencyID: agency,
 		cloneDir: filepath.Join(t.TempDir(), "clone"),
 		Cfg:      &config.Config{GitLabWriteBranch: first.Cfg.GitLabWriteBranch},
 	}, repo, remote

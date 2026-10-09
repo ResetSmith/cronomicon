@@ -59,8 +59,20 @@ func TestMigrate1320GitNamesPerRepo(t *testing.T) {
 	h.exec(`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, owner_uid)
 	        VALUES('git', 'job', 'nightly', 'default', '0 0 2 * * *', 0, 'j-g')`)
 
+	// And its log-folder code, which no trigger retires.
+	h.exec(`INSERT INTO entity_codes(kind, source, name, created_at, uid, repo_id) VALUES('job', 'git', 'nightly', 't', 'j-b', 'repo-b')`)
+
 	// The way back: one Git definition of a name. Global's is kept.
 	h.to(1310)
+	if n := h.count(`SELECT COUNT(*) FROM entity_codes WHERE kind='job' AND source='git' AND name='nightly' AND deleted_at IS NULL`); n != 1 {
+		t.Errorf("live log-folder codes of the Git job nightly after the way back = %d, want 1 (the deleted job's is retired)", n)
+	}
+	if got := h.str(`SELECT uid FROM entity_codes WHERE kind='job' AND source='git' AND name='nightly' AND deleted_at IS NULL`); got != "j-g" {
+		t.Errorf("the live log-folder code after the way back is %q's, want Global's job's", got)
+	}
+	if n := h.count(`SELECT COUNT(*) FROM entity_codes WHERE uid='j-b' AND deleted_at IS NOT NULL`); n != 1 {
+		t.Errorf("the deleted job's log-folder code is not retired (%d rows)", n)
+	}
 	if got := h.str(`SELECT GROUP_CONCAT(uid, ',') FROM (SELECT uid FROM jobs WHERE source='git' AND name='nightly' ORDER BY uid)`); got != "j-g" {
 		t.Errorf("Git jobs named nightly after the way back = %q, want Global's alone", got)
 	}

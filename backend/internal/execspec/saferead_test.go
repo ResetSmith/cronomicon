@@ -65,6 +65,32 @@ func TestSafeReadRepoFile(t *testing.T) {
 		t.Error("expected symlink-escape rejection, got nil")
 	}
 
+	// Nor a link into the repository's own .git, which is inside the root and
+	// is no part of what the repository holds (2.4.0): its config names the
+	// connection's URL.
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", "config"), []byte("[remote \"origin\"]\n\turl = https://token@git.example/x.git\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", ".git", "config"), filepath.Join(root, "scripts", "conf.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if data, _, err := execspec.SafeReadRepoFile(root, "scripts/conf.sh", 0); err == nil {
+		t.Errorf("a link into .git was read: %q", data)
+	}
+	if data, _, err := execspec.SafeReadRepoFile(root, ".git/config", 0); err == nil {
+		t.Errorf(".git/config was read by its own path: %q", data)
+	}
+	// A file whose name merely begins with .git is the repository's own.
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execspec.SafeReadRepoFile(root, ".gitignore", 0); err != nil {
+		t.Errorf(".gitignore is refused: %v", err)
+	}
+
 	// A missing file is an error (not a panic / empty success).
 	if _, _, err := execspec.SafeReadRepoFile(root, "scripts/nope.sh", 0); err == nil {
 		t.Error("expected error for missing file, got nil")

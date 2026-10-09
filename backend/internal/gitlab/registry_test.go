@@ -411,3 +411,36 @@ func TestCloneDirFor(t *testing.T) {
 }
 
 var _ = plumbing.HEAD
+
+// A connection whose URL is taken away while the server runs has nothing left
+// to say about its files: no sync will come to clear what the last one found,
+// so the rows go and the notice resolves when the connection is written.
+func TestRegistry_AConnectionWithNoURLForgetsItsProblems(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	gitCommitFile(t, f.repo, f.remote, "jobs/bad.yaml", "apiVersion: cronomicon.io/v2\nkind: Job\nmetadata:\n  name: bad\n", "a file that does not validate")
+	if err := f.reg.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	eventually(t, "the first sync", func() bool { return f.lastSHA(repoid.Global) == headOf(t, f.repo) })
+	open := func() int {
+		return grCount(t, f.db, `SELECT COUNT(*) FROM notices WHERE kind='git_sync_problems' AND subject='global' AND resolved_at IS NULL`)
+	}
+	eventually(t, "the notice of the file that does not validate", func() bool { return open() == 1 })
+	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_problems WHERE repo_id='global'`); n == 0 {
+		t.Fatalf("no problem rows after a sync of a file that does not validate")
+	}
+
+	if _, err := f.db.Exec(`UPDATE git_repos SET url = '' WHERE id = 'global'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.reg.Restart(ctx, repoid.Global); err != nil {
+		t.Fatalf("restart after the URL was removed: %v", err)
+	}
+	if n := grCount(t, f.db, `SELECT COUNT(*) FROM git_sync_problems WHERE repo_id='global'`); n != 0 {
+		t.Errorf("%d problem row(s) left for a connection with no URL", n)
+	}
+	if open() != 0 {
+		t.Errorf("the notice is still open for a connection with no URL")
+	}
+}

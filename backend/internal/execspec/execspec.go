@@ -787,6 +787,12 @@ func SafeReadRepoFile(gitCacheDir, relPath string, limit int64) (data []byte, tr
 	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return nil, false, fmt.Errorf("scriptPath %q escapes repository root: resolves to %q", relPath, resolvedPath)
 	}
+	// Nor the clone's own .git, which is inside the directory and is no part of
+	// what the repository holds: its config names the connection's URL, and a
+	// committed link to it would be a script's body, shown and run.
+	if rel == ".git" || strings.HasPrefix(rel, ".git"+string(filepath.Separator)) {
+		return nil, false, fmt.Errorf("scriptPath %q escapes repository root: resolves into the clone's .git", relPath)
+	}
 	if limit <= 0 {
 		data, err = os.ReadFile(resolvedPath)
 		if err != nil {

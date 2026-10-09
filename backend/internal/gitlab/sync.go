@@ -118,6 +118,15 @@ type Service struct {
 	// and before anything is parsed. Tests use it to act "during a sync".
 	afterFetch func()
 
+	// problems collects what the sync that is under way has to say about the
+	// repository's files (GR-30, problems.go). nil between syncs. One sync of a
+	// Service runs at a time (the queue), so there is one collector at a time;
+	// but a warning can be logged by a goroutine that is not the one syncing
+	// (the line that follows a sync started by a trigger), so the pointer is
+	// read and set under problemsMu.
+	problemsMu sync.Mutex
+	problems   *problemSet
+
 	// onSyncComplete, when set, is invoked at the end of a sync that committed,
 	// with the definitions generation that sync advanced to, so the scheduler can
 	// reload newly-synced schedules immediately (it compares the generation with
@@ -460,7 +469,12 @@ func heldBoundScopes(ctx context.Context, tx *sql.Tx, nowStr, repoID string) []s
 }
 
 // logWarn logs at Warn level, safely handling a nil logger.
+//
+// During a sync it is also a row of the repository's problems (noteWarning):
+// whatever a sync warns of is told to the repository's agency, not only to
+// whoever reads the server's log.
 func (s *Service) logWarn(msg string, args ...any) {
+	s.noteWarning(msg, args)
 	if s.log != nil {
 		s.log.Warn(msg, args...)
 	}
@@ -499,11 +513,24 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	branch := s.writeBranch(ctx)
+	// From here to the end of the sync, whatever it warns of or reports is
+	// collected for the repository's problem rows (GR-30).
+	s.setProblems(&problemSet{})
+	defer s.setProblems(nil)
 	repo, err := s.cloneOrFetch(ctx, branch)
 	if err != nil {
 		res.ErrorMessage = err.Error()
 		res.FinishedAt = time.Now().UTC()
 		_ = s.recordSyncEvent(ctx, triggeredBy, res)
+		// Not for a sync cut short because its Service was stopped. A repository
+		// with no URL has nothing to fetch (the history says "not configured"),
+		// and nothing to say about files nobody reads any more.
+		switch {
+		case s.repoURL == "":
+			s.clearProblems(context.WithoutCancel(ctx))
+		case s.lifetime().Err() == nil && ctx.Err() == nil:
+			s.noteFetchFailure(ctx, err)
+		}
 		return res
 	}
 	if s.afterFetch != nil {
@@ -547,6 +574,26 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	collect(wfErrs)
 	collect(scopeErrs)
 
+	// A name that two files of this repository both define (present defect 19).
+	// One of the two is used, the one read last, and until 2.4.0 the sync said
+	// nothing: a clean success, and which file's definition ran was the order the
+	// directory happened to be walked in. It is REPORTED now, per file, and the
+	// sync is partial. It is not refused, and it switches no prune off: both
+	// would change what a repository that has such a pair runs today.
+	var dupErrs []ValidationError
+	dupErrs = append(dupErrs, duplicateNames("script", scripts,
+		func(x ScriptYAML) string { return x.Metadata.Name }, func(x ScriptYAML) string { return x.SourcePath })...)
+	dupErrs = append(dupErrs, duplicateNames("schedule", scheds,
+		func(x ScheduleYAML) string { return x.Metadata.Name }, func(x ScheduleYAML) string { return x.SourcePath })...)
+	dupErrs = append(dupErrs, duplicateNames("job", jobs,
+		func(x JobYAML) string { return x.Metadata.Name }, func(x JobYAML) string { return x.SourcePath })...)
+	dupErrs = append(dupErrs, duplicateNames("workflow", wfs,
+		func(x WorkflowYAML) string { return x.Metadata.Name }, func(x WorkflowYAML) string { return x.SourcePath })...)
+	for _, ve := range dupErrs {
+		allErrs = append(allErrs, ve.Error())
+		res.Errors = append(res.Errors, ve)
+	}
+
 	// PP-B2: per-subsystem parse health. A subsystem's GitOps prune runs ONLY
 	// when that subsystem parsed cleanly — directory readable AND zero parse /
 	// resolve / cross-ref errors — so a transient read error, one corrupt file,
@@ -575,7 +622,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 			continue
 		}
 		for _, f := range lintProjectWith(s.cloneDir, sc.Spec.ProjectRoot, s.readCloned) {
-			s.log.Warn("git sync: checkout project lint (advisory)",
+			s.logWarn("git sync: checkout project lint (advisory)",
 				"project", sc.Spec.ProjectRoot, "file", f.File, "detail", f.Message)
 		}
 	}
@@ -1034,15 +1081,15 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// errors are already in allErrs (status → "partial"); this names the affected
 	// subsystems for the operator.
 	if len(skipped) > 0 {
-		s.log.Warn("git sync: prune skipped for subsystems with parse errors — stale rows retained this cycle",
-			"subsystems", skipped)
+		s.logWarn("git sync: prune skipped for subsystems with parse errors — stale rows retained this cycle",
+			"subsystems", strings.Join(skipped, ", "))
 	}
 	// PP-B2 (B2-4): a full wipe of a kind (rows deleted while zero synced) is the
 	// signature of an accidental empty/rewritten tree — log it loudly even when the
 	// parse looked clean, so an operator can catch a bad force-push.
 	if (prunedJobs > 0 && res.JobsSynced == 0) || (prunedWfs > 0 && res.WfsSynced == 0) ||
 		(prunedScripts > 0 && res.ScriptsSynced == 0) || (prunedScopes > 0 && res.ScopesSynced == 0) {
-		s.log.Warn("git sync: a definition kind was fully pruned (0 synced, rows deleted) — verify the repo was not mid-rewrite",
+		s.logWarn("git sync: a definition kind was fully pruned (0 synced, rows deleted) — verify the repo was not mid-rewrite",
 			"jobs_pruned", prunedJobs, "workflows_pruned", prunedWfs,
 			"scripts_pruned", prunedScripts, "scopes_pruned", prunedScopes)
 	}
@@ -1082,6 +1129,16 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 			RETURNING n`).Scan(&generation)
 		if dbErr != nil {
 			allErrs = append(allErrs, "advance the definitions generation: "+dbErr.Error())
+		}
+	}
+
+	// The repository's problems as of this sync (GR-30), in this transaction:
+	// every file error it reported and everything it warned of. If the
+	// transaction does not commit, the rows of the last sync that did stay.
+	if dbErr == nil {
+		s.noteErrors(res.Errors)
+		if dbErr = s.writeProblems(ctx, tx, nowStr, s.currentProblems()); dbErr != nil {
+			allErrs = append(allErrs, "record the sync's problems: "+dbErr.Error())
 		}
 	}
 
@@ -1448,6 +1505,13 @@ func containedReader(root string) fileReader {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
 			return nil, errLeavesRepository
 		}
+		// Nor the clone's own .git: it is inside the directory and is no part of
+		// what the repository holds. Its config names the connection's URL, and a
+		// link `inventory/x.ini -> ../.git/config` would store that as a scope's
+		// inventory.
+		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
+			return nil, errLeavesRepository
+		}
 		return os.ReadFile(resolved)
 	}
 }
@@ -1457,6 +1521,25 @@ func containedReader(root string) fileReader {
 // through execspec.SafeReadRepoFile.
 func (s *Service) readCloned(path string) ([]byte, error) {
 	return containedReader(s.cloneDir)(path)
+}
+
+// readClonedDir says where a directory of the clone really is, refusing one
+// that, with its links followed, is outside the clone or in its .git.
+func (s *Service) readClonedDir(dir string) (string, error) {
+	root, err := filepath.EvalSymlinks(s.cloneDir)
+	if err != nil {
+		root = s.cloneDir
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", errLinkNotFollowed
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) ||
+		rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
+		return "", errLeavesRepository
+	}
+	return resolved, nil
 }
 
 // walkManifests recursively collects every .yaml/.yml file under dir so jobs,
@@ -1623,6 +1706,15 @@ func parseInventoryHosts(content string) []string {
 
 func (s *Service) parseInventories() ([]inventoryScope, []error) {
 	dir := filepath.Join(s.cloneDir, "inventory")
+	// `inventory` itself may be a link. os.ReadDir follows it, so one that led
+	// out of the repository would be LISTED here, and each name in it reported
+	// by the refusal of the file: the names of another repository's scopes.
+	// (The walkers of the other kinds do not follow a linked directory.)
+	if fi, lerr := os.Lstat(dir); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if _, cerr := s.readClonedDir(dir); cerr != nil {
+			return nil, []error{ValidationError{File: "inventory", Message: cerr.Error()}}
+		}
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1661,7 +1753,7 @@ func (s *Service) parseInventories() ([]inventoryScope, []error) {
 		path := filepath.Join(dir, e.Name())
 		data, err := s.readCloned(path)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("read %s: %w", path, err))
+			errs = append(errs, fmt.Errorf("read %s: %w", "inventory/"+e.Name(), err))
 			continue
 		}
 		content := string(data)
@@ -1784,8 +1876,16 @@ func (s *Service) resolveScripts(scripts []ScriptYAML) (map[string]resolvedScrip
 		// scan is advisory: it never errors and a finding never drops the script.
 		raw, err := s.resolveBody(sc.Spec.Command, sc.Spec.Script, sc.Spec.ScriptPath)
 		if err != nil {
-			errs = append(errs, ValidationError{File: sc.SourcePath,
-				Message: "compute content hash: " + err.Error()})
+			// Not the reader's own text when the body is a file: it names where a
+			// link resolves to, which tells whoever reads the sync's problems what
+			// is on the server's disk (a file that exists and one that does not
+			// answer differently).
+			msg := "compute content hash: " + err.Error()
+			if strings.TrimSpace(sc.Spec.ScriptPath) != "" {
+				msg = fmt.Sprintf("compute content hash: the script's file %q could not be read: "+
+					"it is missing, or is a link that leads out of the repository", sc.Spec.ScriptPath)
+			}
+			errs = append(errs, ValidationError{File: sc.SourcePath, Message: msg})
 			continue
 		}
 		// LR-48 — a sidecar's `executor` is retired with the job's. Said here
@@ -2342,7 +2442,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		watches := watchspec.Normalize(j.Spec.Watch)
 		if verrs := watchspec.Validate(watches); len(verrs) > 0 {
 			for _, ve := range verrs {
-				s.log.Warn("job declares an unusable file watch; ignoring it", "job", name, "problem", ve)
+				s.logWarn("job declares an unusable file watch; ignoring it", "job", name, "source_path", j.SourcePath, "problem", ve)
 			}
 			watches = nil
 		}
@@ -2363,8 +2463,8 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		}
 		warnDeadline := strings.TrimSpace(j.Spec.MustFinishBy)
 		if warnDeadline != "" && !cronutil.ValidDeadline(warnDeadline) {
-			s.log.Warn("job declares an unparseable must_finish_by; ignoring it",
-				"job", name, "value", warnDeadline)
+			s.logWarn("job declares an unparseable must_finish_by; ignoring it",
+				"job", name, "source_path", j.SourcePath, "value", warnDeadline)
 			warnDeadline = ""
 		}
 		// SB — spec.runner_tag is RETIRED. It used to confine the job to runners
@@ -2660,10 +2760,13 @@ func (s *Service) clearOwnedRows(ctx context.Context, tx *sql.Tx, table, ownerKi
 // can never wipe an operator's in-app reactions on the same definition name.
 //
 // The owner is named by its uid, which the caller has just read (2.4.0, GR-13):
-// see clearOwnedRows. The UPSTREAM a reaction watches is still found by name:
-// among this repository's definitions first when it is a Git one, and
-// otherwise only when one definition of that source holds the name. (The rule
-// for a name that is in several places, GR-16, is Phase R4's.)
+// see clearOwnedRows. The UPSTREAM a reaction watches is still found by name.
+// A Git one: this repository's definition of the name, else Global's (GR-16:
+// a name resolves in the definition's own repository, then in Global's), and
+// NEVER another repository's. As first built this fell back to "the one Git
+// definition of that name, wherever it is", which is another agency's job the
+// moment this repository's own does not sync. One built in the app: only when
+// one such definition holds the name, as before (its rule is Phase R4's).
 func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, ownerKind, ownerName, ownerUID string, entries []ReactionEntry) error {
 	const ownerSource = "git"
 	if err := s.clearOwnedRows(ctx, tx, "reactions", ownerKind, ownerName, ownerUID); err != nil {
@@ -2692,13 +2795,15 @@ func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, owne
 				?,
 				COALESCE(
 					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = ? AND name = ?),
-					(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+ownerTable(e.OnKind)+` WHERE name = ? AND source = ?)))`,
+					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = 'global' AND name = ?),
+					(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+ownerTable(e.OnKind)+` WHERE ? <> 'git' AND name = ? AND source = ?)))`,
 			ownerSource, ownerKind, ownerName, e.Name,
 			e.OnSourceOrDefault(), e.OnKind, e.OnName, e.OnOutcome,
 			e.DelaySeconds, e.MinIntervalSeconds, children, enabled, i,
 			ownerUID,
 			e.OnSourceOrDefault(), s.repo(), e.OnName,
-			e.OnName, e.OnSourceOrDefault()); err != nil {
+			e.OnSourceOrDefault(), e.OnName,
+			e.OnSourceOrDefault(), e.OnName, e.OnSourceOrDefault()); err != nil {
 			return err
 		}
 	}
@@ -2777,8 +2882,8 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 		// else in the repo. The runtime depth ceiling is the real backstop.
 		if parsed, perr := workflow.ParseSteps(string(stepsJSON)); perr == nil {
 			for _, verr := range workflow.ValidateSteps(parsed) {
-				s.log.Warn("git workflow has a structural problem; syncing it anyway",
-					"workflow", name, "step", verr.Step, "field", verr.Field, "problem", verr.Message)
+				s.logWarn("git workflow has a structural problem; syncing it anyway",
+					"workflow", name, "source_path", wf.SourcePath, "step", verr.Step, "field", verr.Field, "problem", verr.Message)
 			}
 		}
 		enabled := 1

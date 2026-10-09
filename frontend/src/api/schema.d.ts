@@ -6693,6 +6693,16 @@ export interface components {
              *       records no owner uid. Filed under the agency of the job's scope,
              *       otherwise under Global. It clears when the definition is saved
              *       again.
+             *     - `git_sync_problems` — the last sync of a repository reported
+             *       errors about its files, or the repository could not be fetched
+             *       (v2.4.0). The detail counts the errors and the warnings and
+             *       quotes the first few errors, each with its file; a file with an
+             *       error was not synced. Warnings alone open no notice. Subject:
+             *       the repository's id (`global` for the installation's own). Filed
+             *       under the repository's agency. It is written by the sync itself
+             *       and clears at the first sync of that repository that reports no
+             *       error; an error that was not there before opens it again for
+             *       whoever had dismissed it.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.

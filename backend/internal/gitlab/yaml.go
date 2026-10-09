@@ -1402,7 +1402,7 @@ func discoverScriptsWith(dir string, read fileReader) ([]ScriptYAML, []error) {
 		if ext == ".yaml" || ext == ".yml" {
 			data, err := read(path)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("read %s: %w", rel, err))
+				errs = append(errs, fmt.Errorf("read %s: %w", repoRel, err))
 				return nil
 			}
 			var hdr cronomiconHeader

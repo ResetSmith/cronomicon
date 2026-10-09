@@ -235,6 +235,9 @@ func (r *Registry) restart(repoID string, atStart bool) error {
 		svc.TriggerSync(base, "poll")
 	} else {
 		r.logInfo("git: the repository's connection has no URL; nothing to sync", "repo_id", repoID)
+		// What its last sync found wrong describes files nothing reads any more,
+		// and no sync will come to clear the notice.
+		svc.clearProblems(base)
 	}
 	return nil
 }

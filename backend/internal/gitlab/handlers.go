@@ -202,6 +202,15 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := r.Header.Get("X-Gitlab-Token")
+	if svc == nil && token != "" && h.reg != nil && h.reg.db != nil {
+		// The read a real repository's check makes, made for one that is not
+		// there: without it "no such repository" answers sooner than "wrong
+		// token", and the clock says what the status does not.
+		var a, b, c sql.NullString
+		_ = h.reg.db.QueryRowContext(r.Context(), `
+			SELECT webhook_secret_enc, webhook_secret_prev_enc, webhook_overlap_until
+			FROM git_repos WHERE id=?`, repoID).Scan(&a, &b, &c)
+	}
 	if svc == nil || token == "" || !svc.ValidateWebhookToken(r.Context(), token) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid X-Gitlab-Token")
 		return

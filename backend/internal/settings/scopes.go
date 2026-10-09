@@ -112,30 +112,63 @@ type BrokenReference struct {
 	Name   string `json:"name"`
 }
 
+// repoLinkSet is every repository's URL and branch, for building the link to
+// a file of one of them.
+type repoLinkSet map[string][2]string
+
+// repoLinks reads them. A read that fails yields none, and no scope gets a
+// link: the link is a convenience, and a scope list must not fail for it.
+func repoLinks(ctx context.Context, database *sql.DB) repoLinkSet {
+	out := repoLinkSet{}
+	rows, err := database.QueryContext(ctx, `SELECT id, url, branch FROM git_repos`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, url, branch string
+		if rows.Scan(&id, &url, &branch) == nil {
+			if branch == "" {
+				branch = "main"
+			}
+			out[id] = [2]string{strings.TrimSuffix(url, ".git"), branch}
+		}
+	}
+	return out
+}
+
+// fileURL is the address of one file of a repository in its web interface, or
+// "" when the repository has no URL. A scope from before a scope recorded its
+// repository (none since migration 1310) is Global's.
+func (l repoLinkSet) fileURL(repoID, path string) string {
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	r, ok := l[repoID]
+	if !ok || r[0] == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/-/blob/%s/%s", r[0], r[1], path)
+}
+
 // ListScopes returns scopes. If sourceFilter is provided, it filters by source ('git' or 'cronomicon').
 func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]Scope, error) {
-	// Fetch GitLab config first to resolve GitLabURL for git-source scopes.
-	// Global's repository: the only one a scope can come from until sync runs
-	// per repository (2.4.0, Phase R3), when this reads each scope's own
-	// (scopes.repo_id, migration 1310).
-	var repoURL, writeBranch string
-	row := database.QueryRowContext(ctx, `SELECT url, branch FROM git_repos WHERE id=?`, repoid.Global)
-	_ = row.Scan(&repoURL, &writeBranch)
-	if writeBranch == "" {
-		writeBranch = "main"
-	}
-	repoURL = strings.TrimSuffix(repoURL, ".git")
+	// Each repository's URL and branch, to resolve GitLabURL for git-source
+	// scopes: a scope's link is to ITS repository (scopes.repo_id, 2.4.0).
+	links := repoLinks(ctx, database)
 
 	var query string
 	var args []any
 	if sourceFilter != "" {
 		query = `SELECT id, name, source, description, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags,
+		                COALESCE(repo_id, '')
 		         FROM scopes WHERE source=? ORDER BY name`
 		args = append(args, sourceFilter)
 	} else {
 		query = `SELECT id, name, source, description, created_by, created_at,
-		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		                last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags,
+		                COALESCE(repo_id, '')
 		         FROM scopes ORDER BY source DESC, name`
 	}
 
@@ -149,11 +182,12 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 	for rows.Next() {
 		var sc Scope
 		var desc, createdBy, lastModBy, lastModAt, sourcePath, gitMeta, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-		var tagsRaw string
+		var tagsRaw, scopeRepo string
 		if err := rows.Scan(
 			&sc.ID, &sc.Scope, &sc.Source, &desc,
 			&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
 			&sourcePath, &gitMeta, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
+			&scopeRepo,
 		); err != nil {
 			return nil, err
 		}
@@ -178,8 +212,7 @@ func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]S
 			if sourcePath.Valid && sourcePath.String != "" {
 				filename := filepath.Base(sourcePath.String)
 				sc.Name = &filename
-				if repoURL != "" {
-					urlVal := fmt.Sprintf("%s/-/blob/%s/%s", repoURL, writeBranch, sourcePath.String)
+				if urlVal := links.fileURL(scopeRepo, sourcePath.String); urlVal != "" {
 					sc.GitLabURL = &urlVal
 				}
 			}
@@ -244,27 +277,23 @@ func applyGitMeta(sc *Scope, raw sql.NullString) {
 
 // GetScope fetches a single scope by ID (handles both git and cronomicon sources).
 func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) {
-	// Fetch GitLab config to resolve GitLabURL.
-	var repoURL, writeBranch string
-	rowCfg := database.QueryRowContext(ctx, `SELECT url, branch FROM git_repos WHERE id=?`, repoid.Global)
-	_ = rowCfg.Scan(&repoURL, &writeBranch)
-	if writeBranch == "" {
-		writeBranch = "main"
-	}
-	repoURL = strings.TrimSuffix(repoURL, ".git")
+	// Each repository's URL and branch, to resolve GitLabURL (see ListScopes).
+	links := repoLinks(ctx, database)
 
 	row := database.QueryRowContext(ctx,
 		`SELECT id, name, source, description, created_by, created_at,
-		        last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags
+		        last_modified_by, last_modified_at, source_path, git_meta_json, synced_at, inventory_format, projection_status, CAST((raw_inventory IS NOT NULL AND raw_inventory != '') AS TEXT) AS has_inventory, tags,
+		        COALESCE(repo_id, '')
 		 FROM scopes WHERE id=?`, id)
 
 	var sc Scope
 	var desc, createdBy, lastModBy, lastModAt, sourcePath, gitMeta, syncedAt, invFmt, projStatus, hasInvStr sql.NullString
-	var tagsRaw string
+	var tagsRaw, scopeRepo string
 	if err := row.Scan(
 		&sc.ID, &sc.Scope, &sc.Source, &desc,
 		&createdBy, &sc.CreatedAt, &lastModBy, &lastModAt,
 		&sourcePath, &gitMeta, &syncedAt, &invFmt, &projStatus, &hasInvStr, &tagsRaw,
+		&scopeRepo,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -292,8 +321,7 @@ func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) 
 		if sourcePath.Valid && sourcePath.String != "" {
 			filename := filepath.Base(sourcePath.String)
 			sc.Name = &filename
-			if repoURL != "" {
-				urlVal := fmt.Sprintf("%s/-/blob/%s/%s", repoURL, writeBranch, sourcePath.String)
+			if urlVal := links.fileURL(scopeRepo, sourcePath.String); urlVal != "" {
 				sc.GitLabURL = &urlVal
 			}
 		}
