@@ -56,7 +56,7 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	mustExec(`INSERT OR REPLACE INTO git_sync_state (id, last_sha) VALUES (1, 'deadbeefcafe')`)
+	mustExec(`UPDATE git_repos SET last_sha = 'deadbeefcafe' WHERE id = 'global'`)
 	// An ANSIBLE job, so that the become-file token the run writer injects for
 	// a become password is in the snapshot: it is injected for ansible runs
 	// only since 2.3.0 (a shell job with an ignored become password would have

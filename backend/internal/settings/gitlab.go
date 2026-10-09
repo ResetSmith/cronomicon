@@ -14,8 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
 
@@ -32,7 +34,52 @@ var (
 	// webhook validation only accepts the env value — rotating the DB secret
 	// (and updating the GitLab hook) would break every webhook delivery.
 	ErrWebhookSecretEnvPinned = errors.New("webhook secret is pinned by CRONOMICON_GITLAB_WEBHOOK_SECRET; unset it to rotate via the API")
+	// ErrRepoNotFound: no repository has that id. Global's always exists
+	// (migration 1310 writes its row on every installation), so this is only
+	// ever an agency's repository that was never connected or has been
+	// disconnected.
+	ErrRepoNotFound = errors.New("no such repository")
 )
+
+// Every function in this file takes the id of the repository it means (2.4.0,
+// GR-1): a row of git_repos, where until migration 1310 there was the one row
+// of gitlab_config. The routes that existed before 2.4.0 pass repoid.Global.
+//
+// The CRONOMICON_GITLAB_* environment overrides are scalar, so they apply to
+// Global's repository and to no other (GR-21): envURL, envToken and
+// envWebhookSecret return "" for any other id.
+
+func envURL(appCfg *config.Config, repoID string) string {
+	if repoID != repoid.Global || appCfg == nil {
+		return ""
+	}
+	return appCfg.GitLabBaseURL
+}
+
+func envToken(repoID string) string {
+	if repoID != repoid.Global {
+		return ""
+	}
+	return os.Getenv("CRONOMICON_GITLAB_TOKEN")
+}
+
+// EnvWebhookSecret is the webhook secret pinned by the environment for this
+// repository: CRONOMICON_GITLAB_WEBHOOK_SECRET for Global's, "" for any other.
+func EnvWebhookSecret(repoID string) string {
+	if repoID != repoid.Global {
+		return ""
+	}
+	return os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET")
+}
+
+// EnvBranch is the branch pinned by the environment for this repository:
+// CRONOMICON_GITLAB_WRITE_BRANCH for Global's, "" for any other.
+func EnvBranch(appCfg *config.Config, repoID string) string {
+	if repoID != repoid.Global || appCfg == nil {
+		return ""
+	}
+	return appCfg.GitLabWriteBranch
+}
 
 type GitlabConfig struct {
 	Pat                   string        `json:"pat,omitempty"`
@@ -87,23 +134,22 @@ func (p WebhookPolicy) Accepts(event string) bool {
 	}
 }
 
-// GetWebhookPolicy reads the four webhook columns from the gitlab_config
-// singleton.
+// GetWebhookPolicy reads the four webhook columns of a repository's row.
 //
 // It FAILS OPEN — no row, no table, any read error → enabled with every event
 // on. That is not laziness about errors: these flags were stored but never read
 // until F2-3, so every install's *effective* policy has always been "on", and a
 // transient DB error must not be the thing that silently stops a repo syncing.
-// Migration 730 back-fills existing rows to that same effective policy, so
-// wiring the control changes what an operator can turn OFF, never what a working
-// deployment does on upgrade.
-func GetWebhookPolicy(ctx context.Context, database *sql.DB) WebhookPolicy {
+// Migration 730 back-filled existing rows to that same effective policy, and
+// since 1310 the columns default to on, so a row written without naming them
+// (the first rotation of a webhook secret) no longer turns the webhook off.
+func GetWebhookPolicy(ctx context.Context, database *sql.DB, repoID string) WebhookPolicy {
 	open := WebhookPolicy{Enabled: true, Events: WebhookEvents{Push: true, Mr: true, Tag: true}}
 
 	var enabled, push, mr, tag sql.NullInt64
 	err := database.QueryRowContext(ctx, `
 		SELECT webhook_enabled, webhook_events_push, webhook_events_mr, webhook_events_tag
-		FROM gitlab_config WHERE id=1`).Scan(&enabled, &push, &mr, &tag)
+		FROM git_repos WHERE id=?`, repoID).Scan(&enabled, &push, &mr, &tag)
 	if err != nil {
 		return open
 	}
@@ -127,24 +173,28 @@ func maskSecret(val string) string {
 	return "••••" + val[len(val)-4:]
 }
 
-// GetGitlabConfig reads the gitlab_config singleton.
-func GetGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Config) (*GitlabConfig, error) {
+// GetGitlabConfig reads a repository's connection. Global's reads as the
+// defaults when it has no row; any other repository without a row is
+// ErrRepoNotFound.
+func GetGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string) (*GitlabConfig, error) {
 	row := database.QueryRowContext(ctx, `
-		SELECT pat_enc, bot_name, bot_email, write_branch, repo_url, token_expiry_notify_days,
+		SELECT token_enc, bot_name, bot_email, branch, url, token_expiry_notify_days,
 		       webhook_enabled, webhook_events_push, webhook_events_mr, webhook_events_tag,
 		       last_modified_by, last_modified_at
-		FROM gitlab_config WHERE id=1`)
+		FROM git_repos WHERE id=?`, repoID)
 	var patEnc, botName, botEmail, writeBranch, repoUrl, lastModBy, lastModAt sql.NullString
 	var tokenExpiryNotifyDays, webhookEnabled, push, mr, tag sql.NullInt64
 
 	var dbExists = true
 	if err := row.Scan(&patEnc, &botName, &botEmail, &writeBranch, &repoUrl, &tokenExpiryNotifyDays,
 		&webhookEnabled, &push, &mr, &tag, &lastModBy, &lastModAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			dbExists = false
-		} else {
-			return nil, fmt.Errorf("read gitlab_config: %w", err)
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("read git_repos: %w", err)
 		}
+		if repoID != repoid.Global {
+			return nil, ErrRepoNotFound
+		}
+		dbExists = false
 	}
 
 	cfg := &GitlabConfig{
@@ -178,24 +228,27 @@ func GetGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Confi
 		}
 	}
 
-	// Apply environment overrides if set (E.3)
-	if envURL := appCfg.GitLabBaseURL; envURL != "" {
-		cfg.RepoUrl = envURL
+	// Apply environment overrides if set (E.3). Global's repository only (GR-21).
+	if u := envURL(appCfg, repoID); u != "" {
+		cfg.RepoUrl = u
 	}
-	if envToken := os.Getenv("CRONOMICON_GITLAB_TOKEN"); envToken != "" {
+	if tok := envToken(repoID); tok != "" {
 		cfg.PatSet = true
-		cfg.Pat = maskSecret(envToken)
+		cfg.Pat = maskSecret(tok)
 	}
 
 	// LB7: surface whether the webhook secret is env-pinned so the UI can disable
 	// rotation (which would otherwise 409 with ErrWebhookSecretEnvPinned).
-	cfg.WebhookSecretEnvPinned = os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET") != ""
+	cfg.WebhookSecretEnvPinned = EnvWebhookSecret(repoID) != ""
 
 	return cfg, nil
 }
 
-// UpdateGitlabConfig updates the gitlab_config singleton.
-func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Config, inp GitlabConfig, actor string) (*GitlabConfig, error) {
+// UpdateGitlabConfig writes a repository's connection. It does not CREATE a
+// repository: one other than Global's that has no row is ErrRepoNotFound
+// (connecting a repository is a route of its own, Phase R6). Global's row is
+// written if it is somehow missing.
+func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string, inp GitlabConfig, actor string) (*GitlabConfig, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	var patEnc *string
@@ -207,7 +260,7 @@ func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Co
 		patEnc = &token
 	} else {
 		var existing sql.NullString
-		err := database.QueryRowContext(ctx, `SELECT pat_enc FROM gitlab_config WHERE id=1`).Scan(&existing)
+		err := database.QueryRowContext(ctx, `SELECT token_enc FROM git_repos WHERE id=?`, repoID).Scan(&existing)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("read existing pat: %w", err)
 		}
@@ -233,39 +286,46 @@ func UpdateGitlabConfig(ctx context.Context, database *sql.DB, appCfg *config.Co
 		tagVal = 1
 	}
 
-	_, err := database.ExecContext(ctx, `
-		INSERT INTO gitlab_config
-		  (id, pat_enc, bot_name, bot_email, write_branch, repo_url, token_expiry_notify_days,
-		   webhook_enabled, webhook_events_push, webhook_events_mr, webhook_events_tag,
-		   last_modified_by, last_modified_at)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-		  pat_enc=excluded.pat_enc, bot_name=excluded.bot_name, bot_email=excluded.bot_email,
-		  write_branch=excluded.write_branch, repo_url=excluded.repo_url,
-		  token_expiry_notify_days=excluded.token_expiry_notify_days,
-		  webhook_enabled=excluded.webhook_enabled,
-		  webhook_events_push=excluded.webhook_events_push,
-		  webhook_events_mr=excluded.webhook_events_mr,
-		  webhook_events_tag=excluded.webhook_events_tag,
-		  last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at`,
+	res, err := database.ExecContext(ctx, `
+		UPDATE git_repos SET
+		  token_enc=?, bot_name=?, bot_email=?, branch=?, url=?, token_expiry_notify_days=?,
+		  webhook_enabled=?, webhook_events_push=?, webhook_events_mr=?, webhook_events_tag=?,
+		  last_modified_by=?, last_modified_at=?
+		WHERE id=?`,
 		patEnc, inp.BotName, inp.BotEmail, inp.WriteBranch, inp.RepoUrl, inp.TokenExpiryNotifyDays,
-		webhookEnabledVal, pushVal, mrVal, tagVal, actor, now,
+		webhookEnabledVal, pushVal, mrVal, tagVal, actor, now, repoID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("upsert gitlab_config: %w", err)
+		return nil, fmt.Errorf("update git_repos: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if repoID != repoid.Global {
+			return nil, ErrRepoNotFound
+		}
+		if _, err := database.ExecContext(ctx, `
+			INSERT INTO git_repos
+			  (id, agency_id, token_enc, bot_name, bot_email, branch, url, token_expiry_notify_days,
+			   webhook_enabled, webhook_events_push, webhook_events_mr, webhook_events_tag,
+			   created_by, created_at, last_modified_by, last_modified_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			repoid.Global, agencyid.Global, patEnc, inp.BotName, inp.BotEmail, inp.WriteBranch, inp.RepoUrl, inp.TokenExpiryNotifyDays,
+			webhookEnabledVal, pushVal, mrVal, tagVal, actor, now, actor, now,
+		); err != nil {
+			return nil, fmt.Errorf("insert Global's git_repos row: %w", err)
+		}
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
 	_ = WriteChangeLog(ctx, database, actor, "Settings", "updated", "GitLab Connection", "")
-	return GetGitlabConfig(ctx, database, appCfg)
+	return GetGitlabConfig(ctx, database, appCfg, repoID)
 }
 
-// RotateWebhookSecret rotates the GitLab webhook secret.
-func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.Config, updateGitlab bool, overlapMinutes int, actor string) (string, bool, time.Time, error) {
+// RotateWebhookSecret rotates a repository's webhook secret.
+func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string, updateGitlab bool, overlapMinutes int, actor string) (string, bool, time.Time, error) {
 	// Rotation is meaningless while the env override pins validation to a
 	// single value — and worse, updating the GitLab hook to the new secret
 	// would break every webhook delivery.
-	if os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET") != "" {
+	if EnvWebhookSecret(repoID) != "" {
 		return "", false, time.Time{}, ErrWebhookSecretEnvPinned
 	}
 
@@ -281,9 +341,12 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 	}
 
 	var currentEnc sql.NullString
-	err = database.QueryRowContext(ctx, `SELECT webhook_secret_enc FROM gitlab_config WHERE id=1`).Scan(&currentEnc)
+	err = database.QueryRowContext(ctx, `SELECT webhook_secret_enc FROM git_repos WHERE id=?`, repoID).Scan(&currentEnc)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", false, time.Time{}, fmt.Errorf("read current webhook secret: %w", err)
+	}
+	if errors.Is(err, sql.ErrNoRows) && repoID != repoid.Global {
+		return "", false, time.Time{}, ErrRepoNotFound
 	}
 
 	overlapUntil := time.Now().UTC().Add(time.Duration(overlapMinutes) * time.Minute)
@@ -296,7 +359,7 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 
 	gitlabUpdated := false
 	if updateGitlab {
-		gitlabCfg, err := GetGitlabConfig(ctx, database, appCfg)
+		gitlabCfg, err := GetGitlabConfig(ctx, database, appCfg, repoID)
 		if err != nil {
 			return "", false, time.Time{}, fmt.Errorf("get gitlab config: %w", err)
 		}
@@ -306,11 +369,11 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 		}
 
 		var pat string
-		if envToken := os.Getenv("CRONOMICON_GITLAB_TOKEN"); envToken != "" {
-			pat = envToken
+		if tok := envToken(repoID); tok != "" {
+			pat = tok
 		} else if gitlabCfg.PatSet {
 			var patEnc sql.NullString
-			if err := database.QueryRowContext(ctx, `SELECT pat_enc FROM gitlab_config WHERE id=1`).Scan(&patEnc); err == nil && patEnc.Valid {
+			if err := database.QueryRowContext(ctx, `SELECT token_enc FROM git_repos WHERE id=?`, repoID).Scan(&patEnc); err == nil && patEnc.Valid {
 				decrypted, err := secrets.DecryptString(appCfg, patEnc.String)
 				if err == nil {
 					pat = decrypted
@@ -396,20 +459,34 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 	}
 
 	nowTime := time.Now().UTC().Format(time.RFC3339)
-	_, err = database.ExecContext(ctx, `
-		INSERT INTO gitlab_config
-		  (id, webhook_secret_enc, webhook_secret_prev_enc, webhook_overlap_until, last_modified_by, last_modified_at)
-		VALUES (1, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-		  webhook_secret_enc=excluded.webhook_secret_enc,
-		  webhook_secret_prev_enc=excluded.webhook_secret_prev_enc,
-		  webhook_overlap_until=excluded.webhook_overlap_until,
-		  last_modified_by=excluded.last_modified_by,
-		  last_modified_at=excluded.last_modified_at`,
-		newSecretEnc, prevEnc, overlapUntilStr, actor, nowTime,
+	// The three secret columns and nothing else. This was an upsert that, on an
+	// installation with no row yet (configured by environment alone), created
+	// the row with the webhook flags at their column default, then 0: the first
+	// rotation turned the webhook off. Global's row exists on every installation
+	// since 1310, and the flags default to on.
+	res, err := database.ExecContext(ctx, `
+		UPDATE git_repos SET
+		  webhook_secret_enc=?, webhook_secret_prev_enc=?, webhook_overlap_until=?,
+		  last_modified_by=?, last_modified_at=?
+		WHERE id=?`,
+		newSecretEnc, prevEnc, overlapUntilStr, actor, nowTime, repoID,
 	)
 	if err != nil {
 		return "", false, time.Time{}, fmt.Errorf("save rotated webhook secret: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if repoID != repoid.Global {
+			return "", false, time.Time{}, ErrRepoNotFound
+		}
+		if _, err := database.ExecContext(ctx, `
+			INSERT INTO git_repos
+			  (id, agency_id, webhook_secret_enc, webhook_secret_prev_enc, webhook_overlap_until,
+			   created_by, created_at, last_modified_by, last_modified_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			repoid.Global, agencyid.Global, newSecretEnc, prevEnc, overlapUntilStr, actor, nowTime, actor, nowTime,
+		); err != nil {
+			return "", false, time.Time{}, fmt.Errorf("save rotated webhook secret: %w", err)
+		}
 	}
 
 	secrets.RedactionSourceChanged() // AM-4b
@@ -417,18 +494,18 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 	return newSecret, gitlabUpdated, overlapUntil, nil
 }
 
-// ResolveGitlabRuntime returns the effective repo URL and PAT for the sync
-// service: env (CRONOMICON_GITLAB_BASE_URL / CRONOMICON_GITLAB_TOKEN) wins when set
-// (E.3 precedence); otherwise the DB-backed gitlab_config is used. Read at
-// startup by mountGit — changes take effect on restart.
-func ResolveGitlabRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config) (repoURL, pat string) {
-	repoURL = appCfg.GitLabBaseURL
-	pat = os.Getenv("CRONOMICON_GITLAB_TOKEN")
+// ResolveGitlabRuntime returns the effective URL and token of a repository, for
+// its sync service: for Global's, env (CRONOMICON_GITLAB_BASE_URL /
+// CRONOMICON_GITLAB_TOKEN) wins when set (E.3 precedence); otherwise, and for
+// every other repository, its row.
+func ResolveGitlabRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string) (repoURL, pat string) {
+	repoURL = envURL(appCfg, repoID)
+	pat = envToken(repoID)
 	if repoURL != "" && pat != "" {
 		return repoURL, pat
 	}
 
-	row := database.QueryRowContext(ctx, `SELECT repo_url, pat_enc FROM gitlab_config WHERE id=1`)
+	row := database.QueryRowContext(ctx, `SELECT url, token_enc FROM git_repos WHERE id=?`, repoID)
 	var dbRepoURL, patEnc sql.NullString
 	if err := row.Scan(&dbRepoURL, &patEnc); err != nil {
 		return repoURL, pat

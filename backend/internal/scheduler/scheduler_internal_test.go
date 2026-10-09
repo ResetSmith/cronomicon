@@ -187,7 +187,7 @@ func TestReloadIfChangedGatesOnSHA(t *testing.T) {
 	ctx := context.Background()
 	seedJobRow(t, pool, "j", 1)
 	seedSchedule(t, pool, "job", "j", "default", "0 2 * * *", 0)
-	if _, err := pool.ExecContext(ctx, `INSERT INTO git_sync_state (id, last_sha) VALUES (1, 'sha1')`); err != nil {
+	if _, err := pool.ExecContext(ctx, `UPDATE git_repos SET last_sha = 'sha1' WHERE id = 'global'`); err != nil {
 		t.Fatalf("sync state: %v", err)
 	}
 

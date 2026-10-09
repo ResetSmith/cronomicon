@@ -173,12 +173,13 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			(SELECT script_ref FROM jobs WHERE uid = ?),
 			(SELECT content_hash FROM jobs WHERE uid = ?),
 			-- §7/RX.2: a checkout job (project_root set) pins the sync clone's
-			-- current commit (git_sync_state.last_sha) and entry playbook AT
+			-- current commit (Global's git_repos.last_sha; the job's own
+			-- repository's from Phase R5) and entry playbook AT
 			-- ENQUEUE, so a mid-run sync can't retarget the run. Body-only jobs
 			-- leave both NULL. Terminal rows (? = 0) take no snapshot at all.
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE WHEN project_root IS NOT NULL AND project_root != ''
-				             THEN (SELECT last_sha FROM git_sync_state WHERE id = 1) END
+				             THEN (SELECT last_sha FROM git_repos WHERE id = 'global') END
 				   FROM jobs WHERE uid = ?) END,
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE WHEN project_root IS NOT NULL AND project_root != ''

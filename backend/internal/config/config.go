@@ -169,7 +169,7 @@ type Config struct {
 	WebhookSecret string
 	// GitLabWriteBranch is the GitOps branch used for BOTH sync-read and
 	// publish-write (V1.1-10). Empty ⇒ fall back to the DB-backed
-	// gitlab_config.write_branch, then "main". See gitlab.Service.writeBranch.
+	// Global's git_repos.branch, then "main". See gitlab.Service.writeBranch.
 	GitLabWriteBranch string
 
 	// SSH executor (execution-update.md EX.6). Opt-in: when enabled the app

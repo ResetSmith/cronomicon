@@ -169,7 +169,7 @@ Only consulted when `CRONOMICON_AUTH_MODE=oidc`.
 | `CRONOMICON_GITLAB_BASE_URL` | _(empty)_ | GitLab repo URL for job-definition sync. |
 | `CRONOMICON_GITLAB_TOKEN` | _(empty)_ | Read token for private repos; unauthenticated clone if empty. Secret. |
 | `CRONOMICON_GITLAB_WEBHOOK_SECRET` | _(empty)_ | Validates `X-Gitlab-Token` on the webhook. Secret. |
-| `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | The GitOps branch used for **both** sync-read and publish-write — there is one branch, not a read/write pair. Empty ⇒ fall back to the DB-backed `gitlab_config.write_branch` (**Settings → GitLab**), then `main`. Resolved **fresh per operation**, so a DB-side change applies without a restart; setting it here pins the branch and the panel value is ignored. |
+| `CRONOMICON_GITLAB_WRITE_BRANCH` | _(empty)_ | The GitOps branch used for **both** sync-read and publish-write — there is one branch, not a read/write pair. Empty ⇒ fall back to the DB-backed branch of Global's repository (`git_repos.branch`, **Settings → GitLab**), then `main`. It applies to Global's repository only. Resolved **fresh per operation**, so a DB-side change applies without a restart; setting it here pins the branch and the panel value is ignored. |
 | `CRONOMICON_RUNNER_BOOTSTRAP_TOKEN` | _(empty)_ | Out-of-band bootstrap registration token. Multi-use, env-configured; unlike UI-minted tokens (single-use per install) it is never consumed. Since v2.3.0 a registration token decides which agency owns the agent it enrols, and this one names none: an agent that registers with it is owned by, and serves, the **Global** agency. To enrol an agent for a department, mint a token for that agency under Runners. Secret. |
 | `CRONOMICON_AGENT_DIR` | `/usr/share/cronomicon/agents` | Directory of runner-agent binaries + `SHA256SUMS` served unauthenticated at `GET /agents/{filename}` (the container image bakes them in). Missing dir ⇒ clean 404 with a build-it-yourself hint — bare-metal deploys can point this at their own build output. |
 
@@ -400,9 +400,9 @@ constructed at boot. The rest are re-read closer to use.
 
 | Setting | Env override | DB source | When applied |
 |---|---|---|---|
-| GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` | `gitlab_config` | restart |
-| GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (pins validation; **rotation API returns 409 while set**) | `gitlab_config` (+ rotation overlap pair) | restart |
-| GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` | `gitlab_config.write_branch` | next sync/publish (read per operation) |
+| GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` (Global's repository only) | `git_repos` (the row `global`) | restart |
+| GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (Global's repository only; pins validation; **rotation API returns 409 while set**) | `git_repos` (+ rotation overlap pair) | restart |
+| GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` (Global's repository only) | `git_repos.branch` | next sync/publish (read per operation) |
 | Vault addr / AppRole | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | restart |
 | Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | restart |
 | Run-log dir | — (no env) | `log_storage_config.local_path` | **immediately** — pushed to every writer on save; in-flight runs finish in the old directory and existing files are not moved |

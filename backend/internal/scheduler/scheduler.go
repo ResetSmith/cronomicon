@@ -32,6 +32,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envmerge"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/notify"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
@@ -186,10 +187,12 @@ func (s *Scheduler) backstopLoop(ctx context.Context) {
 	}
 }
 
-// currentSHA reads the last-synced git SHA from git_sync_state (empty if unknown).
+// currentSHA reads the last-synced git SHA of Global's repository (empty if
+// unknown). One repository's SHA is half of the reload gate until a generation
+// counter that any repository's sync advances replaces it (GR-29, Phase R3).
 func (s *Scheduler) currentSHA(ctx context.Context) string {
 	var sha sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT last_sha FROM git_sync_state WHERE id = 1`).Scan(&sha)
+	_ = s.db.QueryRowContext(ctx, `SELECT last_sha FROM git_repos WHERE id = ?`, repoid.Global).Scan(&sha)
 	return sha.String
 }
 

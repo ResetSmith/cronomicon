@@ -289,9 +289,9 @@ func simpleDiff(path string, existing, incoming []string) string {
 func (s *Service) RecordPush(ctx context.Context, actor, filePath, baseSHA, newSHA, status, errMsg string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO schedule_pushes(at, actor, schedule_file, base_sha, new_sha, status, trace_id, details, created_at)
-		VALUES(?,?,?,?,?,?,NULL,?,?)`,
-		now, actor, filePath,
+		INSERT INTO schedule_pushes(repo_id, at, actor, schedule_file, base_sha, new_sha, status, trace_id, details, created_at)
+		VALUES(?,?,?,?,?,?,?,NULL,?,?)`,
+		s.repo(), now, actor, filePath,
 		nullStr(baseSHA), nullStr(newSHA),
 		status,
 		nullStr(errMsg),

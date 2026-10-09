@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 )
 
@@ -34,7 +35,7 @@ func TestGR0_SavingTheConnectionBackStoresTheMaskAsTheToken(t *testing.T) {
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek)}
 
 	const token = "glpat-a-real-token-1234"
-	if _, err := UpdateGitlabConfig(ctx, pool, cfg, GitlabConfig{
+	if _, err := UpdateGitlabConfig(ctx, pool, cfg, repoid.Global, GitlabConfig{
 		Pat: token, WriteBranch: "main", RepoUrl: "https://gitlab.example.com/org/repo.git",
 	}, "tester"); err != nil {
 		t.Fatal(err)
@@ -42,12 +43,12 @@ func TestGR0_SavingTheConnectionBackStoresTheMaskAsTheToken(t *testing.T) {
 	stored := func() string {
 		t.Helper()
 		var enc string
-		if err := pool.QueryRowContext(ctx, `SELECT pat_enc FROM gitlab_config WHERE id = 1`).Scan(&enc); err != nil {
-			t.Fatalf("read pat_enc: %v", err)
+		if err := pool.QueryRowContext(ctx, `SELECT token_enc FROM git_repos WHERE id = 'global'`).Scan(&enc); err != nil {
+			t.Fatalf("read token_enc: %v", err)
 		}
 		plain, err := secrets.DecryptString(cfg, enc)
 		if err != nil {
-			t.Fatalf("decrypt pat_enc: %v", err)
+			t.Fatalf("decrypt token_enc: %v", err)
 		}
 		return plain
 	}
@@ -56,14 +57,14 @@ func TestGR0_SavingTheConnectionBackStoresTheMaskAsTheToken(t *testing.T) {
 	}
 
 	// What the form holds, sent back unchanged: no new token was typed.
-	form, err := GetGitlabConfig(ctx, pool, cfg)
+	form, err := GetGitlabConfig(ctx, pool, cfg, repoid.Global)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if form.Pat == "" || form.Pat == token {
 		t.Fatalf("the read should return the token masked, got %q", form.Pat)
 	}
-	if _, err := UpdateGitlabConfig(ctx, pool, cfg, *form, "tester"); err != nil {
+	if _, err := UpdateGitlabConfig(ctx, pool, cfg, repoid.Global, *form, "tester"); err != nil {
 		t.Fatal(err)
 	}
 

@@ -529,7 +529,9 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			s.by, nullStr(s.sha), s.status, s.jobs, s.wfs, s.scopes, nullStr(s.errMsg), iso(start), iso(start.Add(8*time.Second)))
 	}
-	exec(`INSERT INTO git_sync_state (id, last_sha, last_synced_at, last_status) VALUES (1, ?, ?, 'success')`, "a1b2c3d", ago(90*minute))
+	// What the last sync saw, on Global's repository row (migration 1310 writes
+	// that row on every installation; this was the singleton git_sync_state).
+	exec(`UPDATE git_repos SET last_sha = ?, last_synced_at = ?, last_status = 'success' WHERE id = 'global'`, "a1b2c3d", ago(90*minute))
 
 	// ── Runners ────────────────────────────────────────────────────────────────
 	runners := []struct {
@@ -768,8 +770,16 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	// ── Singleton configs + global settings ────────────────────────────────────
 	exec(`INSERT INTO notification_config (id, smtp_host, smtp_port, smtp_from, apprise_targets, last_modified_by, last_modified_at)
 	      VALUES (1, 'smtp.corp.example', 587, 'cronomicon@corp.example', '[{"label":"On-call","service":"email","url":"mailto://oncall@corp.example","enabled":true}]', ?, ?)`, dev, ago(9*day))
-	exec(`INSERT INTO gitlab_config (id, base_url, project_path, webhook_secret, branch, last_modified_by, last_modified_at)
-	      VALUES (1, 'https://gitlab.corp.example', 'infra/job-defs', 'demo-webhook-secret', 'main', ?, ?)`, dev, ago(9*day))
+	// The connection of Global's repository. The URL is left EMPTY on purpose:
+	// the demo data is not in a repository, and a URL here would send the sync
+	// service off to clone a host that does not exist. (The four columns this
+	// used to fill, of the old gitlab_config, were read by nothing.)
+	exec(`UPDATE git_repos SET branch = 'main', last_modified_by = ?, last_modified_at = ? WHERE id = 'global'`, dev, ago(9*day))
+	// Whatever the demo shows as coming from Git came from Global's repository
+	// (GR-3): a Git row always says which repository it is from.
+	for _, tbl := range []string{"jobs", "workflows", "scopes"} {
+		exec(`UPDATE ` + tbl + ` SET repo_id = 'global' WHERE source = 'git' AND repo_id IS NULL`)
+	}
 
 	settings := map[string]string{
 		"appName":           "Cronomicon",

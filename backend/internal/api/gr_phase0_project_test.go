@@ -47,7 +47,7 @@ func TestGR0_AnInAppJobOnAProjectIsNotACheckoutJob(t *testing.T) {
 		return s
 	}
 	const sha = "0123456789abcdef0123456789abcdef01234567"
-	exec(`INSERT OR REPLACE INTO git_sync_state (id, last_sha) VALUES (1, ?)`, sha)
+	exec(`UPDATE git_repos SET last_sha = ? WHERE id = 'global'`, sha)
 	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, script_path, project_root, content_hash, synced_at)
 	      VALUES('s-proj','global','proj','ansible','scripts/proj/site.yml','scripts/proj','sha256:p','t')`)
 	// The same script used by a job that came from Git, as sync writes it: the

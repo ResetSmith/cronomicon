@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     ssh_credential     TEXT,
     become_password_secret TEXT,
     script_uid         TEXT, -- which script script_ref means (migration 1290)
+    repo_id            TEXT, -- the repository a Git job comes from (migration 1310)
     PRIMARY KEY (source, name)
 );
 
@@ -145,6 +146,7 @@ CREATE TABLE IF NOT EXISTS workflows (
     source_path TEXT,
     synced_at   TEXT,
     tags        TEXT NOT NULL DEFAULT '[]',
+    repo_id     TEXT, -- migration 1310
     PRIMARY KEY (source, name)
 );
 
@@ -254,15 +256,30 @@ CREATE TABLE IF NOT EXISTS schedules (
     UNIQUE (source, owner_agency, name)
 );
 
-CREATE TABLE IF NOT EXISTS git_sync_state (
-    id          INTEGER PRIMARY KEY CHECK (id = 1),
-    last_sha    TEXT,
-    last_synced_at TEXT,
-    last_status TEXT
+CREATE TABLE IF NOT EXISTS git_repos (
+    -- Mirrors migration 1310: a repository is a row (was gitlab_config and
+    -- git_sync_state, one row each). Global's is there on every installation.
+    id                       TEXT PRIMARY KEY,
+    agency_id                TEXT NOT NULL UNIQUE,
+    url                      TEXT NOT NULL DEFAULT '',
+    branch                   TEXT NOT NULL DEFAULT 'main',
+    token_enc                TEXT,
+    webhook_enabled          INTEGER NOT NULL DEFAULT 1,
+    webhook_events_push      INTEGER NOT NULL DEFAULT 1,
+    webhook_events_mr        INTEGER NOT NULL DEFAULT 1,
+    webhook_events_tag       INTEGER NOT NULL DEFAULT 1,
+    webhook_secret_enc       TEXT,
+    webhook_secret_prev_enc  TEXT,
+    webhook_overlap_until    TEXT,
+    last_sha                 TEXT,
+    last_synced_at           TEXT,
+    last_status              TEXT
 );
+INSERT OR IGNORE INTO git_repos (id, agency_id) VALUES ('global', 'global');
 
 CREATE TABLE IF NOT EXISTS git_sync_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_id       TEXT NOT NULL DEFAULT 'global', -- migration 1310
     triggered_by  TEXT NOT NULL,
     sha           TEXT,
     status        TEXT NOT NULL,
@@ -278,6 +295,7 @@ CREATE TABLE IF NOT EXISTS git_sync_events (
 
 CREATE TABLE IF NOT EXISTS schedule_pushes (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_id       TEXT NOT NULL DEFAULT 'global', -- migration 1310
     at            TEXT NOT NULL,
     actor         TEXT NOT NULL,
     schedule_file TEXT NOT NULL,

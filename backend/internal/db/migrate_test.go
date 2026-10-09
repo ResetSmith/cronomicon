@@ -31,8 +31,8 @@ func TestMigrateUpDown(t *testing.T) {
 	if dirty {
 		t.Fatal("schema is dirty after up")
 	}
-	if v != 1300 {
-		t.Fatalf("schema version = %d, want 1300", v)
+	if v != 1310 {
+		t.Fatalf("schema version = %d, want 1310", v)
 	}
 
 	// Core tables should exist.
@@ -41,7 +41,8 @@ func TestMigrateUpDown(t *testing.T) {
 		"reactions", "reaction_deliveries", "runner_placement_history",
 		"roles", "access_grants", "scope_agencies", "secret_agencies", "env_var_agencies", "ssh_credential_agencies", "run_agencies",
 		"service_accounts", "definition_revisions", "file_watch_sightings",
-		"annotations", "scope_runners", "retired_runner_pins", "host_key_ledger", "host_key_scan_targets", "runner_known_hosts"} {
+		"annotations", "scope_runners", "retired_runner_pins", "host_key_ledger", "host_key_scan_targets", "runner_known_hosts",
+		"git_repos"} {
 		var name string
 		err := pool.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&name)
 		if err != nil {

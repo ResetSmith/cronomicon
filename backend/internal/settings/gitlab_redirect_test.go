@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // TestRotateWebhookDoesNotFollowRedirectWithPAT (SU-8): Go's stdlib does not strip
@@ -51,7 +52,7 @@ func TestRotateWebhookDoesNotFollowRedirectWithPAT(t *testing.T) {
 		OutboundAllowLoopback: true,
 	}
 
-	if _, err := UpdateGitlabConfig(ctx, pool, cfg, GitlabConfig{
+	if _, err := UpdateGitlabConfig(ctx, pool, cfg, repoid.Global, GitlabConfig{
 		Pat:         "super-secret-pat",
 		BotName:     "cronomicon-bot",
 		BotEmail:    "bot@example.com",
@@ -63,7 +64,7 @@ func TestRotateWebhookDoesNotFollowRedirectWithPAT(t *testing.T) {
 
 	// The rotation's GitLab call hits a 302; it will error, but the PAT must never
 	// reach the redirect target.
-	_, _, _, _ = RotateWebhookSecret(ctx, pool, cfg, true, 10, "tester")
+	_, _, _, _ = RotateWebhookSecret(ctx, pool, cfg, repoid.Global, true, 10, "tester")
 
 	if attackerGotPAT.Load() {
 		t.Errorf("Private-Token was leaked to the redirect target")

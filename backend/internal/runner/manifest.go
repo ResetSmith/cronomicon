@@ -17,6 +17,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runnerproto"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -327,14 +328,16 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	var checkout *runnerproto.ManifestCheckout
 	if checkoutSHA.Valid && checkoutSHA.String != "" {
 		// Defense-in-depth (RX.2): the pinned value must be a full commit SHA,
-		// never a ref. It is snapshotted from git_sync_state.last_sha, so this
-		// only fires on a corrupt/never-synced state.
+		// never a ref. It is snapshotted from the repository's last synced SHA
+		// (git_repos.last_sha), so this only fires on a corrupt/never-synced state.
 		if !isFullCommitSHA(checkoutSHA.String) {
 			httpx.Fail(w, http.StatusConflict, "no_checkout_sha",
 				"checkout run has no valid pinned commit SHA (the repo may not have synced yet)")
 			return
 		}
-		repoURL, _ := settings.ResolveGitlabRuntime(r.Context(), s.db, s.cfg)
+		// Global's repository: the one every checkout run's commit is pinned
+		// from until a run records its own (runs.checkout_repo, Phase R5).
+		repoURL, _ := settings.ResolveGitlabRuntime(r.Context(), s.db, s.cfg, repoid.Global)
 		if repoURL == "" {
 			httpx.Fail(w, http.StatusConflict, "no_checkout_repo",
 				"checkout run cannot resolve the source repository URL; configure the GitLab integration")

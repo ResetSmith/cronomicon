@@ -41,6 +41,13 @@ func grSecondRepo(t *testing.T, first *Service) (*Service, *gogit.Repository, st
 	if err != nil {
 		t.Fatalf("git init: %v", err)
 	}
+	// Its row of git_repos (migration 1310), with its branch: the environment's
+	// branch override, which the first Service's fixture uses, is Global's
+	// repository's alone (GR-21), so a second repository reads its own row.
+	if _, err := first.db.Exec(`INSERT OR REPLACE INTO git_repos (id, agency_id, url, branch) VALUES ('repo-b', 'ag-b', ?, ?)`,
+		remote, first.Cfg.GitLabWriteBranch); err != nil {
+		t.Fatalf("the second repository's row: %v", err)
+	}
 	return &Service{
 		db:       first.db,
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -387,37 +394,62 @@ func TestGR0_TwoScopesOfOneNameAreOneScope(t *testing.T) {
 	}
 }
 
-// The sync state is one row whatever the number of repositories, and a sync
-// event does not say which repository it was. Phases R2 and R3 invert this:
-// the state moves onto git_repos, and git_sync_events gains repo_id.
-func TestGR0_TheSyncStateIsOneRow(t *testing.T) {
+// Each repository has its own sync state, and a sync event says which
+// repository it was.
+//
+// Until Phase R2 (TestGR0_TheSyncStateIsOneRow pinned it) the state was one
+// row whatever the number of repositories, so the second repository's sync
+// overwrote the first one's commit, which was then recorded nowhere; and a
+// sync event did not say whose it was. Since migration 1310 the state is on
+// the repository's own row of git_repos and git_sync_events has repo_id.
+func TestGR2_EachRepositoryHasItsOwnSyncState(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
-	ra := grSync(t, a, "first repository")
+	sync := func(svc *Service, what string) SyncResult {
+		t.Helper()
+		// "manual": the history row's trigger is CHECKed, and this test reads it.
+		r := svc.SyncBlocking(context.Background(), "manual")
+		if r.Status == "failed" {
+			t.Fatalf("%s: sync failed: %s", what, r.ErrorMessage)
+		}
+		return r
+	}
+	ra := sync(a, "first repository")
 
 	b, repoB, remoteB := grSecondRepo(t, a)
 	grCommitFiles(t, repoB, remoteB, map[string]string{"jobs/other.yaml": grJob("other", "echo other")}, "the second repository")
-	rb := grSync(t, b, "second repository")
+	rb := sync(b, "second repository")
 	if ra.SHA == "" || ra.SHA == rb.SHA {
 		t.Fatalf("the two repositories should be at two commits (first %q, second %q)", ra.SHA, rb.SHA)
 	}
 
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM git_sync_state`); n != 1 {
-		t.Fatalf("git_sync_state rows = %d, want the singleton", n)
+	if got := grString(t, a.db, `SELECT last_sha FROM git_repos WHERE id = 'global'`); got != ra.SHA {
+		t.Errorf("Global's last_sha = %q, want its own %q: the second repository's sync wrote over it", got, ra.SHA)
 	}
-	if got := grString(t, a.db, `SELECT last_sha FROM git_sync_state WHERE id = 1`); got != rb.SHA {
-		t.Errorf("git_sync_state.last_sha = %q, want the second repository's %q: the first repository's commit is no longer recorded anywhere", got, rb.SHA)
+	if got := grString(t, a.db, `SELECT last_sha FROM git_repos WHERE id = 'repo-b'`); got != rb.SHA {
+		t.Errorf("the second repository's last_sha = %q, want %q", got, rb.SHA)
 	}
-	// scripts and schedules left this list with Phase R1 (migrations 1290 and
-	// 1300); the rest follow in R2.
-	for _, table := range []string{"git_sync_events", "schedule_pushes", "jobs", "workflows", "scopes"} {
-		if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'repo_id'`, table); n != 0 {
-			t.Errorf("%s already has a repo_id column: the phase that adds it has landed and this test is to be inverted", table)
-		}
+	if st, err := a.GetSyncState(context.Background()); err != nil || st.LastSHA != ra.SHA {
+		t.Errorf("the first Service reads its sync state as %q (%v), want its own %q", st.LastSHA, err, ra.SHA)
 	}
-	for _, table := range []string{"scripts", "schedules"} {
+	if st, err := b.GetSyncState(context.Background()); err != nil || st.LastSHA != rb.SHA {
+		t.Errorf("the second Service reads its sync state as %q (%v), want its own %q", st.LastSHA, err, rb.SHA)
+	}
+	if got := grString(t, a.db, `SELECT GROUP_CONCAT(repo_id || '=' || sha, ' ') FROM (SELECT repo_id, sha FROM git_sync_events ORDER BY id)`); got != "global="+ra.SHA+" repo-b="+rb.SHA {
+		t.Errorf("the sync history = %q, want one event per repository, each naming its own", got)
+	}
+	// Every table of Git rows says which repository (GR-3).
+	for _, table := range []string{"git_sync_events", "schedule_pushes", "jobs", "workflows", "scopes", "scripts", "schedules"} {
 		if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'repo_id'`, table); n != 1 {
-			t.Errorf("%s has no repo_id column: its Phase R1 migration is missing", table)
+			t.Errorf("%s has no repo_id column", table)
 		}
+	}
+	// A job says which repository it came from, at first sight. (Its KEY is
+	// still the name alone until Phase R3: TestGR0_TwoJobsOfOneNameAreOneRow.)
+	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='keep'`); got != "global" {
+		t.Errorf("the first repository's job has repo_id %q, want global", got)
+	}
+	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='other'`); got != "repo-b" {
+		t.Errorf("the second repository's job has repo_id %q, want repo-b", got)
 	}
 }
 

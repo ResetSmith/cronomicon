@@ -7,6 +7,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
@@ -21,7 +22,7 @@ import (
 func (s *Server) mountGit(mux *http.ServeMux) {
 	// Effective repo URL + PAT: env wins, DB-backed settings otherwise (E.3).
 	// Resolved once at startup — settings changes take effect on restart.
-	repoURL, token := settings.ResolveGitlabRuntime(context.Background(), s.db, s.cfg)
+	repoURL, token := settings.ResolveGitlabRuntime(context.Background(), s.db, s.cfg, repoid.Global)
 	svc := gitlab.NewService(
 		s.db,
 		s.log,

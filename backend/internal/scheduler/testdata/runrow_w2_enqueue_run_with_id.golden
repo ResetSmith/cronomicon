@@ -1,5 +1,6 @@
 agencies_json = ["finance"]
 checkout_entry = site.yml
+checkout_repo = <NULL>
 checkout_sha = deadbeefcafe
 completed_at = <NULL>
 concurrency_key = ck-golden

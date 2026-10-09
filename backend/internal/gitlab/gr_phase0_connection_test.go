@@ -1,11 +1,13 @@
 package gitlab
 
 // Phase R0 of 2.4.0 read these three about the connection and its clone and
-// did not run them. They are reproduced here before Phase R2 changes anything:
-// each test passes on the code as it is and says what R2 is to make of it. No
-// production code changes.
+// did not run them. They were reproduced here (as TestGR0_…, in c630401)
+// before Phase R2 changed anything. A test still named TestGR0_ passes on
+// behaviour R2 has not changed yet and says what R2 is to make of it; one named
+// TestGR2_ has been inverted by the commit that fixed what it pinned.
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,13 +87,17 @@ func TestGR0_AChangedBranchBreaksEverySyncAfterIt(t *testing.T) {
 	}
 }
 
-// Present defect 9, its second half. Every sync writes a line to the activity
-// stream that names the repository and the branch. Both are read from two
-// columns of the connection that nothing has written since migration 060
-// (`project_path`, `branch`), so on every real installation the line says
-// repository `infra/job-defs`, branch `main`: the fallbacks, whatever
-// repository and branch are configured.
-func TestGR0_TheActivityLineNamesARepositoryNobodyConfigured(t *testing.T) {
+// Every sync writes a line to the activity stream that names the repository
+// and the branch that were synced.
+//
+// Until Phase R2 (present defect 9, its second half;
+// TestGR0_TheActivityLineNamesARepositoryNobodyConfigured pinned it) both were
+// read from two columns of the connection that nothing had written since
+// migration 060 (`project_path`, `branch`), so on every real installation the
+// line said repository `infra/job-defs`, branch `main`: the fallbacks,
+// whatever repository and branch were configured. Those columns went with the
+// table in migration 1310, and the line names what the Service synced.
+func TestGR2_TheActivityLineNamesWhatWasSynced(t *testing.T) {
 	svc, repo, remote := newSyncFixture(t)
 	// A branch that is not `main`, so that the fallback cannot be right by luck.
 	wt, err := repo.Worktree()
@@ -110,14 +116,29 @@ func TestGR0_TheActivityLineNamesARepositoryNobodyConfigured(t *testing.T) {
 	}
 
 	got := grString(t, svc.db, `SELECT repository || ' @ ' || branch FROM activity WHERE kind='gitsync' ORDER BY id DESC LIMIT 1`)
-	switch got {
-	case "infra/job-defs @ main":
-		// Today: neither is what was synced.
-	default:
-		if strings.HasSuffix(got, " @ trunk") {
-			t.Errorf("the activity line names the branch that was synced (%q): this is fixed, and the test is to be inverted (Phase R2)", got)
-		} else {
-			t.Errorf("the activity line says %q", got)
+	// The fixture's repository is a directory; it is named by its last element.
+	if want := filepath.Base(remote) + " @ trunk"; got != want {
+		t.Errorf("the activity line says %q, want %q", got, want)
+	}
+}
+
+// A repository is named in the activity stream by the path of its URL, and by
+// nothing else a URL can carry.
+func TestRepoDisplayPath(t *testing.T) {
+	for in, want := range map[string]string{
+		"": "",
+		"https://gitlab.example/infra/job-defs.git":          "infra/job-defs",
+		"https://gitlab.example/group/sub/defs":              "group/sub/defs",
+		"https://oauth2:s3cret@gitlab.example/org/defs.git/": "org/defs",
+		"http://git.internal:8080/defs.git?x=1":              "defs",
+		"/srv/git/job-definitions":                           "job-definitions",
+		"/srv/git/job-definitions.git/":                      "job-definitions",
+	} {
+		if got := repoDisplayPath(in); got != want {
+			t.Errorf("repoDisplayPath(%q) = %q, want %q", in, got, want)
+		}
+		if strings.Contains(repoDisplayPath(in), "s3cret") {
+			t.Errorf("repoDisplayPath(%q) carries the URL's password", in)
 		}
 	}
 }

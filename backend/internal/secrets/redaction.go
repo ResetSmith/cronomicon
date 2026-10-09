@@ -18,6 +18,20 @@ type SettingsColumn struct {
 	Table  string
 	Column string
 	Where  string
+	// Key names the column that identifies a row, for a table that holds one
+	// token PER ROW (git_repos: a token and two webhook secrets per repository).
+	// Empty for a singleton, whose Where selects its one row. With a Key, Where
+	// selects the rows to cover and every one of them is read, masked and
+	// re-wrapped. A many-row table listed WITHOUT a Key would be read with a
+	// single-row query and silently cover its first row only.
+	Key string
+}
+
+// SettingsToken is one stored token of a SettingsColumn: the raw (still
+// encrypted) value, and the Key of the row it is in ("" for a singleton).
+type SettingsToken struct {
+	Key   string
+	Token string
 }
 
 // EncryptedSettingsColumns is the complete set, shared by `cronomicon
@@ -30,31 +44,65 @@ type SettingsColumn struct {
 // three of the seven — the GitLab webhook secret, the S3 log-storage key, the
 // Vault role id and the observability bearer token were re-wrapped by rotation
 // but never masked.
+//
+// 2.4.0: a repository is a row of git_repos (migration 1310), one per agency
+// to come, so its three entries carry a Key and cover every row. The third is
+// the PREVIOUS webhook secret, which a rotation keeps (and the webhook still
+// accepts) for an overlap: it was on neither side of this list until now.
 var EncryptedSettingsColumns = []SettingsColumn{
-	{"gitlab.token", "gitlab_config", "pat_enc", "id=1"},
-	{"gitlab.webhookSecret", "gitlab_config", "webhook_secret_enc", "id=1"},
-	{"logStorage.s3SecretKey", "log_storage_config", "s3_secret_key_enc", "id=1"},
-	{"vault.roleId", "vault_config", "role_id", "id=1"},
-	{"vault.secretId", "vault_config", "secret_id_enc", "id=1"},
-	{"notifications.smtpPassword", "notification_config", "smtp_password_enc", "id=1"},
-	{"observability.bearerToken", "settings", "value", "key='obs.bearerTokenEnc'"},
+	{Label: "gitlab.token", Table: "git_repos", Column: "token_enc", Where: "1=1", Key: "id"},
+	{Label: "gitlab.webhookSecret", Table: "git_repos", Column: "webhook_secret_enc", Where: "1=1", Key: "id"},
+	{Label: "gitlab.webhookSecretPrevious", Table: "git_repos", Column: "webhook_secret_prev_enc", Where: "1=1", Key: "id"},
+	{Label: "logStorage.s3SecretKey", Table: "log_storage_config", Column: "s3_secret_key_enc", Where: "id=1"},
+	{Label: "vault.roleId", Table: "vault_config", Column: "role_id", Where: "id=1"},
+	{Label: "vault.secretId", Table: "vault_config", Column: "secret_id_enc", Where: "id=1"},
+	{Label: "notifications.smtpPassword", Table: "notification_config", Column: "smtp_password_enc", Where: "id=1"},
+	{Label: "observability.bearerToken", Table: "settings", Column: "value", Where: "key='obs.bearerTokenEnc'"},
 }
 
-// ReadSettingsToken returns the raw (still encrypted) token in one settings
-// column, "" when the row or value is absent.
-func ReadSettingsToken(ctx context.Context, database *sql.DB, sc SettingsColumn) (string, error) {
-	var v sql.NullString
-	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s", sc.Column, sc.Table, sc.Where) //nolint:gosec // identifiers from the fixed table above
-	switch err := database.QueryRowContext(ctx, q).Scan(&v); {
-	case err == sql.ErrNoRows:
-		return "", nil
-	case err != nil:
-		return "", fmt.Errorf("read %s: %w", sc.Label, err)
+// ReadSettingsTokens returns every raw (still encrypted) token stored in one
+// settings column: at most one for a singleton, one per row that has a value
+// for a column with a Key. An absent row, a NULL and an empty value yield
+// nothing. It is the ONLY reader, for both consumers, so that neither can read
+// a many-row column as if it had one row.
+func ReadSettingsTokens(ctx context.Context, database *sql.DB, sc SettingsColumn) ([]SettingsToken, error) {
+	key := "''"
+	order := ""
+	if sc.Key != "" {
+		key = sc.Key
+		order = " ORDER BY " + sc.Key
 	}
-	if !v.Valid {
-		return "", nil
+	q := fmt.Sprintf("SELECT %s, %s FROM %s WHERE (%s) AND %s IS NOT NULL AND %s <> ''%s", //nolint:gosec // identifiers from the fixed table above
+		key, sc.Column, sc.Table, sc.Where, sc.Column, sc.Column, order)
+	rows, err := database.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", sc.Label, err)
 	}
-	return v.String, nil
+	defer rows.Close()
+	var out []SettingsToken
+	for rows.Next() {
+		var t SettingsToken
+		if err := rows.Scan(&t.Key, &t.Token); err != nil {
+			return nil, fmt.Errorf("read %s: %w", sc.Label, err)
+		}
+		out = append(out, t)
+		if sc.Key == "" {
+			break // a singleton is one row by definition
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", sc.Label, err)
+	}
+	return out, nil
+}
+
+// RowLabel names one token for a message: the column's label, and the row's
+// key when the column has one ("gitlab.token[global]").
+func (sc SettingsColumn) RowLabel(key string) string {
+	if sc.Key == "" {
+		return sc.Label
+	}
+	return sc.Label + "[" + key + "]"
 }
 
 // RedactionReport returns every plaintext the server can decrypt from its three
@@ -130,20 +178,22 @@ func RedactionReport(ctx context.Context, database *sql.DB, cfg *config.Config) 
 	// git clone error or a Vault client error can print. A missing table or
 	// column (schema upgrade in progress) is skipped; an unreadable token counts.
 	for _, sc := range EncryptedSettingsColumns {
-		tok, terr := ReadSettingsToken(ctx, database, sc)
-		if terr != nil || tok == "" {
+		toks, terr := ReadSettingsTokens(ctx, database, sc)
+		if terr != nil {
 			continue
 		}
-		if _, isToken := TokenKEKVersion(tok); !isToken {
-			continue // an un-encrypted legacy value set by hand; not ours to count
-		}
-		plain, derr := DecryptString(cfg, tok)
-		if derr != nil {
-			undecryptable++
-			continue
-		}
-		if plain != "" {
-			values = append(values, plain)
+		for _, t := range toks {
+			if _, isToken := TokenKEKVersion(t.Token); !isToken {
+				continue // an un-encrypted legacy value set by hand; not ours to count
+			}
+			plain, derr := DecryptString(cfg, t.Token)
+			if derr != nil {
+				undecryptable++
+				continue
+			}
+			if plain != "" {
+				values = append(values, plain)
+			}
 		}
 	}
 	return values, undecryptable, nil

@@ -48,7 +48,7 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	mustExec(`INSERT OR REPLACE INTO git_sync_state (id, last_sha) VALUES (1, 'deadbeefcafe')`)
+	mustExec(`UPDATE git_repos SET last_sha = 'deadbeefcafe' WHERE id = 'global'`)
 	mustExec(`
 		INSERT INTO jobs (name, source, uid, run_type, scope, target_host, concurrency_policy, synced_at,
 		                  script_ref, script_uid, content_hash, project_root, script_path,

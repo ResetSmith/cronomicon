@@ -397,7 +397,8 @@ func TestSync_GitOpsPruning(t *testing.T) {
 			created_by TEXT,
 			created_at TEXT,
 			raw_inventory TEXT,
-			inventory_format TEXT
+			inventory_format TEXT,
+			repo_id TEXT
 		);
 		CREATE TABLE IF NOT EXISTS scope_hosts (
 			scope_id TEXT,

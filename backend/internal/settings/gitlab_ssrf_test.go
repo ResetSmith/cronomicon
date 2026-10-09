@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // TestRotateWebhookRefusesMetadataTarget (SU-7): the guarded GitLab REST client
@@ -25,7 +26,7 @@ func TestRotateWebhookRefusesMetadataTarget(t *testing.T) {
 	// Default posture: private allowed, loopback/metadata blocked.
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek), OutboundAllowPrivate: true}
 
-	if _, err := UpdateGitlabConfig(ctx, pool, cfg, GitlabConfig{
+	if _, err := UpdateGitlabConfig(ctx, pool, cfg, repoid.Global, GitlabConfig{
 		Pat:         "super-secret-pat",
 		BotName:     "cronomicon-bot",
 		BotEmail:    "bot@example.com",
@@ -35,7 +36,7 @@ func TestRotateWebhookRefusesMetadataTarget(t *testing.T) {
 		t.Fatalf("update gitlab config: %v", err)
 	}
 
-	_, _, _, err := RotateWebhookSecret(ctx, pool, cfg, true, 10, "tester")
+	_, _, _, err := RotateWebhookSecret(ctx, pool, cfg, repoid.Global, true, 10, "tester")
 	if err == nil {
 		t.Fatal("expected rotation to fail on a cloud-metadata SSRF target")
 	}

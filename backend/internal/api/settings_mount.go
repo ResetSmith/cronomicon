@@ -19,6 +19,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/notify"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sshexec"
@@ -2322,7 +2323,9 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetGitlabSettings(w http.ResponseWriter, r *http.Request) {
-	cfg, err := settings.GetGitlabConfig(r.Context(), s.db, s.cfg)
+	// The /settings/gitlab routes mean Global's repository (GR-9; an agency's
+	// own repository gets routes of its own in Phase R6).
+	cfg, err := settings.GetGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -2341,7 +2344,7 @@ func (s *Server) handleUpdateGitlabSettings(w http.ResponseWriter, r *http.Reque
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	cfg, err := settings.UpdateGitlabConfig(r.Context(), s.db, s.cfg, inp, id.Email)
+	cfg, err := settings.UpdateGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global, inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return
@@ -2384,7 +2387,7 @@ func (s *Server) handleRotateGitlabWebhookSecret(w http.ResponseWriter, r *http.
 		}
 	}
 
-	secret, gitlabUpdated, overlapUntil, err := settings.RotateWebhookSecret(r.Context(), s.db, s.cfg, updateGitlab, overlapMinutes, id.Email)
+	secret, gitlabUpdated, overlapUntil, err := settings.RotateWebhookSecret(r.Context(), s.db, s.cfg, repoid.Global, updateGitlab, overlapMinutes, id.Email)
 	if err != nil {
 		switch {
 		case errors.Is(err, settings.ErrWebhookSecretEnvPinned):

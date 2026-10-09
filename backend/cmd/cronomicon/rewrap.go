@@ -47,9 +47,9 @@ func runRewrapSecrets(args []string) int {
 
 Re-wraps every stored credential under the active KEK (CRONOMICON_KEK_VERSION) so a
 superseded key can be retired. Covers three stores: stored secrets, SSH
-credentials, and the encrypted settings integrations (GitLab token + webhook
-secret, S3 log-storage key, Vault credentials, SMTP password, observability
-bearer token).
+credentials, and the encrypted settings integrations (every repository's token
+and its webhook secret, current and previous, the S3 log-storage key, Vault
+credentials, SMTP password, observability bearer token).
 
 Safe to run with the server up, and safe to re-run: it is idempotent, and
 re-running is the recovery for a partial pass. Start with --dry-run.
@@ -226,27 +226,29 @@ func survey(ctx context.Context, pool *sql.DB, active int) (*surveyReport, error
 
 	settings := storeCount{store: "settings integrations", byVer: map[int]int{}}
 	for _, tc := range tokenColumns {
-		tok, err := readToken(ctx, pool, tc)
+		toks, err := readTokens(ctx, pool, tc)
 		if err != nil {
 			return nil, err
 		}
-		if tok == "" {
-			continue // unset credential; nothing sealed
-		}
-		if v, ok := secrets.TokenKEKVersion(tok); ok {
-			settings.byVer[v]++
-		} else {
-			settings.unparsed++
+		// One item per stored token: an unset credential seals nothing, and a
+		// column of a many-row table (a repository's token) counts once per row.
+		for _, t := range toks {
+			if v, ok := secrets.TokenKEKVersion(t.Token); ok {
+				settings.byVer[v]++
+			} else {
+				settings.unparsed++
+			}
 		}
 	}
 	rep.counts = append(rep.counts, settings)
 	return rep, nil
 }
 
-// readToken returns "" when the column is absent, NULL or empty — several of
-// these default to ” rather than NULL when the credential is unset.
-func readToken(ctx context.Context, pool *sql.DB, tc tokenColumn) (string, error) {
-	return secrets.ReadSettingsToken(ctx, pool, tc)
+// readTokens returns nothing when the column is absent, NULL or empty — several
+// of these default to ” rather than NULL when the credential is unset — and one
+// token per row for a column of a many-row table.
+func readTokens(ctx context.Context, pool *sql.DB, tc tokenColumn) ([]secrets.SettingsToken, error) {
+	return secrets.ReadSettingsTokens(ctx, pool, tc)
 }
 
 // rewrapAll moves every outstanding item to the active version, returning how
@@ -261,11 +263,19 @@ func rewrapAll(ctx context.Context, pool *sql.DB, cfg *config.Config, sealer *se
 		failed += f
 	}
 	for _, tc := range tokenColumns {
-		switch rewrapTokenColumn(ctx, pool, cfg, tc, active) {
-		case rewrapMoved:
-			moved++
-		case rewrapFailed:
+		toks, err := readTokens(ctx, pool, tc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
 			failed++
+			continue
+		}
+		for _, t := range toks {
+			switch rewrapToken(ctx, pool, cfg, tc, t, active) {
+			case rewrapMoved:
+				moved++
+			case rewrapFailed:
+				failed++
+			}
 		}
 	}
 	return moved, failed
@@ -338,15 +348,11 @@ func rewrapEnvelopeTable(ctx context.Context, pool *sql.DB, sealer *secrets.Seal
 	return moved, failed
 }
 
-func rewrapTokenColumn(ctx context.Context, pool *sql.DB, cfg *config.Config, tc tokenColumn, active int) rewrapOutcome {
-	tok, err := readToken(ctx, pool, tc)
-	if err != nil || tok == "" {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
-			return rewrapFailed
-		}
-		return rewrapSkipped
-	}
+// rewrapToken moves ONE stored token of a settings column: the singleton's, or
+// one row's of a column with a Key.
+func rewrapToken(ctx context.Context, pool *sql.DB, cfg *config.Config, tc tokenColumn, t secrets.SettingsToken, active int) rewrapOutcome {
+	label := tc.RowLabel(t.Key)
+	tok := t.Token
 	if v, ok := secrets.TokenKEKVersion(tok); !ok || v == active {
 		// Not a token (an un-encrypted legacy value someone set by hand), or
 		// already current. Neither is this command's business to rewrite.
@@ -354,20 +360,27 @@ func rewrapTokenColumn(ctx context.Context, pool *sql.DB, cfg *config.Config, tc
 	}
 	plain, err := secrets.DecryptString(cfg, tok)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rewrap %s: cannot decrypt: %v\n", tc.Label, err)
+		fmt.Fprintf(os.Stderr, "rewrap %s: cannot decrypt: %v\n", label, err)
 		return rewrapFailed
 	}
 	next, err := secrets.EncryptString(cfg, plain)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
+		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", label, err)
 		return rewrapFailed
 	}
 	// Guarded on the exact token we read, for the same reason as the envelope
-	// path: a concurrent settings save wins.
-	res, err := pool.ExecContext(ctx, fmt.Sprintf(
-		"UPDATE %s SET %s=? WHERE %s AND %s=?", tc.Table, tc.Column, tc.Where, tc.Column), next, tok)
+	// path: a concurrent settings save wins. A column with a Key is also
+	// addressed by its row: two repositories may hold the same token value, and
+	// each row is its own item.
+	q := fmt.Sprintf("UPDATE %s SET %s=? WHERE (%s) AND %s=?", tc.Table, tc.Column, tc.Where, tc.Column)
+	args := []any{next, tok}
+	if tc.Key != "" {
+		q += fmt.Sprintf(" AND %s=?", tc.Key)
+		args = append(args, t.Key)
+	}
+	res, err := pool.ExecContext(ctx, q, args...)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", tc.Label, err)
+		fmt.Fprintf(os.Stderr, "rewrap %s: %v\n", label, err)
 		return rewrapFailed
 	}
 	if n, _ := res.RowsAffected(); n > 0 {

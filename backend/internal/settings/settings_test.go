@@ -14,6 +14,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // openTestPool opens a migrated SQLite DB for a test.
@@ -614,7 +615,7 @@ func TestGitlabConfig(t *testing.T) {
 	cfg := &config.Config{SecretKEKEnv: base64.StdEncoding.EncodeToString(kek)}
 
 	// Initial default check
-	initial, err := GetGitlabConfig(ctx, pool, cfg)
+	initial, err := GetGitlabConfig(ctx, pool, cfg, repoid.Global)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +624,7 @@ func TestGitlabConfig(t *testing.T) {
 	}
 
 	// Update gitlab config
-	_, err = UpdateGitlabConfig(ctx, pool, cfg, GitlabConfig{
+	_, err = UpdateGitlabConfig(ctx, pool, cfg, repoid.Global, GitlabConfig{
 		Pat:         "my-secret-pat",
 		BotName:     "custom-bot",
 		BotEmail:    "custom@example.com",
@@ -634,7 +635,7 @@ func TestGitlabConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := GetGitlabConfig(ctx, pool, cfg)
+	got, err := GetGitlabConfig(ctx, pool, cfg, repoid.Global)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,11 +800,10 @@ func TestGitOpsScopeSyncAndList(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
 
-	// 1. Insert gitlab config to resolve GitLabURL.
+	// 1. Global's repository's connection, to resolve GitLabURL.
 	_, err := pool.ExecContext(ctx, `
-		INSERT INTO gitlab_config (id, repo_url, write_branch, webhook_secret, last_modified_by, last_modified_at)
-		VALUES (1, ?, ?, ?, ?, ?)`,
-		"https://gitlab.example.com/org/repo.git", "main", "secret", "tester", "2026-06-12T16:11:17Z")
+		UPDATE git_repos SET url = ?, branch = ?, last_modified_by = ?, last_modified_at = ? WHERE id = 'global'`,
+		"https://gitlab.example.com/org/repo.git", "main", "tester", "2026-06-12T16:11:17Z")
 	if err != nil {
 		t.Fatalf("failed to insert gitlab config: %v", err)
 	}

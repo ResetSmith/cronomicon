@@ -135,7 +135,7 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid X-Gitlab-Token")
 		return
 	}
-	policy := settings.GetWebhookPolicy(r.Context(), h.svc.db)
+	policy := settings.GetWebhookPolicy(r.Context(), h.svc.db, h.svc.repo())
 	if !policy.Enabled {
 		metrics.WebhookSync("disabled")
 		writeError(w, http.StatusForbidden, "webhook_disabled",

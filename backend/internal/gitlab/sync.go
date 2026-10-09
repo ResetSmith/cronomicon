@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,10 +124,15 @@ func NewService(db *sql.DB, log *slog.Logger, repoURL, token, cloneDir, webhookS
 	}
 }
 
-// ValidateWebhookToken validates the GitLab webhook token.
+// ValidateWebhookToken validates a webhook token against THIS repository's
+// secret set (its row of git_repos).
 // If CRONOMICON_GITLAB_WEBHOOK_SECRET is set, only that secret is accepted.
 // Otherwise, it checks the active secret and, if the overlap window has not expired,
 // the previous secret stored in the database (encrypted using KEK).
+//
+// The environment's secret and the secret read at start-up are Global's
+// repository's alone (GR-21): they are scalar, and a second repository that
+// honoured them would open its webhook to whoever holds Global's secret.
 func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	// ctEq is a local alias for constant-time string comparison to prevent
 	// timing-based webhook secret enumeration (PP-L10).
@@ -135,18 +141,22 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 	}
 
 	// 1. Env var override check
-	if envSecret := os.Getenv("CRONOMICON_GITLAB_WEBHOOK_SECRET"); envSecret != "" {
+	if envSecret := settings.EnvWebhookSecret(s.repo()); envSecret != "" {
 		return ctEq(token, envSecret)
+	}
+	bootSecret := ""
+	if s.repo() == repoid.Global {
+		bootSecret = s.webhookSecret
 	}
 
 	// 2. Read secrets from database
 	row := s.db.QueryRowContext(ctx, `
 		SELECT webhook_secret_enc, webhook_secret_prev_enc, webhook_overlap_until
-		FROM gitlab_config WHERE id=1`)
+		FROM git_repos WHERE id=?`, s.repo())
 	var secretEnc, prevEnc, overlapUntil sql.NullString
 	if err := row.Scan(&secretEnc, &prevEnc, &overlapUntil); err != nil {
 		// Fallback to static webhookSecret loaded at boot if DB query fails or has no rows
-		return s.webhookSecret != "" && ctEq(token, s.webhookSecret)
+		return bootSecret != "" && ctEq(token, bootSecret)
 	}
 
 	// 3. Decrypt and check active secret
@@ -155,7 +165,7 @@ func (s *Service) ValidateWebhookToken(ctx context.Context, token string) bool {
 		if err == nil && ctEq(token, decrypted) {
 			return true
 		}
-	} else if s.webhookSecret != "" && ctEq(token, s.webhookSecret) {
+	} else if bootSecret != "" && ctEq(token, bootSecret) {
 		// If DB has no active secret but boot secret matches, accept it
 		return true
 	}
@@ -818,22 +828,24 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
-		// Update git_sync_state.
-		_, dbErr = tx.ExecContext(ctx,
-			`INSERT INTO git_sync_state(id, last_sha, last_synced_at, last_status)
-	         VALUES(1, ?, ?, ?)
-	         ON CONFLICT(id) DO UPDATE SET
-	             last_sha=excluded.last_sha,
-	             last_synced_at=excluded.last_synced_at,
-	             last_status=excluded.last_status`,
+		// What this sync saw, on the repository's own row (was the singleton
+		// git_sync_state until migration 1310). An UPDATE: a repository that is
+		// being synced has a row, and a sync never creates one.
+		var stateRes sql.Result
+		stateRes, dbErr = tx.ExecContext(ctx,
+			`UPDATE git_repos SET last_sha=?, last_synced_at=?, last_status=? WHERE id=?`,
 			sha, nowStr, func() string {
 				if len(allErrs) == 0 {
 					return "success"
 				}
 				return "partial"
-			}())
+			}(), s.repo())
 		if dbErr != nil {
 			allErrs = append(allErrs, "update sync state: "+dbErr.Error())
+		} else if n, _ := stateRes.RowsAffected(); n == 0 {
+			// The definitions are written and the commit is in the history row;
+			// only "what the last sync saw" has nowhere to go. Said, not failed.
+			s.logWarn("git sync: the repository has no row to record its sync state on", "repo_id", s.repo())
 		}
 	}
 
@@ -863,16 +875,17 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 }
 
 // writeBranch resolves the working branch used for both sync (read) and publish
-// (write): env override → DB gitlab_config.write_branch → "main". Read fresh per
-// operation so a settings change takes effect without a restart (V1.1-10).
+// (write): env override (Global's repository only, GR-21) → the repository's
+// row (git_repos.branch) → "main". Read fresh per operation so a settings
+// change takes effect without a restart (V1.1-10).
 func (s *Service) writeBranch(ctx context.Context) string {
-	if s.Cfg != nil && s.Cfg.GitLabWriteBranch != "" {
-		return s.Cfg.GitLabWriteBranch
+	if b := settings.EnvBranch(s.Cfg, s.repo()); b != "" {
+		return b
 	}
 	if s.db != nil {
 		var b sql.NullString
 		if err := s.db.QueryRowContext(ctx,
-			`SELECT write_branch FROM gitlab_config WHERE id=1`).Scan(&b); err == nil && b.Valid && b.String != "" {
+			`SELECT branch FROM git_repos WHERE id=?`, s.repo()).Scan(&b); err == nil && b.Valid && b.String != "" {
 			return b.String
 		}
 	}
@@ -2029,8 +2042,8 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			                 source_path, synced_at, prompts_json, env_passthrough,
 			                 project_root, requires_json, prompt_enforcement,
 			                 ssh_user, ssh_credential, become_password_secret,
-			                 warn_after_seconds, must_finish_by, watch_json, uid, script_uid)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			                 warn_after_seconds, must_finish_by, watch_json, uid, script_uid, repo_id)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
 				run_type=excluded.run_type,
 				description=excluded.description,
@@ -2082,7 +2095,10 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			nullIfZero(j.Spec.WarnAfterSeconds), nullStr(warnDeadline), watchJSON,
 			// AF-4a — see the schedules upsert: first-sight identity, preserved on
 			// conflict by omission from DO UPDATE.
-			db.NewID(), nullStr(scriptUID))
+			db.NewID(), nullStr(scriptUID),
+			// The repository the job comes from (GR-3, migration 1310): written
+			// at first sight and absent from DO UPDATE, like the uid.
+			s.repo())
 		if err != nil {
 			return fmt.Errorf("upsert job %q: %w", name, err)
 		}
@@ -2305,8 +2321,8 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			legacyMirror = entries[0].Cron
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid)
-			VALUES(?,?,?,?,?,?,?,?)
+			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid, repo_id)
+			VALUES(?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(source, name) WHERE source = 'git' DO UPDATE SET
 				description=excluded.description,
 				steps=excluded.steps,
@@ -2317,7 +2333,9 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			name, wf.Spec.Description, string(stepsJSON),
 			nullStr(legacyMirror), enabled,
 			defPath(wf.SourcePath, "workflows/"+name+".yaml"), now,
-			db.NewID())
+			db.NewID(),
+			// The repository it comes from (GR-3): see upsertJobs.
+			s.repo())
 		if err != nil {
 			return fmt.Errorf("upsert workflow %q: %w", name, err)
 		}
@@ -2404,15 +2422,19 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// INSERT OR REPLACE — a new id cascades the binding away and the scope reopens
 		// to its whole agency. TestSyncPreservesScopeRunners pins that.
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at)
-			VALUES(?,?,?,?,?,?,?,?,?)
+			INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at, repo_id)
+			VALUES(?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(name) DO UPDATE SET
 				source=excluded.source,
+				-- The repository travels with the source (GR-3, 1310): this
+				-- statement can turn a scope built in the app into a Git one,
+				-- and a Git scope always says which repository it is from.
+				repo_id=excluded.repo_id,
 				source_path=excluded.source_path,
 				git_meta_json=excluded.git_meta_json,
 				synced_at=excluded.synced_at,
 				description=excluded.description`,
-			id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now)
+			id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now, s.repo())
 		if err != nil {
 			// Gracefully skip if columns don't exist yet (schema mismatch in parallel dev).
 			s.logWarn("upsert scope skipped", "name", sc.Name, "error", err)
@@ -2569,8 +2591,9 @@ func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res S
 		return nil
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO git_sync_events(triggered_by, sha, status, jobs_synced, scripts_synced, schedules_synced, wfs_synced, scopes_synced, error_message, started_at, finished_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		INSERT INTO git_sync_events(repo_id, triggered_by, sha, status, jobs_synced, scripts_synced, schedules_synced, wfs_synced, scopes_synced, error_message, started_at, finished_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		s.repo(),
 		triggeredBy,
 		nullStr(res.SHA),
 		res.Status,
@@ -2593,14 +2616,11 @@ func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res S
 		outcome = "warning"
 	}
 
-	var repoPath, branch string
-	_ = s.db.QueryRow(`SELECT project_path, branch FROM gitlab_config WHERE id=1`).Scan(&repoPath, &branch)
-	if repoPath == "" {
-		repoPath = "infra/job-defs"
-	}
-	if branch == "" {
-		branch = "main"
-	}
+	// The repository and the branch that were synced. Until 1310 both came from
+	// two columns of the connection that nothing had written since migration
+	// 060, so every installation's line said `infra/job-defs`, `main`.
+	repoPath := repoDisplayPath(s.repoURL)
+	branch := s.writeBranch(ctx)
 
 	summary := fmt.Sprintf("Synced %d jobs, %d scripts, %d schedules, %d workflows, %d scopes", res.JobsSynced, res.ScriptsSynced, res.SchedulesSynced, res.WfsSynced, res.ScopesSynced)
 	if res.Status == "failed" {
@@ -2626,6 +2646,23 @@ func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res S
 	return nil
 }
 
+// repoDisplayPath is how a repository is named in the activity stream: the
+// path of its URL (`group/project`), without the host, a trailing `.git`, or
+// anything else a URL can carry (a user, a password, a query). A URL that is
+// not one (a bare path, as tests use) is named by its last element.
+func repoDisplayPath(repoURL string) string {
+	if repoURL == "" {
+		return ""
+	}
+	p := repoURL
+	if u, err := url.Parse(repoURL); err == nil && u.Host != "" {
+		p = u.Path
+	} else {
+		p = filepath.Base(filepath.Clean(repoURL))
+	}
+	return strings.TrimSuffix(strings.Trim(p, "/"), ".git")
+}
+
 func nullStr(s string) any {
 	if s == "" {
 		return nil
@@ -2640,10 +2677,10 @@ type SyncState struct {
 	LastStatus   string
 }
 
-// GetSyncState reads the current git_sync_state row.
+// GetSyncState reads what the last sync of this repository saw.
 func (s *Service) GetSyncState(ctx context.Context) (SyncState, error) {
 	var st SyncState
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(last_sha,''), COALESCE(last_synced_at,''), COALESCE(last_status,'') FROM git_sync_state WHERE id=1`).
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(last_sha,''), COALESCE(last_synced_at,''), COALESCE(last_status,'') FROM git_repos WHERE id=?`, s.repo()).
 		Scan(&st.LastSHA, &st.LastSyncedAt, &st.LastStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return st, nil

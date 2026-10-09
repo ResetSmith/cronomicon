@@ -14,6 +14,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/tagutil"
 )
 
@@ -114,8 +115,11 @@ type BrokenReference struct {
 // ListScopes returns scopes. If sourceFilter is provided, it filters by source ('git' or 'cronomicon').
 func ListScopes(ctx context.Context, database *sql.DB, sourceFilter string) ([]Scope, error) {
 	// Fetch GitLab config first to resolve GitLabURL for git-source scopes.
+	// Global's repository: the only one a scope can come from until sync runs
+	// per repository (2.4.0, Phase R3), when this reads each scope's own
+	// (scopes.repo_id, migration 1310).
 	var repoURL, writeBranch string
-	row := database.QueryRowContext(ctx, `SELECT repo_url, write_branch FROM gitlab_config WHERE id=1`)
+	row := database.QueryRowContext(ctx, `SELECT url, branch FROM git_repos WHERE id=?`, repoid.Global)
 	_ = row.Scan(&repoURL, &writeBranch)
 	if writeBranch == "" {
 		writeBranch = "main"
@@ -242,7 +246,7 @@ func applyGitMeta(sc *Scope, raw sql.NullString) {
 func GetScope(ctx context.Context, database *sql.DB, id string) (*Scope, error) {
 	// Fetch GitLab config to resolve GitLabURL.
 	var repoURL, writeBranch string
-	rowCfg := database.QueryRowContext(ctx, `SELECT repo_url, write_branch FROM gitlab_config WHERE id=1`)
+	rowCfg := database.QueryRowContext(ctx, `SELECT url, branch FROM git_repos WHERE id=?`, repoid.Global)
 	_ = rowCfg.Scan(&repoURL, &writeBranch)
 	if writeBranch == "" {
 		writeBranch = "main"

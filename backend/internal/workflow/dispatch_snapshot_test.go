@@ -105,7 +105,7 @@ func TestRunJob_NoRequiresIsNull(t *testing.T) {
 
 func TestRunJob_CheckoutPinned(t *testing.T) {
 	pool := openPool(t)
-	if _, err := pool.Exec(`INSERT OR REPLACE INTO git_sync_state (id, last_sha) VALUES (1, 'abc123')`); err != nil {
+	if _, err := pool.Exec(`UPDATE git_repos SET last_sha = 'abc123' WHERE id = 'global'`); err != nil {
 		t.Fatalf("seed sync state: %v", err)
 	}
 	seedDispatchJob(t, pool, dispatchJob{name: "proj-job", uid: "u-pj", requires: `[]`, projectRoot: "playbooks/site", scriptPath: "site.yml"})
