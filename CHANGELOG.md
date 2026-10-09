@@ -13,6 +13,263 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.3.2] - 2026-10-08
+
+What 2.3.0 left open, closed before the next band of work begins. The first
+real jobs were run on installed agents (RHEL 8.10, the installer's hardened
+unit), and they ran; stopping an agent under one of them did not go as the
+unit, the log line and the guides had all said. Schema (v1280) and runner
+protocol (14) are unchanged.
+
+**Upgrading.** Nothing is converted. Upgrade the agents with the server
+(**Copy upgrade command** on a runner's row). **This upgrade is the last one
+that cuts runs off:** the agents being replaced are older and end their runs
+the moment they are stopped, so drain them first, or run the command when
+nothing is running. Runs that an older agent left shown as *running* are closed
+as failed (*runner lost*) when the upgraded agent first reports in. An agent in
+a container needs a longer stop timeout to drain (below). **An installed
+agent's unit needs `KillMode=mixed`** for a stop to spare its Ansible and
+Terraform runs: the upgrade command adds it; a unit you wrote yourself, or one
+you upgrade by hand, needs the line added (below).
+
+### Added
+
+- **A runner's poll interval can be set from the app.** *Runners → the runner
+  → ⚙ Edit → Poll interval*, in seconds, from 30 to 90. It is how often the
+  agent starts asking for work: 60 seconds unless the agent's own
+  configuration says otherwise, and until now changing it meant editing a file
+  on the agent's machine and restarting it. The server holds each request for
+  up to 30 seconds and hands over a run the moment one arrives, so **the
+  longest a new run waits is the interval less 30**: nothing at 30, where the
+  agent is connected all the time; about 30 seconds at 60; a minute at 90.
+  Thirty is the lowest value offered because anything below it would behave
+  the same. The interval does not decide how soon a Stop reaches a job or how
+  fast a queue is taken: see the two fixes below. The value overrides
+  the agent's own, takes effect on the agent's next poll with no restart, and
+  reverts when cleared. The app cannot read the agent's own setting, so an
+  empty field reads *inherit*. A value outside the bounds is refused, in the
+  field before Save and by the server (400): a runner that has not polled for
+  two minutes is shown as degraded. An agent older than 2.3.2 ignores it.
+  `pollIntervalSeconds` in `PATCH /runners/{runnerId}/settings`.
+- **A notice when two runners of one agency share a name.** A runner's name is
+  what its agent declares, and nothing makes it unique. Two agents under one
+  name both run their jobs correctly, because everything that decides
+  anything goes by the runner's id. But History, Activity and the host-key
+  ledger show the name, so the two cannot be told apart there, and the offer
+  to restore a lost runner's scope bindings goes by name, so it would be made
+  to the other. The Notices inbox now reports two or more live agents of one
+  agency under one name (`runner_name_shared`), to that agency, with each
+  runner's id, and clears when one is renamed (`CRONOMICON_RUNNER_NAME`, then
+  a restart: the runner keeps its identity). An agent that enrolled again and
+  left its old row behind does not raise it, and neither does another agency's
+  runner of the same name.
+- **The install guide says what copying an identity file does.** A cloned VM,
+  a snapshot taken after enrolment or two containers on one volume are the
+  same runner twice, shown as one row. Each copy takes the other's messages,
+  and from this release each copy's start closes the runs the other is in the
+  middle of as *runner lost*. The guide's identity section has the signs, and
+  the steps to make the copy a runner of its own.
+
+### Fixed
+
+- **An agent took one run per poll interval.** It asked, started what it was
+  given, and waited for its next tick, a minute by default. The server has
+  always answered an assignment with "come back now" and the agent did not
+  read it. Five runs queued for an agent with five free slots therefore
+  started a minute apart, and a settings change made in the app was
+  acknowledged a minute late. An agent that is given a run and starts it now
+  asks for the next one at once, for as long as it has a free slot and there
+  is work; and it acknowledges new settings at once. An idle agent's cadence
+  is unchanged.
+- **A Stop could take half a minute to reach a running job.** A Stop is
+  delivered to an agent as the answer to its next poll, and the app records
+  the run as stopped at once: until the agent asks, the job goes on running on
+  its target behind a row that says it stopped. An agent between two polls
+  waited out the rest of its interval first, about 30 seconds at the default.
+  An agent with a run in flight now asks again at least every five seconds,
+  whatever its interval. (This matters more with the full-agent fix below: a
+  full agent's polls are no longer held by the server, so without it a Stop
+  on a full agent would have waited the whole interval.)
+- **Stopping an agent ended its runs and told the server nothing.** `systemctl
+  stop` and `restart` send `SIGTERM`. Every run's context was a child of the
+  signal's, so each run was killed at once and the upload of its log was
+  cancelled with it, while the agent logged *waiting for active runs to
+  finish*. The server never learned the outcome, and because a restarted agent
+  is back long before it counts as offline, nothing ever closed the run: it
+  stayed *running*. Seen on RHEL 8.10 with 2.3.1: a restart under a 40-second
+  job returned in one second, and the run was still shown as running minutes
+  later. The upgrade command restarts every agent on a machine, so every
+  upgrade did this to whatever was running. Now:
+  - **The first signal is a drain.** The agent claims no new work, keeps its
+    heartbeat, lets the runs in flight finish, uploads their logs and exits.
+    systemd waits for it as long as the unit's `TimeoutStopSec=300` allows.
+    A host-key scan or a `known_hosts` report that the server asks for in
+    that time is still carried out, and an agent stopped with nothing in
+    flight first finishes reporting a run it has just refused.
+  - **systemd signals the agent alone (`KillMode=mixed`).** An Ansible or
+    Terraform run is the agent's own child process, in the unit's control
+    group, and systemd's default sends `SIGTERM` to every process in the
+    group: the play would be cut off by systemd while the agent waited for it,
+    and end as an ordinary failure with nothing to say why. Shell runs were
+    never affected (they run on their targets, over SSH), which is how the
+    first checks on RHEL 8.10 missed it. The installer's unit and the
+    reference unit carry the line; **the upgrade command adds it** to every
+    agent unit that names no `KillMode`, as a drop-in
+    (`/etc/systemd/system/<unit>.d/20-killmode.conf`), before it restarts
+    anything, and leaves alone a unit that names one. A container agent needs
+    nothing: Docker signals only the agent.
+  - **A second signal, or any after it, cancels the runs.** Each still uploads
+    its log, which ends with *the runner agent was stopped before this run
+    finished*. A run handed over between the two signals is refused instead of
+    started, and a third signal is no longer swallowed.
+  - **A run's last log upload outlives the run's own cancellation**, so a
+    cancelled run is recorded as what it was instead of not at all. A run
+    cancelled before it had begun (its manifest still on the way) is ended
+    too, with *the runner agent was stopped before this run started*.
+- **A run whose agent died stayed *running* for good.** A crash, an
+  out-of-memory kill, a reboot or a stop that ran out of time leaves the run
+  with no owner. Only the offline sweep closed a runner's runs, and it acts on
+  a runner that has been quiet for five minutes, which an agent that systemd
+  starts again never is. The first poll of an agent process now says that it
+  has just started, and the server closes every run it still shows as running
+  on that runner as failed (*runner lost*), with the usual notification.
+- **An agent at its concurrency limit was handed more work, and that work was
+  lost.** The server's claim does not know how many runs an agent holds: it
+  counts them and compares the count with nothing. An agent polls while it is
+  busy, so one with every slot taken was given the next queued run, could not
+  start it, wrote a warning in its own journal and dropped it. The server went
+  on showing that run as *running* on that runner: never executed, never
+  ended, and counted in the runner's load. The default limit is 5, so any
+  agent with more than five runs' worth of work queued did this. Reproduced
+  with the real agent and server: limit one, one run in flight, a second
+  queued; the second was *running* within seconds and still *running* after
+  the first had finished. Now:
+  - **An agent with no free slot asks for nothing.** Its poll is a heartbeat
+    that claims no run (the `claim=0` a stopping agent sends), and it asks
+    again the moment a run ends.
+  - **A run that is assigned and cannot be started is ended, not dropped.**
+    The agent reports it as failed, with a line in its log saying that
+    nothing was executed and why (no free slot, stopping, a run type its
+    settings no longer allow). This is the fallback for what the first point
+    cannot rule out, such as a server older than the agent.
+  - An agent older than 2.3.2 still does the old thing, which is one more
+    reason to upgrade the agents with the server. Runs it stranded are closed
+    as *runner lost* when it comes back upgraded.
+- **An agent stopped while it was enrolling could never enrol again.** A
+  registration token is good for one use. An agent that was stopped after the
+  server had answered and before it had written its identity file had spent
+  the token and kept nothing: every later start asked again with the same
+  token, was refused (`token_used`) and exited, until somebody minted another.
+  Seen on RHEL 8.10 when a unit was restarted a second after the installer
+  started it. The exchange and the saving of its answer are now one step that
+  a stop signal does not interrupt (bounded at 30 seconds).
+- **An agent started from a desktop session raised a password dialog.** The
+  agent asks systemd for a scope when it starts, to learn whether it may put
+  its runs in one. Run by a user who may not, on a machine with a graphical
+  session, the request raised a polkit dialog that nobody answers, once per
+  start (and once per test that starts an agent). `systemd-run` is now called
+  with `--no-ask-password`: a refusal is an answer, at once.
+- **The upgrade notice about two host keys for one address never cleared.**
+  `host_key_conflict` stayed for as long as a record's old key differed from
+  the trusted one, so approving the host's current key, which is what the
+  notice told you to do, left it open. It now reports only a key that the
+  upgrade itself chose: once a person has approved a key for the address, the
+  notice resolves. Its text says what clears it in each case, dismissal
+  included (the server already holds the right key; two machines share the
+  address).
+
+### Changed
+
+- **An Ansible run with no scope says that it has no inventory.** A job with
+  no scope is sent none, so Ansible has only its implicit `localhost`: the
+  machine of the agent that took the run. A play for `localhost` runs there;
+  a play for `all` or any other host matches nothing, `ansible-playbook` exits
+  0, and the run is a success that did nothing. The run itself is unchanged.
+  Its log now carries the line `cronomicon: ansible: no inventory …`, and the
+  Ansible guide has the row.
+- **An unbound scope says who reviews which runner's host keys.** The host-key
+  coverage table needs a fixed set of runners, so a scope with none bound
+  showed nothing, and an agency's administrator whose runs failed
+  `host_key_unverified` on the local runner was not told that its keys are a
+  global administrator's to approve. The scope's row now says so, links to
+  Runners and Notices, and names the agency's own remedy: bind the scope to
+  its own agents.
+- **The generated `docker run` for an agent carries `--stop-timeout 300`.**
+  `docker stop` waits 10 seconds by default and then kills the container,
+  which would cut a drain short. In Compose the key is `stop_grace_period:
+  5m`. The install guide says so.
+- **The upgrade command says that it is waiting.** A restart now waits for
+  each agent's runs, up to five minutes, before the command reports.
+- The reference unit's comment on stopping, the manuals and the runner guides
+  describe the stop as it now is, and what an older agent does instead.
+
+### Not changed, and worth knowing
+
+- **A run still going when the stop times out is cut off.** systemd kills the
+  agent after `TimeoutStopSec` (five minutes as installed), and the run is
+  recorded as lost when the agent next starts. For longer work, **Drain** the
+  runner from the Runners view first: that deadline is an hour.
+- **No notice is raised for an installation that had the SSH executor off
+  when it upgraded to 2.3.0** (shell jobs that never ran can start on an agent
+  of their agency). `cronomicon preflight`, run before the upgrade, reports
+  it; nothing was added for it here.
+
+### For developers
+
+- Two poll query params, additive within protocol 14 and documented in
+  `openapi.yaml`: `started=1` (no poll of this process has been answered yet)
+  and `claim=0` (the heartbeat of an agent that can start nothing: stopping,
+  or full; no run is claimed and the request is not held).
+  `runnerproto.PollParamStarted`, `PollParamClaim`. **The claim still does not
+  compare `runners.load` with `max_concurrent`**: `claim=0` is the only thing
+  between a full agent and a run it cannot start, so a poll path that drops
+  the param reopens the bug (`TestRunnerAgentE2EFullAgentIsNotHandedWork`,
+  `TestPollOfAFullAgentClaimsNothing`).
+- `Agent.dispatch` no longer drops an assignment it cannot start: it calls
+  `Agent.refuse`, which uploads a one-line log and a failure envelope.
+- `Agent.pollOnce` reports whether to poll again at once: only when a run was
+  STARTED or the settings version moved. A refused assignment does not, so an
+  agent facing a server that hands it work it cannot take does not fail one
+  queued run after another. `PollSettingsValues.PollIntervalSeconds` is
+  additive; the bounds are `runnerproto.Min/MaxManagedPollIntervalSeconds`,
+  mirrored by `POLL_INTERVAL_MIN/MAX_SECONDS` in `Runners.tsx` and the
+  `ManagedRunnerSettings` schema: change all three or none.
+- `Agent.Run` returns when its context is cancelled **and** its runs have
+  ended; `Agent.Abort` cancels them. A test that cancels the context with a
+  run in flight must end the run or call `Abort`, or `Run` does not return.
+  `Abort` is sticky (`Agent.aborted`): `dispatch` refuses whatever arrives
+  after it.
+- Work that a poll starts and does not wait for (a host-key scan, a
+  `known_hosts` report) takes `Agent.outlivingPoll(ctx)`, never the poll's
+  own context: a stopping agent's heartbeat poll has a context that ends
+  when the poll is answered, and the server hands a host-key op over once.
+  `Agent.flushTerminal` is the one upload that ends a run on the server, for
+  a run that ran and for one that never got its manifest; do not upload a
+  sealed log on the run's context. `internal/agent/stop_edges_test.go` holds
+  all three.
+- `KillMode=mixed` is in three places that must agree: the installer's unit,
+  the reference unit (`runner-install-check.sh` compares the two and checks
+  the line in each) and `KILLMODE_DROPIN` in `runner-upgrade-cmd.ts`, which is
+  how a unit that already exists gets it. A run type that executes as a child
+  of the agent depends on it.
+- The runner package's E2E tests set `NoSandbox`: they run SSH jobs and must
+  not ask the host's systemd for anything.
+- `internal/runner/e2e_stop_test.go` holds the three behaviours against the
+  real agent and the real handlers; the drain test fails on the old run
+  context.
+- A 409 on a log upload that carries no `persistedOffset` means the server has
+  closed the run; the agent stops instead of re-sending the log from zero.
+- The dev stack (`cronomicon-dev`, outside this repository) gained a git
+  server for test definitions and `scripts/e2e-vm-jobs.sh`, which installs
+  three agents on a test VM and runs shell and Ansible jobs on them, stops an
+  agent under a shell run and under an Ansible play, and kills one. The play
+  is what shows `KillMode=mixed`: the restart waited 35 seconds and the play
+  finished, and a control pass with the unit set back to systemd's default
+  returned at once with the play cut off. It also runs the upgrade command
+  against a unit made to look like an older installer's, and checks that the
+  drop-in is written there and nowhere else. Run on RHEL 8.10 (kernel 4.18,
+  systemd 239, SELinux enforcing) against 2.3.1 and 2.3.2.
+
 ## [2.3.1] - 2026-10-08
 
 Two things found by running 2.3.0's agents on a real RHEL 8 machine: a

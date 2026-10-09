@@ -49,6 +49,11 @@ func validateAndNormalize(v runnerproto.PollSettingsValues) (string, error) {
 	if v.MaxConcurrent != nil && *v.MaxConcurrent <= 0 {
 		return "", fmt.Errorf("maxConcurrent must be > 0")
 	}
+	if p := v.PollIntervalSeconds; p != nil &&
+		(*p < runnerproto.MinManagedPollIntervalSeconds || *p > runnerproto.MaxManagedPollIntervalSeconds) {
+		return "", fmt.Errorf("pollIntervalSeconds must be between %d and %d (a runner that has not polled for two minutes is shown as degraded)",
+			runnerproto.MinManagedPollIntervalSeconds, runnerproto.MaxManagedPollIntervalSeconds)
+	}
 	trimEmpty := func(p *string, name string) error {
 		if p != nil && strings.TrimSpace(*p) == "" {
 			return fmt.Errorf("%s must not be empty when set (omit it to clear)", name)
@@ -80,7 +85,7 @@ func validateAndNormalize(v runnerproto.PollSettingsValues) (string, error) {
 	// All-nil ⇒ no opinion; store NULL.
 	if v.MaxConcurrent == nil && v.SandboxMemoryMax == nil && v.SandboxCPUQuota == nil &&
 		v.SandboxTasksMax == nil && v.AllowCheckout == nil && v.CheckoutRepos == nil &&
-		len(v.CapabilityMask) == 0 {
+		len(v.CapabilityMask) == 0 && v.PollIntervalSeconds == nil {
 		return "", nil
 	}
 	b, err := json.Marshal(v)

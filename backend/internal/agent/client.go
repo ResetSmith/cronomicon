@@ -245,21 +245,44 @@ func (c *Client) Redeclare(ctx context.Context, id Identity, cfg Config, caps []
 	}
 }
 
+// pollState is what a poll tells the server about this process, beyond being
+// alive.
+type pollState struct {
+	// started: no poll of this process has been answered yet, so it holds no
+	// run. The server closes any run it still shows as running here: they were
+	// this runner's before it stopped, and nothing will ever report on them.
+	started bool
+	// noClaim: the agent can start no run now. It was told to stop and is
+	// finishing its runs, or every concurrency slot is taken. The poll is a
+	// heartbeat and a way to receive a kill; it must not be handed new work,
+	// because a run the agent is handed and cannot start has no owner: the
+	// server shows it as running, and nothing here will ever report on it.
+	noClaim bool
+}
+
 // Poll performs GET /api/v1/runners/{id}/poll. The server holds the request
 // ~30s. configDigest, when non-empty, rides as a query param so the server
 // can detect declared-config drift and request a re-register (Phase 5).
 // settingsVersion is the managed-settings version the agent has APPLIED; it
 // ALWAYS rides (even 0), which is how the server knows the agent is
 // settings-capable (Phase 4) and can safely send it settings.
+// st says where this process is in its life (pollState); both of its flags are
+// query params that a server older than 2.3.2 ignores.
 // Returns:
 //   - (resp, nil)         on 200 with a body (may carry an assignment/control)
 //   - (nil, errNoWork)    on 204 No Content
 //   - (nil, errReaped)    on 404 (runner reaped/deregistered — re-register)
 //   - (nil, errProtocolTooOld) on 426 (this binary is below the server's floor)
-func (c *Client) Poll(ctx context.Context, id Identity, configDigest string, settingsVersion int) (*runnerproto.PollResponse, error) {
+func (c *Client) Poll(ctx context.Context, id Identity, configDigest string, settingsVersion int, st pollState) (*runnerproto.PollResponse, error) {
 	q := url.Values{}
 	if configDigest != "" {
 		q.Set("configDigest", configDigest)
+	}
+	if st.started {
+		q.Set(runnerproto.PollParamStarted, "1")
+	}
+	if st.noClaim {
+		q.Set(runnerproto.PollParamClaim, "0")
 	}
 	// Always present (even "0") so the server can tell a Phase-4 agent from an
 	// older one and only then include managed settings in the response.
@@ -359,6 +382,9 @@ type postLogResult struct {
 	// that differs from the offset we sent; persistedOffset carries the truth.
 	resumeMismatch  bool
 	persistedOffset int64
+	// runClosed is true when the server replied 409 because the run is already
+	// terminal there: it takes no more of this run's log, at any offset.
+	runClosed bool
 }
 
 // postLog streams a chunk to POST /api/v1/runs/{traceId}/log starting at
@@ -398,10 +424,16 @@ func (c *Client) postLog(ctx context.Context, id Identity, traceID string,
 		// Resume-offset mismatch: parse persistedOffset and let the caller
 		// re-slice from there.
 		var c409 struct {
-			PersistedOffset int64 `json:"persistedOffset"`
+			PersistedOffset *int64 `json:"persistedOffset"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&c409)
-		return postLogResult{resumeMismatch: true, persistedOffset: c409.PersistedOffset}, nil
+		if c409.PersistedOffset == nil {
+			// The other 409 this route answers: the run is no longer running
+			// (an operator stopped it, or it was closed as lost), so there is
+			// no offset to resume from and nothing more will be accepted.
+			return postLogResult{runClosed: true}, nil
+		}
+		return postLogResult{resumeMismatch: true, persistedOffset: *c409.PersistedOffset}, nil
 	default:
 		return postLogResult{}, fmt.Errorf("log post: server returned %s: %s",
 			resp.Status, readSnippet(resp.Body))

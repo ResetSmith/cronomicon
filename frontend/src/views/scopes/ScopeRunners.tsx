@@ -622,6 +622,32 @@ export function BindingNotices({ dep }: { dep: number; onChanged?: () => void })
   );
 }
 
+// UnboundHostKeysNote is what the expanded row of a scope with NO bound runner
+// says about host keys (2.3.2). The coverage table needs a fixed set of runners
+// and so shows nothing there, which left an agency's administrator with runs
+// failing host_key_unverified on the local runner and no word on the page about
+// who can approve its keys: the local runner is Global's, and a guest decides
+// nothing on it (LR-63). Like RunsOn it STATES the claim rule and the host-key
+// rule, so it must stay true to both.
+export function UnboundHostKeysNote() {
+  return (
+    <div style={{ fontSize: c.fontSm, color: c.textSec, lineHeight: 1.5, maxWidth: 760 }}>
+      No runner is named for this scope, so any runner that serves its agency may take its jobs, and each connects only
+      to hosts whose key was approved <strong>for that runner</strong>. An agent's keys are reviewed on the agent:{" "}
+      <Link to="/runners" style={{ color: c.primary, fontWeight: 600 }}>
+        Runners
+      </Link>{" "}
+      → the agent → Trusted host keys. The local runner (this server, where it is switched on and serves the agency)
+      belongs to Global: <strong>only a global administrator approves its host keys</strong>, and{" "}
+      <Link to="/notices" style={{ color: c.primary, fontWeight: 600 }}>
+        Notices
+      </Link>{" "}
+      lists the hosts it has none for. Binding this scope to the agency's own agents keeps its jobs off the local
+      runner.
+    </div>
+  );
+}
+
 // RunsOn is the job detail's answer to "where does this run": the bound runners
 // when the job's scope has any, each with the reason it is not serving if it is
 // not, and otherwise the plain statement that any eligible runner may take it.

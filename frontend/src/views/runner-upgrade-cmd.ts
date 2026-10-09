@@ -2,8 +2,10 @@
 //
 // Upgrading an installed agent is binary-swap + restart: the runner keeps its
 // id, API key, config and unit — only /usr/local/bin/cronomicon-runner changes.
-// The one exception is a drop-in for a unit that filters system calls without
-// an error number (every unit written before 2.3.0): see SYSCALL_DROPIN.
+// The exceptions are two drop-ins, each for a unit written by an installer that
+// did not yet know the line: SYSCALL_DROPIN (a unit that filters system calls
+// without an error number, every one written before 2.3.0) and KILLMODE_DROPIN
+// (a unit that names no KillMode, every one written before 2.3.2).
 //
 // The command upgrades a MACHINE, not a runner (MA-22). A machine may run
 // several agents (runner-install.sh --instance), each with a unit of its own,
@@ -48,6 +50,17 @@ export const AGENT_UNIT_PATTERNS = [`${AGENT_UNIT}.service`, `${AGENT_UNIT}-*.se
  * the upgrade is what carries the line to the units that exist.
  */
 export const SYSCALL_DROPIN = "10-syscall-errno.conf";
+/**
+ * The second drop-in the upgrade writes, beside a unit that names no KillMode
+ * (every unit written before 2.3.2). An agent from 2.3.2 on finishes its runs
+ * when it is told to stop, but systemd's default kill mode sends SIGTERM to
+ * every process in the unit's control group, and an Ansible or Terraform run
+ * is a child of the agent in that group: the play was cut off by systemd while
+ * the agent waited for it. `KillMode=mixed` signals the agent alone. A unit
+ * that already names a KillMode, whatever it is, is the operator's and is left
+ * alone.
+ */
+export const KILLMODE_DROPIN = "20-killmode.conf";
 /** How long each restarted unit is watched before it is reported, in seconds. */
 export const RESTART_WATCH_SECONDS = 20;
 
@@ -74,6 +87,9 @@ export const RESTART_WATCH_SECONDS = 20;
  *   - a unit that filters system calls without an error number gets the
  *     SYSCALL_DROPIN drop-in before it restarts; a unit that already has the
  *     line, or no filter, is left alone.
+ *   - a unit that names no KillMode gets the KILLMODE_DROPIN drop-in before it
+ *     restarts, so the restart that follows is already a drain for an agent
+ *     that can drain; a unit that names one is left alone.
  *   - every agent unit that is ENABLED OR RUNNING is restarted, and each is
  *     watched and reported on its own line. "Active" at one moment proves
  *     nothing: an agent that exits some seconds in is started again by systemd
@@ -138,12 +154,26 @@ export function upgradeCommand(origin: string): string {
     `    echo ">> Added SystemCallErrorNumber=EPERM to \${U} (/etc/systemd/system/\${U}.d/${SYSCALL_DROPIN})"`,
     `    RELOAD=1`,
     `  fi`,
+    `  # A unit from an installer older than 2.3.2 names no KillMode, and systemd's`,
+    `  # default signals every process of the unit: an Ansible or Terraform run is`,
+    `  # cut off by the stop its agent is draining. mixed signals the agent alone.`,
+    `  if [ -n "$CONF" ] && ! grep -q '^KillMode=' <<<"$CONF"; then`,
+    `    mkdir -p "/etc/systemd/system/\${U}.d"`,
+    `    printf '[Service]\\nKillMode=mixed\\n' > "/etc/systemd/system/\${U}.d/${KILLMODE_DROPIN}"`,
+    `    echo ">> Added KillMode=mixed to \${U} (/etc/systemd/system/\${U}.d/${KILLMODE_DROPIN})"`,
+    `    RELOAD=1`,
+    `  fi`,
     `done`,
     `if [ "$RELOAD" = 1 ]; then systemctl daemon-reload; fi`,
     ``,
     `main_pid() { P=$(systemctl show -p MainPID "$1" 2>/dev/null | cut -d= -f2 || true); case "$P" in ''|*[!0-9]*) echo 0 ;; *) echo "$P" ;; esac; }`,
     ``,
     `echo ">> Restarting: \${UNITS}"`,
+    `# An agent from 2.3.2 on finishes the runs it has in flight before it stops,`,
+    `# so this waits for them: up to the unit's TimeoutStopSec (5 minutes as`,
+    `# installed), after which systemd ends the agent and the run is recorded as`,
+    `# lost. An older agent stops at once and its runs with it.`,
+    `echo ">> Each agent finishes the runs it has in flight first (up to 5 minutes) ..."`,
     `systemctl restart $UNITS || true`,
     `# "active" is true of an agent that is about to fail, until it does, and`,
     `# true again each time systemd starts it afresh. So a unit passes only if`,

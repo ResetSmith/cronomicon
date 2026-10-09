@@ -6638,6 +6638,13 @@ export interface components {
              *       it did, is Global's, and can be narrowed and never widened; the
              *       detail gives the order that settles it. Subject: the runner's id.
              *       Filed under Global.
+             *     - `runner_name_shared` — two or more agents that one agency owns
+             *       are registered under the same name and are both polling
+             *       (v2.3.2). They run correctly (a runner is identified by its id),
+             *       but History, Activity and the host-key ledger show the name, and
+             *       the offer to restore a lost runner's bindings goes by name.
+             *       Subject: `<agency id>:<name>`. Filed under the owning agency. It
+             *       clears when one of them is renamed.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -7409,6 +7416,20 @@ export interface components {
             checkoutRepos?: string[];
             /** @description Run-types to REMOVE from the runner's effective claim set (subtract-only). */
             capabilityMask?: components["schemas"]["RunType"][];
+            /**
+             * @description How often the agent STARTS a poll for work (2.3.2). Overrides the
+             *     interval in the agent's own configuration (60 seconds unless set
+             *     there) and takes effect on the poll that delivers it, with no
+             *     restart. The server holds a poll for up to 30 seconds waiting for
+             *     work, so the longest a new run waits is this value less 30: at 30
+             *     the agent is connected all the time. Nothing lower is offered
+             *     because it would change nothing: an agent with a run in flight
+             *     asks again every few seconds whatever its interval, which is what
+             *     bounds how soon a kill reaches it. Outside 30–90 is
+             *     refused (400): a runner that has not polled for two minutes is
+             *     shown as degraded. An agent older than 2.3.2 ignores the field.
+             */
+            pollIntervalSeconds?: number;
         };
         /**
          * @description A scanned target host key awaiting operator approval (Phase 5, D4). The
@@ -13574,6 +13595,25 @@ export interface operations {
                  *     agent) ⇒ the server never sends settings.
                  */
                 settingsVersion?: number;
+                /**
+                 * @description Sent on every poll of an agent process until one has been answered
+                 *     (2.3.2). Such a process holds no run, so the server closes every run
+                 *     it still shows as running on this runner (failure, runner_lost):
+                 *     the runs of the process before it, which was killed, crashed or
+                 *     lost power and will never report on them. Absent ⇒ nothing is
+                 *     closed; an agent older than 2.3.2 never sends it.
+                 */
+                started?: "1";
+                /**
+                 * @description `claim=0` is sent by an agent that can start no run now (2.3.2): it
+                 *     was told to stop and is finishing the runs it has in flight, or
+                 *     every one of its concurrency slots is taken. The poll is still its
+                 *     heartbeat and still delivers control messages and settings, but no
+                 *     run is claimed for it and the request is not held. Absent ⇒ an
+                 *     ordinary poll. The claim does not otherwise know how many runs an
+                 *     agent holds.
+                 */
+                claim?: "0";
             };
             header?: never;
             path: {

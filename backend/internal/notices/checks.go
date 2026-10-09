@@ -34,6 +34,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindRecordKeyOutsideOwner, checkRecordKeyOutsideOwner},
 		{KindVaultPathOutsidePrefix, checkVaultPathOutsidePrefix},
 		{KindLegacyPlacement, checkLegacyPlacement},
+		{KindRunnerNameShared, checkRunnerNameShared},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},
 		{KindNoRunnerForShellJobs, checkNoRunnerForShellJobs},

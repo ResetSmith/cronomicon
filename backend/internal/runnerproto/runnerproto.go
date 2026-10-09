@@ -161,7 +161,36 @@ import (
 //	      startup. An agent that silently dropped either op would leave a
 //	      replaced key trusted and every delivery unconfirmed, so this is a
 //	      real bump, not an additive field.
+//	      Additive within v14 (2.3.2): two poll query params, PollParamStarted
+//	      and PollParamClaim below. NOT gated, in both directions. An agent
+//	      that sends neither behaves as it did (its runs die with it when it is
+//	      stopped, and the server learns nothing). A server that reads neither
+//	      is one an agent of this build never meets: the upgrade command moves
+//	      the agents after the server, and the agent drops an assignment it is
+//	      handed while stopping, as it always has.
 const ProtocolVersion = 14
+
+// Poll query params (2.3.2), beside configDigest and settingsVersion.
+const (
+	// PollParamStarted ("started=1") rides every poll of an agent process until
+	// one is answered. A process that has not been answered yet holds no run,
+	// so the server closes whatever it still shows as running on this runner
+	// (failure, runner_lost): the runs of the process before it, which was
+	// killed, crashed, or lost power, and will never report on them. Without
+	// it such a run stays `running` for good whenever the agent is back inside
+	// the offline window, since only the reaper closes a runner's runs and it
+	// only acts on a runner that has gone quiet.
+	PollParamStarted = "started"
+	// PollParamClaim ("claim=0") is sent by an agent that can start no run now:
+	// it was told to stop and is finishing its runs, or every one of its
+	// concurrency slots is taken. The poll is still its heartbeat and still
+	// delivers a kill, a settings change and a host-key op, but the server
+	// claims nothing for it and does not hold the request. The claim itself
+	// does not know how many runs an agent holds (it increments runners.load
+	// and compares it with nothing), so this param is the only thing that
+	// keeps a full agent from being handed a run it cannot start.
+	PollParamClaim = "claim"
+)
 
 // MinProtocolVersion is the oldest agent protocol this server accepts, checked
 // at registration and redeclare (426 protocol_too_old). It TRACKS
@@ -298,7 +327,25 @@ type PollSettingsValues struct {
 	AllowCheckout    *bool     `json:"allowCheckout,omitempty"`
 	CheckoutRepos    *[]string `json:"checkoutRepos,omitempty"`
 	CapabilityMask   []string  `json:"capabilityMask,omitempty"`
+	// PollIntervalSeconds (2.3.2) overrides the agent's own poll cadence: how
+	// often it asks for work when the last answer gave it none. Additive: an
+	// agent older than 2.3.2 drops the field and keeps its local interval.
+	// The server holds it within Min/MaxManagedPollIntervalSeconds.
+	PollIntervalSeconds *int `json:"pollIntervalSeconds,omitempty"`
 }
+
+// Bounds of a server-managed poll interval. The interval is how often a poll
+// STARTS, and the server holds a poll for 30 seconds (runner.pollTimeout), so
+// the longest a new run waits is the interval less 30. The floor is that hold:
+// at 30 an idle agent is connected all the time, and a lower value would buy
+// nothing, since an agent with a run in flight asks again every few seconds
+// whatever its interval (agent.busyHeartbeat). The ceiling stays under the two
+// minutes without a poll after which a runner is shown as degraded, and well
+// under the five after which it is offline and its runs are closed as lost.
+const (
+	MinManagedPollIntervalSeconds = 30
+	MaxManagedPollIntervalSeconds = 90
+)
 
 // PollAssignment is returned when a run is claimed.
 type PollAssignment struct {

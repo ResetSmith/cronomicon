@@ -185,6 +185,12 @@ check "the sandbox self-probe runs with the unit's filter and its EPERM answer" 
   bash -c "sed -n '/systemd-run --quiet --pipe --wait --collect/,/then\$/p' '$SCRIPT' | grep -qF -- \"-p 'SystemCallFilter=@system-service' -p 'SystemCallErrorNumber=EPERM'\""
 REFERENCE_UNIT="$(dirname "$0")/cronomicon-runner.service"
 check "the reference unit answers EPERM for a filtered syscall" grep -qxF "SystemCallErrorNumber=EPERM" "$REFERENCE_UNIT"
+# A stop is a drain only if systemd signals the agent alone. With its default
+# (KillMode=control-group) the Ansible and Terraform runs the agent is waiting
+# for are sent SIGTERM too: they are its children, in the unit's control group.
+check "a stop signals the agent alone, not the runs it is finishing" unit_has "$unit_default" "KillMode=mixed"
+check "an instance's unit does too" unit_has "$unit_tax" "KillMode=mixed"
+check "the reference unit does too" grep -qxF "KillMode=mixed" "$REFERENCE_UNIT"
 # cronomicon-runner.service is a second copy of the unit the installer writes.
 # They must carry the same directives, apart from two lines that are each in
 # one of them on purpose: the reference unit points at its own documentation,

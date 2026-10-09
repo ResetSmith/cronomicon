@@ -35,7 +35,12 @@ const (
 	// settings-resolved path is pushed in via SetLogDir (and by tests).
 	DefaultLogDir = "/var/lib/cronomicon/logs"
 
-	// pollTimeout is the server-side long-poll timeout (A6.2).
+	// pollTimeout is the server-side long-poll timeout (A6.2). An agent's poll
+	// interval is how often a poll STARTS, so an idle agent waits on the server
+	// for this much of every interval, and all of it at or below this value:
+	// the runner drawer's Poll interval field says so (POLL_HOLD_SECONDS in
+	// frontend/src/views/Runners.tsx, the guide and the openapi description all
+	// state 30). Change this and they are wrong.
 	pollTimeout = 30 * time.Second
 
 	// pollInterval is how often the long-poll loop re-checks for work.

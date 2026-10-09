@@ -124,6 +124,32 @@ func (s *Service) sweepOffline(ctx context.Context) {
 // runs to terminal. Closely mirrors forceOfflineOnDrainTimeout (log.go) — the
 // difference is the marker: queued_reason='runner_lost' (D6) vs 'drain_timeout'.
 func (s *Service) offlineRunner(ctx context.Context, runnerID string) {
+	orphans := s.failRunningRuns(ctx, runnerID)
+	if orphans < 0 {
+		return
+	}
+
+	// Flip the runner to offline and zero its load. We deliberately do NOT stamp
+	// an offline_at column: there is none today, and D4's deregister sweep reuses
+	// last_seen_at as the "offline since" proxy (an offline runner stops updating
+	// it), so adding a column would buy nothing. A reaped runner re-appears and
+	// resumes its identity on the next register/poll.
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE runners SET status = 'offline', load = 0 WHERE id = ?`, runnerID); err != nil {
+		s.log.Error("reaper: mark runner offline", "runner_id", runnerID, "error", err)
+		return
+	}
+	s.log.Info("reaper: runner offlined", "runner_id", runnerID, "orphaned_runs", orphans)
+}
+
+// failRunningRuns drives every run still `running` on a runner to terminal
+// (failure, queued_reason='runner_lost'), with the run-end activity, metric and
+// notification of any other terminal seam. It is the reaper's reconcile for a
+// runner that went quiet, and the poll handler's for one whose agent process
+// was replaced (runnerproto.PollParamStarted): in both the runs' owner is gone
+// and nothing will report on them. Returns how many it closed, or -1 when the
+// runs could not be read.
+func (s *Service) failRunningRuns(ctx context.Context, runnerID string) int {
 	ts := now()
 	nowT := reaperNow()
 
@@ -134,7 +160,7 @@ func (s *Service) offlineRunner(ctx context.Context, runnerID string) {
 		WHERE runner_id = ? AND status = 'running'`, runnerID)
 	if err != nil {
 		s.log.Error("reaper: query running runs", "runner_id", runnerID, "error", err)
-		return
+		return -1
 	}
 	// One lookup per sweep, not per orphan: every run in this loop belongs to
 	// the single runner being reaped (AA-1).
@@ -150,6 +176,7 @@ func (s *Service) offlineRunner(ctx context.Context, runnerID string) {
 	_ = rows.Err()
 	rows.Close()
 
+	closed := 0
 	for _, run := range orphans {
 		tid, jn, sc, startedAt := run[0], run[1], run[2], run[3]
 
@@ -198,19 +225,9 @@ func (s *Service) offlineRunner(ctx context.Context, runnerID string) {
 		// Same terminal seam as finalizeRun / drain-timeout: a runner_lost
 		// failure must also emit the RunFinished metric and fire notifications.
 		s.emitRunTerminal(notify.RunEvent{TraceID: tid, JobName: jn, Scope: sc, Status: "failure"})
+		closed++
 	}
-
-	// Flip the runner to offline and zero its load. We deliberately do NOT stamp
-	// an offline_at column: there is none today, and D4's deregister sweep reuses
-	// last_seen_at as the "offline since" proxy (an offline runner stops updating
-	// it), so adding a column would buy nothing. A reaped runner re-appears and
-	// resumes its identity on the next register/poll.
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE runners SET status = 'offline', load = 0 WHERE id = ?`, runnerID); err != nil {
-		s.log.Error("reaper: mark runner offline", "runner_id", runnerID, "error", err)
-		return
-	}
-	s.log.Info("reaper: runner offlined", "runner_id", runnerID, "orphaned_runs", len(orphans))
+	return closed
 }
 
 // sweepDeregister fully removes runners that have been offline longer than

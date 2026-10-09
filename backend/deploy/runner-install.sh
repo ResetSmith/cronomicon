@@ -853,8 +853,11 @@ WorkingDirectory=${STATE_DIR}
 ExecStartPre=-/usr/local/bin/cronomicon-runner doctor --quick
 ExecStart=/usr/local/bin/cronomicon-runner
 
-# Graceful drain on SIGTERM
+# Graceful drain on SIGTERM. KillMode=mixed signals the agent alone: with
+# systemd's default, the Ansible and Terraform runs it is waiting for (its own
+# child processes, in this unit's control group) are sent SIGTERM as well.
 KillSignal=SIGTERM
+KillMode=mixed
 TimeoutStopSec=300
 
 Restart=on-failure

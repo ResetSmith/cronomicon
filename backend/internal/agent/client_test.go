@@ -44,7 +44,7 @@ func TestPollStatusToSentinelError(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewClient: %v", err)
 			}
-			_, err = c.Poll(context.Background(), Identity{ID: "r1", APIKey: "crn_run_x"}, "", 0)
+			_, err = c.Poll(context.Background(), Identity{ID: "r1", APIKey: "crn_run_x"}, "", 0, pollState{})
 			if !errors.Is(err, tc.want) {
 				t.Errorf("Poll on HTTP %d returned %v, want %v", tc.code, err, tc.want)
 			}
@@ -98,7 +98,7 @@ func TestPollProtocolTooOldKeepsIdentity(t *testing.T) {
 
 	// And the server's own sentence reaches the agent, because it is the one
 	// place both version numbers appear.
-	if err := func() error { _, e := c.Poll(context.Background(), id, "", 0); return e }(); err == nil ||
+	if err := func() error { _, e := c.Poll(context.Background(), id, "", 0, pollState{}); return e }(); err == nil ||
 		!strings.Contains(err.Error(), "requires 12") {
 		t.Errorf("poll error = %v, want it to carry the server's message naming both versions", err)
 	}

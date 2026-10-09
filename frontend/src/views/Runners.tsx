@@ -136,10 +136,25 @@ interface Runner {
 // RunTypeName is the closed run-type vocabulary (matches the openapi RunType).
 type RunTypeName = (typeof RUN_TYPES)[number];
 
+// The bounds the server holds a managed poll interval within
+// (runnerproto.Min/MaxManagedPollIntervalSeconds; openapi ManagedRunnerSettings).
+// The ceiling stays under the two minutes after which a runner is shown as
+// degraded. The floor is the server's own hold on a poll (below).
+export const POLL_INTERVAL_MIN_SECONDS = 30;
+export const POLL_INTERVAL_MAX_SECONDS = 90;
+// How long the server holds a poll waiting for work (runner.pollTimeout). The
+// interval is how often a poll STARTS, so an idle agent with a free slot is
+// connected for this much of every interval: at this value, all the time. A
+// lower interval would change nothing (an agent with a run in flight asks
+// again every few seconds whatever its interval), which is why this is also
+// the field's floor.
+export const POLL_HOLD_SECONDS = 30;
+
 // ManagedSettings is the tri-state override set edited in the Settings drawer.
 // A field present overrides the runner's local value; absent = no server opinion.
 interface ManagedSettings {
   maxConcurrent?: number;
+  pollIntervalSeconds?: number;
   sandboxMemoryMax?: string;
   sandboxCpuQuota?: string;
   sandboxTasksMax?: string;
@@ -963,7 +978,7 @@ function RunnerDetail({
                 {pendingAck && <span title="A change is still propagating to the agent" style={{ marginLeft: 6, color: c.warning }}>● pending</span>}
               </>
             }
-            info="Server-managed overrides pushed to the agent: max concurrent jobs, sandbox caps, checkout policy and capability mask. When none are set the runner uses its local config."
+            info="Server-managed overrides pushed to the agent: max concurrent jobs, poll interval, sandbox caps, checkout policy and capability mask. When none are set the runner uses its local config."
             actions={
               <Btn small onClick={onEditSettings} disabled={!!notOwnerWhy(runner)} title={notOwnerWhy(runner) || undefined}>
                 ⚙ Edit
@@ -975,6 +990,7 @@ function RunnerDetail({
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: "14px 24px" }}>
                 <Field label="Max concurrent" value={ms.maxConcurrent != null ? String(ms.maxConcurrent) : "—"} mono />
+                <Field label="Poll interval" value={ms.pollIntervalSeconds != null ? `${ms.pollIntervalSeconds}s` : "—"} mono />
                 <Field label="Capability mask" value={ms.capabilityMask && ms.capabilityMask.length ? ms.capabilityMask.join(", ") : "—"} />
                 <Field
                   label="Sandbox caps"
@@ -2643,6 +2659,12 @@ function RunnerSettingsDrawer({
 }) {
   const ms = runner.managedSettings ?? {};
   const [maxJobs, setMaxJobs] = useState(ms.maxConcurrent != null ? String(ms.maxConcurrent) : "");
+  // 2.3.2 — how often the agent asks for work when its last poll gave it none.
+  // The server refuses a value outside the bounds; the field says so first, so
+  // that Save is never the way to find out.
+  const [pollSecs, setPollSecs] = useState(ms.pollIntervalSeconds != null ? String(ms.pollIntervalSeconds) : "");
+  const pollBad =
+    pollSecs.trim() !== "" && (Number(pollSecs) < POLL_INTERVAL_MIN_SECONDS || Number(pollSecs) > POLL_INTERVAL_MAX_SECONDS);
   const [sbMem, setSbMem] = useState(ms.sandboxMemoryMax ?? "");
   const [sbCpu, setSbCpu] = useState(ms.sandboxCpuQuota ?? "");
   const [sbTasks, setSbTasks] = useState(ms.sandboxTasksMax ?? "");
@@ -2663,6 +2685,7 @@ function RunnerSettingsDrawer({
   const build = (): ManagedSettings => {
     const body: ManagedSettings = {};
     if (maxJobs.trim()) body.maxConcurrent = Number(maxJobs);
+    if (pollSecs.trim()) body.pollIntervalSeconds = Number(pollSecs);
     if (sbMem.trim()) body.sandboxMemoryMax = sbMem.trim();
     if (sbCpu.trim()) body.sandboxCpuQuota = sbCpu.trim();
     if (sbTasks.trim()) body.sandboxTasksMax = sbTasks.trim();
@@ -2733,7 +2756,12 @@ function RunnerSettingsDrawer({
               <Btn onClick={onClose} disabled={busy}>
                 Cancel
               </Btn>
-              <Btn primary onClick={() => save(false)} disabled={busy}>
+              <Btn
+                primary
+                onClick={() => save(false)}
+                disabled={busy || pollBad}
+                title={pollBad ? `The poll interval must be between ${POLL_INTERVAL_MIN_SECONDS} and ${POLL_INTERVAL_MAX_SECONDS} seconds.` : undefined}
+              >
                 {busy ? "Saving…" : "Save"}
               </Btn>
             </div>
@@ -2763,6 +2791,37 @@ function RunnerSettingsDrawer({
         />,
         <>
           Caps simultaneously-executing runs. Runner's declared value: <strong>{runner.maxConcurrent ?? 5}</strong>.
+        </>,
+      )}
+
+      {row(
+        "Poll interval",
+        <>
+          <input
+            style={{ ...inputStyle, width: 90, ...(pollBad ? { borderColor: c.danger } : {}) }}
+            value={pollSecs}
+            onChange={(e) => setPollSecs(e.target.value.replace(/[^0-9]/g, ""))}
+            placeholder="inherit"
+            aria-label="Poll interval in seconds"
+            aria-invalid={pollBad || undefined}
+          />
+          <span style={{ fontSize: c.fontSm, color: c.textSec }}>seconds</span>
+        </>,
+        <>
+          How often the agent starts asking for work: {POLL_INTERVAL_MIN_SECONDS}–{POLL_INTERVAL_MAX_SECONDS} seconds.
+          The agent's own setting is 60 unless its configuration says otherwise, and the app cannot read it. The
+          server holds each request for up to {POLL_HOLD_SECONDS} seconds and hands over a run the moment one
+          arrives, so <strong>the longest a new run waits is this value less {POLL_HOLD_SECONDS}</strong>: nothing at{" "}
+          {POLL_HOLD_SECONDS}, where the agent is connected all the time; about 30 seconds at 60; a minute at 90.
+          This does not decide how soon a <strong>Stop</strong> reaches a job, nor how fast a queue is taken: an
+          agent with a run in flight checks in every few seconds, and one that is given a run asks for the next at
+          once, whatever this is set to.
+          {pollBad && (
+            <div role="alert" style={{ color: c.danger, marginTop: 4 }}>
+              Between {POLL_INTERVAL_MIN_SECONDS} and {POLL_INTERVAL_MAX_SECONDS} seconds: a runner that has not asked
+              for two minutes is shown as degraded.
+            </div>
+          )}
         </>,
       )}
 

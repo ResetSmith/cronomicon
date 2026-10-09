@@ -118,6 +118,25 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A poll from an agent process that has not been answered yet (2.3.2,
+	// runnerproto.PollParamStarted). That process holds no run, so every run
+	// still `running` here belonged to the process before it and will never be
+	// reported on: close them now. Nothing else would — the reaper closes a
+	// runner's runs only once the runner has been quiet for RunnerOfflineAfter,
+	// and an agent that is restarted, upgraded or crashes and comes back is
+	// never quiet that long. Before the claim below, so a run handed out by
+	// this very poll is not among them.
+	if r.URL.Query().Get(runnerproto.PollParamStarted) == "1" {
+		if n := s.failRunningRuns(r.Context(), runnerID); n > 0 {
+			if _, err := s.db.ExecContext(r.Context(),
+				`UPDATE runners SET load = 0 WHERE id = ?`, runnerID); err != nil {
+				s.log.Error("restarted runner: reset load", "runner_id", runnerID, "error", err)
+			}
+			s.log.Warn("runner restarted with runs still marked running — closed them as runner_lost",
+				"runner_id", runnerID, "runs", n)
+		}
+	}
+
 	// ET-D — the file-arrival specs this agent should poll. Resolved once, HERE,
 	// before any early return: writePoll attaches them to every exit, so an
 	// agent's watch set is refreshed by any poll outcome including a 204 or a
@@ -213,6 +232,18 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 			Control:     control,
 			PollAfterMs: 0,
 		}, settingsPayload, watches)
+		return
+	}
+
+	// An agent that can start no run now (2.3.2, runnerproto.PollParamClaim):
+	// it was told to stop and is finishing its runs, or all its slots are
+	// taken. The poll has done its work above: the heartbeat, and any kill,
+	// settings change or host-key op. It is handed no run, and it is not held:
+	// the agent comes back when a slot opens, or on its next tick. Nothing
+	// below this point knows how many runs the agent holds, so without this a
+	// full agent is claimed a run it cannot start.
+	if r.URL.Query().Get(runnerproto.PollParamClaim) == "0" {
+		respondControlOr204(w, control, settingsPayload, watches)
 		return
 	}
 

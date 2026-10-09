@@ -339,7 +339,7 @@ describe("resource limits", () => {
       "--pids-limit 1024",
     ]);
     const cmd = provisionDockerRun(withLimits());
-    expect(cmd).toContain("--restart unless-stopped \\\n  --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 \\\n  -e ");
+    expect(cmd).toContain("--restart unless-stopped --stop-timeout 300 \\\n  --memory 4g --memory-swap 4g --cpus 2 --pids-limit 1024 \\\n  -e ");
     // The installer's flags are not docker's.
     expect(cmd).not.toMatch(/--(memory-max|cpu-quota|tasks-max)/);
   });

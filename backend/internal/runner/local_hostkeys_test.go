@@ -334,6 +334,35 @@ func TestCarryServerHostKeys(t *testing.T) {
 	if !strings.Contains(detail, "other-zone") || !strings.Contains(detail, fp(k2)) || !strings.Contains(detail, fp(k1)) {
 		t.Errorf("the notice must name the record and both keys: %q", detail)
 	}
+	if !strings.Contains(detail, "dismiss this notice") {
+		t.Errorf("the notice must say what clears it when nothing needs changing: %q", detail)
+	}
+	openConflict := func(subject string) int {
+		t.Helper()
+		var n int
+		_ = f.svc.db.QueryRow(`SELECT COUNT(*) FROM notices WHERE kind = 'host_key_conflict' AND subject = ? AND resolved_at IS NULL`, subject).Scan(&n)
+		return n
+	}
+	// The notice asks which of two keys is right, about a key the UPGRADE chose.
+	// A key a person approved is not a question (2.3.2): h5's address was decided
+	// by an operator before the carry, so its record raises nothing.
+	exec(`INSERT INTO ssh_hosts (id, hostname, address, port, created_at) VALUES ('h5', 'decided', '10.0.0.8', 22, ?)`, now())
+	if err := notices.RunChecks(ctx, f.svc.db); err != nil {
+		t.Fatalf("checks: %v", err)
+	}
+	if openConflict("host:h5") != 0 {
+		t.Error("a conflict was reported against a key an operator approved")
+	}
+	// And the open one resolves by its remedy: a person scans the host and
+	// approves the key it has now. Until 2.3.2 it stayed, whatever was approved.
+	exec(`UPDATE host_key_ledger SET superseded_at = ? WHERE host = '10.0.0.5' AND decision = 'approved' AND superseded_at IS NULL`, now())
+	serverTrusts(t, f.svc, "10.0.0.5", decided, "", "root@example.com")
+	if err := notices.RunChecks(ctx, f.svc.db); err != nil {
+		t.Fatalf("checks: %v", err)
+	}
+	if openConflict("host:h7") != 0 {
+		t.Error("the conflict notice stayed open after an operator approved a key for the address")
+	}
 	// It runs once.
 	before := f.count(`SELECT COUNT(*) FROM host_key_ledger`)
 	if n, err := CarryServerHostKeys(ctx, f.svc.db, f.svc.log); err != nil || n != 0 {

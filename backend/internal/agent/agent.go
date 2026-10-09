@@ -51,9 +51,36 @@ type Agent struct {
 	// maxConcurrent) — Phase 4 replaced a fixed-size channel semaphore with this
 	// counter so the limit can be raised/lowered live by a managed setting.
 	mu       sync.Mutex
-	active   map[string]context.CancelFunc
+	active   map[string]context.CancelCauseFunc
 	draining bool
-	wg       sync.WaitGroup
+	// aborted is set by Abort and never cleared: the agent was told to stop a
+	// second time. Abort cancels the runs in `active` at that moment, and a
+	// poll already on its way back can still carry an assignment; dispatch
+	// reads this so that such a run is refused instead of started behind an
+	// Abort that will never reach it.
+	aborted bool
+	wg      sync.WaitGroup
+
+	// runParent is the parent of every run's context: the process context with
+	// its cancellation removed (2.3.2). The signal that stops the agent ends
+	// the claiming of work, not the work: a run ends when it finishes, when
+	// the server kills it, or on Abort. Nil until Run sets it; dispatch then
+	// falls back to the context it is given.
+	runParent context.Context
+	// idle receives when the last active run ends, so a stopping agent leaves
+	// without waiting out its next heartbeat.
+	idle chan struct{}
+	// freed receives when a run ends on an agent that had no free slot, so the
+	// agent asks for work again at once: while it was full its polls claimed
+	// nothing (pollState.noClaim) and were not held by the server.
+	freed chan struct{}
+
+	// stopping (the process was signalled and is finishing its runs) and
+	// answered (some poll of this process has had an answer) are what a poll
+	// tells the server beyond being alive (pollState). Only touched from the
+	// poll-loop goroutine.
+	stopping bool
+	answered bool
 
 	// settings holds server-managed operational overrides applied in-memory
 	// (Phase 4). Shared with a.exec so per-run code sees the same overrides.
@@ -86,16 +113,41 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 		client:   client,
 		log:      log,
 		exec:     &executor{ssh: sshR, cfg: cfg, inv: inv, settings: store},
-		active:   map[string]context.CancelFunc{},
+		active:   map[string]context.CancelCauseFunc{},
+		idle:     make(chan struct{}, 1),
+		freed:    make(chan struct{}, 1),
 		settings: store,
 	}, nil
 }
 
-// Run drives the agent until ctx is cancelled. It registers (or resumes its
-// identity), then loops polling at the configured cadence. It always keeps
-// polling while runs execute (R2.2) so it stays heartbeat-fresh and receives
-// kill/drain. On a 404 poll it re-registers (D4).
+// busyHeartbeat is the longest an agent with a run in flight goes without
+// asking the server anything, whatever its poll interval: a kill reaches an
+// agent only as the answer to a poll. A poll the server holds (an agent with a
+// free slot) is answered the moment a kill is queued; one it does not hold (a
+// full or stopping agent, which is handed no work) is answered at once, and
+// this is then how long a kill sent just afterwards waits to be delivered.
+const busyHeartbeat = 5 * time.Second
+
+// registerTimeout bounds the registration exchange, which a stop signal does
+// not interrupt (register).
+const registerTimeout = 30 * time.Second
+
+// errAgentStopped is the cause a run's context carries when Abort ended it.
+var errAgentStopped = errors.New("the runner agent was stopped")
+
+// Run drives the agent until ctx is cancelled AND its runs have finished. It
+// registers (or resumes its identity), then loops polling at the configured
+// cadence. It always keeps polling while runs execute (R2.2) so it stays
+// heartbeat-fresh and receives kill/drain. On a 404 poll it re-registers (D4).
+//
+// Cancelling ctx (SIGTERM, SIGINT) is a drain, not a kill (2.3.2): the agent
+// stops claiming, keeps its heartbeat, and returns when the runs in flight
+// have ended. Until 2.3.2 every run's context was a child of ctx, so the
+// signal killed them all and cancelled the upload of their logs with them,
+// while the log line and the unit's comment both said "waiting for active runs
+// to finish". Abort is the way to end them early.
 func (a *Agent) Run(ctx context.Context) error {
+	a.runParent = context.WithoutCancel(ctx)
 	// Startup progress is logged step-by-step ON PURPOSE: each phase below can
 	// block on the host (a $PATH dir on a hung mount stalls exec.LookPath, an
 	// unreachable server stalls register), and the probes are best-effort. When
@@ -168,21 +220,146 @@ func (a *Agent) Run(ctx context.Context) error {
 	ticker := time.NewTicker(a.cfg.PollInterval)
 	defer ticker.Stop()
 
+	// The poll in flight when the signal arrives is cancelled by it (it may be
+	// held by the server for half a minute, and could come back with work).
+	// The polls after it must not be: they are the heartbeat of the drain.
+	interval := a.cfg.PollInterval
 	for {
-		a.pollOnce(ctx)
+		again := false
+		if a.stopping {
+			// Bounded: the server answers a stopping agent's poll at once, and an
+			// unreachable server must not keep the agent after its last run ends.
+			hb, cancel := context.WithTimeout(a.runParent, 2*busyHeartbeat)
+			a.pollOnce(hb) //nolint:contextcheck // deliberate: the drain's heartbeat outlives the cancelled signal context
+			cancel()
+		} else {
+			again = a.pollOnce(ctx)
+		}
+
+		// The cadence is the operator's when the server manages it (2.3.2), and
+		// takes effect on the poll that delivers it: no restart.
+		if d := a.settings.pollInterval(a.cfg.PollInterval); d != interval && d > 0 {
+			a.log.Info("poll interval changed", "from", interval, "to", d)
+			interval = d
+			ticker.Reset(d)
+		}
 
 		if a.isDrainingDone() {
 			a.log.Info("drain complete — no active runs, exiting")
-			return nil
+			a.wg.Wait() // the goroutines of runs that have just left `active`
+			return ctx.Err()
+		}
+
+		if a.stopping {
+			wait := min(busyHeartbeat, interval)
+			select {
+			case <-a.idle:
+			case <-time.After(wait):
+			}
+			continue
+		}
+
+		// A poll that gave the agent a run it started, or settings it applied,
+		// is followed by another at once (2.3.2). The server has always answered
+		// such a poll "come back now" (pollAfterMs: 0) and the agent never read
+		// it: it took ONE run per interval, so five queued runs on an agent with
+		// five free slots started a minute apart, and a settings change was
+		// acknowledged a minute late. This cannot spin: every pass through here
+		// started a run (which took a slot; a full agent is given none) or moved
+		// the settings version forward.
+		if again && ctx.Err() == nil {
+			continue
+		}
+
+		// An agent with a run in flight does not wait out its interval (2.3.2).
+		// A Stop is delivered as the answer to a poll, and the operator's write
+		// has already ended the run on the server: until the agent asks, the
+		// job goes on running on its target behind a row that says it stopped.
+		// This is not new for an agent between two held polls (up to its
+		// interval less the server's hold), but the full-agent change above made
+		// it the whole interval for a full agent, whose polls are no longer
+		// held. So: any run in flight, and the agent asks again within
+		// busyHeartbeat. An idle agent's cadence is untouched.
+		var busy <-chan time.Time
+		if a.busy() {
+			busy = time.After(min(busyHeartbeat, interval))
 		}
 
 		select {
+		case <-busy:
 		case <-ctx.Done():
-			a.log.Info("shutdown signal — waiting for active runs to finish")
-			a.wg.Wait()
-			return ctx.Err()
+			n := a.startDrain("shutdown signal")
+			if n == 0 {
+				// No run, but perhaps a refusal still on its way to the server
+				// (refuse): leaving now would strand the run it is ending.
+				a.wg.Wait()
+				return ctx.Err()
+			}
+			a.log.Info("shutdown signal — claiming no new work and waiting for active runs to finish; "+
+				"a second signal cancels them", "active_runs", n)
+			a.stopping = true
 		case <-ticker.C:
+		case <-a.freed:
+			// A slot opened on an agent that had none: ask for work now.
 		}
+	}
+}
+
+// busy reports whether any run is in flight.
+func (a *Agent) busy() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.active) > 0
+}
+
+// full reports whether every concurrency slot is taken, by the same count and
+// the same (possibly server-managed) limit that dispatch enforces.
+func (a *Agent) full() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.active) >= a.settings.maxConcurrent(a.cfg.MaxConcurrent)
+}
+
+// refuse reports a run that the server assigned and this agent will not
+// execute. The server has already moved the run to running, here; if the agent
+// only logged the fact, as it did before 2.3.2, nothing would ever end the run.
+// So it ends it: one line saying why, and the envelope of a failure. With
+// pollState.noClaim this should not happen at all; it is what keeps the cases
+// that remain (a limit or a mask that changed between the claim and now, a
+// server older than the agent) from stranding a run.
+func (a *Agent) refuse(ctx context.Context, asn *runnerproto.PollAssignment, why string) {
+	a.log.Warn("assigned a run this agent will not execute — reporting it as failed", "trace_id", asn.TraceID, "reason", why)
+	a.wg.Go(func() {
+		flush, stop := context.WithTimeout(context.WithoutCancel(ctx), terminalFlushTimeout)
+		defer stop()
+		now := time.Now()
+		buf := &logBuffer{}
+		buf.writeLine("cronomicon: this runner was handed the run and did not start it: " + why + ". Nothing was executed; run it again.")
+		buf.seal(makeEnvelope(1, now, now, ""))
+		if err := streamLogs(flush, a.client, a.id, asn.TraceID, buf, a.cfg.LogRetryBudget, false); err != nil && !errors.Is(err, errRunClosed) {
+			a.log.Error("could not report a refused assignment", "trace_id", asn.TraceID, "error", err)
+		}
+	})
+}
+
+// Abort cancels every run in flight, and has the agent start no other. It is
+// what every stop signal after the first does: the first one drains (Run), and
+// an operator who will not wait sends another. The runs end as cancelled and
+// still upload their logs, so the server records what happened to each instead
+// of losing them. Calling it again is harmless: it cancels whatever is left.
+func (a *Agent) Abort() {
+	a.mu.Lock()
+	a.aborted = true
+	cancels := make([]context.CancelCauseFunc, 0, len(a.active))
+	for _, cancel := range a.active {
+		cancels = append(cancels, cancel)
+	}
+	a.mu.Unlock()
+	if len(cancels) > 0 {
+		a.log.Warn("another shutdown signal — cancelling active runs", "active_runs", len(cancels))
+	}
+	for _, cancel := range cancels {
+		cancel(errAgentStopped)
 	}
 }
 
@@ -209,7 +386,17 @@ func (a *Agent) register(ctx context.Context) error {
 	a.log.Info("detecting host capabilities (toolchain probes)")
 	caps, tc := detectCapabilities(ctx, a.cfg)
 	a.log.Info("registering with server", "server", a.cfg.ServerURL, "capabilities", caps)
-	id, err := a.client.Register(ctx, a.cfg, caps, tc)
+	// The exchange and the saving of its answer are one step that a stop signal
+	// must not split (2.3.2). The registration token is good for ONE use: once
+	// the server has answered, the token is spent and the runner exists, and an
+	// agent that was stopped before it wrote its identity file can only ask
+	// again with a spent token (401 token_used) and exit, for ever, until
+	// somebody mints another. Seen on a host where the unit was restarted a
+	// second after the installer started it. Bounded, so an unreachable server
+	// cannot hold a stopping agent.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), registerTimeout)
+	defer cancel()
+	id, err := a.client.Register(rctx, a.cfg, caps, tc) //nolint:contextcheck // deliberate: see above
 	if err != nil {
 		return err
 	}
@@ -246,7 +433,7 @@ func (a *Agent) reregister(ctx context.Context, reason string) {
 	}
 	// A new id is a new runner as far as the server is concerned, and it knows
 	// nothing of this file until told.
-	go a.reportKnownHosts(ctx)
+	go a.reportKnownHosts(a.outlivingPoll(ctx)) //nolint:contextcheck // deliberate: see outlivingPoll
 }
 
 // pollOnce performs one poll and dispatches its assignment + control ops. It
@@ -254,8 +441,16 @@ func (a *Agent) reregister(ctx context.Context, reason string) {
 // the effective maxConcurrent) and the loop returns immediately so the next
 // poll fires on cadence (R2.2). It echoes the applied managed-settings version
 // as the poll ack (Phase 4) and applies any settings the response carries.
-func (a *Agent) pollOnce(ctx context.Context) {
-	pr, err := a.client.Poll(ctx, a.id, a.configDigest, a.settings.applied())
+func (a *Agent) pollOnce(ctx context.Context) (again bool) {
+	// An agent with no free slot asks for nothing (2.3.2). The server's claim
+	// does not know how many runs an agent holds, so a full agent that polled
+	// as usual was handed the next queued run, could not start it, and left it
+	// shown as running with nobody to end it.
+	pr, err := a.client.Poll(ctx, a.id, a.configDigest, a.settings.applied(),
+		pollState{started: !a.answered, noClaim: a.stopping || a.full()})
+	if err == nil || errors.Is(err, errNoWork) {
+		a.answered = true
+	}
 	switch {
 	case errors.Is(err, errNoWork):
 		// ET-D — a 204 is a COMPLETE answer, not a missing one: the server sends
@@ -292,6 +487,9 @@ func (a *Agent) pollOnce(ctx context.Context) {
 			"error", err)
 		return
 	case err != nil:
+		if ctx.Err() != nil && !a.stopping {
+			return // the stop signal cancelled a poll the server was holding
+		}
 		a.log.Error("poll failed", "error", err)
 		return
 	}
@@ -300,6 +498,7 @@ func (a *Agent) pollOnce(ctx context.Context) {
 	// checkout policy takes effect on this very poll's assignment.
 	if a.settings.apply(pr.Settings) {
 		a.log.Info("applied server-managed settings", "version", pr.Settings.Version)
+		again = true // acknowledge it now, not an interval from now
 	}
 
 	// ET-D — refresh the watch set from EVERY poll that returns a body. The
@@ -311,9 +510,28 @@ func (a *Agent) pollOnce(ctx context.Context) {
 
 	a.handleControl(ctx, pr.Control)
 
-	if pr.Assignment != nil {
-		a.dispatch(ctx, pr.Assignment)
+	// Only a run that was STARTED asks for the next poll at once. One that was
+	// refused does not: against a server that hands a stopping or full agent
+	// work, asking again at once would fail one queued run after another.
+	if pr.Assignment != nil && a.dispatch(ctx, pr.Assignment) {
+		again = true
 	}
+	return again
+}
+
+// outlivingPoll is the context for work that a poll STARTS and does not wait
+// for: a host-key scan, a known_hosts report. It must not be the poll's own.
+// The heartbeat of a stopping agent has a context that ends the moment the poll
+// is answered (Run), and the server hands such an op over once and marks it
+// delivered: on the poll's context the scan was cancelled before it had dialled
+// anything, and an operator waited on a review screen for keys that never came.
+// Like a run, the work ends when it is done or the process exits. Before Run
+// has set runParent (a test that drives a poll by hand) it is ctx.
+func (a *Agent) outlivingPoll(ctx context.Context) context.Context {
+	if a.runParent != nil {
+		return a.runParent
+	}
+	return ctx
 }
 
 // handleControl applies kill/drain/re-register control ops (R2.2, v4).
@@ -327,14 +545,14 @@ func (a *Agent) handleControl(ctx context.Context, control []runnerproto.PollCon
 				a.kill(*c.TraceID)
 			}
 		case "drain":
-			a.startDrain()
+			a.startDrain("drain control received")
 		case "re-register":
 			a.redeclare(ctx)
 		case "keyscan":
 			// Scan + upload runs in its own goroutine so it never blocks the poll
 			// loop (dials can be slow / time out).
 			hosts := c.Hosts
-			go a.handleKeyscan(ctx, hosts)
+			go a.handleKeyscan(a.outlivingPoll(ctx), hosts) //nolint:contextcheck // deliberate: see outlivingPoll
 		case "untrust-hosts":
 			a.handleUntrustHosts(c.Entries)
 		case "trust-hosts":
@@ -343,7 +561,7 @@ func (a *Agent) handleControl(ctx context.Context, control []runnerproto.PollCon
 			// The server sends this AFTER any untrust/trust ops in the same
 			// poll, and those two are applied synchronously above, so the file
 			// is read as they left it. Only the upload leaves the poll loop.
-			go a.reportKnownHosts(ctx)
+			go a.reportKnownHosts(a.outlivingPoll(ctx)) //nolint:contextcheck // deliberate: see outlivingPoll
 		}
 	}
 }
@@ -378,18 +596,21 @@ func (a *Agent) kill(traceID string) {
 	a.mu.Unlock()
 	if ok {
 		a.log.Info("kill control received", "trace_id", traceID)
-		cancel()
+		cancel(nil)
 	}
 }
 
 // startDrain stops claiming new work; active runs are allowed to finish (R2.2).
-func (a *Agent) startDrain() {
+// why is what asked for it (the server's drain op, or a stop signal). Returns
+// the number of runs in flight.
+func (a *Agent) startDrain(why string) int {
 	a.mu.Lock()
+	defer a.mu.Unlock()
 	if !a.draining {
 		a.draining = true
-		a.log.Info("drain control received — finishing active runs, claiming no new work")
+		a.log.Info(why + " — finishing active runs, claiming no new work")
 	}
-	a.mu.Unlock()
+	return len(a.active)
 }
 
 // isDrainingDone reports whether the agent is draining and has no active runs.
@@ -401,45 +622,67 @@ func (a *Agent) isDrainingDone() bool {
 
 // dispatch starts executing a claimed run, unless we're draining or out of
 // concurrency slots. It runs in a goroutine so the poll loop never blocks.
-func (a *Agent) dispatch(ctx context.Context, asn *runnerproto.PollAssignment) {
+func (a *Agent) dispatch(ctx context.Context, asn *runnerproto.PollAssignment) (started bool) {
 	// Honor the server-managed capability mask agent-side too (Phase 4). The
 	// server already refuses to assign a masked run-type; this catches a stale
 	// assignment that raced a mask change.
 	if a.settings.masks(asn.RunType) {
-		a.log.Warn("run-type masked by server-managed settings — refusing assignment", "trace_id", asn.TraceID, "type", asn.RunType)
+		a.refuse(ctx, asn, "its settings no longer let it run "+asn.RunType+" jobs")
 		return
 	}
 
 	// Acquire a concurrency slot and record the run under one lock: len(active)
 	// is the live count, bounded by the effective (possibly server-managed)
-	// maxConcurrent. If full, the server claimed a run we can't start right now —
-	// log and let the run's absence of logs trip the server-side reconcile.
-	runCtx, cancel := context.WithCancel(ctx)
+	// maxConcurrent. If full or draining, the server claimed a run we cannot
+	// start: refuse says so to the server, which has no other way to learn it.
+	//
+	// The run's context descends from runParent, not from the poll's: a stop
+	// signal cancels the poll loop's context and must not reach a run (Run).
+	parent := a.runParent //nolint:contextcheck // deliberate: a run outlives the stop signal (Run)
+	if parent == nil {
+		parent = ctx
+	}
+	runCtx, cancel := context.WithCancelCause(parent)
 	a.mu.Lock()
-	if a.draining {
+	if a.draining || a.aborted {
 		a.mu.Unlock()
-		cancel()
-		a.log.Warn("draining — dropping claimed assignment (will not execute)", "trace_id", asn.TraceID)
+		cancel(nil)
+		a.refuse(ctx, asn, "it is stopping and takes no new work")
 		return
 	}
 	if len(a.active) >= a.settings.maxConcurrent(a.cfg.MaxConcurrent) {
 		a.mu.Unlock()
-		cancel()
-		a.log.Warn("at max concurrency — cannot start claimed run now", "trace_id", asn.TraceID)
+		cancel(nil)
+		a.refuse(ctx, asn, "it is already running as many jobs as its limit allows")
 		return
 	}
 	a.active[asn.TraceID] = cancel
 	a.mu.Unlock()
 
 	a.wg.Go(func() {
-		defer cancel()
+		defer cancel(nil)
 		defer func() {
 			a.mu.Lock()
+			wasFull := len(a.active) >= a.settings.maxConcurrent(a.cfg.MaxConcurrent)
 			delete(a.active, asn.TraceID)
+			last := len(a.active) == 0
 			a.mu.Unlock()
+			if last {
+				select {
+				case a.idle <- struct{}{}:
+				default:
+				}
+			}
+			if wasFull {
+				select {
+				case a.freed <- struct{}{}:
+				default:
+				}
+			}
 		}()
 		a.executeRun(runCtx, asn.TraceID, asn.LiveLog)
 	})
+	return true
 }
 
 // liveLogFlushInterval is how often a LiveLog run's pending buffer is flushed
@@ -458,13 +701,17 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 	if err != nil {
 		a.log.Error("fetch manifest", "trace_id", traceID, "error", err)
 		// Without a manifest we can't execute; stream a single failure line +
-		// envelope so the run terminates instead of hanging.
+		// envelope so the run terminates instead of hanging. A fetch that
+		// failed because the agent was told to stop a second time (Abort) says
+		// that, not "context canceled".
 		buf := &logBuffer{}
-		buf.writeLine("cronomicon: manifest fetch failed: " + err.Error())
-		buf.seal(makeEnvelope(1, time.Now(), time.Now(), ""))
-		if serr := streamLogs(ctx, a.client, a.id, traceID, buf, a.cfg.LogRetryBudget, false); serr != nil {
-			a.log.Error("stream logs (manifest failure)", "trace_id", traceID, "error", serr)
+		if errors.Is(context.Cause(ctx), errAgentStopped) {
+			buf.writeLine("cronomicon: the runner agent was stopped before this run started. Nothing was executed; run it again.")
+		} else {
+			buf.writeLine("cronomicon: manifest fetch failed: " + err.Error())
 		}
+		buf.seal(makeEnvelope(1, time.Now(), time.Now(), ""))
+		a.flushTerminal(ctx, traceID, buf)
 		return
 	}
 
@@ -506,8 +753,33 @@ func (a *Agent) executeRun(ctx context.Context, traceID string, liveLog bool) {
 		flushWG.Wait()
 	}
 
-	if err := streamLogs(ctx, a.client, a.id, traceID, buf, a.cfg.LogRetryBudget, false); err != nil {
+	a.flushTerminal(ctx, traceID, buf)
+}
+
+// flushTerminal uploads a run's sealed log: its tail and the envelope that ends
+// the run on the server. It outlives the run's own cancellation (2.3.2). A run
+// that was cancelled still has a log and an exit code, and the server has no
+// other way to learn either: flushing on ctx sent nothing at all for a run the
+// agent had just ended. That holds for a run that never got its manifest as
+// much as for one that ran, so both ends of executeRun come through here.
+// Bounded, so a server that never answers cannot hold a stopping agent. For a
+// run the server killed, it has already written the terminal state and answers
+// 409; the budget ends that quickly.
+func (a *Agent) flushTerminal(ctx context.Context, traceID string, buf *logBuffer) {
+	flush, stop := context.WithTimeout(context.WithoutCancel(ctx), terminalFlushTimeout)
+	defer stop()
+	switch err := streamLogs(flush, a.client, a.id, traceID, buf, a.cfg.LogRetryBudget, false); {
+	case errors.Is(err, errRunClosed):
+		a.log.Info("the server had already closed this run; the rest of its log was not accepted", "trace_id", traceID)
+	case err != nil:
 		// Budget exhausted: the server will mark the run log_stream_lost (R2.3).
 		a.log.Error("log stream lost", "trace_id", traceID, "error", err)
 	}
 }
+
+// errRunClosed: see streamLogs.
+var errRunClosed = errors.New("the server has already closed this run")
+
+// terminalFlushTimeout bounds the upload of a finished run's log tail and
+// envelope. Generous beside the retry budget's own back-off (seconds).
+const terminalFlushTimeout = 2 * time.Minute
