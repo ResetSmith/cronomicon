@@ -55,6 +55,14 @@ type Scheduler struct {
 	log *slog.Logger
 	cr  *cron.Cron
 
+	// reloadMu makes a reload one step: read the entries, remove the old, add the
+	// new. Reloads are asked for from several goroutines (every in-app save, the
+	// hook after every sync, the backstop), and two that overlapped could each
+	// remove the entries and then each add its set: every schedule in the engine
+	// twice, and every job on the default concurrency policy enqueued twice at
+	// each of its times, until the next reload. Taken before mu, never after.
+	reloadMu sync.Mutex
+
 	mu                sync.Mutex
 	loc               *time.Location       // effective app zone the engine fires in (never nil)
 	loadedGeneration  string               // definitions generation the current cron entries were loaded at
@@ -245,7 +253,14 @@ type scheduleEntry struct {
 // for the reload was abandoned) left the scheduler with no entries; and since
 // what it compares to decide whether to reload was as it had been, neither the
 // next caller nor the backstop put them back. Every schedule had stopped.
+//
+// One reload at a time (reloadMu). The read is inside it too, so that of two
+// reloads asked for together the one that swaps last is also the one that read
+// last, and the entries left are the newest reading of the tables.
 func (s *Scheduler) Reload(ctx context.Context) error {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
 	jobs, err := s.loadJobEntries(ctx)
 	if err != nil {
 		return err
@@ -255,11 +270,18 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 		return err
 	}
 
-	for _, e := range s.cr.Entries() {
-		s.cr.Remove(e.ID)
+	// The engine as it is now. A timezone change swaps the engine for a new one
+	// and then reloads; if it swaps while this reload is under way, this one
+	// fills the engine that was replaced and the timezone change's own reload,
+	// which waits its turn behind this one, fills the new.
+	s.mu.Lock()
+	cr := s.cr
+	s.mu.Unlock()
+	for _, e := range cr.Entries() {
+		cr.Remove(e.ID)
 	}
 	for _, e := range append(jobs, wfs...) {
-		s.cr.Schedule(e.sched, e.job)
+		cr.Schedule(e.sched, e.job)
 		e.registered()
 	}
 

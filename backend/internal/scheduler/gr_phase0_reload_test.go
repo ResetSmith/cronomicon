@@ -174,23 +174,23 @@ func TestATimezoneRebuildWhoseReloadFailsIsRetriedByTheBackstop(t *testing.T) {
 	}
 }
 
-// Present defect 31, found on 2026-10-09 while fixing defect 29; pinned, NOT
-// fixed. It passes on the code as it is.
+// Reloads asked for at the same moment leave every schedule in the engine
+// ONCE.
 //
-// Nothing serialises reloads. Each removes the entries and then registers the
-// set it read, so two that overlap can both remove and then both register:
-// every schedule is in the engine twice, and every scheduled job fires twice
-// at each of its times, until the next reload. That next reload is not the
-// backstop's (the commit and the tables are as the scheduler remembers them);
-// it is whenever a definition is next saved or a sync next lands.
+// Until this test was inverted (present defect 31, found while fixing defect
+// 29; TestGR0_TwoReloadsAtOnceRegisterEveryEntryTwice pinned it) nothing
+// serialised reloads. Each removed the entries and then registered the set it
+// had read, so two that overlapped could both remove and then both register:
+// every schedule was in the engine twice, and a job on the default concurrency
+// policy was enqueued twice at each of its times, until the next reload. That
+// next reload was not the backstop's (the generation and the tables were as the
+// scheduler remembered them); it was whenever a definition was next saved or a
+// sync next landed. On the released code two reloads at once doubled the
+// entries in 147 rounds of 150.
 //
 // A reload is asked for by every in-app save, by the hook after every sync,
-// and by the backstop, each on its own goroutine: two saves at one moment, or
-// a save during a sync, is all it takes.
-//
-// It is a race, so the test tries until it sees it. On the released code two
-// reloads at once doubled the entries in 147 rounds of 150.
-func TestGR0_TwoReloadsAtOnceRegisterEveryEntryTwice(t *testing.T) {
+// and by the backstop, each on its own goroutine.
+func TestReloadsAtOnceLeaveEachEntryOnce(t *testing.T) {
 	pool := mustPool(t)
 	ctx := context.Background()
 	seedJobRow(t, pool, "j", 1)
@@ -199,22 +199,44 @@ func TestGR0_TwoReloadsAtOnceRegisterEveryEntryTwice(t *testing.T) {
 		seedSchedule(t, pool, "job", "j", "s"+string(rune('a'+i)), "0 2 * * *", i)
 	}
 	s := New(pool, quietLog(), nil)
-	const rounds = 400
-	for round := 1; round <= rounds; round++ {
+	for round := 1; round <= 150; round++ {
 		var wg sync.WaitGroup
-		for g := 0; g < 2; g++ {
+		for g := 0; g < 4; g++ {
 			wg.Add(1)
-			go func() { defer wg.Done(); _ = s.Reload(ctx) }()
+			go func(g int) {
+				defer wg.Done()
+				if g%2 == 0 {
+					_ = s.Reload(ctx)
+				} else {
+					s.ReloadIfChanged(ctx, "") // an empty generation forces a reload
+				}
+			}(g)
 		}
 		wg.Wait()
-		if n := len(s.cr.Entries()); n > schedules {
-			// Today: more entries than schedules. And one reload on its own puts it right.
-			if err := s.Reload(ctx); err != nil || len(s.cr.Entries()) != schedules {
-				t.Errorf("a reload on its own after the doubling: err=%v, entries=%d, want %d", err, len(s.cr.Entries()), schedules)
-			}
-			t.Logf("round %d: two reloads at once left %d entries for %d schedules", round, n, schedules)
-			return
+		if n := len(s.cr.Entries()); n != schedules {
+			t.Fatalf("round %d: four reloads at once left %d entries for %d schedules", round, n, schedules)
 		}
 	}
-	t.Errorf("two reloads at once never left an entry registered twice in %d rounds: this is fixed, and the test is to be inverted (assert it for every round)", rounds)
+	// A reload that reads a CHANGED table while another is under way: whichever
+	// swaps last read last, so the entries are the table's.
+	for round := 1; round <= 50; round++ {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _ = s.Reload(ctx) }()
+		go func() {
+			defer wg.Done()
+			if _, err := pool.ExecContext(ctx, `DELETE FROM definition_schedules WHERE name = 'sa'`); err != nil {
+				t.Errorf("delete: %v", err)
+			}
+			_ = s.Reload(ctx)
+		}()
+		wg.Wait()
+		if n := len(s.cr.Entries()); n != schedules-1 {
+			t.Fatalf("round %d: after a schedule was removed and reloaded, %d entries, want %d", round, n, schedules-1)
+		}
+		seedSchedule(t, pool, "job", "j", "sa", "0 2 * * *", 0)
+		if err := s.Reload(ctx); err != nil || len(s.cr.Entries()) != schedules {
+			t.Fatalf("round %d: after the schedule was put back: err=%v, entries=%d", round, err, len(s.cr.Entries()))
+		}
+	}
 }
