@@ -125,6 +125,12 @@ func (s *Scheduler) RebuildWithLocation(ctx context.Context, newLoc *time.Locati
 	// zone is then a safe no-op (idempotency check) because the backstop converges.
 	s.cr.Start()
 	if reloadErr != nil {
+		// The new engine has no entries (the old one's went with it), so what
+		// the backstop compares is forgotten: its next pass finds a difference
+		// and reloads. Without this it found none, and the engine stayed empty.
+		s.mu.Lock()
+		s.loadedSHA, s.loadedFingerprint = "", ""
+		s.mu.Unlock()
 		s.log.Error("scheduler: timezone rebuild reload failed; engine started, entries reload via backstop", "zone", newLoc.String(), "err", reloadErr)
 		return reloadErr
 	}
@@ -216,20 +222,41 @@ func (s *Scheduler) ReloadIfChanged(ctx context.Context, sha string) {
 	}
 }
 
-// Reload removes all existing entries and re-registers them from the DB.
-// Safe to call multiple times (e.g. after a git sync rebuilds the definition
-// tables). It reads jobs and workflows from definition_schedules.
+// scheduleEntry is one cron entry read from the tables and ready to be
+// registered: its schedule, what it fires, and the log line that says so.
+type scheduleEntry struct {
+	sched      cron.Schedule
+	job        cron.Job
+	registered func()
+}
+
+// Reload replaces the cron entries with what the tables say now. Safe to call
+// multiple times (e.g. after a git sync rebuilds the definition tables). It
+// reads jobs and workflows from definition_schedules.
+//
+// It READS FIRST and removes the entries that are firing only once the new set
+// is in hand. A reload whose read fails returns its error and changes nothing:
+// what was firing goes on firing. Until 2.4.0 it removed every entry and then
+// read, so a read that failed (its context had ended: the request that asked
+// for the reload was abandoned) left the scheduler with no entries; and since
+// what it compares to decide whether to reload was as it had been, neither the
+// next caller nor the backstop put them back. Every schedule had stopped.
 func (s *Scheduler) Reload(ctx context.Context) error {
-	// Remove all existing entries.
+	jobs, err := s.loadJobEntries(ctx)
+	if err != nil {
+		return err
+	}
+	wfs, err := s.loadWorkflowEntries(ctx)
+	if err != nil {
+		return err
+	}
+
 	for _, e := range s.cr.Entries() {
 		s.cr.Remove(e.ID)
 	}
-
-	if err := s.reloadJobs(ctx); err != nil {
-		return err
-	}
-	if err := s.reloadWorkflows(ctx); err != nil {
-		return err
+	for _, e := range append(jobs, wfs...) {
+		s.cr.Schedule(e.sched, e.job)
+		e.registered()
 	}
 
 	fp := s.dbFingerprint(ctx)
@@ -256,7 +283,9 @@ func (s *Scheduler) dbFingerprint(ctx context.Context) string {
 	return fmt.Sprintf("%d:%d:%d:%s:%s", jobCount, wfCount, schedCount, maxJobTime.String, maxWfTime.String)
 }
 
-func (s *Scheduler) reloadJobs(ctx context.Context) error {
+// loadJobEntries reads every job schedule that should fire and builds its
+// entry. It registers nothing.
+func (s *Scheduler) loadJobEntries(ctx context.Context) ([]scheduleEntry, error) {
 	type jobRow struct {
 		schedName, cron   string
 		envJSON           sql.NullString
@@ -292,7 +321,7 @@ func (s *Scheduler) reloadJobs(ctx context.Context) error {
 		WHERE ds.owner_kind = 'job' AND j.enabled = 1 AND j.deleted_at IS NULL
 	`)
 	if err != nil {
-		return fmt.Errorf("query scheduled jobs: %w", err)
+		return nil, fmt.Errorf("query scheduled jobs: %w", err)
 	}
 	defer rows.Close()
 
@@ -308,9 +337,10 @@ func (s *Scheduler) reloadJobs(ctx context.Context) error {
 		jobs = append(jobs, j)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate scheduled jobs: %w", err)
+		return nil, fmt.Errorf("iterate scheduled jobs: %w", err)
 	}
 
+	entries := make([]scheduleEntry, 0, len(jobs))
 	for _, j := range jobs {
 		// One seam for all three modes (cron / interval / once): ParseSpec
 		// resolves the mode and applies the activation window, so the engine
@@ -328,16 +358,22 @@ func (s *Scheduler) reloadJobs(ctx context.Context) error {
 		}
 		concKey := cronutil.ConcurrencyKey(j.concurrencyKey.String, j.uid, j.source, j.name)
 		envJSON := j.envJSON.String
-		s.cr.Schedule(sched, cron.FuncJob(func() {
-			s.fire(j.source, j.name, j.uid, j.runType, scope, j.concurrencyPolicy, concKey, j.schedName, envJSON)
-		}))
-		s.log.Info("scheduler: registered job schedule", "job", j.name, "schedule", j.schedName,
-			"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+		entries = append(entries, scheduleEntry{
+			sched: sched,
+			job: cron.FuncJob(func() {
+				s.fire(j.source, j.name, j.uid, j.runType, scope, j.concurrencyPolicy, concKey, j.schedName, envJSON)
+			}),
+			registered: func() {
+				s.log.Info("scheduler: registered job schedule", "job", j.name, "schedule", j.schedName,
+					"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+			},
+		})
 	}
-	return nil
+	return entries, nil
 }
 
-func (s *Scheduler) reloadWorkflows(ctx context.Context) error {
+// loadWorkflowEntries is loadJobEntries for workflows.
+func (s *Scheduler) loadWorkflowEntries(ctx context.Context) ([]scheduleEntry, error) {
 	type wfRow struct {
 		schedName, cron string
 		envJSON         sql.NullString
@@ -349,14 +385,14 @@ func (s *Scheduler) reloadWorkflows(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ds.name, ds.cron, ds.env, ds.start_at, ds.end_at, ds.interval, w.name, w.source
 		FROM definition_schedules ds
-		-- R2-3 — uid-keyed with a name arm, exactly as reloadJobs above; see the
+		-- R2-3 — uid-keyed with a name arm, exactly as loadJobEntries above; see the
 		-- comment there for why the fallback is mandatory rather than defensive.
 		JOIN workflows w ON (ds.owner_uid IS NOT NULL AND w.uid = ds.owner_uid)
 		                 OR (ds.owner_uid IS NULL AND w.name = ds.owner_name AND w.source = ds.owner_source)
 		WHERE ds.owner_kind = 'workflow' AND w.enabled = 1 AND w.deleted_at IS NULL -- RH
 	`)
 	if err != nil {
-		return fmt.Errorf("query scheduled workflows: %w", err)
+		return nil, fmt.Errorf("query scheduled workflows: %w", err)
 	}
 	defer rows.Close()
 
@@ -370,9 +406,10 @@ func (s *Scheduler) reloadWorkflows(ctx context.Context) error {
 		wfs = append(wfs, wf)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate scheduled workflows: %w", err)
+		return nil, fmt.Errorf("iterate scheduled workflows: %w", err)
 	}
 
+	entries := make([]scheduleEntry, 0, len(wfs))
 	for _, wf := range wfs {
 		spec := cronutil.Spec{Cron: wf.cron, Interval: wf.interval.String, Window: parseWindowCols(wf.startAt, wf.endAt)}
 		sched, err := cronutil.ParseSpec(spec)
@@ -382,13 +419,18 @@ func (s *Scheduler) reloadWorkflows(ctx context.Context) error {
 			continue
 		}
 		envJSON := wf.envJSON.String
-		s.cr.Schedule(sched, cron.FuncJob(func() {
-			s.fireWorkflow(wf.source, wf.name, wf.schedName, envJSON)
-		}))
-		s.log.Info("scheduler: registered workflow schedule", "workflow", wf.name, "schedule", wf.schedName,
-			"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+		entries = append(entries, scheduleEntry{
+			sched: sched,
+			job: cron.FuncJob(func() {
+				s.fireWorkflow(wf.source, wf.name, wf.schedName, envJSON)
+			}),
+			registered: func() {
+				s.log.Info("scheduler: registered workflow schedule", "workflow", wf.name, "schedule", wf.schedName,
+					"spec", cronutil.DescribeSpec(spec), "window", windowLogState(spec.Window, time.Now()))
+			},
+		})
 	}
-	return nil
+	return entries, nil
 }
 
 // fire is called by the cron engine on each tick.  It honors operator pause,
