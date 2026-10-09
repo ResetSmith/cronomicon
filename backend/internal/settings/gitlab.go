@@ -521,16 +521,29 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 // CRONOMICON_GITLAB_TOKEN) wins when set (E.3 precedence); otherwise, and for
 // every other repository, its row.
 func ResolveGitlabRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string) (repoURL, pat string) {
+	repoURL, pat, _ = ResolveRepoRuntime(ctx, database, appCfg, repoID)
+	return repoURL, pat
+}
+
+// ResolveRepoRuntime is ResolveGitlabRuntime that says when the row could not
+// be READ. A repository with no row is not an error (it resolves to what the
+// environment gives, which is nothing for any repository but Global's); a
+// query that failed is, and a caller that would build a sync service from the
+// answer must not take "could not read" for "not configured".
+func ResolveRepoRuntime(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string) (repoURL, pat string, err error) {
 	repoURL = envURL(appCfg, repoID)
 	pat = envToken(repoID)
 	if repoURL != "" && pat != "" {
-		return repoURL, pat
+		return repoURL, pat, nil
 	}
 
 	row := database.QueryRowContext(ctx, `SELECT url, token_enc FROM git_repos WHERE id=?`, repoID)
 	var dbRepoURL, patEnc sql.NullString
 	if err := row.Scan(&dbRepoURL, &patEnc); err != nil {
-		return repoURL, pat
+		if errors.Is(err, sql.ErrNoRows) {
+			return repoURL, pat, nil
+		}
+		return repoURL, pat, fmt.Errorf("read the repository's connection: %w", err)
 	}
 	if repoURL == "" {
 		repoURL = dbRepoURL.String
@@ -540,7 +553,7 @@ func ResolveGitlabRuntime(ctx context.Context, database *sql.DB, appCfg *config.
 			pat = decrypted
 		}
 	}
-	return repoURL, pat
+	return repoURL, pat, nil
 }
 
 func parseGitLabProjectPath(repoURL string) (baseURL, projectPath string, err error) {

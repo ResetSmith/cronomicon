@@ -21,6 +21,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/config"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/logarchive"
 	"github.com/ResetSmith/cronomicon/internal/metrics"
 	"github.com/ResetSmith/cronomicon/internal/notices"
@@ -52,7 +53,12 @@ type Server struct {
 	// sshexec.Service (no claim loop / Start), kept as one long-lived instance so
 	// its per-target in-flight guard is shared across requests.
 	sshProbe *sshexec.Service
-	// scheduleReload, when set, is handed to the gitlab Service as its
+	// git owns the sync service of every repository (2.4.0, GR-11): built by
+	// mountGit, asked by the Git routes at each request, and told when a
+	// repository's connection has been written so that the write takes effect
+	// without a restart of the server.
+	git *gitlab.Registry
+	// scheduleReload, when set, is handed to every gitlab Service as its
 	// onSyncComplete hook so a git sync triggers an immediate scheduler reload.
 	// Set from Options (main.go wires it to scheduler.ReloadIfChanged).
 	scheduleReload func(ctx context.Context, sha string)

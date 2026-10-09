@@ -90,8 +90,32 @@ type Service struct {
 	webhookSecret string
 	Cfg           *config.Config // added for KEK-based webhook secret decryption
 
-	mu      sync.Mutex // guards in-progress sync to prevent overlapping runs
-	syncing bool
+	// gate is the one queue a sync, a blocking sync and a publish wait in: the
+	// Registry's, shared by the Services of every repository (GR-11). nil for a
+	// Service built on its own (tests), which gets one of its own from queue().
+	gate     chan struct{}
+	gateOnce sync.Once
+	// ctx is the Service's lifetime: cancelled by Stop, and by the end of the
+	// process. Everything the Service does on its own account (the syncs
+	// TriggerSync starts) runs on it, and everything it does for a caller is
+	// cancelled with it. nil for a Service built on its own; read it through
+	// lifetime().
+	ctx    context.Context
+	cancel context.CancelFunc
+	// wg counts the operations in flight, so that Stop can wait for them.
+	wg sync.WaitGroup
+
+	mu      sync.Mutex // guards syncing, pending, pendingTrigger and stopped
+	syncing bool       // a sync started by TriggerSync is queued or running
+	// pending: a trigger arrived while that sync was queued or running. One more
+	// sync follows it, with pendingTrigger as its label.
+	pending        bool
+	pendingTrigger string
+	stopped        bool
+
+	// afterFetch, when set, is called once the clone is at the remote's commit
+	// and before anything is parsed. Tests use it to act "during a sync".
+	afterFetch func()
 
 	// onSyncComplete, when set, is invoked at the end of a successful sync with
 	// the synced HEAD SHA so the scheduler can reload newly-synced schedules
@@ -215,50 +239,183 @@ type SyncResult struct {
 	StartedAt       time.Time
 	FinishedAt      time.Time
 	Errors          []ValidationError
+	// notRun: the sync was never attempted, because the Service was stopped or
+	// the caller went away while it waited its turn. Status is "failed", and no
+	// history row was written: nothing happened to record.
+	notRun bool
 }
 
-// TriggerSync starts an async sync and returns immediately. Overlapping calls are
-// coalesced — if a sync is already running, this is a no-op.
-func (s *Service) TriggerSync(ctx context.Context, triggeredBy string) {
+// TriggerSync starts an async sync and returns immediately. At most one sync
+// of this repository started this way is queued or running at a time. A
+// trigger that arrives meanwhile is not dropped: it is remembered, and ONE
+// more sync runs after the current one, however many arrived.
+//
+// Until 2.4.0 such a trigger was dropped ("coalesced"). The sync it was
+// coalesced into may already have fetched, so a push that arrived during a
+// sync was picked up by nothing until the next delivery or a manual sync: no
+// timer polls the repository.
+func (s *Service) TriggerSync(_ context.Context, triggeredBy string) {
 	s.mu.Lock()
-	if s.syncing {
+	if s.stopped {
 		s.mu.Unlock()
-		s.logInfo("sync already in progress — coalescing", "trigger", triggeredBy)
+		return
+	}
+	if s.syncing {
+		s.pending, s.pendingTrigger = true, triggeredBy
+		s.mu.Unlock()
+		s.logInfo("sync already queued or running — one more will follow it", "trigger", triggeredBy)
 		return
 	}
 	s.syncing = true
+	s.wg.Add(1)
 	s.mu.Unlock()
 
 	go func() {
-		defer func() {
+		defer s.wg.Done()
+		for trig := triggeredBy; ; {
+			s.syncLogged(trig)
 			s.mu.Lock()
-			s.syncing = false
+			again := s.pending && !s.stopped
+			trig = s.pendingTrigger
+			s.pending, s.pendingTrigger = false, ""
+			if !again {
+				s.syncing = false
+				s.mu.Unlock()
+				return
+			}
 			s.mu.Unlock()
-		}()
-		defer func() {
-			if r := recover(); r != nil {
-				s.logError("git sync panicked", "panic", r)
-			}
-		}()
-		res := s.sync(context.Background(), triggeredBy)
-		if res.Status != "success" {
-			// GitLab is an optional dependency that degrades gracefully (T12):
-			// an unconfigured/unreachable remote is a warning, not an error.
-			if s.repoURL == "" {
-				s.logWarn("git sync skipped — GitLab not configured", "status", res.Status)
-			} else {
-				s.logError("git sync failed", "status", res.Status, "error", res.ErrorMessage)
-			}
-		} else {
-			s.logInfo("git sync complete",
-				"sha", res.SHA,
-				"jobs", res.JobsSynced,
-				"scripts", res.ScriptsSynced,
-				"schedules", res.SchedulesSynced,
-				"workflows", res.WfsSynced,
-				"scopes", res.ScopesSynced)
 		}
 	}()
+}
+
+// syncLogged runs one sync on the Service's own account and logs how it went.
+func (s *Service) syncLogged(triggeredBy string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logError("git sync panicked", "panic", r)
+		}
+	}()
+	res := s.sync(s.lifetime(), triggeredBy)
+	switch {
+	case res.Status == "success":
+		s.logInfo("git sync complete",
+			"repo_id", s.repo(),
+			"sha", res.SHA,
+			"jobs", res.JobsSynced,
+			"scripts", res.ScriptsSynced,
+			"schedules", res.SchedulesSynced,
+			"workflows", res.WfsSynced,
+			"scopes", res.ScopesSynced)
+	case res.notRun, s.lifetime().Err() != nil:
+		// The Service was stopped while the sync waited its turn, or part of the
+		// way through it: its repository was disconnected, its connection
+		// rewritten, or the server is shutting down. Nothing is wrong.
+	case s.repoURL == "":
+		// GitLab is an optional dependency that degrades gracefully (T12):
+		// an unconfigured/unreachable remote is a warning, not an error.
+		s.logWarn("git sync skipped — GitLab not configured", "repo_id", s.repo(), "status", res.Status)
+	default:
+		s.logError("git sync failed", "repo_id", s.repo(), "status", res.Status, "error", res.ErrorMessage)
+	}
+}
+
+// lifetime is the context the Service lives on: its own, or the background
+// context for a Service built on its own.
+func (s *Service) lifetime() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
+
+// queue is the gate this Service waits in: the Registry's, or one of its own.
+func (s *Service) queue() chan struct{} {
+	s.gateOnce.Do(func() {
+		if s.gate == nil {
+			s.gate = make(chan struct{}, 1)
+		}
+	})
+	return s.gate
+}
+
+// errServiceStopped is what an operation asked of a stopped Service gets.
+var errServiceStopped = errors.New("the repository's sync service has been stopped")
+
+// enter queues one operation on the clone (a sync, a publish) and returns when
+// it is this operation's turn: no other operation of ANY repository's Service
+// is then running (GR-11). The context it returns ends when the caller's does
+// or when the Service is stopped, whichever is first. release must be called
+// when the operation is done.
+//
+// It fails, having started nothing, when the Service is stopped or either
+// context ends before the turn comes.
+func (s *Service) enter(ctx context.Context) (context.Context, func(), error) {
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return nil, nil, errServiceStopped
+	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+
+	opCtx, cancel := context.WithCancel(ctx)
+	unhook := context.AfterFunc(s.lifetime(), cancel)
+	gate := s.queue()
+	leave := func() error {
+		unhook()
+		cancel()
+		s.wg.Done()
+		if s.lifetime().Err() != nil {
+			return errServiceStopped
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return errServiceStopped
+	}
+	select {
+	case gate <- struct{}{}:
+	case <-opCtx.Done():
+		return nil, nil, leave()
+	}
+	if opCtx.Err() != nil {
+		// The turn came at the moment the Service was stopped or the caller
+		// went away: give it up rather than start work that is already cancelled.
+		<-gate
+		return nil, nil, leave()
+	}
+	return opCtx, func() {
+		<-gate
+		unhook()
+		cancel()
+		s.wg.Done()
+	}, nil
+}
+
+// Stop ends the Service: it starts nothing more, whatever it has in flight is
+// cancelled, and Stop returns when that has unwound. A cancelled sync leaves
+// the database as it was (its transaction rolls back) and the clone as far as
+// the fetch got, which the next Service of the repository repairs by fetching
+// and resetting, as every sync does.
+func (s *Service) Stop() {
+	s.halt()
+	s.wg.Wait()
+}
+
+// halt is Stop without the wait: the Service starts nothing more and whatever
+// it has in flight is cancelled, and halt returns at once. Parts of a sync
+// cannot be interrupted (parsing, the reset of the working tree), so "at once"
+// and "unwound" are different moments. The registry replaces a Service with
+// halt: the successor cannot touch the clone before the predecessor has left
+// it, because both wait in the one queue.
+func (s *Service) halt() {
+	s.mu.Lock()
+	s.stopped = true
+	s.pending, s.pendingTrigger = false, ""
+	s.mu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 // logInfo logs at Info level, safely handling a nil logger.
@@ -313,8 +470,19 @@ func (s *Service) SyncBlocking(ctx context.Context, triggeredBy string) SyncResu
 	return s.sync(ctx, triggeredBy)
 }
 
-// sync is the internal sync implementation.
+// sync waits its turn in the queue and runs one sync.
 func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
+	opCtx, release, err := s.enter(ctx)
+	if err != nil {
+		now := time.Now().UTC()
+		return SyncResult{Status: "failed", ErrorMessage: "sync not run: " + err.Error(), StartedAt: now, FinishedAt: now, notRun: true}
+	}
+	defer release()
+	return s.syncNow(opCtx, triggeredBy)
+}
+
+// syncNow is the sync itself. The caller holds the queue.
+func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// LR-78: a sync may add, rename away or prune a scope, and a scope's existence
 	// decides what an agency grant reaches. The grant snapshot is told on the way
 	// out, after the transaction has committed or rolled back. (gitlab cannot be
@@ -329,12 +497,15 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	branch := s.writeBranch(ctx)
-	repo, err := s.cloneOrFetch(branch)
+	repo, err := s.cloneOrFetch(ctx, branch)
 	if err != nil {
 		res.ErrorMessage = err.Error()
 		res.FinishedAt = time.Now().UTC()
 		_ = s.recordSyncEvent(ctx, triggeredBy, res)
 		return res
+	}
+	if s.afterFetch != nil {
+		s.afterFetch()
 	}
 
 	sha, err := s.headSHA(repo)
@@ -868,8 +1039,16 @@ func (s *Service) sync(ctx context.Context, triggeredBy string) SyncResult {
 
 	// Notify the scheduler so freshly-synced schedules take effect at once. The
 	// callback self-gates on SHA change, so a no-op poll (same SHA) is cheap.
-	if s.onSyncComplete != nil {
-		s.onSyncComplete(ctx, sha)
+	//
+	// Only when the sync COMMITTED, and on a context that cannot end. The
+	// scheduler's reload removes every cron entry and then reads them back; run
+	// on a cancelled context it removes them and reads nothing, and since a
+	// rolled-back sync changed neither the commit nor the tables, nothing tells
+	// it to try again: every schedule stops firing. A sync is cancelled whenever
+	// its Service is stopped (a connection was saved, GR-11) or its caller goes
+	// away (a scope resync), and its transaction is where the cancellation lands.
+	if s.onSyncComplete != nil && dbErr == nil {
+		s.onSyncComplete(context.WithoutCancel(ctx), sha)
 	}
 	return res
 }
@@ -896,7 +1075,14 @@ func (s *Service) writeBranch(ctx context.Context) string {
 // After either path it initializes/updates any git submodules (best-effort) so
 // files contributed by a submodule — e.g. an Ansible playbooks repo mounted at
 // scripts/playbooks — are present in the working tree for script discovery.
-func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
+//
+// An existing clone is made to follow the CONNECTION before it is fetched
+// (GR-12): its `origin` is set to the configured URL and to fetch the
+// configured branch. Until 2.4.0 the URL was used once, to clone, and the
+// clone was single-branch, so a changed URL was never applied (the server went
+// on syncing the old repository) and a changed branch was never fetched (every
+// sync after it failed).
+func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repository, error) {
 	if s.repoURL == "" {
 		return nil, fmt.Errorf("CRONOMICON_GITLAB_BASE_URL not configured")
 	}
@@ -911,11 +1097,15 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 		if err != nil {
 			return nil, fmt.Errorf("worktree: %w", err)
 		}
-		fetchOpts := &gogit.FetchOptions{RemoteName: "origin", Force: true}
+		refSpec := gitconfig.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch))
+		if err := s.pointOriginAt(repo, refSpec); err != nil {
+			return nil, err
+		}
+		fetchOpts := &gogit.FetchOptions{RemoteName: "origin", Force: true, RefSpecs: []gitconfig.RefSpec{refSpec}}
 		if auth != nil {
 			fetchOpts.Auth = auth
 		}
-		ferr := repo.Fetch(fetchOpts)
+		ferr := repo.FetchContext(ctx, fetchOpts)
 		if ferr != nil && ferr != gogit.NoErrAlreadyUpToDate {
 			return nil, fmt.Errorf("git fetch: %w", ferr)
 		}
@@ -923,6 +1113,18 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 		remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", branch), true)
 		if err != nil {
 			return nil, fmt.Errorf("resolve origin/%s: %w", branch, err)
+		}
+		// The local branch of that name, at that commit, with HEAD on it: what
+		// `git checkout -B <branch> origin/<branch>` does. On a clone made at
+		// this branch it changes nothing (the reset below moves the same ref).
+		// After the connection's branch has changed, it is what gives publish a
+		// local branch of the new name to commit on and push.
+		local := plumbing.NewBranchReferenceName(branch)
+		if err := repo.Storer.SetReference(plumbing.NewHashReference(local, remoteRef.Hash())); err != nil {
+			return nil, fmt.Errorf("set %s: %w", local, err)
+		}
+		if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, local)); err != nil {
+			return nil, fmt.Errorf("point HEAD at %s: %w", local, err)
 		}
 		if err := wt.Reset(&gogit.ResetOptions{
 			Commit: remoteRef.Hash(),
@@ -932,7 +1134,7 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 		}
 		// Pull any submodules up to their pinned commits so their files are
 		// present for discovery (e.g. scripts/playbooks). Best-effort.
-		s.updateSubmodules(repo, wt, auth)
+		s.updateSubmodules(ctx, repo, wt, auth)
 		return repo, nil
 	}
 
@@ -948,7 +1150,7 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 	if auth != nil {
 		cloneOpts.Auth = auth
 	}
-	repo, err = gogit.PlainClone(s.cloneDir, false, cloneOpts)
+	repo, err = gogit.PlainCloneContext(ctx, s.cloneDir, false, cloneOpts)
 	if err != nil {
 		return nil, fmt.Errorf("git clone %s: %w", s.repoURL, err)
 	}
@@ -957,9 +1159,37 @@ func (s *Service) cloneOrFetch(branch string) (*gogit.Repository, error) {
 	// submodule fetch failure cannot fail the whole clone — updateSubmodules runs
 	// it as a separate best-effort step instead.
 	if wt, werr := repo.Worktree(); werr == nil {
-		s.updateSubmodules(repo, wt, auth)
+		s.updateSubmodules(ctx, repo, wt, auth)
 	}
 	return repo, nil
+}
+
+// pointOriginAt makes the clone's `origin` name the configured URL and fetch
+// the configured branch, writing the clone's config only when it says
+// otherwise (which is: never, on a clone whose connection has not changed).
+func (s *Service) pointOriginAt(repo *gogit.Repository, refSpec gitconfig.RefSpec) error {
+	cfg, err := repo.Config()
+	if err != nil {
+		return fmt.Errorf("read the clone's config: %w", err)
+	}
+	origin := cfg.Remotes["origin"]
+	if origin != nil && len(origin.URLs) == 1 && origin.URLs[0] == s.repoURL &&
+		len(origin.Fetch) == 1 && origin.Fetch[0] == refSpec {
+		return nil
+	}
+	if origin != nil && len(origin.URLs) > 0 && origin.URLs[0] != s.repoURL {
+		// Not the URL: it may carry a credential. That it changed is the news.
+		s.logInfo("git sync: the repository's URL has changed; the clone now fetches from the new one", "repo_id", s.repo())
+	}
+	cfg.Remotes["origin"] = &gitconfig.RemoteConfig{
+		Name:  "origin",
+		URLs:  []string{s.repoURL},
+		Fetch: []gitconfig.RefSpec{refSpec},
+	}
+	if err := repo.SetConfig(cfg); err != nil {
+		return fmt.Errorf("point the clone's origin at the configured repository: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) gitAuth() *gogithttp.BasicAuth {
@@ -979,7 +1209,7 @@ func (s *Service) gitAuth() *gogithttp.BasicAuth {
 // files always load. Submodules are fetched with the same token as the parent
 // repo via SubmoduleUpdateOptions.Auth; a repo with no .gitmodules yields an
 // empty list and is a no-op.
-func (s *Service) updateSubmodules(repo *gogit.Repository, wt *gogit.Worktree, auth *gogithttp.BasicAuth) {
+func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, wt *gogit.Worktree, auth *gogithttp.BasicAuth) {
 	// Sync submodule URLs from .gitmodules to .git/config (equivalent to git submodule sync).
 	// Since go-git does not sync them automatically on URL change, we manually synchronize
 	// the configured URL from .gitmodules.
@@ -1025,7 +1255,10 @@ func (s *Service) updateSubmodules(repo *gogit.Repository, wt *gogit.Worktree, a
 	for _, sub := range subs {
 		cfg := sub.Config()
 		declared[cfg.Path] = true
-		if err := sub.Update(opts); err != nil {
+		// With the sync's context: a submodule fetch is a transfer like the
+		// repository's own, and a Service that is stopped must not have to wait
+		// for one that has stalled.
+		if err := sub.UpdateContext(ctx, opts); err != nil {
 			s.logWarn("update submodule failed; its files will be skipped this sync",
 				"submodule", cfg.Name, "path", cfg.Path, "err", err)
 			continue
@@ -2586,8 +2819,18 @@ func (s *Service) writeScopeProjection(ctx context.Context, tx *sql.Tx, scopeID 
 }
 
 // recordSyncEvent writes a row to git_sync_events and inserts a gitsync activity entry.
+//
+// Not for a sync that was cut short because its own Service was stopped: the
+// connection was rewritten, the repository disconnected or the server is
+// shutting down, and "failed: context canceled" in the history, once for every
+// save that happened to land during a sync, would describe nothing that went
+// wrong. The Service that replaces this one syncs at once and records that.
 func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res SyncResult) error {
 	if s.db == nil {
+		return nil
+	}
+	if res.Status != "success" && s.lifetime().Err() != nil {
+		s.logInfo("git sync: cut short because the repository's sync service was stopped; not recorded", "repo_id", s.repo())
 		return nil
 	}
 	_, err := s.db.Exec(`

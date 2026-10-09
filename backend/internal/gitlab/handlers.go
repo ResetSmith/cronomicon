@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"math"
@@ -16,14 +15,42 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/sortparam"
 )
 
-// Handlers wraps Service and exposes http.HandlerFunc methods for each route.
+// Handlers exposes http.HandlerFunc methods for each route. It answers either
+// from one fixed Service, or from a Registry that it asks at every request,
+// because a repository's Service is replaced whenever its connection is
+// written (GR-11) and a handler that kept the one it was built with would go on
+// syncing with the old URL and token.
 type Handlers struct {
 	svc *Service
+	reg *Registry
 }
 
-// NewHandlers creates handler wrappers around the Service.
+// NewHandlers creates handler wrappers around one fixed Service.
 func NewHandlers(svc *Service) *Handlers {
 	return &Handlers{svc: svc}
+}
+
+// NewRegistryHandlers creates handler wrappers that ask the registry.
+func NewRegistryHandlers(reg *Registry) *Handlers {
+	return &Handlers{reg: reg}
+}
+
+// service is the Service a request is answered by. Every route mounted here
+// existed before a repository was a row, and means Global's (GR-20, GR-27):
+// the routes that name a repository are Phase R6's. It answers 503 and returns
+// nil when there is none: the server is shutting down, or the repository's row
+// could not be read when the server started. (A restart swaps one Service for
+// the next in one step, so a saved connection is never such a moment.)
+func (h *Handlers) service(w http.ResponseWriter) *Service {
+	svc := h.svc
+	if h.reg != nil {
+		svc = h.reg.Global()
+	}
+	if svc == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable",
+			"the repository's sync service is not running; try again in a moment")
+	}
+	return svc
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -31,7 +58,11 @@ func NewHandlers(svc *Service) *Handlers {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func (h *Handlers) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
-	state, err := h.svc.GetSyncState(r.Context())
+	svc := h.service(w)
+	if svc == nil {
+		return
+	}
+	state, err := svc.GetSyncState(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
@@ -48,8 +79,12 @@ func (h *Handlers) GetSyncStatus(w http.ResponseWriter, r *http.Request) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func (h *Handlers) PostSync(w http.ResponseWriter, r *http.Request) {
+	svc := h.service(w)
+	if svc == nil {
+		return
+	}
 	startedAt := time.Now().UTC()
-	h.svc.TriggerSync(r.Context(), "manual")
+	svc.TriggerSync(r.Context(), "manual")
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"startedAt": startedAt.Format(time.RFC3339),
 	})
@@ -83,6 +118,10 @@ func pageParams(r *http.Request) (page, pageSize int) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
+	svc := h.service(w)
+	if svc == nil {
+		return
+	}
 	page, pageSize := pageParams(r)
 	// TS-20: allowlisted ?sort=&order=. `id` is the chronological tiebreak (the
 	// table's insert order); timestamp maps to started_at, action to the
@@ -96,7 +135,7 @@ func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_sort", sortErr.Error())
 		return
 	}
-	events, total, err := h.svc.ListSyncEvents(r.Context(), page, pageSize, orderBy)
+	events, total, err := svc.ListSyncEvents(r.Context(), page, pageSize, orderBy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 		return
@@ -130,12 +169,16 @@ func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
 // that is merely unselected ACCEPTS (202) and does nothing: the delivery is not
 // an error, it is simply not one we react to.
 func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
+	svc := h.service(w)
+	if svc == nil {
+		return
+	}
 	token := r.Header.Get("X-Gitlab-Token")
-	if token == "" || !h.svc.ValidateWebhookToken(r.Context(), token) {
+	if token == "" || !svc.ValidateWebhookToken(r.Context(), token) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid X-Gitlab-Token")
 		return
 	}
-	policy := settings.GetWebhookPolicy(r.Context(), h.svc.db, h.svc.repo())
+	policy := settings.GetWebhookPolicy(r.Context(), svc.db, svc.repo())
 	if !policy.Enabled {
 		metrics.WebhookSync("disabled")
 		writeError(w, http.StatusForbidden, "webhook_disabled",
@@ -147,7 +190,7 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	h.svc.TriggerSync(r.Context(), "webhook")
+	svc.TriggerSync(r.Context(), "webhook")
 	metrics.WebhookSync("ok") // C.2
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -157,6 +200,10 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w http.ResponseWriter, r *http.Request) {
+	svc := h.service(w)
+	if svc == nil {
+		return
+	}
 	baseSHA := r.Header.Get("If-Match")
 	if baseSHA == "" {
 		writeError(w, http.StatusBadRequest, "missing_if_match", "If-Match header with base_sha is required")
@@ -185,13 +232,13 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 	// asks whether they may publish THIS file. Decided before Publish takes the
 	// sync mutex, and before anything is written.
 	if authorize != nil {
-		if msg := authorize(r, h.svc.publishTarget(req)); msg != "" {
+		if msg := authorize(r, svc.publishTarget(req)); msg != "" {
 			writeError(w, http.StatusForbidden, "forbidden", msg)
 			return
 		}
 	}
 
-	result, err := h.svc.Publish(r.Context(), req, baseSHA, actor)
+	result, err := svc.Publish(r.Context(), req, baseSHA, actor)
 	if err != nil {
 		// Check for precondition failure (412).
 		if pe, ok := err.(*PreconditionError); ok {
@@ -203,7 +250,7 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 				"diff":       pe.Diff,
 			})
 			// Record failed push for audit.
-			_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed",
+			_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed",
 				"base_sha mismatch: current="+pe.CurrentSHA)
 			return
 		}
@@ -224,7 +271,7 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 				"message": ve.Message,
 				"errors":  errs,
 			})
-			_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", ve.Message)
+			_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", ve.Message)
 			return
 		}
 		// GitLab unreachable or other push failure (503).
@@ -232,12 +279,12 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 			"code":    "gitlab_unreachable",
 			"message": "Failed to push to GitLab: " + err.Error(),
 		})
-		_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", err.Error())
+		_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", err.Error())
 		return
 	}
 
 	// Record successful push.
-	_ = h.svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, result.CommitSHA, "success", "")
+	_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, result.CommitSHA, "success", "")
 	metrics.SchedulePublish() // C.2
 
 	// Return SchedulePush shape.
@@ -402,22 +449,26 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Request) {
+	svc := h.service(w)
+	if svc == nil {
+		return
+	}
 	// 1. Get scopes before sync
-	beforeScopes, err := settings.ListScopes(r.Context(), h.svc.db, "git")
+	beforeScopes, err := settings.ListScopes(r.Context(), svc.db, "git")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list scopes before sync: "+err.Error())
 		return
 	}
 
-	// 2. Call h.svc.SyncBlocking(...)
+	// 2. Call svc.SyncBlocking(...)
 	// "manual", not the actor: git_sync_events.triggered_by is CHECKed to
 	// poll/webhook/manual, and the insert error is discarded, so passing an
 	// email here left a scope resync with no history row at all.
 	_ = actor
-	res := h.svc.SyncBlocking(r.Context(), "manual")
+	res := svc.SyncBlocking(r.Context(), "manual")
 
 	// 3. Get scopes after sync
-	afterScopes, err := settings.ListScopes(r.Context(), h.svc.db, "git")
+	afterScopes, err := settings.ListScopes(r.Context(), svc.db, "git")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", "failed to list scopes after sync: "+err.Error())
 		return
@@ -485,15 +536,4 @@ func (h *Handlers) ResyncScopes(actor string, w http.ResponseWriter, r *http.Req
 		"errors":       errs,
 		"deltas":       deltas,
 	})
-}
-
-// contextKey is a package-local context key type.
-type contextKey int
-
-const _ contextKey = iota
-
-// StartBackgroundSync kicks off the first sync in the background.
-// Call this once at startup after the service is initialized.
-func StartBackgroundSync(ctx context.Context, svc *Service) {
-	svc.TriggerSync(ctx, "poll")
 }

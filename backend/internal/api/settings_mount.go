@@ -2349,8 +2349,15 @@ func (s *Server) handleUpdateGitlabSettings(w http.ResponseWriter, r *http.Reque
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return
 	}
-	// The sync service resolves repo URL/PAT once at startup (E.5).
-	s.log.Warn("gitlab settings updated — repo URL/PAT changes take effect on restart", "actor", id.Email)
+	// The connection has been written: the repository's sync service is built
+	// again from it, and syncs (GR-11). Until 2.4.0 the service resolved the URL
+	// and the token once, at start-up, and this handler logged that the change
+	// would take effect at the next restart.
+	if s.git != nil {
+		if err := s.git.Restart(r.Context(), repoid.Global); err != nil {
+			s.log.Error("gitlab settings saved, but the sync service could not be restarted with them", "actor", id.Email, "error", err)
+		}
+	}
 	httpx.JSON(w, http.StatusOK, cfg)
 }
 

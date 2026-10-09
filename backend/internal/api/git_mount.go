@@ -7,8 +7,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
-	"github.com/ResetSmith/cronomicon/internal/repoid"
-	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
 // mountGit wires B3 (GitLab integration + schedule write-path) routes.
@@ -20,27 +18,37 @@ import (
 //	GET  /api/v1/git/history             (operator; paginated sync events)
 //	POST /api/v1/webhooks/gitlab         (unauthenticated; X-Gitlab-Token)
 func (s *Server) mountGit(mux *http.ServeMux) {
-	// Effective repo URL + PAT: env wins, DB-backed settings otherwise (E.3).
-	// Resolved once at startup — settings changes take effect on restart.
-	repoURL, token := settings.ResolveGitlabRuntime(context.Background(), s.db, s.cfg, repoid.Global)
-	svc := gitlab.NewService(
-		s.db,
-		s.log,
-		repoURL,
-		token,
-		gitlab.DefaultCloneDir(),
-		s.cfg.WebhookSecret,
-	)
-	svc.Cfg = s.cfg
+	// One sync service per repository, owned by a registry (GR-11). Each
+	// resolves its repository's URL and token when it is built (for Global's:
+	// env wins, its row otherwise, E.3), and is built again whenever the
+	// connection is written, so a change needs no restart of the server.
+	reg := gitlab.NewRegistry(s.db, s.log, s.cfg)
 	// Reload the scheduler immediately after a git sync brings in new schedules
 	// (no-op when unset, e.g. in tests). The hook self-gates on SHA change.
 	if s.scheduleReload != nil {
-		svc.SetOnSyncComplete(s.scheduleReload)
+		reg.SetOnSyncComplete(s.scheduleReload)
 	}
-	h := gitlab.NewHandlers(svc)
+	s.git = reg
+	h := gitlab.NewRegistryHandlers(reg)
 
-	// Kick off an initial background sync so the cache warms at startup.
-	gitlab.StartBackgroundSync(context.Background(), svc)
+	// Start every repository's service, each with a first sync so the cache
+	// warms at startup. They live as long as the process: at shutdown they are
+	// stopped, and the drain waits for a sync in flight to unwind before the
+	// pool closes.
+	if err := reg.Start(s.runCtx); err != nil {
+		s.log.Error("git: the repositories could not be listed; no sync service was started", "error", err)
+	}
+	if s.runCtx.Done() != nil {
+		if s.shutdownWG != nil {
+			s.shutdownWG.Add(1)
+		}
+		context.AfterFunc(s.runCtx, func() {
+			reg.Close()
+			if s.shutdownWG != nil {
+				s.shutdownWG.Done()
+			}
+		})
+	}
 
 	// ── Webhook (unauthenticated; verified by X-Gitlab-Token header) ──────
 	mux.Handle("POST /api/v1/webhooks/gitlab",

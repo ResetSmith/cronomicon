@@ -45,8 +45,10 @@ func (e *PreconditionError) Error() string {
 // Publish validates, commits, and pushes the YAML to GitLab.
 // baseSHA is from the If-Match header (required). actor is the authenticated user's email.
 //
-// Thread-safety: callers must serialize publishes using a DB row lock or external mutex;
-// the in-process single-instance invariant (§1) means a sync.Mutex in the service is enough.
+// Thread-safety: a publish waits in the one queue every sync and publish of
+// every repository waits in (Service.enter, GR-11), so it never works in a
+// clone while a sync is fetching into it or resetting it. Until 2.4.0 it held a
+// mutex that a running sync did not hold.
 // PublishTarget describes what a publish would write, for the caller to
 // authorize (GC-9). The gitlab package knows how to read a definition file; it
 // does not know who the caller is, so it reports facts and the route decides.
@@ -113,8 +115,11 @@ func jobNameAndScope(content []byte) (name, scope string, ok bool) {
 }
 
 func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, actor string) (*PublishResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, release, err := s.enter(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("publish not run: %w", err)
+	}
+	defer release()
 	s.installGuardedGitTransport() // SU-7/SU-8: guard go-git http(s) egress (once)
 
 	// PP-B3: never join an untrusted path into the clone — re-validate here so the

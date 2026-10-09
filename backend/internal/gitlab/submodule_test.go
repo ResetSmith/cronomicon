@@ -58,7 +58,7 @@ func TestCloneOrFetch_PopulatesSubmodules(t *testing.T) {
 	// 3. Sync clones the superproject; updateSubmodules must pull the submodule.
 	clone := filepath.Join(root, "clone")
 	svc := &Service{cloneDir: clone, repoURL: super}
-	if _, err := svc.cloneOrFetch("main"); err != nil {
+	if _, err := svc.cloneOrFetch(t.Context(), "main"); err != nil {
 		t.Fatalf("cloneOrFetch: %v", err)
 	}
 
@@ -123,7 +123,7 @@ func TestCloneOrFetch_WarnsOnGitlinkWithoutGitmodules(t *testing.T) {
 
 	clone := filepath.Join(root, "clone")
 	svc := &Service{cloneDir: clone, repoURL: super, log: logger}
-	if _, err := svc.cloneOrFetch("main"); err != nil {
+	if _, err := svc.cloneOrFetch(t.Context(), "main"); err != nil {
 		t.Fatalf("cloneOrFetch: %v", err)
 	}
 

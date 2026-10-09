@@ -112,7 +112,7 @@ A write failure is reported (rate-limited) to the process log and never stops th
 | Var | Default | Notes |
 |---|---|---|
 | `CRONOMICON_DB_PATH` | `/var/lib/cronomicon/cronomicon.db` | SQLite file on the mounted volume. |
-| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/cronomicon/git-cache/job-definitions` | GitLab clone cache. Keep on the volume so it survives restarts. |
+| `CRONOMICON_GIT_CACHE_DIR` | `/var/lib/cronomicon/git-cache/job-definitions` | The clone of Global's repository: the directory itself, not a parent. Keep on the volume so it survives restarts. Any other repository is cloned into a directory named by its id **beside** this one (by default `/var/lib/cronomicon/git-cache/<repo id>`), so the directory that holds this one must be writable and on the volume too. |
 
 ## Auth — Trusted Header SSO (primary)
 
@@ -394,14 +394,15 @@ timezone blobs). The precedence rule is applied uniformly:
 
 **When a change applies** is per-setting, not uniform — the "When applied" column
 below is the answer, and the PUT handler logs a restart warning only for the ones
-that genuinely need one. The connection-shaped settings (GitLab repo/PAT, Vault
-addr/AppRole) are resolved once at startup, because the client built from them is
-constructed at boot. The rest are re-read closer to use.
+that genuinely need one. The Vault connection (addr/AppRole) is resolved once at
+startup, because the client built from it is constructed at boot. A repository's
+connection (GitLab repo/PAT) was too, until 2.4.0; its sync service is now rebuilt
+whenever the connection is saved. The rest are re-read closer to use.
 
 | Setting | Env override | DB source | When applied |
 |---|---|---|---|
-| GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` (Global's repository only) | `git_repos` (the row `global`) | restart |
-| GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (Global's repository only; pins validation; **rotation API returns 409 while set**) | `git_repos` (+ rotation overlap pair) | restart |
+| GitLab repo URL / PAT | `CRONOMICON_GITLAB_BASE_URL` / `CRONOMICON_GITLAB_TOKEN` (Global's repository only) | `git_repos` (the row `global`) | when the connection is saved (its sync service is rebuilt and syncs); an env value at restart |
+| GitLab webhook secret | `CRONOMICON_GITLAB_WEBHOOK_SECRET` (Global's repository only; pins validation; **rotation API returns 409 while set**) | `git_repos` (+ rotation overlap pair) | the stored secret: at once (read per delivery); the env value: restart |
 | GitLab write branch | `CRONOMICON_GITLAB_WRITE_BRANCH` (Global's repository only) | `git_repos.branch` | next sync/publish (read per operation) |
 | Vault addr / AppRole | `CRONOMICON_VAULT_ADDR` / `CRONOMICON_VAULT_ROLE_ID[_FILE]` / `CRONOMICON_VAULT_SECRET_ID[_FILE]` | `vault_config` | restart |
 | Vault namespace | `CRONOMICON_VAULT_NAMESPACE` | `vault_config.namespace` | restart |

@@ -5590,7 +5590,14 @@ paths:
       tags: [Settings]
       operationId: updateGitlabConfig
       summary: Update GitLab connection config
-      description: Omit pat to keep the stored value. CRONOMICON_GITLAB_PAT env var overrides the DB value at startup (§11.2).
+      description: >-
+        Omit `pat` to keep the stored token; the masked value a read returns in
+        `pat` is taken the same way when it is sent back. The connection is
+        applied when it is saved, with no restart of the server: the
+        repository's sync service is rebuilt from it and syncs at once. The
+        environment variables `CRONOMICON_GITLAB_BASE_URL` and
+        `CRONOMICON_GITLAB_TOKEN`, when set, override the stored URL and token
+        of this repository (§11.2).
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -7215,7 +7222,12 @@ paths:
       tags: [Git]
       operationId: triggerGitSync
       summary: Trigger an immediate Git sync (operator)
-      description: Same pipeline as the <=5min poll and the GitLab webhook (§3.1). CSRF required.
+      description: >-
+        Same pipeline as the GitLab webhook and the sync at start-up (§3.1).
+        Nothing polls the repository on a timer: it is synced when the server
+        starts, when its connection is saved, on a webhook delivery, and by
+        this route. A sync asked for while one is running is not dropped; one
+        more runs after it. CSRF required.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       responses:
         '202':

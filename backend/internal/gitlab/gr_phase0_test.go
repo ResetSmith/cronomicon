@@ -414,6 +414,14 @@ func TestGR2_EachRepositoryHasItsOwnSyncState(t *testing.T) {
 		return r
 	}
 	ra := sync(a, "first repository")
+	// A job says which repository it came from, at first sight. Read before the
+	// second repository syncs: a job's KEY is still the name alone, and the jobs
+	// prune is not bounded by repository, until Phase R3
+	// (TestGR0_TwoJobsOfOneNameAreOneRow, TestGR0_ASecondRepositorysSyncDeletesTheFirsts),
+	// so that sync may remove this one.
+	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='keep'`); got != "global" {
+		t.Errorf("the first repository's job has repo_id %q, want global", got)
+	}
 
 	b, repoB, remoteB := grSecondRepo(t, a)
 	grCommitFiles(t, repoB, remoteB, map[string]string{"jobs/other.yaml": grJob("other", "echo other")}, "the second repository")
@@ -442,11 +450,6 @@ func TestGR2_EachRepositoryHasItsOwnSyncState(t *testing.T) {
 		if n := grCount(t, a.db, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'repo_id'`, table); n != 1 {
 			t.Errorf("%s has no repo_id column", table)
 		}
-	}
-	// A job says which repository it came from, at first sight. (Its KEY is
-	// still the name alone until Phase R3: TestGR0_TwoJobsOfOneNameAreOneRow.)
-	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='keep'`); got != "global" {
-		t.Errorf("the first repository's job has repo_id %q, want global", got)
 	}
 	if got := grString(t, a.db, `SELECT repo_id FROM jobs WHERE source='git' AND name='other'`); got != "repo-b" {
 		t.Errorf("the second repository's job has repo_id %q, want repo-b", got)
