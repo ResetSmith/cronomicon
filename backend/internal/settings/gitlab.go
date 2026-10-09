@@ -451,7 +451,7 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 
 		var hookID int
 		for _, h := range hooks {
-			if strings.HasSuffix(h.URL, "/api/v1/webhooks/gitlab") {
+			if isWebhookURLOf(h.URL, repoID) {
 				hookID = h.ID
 				break
 			}
@@ -554,6 +554,18 @@ func ResolveRepoRuntime(ctx context.Context, database *sql.DB, appCfg *config.Co
 		}
 	}
 	return repoURL, pat, nil
+}
+
+// isWebhookURLOf reports whether a hook's URL is this repository's webhook
+// route (GR-20): /api/v1/webhooks/gitlab/<repo id>, and for Global's also the
+// route with no id, which is the one every hook installed before 2.4.0 has.
+func isWebhookURLOf(hookURL, repoID string) bool {
+	const route = "/api/v1/webhooks/gitlab"
+	u := strings.TrimSuffix(hookURL, "/")
+	if strings.HasSuffix(u, route+"/"+repoID) {
+		return true
+	}
+	return repoID == repoid.Global && strings.HasSuffix(u, route)
 }
 
 func parseGitLabProjectPath(repoURL string) (baseURL, projectPath string, err error) {

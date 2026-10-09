@@ -99,6 +99,7 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/workflow-annotation/{workflowId}":                  {clsVisible, "any signed-in user, on a workflow they can read (GC-12)"},
 	"POST /api/v1/workflows/runs/{traceId}/cancel":                  {clsVerb, "killJobs on every scope the run tree touches (GC-10)"},
 	"POST /api/v1/webhooks/gitlab":                                  {clsWebhook, "X-Gitlab-Token shared secret; triggers a sync, takes no input"},
+	"POST /api/v1/webhooks/gitlab/{repoId}":                         {clsWebhook, "the named repository's X-Gitlab-Token secret; triggers that repository's sync, takes no input (GR-20)"},
 	"POST /api/v1/schedules/publish":                                {clsObject, "authorizePublish — the scope on both sides of the write (GC-9)"},
 	"POST /api/v1/git/sync":                                         {clsGlobal, "one repository for the installation"},
 	"POST /api/v1/scopes/resync":                                    {clsGlobal, "one repository for the installation"},

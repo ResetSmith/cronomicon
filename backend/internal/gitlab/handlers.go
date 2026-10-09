@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/metrics"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 	"github.com/ResetSmith/cronomicon/internal/sortparam"
 )
@@ -42,15 +43,25 @@ func NewRegistryHandlers(reg *Registry) *Handlers {
 // could not be read when the server started. (A restart swaps one Service for
 // the next in one step, so a saved connection is never such a moment.)
 func (h *Handlers) service(w http.ResponseWriter) *Service {
-	svc := h.svc
-	if h.reg != nil {
-		svc = h.reg.Global()
-	}
+	svc := h.serviceOf(repoid.Global)
 	if svc == nil {
 		writeError(w, http.StatusServiceUnavailable, "unavailable",
 			"the repository's sync service is not running; try again in a moment")
 	}
 	return svc
+}
+
+// serviceOf is the running Service of one repository, or nil when it has none.
+// It writes nothing. (Handlers built around one fixed Service answer for that
+// Service's repository and for no other.)
+func (h *Handlers) serviceOf(repoID string) *Service {
+	if h.reg != nil {
+		return h.reg.Service(repoID)
+	}
+	if h.svc != nil && h.svc.repo() == repoID {
+		return h.svc
+	}
+	return nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -168,13 +179,30 @@ func (h *Handlers) ListGitHistory(w http.ResponseWriter, r *http.Request) {
 // operator debugging "why did my push not sync" actually looks. An event type
 // that is merely unselected ACCEPTS (202) and does nothing: the delivery is not
 // an error, it is simply not one we react to.
+//
+// Which repository a delivery is for is in the path (GR-20):
+// /webhooks/gitlab/{repoId}. The route with no id is the one that existed
+// before a repository had one, and means Global's: the hooks installations
+// already have point at it. A delivery is checked against THAT repository's
+// secret set and policy, and starts that repository's sync and no other.
+//
+// A repository that does not exist answers exactly as a wrong token does. The
+// route is unauthenticated, and "no such repository" would tell anyone who can
+// reach it which ids are real.
 func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
-	svc := h.service(w)
-	if svc == nil {
+	repoID := r.PathValue("repoId")
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	svc := h.serviceOf(repoID)
+	if svc == nil && repoID == repoid.Global {
+		// Global's always exists; with no Service it is the server that is not
+		// ready (see service), and a hook's sender should try again.
+		h.service(w)
 		return
 	}
 	token := r.Header.Get("X-Gitlab-Token")
-	if token == "" || !svc.ValidateWebhookToken(r.Context(), token) {
+	if svc == nil || token == "" || !svc.ValidateWebhookToken(r.Context(), token) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid X-Gitlab-Token")
 		return
 	}

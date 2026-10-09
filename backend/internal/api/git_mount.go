@@ -16,7 +16,8 @@ import (
 //	GET  /api/v1/git/sync                (operator; sync status)
 //	POST /api/v1/git/sync                (operator; trigger resync, CSRF)
 //	GET  /api/v1/git/history             (operator; paginated sync events)
-//	POST /api/v1/webhooks/gitlab         (unauthenticated; X-Gitlab-Token)
+//	POST /api/v1/webhooks/gitlab         (unauthenticated; X-Gitlab-Token; Global's repository)
+//	POST /api/v1/webhooks/gitlab/{repoId} (the same, for the repository named)
 func (s *Server) mountGit(mux *http.ServeMux) {
 	// One sync service per repository, owned by a registry (GR-11). Each
 	// resolves its repository's URL and token when it is built (for Global's:
@@ -52,6 +53,10 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 
 	// ── Webhook (unauthenticated; verified by X-Gitlab-Token header) ──────
 	mux.Handle("POST /api/v1/webhooks/gitlab",
+		http.HandlerFunc(h.WebhookGitLab))
+	// One route per repository (GR-20). The one above is the one every
+	// installation's hook points at already, and means Global's.
+	mux.Handle("POST /api/v1/webhooks/gitlab/{repoId}",
 		http.HandlerFunc(h.WebhookGitLab))
 
 	// ── Schedule publish (PublishSchedule = admin OR approver, PP-B1 / closes

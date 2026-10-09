@@ -4604,6 +4604,11 @@ export interface paths {
          *     session or bearer auth. Triggers an immediate sync. During a webhook
          *     secret rotation overlap window both old and new secrets are accepted (S15).
          *
+         *     This route is for the installation's own (Global's) repository. Each
+         *     repository has a route of its own, `/webhooks/gitlab/{repoId}`, which
+         *     behaves in every way as this one does, against that repository's secret
+         *     and settings (v2.4.0).
+         *
          *     Gated by the Webhook Enabled / Webhook Events settings (F2-3). Disabled →
          *     403; an event type whose flag is off → 202 with no sync, since an
          *     unselected event is not a delivery error. X-Gitlab-Event selects the
@@ -4612,6 +4617,37 @@ export interface paths {
          *     token is checked first, so a 403 is never reachable without the secret.
          */
         post: operations["receiveGitlabWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/webhooks/gitlab/{repoId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Webhook receiver of one repository (v2.4.0)
+         * @description `/webhooks/gitlab` for the repository named in the path: the delivery is
+         *     checked against that repository's webhook secret (and its previous one,
+         *     during a rotation's overlap), is gated by that repository's Webhook
+         *     Enabled and Webhook Events settings, and triggers a sync of that
+         *     repository and of no other. `global` names the installation's own
+         *     repository, for which this route and the one without an id are the same.
+         *
+         *     A repository that does not exist answers 401, exactly as a wrong token
+         *     does: the route is unauthenticated, and would otherwise tell a caller
+         *     which ids exist. The environment's webhook secret
+         *     (`CRONOMICON_GITLAB_WEBHOOK_SECRET`) is the installation's own
+         *     repository's and opens no other.
+         */
+        post: operations["receiveRepositoryWebhook"];
         delete?: never;
         options?: never;
         head?: never;
@@ -16874,6 +16910,53 @@ export interface operations {
                 };
             };
             /** @description Webhook delivery is disabled in Settings → Integrations (Webhook Enabled). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    receiveRepositoryWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Gitlab-Token": string;
+                /** @description GitLab's event name, used to select the Webhook Events flag. Absent is treated as a push. */
+                "X-Gitlab-Event"?: string;
+            };
+            path: {
+                /** @description The repository's id; `global` for the installation's own. */
+                repoId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Delivery accepted. A sync of the repository was triggered unless the event's Webhook Events flag is off, in which case it was accepted and ignored. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid X-Gitlab-Token, or no such repository. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Webhook delivery is disabled for this repository. */
             403: {
                 headers: {
                     [name: string]: unknown;
