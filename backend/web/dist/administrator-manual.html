@@ -5004,7 +5004,9 @@ docker run -d --name cronomicon-runner-01 --restart unless-stopped --stop-timeou
                         <code>restart</code>) sends SIGTERM, which from 2.3.2 is also a drain: the agent claims
                         nothing, finishes its runs and exits. The unit's <code>TimeoutStopSec=300</code> (5 min) is
                         how long systemd waits; a run still going then is killed with the agent and recorded as
-                        <code>runner_lost</code> when the agent next starts. An agent older than 2.3.2 ends its
+                        <code>runner_lost</code> when the agent next starts. The unit's <code>KillMode=mixed</code>
+                        is what keeps systemd from signalling an Ansible or Terraform run directly: the installer
+                        writes it from 2.3.2, and the upgrade command adds it to a unit that has none. An agent older than 2.3.2 ends its
                         runs at once on that signal. <strong>Drain before long maintenance.</strong></li>
                     <li><strong>Resync</strong>: declares the runner's current local config again, <em>in place</em>
                         (same id, same API key; owner kept; active runs not affected). This occurs

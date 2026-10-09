@@ -55,7 +55,15 @@ ExecStart=/usr/local/bin/cronomicon-runner
 # server was told nothing.) A run still going after TimeoutStopSec is killed by
 # systemd; the agent's next start tells the server, which records it as lost. For
 # longer runs, drain the runner from the Runners view first and stop it after.
+#
+# KillMode=mixed is what makes that true of Ansible and Terraform runs. They are
+# the agent's own child processes, in this unit's control group, and systemd's
+# default (control-group) sends SIGTERM to every process in the group: the play
+# is cut off by systemd while the agent waits for it. mixed signals the agent
+# alone, and kills whatever is left once it has exited or the timeout has run
+# out. Shell runs go over SSH and were never in the group.
 KillSignal=SIGTERM
+KillMode=mixed
 TimeoutStopSec=300
 
 Restart=on-failure

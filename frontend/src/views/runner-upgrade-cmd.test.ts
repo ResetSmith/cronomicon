@@ -3,6 +3,7 @@ import {
   AGENT_BIN_PATH,
   AGENT_UNIT,
   AGENT_UNIT_PATTERNS,
+  KILLMODE_DROPIN,
   RESTART_WATCH_SECONDS,
   SYSCALL_DROPIN,
   upgradeCommand,
@@ -84,6 +85,23 @@ describe("upgradeCommand", () => {
       `printf '[Service]\\nSystemCallErrorNumber=EPERM\\n' > "/etc/systemd/system/\${U}.d/${SYSCALL_DROPIN}"`,
     );
     expect(cmd).toContain('if [ "$RELOAD" = 1 ]; then systemctl daemon-reload; fi');
+    expect(cmd.indexOf("systemctl daemon-reload")).toBeLessThan(cmd.indexOf("systemctl restart $UNITS || true"));
+  });
+
+  // A unit written before 2.3.2 names no KillMode, and systemd's default sends
+  // the stop signal to every process of the unit: an Ansible or Terraform run,
+  // which is the agent's child, is cut off by the stop its agent is draining.
+  // The line goes in before the restart, so that restart is already a drain;
+  // a unit that names a KillMode of its own is left alone, and so is the
+  // fallback unit name on a machine where no unit was found (an empty $CONF).
+  it("adds KillMode=mixed to a unit that names none, before the restart", () => {
+    const cmd = upgradeCommand(ORIGIN);
+    expect(KILLMODE_DROPIN).toBe("20-killmode.conf");
+    expect(cmd).toContain(`if [ -n "$CONF" ] && ! grep -q '^KillMode=' <<<"$CONF"; then`);
+    expect(cmd).toContain(
+      `printf '[Service]\\nKillMode=mixed\\n' > "/etc/systemd/system/\${U}.d/${KILLMODE_DROPIN}"`,
+    );
+    expect(cmd.indexOf("KillMode=mixed")).toBeLessThan(cmd.indexOf("systemctl daemon-reload"));
     expect(cmd.indexOf("systemctl daemon-reload")).toBeLessThan(cmd.indexOf("systemctl restart $UNITS || true"));
   });
 

@@ -27,7 +27,10 @@ that cuts runs off:** the agents being replaced are older and end their runs
 the moment they are stopped, so drain them first, or run the command when
 nothing is running. Runs that an older agent left shown as *running* are closed
 as failed (*runner lost*) when the upgraded agent first reports in. An agent in
-a container needs a longer stop timeout to drain (below).
+a container needs a longer stop timeout to drain (below). **An installed
+agent's unit needs `KillMode=mixed`** for a stop to spare its Ansible and
+Terraform runs: the upgrade command adds it; a unit you wrote yourself, or one
+you upgrade by hand, needs the line added (below).
 
 ### Added
 
@@ -100,8 +103,22 @@ a container needs a longer stop timeout to drain (below).
   - **The first signal is a drain.** The agent claims no new work, keeps its
     heartbeat, lets the runs in flight finish, uploads their logs and exits.
     systemd waits for it as long as the unit's `TimeoutStopSec=300` allows.
-  - **A second signal cancels the runs.** Each still uploads its log, which
-    ends with *the runner agent was stopped before this run finished*.
+  - **systemd signals the agent alone (`KillMode=mixed`).** An Ansible or
+    Terraform run is the agent's own child process, in the unit's control
+    group, and systemd's default sends `SIGTERM` to every process in the
+    group: the play would be cut off by systemd while the agent waited for it,
+    and end as an ordinary failure with nothing to say why. Shell runs were
+    never affected (they run on their targets, over SSH), which is how the
+    first checks on RHEL 8.10 missed it. The installer's unit and the
+    reference unit carry the line; **the upgrade command adds it** to every
+    agent unit that names no `KillMode`, as a drop-in
+    (`/etc/systemd/system/<unit>.d/20-killmode.conf`), before it restarts
+    anything, and leaves alone a unit that names one. A container agent needs
+    nothing: Docker signals only the agent.
+  - **A second signal, or any after it, cancels the runs.** Each still uploads
+    its log, which ends with *the runner agent was stopped before this run
+    finished*. A run handed over between the two signals is refused instead of
+    started, and a third signal is no longer swallowed.
   - **A run's last log upload outlives the run's own cancellation**, so a
     cancelled run is recorded as what it was instead of not at all.
 - **A run whose agent died stayed *running* for good.** A crash, an
@@ -141,6 +158,12 @@ a container needs a longer stop timeout to drain (below).
   Seen on RHEL 8.10 when a unit was restarted a second after the installer
   started it. The exchange and the saving of its answer are now one step that
   a stop signal does not interrupt (bounded at 30 seconds).
+- **An agent started from a desktop session raised a password dialog.** The
+  agent asks systemd for a scope when it starts, to learn whether it may put
+  its runs in one. Run by a user who may not, on a machine with a graphical
+  session, the request raised a polkit dialog that nobody answers, once per
+  start (and once per test that starts an agent). `systemd-run` is now called
+  with `--no-ask-password`: a refusal is an answer, at once.
 - **The upgrade notice about two host keys for one address never cleared.**
   `host_key_conflict` stayed for as long as a record's old key differed from
   the trusted one, so approving the host's current key, which is what the
@@ -209,6 +232,15 @@ a container needs a longer stop timeout to drain (below).
 - `Agent.Run` returns when its context is cancelled **and** its runs have
   ended; `Agent.Abort` cancels them. A test that cancels the context with a
   run in flight must end the run or call `Abort`, or `Run` does not return.
+  `Abort` is sticky (`Agent.aborted`): `dispatch` refuses whatever arrives
+  after it.
+- `KillMode=mixed` is in three places that must agree: the installer's unit,
+  the reference unit (`runner-install-check.sh` compares the two and checks
+  the line in each) and `KILLMODE_DROPIN` in `runner-upgrade-cmd.ts`, which is
+  how a unit that already exists gets it. A run type that executes as a child
+  of the agent depends on it.
+- The runner package's E2E tests set `NoSandbox`: they run SSH jobs and must
+  not ask the host's systemd for anything.
 - `internal/runner/e2e_stop_test.go` holds the three behaviours against the
   real agent and the real handlers; the drain test fails on the old run
   context.
