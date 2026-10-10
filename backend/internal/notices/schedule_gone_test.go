@@ -98,3 +98,44 @@ func TestScheduleGoneIsAnInAppEntryWhoseScheduleLeft(t *testing.T) {
 		t.Errorf("open notices once a schedule holds the name again = %v; that is the other notice's now", got)
 	}
 }
+
+// "A schedule of that name" is one the definition could be bound to: built in
+// the app, of Global's repository, or of its own agency's. Another agency's
+// repository's schedule of the name is nothing to it. (As first built, both
+// notices asked for a schedule of the name anywhere: once another agency's
+// repository had one, a job's "its schedule is gone" turned into "a schedule
+// of that name exists; save the job", which saving could not do, and which
+// told one agency a name another holds.)
+func TestAScheduleOfAnotherAgencysRepositoryIsNotANamesake(t *testing.T) {
+	pool := open(t)
+	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't'), ('ag-tax', 'Tax', 't')`)
+	mustExec(t, pool, `INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-fin', 'ag-fin', 'u', 'main'), ('repo-tax', 'ag-tax', 'u', 'main')`)
+	mustExec(t, pool, `INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-prod', 'cronomicon', 't')`)
+	mustExec(t, pool, `INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin')`)
+	mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, synced_at) VALUES ('j-fin', 'fin-job', 'cronomicon', 'bash', 'fin-prod', 't')`)
+	mustExec(t, pool, `INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, source_ref, owner_uid, schedule_uid)
+		VALUES ('cronomicon', 'job', 'fin-job', 'nightly', '0 0 2 * * *', 0, 'nightly', 'j-fin', 's-pruned')`)
+	kinds := func() (gone, ambiguous int) {
+		t.Helper()
+		if err := notices.RunChecks(context.Background(), pool); err != nil {
+			t.Fatalf("checks: %v", err)
+		}
+		return len(openOf(t, pool, notices.KindScheduleGone)), len(openOf(t, pool, notices.KindScheduleBindingAmbiguous))
+	}
+	if gone, amb := kinds(); gone != 1 || amb != 0 {
+		t.Fatalf("with no schedule of the name: gone=%d ambiguous=%d, want 1 and 0", gone, amb)
+	}
+	// Another agency's repository gets a schedule of the name: nothing changes.
+	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash, repo_id, owner_agency) VALUES ('s-tax', 'nightly', 'git', '0 0 5 * * *', 'h', 'repo-tax', 'ag-tax')`)
+	if gone, amb := kinds(); gone != 1 || amb != 0 {
+		t.Errorf("with another agency's repository's schedule of the name: gone=%d ambiguous=%d, want 1 and 0 still", gone, amb)
+	}
+	// Its OWN agency's repository gets one: that one it could be bound to.
+	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash, repo_id, owner_agency) VALUES ('s-fin', 'nightly', 'git', '0 0 6 * * *', 'h', 'repo-fin', 'ag-fin')`)
+	if gone, amb := kinds(); gone != 0 || amb != 1 {
+		t.Errorf("with its own agency's repository's schedule of the name: gone=%d ambiguous=%d, want 0 and 1", gone, amb)
+	}
+	if d := openOf(t, pool, notices.KindScheduleBindingAmbiguous)["job:j-fin:nightly"].Detail; strings.Contains(d, "2 schedules") {
+		t.Errorf("the notice counts another agency's schedule among those of the name: %s", d)
+	}
+}

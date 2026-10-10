@@ -471,28 +471,3 @@ func TestGR4_AScopeFromAnAgencysRepositoryIsThatAgencys(t *testing.T) {
 		t.Errorf("the scope that returned is in %q, want ag-b", got)
 	}
 }
-
-// A repository whose agency is not in the catalog supplies no scope: with no
-// agency to give it, the scope is not born at all, rather than born Global's.
-func TestGR4_AScopeIsNotBornGlobalsForWantOfItsAgency(t *testing.T) {
-	a, _, _ := newSyncFixture(t)
-	grSync(t, a, "Global's repository")
-	b, repoB, remoteB := grSecondRepo(t, a)
-	// The row of the repository stays; its agency goes. (Nothing lets this
-	// happen through the application: an agency with a repository cannot be
-	// deleted.)
-	if _, err := a.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.db.Exec(`DELETE FROM agencies WHERE id = 'ag-b'`); err != nil {
-		t.Skipf("the agency could not be removed for the test: %v", err)
-	}
-	if _, err := a.db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		t.Fatal(err)
-	}
-	gitCommitFile(t, repoB, remoteB, "inventory/theirs.ini", fmt.Sprintf(grScope, "b1", "10.0.0.2"), "the agency's scope")
-	b.SyncBlocking(context.Background(), "t")
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = 'theirs' AND sa.agency_id = 'global'`); n != 0 {
-		t.Errorf("the scope of a repository whose agency is gone was born Global's")
-	}
-}

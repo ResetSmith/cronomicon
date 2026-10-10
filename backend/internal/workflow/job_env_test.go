@@ -29,7 +29,7 @@ func TestChildEnvJSONLayersJobEnv(t *testing.T) {
 	e := New(pool, discardLog())
 
 	// Parent NULL (no such workflow run) ⇒ job-env base + step input; input wins Y.
-	got := e.childEnvJSON(context.Background(), "no-such-wf", "cronomicon", "step1", map[string]string{"Y": "in"})
+	got := e.childEnvJSON(context.Background(), "no-such-wf", "cronomicon", "step1", "", map[string]string{"Y": "in"})
 	if !got.Valid {
 		t.Fatalf("childEnvJSON returned NULL, want merged env")
 	}
@@ -43,7 +43,7 @@ func TestChildEnvJSONLayersJobEnv(t *testing.T) {
 	if _, err := pool.Exec(`INSERT INTO jobs (uid, name, source, run_type, enabled, synced_at)VALUES ('uid-'||'plain', 'plain','cronomicon','bash',1,'t')`); err != nil {
 		t.Fatalf("seed plain job: %v", err)
 	}
-	if got := e.childEnvJSON(context.Background(), "no-such-wf", "cronomicon", "plain", nil); got.Valid {
+	if got := e.childEnvJSON(context.Background(), "no-such-wf", "cronomicon", "plain", "", nil); got.Valid {
 		t.Errorf("childEnvJSON for an env-less step = %q, want NULL", got.String)
 	}
 }

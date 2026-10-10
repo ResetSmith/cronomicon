@@ -26,7 +26,29 @@ func newHomeFixture(t *testing.T) *homeFixture {
 	f := &homeFixture{t: t, e: identityPool(t)}
 	f.exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-b', 'B', 't'), ('ag-c', 'C', 't')`)
 	f.exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-b', 'ag-b', 'u', 'main'), ('repo-c', 'ag-c', 'u', 'main')`)
+	// A scope of each agency, and one that is Global's.
+	for _, sc := range [][3]string{{"sc-b", "b-hosts", "ag-b"}, {"sc-c", "c-hosts", "ag-c"}, {"sc-g", "g-hosts", "global"}} {
+		f.exec(`INSERT INTO scopes (id, name, source, created_at) VALUES (?, ?, 'cronomicon', 't')`, sc[0], sc[1])
+		f.exec(`DELETE FROM scope_agencies WHERE scope_id = ?`, sc[0])
+		f.exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, sc[0], sc[2])
+	}
 	return f
+}
+
+// lastRun is the newest run of a job name: the job it is of, its scope, status,
+// stored reason and environment. ok is false when there is none within the wait.
+func (f *homeFixture) lastRun(job string) (uid, scope, status, reason, env string, ok bool) {
+	f.t.Helper()
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		err := f.e.db.QueryRow(`SELECT COALESCE(job_uid,''), COALESCE(scope,''), status, COALESCE(queued_reason,''), COALESCE(env_json,'')
+		                          FROM runs WHERE job_name = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`, job).Scan(&uid, &scope, &status, &reason, &env)
+		if err == nil {
+			return uid, scope, status, reason, env, true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return "", "", "", "", "", false
 }
 
 func (f *homeFixture) exec(q string, args ...any) {
@@ -67,8 +89,10 @@ func TestAGitWorkflowsStepResolvesInItsRepositoryThenGlobals(t *testing.T) {
 	f.job("og", "only-global", "global", "g-hosts")
 	f.job("oc", "only-c", "repo-c", "c-hosts")
 	f.job("ob", "only-b", "repo-b", "b-hosts")
-	f.job("oc-app", "also-in-app", "repo-c", "c-hosts")
-	f.job("app", "also-in-app", "", "app-hosts")
+	// Built in the app: one of the workflow's own agency, one of another's.
+	f.job("app-b", "b-app-job", "", "b-hosts")
+	f.job("app-c", "c-app-job", "", "c-hosts")
+	f.job("app-g", "g-app-job", "", "g-hosts")
 
 	resolve := func(name, stepSource, home string) (uid, unavailable string, found bool) {
 		t.Helper()
@@ -88,7 +112,15 @@ func TestAGitWorkflowsStepResolvesInItsRepositoryThenGlobals(t *testing.T) {
 		{"a name only another agency's has", "only-c", "", "repo-b", "", false},
 		{"the same, the step saying git", "only-c", "git", "repo-b", "", false},
 		{"a name only another agency's has, from Global's", "only-b", "", "global", "", false},
-		{"another agency's and the app's: the app's, second", "also-in-app", "", "repo-b", "app", true},
+		// Among the jobs built in the app, a workflow of an AGENCY's repository
+		// finds its own agency's and no other's; Global's repository's finds
+		// any, as it always has.
+		{"the app's job of the workflow's own agency, second", "b-app-job", "", "repo-b", "app-b", true},
+		{"the same, the step saying so", "b-app-job", "cronomicon", "repo-b", "app-b", true},
+		{"the app's job of ANOTHER agency", "c-app-job", "", "repo-b", "", false},
+		{"the same, the step saying so", "c-app-job", "cronomicon", "repo-b", "", false},
+		{"the app's job that is Global's", "g-app-job", "", "repo-b", "", false},
+		{"the app's job of any agency, from Global's repository", "c-app-job", "", "global", "app-c", true},
 	} {
 		uid, unavailable, found := resolve(c.name, c.stepSource, c.home)
 		if found != c.wantFound || uid != c.wantUID || unavailable != "" {
@@ -151,6 +183,21 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
 	rowB := f.workflowRow("f-b", "flow", "repo-b", child)
 	f.workflowRow("only-c", "theirs", "repo-c", child)
 	rowGonly := f.workflowRow("only-g", "shared", "global", child)
+	// Built in the app: another agency's (the older row), and the workflow's own.
+	f.exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency) VALUES
+	        ('app-c', 'month-end', 'cronomicon', '[]', 1, 't', 'ag-c'),
+	        ('app-b', 'month-end', 'cronomicon', '[]', 1, 't', 'ag-b'),
+	        ('app-c2', 'c-only', 'cronomicon', '[]', 1, 't', 'ag-c')`)
+	appRow := func(uid string) int64 {
+		var r int64
+		if err := f.e.db.QueryRow(`SELECT rowid FROM workflows WHERE uid = ?`, uid).Scan(&r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	// A workflow of the home repository that is switched off, with Global's of the name on.
+	f.exec(`INSERT INTO workflows (uid, name, source, steps, enabled, synced_at, repo_id) VALUES
+	        ('off-b', 'paused', 'git', '[]', 0, 't', 'repo-b'), ('on-g', 'paused', 'git', '[]', 1, 't', 'global')`)
 
 	for _, c := range []struct {
 		what, name, home string
@@ -163,6 +210,14 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
 		{"a name only Global's has, from repo-b", "shared", "repo-b", rowGonly, "global"},
 		{"a name only another agency's has, from repo-b", "theirs", "repo-b", 0, ""},
 		{"with no home: the oldest, as before", "flow", "", rowC, "repo-c"},
+		// Built in the app: the workflow's own agency's, and no other's.
+		{"the app's workflow of its own agency, from repo-b", "month-end", "repo-b", appRow("app-b"), ""},
+		{"the app's workflow of another agency, from repo-b", "c-only", "repo-b", 0, ""},
+		{"the app's workflow of any agency, from Global's: the oldest, as before", "month-end", "global", appRow("app-c"), ""},
+		// Its own repository's workflow is switched off: the step fails; Global's
+		// of the name does not run in its place.
+		{"its own, switched off, with Global's on", "paused", "repo-b", 0, ""},
+		{"from Global's, Global's own", "paused", "global", appRow("on-g"), "global"},
 	} {
 		_, _, row, home, ok := f.e.loadChildWorkflow(ctx, c.name, "git", c.home)
 		if row != c.wantRow || home != c.wantHome || ok != (c.wantRow != 0) {
@@ -189,9 +244,6 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
 // repository's job of a name that Global's and another agency's also hold.
 func TestATriggeredGitWorkflowRunsItsOwnRepositorysJob(t *testing.T) {
 	f := newHomeFixture(t)
-	f.exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-b', 'b-hosts', 'cronomicon', 't')`)
-	f.exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-b'`)
-	f.exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-b', 'ag-b')`)
 	f.job("d-c", "deploy", "repo-c", "c-hosts")
 	f.job("d-g", "deploy", "global", "")
 	f.job("d-b", "deploy", "repo-b", "b-hosts")

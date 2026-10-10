@@ -67,3 +67,38 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 	}
 	return false, rows.Err()
 }
+
+// ReasonWorkflowScopeMismatch is the stored reason of a workflow step refused
+// by ScopeOutsideRepository.
+const ReasonWorkflowScopeMismatch = "Refused: this workflow comes from an agency's repository, and this step would run on a scope that does not belong to that agency"
+
+// ScopeOutsideRepository reports whether a scope is one a workflow of the
+// repository repoID may NOT run a step on: the repository belongs to an
+// agency, and the scope is not that agency's alone (another agency's,
+// Global's, several agencies', none at all, or not there). Global's
+// repository, and no repository, may run on any.
+//
+// RepoScopeMismatch asks this of a JOB's repository. A workflow needs it asked
+// of its own: a step of an agency's repository's workflow may resolve to a job
+// of GLOBAL's repository (GR-16), and a Global job may name any agency's scope
+// (GR-14). Without this an agency's committers could run Global's job on
+// another agency's hosts, on their schedule and with their environment.
+func ScopeOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope string) (bool, error) {
+	if repoID == "" || repoID == repoid.Global {
+		return false, nil
+	}
+	var agencies, own int
+	err := database.QueryRowContext(ctx, `
+		SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1),
+		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+		         WHERE sc.name = ?1 AND sa.agency_id = g.agency_id)
+		  FROM git_repos g WHERE g.id = ?2`, scope, repoID).Scan(&agencies, &own)
+	if err == sql.ErrNoRows {
+		// A repository that is not there has no agency to run for.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return scope == "" || agencies != 1 || own != 1, nil
+}

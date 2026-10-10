@@ -241,18 +241,35 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, name, parentSource, home
 		var rowid int64
 		var repo sql.NullString
 		err := sql.ErrNoRows
-		if src == "git" && home != "" {
+		switch agency := e.agencyOfHome(ctx, home); {
+		case src == "git" && home != "":
 			for _, in := range homeThenGlobal(home) {
+				// The repository's own workflow of the name stops the search even
+				// when it may not run. A disabled one is NOT replaced by Global's
+				// of the same name: the step fails, as a step whose job is disabled
+				// does, rather than run a different workflow under the name.
+				var off bool
 				err = e.db.QueryRowContext(ctx, `
-					SELECT rowid, steps, repo_id FROM workflows
-					 WHERE name = ? AND source = 'git' AND enabled = 1 AND deleted_at IS NULL
-					   AND COALESCE(repo_id, ?) = ?`,
-					name, repoid.Global, in).Scan(&rowid, &raw, &repo)
+					SELECT rowid, steps, repo_id, enabled = 0 OR deleted_at IS NOT NULL FROM workflows
+					 WHERE name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`,
+					name, repoid.Global, in).Scan(&rowid, &raw, &repo, &off)
+				if err == nil && off {
+					return "", nil, 0, "", false
+				}
 				if err == nil {
 					break
 				}
 			}
-		} else {
+		case src == "cronomicon" && agency != "":
+			// A workflow built in the app, for a parent of an AGENCY's repository:
+			// that agency's, and no other's (see agencyOfHome).
+			err = e.db.QueryRowContext(ctx, `
+				SELECT rowid, steps, repo_id FROM workflows
+				 WHERE name = ? AND source = 'cronomicon' AND enabled = 1 AND deleted_at IS NULL
+				   AND owner_agency = ?
+				 ORDER BY rowid LIMIT 1`,
+				name, agency).Scan(&rowid, &raw, &repo)
+		default:
 			err = e.db.QueryRowContext(ctx, `
 				SELECT rowid, steps, repo_id FROM workflows
 				 WHERE name = ? AND source = ? AND enabled = 1 AND deleted_at IS NULL

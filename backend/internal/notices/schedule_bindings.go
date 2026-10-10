@@ -43,7 +43,15 @@ func checkScheduleBindingAmbiguous(ctx context.Context, database *sql.DB) error 
 		SELECT ds.owner_kind,
 		       COALESCE(NULLIF(ds.owner_uid, ''), ds.owner_source || ':' || ds.owner_name),
 		       ds.owner_name, ds.owner_source, ds.name, ds.source_ref, ds.cron,
-		       (SELECT COUNT(*) FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL),
+		       (SELECT COUNT(*) FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL
+		                 AND (s.source = 'cronomicon' OR COALESCE(s.repo_id, 'global') = 'global'
+		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
+		                           (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+		                              FROM jobs j
+		                              JOIN scopes sc         ON sc.name = j.scope
+		                              JOIN scope_agencies sa ON sa.scope_id = sc.id
+		                             WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
+		                           (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid))))),
 		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 		                   FROM jobs j
 		                   JOIN scopes sc         ON sc.name = j.scope
@@ -57,8 +65,21 @@ func checkScheduleBindingAmbiguous(ctx context.Context, database *sql.DB) error 
 		        OR NOT EXISTS (SELECT 1 FROM schedules s0 WHERE s0.uid = ds.schedule_uid))
 		   AND COALESCE(ds.source_ref, '') <> ''
 		   -- a schedule of that name is there to be bound to; an entry whose
-		   -- schedule has gone and has no namesake is a different condition
-		   AND EXISTS (SELECT 1 FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL)
+		   -- schedule has gone and has no namesake is a different condition.
+		   -- One the definition COULD be bound to (2.4.0): built in the app, of
+		   -- Global's repository, or of its own agency's. Another agency's
+		   -- repository's schedule of the name is nothing to this definition:
+		   -- saving it would not bind that one, and its notice must not say
+		   -- that such a schedule exists.
+		   AND EXISTS (SELECT 1 FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL
+		                 AND (s.source = 'cronomicon' OR COALESCE(s.repo_id, 'global') = 'global'
+		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
+		                           (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+		                              FROM jobs j
+		                              JOIN scopes sc         ON sc.name = j.scope
+		                              JOIN scope_agencies sa ON sa.scope_id = sc.id
+		                             WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
+		                           (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid)))))
 		   -- the owner is live: a binned definition fires nothing. An entry with
 		   -- no owner uid (what is left under a name two definitions share) is
 		   -- matched to its owner the way the scheduler matches it, by the name.
@@ -150,7 +171,15 @@ func checkScheduleGone(ctx context.Context, database *sql.DB) error {
 		   AND COALESCE(ds.source_ref, '') <> ''
 		   AND COALESCE(ds.schedule_uid, '') <> ''
 		   AND NOT EXISTS (SELECT 1 FROM schedules s0 WHERE s0.uid = ds.schedule_uid)
-		   AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL)
+		   AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL
+		                     AND (s.source = 'cronomicon' OR COALESCE(s.repo_id, 'global') = 'global'
+		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
+		                           (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+		                              FROM jobs j
+		                              JOIN scopes sc         ON sc.name = j.scope
+		                              JOIN scope_agencies sa ON sa.scope_id = sc.id
+		                             WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
+		                           (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid)))))
 		   AND (   (ds.owner_kind = 'job'      AND EXISTS (SELECT 1 FROM jobs j      WHERE j.uid = ds.owner_uid AND j.deleted_at IS NULL))
 		        OR (ds.owner_kind = 'workflow' AND EXISTS (SELECT 1 FROM workflows w WHERE w.uid = ds.owner_uid AND w.deleted_at IS NULL)))
 		 ORDER BY ds.owner_kind, ds.owner_name, ds.name`, agencyid.Global)

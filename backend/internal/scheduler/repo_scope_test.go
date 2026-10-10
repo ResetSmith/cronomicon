@@ -251,3 +251,165 @@ func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionThenGlobals(t *testing
 	finish("n-b")
 	expect("repo-b's nightly ran", map[string]int{"after-b": 2, "after-app": 2, "after-g": 2})
 }
+
+// With ONLY Global's repository the reaction engine's name rule is the one it
+// was: a reaction with no upstream identity fires on the run of a job that was
+// pruned before its run finished, and on an old run of a job that has returned
+// under a new identity. (The rule for several repositories compares the run's
+// definition with the one the name means, and so would fire on neither; as
+// Phase R4 was first built it applied to every installation, which the review
+// found by running both.)
+func TestAReactionByNameIsUnchangedWithOneRepository(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	job := func(uid, name, source string, repo any) {
+		t.Helper()
+		exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at, repo_id)
+		      VALUES (?, ?, ?, 'bash', 'Allow', 1, 't', ?)`, uid, name, source, repo)
+	}
+	job("after", "after", "cronomicon", nil)
+	exec(`INSERT INTO reactions (owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name, on_outcome,
+	                             delay_seconds, min_interval_seconds, include_workflow_children, enabled, owner_uid)
+	      VALUES ('cronomicon', 'job', 'after', 'on-nightly', 'git', 'job', 'nightly', 'success', 0, 0, 0, 1, 'after')`)
+	n := 0
+	finish := func(uid string) {
+		t.Helper()
+		n++
+		ts := time.Now().UTC().Add(-time.Duration(60-n) * time.Second).Format(time.RFC3339)
+		exec(`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, completed_at, created_at)
+		      VALUES (?, 'nightly', 'git', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`, "r-"+uid+"-"+string(rune('a'+n)), uid, ts, ts)
+	}
+	pending := func() int { t.Helper(); s.ScanReactions(ctxb()); return countPending(t, pool, "after") }
+	primeCursor(t, s)
+
+	job("n-1", "nightly", "git", "global")
+	finish("n-1")
+	if got := pending(); got != 1 {
+		t.Fatalf("while the job is there: %d pending, want 1", got)
+	}
+	// The job is pruned while its last run is going; the run then finishes.
+	exec(`DELETE FROM jobs WHERE uid = 'n-1'`)
+	finish("n-1")
+	if got := pending(); got != 2 {
+		t.Errorf("after the job was pruned and its last run finished: %d pending, want 2 (as before 2.4.0)", got)
+	}
+	// It returns under a new identity, and an old run finishes; then a new one.
+	job("n-2", "nightly", "git", "global")
+	finish("n-1")
+	if got := pending(); got != 3 {
+		t.Errorf("after the job returned and an old run finished: %d pending, want 3 (as before 2.4.0)", got)
+	}
+	finish("n-2")
+	if got := pending(); got != 4 {
+		t.Errorf("after the returned job's run finished: %d pending, want 4", got)
+	}
+}
+
+// The reaction engine's name rule for a WORKFLOW: as an upstream, and as the
+// owner whose repository the name is looked up in. (The tests of 5f643c1 had a
+// job in both places.)
+func TestAReactionByNameResolvesWorkflowsTheSameWay(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-b', 'B', 't'), ('ag-c', 'C', 't')`)
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-b', 'ag-b', 'u', 'main'), ('repo-c', 'ag-c', 'u', 'main')`)
+	wf := func(uid, name, source string, repo any, owner string) {
+		t.Helper()
+		exec(`INSERT INTO workflows (uid, name, source, steps, enabled, synced_at, repo_id, owner_agency) VALUES (?, ?, ?, '[]', 1, 't', ?, ?)`,
+			uid, name, source, repo, owner)
+	}
+	// Who reacts, all WORKFLOWS, none with an upstream identity: one of repo-b,
+	// one built in the app that agency B owns, one of Global's repository.
+	wf("after-b", "after-b", "git", "repo-b", "ag-b")
+	wf("after-app", "after-app", "cronomicon", nil, "ag-b")
+	wf("after-g", "after-g", "git", "global", "global")
+	for _, o := range [][2]string{{"git", "after-b"}, {"cronomicon", "after-app"}, {"git", "after-g"}} {
+		exec(`INSERT INTO reactions (owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name, on_outcome,
+		                             delay_seconds, min_interval_seconds, include_workflow_children, enabled, owner_uid)
+		      VALUES (?, 'workflow', ?, 'on-nightly', 'git', 'workflow', 'nightly', 'success', 0, 0, 0, 1, ?)`, o[0], o[1], o[1])
+	}
+	n := 0
+	finish := func(uid string) {
+		t.Helper()
+		n++
+		ts := time.Now().UTC().Add(-time.Duration(60-n) * time.Second).Format(time.RFC3339)
+		exec(`INSERT INTO workflow_runs (id, workflow_id, workflow_name, workflow_source, workflow_uid, status, triggered_by, trigger_kind,
+		                                 started_at, completed_at, created_at)
+		      VALUES (?, 0, 'nightly', 'git', ?, 'success', 't', 'scheduled', ?, ?, ?)`, "wr-"+uid+"-"+string(rune('a'+n)), uid, ts, ts, ts)
+	}
+	expect := func(when string, want map[string]int) {
+		t.Helper()
+		s.ScanReactions(ctxb())
+		for name, w := range want {
+			if got := countPending(t, pool, name); got != w {
+				t.Errorf("%s: %s has %d pending run(s), want %d", when, name, got, w)
+			}
+		}
+	}
+	primeCursor(t, s)
+
+	wf("n-c", "nightly", "git", "repo-c", "ag-c")
+	finish("n-c")
+	expect("only another agency's nightly", map[string]int{"after-b": 0, "after-app": 0, "after-g": 0})
+	wf("n-g", "nightly", "git", "global", "global")
+	finish("n-g")
+	expect("Global's nightly ran", map[string]int{"after-b": 1, "after-app": 1, "after-g": 1})
+	wf("n-b", "nightly", "git", "repo-b", "ag-b")
+	finish("n-g")
+	expect("Global's nightly ran, repo-b having its own", map[string]int{"after-b": 1, "after-app": 1, "after-g": 2})
+	finish("n-b")
+	expect("repo-b's nightly ran", map[string]int{"after-b": 2, "after-app": 2, "after-g": 2})
+}
+
+// A job built in the app whose scope several agencies share is Global's for
+// the purpose of where its reaction's names are looked up: not the first of
+// the agencies that happens to come back.
+func TestAReactionOwnersSharedScopeIsGlobals(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-b', 'B', 't'), ('ag-c', 'C', 't')`)
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-b', 'ag-b', 'u', 'main')`)
+	exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-both', 'both-hosts', 'cronomicon', 't')`)
+	exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-both'`)
+	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-both', 'ag-b'), ('sc-both', 'ag-c')`)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at, scope) VALUES ('after', 'after', 'cronomicon', 'bash', 'Allow', 1, 't', 'both-hosts')`)
+	exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at, repo_id) VALUES
+	      ('n-b', 'nightly', 'git', 'bash', 'Allow', 1, 't', 'repo-b'), ('n-g', 'nightly', 'git', 'bash', 'Allow', 1, 't', 'global')`)
+	exec(`INSERT INTO reactions (owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name, on_outcome,
+	                             delay_seconds, min_interval_seconds, include_workflow_children, enabled, owner_uid)
+	      VALUES ('cronomicon', 'job', 'after', 'on-nightly', 'git', 'job', 'nightly', 'success', 0, 0, 0, 1, 'after')`)
+	finish := func(id, uid string, ago time.Duration) {
+		ts := time.Now().UTC().Add(-ago).Format(time.RFC3339)
+		exec(`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, completed_at, created_at)
+		      VALUES (?, 'nightly', 'git', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`, id, uid, ts, ts)
+	}
+	primeCursor(t, s)
+	finish("r1", "n-b", 50*time.Second)
+	s.ScanReactions(ctxb())
+	if got := countPending(t, pool, "after"); got != 0 {
+		t.Errorf("a job on a scope two agencies share reacted to ONE agency's repository's nightly (%d pending)", got)
+	}
+	finish("r2", "n-g", 40*time.Second)
+	s.ScanReactions(ctxb())
+	if got := countPending(t, pool, "after"); got != 1 {
+		t.Errorf("the same job did not react to Global's nightly (%d pending, want 1)", got)
+	}
+}

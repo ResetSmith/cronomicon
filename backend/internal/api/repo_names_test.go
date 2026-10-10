@@ -3,6 +3,7 @@ package api_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,11 @@ import (
 // A reaction written in the app pins the upstream the engine would find by the
 // name. Until Phase R4 it pinned "the one Git definition of that name, wherever
 // it is", which with a repository per agency can be another agency's job.
+//
+// And a name that only ANOTHER agency's repository holds is no upstream at all
+// for this owner: the save is refused, in the words used for a name nobody
+// holds. (As Phase R4 was first built it was saved with no upstream, would
+// never fire, and was listed as healthy.)
 func TestAReactionWrittenInTheAppPinsItsAgencysRepositorysDefinition(t *testing.T) {
 	api, pool := newRxAPI(t)
 	exec := mustExec(t, pool)
@@ -29,12 +35,15 @@ func TestAReactionWrittenInTheAppPinsItsAgencysRepositorysDefinition(t *testing.
 		t.Helper()
 		exec(`INSERT INTO jobs (name, uid, source, run_type, enabled, synced_at, repo_id) VALUES ('nightly', ?, 'git', 'bash', 1, 't', ?)`, uid, repo)
 	}
+	try := func(owner, upstream string) (int, string) {
+		t.Helper()
+		return api.doRaw(http.MethodPut, "/api/v1/reactions/job/"+owner, map[string]any{
+			"reactions": []map[string]any{{"name": "after-it", "onKind": "job", "onName": upstream, "onSource": "git", "onOutcome": "success"}},
+		})
+	}
 	put := func(owner string) {
 		t.Helper()
-		code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/"+owner, map[string]any{
-			"reactions": []map[string]any{{"name": "after-nightly", "onKind": "job", "onName": "nightly", "onSource": "git", "onOutcome": "success"}},
-		})
-		if code != http.StatusOK {
+		if code, body := try(owner, "nightly"); code != http.StatusOK {
 			t.Fatalf("PUT reactions of %s = %d (%s)", owner, code, body)
 		}
 	}
@@ -47,13 +56,19 @@ func TestAReactionWrittenInTheAppPinsItsAgencysRepositorysDefinition(t *testing.
 		return uid
 	}
 
-	// Only ANOTHER agency's repository has a nightly.
+	// Only ANOTHER agency's repository has a nightly: for these owners there is
+	// no such job, and the answer is the one a name nobody holds gets.
 	gitJob("n-c", "repo-c")
-	put("load-b")
-	put("load-g")
 	for _, owner := range []string{"load-b", "load-g"} {
-		if got := pinned(owner); got != "(none)" {
-			t.Errorf("with only another agency's nightly, %s's reaction is pinned to %q; want to nothing", owner, got)
+		code, body := try(owner, "nightly")
+		nobodyCode, nobodyBody := try(owner, "no-such-job")
+		if code != http.StatusUnprocessableEntity || code != nobodyCode ||
+			strings.ReplaceAll(body, "nightly", "X") != strings.ReplaceAll(nobodyBody, "no-such-job", "X") {
+			t.Errorf("%s reacting to a job only another agency's repository has: %d %s; want what a name nobody holds gets: %d %s",
+				owner, code, body, nobodyCode, nobodyBody)
+		}
+		if n := count(t, pool, `SELECT COUNT(*) FROM reactions WHERE owner_name = ?`, owner); n != 0 {
+			t.Errorf("a refused save left %d reaction row(s) for %s", n, owner)
 		}
 	}
 	// Global's repository gets one: both mean it.
@@ -150,5 +165,71 @@ func TestTheComposerResolvesAScriptAndAScheduleInItsAgencysRepository(t *testing
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM jobs WHERE name LIKE 'fin-wants-%'`); n != 0 {
 		t.Errorf("%d jobs were saved on another agency's script or schedule", n)
+	}
+}
+
+// Where the composer looks a name up, for two cases the first tests left out
+// (the review's mutations survived): a job on a scope SEVERAL agencies share
+// is Global's for this purpose, not the first of them; and a workflow's
+// schedule is taken from its owner's repository.
+func TestTheComposersHomeForASharedScopeAndForAWorkflow(t *testing.T) {
+	h, pool := gateServer(t) // fin-hosts is FIN's, tax-hosts is TAX's
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-fin', 'ag:FIN', 'u', 'main'), ('repo-tax', 'ag:TAX', 'u', 'main')`)
+	exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc:both', 'both-hosts', 'cronomicon', '2026-01-01T00:00:00Z')`)
+	exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc:both'`)
+	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc:both', 'ag:FIN'), ('sc:both', 'ag:TAX')`)
+	exec(`INSERT INTO scripts (uid, repo_id, name, run_type, command, content_hash, synced_at) VALUES
+	      ('s-fin', 'repo-fin', 'deploy.sh', 'bash', 'echo fin', 'h1', 't'), ('s-glob', 'global', 'deploy.sh', 'bash', 'echo glob', 'h2', 't')`)
+	exec(`INSERT INTO schedules (uid, name, source, cron, content_hash, repo_id, owner_agency) VALUES
+	      ('d-tax', 'nightly', 'git', '0 0 1 * * *', 'h', 'repo-tax', 'ag:TAX'),
+	      ('d-glob', 'nightly', 'git', '0 0 2 * * *', 'h', 'global', 'global'),
+	      ('d-fin', 'nightly', 'git', '0 0 3 * * *', 'h', 'repo-fin', 'ag:FIN')`)
+	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled, created_at) VALUES
+	      ('fin-job', 'cronomicon', 'bash', 'fin-hosts', 1, '2026-01-01T00:00:00Z'),
+	      ('tax-job', 'cronomicon', 'bash', 'tax-hosts', 1, '2026-01-01T00:00:00Z')`)
+
+	// A job on the shared scope: its script is Global's.
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gRoot, `{"name":"on-shared","scope":"both-hosts","scriptRef":"deploy.sh"}`)
+	if rec.Code/100 != 2 {
+		t.Fatalf("composing a job on the shared scope = %d (%s)", rec.Code, rec.Body)
+	}
+	var script string
+	_ = pool.QueryRow(`SELECT COALESCE(script_uid, '') FROM jobs WHERE name = 'on-shared'`).Scan(&script)
+	if script != "s-glob" {
+		t.Errorf("a job on a scope two agencies share is joined to the script %q; want Global's", script)
+	}
+
+	// A workflow of FIN's jobs takes FIN's repository's schedule; of TAX's, TAX's.
+	for who, c := range map[string][3]string{gFinAdmin: {"fin-flow", "fin-job", "d-fin"}, gTaxAdmin: {"tax-flow", "tax-job", "d-tax"}} {
+		body := fmt.Sprintf(`{"name":%q,"steps":[{"type":"job","name":%q}],"scheduleRefs":["nightly"]}`, c[0], c[1])
+		if rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", who, body); rec.Code/100 != 2 {
+			t.Fatalf("composing %s = %d (%s)", c[0], rec.Code, rec.Body)
+		}
+		var sched string
+		_ = pool.QueryRow(`SELECT COALESCE(d.schedule_uid, '') FROM definition_schedules d JOIN workflows w ON w.uid = d.owner_uid WHERE w.name = ?`, c[0]).Scan(&sched)
+		if sched != c[2] {
+			t.Errorf("the workflow %s is bound to the schedule %q; want its owner's repository's, %q", c[0], sched, c[2])
+		}
+	}
+}
+
+// A workflow that runs a job whose scope is not in the catalog is Global's: the
+// job's runs are Global's, and so is what the workflow reaches.
+func TestAWorkflowOfAJobOnAnUnknownScopeIsGlobals(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled, created_at) VALUES
+	      ('fin-job', 'cronomicon', 'bash', 'fin-hosts', 1, '2026-01-01T00:00:00Z'),
+	      ('odd-job', 'cronomicon', 'bash', 'no-such-scope', 1, '2026-01-01T00:00:00Z')`)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
+		`{"name":"odd-flow","steps":[{"type":"job","name":"fin-job"},{"type":"job","name":"odd-job"}]}`)
+	if rec.Code/100 != 2 {
+		t.Fatalf("composing = %d (%s)", rec.Code, rec.Body)
+	}
+	var owner string
+	_ = pool.QueryRow(`SELECT owner_agency FROM workflows WHERE name = 'odd-flow'`).Scan(&owner)
+	if owner != "global" {
+		t.Errorf("a workflow of FIN's job and a job on a scope that is not there is %q's; want Global's", owner)
 	}
 }

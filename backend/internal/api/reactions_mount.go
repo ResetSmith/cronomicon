@@ -14,6 +14,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/reaction"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
@@ -362,7 +363,11 @@ func (s *Server) validateReactions(r *http.Request, owner reactionRef, in []reac
 			return badReaction(x.Name + ": a definition cannot react to itself")
 		}
 
-		exists, err := s.definitionExists(r, upstream)
+		// For the OWNER: a Git name means the definition the engine would find
+		// for it (GR-16), not any repository's. Saved against a name that only
+		// another agency's repository holds, the reaction would be stamped with
+		// no upstream, never fire, and be shown as healthy.
+		exists, err := s.upstreamExistsFor(r, owner, upstream)
 		if err != nil {
 			return err
 		}
@@ -567,6 +572,57 @@ func (s *Server) definitionExists(r *http.Request, ref reactionRef) (bool, error
 	return true, nil
 }
 
+// upstreamExistsFor is definitionExists as the reaction's OWNER would find the
+// upstream (2.4.0, GR-16). A definition built in the app is found by its name,
+// as before. A Git one is the owner's repository's, then Global's: the owner's
+// repository is a Git owner's own, and for an owner built in the app the
+// repository of its agency. This is the question the engine asks when the
+// upstream finishes, so "missing" here is "will not fire".
+func (s *Server) upstreamExistsFor(r *http.Request, owner, upstream reactionRef) (bool, error) {
+	if upstream.Source != "git" {
+		return s.definitionExists(r, upstream)
+	}
+	home := repoid.Global
+	ownerTable := "jobs"
+	if owner.Kind == "workflow" {
+		ownerTable = "workflows"
+	}
+	if owner.Source == "git" {
+		var repo sql.NullString
+		//nolint:gosec // the table is one of two literals
+		_ = s.db.QueryRowContext(r.Context(),
+			"SELECT repo_id FROM "+ownerTable+" WHERE source = 'git' AND name = ? ORDER BY rowid LIMIT 1", owner.Name).Scan(&repo)
+		if repo.Valid && repo.String != "" {
+			home = repo.String
+		}
+	} else if owner.Kind == "workflow" {
+		var agency sql.NullString
+		_ = s.db.QueryRowContext(r.Context(),
+			`SELECT owner_agency FROM workflows WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&agency)
+		if agency.Valid {
+			home = s.agencyRepo(r.Context(), agency.String)
+		}
+	} else {
+		var scope sql.NullString
+		_ = s.db.QueryRowContext(r.Context(),
+			`SELECT scope FROM jobs WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&scope)
+		home = s.scopeRepo(r.Context(), scope.String)
+	}
+	table := "jobs"
+	if upstream.Kind == "workflow" {
+		table = "workflows"
+	}
+	var one int
+	//nolint:gosec // the table is one of two literals
+	err := s.db.QueryRowContext(r.Context(),
+		"SELECT 1 FROM "+table+" WHERE source = 'git' AND name = ? AND deleted_at IS NULL AND COALESCE(repo_id, ?) IN (?, ?) LIMIT 1",
+		upstream.Name, repoid.Global, home, repoid.Global).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // definitionReadable answers §2.9's can-the-author-see-it question against the
 // upstream's own scope, using the same scope predicate every read path uses.
 func (s *Server) definitionReadable(r *http.Request, id auth.Identity, ref reactionRef) (bool, error) {
@@ -688,8 +744,9 @@ func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]re
 	out = readable
 
 	for i := range out {
-		exists, err := s.definitionExists(r, reactionRef{
-			Source: out[i].OnSource, Kind: out[i].OnKind, Name: out[i].OnName})
+		exists, err := s.upstreamExistsFor(r,
+			reactionRef{Source: out[i].OwnerSource, Kind: out[i].OwnerKind, Name: out[i].OwnerName},
+			reactionRef{Source: out[i].OnSource, Kind: out[i].OnKind, Name: out[i].OnName})
 		if err != nil {
 			return nil, err
 		}

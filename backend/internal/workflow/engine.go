@@ -627,6 +627,23 @@ func (e *Engine) runJob(
 				"job", step.Name, "scope", effectiveScope)
 		}
 	}
+	// And the WORKFLOW's repository: a step of an agency's repository's workflow
+	// runs on that agency's scopes, whoever's job it resolved to. The check
+	// above asks about the job's repository, and a job of Global's may name any
+	// agency's scope; this is what stops an agency's workflow from running it
+	// there, on its own schedule and with its own environment.
+	if stepStatus == "queued" {
+		outside, oerr := runref.ScopeOutsideRepository(ctx, e.db, e.Home(ctx, wfID), effectiveScope)
+		if oerr != nil {
+			e.log.Error("workflow: check the step's scope against the workflow's repository", "job", step.Name, "err", oerr)
+			return "danger", false
+		}
+		if outside {
+			stepStatus, stepQueuedReason = "failure", runref.ReasonWorkflowScopeMismatch
+			e.log.Warn("workflow: the workflow comes from an agency's repository and this step's scope is not that agency's",
+				"job", step.Name, "scope", effectiveScope)
+		}
+	}
 	// LR-47 — a key-bound shell step with no agent to deliver the key fails the
 	// step here, terminal-and-recorded like the refusal above: the local runner
 	// cannot deliver it, and a step left queued for a runner that does not exist
@@ -675,7 +692,7 @@ func (e *Engine) runJob(
 			ConcurrencyKey: concKey,
 			WorkflowRunID:  wfTraceID,
 			Executor:       executor,
-			EnvJSON:        e.childEnvJSON(ctx, wfTraceID, jobSrc, step.Name, inputEnv).String,
+			EnvJSON:        e.childEnvJSON(ctx, wfTraceID, jobSrc, step.Name, jd.uid, inputEnv).String,
 			SSHUser:        jd.sshUser,
 			SSHCredential:  jd.sshCred,
 			AgenciesJSON:   stepAgenciesJSON,
@@ -825,9 +842,16 @@ func (e *Engine) Cancel(ctx context.Context, wfTraceID string) bool {
 // childEnvJSON builds a child run's env snapshot in precedence order (later wins):
 // job-level env (JC10/JC11 base) → the parent workflow env → this step's resolved
 // A12 inputs (inputs win). Returns NULL when every layer is empty (R2 no-op).
-func (e *Engine) childEnvJSON(ctx context.Context, wfTraceID, jobSource, jobName string, inputEnv map[string]string) sql.NullString {
+//
+// The job's env is read by the job's uid, the one the step resolved to. By
+// name and source, as it was until 2.4.0 (present defect 37), it was the env
+// of WHICHEVER job of that name the query returned: with two agencies' jobs of
+// one name, a step ran one agency's job with the other's environment.
+func (e *Engine) childEnvJSON(ctx context.Context, wfTraceID, jobSource, jobName, jobUID string, inputEnv map[string]string) sql.NullString {
 	var jobEnv sql.NullString
-	_ = e.db.QueryRowContext(ctx, `SELECT env_json FROM jobs WHERE name=? AND source=?`, jobName, jobSource).Scan(&jobEnv)
+	_ = e.db.QueryRowContext(ctx,
+		`SELECT env_json FROM jobs WHERE CASE WHEN ?1 != '' THEN uid = ?1 ELSE name = ?2 AND source = ?3 END`,
+		jobUID, jobName, jobSource).Scan(&jobEnv)
 	parent := e.parentEnvJSON(ctx, wfTraceID)
 	merged := envmerge.Merge(envmerge.Parse(jobEnv.String), envmerge.Parse(parent.String), inputEnv)
 	if merged == nil {
@@ -1133,6 +1157,33 @@ func (e *Engine) Home(ctx context.Context, workflowID int64) string {
 
 // homeThenGlobal is where a Git name is looked up for a workflow whose home is
 // known: its repository, then Global's.
+// agencyOfHome is the agency a workflow's home repository belongs to, when the
+// home is an AGENCY's: "" for Global's repository and for no home.
+//
+// A workflow of an agency's repository is confined to that agency in what it
+// names as well as in what it runs on. Its Git names are its repository's and
+// Global's (homeThenGlobal). The names it finds among the definitions built in
+// the app are that agency's and nobody else's: the older rule, "the one in-app
+// definition of the name", is another agency's job the moment that agency
+// builds one.
+func (e *Engine) agencyOfHome(ctx context.Context, home string) string {
+	if home == "" || home == repoid.Global {
+		return ""
+	}
+	var agency string
+	if err := e.db.QueryRowContext(ctx, `SELECT agency_id FROM git_repos WHERE id = ?`, home).Scan(&agency); err != nil {
+		// A home that cannot be read confines to nobody: nothing in-app is found.
+		return "\x00no-agency"
+	}
+	return agency
+}
+
+// jobOfAgencySQL is "this row of `jobs` is the agency ?'s": its scope belongs
+// to that agency alone.
+const jobOfAgencySQL = ` AND (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+	                          FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+	                         WHERE sc.name = jobs.scope) = ?`
+
 func homeThenGlobal(home string) []string {
 	if home == repoid.Global {
 		return []string{repoid.Global}
@@ -1431,6 +1482,21 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource, home 
 				if _, jd, ok := scan(`name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`, name, repoid.Global, repo); ok {
 					return src, jd, true
 				}
+			}
+			continue
+		}
+		// And among the jobs built in the app, for a workflow of an AGENCY's
+		// repository: that agency's, and no other's (see agencyOfHome).
+		if agency := e.agencyOfHome(ctx, home); src == "cronomicon" && agency != "" {
+			var nMatches int
+			_ = e.db.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM jobs WHERE name = ? AND source = 'cronomicon'`+jobOfAgencySQL, name, agency).Scan(&nMatches)
+			if nMatches > 1 {
+				return src, jobDef{runType: "bash", source: src,
+					unavailable: "Refused: this name matches more than one job; qualify the step by identity"}, true
+			}
+			if _, jd, ok := scan(`name = ? AND source = 'cronomicon'`+jobOfAgencySQL, name, agency); ok {
+				return src, jd, true
 			}
 			continue
 		}

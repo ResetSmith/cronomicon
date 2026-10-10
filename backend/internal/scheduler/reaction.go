@@ -336,6 +336,13 @@ func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time
 		   -- hold the name, and on nobody's when neither of the two does. (A
 		   -- run from before a run recorded its definition keeps the older
 		   -- rule: there is nothing to compare.)
+		   --
+		   -- Only once a repository other than Global's is connected. With one
+		   -- repository the older rule cannot reach another agency's job, and
+		   -- it does one thing this rule does not: it fires on the run of a
+		   -- job that has since been pruned, or pruned and recreated, whose
+		   -- definition the run's identity no longer names. An installation
+		   -- with one repository keeps exactly what it had.
 		   AND (
 		         (COALESCE(on_uid,'') <> '' AND ? <> '' AND on_uid = ?)
 		      OR (
@@ -343,7 +350,8 @@ func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time
 		              OR (NOT EXISTS (SELECT 1 FROM jobs      WHERE uid = reactions.on_uid)
 		              AND NOT EXISTS (SELECT 1 FROM workflows WHERE uid = reactions.on_uid)))
 		        AND CASE
-		              WHEN reactions.on_source = 'git' AND ? <> '' THEN `+reactionUpstreamByNameSQL+` = ?
+		              WHEN reactions.on_source = 'git' AND ? <> ''
+		                   AND EXISTS (SELECT 1 FROM git_repos WHERE id <> 'global') THEN `+reactionUpstreamByNameSQL+` = ?
 		              ELSE CASE on_kind
 		                     WHEN 'job' THEN (SELECT COUNT(*) FROM jobs
 		                                       WHERE source = reactions.on_source AND name = reactions.on_name

@@ -760,10 +760,16 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		if kind == "workflow" {
 			table = "workflows"
 		}
+		// A definition built in the app, for a reaction in an AGENCY's
+		// repository: one of that agency's, and no other's (2.4.0). "Any in-app
+		// definition of the name" told a repository's committers which names
+		// other agencies hold (this file's error, or its absence), and then the
+		// timing and outcome of their runs. Global's repository asks as before.
+		ofAgency, ofAgencyArgs := s.inAppOfThisAgency(kind)
 		var one int
 		//nolint:gosec // table is chosen from two literals by the kind switch
 		err := s.db.QueryRowContext(ctx,
-			"SELECT 1 FROM "+table+" WHERE source = ? AND name = ?", source, name).Scan(&one)
+			"SELECT 1 FROM "+table+" WHERE source = ? AND name = ?"+ofAgency, append([]any{source, name}, ofAgencyArgs...)...).Scan(&one)
 		if err == nil {
 			return true
 		}
@@ -2096,13 +2102,25 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 		// among them and is not written here: the composer has never copied it,
 		// so an in-app job on a project is not a checkout job, and making it one
 		// is a change of its own that this does not make.
+		//
+		// Of THIS repository's agency, when the repository is an agency's (2.4.0).
+		// An in-app job is joined to an agency's repository's script because it
+		// is that agency's (GR-16). If its scope is given to another agency
+		// afterwards, the join is still there; what must not go on is the
+		// repository's committers changing the body of a job that now runs on
+		// another agency's hosts. Such a job keeps the copy it has. Global's
+		// script reaches every in-app job joined to it, as before.
+		ofThisAgency, ofThisAgencyArgs := "", []any{}
+		if s.repo() != repoid.Global {
+			ofThisAgency, ofThisAgencyArgs = ` AND `+jobsAgencySQL+` = ?`, []any{s.agency()}
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE jobs
 			    SET run_type = ?, command = ?, script = ?, script_path = ?, executor = ?,
 			        content_hash = ?
-			  WHERE source = 'cronomicon' AND script_uid = ?`,
-			rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
-			rs.contentHash, rs.uid); err != nil {
+			  WHERE source = 'cronomicon' AND script_uid = ?`+ofThisAgency,
+			append([]any{rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
+				rs.contentHash, rs.uid}, ofThisAgencyArgs...)...); err != nil {
 			return fmt.Errorf("refresh in-app jobs of script %q: %w", name, err)
 		}
 		// And a job of ANOTHER repository that uses this script (GR-16: an
@@ -2324,17 +2342,36 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 		// GR-16: an agency's definition may use Global's). Its copy was written
 		// by its own repository's last sync. This repository's own definitions
 		// are left to the rewrite further down, as before.
-		const elsewhereOwner = `(owner_source = 'cronomicon' OR owner_uid IN (
-			SELECT uid FROM jobs      WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?
-			UNION ALL
-			SELECT uid FROM workflows WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?))`
+		//
+		// An in-app definition follows an AGENCY's repository's schedule only
+		// while it is that agency's, like a job its script (upsertScripts): one
+		// whose scope has since been given to another agency keeps the timing it
+		// has. Global's repository's schedules reach every in-app definition
+		// bound to them, with the statement they always had.
+		inApp, inAppArgs := `owner_source = 'cronomicon'`, []any{}
+		if s.repo() != repoid.Global {
+			inApp = `(owner_source = 'cronomicon' AND ? = CASE owner_kind
+				WHEN 'job' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+				                   FROM jobs j
+				                   JOIN scopes sc         ON sc.name = j.scope
+				                   JOIN scope_agencies sa ON sa.scope_id = sc.id
+				                  WHERE j.uid = definition_schedules.owner_uid)
+				ELSE (SELECT owner_agency FROM workflows w WHERE w.uid = definition_schedules.owner_uid)
+			END)`
+			inAppArgs = []any{s.agency()}
+		}
+		propagate := []any{rs.cron, envJSON, nullStr(rs.startAt), nullStr(rs.endAt), nullStr(rs.interval),
+			nullStr(calendar.MarshalNames(rs.skipCals)), nullStr(calendar.MarshalNames(rs.onlyCals)), rs.uid}
+		propagate = append(propagate, inAppArgs...)
+		propagate = append(propagate, s.repo(), s.repo())
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE definition_schedules
 			   SET cron=?, env=?, start_at=?, end_at=?, interval=?, skip_calendars=?, only_calendars=?
-			 WHERE schedule_uid = ? AND `+elsewhereOwner,
-			rs.cron, envJSON, nullStr(rs.startAt), nullStr(rs.endAt), nullStr(rs.interval),
-			nullStr(calendar.MarshalNames(rs.skipCals)), nullStr(calendar.MarshalNames(rs.onlyCals)),
-			rs.uid, s.repo(), s.repo()); err != nil {
+			 WHERE schedule_uid = ? AND (`+inApp+` OR owner_uid IN (
+				SELECT uid FROM jobs      WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?
+				UNION ALL
+				SELECT uid FROM workflows WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?))`,
+			propagate...); err != nil {
 			return fmt.Errorf("propagate schedule %q to the definitions that use it: %w", name, err)
 		}
 		// The legacy display mirror (jobs/workflows.schedule, the lowest-position
@@ -2905,6 +2942,19 @@ func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, owne
 		if e.IncludeWorkflowChildren {
 			children = 1
 		}
+		// An in-app upstream, for a repository of an agency: that agency's only
+		// (see the validation in syncNow).
+		ofAgency, ofAgencyArgs := s.inAppOfThisAgency(e.OnKind)
+		args := []any{
+			ownerSource, ownerKind, ownerName, e.Name,
+			e.OnSourceOrDefault(), e.OnKind, e.OnName, e.OnOutcome,
+			e.DelaySeconds, e.MinIntervalSeconds, children, enabled, i,
+			ownerUID,
+			e.OnSourceOrDefault(), s.repo(), e.OnName,
+			e.OnSourceOrDefault(), e.OnName,
+			e.OnSourceOrDefault(), e.OnName, e.OnSourceOrDefault(),
+		}
+		args = append(args, ofAgencyArgs...)
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO reactions(owner_source, owner_kind, owner_name, name,
 			                      on_source, on_kind, on_name, on_outcome,
@@ -2916,14 +2966,8 @@ func (s *Service) writeDefinitionReactions(ctx context.Context, tx *sql.Tx, owne
 				COALESCE(
 					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = ? AND name = ?),
 					(SELECT uid FROM `+ownerTable(e.OnKind)+` WHERE ? = 'git' AND source = 'git' AND repo_id = 'global' AND name = ?),
-					(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+ownerTable(e.OnKind)+` WHERE ? <> 'git' AND name = ? AND source = ?)))`,
-			ownerSource, ownerKind, ownerName, e.Name,
-			e.OnSourceOrDefault(), e.OnKind, e.OnName, e.OnOutcome,
-			e.DelaySeconds, e.MinIntervalSeconds, children, enabled, i,
-			ownerUID,
-			e.OnSourceOrDefault(), s.repo(), e.OnName,
-			e.OnSourceOrDefault(), e.OnName,
-			e.OnSourceOrDefault(), e.OnName, e.OnSourceOrDefault()); err != nil {
+					(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM `+ownerTable(e.OnKind)+` WHERE ? <> 'git' AND name = ? AND source = ?`+ofAgency+`)))`,
+			args...); err != nil {
 			return err
 		}
 	}
@@ -3170,8 +3214,14 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 				description=excluded.description`,
 			id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now, s.repo())
 		if err != nil {
-			// Gracefully skip if columns don't exist yet (schema mismatch in parallel dev).
-			s.logWarn("upsert scope skipped", "name", sc.Name, "error", err)
+			// Not written: said to its file, and not counted among the scopes
+			// synced. (The one cause in a working installation is a repository
+			// whose agency is not in the catalog: the scope cannot be given its
+			// owner, and is not born Global's instead, migration 1350.) The
+			// database's own words go to the server's log.
+			s.logError("git sync: an inventory could not be written", "name", sc.Name, "source_path", sc.SourcePath, "err", err)
+			taken = append(taken, ValidationError{File: sc.SourcePath,
+				Message: fmt.Sprintf("the scope %q could not be written: this inventory was not synced", sc.Name)})
 			continue
 		}
 
@@ -3542,4 +3592,18 @@ func nullIfZero(v int) any {
 		return nil
 	}
 	return v
+}
+
+// inAppOfThisAgency is the condition, over the table of a kind, that confines
+// a lookup of a definition BUILT IN THE APP to this repository's agency: a
+// job whose scope is that agency's alone, a workflow that agency owns. Nothing
+// for Global's repository, which may name any.
+func (s *Service) inAppOfThisAgency(kind string) (string, []any) {
+	if s.repo() == repoid.Global {
+		return "", nil
+	}
+	if kind == "workflow" {
+		return ` AND owner_agency = ?`, []any{s.agency()}
+	}
+	return ` AND ` + jobsAgencySQL + ` = ?`, []any{s.agency()}
 }
