@@ -21,6 +21,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,9 +53,8 @@ func grRepo(t *testing.T, first *Service, id, agency string) (*Service, *gogit.R
 	// Its row of git_repos (migration 1310), with its branch: the environment's
 	// branch override, which the first Service's fixture uses, is Global's
 	// repository's alone (GR-21), so a second repository reads its own row.
-	if _, err := first.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, 't')`, agency, "Agency "+agency); err != nil {
-		t.Fatalf("the agency %s: %v", agency, err)
-	}
+	grAgencyScope(t, first.db, agency, "hosts-of-"+id)
+	grConfinedTo.Store(remote, "hosts-of-"+id)
 	if _, err := first.db.Exec(`INSERT OR REPLACE INTO git_repos (id, agency_id, url, branch) VALUES (?, ?, ?, ?)`,
 		id, agency, remote, first.Cfg.GitLabWriteBranch); err != nil {
 		t.Fatalf("the repository %s's row: %v", id, err)
@@ -69,6 +70,40 @@ func grRepo(t *testing.T, first *Service, id, agency string) (*Service, *gogit.R
 	}, repo, remote
 }
 
+// grAgencyScope makes an agency (if it is not there) and a scope it owns,
+// built in the app. A job in an agency's repository must name one of its
+// agency's scopes (Phase R4, GR-14), so a test repository of an agency has one
+// from the start.
+func grAgencyScope(t *testing.T, pool *sql.DB, agency, scope string) {
+	t.Helper()
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, 't')`, agency, "Agency "+agency); err != nil {
+		t.Fatalf("the agency %s: %v", agency, err)
+	}
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO scopes (id, name, source, created_by, created_at) VALUES (?, ?, 'cronomicon', 't', 't')`, "id-"+scope, scope); err != nil {
+		t.Fatalf("the scope %s: %v", scope, err)
+	}
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, "id-"+scope, agency); err != nil {
+		t.Fatalf("the scope %s into %s: %v", scope, agency, err)
+	}
+}
+
+// grConfinedTo is, for the remote of each agency's test repository (grRepo),
+// the scope its jobs are given: remote directory → scope name.
+var grConfinedTo sync.Map
+
+// grInItsAgency is what the commit helpers write for a file: a job committed
+// to an agency's test repository that names no scope is given its agency's, so
+// that the tests written before confinement say what they said. A test of
+// confinement itself writes `scope:` in the file, an empty one included, and
+// is left alone.
+func grInItsAgency(root, rel, content string) string {
+	scope, confined := grConfinedTo.Load(root)
+	if !confined || !strings.HasPrefix(rel, "jobs/") || strings.Contains(content, "\n  scope:") {
+		return content
+	}
+	return strings.TrimRight(content, "\n") + "\n  scope: " + scope.(string) + "\n"
+}
+
 // grCommitFiles writes several files and commits them once.
 func grCommitFiles(t *testing.T, repo *gogit.Repository, root string, files map[string]string, msg string) {
 	t.Helper()
@@ -81,7 +116,7 @@ func grCommitFiles(t *testing.T, repo *gogit.Repository, root string, files map[
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(abs, []byte(grInItsAgency(root, rel, content)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := wt.Add(rel); err != nil {

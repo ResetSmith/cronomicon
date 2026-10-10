@@ -163,7 +163,8 @@ func TestRegistry_ARepositoryConnectedWhileRunningGetsItsFirstSync(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gitCommitFile(t, repo2, second, "jobs/agency-job.yaml", jobYAML("agency-job"), "an agency's job")
+	grAgencyScope(t, f.db, "ag-b", "hosts-of-repo-b")
+	gitCommitFile(t, repo2, second, "jobs/agency-job.yaml", jobYAML("agency-job")+"  scope: hosts-of-repo-b\n", "an agency's job")
 	head2, _ := repo2.Head()
 	if err := f.reg.Restart(ctx, "repo-b"); err == nil {
 		t.Errorf("a repository with no row was started")
@@ -218,7 +219,8 @@ func TestRegistry_OneOperationAtATime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gitCommitFile(t, repo2, second, "jobs/agency-job.yaml", jobYAML("agency-job"), "an agency's job")
+	grAgencyScope(t, f.db, "ag-b", "hosts-of-repo-b")
+	gitCommitFile(t, repo2, second, "jobs/agency-job.yaml", jobYAML("agency-job")+"  scope: hosts-of-repo-b\n", "an agency's job")
 	head2, _ := repo2.Head()
 	if _, err := f.db.Exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-b', 'ag-b', ?, ?)`, second, head2.Name().Short()); err != nil {
 		t.Fatal(err)

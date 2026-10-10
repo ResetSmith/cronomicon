@@ -826,6 +826,27 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		jobsOK = false
 	}
 
+	// Confinement (GR-14): a job in an AGENCY's repository must name a scope
+	// that agency owns. A file that does not is not written, and is told so.
+	//
+	// It is that file's error and no more. It is taken out AFTER jobsOK is
+	// settled, so that it does not switch the jobs' prune off: one refused file
+	// must not freeze a repository's whole job list. And because the prune still
+	// runs, a job that WAS synced and whose file now names another agency's
+	// scope is removed rather than left running as it was.
+	if kept, refused, cerr := s.confineJobs(ctx, goodJobs, scopes); cerr != nil {
+		// What could not be asked is not answered "no": nothing is refused,
+		// nothing is pruned, and the sync says why.
+		allErrs = append(allErrs, "confinement: "+cerr.Error())
+		jobsOK = false
+	} else {
+		goodJobs = kept
+		for _, ve := range refused {
+			allErrs = append(allErrs, ve.Error())
+			res.Errors = append(res.Errors, ve)
+		}
+	}
+
 	// Same dangling-scheduleRef guard for workflows.
 	goodWfs := make([]WorkflowYAML, 0, len(wfs))
 	for _, wf := range wfs {
@@ -2420,9 +2441,21 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			s.logWarn("git sync: ssh_user/ssh_credential cannot be applied to this run type (terraform authenticates through its providers, not SSH); the field is stored but ignored for this job's runs",
 				"job", j.Metadata.Name, "source_path", j.SourcePath, "run_type", runType)
 		}
+		// Asked within the repository's agency (2.4.0): what a job of an agency's
+		// repository can use is its agency's and Global's, and a warning that
+		// said otherwise would tell one agency which names another holds.
+		// Global's repository's jobs may name any agency's scope, so for those
+		// the question is the old one.
+		ownerArm := ""
+		ownerArgs := []any{}
+		if s.repo() != repoid.Global {
+			ownerArm = ` AND owner_agency IN (?, ?)`
+			ownerArgs = []any{s.agency(), agencyid.Global}
+		}
 		if sshCred != "" {
 			var one int
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM ssh_credentials WHERE label = ? LIMIT 1`, sshCred).Scan(&one); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM ssh_credentials WHERE label = ?`+ownerArm+` LIMIT 1`,
+				append([]any{sshCred}, ownerArgs...)...).Scan(&one); err != nil {
 				s.logWarn("git sync: job ssh_credential names no stored SSH credential; runs will fail at dispatch until it exists",
 					"job", j.Metadata.Name, "source_path", j.SourcePath, "ssh_credential", sshCred)
 			}
@@ -2439,7 +2472,8 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 					"job", j.Metadata.Name, "source_path", j.SourcePath, "run_type", runType)
 			}
 			var one int
-			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM secrets WHERE key = ? LIMIT 1`, bp).Scan(&one); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM secrets WHERE key = ?`+ownerArm+` LIMIT 1`,
+				append([]any{bp}, ownerArgs...)...).Scan(&one); err != nil {
 				s.logWarn("git sync: job become_password_secret names no stored Secret; runs will fail closed at dispatch until it exists",
 					"job", j.Metadata.Name, "source_path", j.SourcePath, "become_password_secret", bp)
 			}

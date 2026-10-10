@@ -272,7 +272,9 @@ func TestGR3_EachRepositoryHasItsOwnProblems(t *testing.T) {
 
 	b, repoB, remoteB := grSecondRepo(t, a)
 	grCommitFiles(t, repoB, remoteB, map[string]string{
-		"jobs/other.yaml":    grJob("other", "echo other"),
+		// A warning of its own: a job in an agency's repository names a scope, so
+		// it has no "declares no scope" to warn of.
+		"jobs/other.yaml":    grJob("other", "echo other") + "  ssh_credential: no-such-key\n",
 		"jobs/alsobad.yaml":  bad,
 		".gitmodules":        "[submodule \"x\"]\n\tpath = scripts/x\n\turl = https://elsewhere.example/x.git\n",
 		"schedules/odd.yaml": "apiVersion: cronomicon.io/v1\nkind: Schedule\nmetadata:\n  name: odd\nspec:\n  cron: \"0 3 1 1 *\"\n",

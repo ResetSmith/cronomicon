@@ -28,7 +28,7 @@ func gitCommitFile(t *testing.T, repo *gogit.Repository, root, rel, content, msg
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(abs, []byte(grInItsAgency(root, rel, content)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	wt, err := repo.Worktree()
