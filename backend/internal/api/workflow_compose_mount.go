@@ -339,7 +339,8 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 				"whose compose grant covers every agency may save it. A workflow whose jobs are all one agency's is that agency's")
 		return
 	}
-	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules})
+	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules},
+		s.agencyRepo(r.Context(), owner))
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return

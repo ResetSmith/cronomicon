@@ -254,6 +254,50 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 	return out
 }
 
+// reactionHomeSQL is the repository a reaction's names are looked up in first
+// (GR-16), as an expression over the row `reactions`: the repository of a Git
+// owner; for an owner built in the app, the repository of its agency (a job's
+// scope's one agency, a workflow's owner). Global's when there is none to say.
+const reactionHomeSQL = `COALESCE(
+	CASE WHEN reactions.owner_source = 'git' THEN
+	          CASE reactions.owner_kind
+	            WHEN 'job' THEN (SELECT repo_id FROM jobs      WHERE uid = reactions.owner_uid)
+	            ELSE            (SELECT repo_id FROM workflows WHERE uid = reactions.owner_uid)
+	          END
+	     ELSE (SELECT g.id FROM git_repos g WHERE g.agency_id =
+	          CASE reactions.owner_kind
+	            WHEN 'job' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+	                               FROM jobs j
+	                               JOIN scopes sc         ON sc.name = j.scope
+	                               JOIN scope_agencies sa ON sa.scope_id = sc.id
+	                              WHERE j.uid = reactions.owner_uid)
+	            ELSE            (SELECT owner_agency FROM workflows WHERE uid = reactions.owner_uid)
+	          END)
+	END, 'global')`
+
+// reactionUpstreamByNameSQL is the uid of the Git definition a reaction's
+// upstream NAME means: the live one of that name in the reaction's home, else
+// in Global's repository, else NULL.
+const reactionUpstreamByNameSQL = ReactionUpstreamByNameSQL
+
+// ReactionUpstreamByNameSQL is exported for the one other place that must
+// answer the same question the same way: whoever WRITES a reaction and stamps
+// its upstream's identity (api, reactions written in the app). A writer that
+// pinned a different definition than the engine would find by the name would
+// be the engine's rule defeated at the door.
+const ReactionUpstreamByNameSQL = `(CASE reactions.on_kind
+	WHEN 'job' THEN COALESCE(
+	    (SELECT uid FROM jobs WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
+	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `),
+	    (SELECT uid FROM jobs WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
+	        AND COALESCE(repo_id, 'global') = 'global'))
+	ELSE COALESCE(
+	    (SELECT uid FROM workflows WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
+	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `),
+	    (SELECT uid FROM workflows WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
+	        AND COALESCE(repo_id, 'global') = 'global'))
+	END)`
+
 // deliverEvent matches one event against every reaction watching it, and
 // decides each independently.
 func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time) {
@@ -281,23 +325,37 @@ func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time
 		   --      name says nothing, so nothing fires until the reaction is
 		   --      re-saved against the one it means. The first half is what
 		   --      lets a job that was purged and recreated keep its reactions.
+		   --
+		   -- GR-16 (2.4.0): for a GIT upstream the name is not "the one live
+		   -- definition that carries it, wherever it is". Two repositories may
+		   -- each hold a "nightly", and a reaction in one agency's repository
+		   -- must not fire on another agency's. The name resolves where every
+		   -- other reference of the reaction's owner does: in the owner's own
+		   -- repository, then in Global's. So by name a reaction fires on THAT
+		   -- definition's runs and on no other's, however many repositories
+		   -- hold the name, and on nobody's when neither of the two does. (A
+		   -- run from before a run recorded its definition keeps the older
+		   -- rule: there is nothing to compare.)
 		   AND (
 		         (COALESCE(on_uid,'') <> '' AND ? <> '' AND on_uid = ?)
 		      OR (
 		            (COALESCE(on_uid,'') = '' OR ? = ''
 		              OR (NOT EXISTS (SELECT 1 FROM jobs      WHERE uid = reactions.on_uid)
 		              AND NOT EXISTS (SELECT 1 FROM workflows WHERE uid = reactions.on_uid)))
-		        AND CASE on_kind
-		              WHEN 'job' THEN (SELECT COUNT(*) FROM jobs
-		                                WHERE source = reactions.on_source AND name = reactions.on_name
-		                                  AND deleted_at IS NULL)
-		              ELSE            (SELECT COUNT(*) FROM workflows
-		                                WHERE source = reactions.on_source AND name = reactions.on_name
-		                                  AND deleted_at IS NULL)
-		            END <= 1
+		        AND CASE
+		              WHEN reactions.on_source = 'git' AND ? <> '' THEN `+reactionUpstreamByNameSQL+` = ?
+		              ELSE CASE on_kind
+		                     WHEN 'job' THEN (SELECT COUNT(*) FROM jobs
+		                                       WHERE source = reactions.on_source AND name = reactions.on_name
+		                                         AND deleted_at IS NULL)
+		                     ELSE            (SELECT COUNT(*) FROM workflows
+		                                       WHERE source = reactions.on_source AND name = reactions.on_name
+		                                         AND deleted_at IS NULL)
+		                   END <= 1
+		            END
 		         )
 		       )`,
-		ev.kind, ev.source, ev.name, ev.uid, ev.uid, ev.uid)
+		ev.kind, ev.source, ev.name, ev.uid, ev.uid, ev.uid, ev.uid, ev.uid)
 	if err != nil {
 		s.log.Error("reactor: match reactions", "kind", ev.kind, "name", ev.name, "err", err)
 		return

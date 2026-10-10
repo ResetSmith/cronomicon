@@ -32,6 +32,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envmerge"
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
 )
@@ -243,7 +244,7 @@ func (e *Engine) Trigger(ctx context.Context, p TriggerParams) (*TriggerResult, 
 
 	// Look up job definitions for run_type/scope/source via the A11 precedence
 	// (step.Source > workflow source > fallback).
-	jobDefs, err := e.lookupJobDefs(ctx, p.Steps, wfSource)
+	jobDefs, err := e.lookupJobDefs(ctx, p.Steps, wfSource, e.Home(ctx, p.WorkflowID))
 	if err != nil {
 		return nil, fmt.Errorf("look up job defs: %w", err)
 	}
@@ -1107,19 +1108,51 @@ func (r StepRef) Key() string {
 // StepKey is the defs-map key for a step, the lookup half of StepRef.Key.
 func StepKey(s Step) string { return StepRefOf(s).Key() }
 
+// Home is the repository a workflow's names are looked up in first (2.4.0,
+// GR-16): the repository of a GIT workflow, by the workflow's row. A workflow
+// built in the app has none (""), and so does a row that is not there.
+//
+// A Git workflow cannot pin a step to a job's identity (sync strips `jobUid`:
+// names are the law in Git), so its name-only steps need a rule for a name
+// that more than one repository holds. The rule is the one every other
+// reference follows: the workflow's own repository, then Global's, and never
+// another agency's. With no home the older rule stands: a name that one Git
+// job holds is that job, and a name that several hold is refused.
+//
+// Whoever AUTHORIZES a workflow must ask with the same home the engine runs it
+// with (JobScopesAt), or the walk authorizes one job and the engine runs
+// another.
+func (e *Engine) Home(ctx context.Context, workflowID int64) string {
+	var repo string
+	if err := e.db.QueryRowContext(ctx,
+		`SELECT COALESCE(repo_id, ?) FROM workflows WHERE rowid = ? AND source = 'git'`, repoid.Global, workflowID).Scan(&repo); err != nil {
+		return ""
+	}
+	return repo
+}
+
+// homeThenGlobal is where a Git name is looked up for a workflow whose home is
+// known: its repository, then Global's.
+func homeThenGlobal(home string) []string {
+	if home == repoid.Global {
+		return []string{repoid.Global}
+	}
+	return []string{home, repoid.Global}
+}
+
 // lookupJobDefs resolves each step's referenced job def. A step pinning a uid
 // (R2F-2) resolves by identity alone; otherwise the A11 step-source precedence
 // applies (v20 Phase 4): an explicit step.Source wins; otherwise the parent
 // workflow's source; otherwise the other source if the job exists there. A ref
-// absent from the returned map is unresolved (runJob warns).
-func (e *Engine) lookupJobDefs(ctx context.Context, steps []Step, wfSource string) (map[string]jobDef, error) {
+// absent from the returned map is unresolved (runJob warns). home: see Home.
+func (e *Engine) lookupJobDefs(ctx context.Context, steps []Step, wfSource, home string) (map[string]jobDef, error) {
 	if wfSource == "" {
 		wfSource = "git"
 	}
 	refs := collectStepRefs(steps)
 	m := make(map[string]jobDef, len(refs))
 	for _, ref := range refs {
-		src, jd, ok := e.resolveJobDef(ctx, ref, wfSource)
+		src, jd, ok := e.resolveJobDef(ctx, ref, wfSource, home)
 		if !ok {
 			continue
 		}
@@ -1163,6 +1196,12 @@ func (e *Engine) maxParallel(ctx context.Context) int {
 // authorized on nothing while the engine went on to run the child's jobs with
 // the caller as actor.
 func (e *Engine) JobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
+	return e.JobScopesAt(ctx, steps, wfSource, "")
+}
+
+// JobScopesAt is JobScopes for a workflow whose home is known (see Home): the
+// scopes of the jobs the engine will run for THAT workflow.
+func (e *Engine) JobScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	add := func(scopes []string) {
@@ -1173,12 +1212,12 @@ func (e *Engine) JobScopes(ctx context.Context, steps []Step, wfSource string) (
 			}
 		}
 	}
-	own, err := e.ownJobScopes(ctx, steps, wfSource)
+	own, err := e.ownJobScopes(ctx, steps, wfSource, home)
 	if err != nil {
 		return nil, err
 	}
 	add(own)
-	nested, err := e.SubWorkflowJobScopes(ctx, steps, wfSource)
+	nested, err := e.SubWorkflowJobScopesAt(ctx, steps, wfSource, home)
 	if err != nil {
 		return nil, err
 	}
@@ -1187,8 +1226,8 @@ func (e *Engine) JobScopes(ctx context.Context, steps []Step, wfSource string) (
 }
 
 // ownJobScopes is the scopes of the job steps this graph names directly.
-func (e *Engine) ownJobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
-	defs, err := e.lookupJobDefs(ctx, steps, wfSource)
+func (e *Engine) ownJobScopes(ctx context.Context, steps []Step, wfSource, home string) ([]string, error) {
+	defs, err := e.lookupJobDefs(ctx, steps, wfSource, home)
 	if err != nil {
 		return nil, err
 	}
@@ -1226,11 +1265,18 @@ func (e *Engine) ownJobScopes(ctx context.Context, steps []Step, wfSource string
 // subtree was cut off earlier at the ceiling, and from nearer the root more of
 // it is reachable — the engine would run that part.
 func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
+	return e.SubWorkflowJobScopesAt(ctx, steps, wfSource, "")
+}
+
+// SubWorkflowJobScopesAt is SubWorkflowJobScopes for a workflow whose home is
+// known (see Home). Each child is walked from ITS OWN home: a Git child's
+// steps resolve in the child's repository.
+func (e *Engine) SubWorkflowJobScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	walkedAt := map[int64]int{} // workflow rowid → shallowest depth walked from
-	var walk func(steps []Step, source string, depth int) error
-	walk = func(steps []Step, source string, depth int) error {
+	var walk func(steps []Step, source, home string, depth int) error
+	walk = func(steps []Step, source, home string, depth int) error {
 		if DepthExceeded(depth) {
 			return nil
 		}
@@ -1238,7 +1284,7 @@ func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSourc
 			source = "git"
 		}
 		for _, name := range collectWorkflowRefs(steps) {
-			childSource, childSteps, rowid, ok := e.loadChildWorkflow(ctx, name, source)
+			childSource, childSteps, rowid, childHome, ok := e.loadChildWorkflow(ctx, name, source, home)
 			if !ok {
 				continue
 			}
@@ -1246,7 +1292,7 @@ func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSourc
 				continue
 			}
 			walkedAt[rowid] = depth
-			scopes, err := e.ownJobScopes(ctx, childSteps, childSource)
+			scopes, err := e.ownJobScopes(ctx, childSteps, childSource, childHome)
 			if err != nil {
 				return err
 			}
@@ -1256,14 +1302,14 @@ func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSourc
 					out = append(out, sc)
 				}
 			}
-			if err := walk(childSteps, childSource, depth+1); err != nil {
+			if err := walk(childSteps, childSource, childHome, depth+1); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	// The children of the addressed workflow run at depth 1.
-	if err := walk(steps, wfSource, 1); err != nil {
+	if err := walk(steps, wfSource, home, 1); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -1303,7 +1349,7 @@ func collectWorkflowRefs(steps []Step) []string {
 
 // resolveJobDef finds a step's job def: by identity when the step pins one
 // (R2F-2), otherwise at the effective source per the A11 precedence.
-func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource string) (string, jobDef, bool) {
+func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource, home string) (string, jobDef, bool) {
 	name := ref.Name
 	// scan runs the def query with an arbitrary WHERE and returns the row's own
 	// source, so the identity arm reports where the job actually lives rather
@@ -1374,6 +1420,20 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource string
 	}
 
 	for _, src := range StepSourceOrder(ref.Source, wfSource) {
+		// GR-16 — a Git name, for a workflow whose home is known: its own
+		// repository's job, then Global's. Each repository holds a name once,
+		// so there is nothing ambiguous to refuse; and a job of that name in
+		// ANOTHER agency's repository is not found at all, however many there
+		// are. (The existence rule of FX-A1 holds within each: a binned or
+		// disabled job of the home repository stops the search there.)
+		if src == "git" && home != "" {
+			for _, repo := range homeThenGlobal(home) {
+				if _, jd, ok := scan(`name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`, name, repoid.Global, repo); ok {
+					return src, jd, true
+				}
+			}
+			continue
+		}
 		// R2-5 — a name may match two jobs within one source pool now. COUNT
 		// first: an ambiguous reference REFUSES (fail closed, RA-17) rather than
 		// running whichever row SQLite returns — a step that silently picks a

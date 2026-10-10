@@ -397,7 +397,10 @@ func (s *Server) requireWorkflowVisible(w http.ResponseWriter, r *http.Request, 
 	if id.Unrestricted() {
 		return true
 	}
-	scopes, err := workflow.New(s.db, s.log).JobScopes(r.Context(), wr.Steps, wr.Source)
+	// With the workflow's home (GR-16): the jobs the engine would run for THIS
+	// workflow, which for a Git workflow are its own repository's.
+	eng := workflow.New(s.db, s.log)
+	scopes, err := eng.JobScopesAt(r.Context(), wr.Steps, wr.Source, eng.Home(r.Context(), wr.ID))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false

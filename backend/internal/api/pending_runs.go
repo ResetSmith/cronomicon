@@ -156,10 +156,11 @@ func pendingCancelPermitted(id auth.Identity, scope string) bool {
 // The identity is the uid when the row carries one, else (source, name).
 func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name string) ([]string, bool, error) {
 	var raw, wfSource string
+	var workflowID int64
 	var err error
 	if uid != "" {
 		err = s.db.QueryRowContext(ctx,
-			`SELECT steps, source FROM workflows WHERE uid = ?`, uid).Scan(&raw, &wfSource)
+			`SELECT steps, source, rowid FROM workflows WHERE uid = ?`, uid).Scan(&raw, &wfSource, &workflowID)
 	} else {
 		// No identity on the row (it predates 1020): the name is only usable
 		// when it is unambiguous. Two workflows of one name means we cannot say
@@ -173,7 +174,7 @@ func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name st
 			return nil, false, nil
 		}
 		err = s.db.QueryRowContext(ctx,
-			`SELECT steps, source FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&raw, &wfSource)
+			`SELECT steps, source, rowid FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&raw, &wfSource, &workflowID)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
@@ -185,7 +186,8 @@ func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name st
 	if perr != nil {
 		return nil, false, nil
 	}
-	scopes, err := workflow.New(s.db, s.log).JobScopes(ctx, steps, wfSource)
+	eng := workflow.New(s.db, s.log)
+	scopes, err := eng.JobScopesAt(ctx, steps, wfSource, eng.Home(ctx, workflowID))
 	if err != nil {
 		return nil, false, err
 	}

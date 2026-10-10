@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // Sub-workflows: a workflow as a step of another workflow (SW,
@@ -167,7 +168,11 @@ func (e *Engine) runChildWorkflowOnce(
 		return "danger", ""
 	}
 
-	src, steps, wfID, ok := e.loadChildWorkflow(ctx, childName, parentSource)
+	// The parent's home (GR-16): where a Git parent's sub-workflow is looked
+	// up first, by the workflow the parent RUN was started for.
+	var parentWorkflow int64
+	_ = e.db.QueryRowContext(ctx, `SELECT COALESCE(workflow_id, 0) FROM workflow_runs WHERE id = ?`, parentTraceID).Scan(&parentWorkflow)
+	src, steps, wfID, _, ok := e.loadChildWorkflow(ctx, childName, parentSource, e.Home(ctx, parentWorkflow))
 	if !ok {
 		e.log.Error("workflow: sub-workflow not found", "parent", parentName, "child", childName)
 		e.recordRefusedChild(ctx, parentTraceID, nodeID, childName, actor, parentSource, childDepth,
@@ -221,7 +226,12 @@ func (e *Engine) parentContext(ctx context.Context, parentTraceID string) (workf
 // precedence: the parent's source first, then the other. A binned or disabled
 // workflow does not resolve — a sub-workflow step must not be a way to run
 // something the catalog says is off.
-func (e *Engine) loadChildWorkflow(ctx context.Context, name, parentSource string) (source string, steps []Step, wfID int64, ok bool) {
+//
+// home is the PARENT's (Engine.Home). For a Git parent whose home is known, a
+// Git child is its own repository's workflow of the name, then Global's, and
+// never another agency's (GR-16). childHome is where the child's own names
+// are then looked up: a Git child's repository.
+func (e *Engine) loadChildWorkflow(ctx context.Context, name, parentSource, home string) (source string, steps []Step, wfID int64, childHome string, ok bool) {
 	order := []string{parentSource, "git"}
 	if parentSource == "git" {
 		order = []string{"git", "cronomicon"}
@@ -229,15 +239,30 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, name, parentSource strin
 	for _, src := range order {
 		var raw string
 		var rowid int64
-		err := e.db.QueryRowContext(ctx, `
-			SELECT rowid, steps FROM workflows
-			 WHERE name = ? AND source = ? AND enabled = 1 AND deleted_at IS NULL
-			 -- Two agencies may hold cronomicon workflows of one name. The oldest
-			 -- wins, always: the authorization walk (SubWorkflowJobScopes) calls
-			 -- this same function, and it can only authorize what will run if
-			 -- the choice does not depend on the query plan.
-			 ORDER BY rowid LIMIT 1`,
-			name, src).Scan(&rowid, &raw)
+		var repo sql.NullString
+		err := sql.ErrNoRows
+		if src == "git" && home != "" {
+			for _, in := range homeThenGlobal(home) {
+				err = e.db.QueryRowContext(ctx, `
+					SELECT rowid, steps, repo_id FROM workflows
+					 WHERE name = ? AND source = 'git' AND enabled = 1 AND deleted_at IS NULL
+					   AND COALESCE(repo_id, ?) = ?`,
+					name, repoid.Global, in).Scan(&rowid, &raw, &repo)
+				if err == nil {
+					break
+				}
+			}
+		} else {
+			err = e.db.QueryRowContext(ctx, `
+				SELECT rowid, steps, repo_id FROM workflows
+				 WHERE name = ? AND source = ? AND enabled = 1 AND deleted_at IS NULL
+				 -- Two agencies may hold cronomicon workflows of one name. The oldest
+				 -- wins, always: the authorization walk (SubWorkflowJobScopes) calls
+				 -- this same function, and it can only authorize what will run if
+				 -- the choice does not depend on the query plan.
+				 ORDER BY rowid LIMIT 1`,
+				name, src).Scan(&rowid, &raw, &repo)
+		}
 		if err != nil {
 			continue
 		}
@@ -246,9 +271,15 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, name, parentSource strin
 			e.log.Error("workflow: sub-workflow has unparseable steps", "child", name, "source", src, "err", perr)
 			continue
 		}
-		return src, parsed, rowid, true
+		if src == "git" {
+			childHome = repoid.Global
+			if repo.Valid && repo.String != "" {
+				childHome = repo.String
+			}
+		}
+		return src, parsed, rowid, childHome, true
 	}
-	return "", nil, 0, false
+	return "", nil, 0, "", false
 }
 
 // waitForWorkflowRun polls a child workflow run to terminal.

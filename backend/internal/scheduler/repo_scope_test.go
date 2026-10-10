@@ -162,3 +162,92 @@ func TestParkedRunOfAStrandedJobIsMissedNotEnqueued(t *testing.T) {
 		t.Errorf("the parked run is %q with reason %q; want missed, %q", status, reason, runref.ReasonRepoScopeMismatch)
 	}
 }
+
+// GR-16 (2.4.0) in the reaction engine: by NAME, a reaction to a Git
+// definition fires on the definition of that name in its owner's own
+// repository, else on Global's, and on no other repository's.
+//
+// A reaction has no usable upstream identity when its upstream had not synced
+// when it was written, or was pruned and has returned. Until Phase R4 it then
+// fired on "the one live definition of that name, wherever it is": a reaction
+// in one agency's repository fired on ANOTHER agency's job whenever that was
+// the only one of the name.
+func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionThenGlobals(t *testing.T) {
+	pool := mustPool(t)
+	s := New(pool, quietLog(), nil)
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-b', 'B', 't'), ('ag-c', 'C', 't')`)
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-b', 'ag-b', 'u', 'main'), ('repo-c', 'ag-c', 'u', 'main')`)
+	exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-b', 'b-hosts', 'cronomicon', 't')`)
+	exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-b'`)
+	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-b', 'ag-b')`)
+	job := func(uid, name, source string, repo, scope any) {
+		t.Helper()
+		exec(`INSERT INTO jobs (uid, name, source, run_type, concurrency_policy, enabled, synced_at, repo_id, scope)
+		      VALUES (?, ?, ?, 'bash', 'Allow', 1, 't', ?, ?)`, uid, name, source, repo, scope)
+	}
+	// Who reacts: a job of repo-b, a job built in the app in repo-b's agency,
+	// and a job of Global's repository. None has an upstream identity.
+	job("after-b", "after-b", "git", "repo-b", "b-hosts")
+	job("after-app", "after-app", "cronomicon", nil, "b-hosts")
+	job("after-g", "after-g", "git", "global", nil)
+	for _, o := range [][2]string{{"git", "after-b"}, {"cronomicon", "after-app"}, {"git", "after-g"}} {
+		exec(`INSERT INTO reactions (owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name, on_outcome,
+		                             delay_seconds, min_interval_seconds, include_workflow_children, enabled, owner_uid)
+		      VALUES (?, 'job', ?, 'on-nightly', 'git', 'job', 'nightly', 'success', 0, 0, 0, 1, ?)`, o[0], o[1], o[1])
+	}
+	n := 0
+	finish := func(uid string) {
+		t.Helper()
+		n++
+		ts := time.Now().UTC().Add(-time.Duration(60-n) * time.Second).Format(time.RFC3339)
+		exec(`INSERT INTO runs (id, job_name, job_source, job_uid, run_type, status, triggered_by, trigger_kind, completed_at, created_at)
+		      VALUES (?, 'nightly', 'git', ?, 'bash', 'success', 't', 'scheduled', ?, ?)`, "r-"+uid+"-"+string(rune('a'+n)), uid, ts, ts)
+	}
+	fired := func() map[string]int {
+		t.Helper()
+		s.ScanReactions(ctxb())
+		out := map[string]int{}
+		for _, name := range []string{"after-b", "after-app", "after-g"} {
+			out[name] = countPending(t, pool, name)
+		}
+		return out
+	}
+	expect := func(when string, want map[string]int) {
+		t.Helper()
+		got := fired()
+		for name, w := range want {
+			if got[name] != w {
+				t.Errorf("%s: %s has %d pending run(s), want %d", when, name, got[name], w)
+			}
+		}
+	}
+	primeCursor(t, s)
+
+	// Only ANOTHER agency's repository has a nightly. Nobody's reaction fires
+	// on its run: it is neither repo-b's nor Global's.
+	job("n-c", "nightly", "git", "repo-c", nil)
+	finish("n-c")
+	expect("only another agency's nightly", map[string]int{"after-b": 0, "after-app": 0, "after-g": 0})
+
+	// Global's repository gets one. Its run fires all three (theirs then
+	// Global's; Global's own); the other agency's run still fires none.
+	job("n-g", "nightly", "git", "global", nil)
+	finish("n-g")
+	expect("Global's nightly ran", map[string]int{"after-b": 1, "after-app": 1, "after-g": 1})
+	finish("n-c")
+	expect("the other agency's nightly ran again", map[string]int{"after-b": 1, "after-app": 1, "after-g": 1})
+
+	// repo-b gets its own. Now its own comes first for repo-b's reaction and
+	// for the in-app job of repo-b's agency; Global's reaction still means Global's.
+	job("n-b", "nightly", "git", "repo-b", nil)
+	finish("n-g")
+	expect("Global's nightly ran, repo-b having its own", map[string]int{"after-b": 1, "after-app": 1, "after-g": 2})
+	finish("n-b")
+	expect("repo-b's nightly ran", map[string]int{"after-b": 2, "after-app": 2, "after-g": 2})
+}

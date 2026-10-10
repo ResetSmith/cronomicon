@@ -482,15 +482,16 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 	// Resolve + denormalize the referenced Git Script (Decision 7).
 	//
-	// In Global's repository: a name is unique per repository since 1290, and
-	// Global's is the only one there is. Where an agency's in-app job looks a
-	// name up once agencies have repositories of their own is GR-16's rule (its
-	// own repository, then Global's) and arrives with them (Phase R4).
+	// A name is unique per repository (1290). Which repository an in-app job's
+	// name means is GR-16's rule: the repository of the job's agency, then
+	// Global's, and never another agency's. The job's agency is its scope's.
+	home := s.scopeRepo(r.Context(), in.scopeOf())
 	var sc composeScript
 	var command, script, scriptPath, executor sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
 		`SELECT uid, run_type, command, script, script_path, executor, content_hash
-		   FROM scripts WHERE repo_id = ? AND name = ?`, repoid.Global, in.ScriptRef).
+		   FROM scripts WHERE name = ?1 AND repo_id IN (?2, ?3)
+		  ORDER BY (repo_id = ?2) DESC LIMIT 1`, in.ScriptRef, home, repoid.Global).
 		Scan(&sc.uid, &sc.runType, &command, &script, &scriptPath, &executor, &sc.contentHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scriptRef does not resolve to any script: "+in.ScriptRef)
@@ -728,7 +729,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 
 	// Resolve schedule entries: inline + referenced first-class schedules (A10a).
-	entries, verr := s.resolveComposeSchedules(r.Context(), in)
+	entries, verr := s.resolveComposeSchedules(r.Context(), in, s.scopeRepo(r.Context(), in.scopeOf()))
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
@@ -919,7 +920,10 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 
 // resolveComposeSchedules merges inline schedules + referenced first-class
 // schedules into a deduped entry list, validating crons and ref existence.
-func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput) ([]composeScheduleEntry, string) {
+//
+// home is the repository of the definition's agency (scopeRepo, agencyRepo):
+// where a Git schedule of a name is looked for before Global's.
+func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput, home string) ([]composeScheduleEntry, string) {
 	seen := map[string]bool{}
 	out := []composeScheduleEntry{}
 	for _, e := range in.Schedules {
@@ -965,11 +969,20 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 		// is never bound; until 1300 this had no such filter, and with an in-app
 		// schedule binned and Git's of the same name live the job was expanded
 		// from the binned one), the in-app one before Git's, as it has always
-		// been. The request carries names only; the order across repositories is
-		// GR-16's and arrives with them (Phase R4).
+		// been.
+		//
+		// Among Git's, GR-16 (2.4.0): the schedule of the definition's own
+		// agency's repository, then Global's, and never another agency's. Two
+		// repositories may each hold a schedule of the name, and until now this
+		// took whichever the query returned. (GR-16 as written also puts Git's
+		// BEFORE the in-app one; that would reverse what a name has always meant
+		// here, and is left as it is until the owner says.)
 		err := s.db.QueryRowContext(ctx,
 			`SELECT uid, cron, env, start_at, end_at, interval, skip_calendars, only_calendars
-			   FROM schedules WHERE name=? AND deleted_at IS NULL ORDER BY source LIMIT 1`, ref).
+			   FROM schedules
+			  WHERE name = ?1 AND deleted_at IS NULL
+			    AND (source = 'cronomicon' OR COALESCE(repo_id, ?3) IN (?2, ?3))
+			  ORDER BY (source = 'cronomicon') DESC, (COALESCE(repo_id, ?3) = ?2) DESC LIMIT 1`, ref, home, repoid.Global).
 			Scan(&refUID, &cron, &envJSON, &refStart, &refEnd, &refInterval, &refSkip, &refOnly)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "scheduleRef does not resolve to any schedule: " + ref
@@ -1096,4 +1109,31 @@ func nullIfZeroInt(v int) any {
 		return nil
 	}
 	return v
+}
+
+// agencyRepo is the repository of an agency: the one its definitions' names
+// are looked up in first (GR-16). Global's when the agency has none of its
+// own, which is every agency until one connects a repository.
+func (s *Server) agencyRepo(ctx context.Context, agencyID string) string {
+	var repo string
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM git_repos WHERE agency_id = ?`, agencyID).Scan(&repo); err != nil || repo == "" {
+		return repoid.Global
+	}
+	return repo
+}
+
+// scopeRepo is agencyRepo for the agency a scope belongs to. A job with no
+// scope, a scope that is not there, and a scope several agencies share are
+// Global's, as their runs are.
+func (s *Server) scopeRepo(ctx context.Context, scope string) string {
+	if strings.TrimSpace(scope) == "" {
+		return repoid.Global
+	}
+	var agency sql.NullString
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+		  FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?`, scope).Scan(&agency); err != nil || !agency.Valid {
+		return repoid.Global
+	}
+	return s.agencyRepo(ctx, agency.String)
 }

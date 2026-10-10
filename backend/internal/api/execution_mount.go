@@ -2753,7 +2753,7 @@ func (s *Server) workflowScopesReadable(w http.ResponseWriter, r *http.Request, 
 // mirroring RB-26 on the single-job path — a workflow must not be a way to run an
 // unscoped job without binding one.
 func (s *Server) workflowScopesPermit(w http.ResponseWriter, r *http.Request, eng *workflow.Engine, id auth.Identity, wr *workflowRow, perm string) bool {
-	scopes, err := eng.JobScopes(r.Context(), wr.Steps, wr.Source)
+	scopes, err := eng.JobScopesAt(r.Context(), wr.Steps, wr.Source, eng.Home(r.Context(), wr.ID))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
@@ -3445,9 +3445,10 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 		traceID := r.PathValue("traceId")
 		var status, wfSource string
 		var stepsSnapshot sql.NullString
+		var workflowID int64
 		err := s.db.QueryRowContext(r.Context(), `
-			SELECT status, steps_snapshot, COALESCE(workflow_source,'') FROM workflow_runs WHERE id = ?
-		`, traceID).Scan(&status, &stepsSnapshot, &wfSource)
+			SELECT status, steps_snapshot, COALESCE(workflow_source,''), COALESCE(workflow_id, 0) FROM workflow_runs WHERE id = ?
+		`, traceID).Scan(&status, &stepsSnapshot, &wfSource, &workflowID)
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "workflow run not found")
 			return
@@ -3555,7 +3556,7 @@ func (s *Server) cancelWorkflowRun(eng *workflow.Engine) http.HandlerFunc {
 		}
 		if stepsSnapshot.Valid && stepsSnapshot.String != "" {
 			if steps, perr := workflow.ParseSteps(stepsSnapshot.String); perr == nil {
-				pending, err := eng.SubWorkflowJobScopes(r.Context(), steps, wfSource)
+				pending, err := eng.SubWorkflowJobScopesAt(r.Context(), steps, wfSource, eng.Home(r.Context(), workflowID))
 				if err != nil {
 					httpx.Fail500(w, s.log, "db_error", err)
 					return

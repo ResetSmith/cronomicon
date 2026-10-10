@@ -14,6 +14,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/reaction"
+	"github.com/ResetSmith/cronomicon/internal/scheduler"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
@@ -217,6 +218,19 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
+	}
+	// GR-16 — a GIT upstream's identity is not "the one definition of that name,
+	// wherever it is", which with a repository per agency can be another
+	// agency's. It is the one the engine would find by the name: in the owner's
+	// agency's repository, then in Global's. The same expression the engine
+	// uses, so the two cannot disagree; a name neither holds is left with no
+	// identity and fires on nothing.
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE reactions SET on_uid = `+scheduler.ReactionUpstreamByNameSQL+`
+		 WHERE owner_source = ? AND owner_kind = ? AND owner_name = ? AND on_source = 'git'`,
+		source, kind, name); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
 	}
 	if err := tx.Commit(); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
