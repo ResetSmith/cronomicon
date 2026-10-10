@@ -7,6 +7,7 @@ package gitlab
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -245,8 +246,11 @@ func TestGR3_TwoRepositoriesWithTheSameNames(t *testing.T) {
 //
 // Until Phase R3 (TestGR0_TwoScopesOfOneNameAreOneScope pinned it) the second
 // repository's inventory replaced the first's hosts, under the agency and the
-// runner bindings the first one's scope had. (The notice that says the name is
-// in use is Phase R4's, GR-19; here it is a line in the log.)
+// runner bindings the first one's scope had.
+//
+// The file that was not synced is told so (Phase R4, GR-19): an error against
+// it, in the one wording that says the name is taken and not whose it is. Until
+// then it was a line in the server's log.
 func TestGR3_AScopeNameHeldByAnotherRepositoryIsNotTakenOver(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	gitCommitFile(t, repoA, remoteA, "inventory/web.ini", fmt.Sprintf(grScope, "web1", "10.0.0.1"), "a's scope")
@@ -263,7 +267,28 @@ func TestGR3_AScopeNameHeldByAnotherRepositoryIsNotTakenOver(t *testing.T) {
 		"inventory/other.ini": fmt.Sprintf(grScope, "db1", "10.0.0.9"),
 	}, "b's scopes")
 	grBackdateAll(t, a)
-	grSync(t, b, "second repository")
+	res := grSync(t, b, "second repository")
+	rows := grProblems(t, b, "repo-b")
+	if res.Status != "partial" || !grHas(rows, "error scope inventory/web.ini:", `the scope name "web" is already in use`) {
+		t.Errorf("the sync is %q; want partial, with an error against the inventory that was not synced:\n%s", res.Status, strings.Join(rows, "\n"))
+	}
+	if grHas(rows, "inventory/other.ini") {
+		t.Errorf("the inventory whose name is free has a problem row:\n%s", strings.Join(rows, "\n"))
+	}
+	// It does not say whose the name is, nor how it is held.
+	for _, r := range rows {
+		for _, leak := range []string{"global", "Global", "repository", "built in the app", "cronomicon-authored"} {
+			if strings.Contains(r, "inventory/web.ini") && strings.Contains(r, leak) {
+				t.Errorf("the refusal says more than that the name is taken (%q): %s", leak, r)
+			}
+		}
+	}
+	if _, open, detail := grNotice(t, b, "repo-b"); !open || !strings.Contains(detail, "inventory/web.ini") {
+		t.Errorf("the second repository's notice: open=%v %q, want it open and naming the file", open, detail)
+	}
+	if res.ScopesSynced != 1 {
+		t.Errorf("the sync counted %d scopes synced, want the one it wrote", res.ScopesSynced)
+	}
 
 	if got := grString(t, a.db, `SELECT id || '/' || repo_id FROM scopes WHERE name='web'`); got != scopeID+"/global" {
 		t.Fatalf("the scope web is now %q, want the first repository's row %q untouched", got, scopeID+"/global")
@@ -365,5 +390,109 @@ func TestGR3_AHeldScopeKeepsItsImportedHostRecords(t *testing.T) {
 	}
 	if n := records("plain"); n != 1 {
 		t.Errorf("the scope that stayed has %d host record(s) after the other was pruned, want 1", n)
+	}
+}
+
+// A scope that arrives from an agency's repository is that agency's (Phase R4,
+// GR-18): the operator said whose it is by connecting the repository. It is
+// born so, once; a later sync neither writes nor changes it; and it comes back
+// the agency's if its file leaves and returns. A scope from Global's
+// repository is born Global's and assigned by an operator, as before (LR-31),
+// and that assignment survives every sync.
+//
+// Until Phase R4 every scope from Git was born Global's, whichever repository
+// it came from: an agency's hosts were Global's to run on until somebody
+// noticed and moved them.
+func TestGR4_AScopeFromAnAgencysRepositoryIsThatAgencys(t *testing.T) {
+	a, repoA, remoteA := newSyncFixture(t)
+	gitCommitFile(t, repoA, remoteA, "inventory/shared.ini", fmt.Sprintf(grScope, "g1", "10.0.0.1"), "Global's scope")
+	grSync(t, a, "Global's repository")
+	b, repoB, remoteB := grSecondRepo(t, a)
+	gitCommitFile(t, repoB, remoteB, "inventory/theirs.ini", fmt.Sprintf(grScope, "b1", "10.0.0.2"), "the agency's scope")
+	grSync(t, b, "the agency's repository")
+
+	agencies := func(scope string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT COALESCE(GROUP_CONCAT(agency_id, ','), '') FROM (
+			SELECT sa.agency_id FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ? ORDER BY sa.agency_id)`, scope)
+	}
+	if got := agencies("theirs"); got != "ag-b" {
+		t.Fatalf("the scope from the agency's repository is in %q, want ag-b alone", got)
+	}
+	if got := agencies("shared"); got != "global" {
+		t.Fatalf("the scope from Global's repository is in %q, want global alone", got)
+	}
+
+	// An operator assigns Global's repository's scope to an agency. It stays.
+	if _, err := a.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) SELECT id, 'ag-b' FROM scopes WHERE name = 'shared'`); err != nil {
+		t.Fatalf("assign Global's repository's scope: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		grBackdateAll(t, a)
+		grSync(t, a, "Global's repository again")
+		grBackdateAll(t, a)
+		grSync(t, b, "the agency's repository again")
+	}
+	if got := agencies("shared"); got != "ag-b" {
+		t.Errorf("after two more syncs the assigned scope is in %q, want the operator's ag-b", got)
+	}
+	if got := agencies("theirs"); got != "ag-b" {
+		t.Errorf("after two more syncs the agency's scope is in %q, want ag-b", got)
+	}
+
+	// The database holds it there, whoever writes: not to Global, not to another agency.
+	if _, err := a.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES ('ag-c', 'Agency C', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, other := range []string{"global", "ag-c"} {
+		_, err := a.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) SELECT id, ? FROM scopes WHERE name = 'theirs'`, other)
+		if err == nil || !strings.Contains(err.Error(), "scope_agency_fixed") {
+			t.Errorf("giving the agency's repository's scope to %s: %v, want the scope_agency_fixed refusal", other, err)
+		}
+	}
+	if got := agencies("theirs"); got != "ag-b" {
+		t.Errorf("after the refused writes the scope is in %q", got)
+	}
+
+	// Its file leaves and returns: a new scope, and the agency's again.
+	first := grString(t, a.db, `SELECT id FROM scopes WHERE name = 'theirs'`)
+	gitRemoveFile(t, repoB, "inventory/theirs.ini", "remove the inventory")
+	grBackdateAll(t, a)
+	grSync(t, b, "the agency's repository without it")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM scopes WHERE name = 'theirs'`); n != 0 {
+		t.Fatalf("the scope whose file left was not pruned")
+	}
+	gitCommitFile(t, repoB, remoteB, "inventory/theirs.ini", fmt.Sprintf(grScope, "b1", "10.0.0.2"), "it returns")
+	grSync(t, b, "the agency's repository with it back")
+	if grString(t, a.db, `SELECT id FROM scopes WHERE name = 'theirs'`) == first {
+		t.Fatalf("the returned scope has the id of the pruned one: the prune did not happen")
+	}
+	if got := agencies("theirs"); got != "ag-b" {
+		t.Errorf("the scope that returned is in %q, want ag-b", got)
+	}
+}
+
+// A repository whose agency is not in the catalog supplies no scope: with no
+// agency to give it, the scope is not born at all, rather than born Global's.
+func TestGR4_AScopeIsNotBornGlobalsForWantOfItsAgency(t *testing.T) {
+	a, _, _ := newSyncFixture(t)
+	grSync(t, a, "Global's repository")
+	b, repoB, remoteB := grSecondRepo(t, a)
+	// The row of the repository stays; its agency goes. (Nothing lets this
+	// happen through the application: an agency with a repository cannot be
+	// deleted.)
+	if _, err := a.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.Exec(`DELETE FROM agencies WHERE id = 'ag-b'`); err != nil {
+		t.Skipf("the agency could not be removed for the test: %v", err)
+	}
+	if _, err := a.db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitFile(t, repoB, remoteB, "inventory/theirs.ini", fmt.Sprintf(grScope, "b1", "10.0.0.2"), "the agency's scope")
+	b.SyncBlocking(context.Background(), "t")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = 'theirs' AND sa.agency_id = 'global'`); n != 0 {
+		t.Errorf("the scope of a repository whose agency is gone was born Global's")
 	}
 }

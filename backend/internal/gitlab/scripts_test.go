@@ -528,7 +528,7 @@ func TestSync_GitOpsPruning(t *testing.T) {
 		SourcePath: "scopes/new-scope.yaml",
 		Hosts:      []string{"host1"},
 	}
-	if err := svc.upsertScopes(ctx, tx2, []inventoryScope{newScope}, newTimeStr, "sha2"); err != nil {
+	if _, err := svc.upsertScopes(ctx, tx2, []inventoryScope{newScope}, newTimeStr, "sha2"); err != nil {
 		t.Fatalf("upsertScopes: %v", err)
 	}
 

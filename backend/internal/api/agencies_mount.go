@@ -599,6 +599,9 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the referenced agency does not exist")
 			return
 		}
+		if failAgencyRule(w, err) {
+			return
+		}
 		httpx.Fail500(w, s.log, "update_failed", err)
 		return
 	}
@@ -739,6 +742,8 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "name_reserved", err.Error())
 	case errors.Is(err, settings.ErrOneAgency):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency", err.Error())
+	case errors.Is(err, settings.ErrScopeAgencyFixed):
+		httpx.Fail(w, http.StatusConflict, "scope_agency_fixed", err.Error())
 	case errors.Is(err, settings.ErrOwnerConflict):
 		httpx.Fail(w, http.StatusConflict, "owner_conflict", err.Error()+
 			": rename or remove one of the two before moving this one")

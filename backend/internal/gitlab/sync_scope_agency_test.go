@@ -51,7 +51,7 @@ func TestSyncPreservesScopeAgencies(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := svc.upsertScopes(context.Background(), tx, scopes, "now", "sha"); err != nil {
+		if _, err := svc.upsertScopes(context.Background(), tx, scopes, "now", "sha"); err != nil {
 			t.Fatalf("upsertScopes: %v", err)
 		}
 		if err := tx.Commit(); err != nil {

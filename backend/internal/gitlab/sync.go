@@ -898,11 +898,19 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
-		if uErr := s.upsertScopes(ctx, tx, scopes, nowStr, sha); uErr != nil {
+		taken, uErr := s.upsertScopes(ctx, tx, scopes, nowStr, sha)
+		if uErr != nil {
 			allErrs = append(allErrs, "upsert scopes: "+uErr.Error())
 			dbErr = uErr
 		} else {
-			res.ScopesSynced = len(scopes)
+			res.ScopesSynced = len(scopes) - len(taken)
+			// An inventory whose name is taken was not synced, and its file is
+			// told so (GR-19). It is that file's error and no more: it is not one
+			// of this repository's scopes, so the prune has nothing to hold back.
+			for _, ve := range taken {
+				allErrs = append(allErrs, ve.Error())
+				res.Errors = append(res.Errors, ve)
+			}
 		}
 	}
 
@@ -2934,7 +2942,9 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 	return nil
 }
 
-func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []inventoryScope, now string, sha string) error {
+// It returns the inventories it did NOT write because their name is already a
+// scope's: each as that file's error.
+func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []inventoryScope, now string, sha string) ([]ValidationError, error) {
 	// Scopes table is owned by B6 (settings) but B3 writes git-source rows.
 	// Check if the table exists before writing to avoid failing when B6 hasn't
 	// been applied yet (test isolation). In production all migrations run before
@@ -2942,9 +2952,21 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 	var exists int
 	_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scopes'`).Scan(&exists)
 	if exists == 0 {
-		return nil // scopes table not yet created — no-op
+		return nil, nil // scopes table not yet created — no-op
 	}
 
+	// One wording, whoever holds the name and however (GR-19): a scope built in
+	// the app, another repository's, another agency's. A repository's
+	// committers are told that the name is taken and not whose it is, which is
+	// the rule the composers follow (execspec.NamePoolRefusal).
+	var taken []ValidationError
+	nameTaken := func(sc inventoryScope) {
+		taken = append(taken, ValidationError{
+			File: sc.SourcePath,
+			Message: fmt.Sprintf("the scope name %q is already in use: this inventory was not synced; rename the file",
+				sc.Name),
+		})
+	}
 	for _, sc := range scopes {
 		// OD-1: a git inventory must NEVER clobber an operator-authored (cronomicon)
 		// scope of the same name. The ON CONFLICT(name) upsert below would otherwise
@@ -2955,7 +2977,7 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		var existingRepo sql.NullString
 		_ = tx.QueryRowContext(ctx, `SELECT source, repo_id FROM scopes WHERE name=?`, sc.Name).Scan(&existingSource, &existingRepo)
 		if existingSource == "cronomicon" {
-			s.logWarn("git inventory name collides with an cronomicon-authored scope — skipping (rename one)", "name", sc.Name)
+			nameTaken(sc)
 			continue
 		}
 		// Nor a scope that ANOTHER repository supplies (GR-13). A scope's name is
@@ -2963,10 +2985,17 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// other repository's scope over: its hosts and inventory replaced by this
 		// file's, under the agency and the runner bindings the other one has. It
 		// is skipped, and says only that the name is in use: whose it is, is not
-		// this repository's to learn (GR-19; the notice for it is Phase R4's).
-		if existingSource == "git" && existingRepo.Valid && existingRepo.String != s.repo() {
-			s.logWarn("git inventory name is already in use — skipping (rename it)", "name", sc.Name, "repo_id", s.repo())
-			continue
+		// this repository's to learn (GR-19). A Git scope that records no
+		// repository is from before a scope recorded one, and is Global's.
+		if existingSource == "git" {
+			holder := repoid.Global
+			if existingRepo.Valid && existingRepo.String != "" {
+				holder = existingRepo.String
+			}
+			if holder != s.repo() {
+				nameTaken(sc)
+				continue
+			}
 		}
 		// git_meta_json — {owner, sidecarPath, errors}. settings.applyGitMeta is
 		// the one reader. (capability_json until migration 1170, when it also
@@ -2981,6 +3010,12 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// column list and the ON CONFLICT DO UPDATE SET below (agency-support.md M1,
 		// §3.2 / D-OWN) — so an operator's agency binding survives re-sync, the same
 		// operator-owned model as tags. Do NOT add agency_id here.
+		//
+		// Since 2.4.0 (GR-18) a scope from an AGENCY's repository is that agency's.
+		// That is still not written here: the database gives a new scope its
+		// repository's agency when the row is inserted (migration 1350), from the
+		// repo_id this statement supplies, and refuses to let it be moved. A row
+		// this statement UPDATES fires neither.
 		//
 		// The SAME RULE now covers the scope_agencies join table (migration 670,
 		// the agencies plan AG-Q6/T2.9), which supersedes agency_id in
@@ -3067,7 +3102,7 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// in-app SSH executor can dial inventory hosts with zero operator action.
 		s.importGitHosts(ctx, tx, scopeID, sc, now)
 	}
-	return nil
+	return taken, nil
 }
 
 // sidecarAuthKeyEnvVar returns the per-scope default auth-key env-var NAME from an

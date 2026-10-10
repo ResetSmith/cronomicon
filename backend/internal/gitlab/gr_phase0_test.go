@@ -51,6 +51,9 @@ func grRepo(t *testing.T, first *Service, id, agency string) (*Service, *gogit.R
 	// Its row of git_repos (migration 1310), with its branch: the environment's
 	// branch override, which the first Service's fixture uses, is Global's
 	// repository's alone (GR-21), so a second repository reads its own row.
+	if _, err := first.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES (?, ?, 't')`, agency, "Agency "+agency); err != nil {
+		t.Fatalf("the agency %s: %v", agency, err)
+	}
 	if _, err := first.db.Exec(`INSERT OR REPLACE INTO git_repos (id, agency_id, url, branch) VALUES (?, ?, ?, ?)`,
 		id, agency, remote, first.Cfg.GitLabWriteBranch); err != nil {
 		t.Fatalf("the repository %s's row: %v", id, err)

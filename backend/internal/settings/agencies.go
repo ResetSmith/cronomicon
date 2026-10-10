@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // Agency is the wire representation of an agency — a network-isolation zone that
@@ -55,6 +56,13 @@ var (
 	// not in the catalog — the write-time integrity guard (agency-support.md §2.3;
 	// mapped 422).
 	ErrUnknownAgency = errors.New("unknown agency")
+
+	// ErrScopeAgencyFixed is returned by a write that would give a scope from
+	// an agency's repository any agency but that one (2.4.0, GR-18). The
+	// repository states whose the scope is; it leaves that agency when its file
+	// leaves the repository. Mapped 409 `scope_agency_fixed`.
+	ErrScopeAgencyFixed = errors.New("this scope comes from an agency's repository and belongs to that agency: " +
+		"it cannot be moved while its inventory file is in that repository")
 
 	// ErrAgencyRequired is returned by a membership write that would leave an
 	// entity in no agency at all (LR-26). Every scope, runner, secret, variable
@@ -599,6 +607,11 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 		}
 		val = aid
 	}
+	if fixed, err := ScopeAgencyFixedTo(ctx, database, scopeID); err != nil {
+		return nil, fmt.Errorf("set scope agency: %w", err)
+	} else if fixed != "" && val != fixed {
+		return nil, ErrScopeAgencyFixed
+	}
 	// T3.9 — scopes.agency_id is GONE (migration 700); scope_agencies is the only
 	// binding now. This endpoint is kept because it is the 1:1 affordance the Scopes
 	// tab has always used, and a scope with one agency is still the common case; it
@@ -625,6 +638,24 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 	detail := fmt.Sprintf("%v", val)
 	audit(ctx, database, actor, "Scopes", "agency-set", sc.Scope, detail)
 	return GetScope(ctx, database, scopeID)
+}
+
+// ScopeAgencyFixedTo is the agency a scope is held to because its inventory
+// is in that agency's repository (2.4.0, GR-18), or "" when the scope may be
+// moved: one built in the app, one from Global's repository, or one that is
+// not there. Migration 1350's trigger refuses the same write; this is where
+// the refusal gets its own error and its own answer.
+func ScopeAgencyFixedTo(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, scopeID string) (string, error) {
+	var agency string
+	err := q.QueryRowContext(ctx, `
+		SELECT g.agency_id FROM scopes sc JOIN git_repos g ON g.id = sc.repo_id
+		 WHERE sc.id = ? AND sc.source = 'git' AND g.id <> ?`, scopeID, repoid.Global).Scan(&agency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return agency, err
 }
 
 // ── Runner ↔ agency membership (M2) ───────────────────────────────────────────

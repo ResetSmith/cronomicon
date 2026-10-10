@@ -174,6 +174,13 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 			return ErrUnknownAgency
 		}
 		targets[i] = ids[0]
+		if kind == MemberScope {
+			if fixed, err := ScopeAgencyFixedTo(ctx, database, a.ID); err != nil {
+				return err
+			} else if fixed != "" && fixed != ids[0] {
+				return fmt.Errorf("%w (scope %s)", ErrScopeAgencyFixed, a.ID)
+			}
+		}
 	}
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
@@ -695,6 +702,29 @@ func SetAgencyMembers(ctx context.Context, database *sql.DB, agencyID string, de
 
 	delta, err := ComputeAgencyMembersDelta(ctx, database, agencyID, desired)
 	if err != nil {
+		return nil, err
+	}
+	// GR-18 before the rest: a scope from an agency's repository is that
+	// agency's, whichever way this save would move it.
+	scopeFixed := func(refs []AgencyMemberRef, refused func(fixed string) bool) error {
+		for _, m := range refs {
+			if m.Kind != string(MemberScope) {
+				continue
+			}
+			fixed, err := ScopeAgencyFixedTo(ctx, database, m.ID)
+			if err != nil {
+				return err
+			}
+			if fixed != "" && refused(fixed) {
+				return fmt.Errorf("%w (scope %s)", ErrScopeAgencyFixed, m.ID)
+			}
+		}
+		return nil
+	}
+	if err := scopeFixed(delta.Removed, func(fixed string) bool { return fixed == agencyID }); err != nil {
+		return nil, err
+	}
+	if err := scopeFixed(delta.Added, func(fixed string) bool { return fixed != agencyID }); err != nil {
 		return nil, err
 	}
 	for _, m := range delta.Removed {
