@@ -122,9 +122,10 @@ func TestSyncKeepsAScriptsIdentityThroughItsLife(t *testing.T) {
 }
 
 // Another repository's sync does not join Global's in-app jobs to ITS script
-// of the same name: which repository an in-app job's name is looked up in is
-// GR-16's rule, and until it is built (Phase R4) only Global's repository
-// answers.
+// of the same name: an in-app job's name is looked up in its own agency's
+// repository, then in Global's (GR-16), and this job, which has no scope, is
+// Global's. (TestGR4_AnInAppJobIsRejoinedInItsAgencysRepositoryThenGlobals has
+// the rest of the rule.)
 func TestAnotherRepositorysScriptDoesNotClaimAnInAppJob(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
 	grSync(t, a, "global")

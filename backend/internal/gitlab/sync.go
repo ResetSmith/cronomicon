@@ -633,14 +633,27 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	collect(schedResolveErrs)
 	schedsOK = schedsOK && len(schedResolveErrs) == 0
 
+	// What this repository's definitions take from Global's (GR-16, borrow.go):
+	// a script, a schedule or a definition to react to that this repository has
+	// no file for and the installation's own repository supplies.
+	borrow := s.newBorrowing(ctx, scripts, scheds)
+	// elsewhere is the end of a "does not resolve" message: where was looked.
+	elsewhere := ""
+	if s.repo() != repoid.Global {
+		elsewhere = " of this repository, nor to one of the installation's own"
+	}
+
 	// dangleScheduleRefs reports any scheduleRef that resolves to no schedule, as a
 	// hard sync error (caught at sync/MR time, not run time — same as script_ref).
 	dangleScheduleRefs := func(file string, refs []string) bool {
 		bad := false
 		for _, ref := range refs {
-			if _, ok := resolvedScheds[ref]; !ok {
+			if _, ok := resolvedScheds[ref]; ok {
+				continue
+			}
+			if _, ok := borrow.schedule(ref); !ok {
 				ve := ValidationError{File: file, Field: "spec.scheduleRefs",
-					Message: fmt.Sprintf("scheduleRef %q does not resolve to any schedules/*.yaml", ref)}
+					Message: fmt.Sprintf("scheduleRef %q does not resolve to any schedules/*.yaml%s", ref, elsewhere)}
 				allErrs = append(allErrs, ve.Error())
 				res.Errors = append(res.Errors, ve)
 				bad = true
@@ -735,10 +748,13 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 	definitionExists := func(kind, source, name string) bool {
 		if source == "git" {
+			// This repository's own, then Global's (GR-16). Global's are in the
+			// tables already: they are not what this sync is writing, so asking
+			// the tables for them is not the race the note above describes.
 			if kind == "workflow" {
-				return incomingWfs[name]
+				return incomingWfs[name] || s.globalHas(ctx, kind, name)
 			}
-			return incomingJobs[name]
+			return incomingJobs[name] || s.globalHas(ctx, kind, name)
 		}
 		table := "jobs"
 		if kind == "workflow" {
@@ -801,9 +817,13 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	goodJobs := make([]JobYAML, 0, len(jobs))
 	for _, j := range jobs {
 		if j.Spec.ScriptRef != "" {
-			if _, ok := resolved[j.Spec.ScriptRef]; !ok {
+			_, ok := resolved[j.Spec.ScriptRef]
+			if !ok {
+				_, ok = borrow.script(j.Spec.ScriptRef)
+			}
+			if !ok {
 				ve := ValidationError{File: "jobs/" + j.Metadata.Name + ".yaml", Field: "spec.script_ref",
-					Message: fmt.Sprintf("script_ref %q does not resolve to any script in scripts/", j.Spec.ScriptRef)}
+					Message: fmt.Sprintf("script_ref %q does not resolve to any script in scripts/%s", j.Spec.ScriptRef, elsewhere)}
 				allErrs = append(allErrs, ve.Error())
 				res.Errors = append(res.Errors, ve)
 				continue
@@ -894,7 +914,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
-		if uErr := s.upsertJobs(ctx, tx, goodJobs, resolved, resolvedScheds, nowStr, sha); uErr != nil {
+		if uErr := s.upsertJobs(ctx, tx, goodJobs, borrow.withScripts(resolved), borrow.withScheds(resolvedScheds), nowStr, sha); uErr != nil {
 			allErrs = append(allErrs, "upsert jobs: "+uErr.Error())
 			dbErr = uErr
 		} else {
@@ -903,7 +923,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
-		if uErr := s.upsertWorkflows(ctx, tx, goodWfs, resolvedScheds, nowStr, sha); uErr != nil {
+		if uErr := s.upsertWorkflows(ctx, tx, goodWfs, borrow.withScheds(resolvedScheds), nowStr, sha); uErr != nil {
 			allErrs = append(allErrs, "upsert workflows: "+uErr.Error())
 			dbErr = uErr
 		} else {
@@ -2011,21 +2031,39 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 		// An in-app job names its script and holds a copy of it. If the script
 		// had gone (the trigger cleared the job's script_uid) and is back, the
 		// job is joined to it again by the name its author wrote, which is what
-		// the name did by itself while a script WAS its name. Global's repository
-		// only: which repository an agency's in-app job resolves a name in is
-		// GR-16's rule, and it arrives with the repositories (Phase R4).
+		// the name did by itself while a script WAS its name.
+		//
+		// Which repository an in-app job's name is looked up in is GR-16's rule:
+		// its agency's repository, then Global's. So an agency's repository joins
+		// the in-app jobs of ITS agency, and Global's joins every other, leaving
+		// alone a job whose own agency's repository has a script of the name. A
+		// job that HAS a script is never moved from it to another: only a job
+		// with none is joined.
 		//
 		// "No script" is a NULL, or a uid that names no row: the composer reads
 		// the script before it opens its transaction, so a prune between the two
 		// can leave a job holding the uid of a script that has just gone, written
 		// after the trigger that would have cleared it had already run.
-		if s.repo() == repoid.Global {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE jobs SET script_uid = ?
-				  WHERE source = 'cronomicon' AND script_ref = ?
-				    AND (script_uid IS NULL OR script_uid NOT IN (SELECT uid FROM scripts))`, rs.uid, name); err != nil {
-				return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, err)
-			}
+		const scriptless = `source = 'cronomicon' AND script_ref = ?
+				    AND (script_uid IS NULL OR script_uid NOT IN (SELECT uid FROM scripts))`
+		var rejoinErr error
+		switch {
+		case s.repo() != repoid.Global:
+			_, rejoinErr = tx.ExecContext(ctx,
+				`UPDATE jobs SET script_uid = ? WHERE `+scriptless+` AND `+jobsAgencySQL+` = ?`,
+				rs.uid, name, s.agency())
+		case otherRepositories(ctx, tx):
+			_, rejoinErr = tx.ExecContext(ctx,
+				`UPDATE jobs SET script_uid = ? WHERE `+scriptless+`
+				    AND NOT EXISTS (SELECT 1 FROM scripts x JOIN git_repos g ON g.id = x.repo_id
+				                     WHERE x.name = jobs.script_ref AND g.id <> ?
+				                       AND g.agency_id = `+jobsAgencySQL+`)`,
+				rs.uid, name, repoid.Global)
+		default:
+			_, rejoinErr = tx.ExecContext(ctx, `UPDATE jobs SET script_uid = ? WHERE `+scriptless, rs.uid, name)
+		}
+		if rejoinErr != nil {
+			return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, rejoinErr)
 		}
 		// An in-app job follows its script (the owner's decision of 2026-10-09).
 		// A job holds a COPY of its script: the run type, the body or the path to
@@ -2050,6 +2088,21 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 			rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
 			rs.contentHash, rs.uid); err != nil {
 			return fmt.Errorf("refresh in-app jobs of script %q: %w", name, err)
+		}
+		// And a job of ANOTHER repository that uses this script (GR-16: an
+		// agency's job may use Global's). Its copy was written by its own
+		// repository's last sync and would otherwise be the old body until that
+		// repository synced again. The columns are the ones upsertJobs copies for
+		// a Git job, the checkout marker among them; the executor as upsertJobs
+		// stores it (the script's when the script has one).
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE jobs
+			    SET run_type = ?, command = ?, script = ?, script_path = ?,
+			        executor = COALESCE(?, executor), content_hash = ?, project_root = ?
+			  WHERE source = 'git' AND script_uid = ? AND COALESCE(repo_id, ?) <> ?`,
+			rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
+			rs.contentHash, nullStr(rs.projectRoot), rs.uid, repoid.Global, s.repo()); err != nil {
+			return fmt.Errorf("refresh other repositories' jobs of script %q: %w", name, err)
 		}
 	}
 	return nil
@@ -2250,14 +2303,23 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 		// time after the schedule was edited in Git, where an in-app schedule's
 		// edit has always reached its users (D1c). The same columns that edit
 		// propagates, found the same way: by schedule_uid.
+		//
+		// And a definition of ANOTHER repository that uses this schedule (2.4.0,
+		// GR-16: an agency's definition may use Global's). Its copy was written
+		// by its own repository's last sync. This repository's own definitions
+		// are left to the rewrite further down, as before.
+		const elsewhereOwner = `(owner_source = 'cronomicon' OR owner_uid IN (
+			SELECT uid FROM jobs      WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?
+			UNION ALL
+			SELECT uid FROM workflows WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?))`
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE definition_schedules
 			   SET cron=?, env=?, start_at=?, end_at=?, interval=?, skip_calendars=?, only_calendars=?
-			 WHERE schedule_uid = ? AND owner_source = 'cronomicon'`,
+			 WHERE schedule_uid = ? AND `+elsewhereOwner,
 			rs.cron, envJSON, nullStr(rs.startAt), nullStr(rs.endAt), nullStr(rs.interval),
 			nullStr(calendar.MarshalNames(rs.skipCals)), nullStr(calendar.MarshalNames(rs.onlyCals)),
-			rs.uid); err != nil {
-			return fmt.Errorf("propagate schedule %q to in-app definitions: %w", name, err)
+			rs.uid, s.repo(), s.repo()); err != nil {
+			return fmt.Errorf("propagate schedule %q to the definitions that use it: %w", name, err)
 		}
 		// The legacy display mirror (jobs/workflows.schedule, the lowest-position
 		// cron) of each owner just touched, as the in-app edit recomputes it.
@@ -2267,11 +2329,11 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 				   SET schedule = (SELECT d.cron FROM definition_schedules d
 				                    WHERE d.owner_kind = ? AND d.owner_uid = `+table+`.uid
 				                    ORDER BY d.position LIMIT 1)
-				 WHERE source = 'cronomicon'
+				 WHERE (source = 'cronomicon' OR (repo_id IS NOT NULL AND repo_id <> ?))
 				   AND uid IN (SELECT owner_uid FROM definition_schedules
-				                WHERE schedule_uid = ? AND owner_kind = ? AND owner_source = 'cronomicon')`,
-				kind, rs.uid, kind); err != nil {
-				return fmt.Errorf("refresh the schedule column of in-app %ss bound to %q: %w", kind, name, err)
+				                WHERE schedule_uid = ? AND owner_kind = ?)`,
+				kind, s.repo(), rs.uid, kind); err != nil {
+				return fmt.Errorf("refresh the schedule column of the %ss bound to %q: %w", kind, name, err)
 			}
 		}
 	}
