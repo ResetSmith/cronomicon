@@ -131,8 +131,8 @@ func checkScheduleBindingAmbiguous(ctx context.Context, database *sql.DB) error 
 // before 1300 that names a schedule nobody has is left as it was found.
 //
 // Subject: "<job|workflow>:<owner uid>:<entry name>". Filed under the agency of
-// a job's scope when the scope is in exactly one, otherwise under Global; a
-// workflow's is Global's.
+// a job's scope when the scope is in exactly one, and under a workflow's owner
+// (1360); otherwise under Global.
 const KindScheduleGone = "schedule_gone"
 
 func checkScheduleGone(ctx context.Context, database *sql.DB) error {
@@ -142,7 +142,8 @@ func checkScheduleGone(ctx context.Context, database *sql.DB) error {
 		                   FROM jobs j
 		                   JOIN scopes sc         ON sc.name = j.scope
 		                   JOIN scope_agencies sa ON sa.scope_id = sc.id
-		                  WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid), ?)
+		                  WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
+		                (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid), ?)
 		  FROM definition_schedules ds
 		 WHERE ds.owner_source = 'cronomicon'
 		   AND COALESCE(ds.owner_uid, '') <> ''

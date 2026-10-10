@@ -10157,10 +10157,18 @@ components:
               repository, and no schedule holds the name (v2.4.0). It was
               left as it is and still fires at the timing it had; nothing will
               change that timing again. Subject: `<job|workflow>:<owner
-              uid>:<entry name>`. Filed under the agency of the job's scope,
-              otherwise under Global. It clears when the definition is bound to
-              another schedule or given a timing of its own. (When another
+              uid>:<entry name>`. Filed under the agency of the job's scope, or
+              the workflow's owner; otherwise under Global. It clears when the
+              definition is bound to another schedule or given a timing of its
+              own. (When another
               schedule holds the name it is `schedule_binding_ambiguous`.)
+            - `workflow_spans_agencies` — a workflow built in the app runs jobs
+              of more than one agency, so it belongs to Global, and from v2.4.0
+              only a global administrator may save it. It runs as before.
+              Raised for the workflows the upgrade found so, and for one that
+              comes to span later (a scope given to another agency). Subject:
+              the workflow's uid. Filed under Global. It clears when the
+              workflow's jobs are all one agency's.
             - `prune_deferred` — a script or a schedule was removed from the
               installation's own repository while an agency's repository still
               uses it (v2.4.0). It is kept as it was until none of that

@@ -37,6 +37,8 @@ func TestScheduleGoneIsAnInAppEntryWhoseScheduleLeft(t *testing.T) {
 	entry("cronomicon", "job", "unscoped", "j-free", "nightly", "nightly", "s-pruned") // the condition, Global's
 	mustExec(t, pool, `INSERT INTO workflows (uid, name, source, steps, synced_at) VALUES ('w-1', 'flow', 'cronomicon', '[]', 't')`)
 	entry("cronomicon", "workflow", "flow", "w-1", "nightly", "nightly", "s-pruned") // the condition, a workflow
+	mustExec(t, pool, `INSERT INTO workflows (uid, name, source, steps, synced_at, owner_agency) VALUES ('w-fin', 'fin-flow', 'cronomicon', '[]', 't', 'ag-fin')`)
+	entry("cronomicon", "workflow", "fin-flow", "w-fin", "nightly", "nightly", "s-pruned") // the condition, an agency's workflow
 
 	job("j-name", "has-namesake", "cronomicon", "fin-prod", nil)
 	entry("cronomicon", "job", "has-namesake", "j-name", "weekly", "weekly", "s-pruned") // a schedule holds the name: the other notice
@@ -58,8 +60,11 @@ func TestScheduleGoneIsAnInAppEntryWhoseScheduleLeft(t *testing.T) {
 		return openOf(t, pool, notices.KindScheduleGone)
 	}
 	got := check()
-	if len(got) != 3 {
-		t.Fatalf("open notices = %d (%v), want the three entries whose schedule has gone", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("open notices = %d (%v), want the four entries whose schedule has gone", len(got), got)
+	}
+	if w, ok := got["workflow:w-fin:nightly"]; !ok || w.AgencyID != "ag-fin" {
+		t.Errorf("the agency's workflow's notice: found %v, agency %q; want it under the workflow's owner", ok, w.AgencyID)
 	}
 	n, ok := got["job:j-gone:nightly"]
 	if !ok || n.AgencyID != "ag-fin" {
@@ -85,8 +90,8 @@ func TestScheduleGoneIsAnInAppEntryWhoseScheduleLeft(t *testing.T) {
 	mustExec(t, pool, `UPDATE definition_schedules SET source_ref = 'weekly', schedule_uid = 's-live' WHERE owner_uid = 'j-gone'`)
 	mustExec(t, pool, `UPDATE definition_schedules SET source_ref = NULL, schedule_uid = NULL WHERE owner_uid = 'j-free'`)
 	got = check()
-	if len(got) != 1 {
-		t.Errorf("open notices after two were settled = %d (%v), want the workflow's", len(got), got)
+	if len(got) != 2 {
+		t.Errorf("open notices after two were settled = %d (%v), want the two workflows'", len(got), got)
 	}
 	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash) VALUES ('s-new', 'nightly', 'cronomicon', '0 0 5 * * *', 'h')`)
 	if got = check(); len(got) != 0 {

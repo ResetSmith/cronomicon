@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -322,6 +323,22 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	if !s.requireComposeStepScopes(w, r, actorID, steps) {
 		return
 	}
+	// GR-7 — whose the workflow is: the one agency its jobs belong to. One whose
+	// jobs are several agencies' is Global's, and saving it is a global
+	// administrator's. Holding compose in each of the agencies is not enough:
+	// what such a workflow does crosses agencies, and nobody who administers
+	// one agency answers for that.
+	owner, spans, oerr := s.workflowOwner(r, steps)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return
+	}
+	if spans && !actorID.GlobalAdmin(auth.PermCompose) {
+		s.denyEntityAgency(w, r, actorID, auth.PermCompose, auth.AllScopes,
+			"this workflow runs jobs of more than one agency, so it belongs to Global: only an administrator "+
+				"whose compose grant covers every agency may save it. A workflow whose jobs are all one agency's is that agency's")
+		return
+	}
 	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules})
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
@@ -367,16 +384,19 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO workflows(name, source, description, steps, schedule, enabled,
-		                      created_by, created_at, last_modified_by, last_modified_at, layout_json, uid)
-		VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                      created_by, created_at, last_modified_by, last_modified_at, layout_json, uid, owner_agency)
+		VALUES(?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uid) DO UPDATE SET
 			description=excluded.description, steps=excluded.steps, schedule=excluded.schedule,
 			enabled=excluded.enabled, last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at,
-			layout_json=COALESCE(excluded.layout_json, workflows.layout_json)`,
+			layout_json=COALESCE(excluded.layout_json, workflows.layout_json),
+			owner_agency=excluded.owner_agency`,
 		in.Name, nullStrIf(in.Description), stepsJSON, nullStrIf(legacyMirror), enabled, actor, now, actor, now, layoutJSON,
 		// R2-5 — the identity IS the conflict target: create inserts fresh,
 		// edit collides on the existing uid and lands in DO UPDATE.
-		uid)
+		uid,
+		// GR-6 — the owner follows the steps, so it is written at every save.
+		owner)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -714,6 +734,60 @@ func (s *Server) stepJobScope(r *http.Request, ref workflow.StepRef) (sql.NullSt
 		}
 	}
 	return sql.NullString{}, false
+}
+
+// workflowOwner works out whose a workflow built in the app is, from the jobs
+// its steps run, sub-workflows followed (GR-6, GR-7): the one agency they all
+// belong to, and Global when there is none to say or more than one. spans is
+// the second case, which is a global administrator's to save.
+//
+// A job with no scope is Global's, as its runs are. So is one whose scope is
+// not in the catalog. A scope that several agencies share (a row from before
+// 2.3.0) counts as each of them.
+func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner string, spans bool, err error) {
+	scopes := s.collectStepScopes(r, steps)
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobScopes(r.Context(), steps, "cronomicon")
+	if err != nil {
+		return "", false, err
+	}
+	agencies := map[string]bool{}
+	for _, scope := range append(scopes, nested...) {
+		if strings.TrimSpace(scope) == "" {
+			agencies[agencyid.Global] = true
+			continue
+		}
+		rows, qerr := s.db.QueryContext(r.Context(), `
+			SELECT sa.agency_id FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?`, scope)
+		if qerr != nil {
+			return "", false, qerr
+		}
+		n := 0
+		for rows.Next() {
+			var id string
+			if serr := rows.Scan(&id); serr != nil {
+				rows.Close()
+				return "", false, serr
+			}
+			agencies[id] = true
+			n++
+		}
+		rows.Close()
+		if rerr := rows.Err(); rerr != nil {
+			return "", false, rerr
+		}
+		if n == 0 {
+			agencies[agencyid.Global] = true
+		}
+	}
+	switch len(agencies) {
+	case 0:
+		return agencyid.Global, false, nil
+	case 1:
+		for id := range agencies {
+			return id, false, nil
+		}
+	}
+	return agencyid.Global, true, nil
 }
 
 // collectStepScopes resolves each step job's scope through the same A11

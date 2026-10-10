@@ -208,3 +208,32 @@ func TestGR4_AJobsAdvisoryChecksAskWithinItsAgency(t *testing.T) {
 		}
 	}
 }
+
+// A Git workflow belongs to its repository's agency (Phase R4, GR-6), written
+// when the workflow is first seen and not changed by a later sync.
+func TestGR4_AGitWorkflowIsItsRepositorysAgencys(t *testing.T) {
+	a, repoA, remoteA := newSyncFixture(t)
+	gitCommitFile(t, repoA, remoteA, "workflows/nightly.yaml", grWorkflow, "Global's workflow")
+	grSync(t, a, "Global's repository")
+	b, repoB, remoteB := grSecondRepo(t, a)
+	grCommitFiles(t, repoB, remoteB, map[string]string{
+		"jobs/keep.yaml":         jobYAML("keep"),
+		"workflows/nightly.yaml": grWorkflow,
+	}, "the agency's workflow of the same name")
+	grSync(t, b, "the agency's repository")
+	owner := func(repo string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT owner_agency FROM workflows WHERE source='git' AND repo_id = ? AND name='nightly'`, repo)
+	}
+	if got := owner("global"); got != "global" {
+		t.Errorf("Global's repository's workflow is %q's, want global's", got)
+	}
+	if got := owner("repo-b"); got != "ag-b" {
+		t.Errorf("the agency's repository's workflow is %q's, want ag-b's", got)
+	}
+	grBackdateAll(t, a)
+	grSync(t, b, "the agency's repository again")
+	if got := owner("repo-b"); got != "ag-b" {
+		t.Errorf("after a second sync the agency's workflow is %q's", got)
+	}
+}

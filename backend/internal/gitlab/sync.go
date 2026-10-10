@@ -3017,8 +3017,8 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			legacyMirror = entries[0].Cron
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid, repo_id)
-			VALUES(?,?,?,?,?,?,?,?,?)
+			INSERT INTO workflows(name, description, steps, schedule, enabled, source_path, synced_at, uid, repo_id, owner_agency)
+			VALUES(?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(repo_id, name) WHERE source = 'git' DO UPDATE SET
 				description=excluded.description,
 				steps=excluded.steps,
@@ -3030,8 +3030,11 @@ func (s *Service) upsertWorkflows(ctx context.Context, tx *sql.Tx, wfs []Workflo
 			nullStr(legacyMirror), enabled,
 			defPath(wf.SourcePath, "workflows/"+name+".yaml"), now,
 			db.NewID(),
-			// The repository it comes from (GR-3): see upsertJobs.
-			s.repo())
+			// The repository it comes from (GR-3): see upsertJobs. And its owner,
+			// that repository's agency (GR-6, 1360): written at first sight and
+			// absent from the update, like the uid, since a repository's agency
+			// never changes (GR-2).
+			s.repo(), s.agency())
 		if err != nil {
 			return fmt.Errorf("upsert workflow %q: %w", name, err)
 		}

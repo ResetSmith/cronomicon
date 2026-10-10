@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS workflows (
     synced_at   TEXT,
     tags        TEXT NOT NULL DEFAULT '[]',
     repo_id     TEXT, -- migration 1310
+    owner_agency TEXT NOT NULL DEFAULT 'global', -- migration 1360
     PRIMARY KEY (source, name)
 );
 -- Migration 1320: a Git name is unique within its repository, and sync's
