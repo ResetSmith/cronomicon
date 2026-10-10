@@ -69,6 +69,13 @@ const (
 	// Written and resolved by the sync itself, in its transaction, not by a
 	// check. Subject: the repository's id. Filed under the repository's agency.
 	KindGitSyncProblems = "git_sync_problems"
+	// KindPruneDeferred — a script or a schedule was removed from the
+	// installation's own repository while an agency's repository still uses it
+	// (2.4.0, GR-17). It is kept as it was until nothing of that repository's
+	// names it. Written and resolved by sync, in its transaction. Subject:
+	// `<script|schedule>:<uid>:<repository id>`. Filed under the agency of the
+	// repository that uses it, and names that repository's definitions only.
+	KindPruneDeferred = "prune_deferred"
 )
 
 // Notice is one row of the inbox.

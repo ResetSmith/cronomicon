@@ -6710,6 +6710,23 @@ export interface components {
              *       and clears at the first sync of that repository that reports no
              *       error; an error that was not there before opens it again for
              *       whoever had dismissed it.
+             *     - `schedule_gone` — a job or workflow built in the app takes its
+             *       timing from a reusable schedule that was removed from its Git
+             *       repository, and no schedule holds the name (v2.4.0). It was
+             *       left as it is and still fires at the timing it had; nothing will
+             *       change that timing again. Subject: `<job|workflow>:<owner
+             *       uid>:<entry name>`. Filed under the agency of the job's scope,
+             *       otherwise under Global. It clears when the definition is bound to
+             *       another schedule or given a timing of its own. (When another
+             *       schedule holds the name it is `schedule_binding_ambiguous`.)
+             *     - `prune_deferred` — a script or a schedule was removed from the
+             *       installation's own repository while an agency's repository still
+             *       uses it (v2.4.0). It is kept as it was until none of that
+             *       repository's definitions names it. Subject:
+             *       `<script|schedule>:<uid>:<repository id>`. Filed under the agency
+             *       of the repository that uses it; the detail names that
+             *       repository's definitions. Written by sync, and cleared by it
+             *       when the agency's repository no longer uses the row.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.

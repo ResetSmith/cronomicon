@@ -110,3 +110,74 @@ func checkScheduleBindingAmbiguous(ctx context.Context, database *sql.DB) error 
 	rows.Close()
 	return Reconcile(ctx, database, KindScheduleBindingAmbiguous, found)
 }
+
+// KindScheduleGone — a job or workflow built in the app takes its timing from
+// a reusable schedule that is no longer there, and no schedule holds the name
+// (2.4.0; present defect 13, its second half, as the owner decided).
+//
+// A Git schedule removed from its repository is pruned. The in-app definitions
+// that were bound to it are neither detached nor stopped: each holds a copy of
+// the timing and goes on firing at it. Until 2.4.0 nothing said so. The entry
+// was left naming a schedule that no schedule list shows, at a timing that no
+// edit will ever change again.
+//
+// When another schedule holds the name it is KindScheduleBindingAmbiguous's
+// condition (saving the definition binds it to that one); this is the case
+// where none does. It resolves when the entry is bound to another schedule or
+// given a timing of its own.
+//
+// Only an entry that RECORDS the schedule it came from (schedule_uid, since
+// 1300) is reported: that is a schedule known to have gone. An entry from
+// before 1300 that names a schedule nobody has is left as it was found.
+//
+// Subject: "<job|workflow>:<owner uid>:<entry name>". Filed under the agency of
+// a job's scope when the scope is in exactly one, otherwise under Global; a
+// workflow's is Global's.
+const KindScheduleGone = "schedule_gone"
+
+func checkScheduleGone(ctx context.Context, database *sql.DB) error {
+	rows, err := database.QueryContext(ctx, `
+		SELECT ds.owner_kind, ds.owner_uid, ds.owner_name, ds.name, ds.source_ref, ds.cron,
+		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+		                   FROM jobs j
+		                   JOIN scopes sc         ON sc.name = j.scope
+		                   JOIN scope_agencies sa ON sa.scope_id = sc.id
+		                  WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid), ?)
+		  FROM definition_schedules ds
+		 WHERE ds.owner_source = 'cronomicon'
+		   AND COALESCE(ds.owner_uid, '') <> ''
+		   AND COALESCE(ds.source_ref, '') <> ''
+		   AND COALESCE(ds.schedule_uid, '') <> ''
+		   AND NOT EXISTS (SELECT 1 FROM schedules s0 WHERE s0.uid = ds.schedule_uid)
+		   AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL)
+		   AND (   (ds.owner_kind = 'job'      AND EXISTS (SELECT 1 FROM jobs j      WHERE j.uid = ds.owner_uid AND j.deleted_at IS NULL))
+		        OR (ds.owner_kind = 'workflow' AND EXISTS (SELECT 1 FROM workflows w WHERE w.uid = ds.owner_uid AND w.deleted_at IS NULL)))
+		 ORDER BY ds.owner_kind, ds.owner_name, ds.name`, agencyid.Global)
+	if err != nil {
+		return err
+	}
+	var found []Finding
+	for rows.Next() {
+		var kind, ownerUID, ownerName, entry, ref, cron, agency string
+		if err := rows.Scan(&kind, &ownerUID, &ownerName, &entry, &ref, &cron, &agency); err != nil {
+			rows.Close()
+			return err
+		}
+		found = append(found, Finding{
+			AgencyID: agency,
+			Subject:  kind + ":" + ownerUID + ":" + entry,
+			Detail: fmt.Sprintf("The %s %s takes the timing %q from a reusable schedule called %s, and that schedule is no "+
+				"longer there: it was removed from its Git repository. The %s was left as it is and still fires, at %s. "+
+				"Nothing will change that timing again: no schedule lists the %s among its users, and no edit of a "+
+				"schedule reaches it. Open the %s and bind it to another schedule, or give it a timing of its own; this "+
+				"notice clears when it is done.",
+				kind, ownerName, entry, ref, kind, cron, kind, kind),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	return Reconcile(ctx, database, KindScheduleGone, found)
+}

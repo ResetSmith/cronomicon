@@ -1062,9 +1062,14 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 		// This repository's scripts only (1290, GR-13). The statement used to ask
 		// neither for a Git row nor for a repository, so a second repository's
 		// sync deleted every script the first had supplied.
+		//
+		// Not one that a job of ANOTHER repository is joined to (GR-17,
+		// deferred.go): it is kept as it was, and that repository's agency is
+		// told, until nothing of another repository's uses it.
 		prunedScripts = prune("scripts", `
 			DELETE FROM scripts
-			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?`, repoID)
+			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?
+			  AND NOT `+scriptUsedElsewhere, repoID, repoID)
 	} else {
 		skipped = append(skipped, "scripts")
 	}
@@ -1074,9 +1079,12 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	if schedsOK {
 		// This repository's schedules only (1300, GR-13), like the scripts
 		// above and for the same reason: the column arrived with this phase.
+		// Nor one that a definition of another repository takes its timing from
+		// (GR-17).
 		prune("schedules", `
 			DELETE FROM schedules
-			WHERE source = 'git' AND synced_at < ? AND repo_id = ?`, repoID)
+			WHERE source = 'git' AND synced_at < ? AND repo_id = ?
+			  AND NOT `+scheduleUsedElsewhere, repoID, repoID, repoID)
 	} else {
 		skipped = append(skipped, "schedules")
 	}
@@ -1124,6 +1132,14 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 			  AND NOT `+settings.BoundScopeBusySQL, repoID)
 	} else {
 		skipped = append(skipped, "scopes")
+	}
+
+	// The prunes this sync deferred, said to whoever they wait for (GR-17).
+	if dbErr == nil {
+		if err := s.noteDeferredPrunes(ctx, tx, nowStr, scriptsOK, schedsOK); err != nil {
+			allErrs = append(allErrs, "note the deferred prunes: "+err.Error())
+			dbErr = err
+		}
 	}
 
 	// PP-B2 (B2-3): a skipped prune leaves stale rows — surface it. The parse

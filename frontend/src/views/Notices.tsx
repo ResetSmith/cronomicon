@@ -34,6 +34,8 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   runner_name_shared: { title: "Two runners of one agency share a name", to: "/runners", toLabel: "Runners" },
   schedule_binding_ambiguous: { title: "A schedule entry is tied to no schedule", to: "/schedules", toLabel: "Schedules" },
   git_sync_problems: { title: "A repository's last sync reported errors", to: "/runs?tab=git-sync", toLabel: "Git Sync" },
+  schedule_gone: { title: "A schedule in use was removed from Git", to: "/schedules", toLabel: "Schedules" },
+  prune_deferred: { title: "Something this agency's repository uses was removed from the installation's", to: "/runs?tab=git-sync", toLabel: "Git Sync" },
   may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
   mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },
   may_run_on_server: { title: "Shell jobs that ran on agents may now run from the server", to: "/scopes", toLabel: "Scopes" },

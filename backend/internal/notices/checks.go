@@ -36,6 +36,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindLegacyPlacement, checkLegacyPlacement},
 		{KindRunnerNameShared, checkRunnerNameShared},
 		{KindScheduleBindingAmbiguous, checkScheduleBindingAmbiguous},
+		{KindScheduleGone, checkScheduleGone},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},
 		{KindNoRunnerForShellJobs, checkNoRunnerForShellJobs},

@@ -1,6 +1,9 @@
 package gitlab
 
 import (
+	"context"
+	"github.com/ResetSmith/cronomicon/internal/notices"
+	"strings"
 	"testing"
 )
 
@@ -104,11 +107,16 @@ func TestAnInAppDefinitionFollowsItsGitSchedule(t *testing.T) {
 	}
 }
 
-// The other half of present defect 13, NOT changed and still the owner's to
-// decide: when a schedule leaves Git, the in-app definitions bound to it go on
-// firing at the timing they have, holding the uid of a schedule that is gone.
-// This passes on the code as it is.
-func TestGR0_AnInAppDefinitionOutlivesItsPrunedGitSchedule(t *testing.T) {
+// The other half of present defect 13, as the owner decided it (2026-10-09):
+// when a schedule leaves Git, the in-app definitions bound to it go on firing
+// at the timing they have, holding the uid of a schedule that is gone, AND THE
+// INBOX SAYS SO (Phase R4), naming each and what to do. The notice clears when
+// the definition is bound to another schedule or given a timing of its own.
+//
+// Until Phase R4 (TestGR0_AnInAppDefinitionOutlivesItsPrunedGitSchedule pinned
+// it) nothing said so: the entry named a schedule that no list shows, at a
+// timing no edit would ever change again.
+func TestGR4_AnInAppDefinitionOutlivesItsPrunedGitScheduleAndTheInboxSaysSo(t *testing.T) {
 	svc, repo, remote := newSyncFixture(t)
 	grCommitFiles(t, repo, remote, map[string]string{
 		"schedules/yearly.yaml": grSchedule("0 3 1 1 *"),
@@ -141,8 +149,37 @@ func TestGR0_AnInAppDefinitionOutlivesItsPrunedGitSchedule(t *testing.T) {
 			t.Errorf("the orphaned entry is %q, want it as it was: %q", got, first+" yearly "+sched)
 		}
 	case 0:
-		t.Errorf("the in-app job was detached when its schedule left Git: this has been decided and built, and the test is to be re-read")
+		t.Errorf("the in-app job was detached when its schedule left Git: the decision was that it goes on firing")
 	default:
 		t.Errorf("the in-app job has %d entries after its schedule was pruned", n)
+	}
+
+	gone := func() (agency, detail string, open bool) {
+		t.Helper()
+		if err := notices.RunChecks(context.Background(), svc.db); err != nil {
+			t.Fatalf("the inbox's checks: %v", err)
+		}
+		var resolved *string
+		if err := svc.db.QueryRow(`SELECT agency_id, detail, resolved_at FROM notices WHERE kind='schedule_gone' AND subject='job:j-app:yearly'`).
+			Scan(&agency, &detail, &resolved); err != nil {
+			return "", "", false
+		}
+		return agency, detail, resolved == nil
+	}
+	agency, detail, open := gone()
+	if !open || agency != "global" {
+		t.Fatalf("the notice for the job whose schedule has gone: open=%v agency=%q", open, agency)
+	}
+	for _, want := range []string{"The job app-job", "yearly", "removed from its Git repository", first} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the notice does not say %q: %s", want, detail)
+		}
+	}
+	// The job is given a timing of its own: the entry names no schedule now.
+	if _, err := svc.db.Exec(`UPDATE definition_schedules SET source_ref = NULL, schedule_uid = NULL WHERE owner_uid='j-app'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, open := gone(); open {
+		t.Errorf("the notice is still open after the job was given a timing of its own")
 	}
 }
