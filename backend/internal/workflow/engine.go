@@ -612,6 +612,20 @@ func (e *Engine) runJob(
 				"job", step.Name, "reference", blocked[0].Reference, "detail", runref.UnboundRefusal(blocked))
 		}
 	}
+	// GR-15 — a step that runs a job of an agency's repository on a scope that
+	// is not that agency's fails here, recorded like the refusal above.
+	if stepStatus == "queued" {
+		stranded, serr := runref.RepoScopeMismatch(ctx, e.db, jd.uid, jobSrc, step.Name, effectiveScope)
+		if serr != nil {
+			e.log.Error("workflow: check the step's job against its scope", "job", step.Name, "err", serr)
+			return "danger", false
+		}
+		if stranded {
+			stepStatus, stepQueuedReason = "failure", runref.ReasonRepoScopeMismatch
+			e.log.Warn("workflow: step's job comes from an agency's repository and its scope is not that agency's",
+				"job", step.Name, "scope", effectiveScope)
+		}
+	}
 	// LR-47 — a key-bound shell step with no agent to deliver the key fails the
 	// step here, terminal-and-recorded like the refusal above: the local runner
 	// cannot deliver it, and a step left queued for a runner that does not exist

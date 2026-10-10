@@ -10,6 +10,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/notify"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
 // Ad-hoc run scheduling (AR) — promotion of pending_runs into real runs.
@@ -305,6 +306,17 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 			return
 		}
 		s.clearRecycleBinHold(ctx, p)
+		// GR-15 — judged again here, on the scope the run was parked with: a
+		// scope can be given to another agency while a run waits for its time.
+		// Terminal, with the reason: nothing that happens to the run will make
+		// it this job's to run, and a row held for it would wait out the grace.
+		if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, params.JobUID, params.jobSourceOrDefault(), params.JobName, params.Scope); serr != nil {
+			s.log.Error("scheduler: check a parked run's job against its scope", "job", params.JobName, "err", serr)
+			return // tried again at the next tick
+		} else if stranded {
+			s.markPendingMissed(ctx, p, runref.ReasonRepoScopeMismatch)
+			return
+		}
 		// RX — restore the reaction context from the ROW, not from the frozen
 		// params. The reactor writes it to dedicated columns because a workflow
 		// target has no params_json to hold it, and because the delivery row that

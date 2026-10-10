@@ -378,6 +378,15 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 			return false, nil
 		}
 	}
+	// GR-15 — an arrival for a job of an agency's repository whose scope is not
+	// that agency's is refused, with the reason recorded.
+	if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, jobUID.String, spec.JobSource, spec.JobName, scope); serr != nil {
+		s.refuseSighting(ctx, sightingID, "could not check the job's repository against its scope: "+serr.Error())
+		return false, nil
+	} else if stranded {
+		s.refuseSighting(ctx, sightingID, runref.ReasonRepoScopeMismatch)
+		return false, nil
+	}
 	// LR-47 — an arrival for a key-bound shell job with no agent to deliver the
 	// key is refused with the reason recorded, like every other gate here: the
 	// local runner cannot deliver it, and nobody is watching a file land. Every

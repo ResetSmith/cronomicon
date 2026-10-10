@@ -9602,6 +9602,16 @@ export interface operations {
              *     Scheduled, workflow, reaction and file-arrival fires of such a job
              *     record the same refusal as a skipped or failed run. Ansible and
              *     terraform runs are not refused: they wait for a capable agent.
+             *     `repo_scope_mismatch` (v2.4.0) — the job comes from an AGENCY's
+             *     repository and the run's effective scope does not belong to that
+             *     agency: it is another agency's, Global's, no scope at all, or the
+             *     job's own scope has been given to another agency since the job was
+             *     synced. A repository reaches its own agency's scopes and no other.
+             *     It is refused for a global administrator too; a job of the
+             *     installation's own repository, and a job built in the app, are not
+             *     held to it. Scheduled, workflow, reaction and file-arrival fires
+             *     of such a job, and a deferred run when its time comes, record the
+             *     same refusal.
              */
             422: {
                 headers: {
@@ -12582,7 +12592,7 @@ export interface operations {
              * @description Validation failed — the same `Error.code` set as `POST
              *     /jobs/{id}/run`, including `key_binding_requires_runner` (KB): a
              *     key-bound shell job with no agent to deliver the key is refused for
-             *     a token exactly as for a click.
+             *     a token exactly as for a click. So is `repo_scope_mismatch`.
              */
             422: {
                 headers: {

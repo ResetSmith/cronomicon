@@ -616,6 +616,13 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 		return nil, fmt.Errorf("reacting job %q consumes department-owned credentials unbound at this scope: %s",
 			jobName, runref.UnboundRefusal(blocked))
 	}
+	// GR-15 — nor a run of an agency's repository's job on a scope that is not
+	// that agency's. The delivery row carries the refusal.
+	if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, jobUID.String, source, jobName, scope.String); serr != nil {
+		return nil, fmt.Errorf("check the repository of %q against its scope: %w", jobName, serr)
+	} else if stranded {
+		return nil, fmt.Errorf("reacting job %q: %s", jobName, runref.ReasonRepoScopeMismatch)
+	}
 	// LR-47 — same posture for a key-bound shell job with no agent to deliver
 	// the key: the delivery row carries the refusal, no run row is invented.
 	executor := execspec.ExecutorRunner

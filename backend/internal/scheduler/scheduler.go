@@ -635,6 +635,25 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		}
 		return
 	}
+	// GR-15 — a job of an agency's repository whose scope is not that agency's
+	// (the scope was given to another agency after the sync that accepted the
+	// job). Recorded as skipped like the refusals around it, and as a STANDING
+	// refusal: it holds until somebody moves the scope back or the repository
+	// syncs, and one row a day says so.
+	if stranded, serr := runref.RepoScopeMismatch(ctx, s.db, jobUID, source, jobName, scope); serr != nil {
+		s.log.Error("scheduler: check the job's repository against its scope", "job", jobName, "err", serr)
+		return
+	} else if stranded {
+		s.log.Warn("scheduler: skip fire — the job's scope does not belong to its repository's agency",
+			"job", jobName, "scope", scope)
+		if err := s.recordSuppression(ctx, EnqueueParams{
+			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
+			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
+		}, s.standingRefusal(runref.ReasonRepoScopeMismatch)); err != nil {
+			s.log.Error("scheduler: record repository-scope skip", "job", jobName, "err", err)
+		}
+		return
+	}
 	// SB — the executor could not be resolved, or the resolution refuses the
 	// fire. An unreadable binding must not be guessed at: the one wrong guess
 	// available is "this scope is not bound", which sends a confined job out

@@ -1203,6 +1203,17 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			return
 		}
 	}
+	// GR-15 — a job of an agency's repository runs on that agency's scopes. On
+	// the EFFECTIVE scope, whatever it is: the job's own may have been given to
+	// another agency since it was synced, and a caller may ask for another.
+	if stranded, serr := runref.RepoScopeMismatch(r.Context(), s.db, jr.UID, jr.Source, jr.Name, scope); serr != nil {
+		httpx.Fail500(w, s.log, "db_error", serr)
+		return
+	} else if stranded {
+		httpx.Fail(w, http.StatusUnprocessableEntity, runref.CodeRepoScopeMismatch,
+			"this job comes from an agency's repository, and the scope it would run on does not belong to that agency")
+		return
+	}
 
 	var runRefs []runref.Binding
 	if len(body.References) > 0 {
