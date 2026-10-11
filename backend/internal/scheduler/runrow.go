@@ -152,7 +152,7 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			 env_json, override_json, ssh_user, ssh_credential, agencies_json,
 			 suppressed_by_calendar, started_at, completed_at, duration_ms, created_at,
 			 entity_code, script_ref, content_hash,
-			 checkout_sha, checkout_entry, requires_json,
+			 checkout_repo, checkout_sha, checkout_entry, requires_json,
 			 reaction_depth, reacted_to_run_id, priority, scheduled_for,
 			 job_uid, script_uid)
 		VALUES (?, ?, ?, ?, ?, ?, ?,
@@ -172,15 +172,28 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			           WHERE kind = 'job' AND uid = ? AND deleted_at IS NULL)),
 			(SELECT script_ref FROM jobs WHERE uid = ?),
 			(SELECT content_hash FROM jobs WHERE uid = ?),
-			-- §7/RX.2: a checkout job (project_root set) pins the sync clone's
-			-- current commit (Global's git_repos.last_sha; the job's own
-			-- repository's from Phase R5) and entry playbook AT
-			-- ENQUEUE, so a mid-run sync can't retarget the run. Body-only jobs
-			-- leave both NULL. Terminal rows (? = 0) take no snapshot at all.
+			-- §7/RX.2: a checkout job (project_root set) pins, AT ENQUEUE, the
+			-- repository its tree is fetched from, that repository's last synced
+			-- commit, and the entry playbook, so a mid-run sync can't retarget the
+			-- run. Body-only jobs leave all three NULL. Terminal rows (? = 0) take
+			-- no snapshot at all.
+			--
+			-- GR-22: the repository is the SCRIPT's, not the job's. The entry and
+			-- the tree are the script's files: an agency's job may use Global's
+			-- script (GR-16), and a job built in the app has no repository of its
+			-- own. Until 2.4.0 there was one repository and the commit was always
+			-- Global's. A project job whose script row has gone falls back to the
+			-- job's own repository and then to Global's, which is where it was
+			-- pinned before.
 			CASE WHEN ? = 1 THEN
-				(SELECT CASE WHEN project_root IS NOT NULL AND project_root != ''
-				             THEN (SELECT last_sha FROM git_repos WHERE id = 'global') END
-				   FROM jobs WHERE uid = ?) END,
+				(SELECT CASE WHEN j.project_root IS NOT NULL AND j.project_root != ''
+				             THEN COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global') END
+				   FROM jobs j WHERE j.uid = ?) END,
+			CASE WHEN ? = 1 THEN
+				(SELECT CASE WHEN j.project_root IS NOT NULL AND j.project_root != ''
+				             THEN (SELECT g.last_sha FROM git_repos g
+				                    WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global')) END
+				   FROM jobs j WHERE j.uid = ?) END,
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE WHEN project_root IS NOT NULL AND project_root != ''
 				             THEN script_path END
@@ -234,7 +247,7 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 		nullStr(r.EnvJSON), nullStr(r.OverrideJSON), nullStr(r.SSHUser), nullStr(r.SSHCredential), r.agenciesSnapshot(),
 		nullStr(r.SuppressedByCalendar), startedAt, completedAt, durationMs, now,
 		r.EntityCode, uid, uid, uid,
-		snap, uid, snap, uid, snap, uid,
+		snap, uid, snap, uid, snap, uid, snap, uid,
 		r.ReactionDepth, nullStr(r.ReactedToRunID), r.Priority, nullStr(r.ScheduledFor),
 		uid, uid)
 	if err != nil {

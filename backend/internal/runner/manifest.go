@@ -51,16 +51,16 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// Look up the run. 404 if absent.
 	var jobName, runType, status, executor string
 	var scope, targetHost, envJSON, runnerID, jobSource, overrideJSON sql.NullString
-	var checkoutSHA, checkoutEntry, requiresJSON, scriptRef, triggeredBy, sshUser, sshCred, jobUID sql.NullString
+	var checkoutSHA, checkoutEntry, requiresJSON, scriptRef, triggeredBy, sshUser, sshCred, jobUID, checkoutRepo sql.NullString
 	err := s.db.QueryRowContext(r.Context(), `
 		SELECT job_name, run_type, status, executor,
 		       scope, target_host, env_json, runner_id, job_source, override_json,
 		       checkout_sha, checkout_entry, requires_json, script_ref, triggered_by,
-		       ssh_user, ssh_credential, job_uid
+		       ssh_user, ssh_credential, job_uid, checkout_repo
 		FROM runs WHERE id = ?`, traceID).
 		Scan(&jobName, &runType, &status, &executor,
 			&scope, &targetHost, &envJSON, &runnerID, &jobSource, &overrideJSON,
-			&checkoutSHA, &checkoutEntry, &requiresJSON, &scriptRef, &triggeredBy, &sshUser, &sshCred, &jobUID)
+			&checkoutSHA, &checkoutEntry, &requiresJSON, &scriptRef, &triggeredBy, &sshUser, &sshCred, &jobUID, &checkoutRepo)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -341,9 +341,15 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 				"checkout run has no valid pinned commit SHA (the repo may not have synced yet)")
 			return
 		}
-		// Global's repository: the one every checkout run's commit is pinned
-		// from until a run records its own (runs.checkout_repo, Phase R5).
-		repoURL, _ := settings.ResolveGitlabRuntime(r.Context(), s.db, s.cfg, repoid.Global)
+		// The repository the run was pinned to at enqueue (runs.checkout_repo,
+		// GR-22): the commit is that repository's, so the URL the agent is sent
+		// to must be its URL. A run from before 2.4.0 records none, and there
+		// was then one repository: Global's.
+		repo := checkoutRepo.String
+		if repo == "" {
+			repo = repoid.Global
+		}
+		repoURL, _ := settings.ResolveGitlabRuntime(r.Context(), s.db, s.cfg, repo)
 		if repoURL == "" {
 			httpx.Fail(w, http.StatusConflict, "no_checkout_repo",
 				"checkout run cannot resolve the source repository URL; configure the GitLab integration")

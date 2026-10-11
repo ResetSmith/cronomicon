@@ -90,3 +90,67 @@ func TestManifestIsOfTheRunsOwnJob(t *testing.T) {
 		t.Errorf("a run with no uid, of a name two jobs hold, was answered %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// GR-22: the manifest sends the agent to the repository the run was pinned to
+// (runs.checkout_repo), whose commit the pin is. Until 2.4.0 it always named
+// Global's URL. A run that records no repository (one queued before 2.4.0) is
+// Global's, as every run then was.
+func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
+	svc := newTestService(t)
+	svc.cfg.GitLabBaseURL = "https://gitlab.example/infra/global-defs.git"
+	as := authSvc(t, svc)
+	runnerID, tok := "runner-repo", "crn_run_repo"
+	insertRunner(t, svc, runnerID, "repo", "online", []string{"ansible"})
+	bindRunnerToken(t, svc, tok, runnerID)
+	if _, err := svc.db.Exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES
+		('repo-a', 'ag-a', 'https://gitlab.example/agency-a/defs.git', 'main')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`
+		INSERT INTO jobs(uid, name, source, run_type, command, script_path, project_root, synced_at)
+		VALUES ('uid-proj', 'proj', 'cronomicon', 'ansible', '- hosts: all', 'scripts/proj/site.yml', 'scripts/proj', ?)`, now()); err != nil {
+		t.Fatal(err)
+	}
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	run := func(repo any) string {
+		t.Helper()
+		id := db.NewTraceID()
+		if _, err := svc.db.Exec(`
+			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, runner_id, executor,
+			                 checkout_repo, checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at)
+			VALUES (?, 'proj', 'cronomicon', 'uid-proj', 'ansible', 'running', ?, 'runner', ?, ?, 'scripts/proj/site.yml',
+			        'test', 'manual', ?, ?)`, id, runnerID, repo, sha, now(), now()); err != nil {
+			t.Fatalf("insert run: %v", err)
+		}
+		return id
+	}
+	for _, c := range []struct {
+		repo any
+		url  string
+	}{
+		{"repo-a", "https://gitlab.example/agency-a/defs.git"},
+		{"global", "https://gitlab.example/infra/global-defs.git"},
+		{nil, "https://gitlab.example/infra/global-defs.git"},
+	} {
+		m := getManifest(t, svc, as, run(c.repo), tok)
+		if m.Checkout == nil || m.Checkout.Repo != c.url || m.Checkout.SHA != sha {
+			t.Errorf("a run pinned to the repository %v is sent to %+v, want %s at %s", c.repo, m.Checkout, c.url, sha)
+		}
+	}
+
+	// A run pinned to a repository that is no longer connected has nowhere to
+	// be sent, and is not sent to Global's.
+	h := as.RequireRunner(http.HandlerFunc(svc.HandleGetManifest))
+	traceID := run("repo-gone")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+traceID+"/manifest", nil)
+	req.SetPathValue("traceId", traceID)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_checkout_repo") {
+		t.Errorf("a run pinned to a repository that is gone was answered %d: %s", rec.Code, rec.Body.String())
+	}
+}
