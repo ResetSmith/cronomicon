@@ -285,11 +285,11 @@ func TestFireWorkflowPausedAndCappedRecord(t *testing.T) {
 			pool := mustPool(t)
 			s := New(pool, quietLog(), nil)
 			fired := 0
-			s.SetWorkflowFirer(func(context.Context, string, string, string, string) { fired++ })
+			s.SetWorkflowFirer(func(context.Context, WorkflowFire) { fired++ })
 			tc.setup(t, pool)
 
-			s.fireWorkflow("git", tc.wf, "nightly", "")
-			s.fireWorkflow("git", tc.wf, "nightly", "")
+			s.fireWorkflow("", "git", tc.wf, "nightly", "")
+			s.fireWorkflow("", "git", tc.wf, "nightly", "")
 
 			if fired != 0 {
 				t.Errorf("suppressed workflow fired %d times, want 0", fired)

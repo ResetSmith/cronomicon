@@ -395,74 +395,11 @@ func run() error {
 	// breaches and missed fires reach the same transports, rules and
 	// per-transport delivery stamps as a terminal-run notification.
 	sched.SetNotifier(notifier)
-	sched.SetWorkflowFirer(func(ctx context.Context, source, workflowName, scheduleName, envJSON string) {
-		var (
-			rowid     int64
-			stepsJSON string
-		)
-		// Source-qualified lookup (A9/A11) so a scheduled cronomicon workflow resolves
-		// its own steps rather than a same-named git workflow's.
-		if err := pool.QueryRowContext(ctx,
-			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, source, workflowName,
-		).Scan(&rowid, &stepsJSON); err != nil {
-			logger.Error("scheduler firer: look up workflow", "workflow", workflowName, "source", source, "error", err)
-			return
-		}
-		steps, err := workflow.ParseSteps(stepsJSON)
-		if err != nil {
-			logger.Error("scheduler firer: parse steps", "workflow", workflowName, "error", err)
-			return
-		}
-		if _, err := workflow.New(pool, logger).Trigger(ctx, workflow.TriggerParams{
-			WorkflowName:   workflowName,
-			WorkflowSource: source,
-			WorkflowID:     rowid,
-			Steps:          steps,
-			TriggeredBy:    "scheduler",
-			TriggerKind:    "scheduled",
-			ScheduleName:   scheduleName,
-			EnvJSON:        envJSON,
-		}); err != nil {
-			logger.Error("scheduler firer: trigger workflow", "workflow", workflowName, "error", err)
-		}
-	})
+	sched.SetWorkflowFirer(workflow.ScheduledFirer(pool, logger))
 	// AR — deferred ad-hoc WORKFLOW runs promoted by the pending loop fire
 	// through the same engine seam as the cron firer, but keep the scheduling
 	// operator as triggered_by so the run's audit trail names a person.
-	sched.SetPendingWorkflowFirer(func(ctx context.Context, p scheduler.PendingWorkflowFire) {
-		var (
-			rowid     int64
-			stepsJSON string
-		)
-		if err := pool.QueryRowContext(ctx,
-			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, p.Source, p.Name,
-		).Scan(&rowid, &stepsJSON); err != nil {
-			logger.Error("pending firer: look up workflow", "workflow", p.Name, "source", p.Source, "error", err)
-			return
-		}
-		steps, err := workflow.ParseSteps(stepsJSON)
-		if err != nil {
-			logger.Error("pending firer: parse steps", "workflow", p.Name, "error", err)
-			return
-		}
-		// RX-11 — the trigger kind and the reaction provenance ride the envelope
-		// rather than being hardcoded here. A reaction-fired workflow that
-		// reported "manual" would be a lie in History, and a depth that reset to
-		// zero on every hop would disarm the runaway ceiling for whole chains.
-		if _, err := workflow.New(pool, logger).Trigger(ctx, workflow.TriggerParams{
-			WorkflowName:   p.Name,
-			WorkflowSource: p.Source,
-			WorkflowID:     rowid,
-			Steps:          steps,
-			TriggeredBy:    p.TriggeredBy,
-			TriggerKind:    p.TriggerKind,
-			EnvJSON:        p.EnvJSON,
-			ReactionDepth:  p.ReactionDepth,
-			ReactedToRunID: p.ReactedToRunID,
-		}); err != nil {
-			logger.Error("pending firer: trigger workflow", "workflow", p.Name, "error", err)
-		}
-	})
+	sched.SetPendingWorkflowFirer(workflow.PendingFirer(pool, logger))
 	bg.Go(func() {
 		if err := sched.Start(ctx0); err != nil {
 			logger.Error("scheduler stopped with error", "error", err)

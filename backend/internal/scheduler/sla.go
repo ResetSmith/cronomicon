@@ -530,7 +530,7 @@ func (s *Scheduler) recordMissedFire(ctx context.Context, e detectionEntry, t ti
 // recordMissedWorkflowFire is recordMissedFire's workflow arm (FX-B3): the same
 // durable marker and the same alert, written to workflow_runs.
 func (s *Scheduler) recordMissedWorkflowFire(ctx context.Context, e detectionEntry, t time.Time) {
-	err := s.recordWorkflowSuppression(ctx, e.ownerSource, e.ownerName, e.name, skipRecord{
+	err := s.recordWorkflowSuppression(ctx, "", e.ownerSource, e.ownerName, e.name, skipRecord{
 		Reason: reasonMissedFire,
 		Mode:   dedupeEpisodeReason,
 		At:     t.UTC().Format(time.RFC3339),

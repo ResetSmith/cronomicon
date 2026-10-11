@@ -47,7 +47,22 @@ const (
 // WorkflowFirer dispatches a scheduled workflow. It is injected via
 // SetWorkflowFirer so the scheduler need not import the workflow package
 // (which itself imports scheduler).
-type WorkflowFirer func(ctx context.Context, source, workflowName, scheduleName, envJSON string)
+type WorkflowFirer func(ctx context.Context, f WorkflowFire)
+
+// WorkflowFire is one scheduled fire of a workflow, as the firer is handed it.
+//
+// UID is WHICH workflow: the row the schedule entry belongs to. Until 2.4.0
+// the firer was handed a source and a name and looked the workflow up by
+// them, and two agencies may each hold a workflow of one name: one agency's
+// schedule ran the other's steps, and its own workflow never ran on its
+// schedule (present defect 34). Source and Name are what the run is called.
+type WorkflowFire struct {
+	UID          string
+	Source       string
+	Name         string
+	ScheduleName string
+	EnvJSON      string
+}
 
 // Scheduler wraps the cron engine and the enqueue logic.
 type Scheduler struct {
@@ -412,10 +427,12 @@ func (s *Scheduler) loadWorkflowEntries(ctx context.Context) ([]scheduleEntry, e
 		startAt, endAt  sql.NullString
 		interval        sql.NullString
 		name, source    string
+		uid             string
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ds.name, ds.cron, ds.env, ds.start_at, ds.end_at, ds.interval, w.name, w.source
+		SELECT ds.name, ds.cron, ds.env, ds.start_at, ds.end_at, ds.interval, w.name, w.source,
+		       COALESCE(w.uid, '')
 		FROM definition_schedules ds
 		-- R2-3 — uid-keyed with a name arm, exactly as loadJobEntries above; see the
 		-- comment there for why the fallback is mandatory rather than defensive.
@@ -431,7 +448,7 @@ func (s *Scheduler) loadWorkflowEntries(ctx context.Context) ([]scheduleEntry, e
 	var wfs []wfRow
 	for rows.Next() {
 		var wf wfRow
-		if err := rows.Scan(&wf.schedName, &wf.cron, &wf.envJSON, &wf.startAt, &wf.endAt, &wf.interval, &wf.name, &wf.source); err != nil {
+		if err := rows.Scan(&wf.schedName, &wf.cron, &wf.envJSON, &wf.startAt, &wf.endAt, &wf.interval, &wf.name, &wf.source, &wf.uid); err != nil {
 			s.log.Error("scheduler: scan workflow schedule row", "err", err)
 			continue
 		}
@@ -454,7 +471,9 @@ func (s *Scheduler) loadWorkflowEntries(ctx context.Context) ([]scheduleEntry, e
 		entries = append(entries, scheduleEntry{
 			sched: sched,
 			job: cron.FuncJob(func() {
-				s.fireWorkflow(wf.source, wf.name, wf.schedName, envJSON)
+				// The uid of the row this entry joined: the entry's own workflow,
+				// whatever else is called the same.
+				s.fireWorkflow(wf.uid, wf.source, wf.name, wf.schedName, envJSON)
 			}),
 			registered: func() {
 				s.log.Info("scheduler: registered workflow schedule", "workflow", wf.name, "schedule", wf.schedName,
@@ -813,7 +832,9 @@ func (s *Scheduler) standingRefusal(reason string) skipRecord {
 
 // fireWorkflow dispatches a scheduled workflow via the injected firer, honoring
 // the workflow pause sentinel ("__wf__"+name) and the global concurrency cap.
-func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON string) {
+// uid is the workflow the entry belongs to ("" only where a caller has none):
+// it is what the firer starts and what a suppressed fire is stamped with.
+func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSON string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -829,7 +850,7 @@ func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON str
 		s.log.Info("scheduler: skip fire — workflow paused", "workflow", workflowName, "source", source, "schedule", scheduleName)
 		// SL-A — the workflow half. CAL-32 already argued why this cannot reuse
 		// recordSkippedFire: that one is job-shaped throughout.
-		if err := s.recordWorkflowSuppression(ctx, source, workflowName, scheduleName,
+		if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName,
 			skipRecord{Reason: reasonWorkflowPaused, Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record paused skip", "workflow", workflowName, "err", err)
 		}
@@ -846,7 +867,7 @@ func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON str
 			"workflow", workflowName, "source", source, "schedule", scheduleName, "day", g.Day,
 			"calendar", v.Calendar, "polarity", v.Polarity, "label", v.Label, "recorded", v.Record)
 		if v.Record {
-			if err := s.recordWorkflowSuppression(ctx, source, workflowName, scheduleName, g.record()); err != nil {
+			if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName, g.record()); err != nil {
 				s.log.Error("scheduler: record calendar suppression", "workflow", workflowName, "err", err)
 			}
 		}
@@ -864,14 +885,14 @@ func (s *Scheduler) fireWorkflow(source, workflowName, scheduleName, envJSON str
 			"workflow", workflowName, "active", active, "cap", maxConcurrent)
 		// SL-A. CAL-32's header noted fireWorkflow "dropped even its
 		// concurrency-cap skips with a log line" — this is that gap closed.
-		if err := s.recordWorkflowSuppression(ctx, source, workflowName, scheduleName,
+		if err := s.recordWorkflowSuppression(ctx, uid, source, workflowName, scheduleName,
 			skipRecord{Reason: reasonConcurrencyCap, Mode: dedupeEpisodeReason}); err != nil {
 			s.log.Error("scheduler: record capped skip", "workflow", workflowName, "err", err)
 		}
 		return
 	}
 
-	firer(ctx, source, workflowName, scheduleName, envJSON)
+	firer(ctx, WorkflowFire{UID: uid, Source: source, Name: workflowName, ScheduleName: scheduleName, EnvJSON: envJSON})
 }
 
 // isPaused reports whether a paused_jobs row exists for a definition, keyed by
@@ -1152,8 +1173,8 @@ func (s *Scheduler) recordSuppression(ctx context.Context, p EnqueueParams, rec 
 // recordWorkflowSuppression is recordSuppression's twin. Written at the same
 // time deliberately: a guard added to one of these and not the other is how the
 // last several defects in this area survived review.
-func (s *Scheduler) recordWorkflowSuppression(ctx context.Context, source, workflowName, scheduleName string, rec skipRecord) error {
-	wrote, err := recordSkippedWorkflowFire(ctx, s.db, source, workflowName, scheduleName, rec)
+func (s *Scheduler) recordWorkflowSuppression(ctx context.Context, uid, source, workflowName, scheduleName string, rec skipRecord) error {
+	wrote, err := recordSkippedWorkflowFire(ctx, s.db, uid, source, workflowName, scheduleName, rec)
 	if err != nil || !wrote {
 		return err
 	}
@@ -1343,7 +1364,7 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 // workflow_runs.status has always permitted 'skipped' (migration 001), so no
 // table rebuild was needed; queued_reason and suppressed_by_calendar arrive with
 // migration 870.
-func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
+func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, uid, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
 	dupe, err := workflowSkipAlreadyRecorded(ctx, database, source, workflowName, scheduleName, rec)
 	if err != nil {
 		return false, err
@@ -1377,10 +1398,15 @@ func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, source, wo
 			 triggered_by, trigger_kind, schedule_name, suppressed_by_calendar,
 			 started_at, completed_at, created_at, workflow_uid)
 		VALUES (?, ?, ?, 'skipped', ?, 'scheduler', 'scheduled', ?, ?, ?, ?, ?,
-			(SELECT uid FROM workflows WHERE name = ? AND source = ?))`,
+			-- The workflow whose fire this was, when the caller knows (the clock
+			-- does: present defect 34). A caller that has only the name (the
+			-- missed-fire detector) gets the uid when one workflow holds the name
+			-- and none when two do: a row that names nobody, not the wrong one.
+			COALESCE(NULLIF(?, ''),
+			         (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)))`,
 		traceID, workflowName, source, rec.Reason,
 		nullStr(scheduleName), nullStr(rec.Calendar), now, now, now,
-		workflowName, source)
+		uid, workflowName, source)
 	if err != nil {
 		return false, fmt.Errorf("insert skipped workflow run: %w", err)
 	}

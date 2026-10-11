@@ -170,10 +170,10 @@ func TestFireWorkflowHonorsWfSentinelPause(t *testing.T) {
 
 	s := New(pool, quietLog(), nil)
 	var fired []string
-	s.SetWorkflowFirer(func(_ context.Context, _ string, name, _, _ string) { fired = append(fired, name) })
+	s.SetWorkflowFirer(func(_ context.Context, f WorkflowFire) { fired = append(fired, f.Name) })
 
-	s.fireWorkflow("git", "wf1", "default", "") // disabled via pause row → skip
-	s.fireWorkflow("git", "wf2", "default", "") // enabled → fire
+	s.fireWorkflow("", "git", "wf1", "default", "") // disabled via pause row → skip
+	s.fireWorkflow("", "git", "wf2", "default", "") // enabled → fire
 
 	if len(fired) != 1 || fired[0] != "wf2" {
 		t.Errorf("fired = %v, want [wf2] (wf1 paused via owner_kind=workflow row)", fired)

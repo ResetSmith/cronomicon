@@ -354,7 +354,9 @@ func (e *Engine) recordRefusedChild(ctx context.Context, parentTraceID, nodeID, 
 			 parent_workflow_run_id, parent_node_id, workflow_depth,
 			 started_at, completed_at, created_at, workflow_uid)
 		VALUES (?, ?, ?, 'skipped', ?, ?, 'workflow', ?, ?, ?, ?, ?, ?,
-			(SELECT uid FROM workflows WHERE name = ? AND source = ?))`,
+			-- A child that was refused was not resolved to a row: the name's uid
+			-- when one workflow holds it, and none when two do (present defect 34).
+			(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?))`,
 		nodeIDOrNew(nodeID), childName, source, reason, actor,
 		nullStr(parentTraceID), nullStr(nodeID), depth, now, now, now,
 		childName, source); err != nil {

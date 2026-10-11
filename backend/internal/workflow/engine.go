@@ -168,6 +168,47 @@ type TriggerParams struct {
 	WorkflowDepth       int
 }
 
+// LoadForFire finds the workflow a schedule entry or a parked run is for, and
+// returns what Trigger needs to start it: its row and its steps.
+//
+// By uid, which is what the entry and the parked row carry. Until 2.4.0 both
+// callers looked the workflow up by source and name, and two agencies may each
+// hold a workflow of one name: one agency's schedule ran the other's steps, and
+// its own workflow never ran on its schedule (present defect 34).
+//
+// With no uid (a caller that has none) the name must mean one workflow: when
+// two hold it, ErrAmbiguousWorkflow, and nothing is started.
+func LoadForFire(ctx context.Context, database *sql.DB, uid, source, name string) (rowid int64, steps []Step, err error) {
+	var stepsJSON string
+	if uid != "" {
+		err = database.QueryRowContext(ctx,
+			`SELECT rowid, steps FROM workflows WHERE uid = ?`, uid).Scan(&rowid, &stepsJSON)
+	} else {
+		var n int
+		if cerr := database.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&n); cerr != nil {
+			return 0, nil, cerr
+		}
+		if n > 1 {
+			return 0, nil, ErrAmbiguousWorkflow
+		}
+		err = database.QueryRowContext(ctx,
+			`SELECT rowid, steps FROM workflows WHERE source = ? AND name = ?`, source, name).Scan(&rowid, &stepsJSON)
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	steps, err = ParseSteps(stepsJSON)
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse steps: %w", err)
+	}
+	return rowid, steps, nil
+}
+
+// ErrAmbiguousWorkflow is LoadForFire's refusal to pick between two workflows
+// of one name.
+var ErrAmbiguousWorkflow = errors.New("two workflows are called this, and the fire does not say which one it is for")
+
 // TriggerResult is returned by Trigger.
 type TriggerResult struct {
 	TraceID     string
@@ -219,13 +260,20 @@ func (e *Engine) Trigger(ctx context.Context, p TriggerParams) (*TriggerResult, 
 			 parent_workflow_run_id, parent_node_id, workflow_depth,
 			 started_at, created_at, workflow_uid)
 		VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			(SELECT uid FROM workflows WHERE name = ? AND source = ?))
+			-- The uid of the row that is being run (WorkflowID), not of whichever
+			-- workflow the name finds: two agencies may each hold a workflow of one
+			-- name, and until 2.4.0 a run of one could be stamped as the other's
+			-- (present defect 34), which is also whose reactions it then fired. A
+			-- caller that passes no row gets the name's uid when one workflow holds
+			-- it, and none when two do.
+			COALESCE((SELECT uid FROM workflows WHERE rowid = ?),
+			         (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)))
 	`, wfTraceID, p.WorkflowID, p.WorkflowName, wfSource, p.TriggeredBy, triggerKind,
 		nullStr(p.ScheduleName), nullStr(p.EnvJSON), nullStr(snapshot), nullStr(snapshotHash),
 		p.ReactionDepth, nullStr(p.ReactedToRunID),
 		nullStr(p.ParentWorkflowRunID), nullStr(p.ParentNodeID), p.WorkflowDepth,
 		now, now,
-		p.WorkflowName, wfSource)
+		p.WorkflowID, p.WorkflowName, wfSource)
 	if err != nil {
 		return nil, fmt.Errorf("insert workflow_run: %w", err)
 	}

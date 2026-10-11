@@ -544,6 +544,7 @@ func (s *Scheduler) fireReaction(ctx context.Context, ev srcEvent, r reactionRow
 		Kind:      r.ownerKind,
 		Name:      r.ownerName,
 		Source:    r.ownerSource,
+		OwnerUID:  r.ownerUID,
 		RunAt:     runAt.Format(time.RFC3339),
 		OriginRef: ev.runID,
 		Depth:     ev.depth + 1,
@@ -573,10 +574,15 @@ func (s *Scheduler) fireReaction(ctx context.Context, ev srcEvent, r reactionRow
 		// delivery naming the workflow, instead of a pending row that survives
 		// until promotion and is marked missed there with the trail one step
 		// further from the cause.
+		//
+		// The reaction's own workflow, by uid when the reaction row has one: a
+		// name may be another agency's workflow too (present defect 34).
 		var one int
-		if err := s.db.QueryRowContext(ctx,
-			`SELECT 1 FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL`,
-			r.ownerSource, r.ownerName).Scan(&one); err != nil {
+		q, args := `SELECT 1 FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL`, []any{r.ownerSource, r.ownerName}
+		if r.ownerUID != "" {
+			q, args = `SELECT 1 FROM workflows WHERE uid = ? AND deleted_at IS NULL`, []any{r.ownerUID}
+		}
+		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&one); err != nil {
 			return "", fmt.Errorf("resolve reacting workflow %q: %w", r.ownerName, err)
 		}
 	}

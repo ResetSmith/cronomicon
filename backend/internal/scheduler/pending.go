@@ -55,7 +55,15 @@ const (
 // reaction-fired workflow would have been labelled manual in History, and the
 // depth ceiling would have read 0 on every hop because nothing carried the
 // chain position forward.
+// ReasonPendingWorkflowAmbiguous is why a parked workflow run is not fired:
+// the row names no workflow by identity and more than one holds its name.
+const ReasonPendingWorkflowAmbiguous = "two workflows are called this, and the parked run does not record which one it was for"
+
 type PendingWorkflowFire struct {
+	// UID is WHICH workflow was parked (pending_runs.owner_uid). Empty for a
+	// row that was parked when two workflows held the name and its producer
+	// could not say which: promotion refuses that row, and does not guess.
+	UID         string
 	Source      string
 	Name        string
 	TriggeredBy string
@@ -103,8 +111,10 @@ func (s *Scheduler) pendingLoop(ctx context.Context) {
 // pendingRow is one due pending_runs row.
 type pendingRow struct {
 	id, kind, name, source string
-	runAt, scheduledBy     string
-	paramsJSON             sql.NullString
+	// ownerUID is the parked definition's identity, when the row records one.
+	ownerUID           string
+	runAt, scheduledBy string
+	paramsJSON         sql.NullString
 	// Reaction provenance (RX-1). originKind is 'reaction' for a reactor-produced
 	// row and NULL for an ordinary AR deferral, which is what keeps the two
 	// producers distinguishable at promotion.
@@ -145,7 +155,8 @@ func (s *Scheduler) PromotePending(ctx context.Context) {
 	now := time.Now().UTC()
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, kind, name, source, run_at, scheduled_by, params_json,
-		       origin_kind, origin_ref, origin_env_json, reaction_depth, gate_kind, created_at, scope
+		       origin_kind, origin_ref, origin_env_json, reaction_depth, gate_kind, created_at, scope,
+		       COALESCE(owner_uid, '')
 		FROM pending_runs WHERE status = 'pending' AND run_at <= ?
 		ORDER BY run_at ASC`, now.Format(time.RFC3339))
 	if err != nil {
@@ -156,7 +167,7 @@ func (s *Scheduler) PromotePending(ctx context.Context) {
 	for rows.Next() {
 		var p pendingRow
 		if err := rows.Scan(&p.id, &p.kind, &p.name, &p.source, &p.runAt, &p.scheduledBy, &p.paramsJSON,
-			&p.originKind, &p.originRef, &p.originEnvJSON, &p.reactionDepth, &p.gateKind, &p.createdAt, &p.scope); err == nil {
+			&p.originKind, &p.originRef, &p.originEnvJSON, &p.reactionDepth, &p.gateKind, &p.createdAt, &p.scope, &p.ownerUID); err == nil {
 			due = append(due, p)
 		}
 	}
@@ -248,11 +259,36 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		// FX-A3 — "exists" and "runnable" are different questions, and the bin is
 		// the difference. A binned owner still exists, so its parked runs WAIT
 		// (see the job branch below for the full reasoning).
+		//
+		// By the parked workflow's uid (present defect 34): two agencies may each
+		// hold a workflow of one name, and the row says which was parked. A row
+		// with no uid was parked when its producer could not tell them apart, or
+		// before rows carried one: it is fired when ONE workflow holds the name,
+		// and refused when two do. Until 2.4.0 it fired whichever the query
+		// returned, which could be another agency's.
 		var wfBinned int
-		if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM workflows WHERE source = ? AND name = ?`,
-			p.source, p.name).Scan(&wfBinned); err != nil {
-			s.markPendingMissed(ctx, p, "workflow no longer exists")
-			return
+		wfUID := p.ownerUID
+		if wfUID != "" {
+			if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM workflows WHERE uid = ?`,
+				wfUID).Scan(&wfBinned); err != nil {
+				s.markPendingMissed(ctx, p, "workflow no longer exists")
+				return
+			}
+		} else {
+			var n int
+			var only sql.NullString
+			var binned sql.NullInt64
+			if err := s.db.QueryRowContext(ctx,
+				`SELECT COUNT(*), MAX(uid), MAX(deleted_at IS NOT NULL) FROM workflows WHERE source = ? AND name = ?`,
+				p.source, p.name).Scan(&n, &only, &binned); err != nil || n == 0 {
+				s.markPendingMissed(ctx, p, "workflow no longer exists")
+				return
+			}
+			if n > 1 {
+				s.markPendingMissed(ctx, p, ReasonPendingWorkflowAmbiguous)
+				return
+			}
+			wfUID, wfBinned = only.String, int(binned.Int64)
 		}
 		if wfBinned == 1 {
 			s.holdForRecycleBin(ctx, p)
@@ -260,6 +296,7 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		}
 		s.clearRecycleBinHold(ctx, p)
 		fire := PendingWorkflowFire{
+			UID:         wfUID,
 			Source:      p.source,
 			Name:        p.name,
 			TriggeredBy: p.scheduledBy,
@@ -596,9 +633,12 @@ func (s *Scheduler) alertPendingMiss(ctx context.Context, p pendingRow, reason s
 // pending row is what makes a delayed reaction survive a restart with its
 // provenance intact.
 type pendingReaction struct {
-	Kind      string // job | workflow (Phase B fires jobs only)
-	Name      string
-	Source    string
+	Kind   string // job | workflow (Phase B fires jobs only)
+	Name   string
+	Source string
+	// OwnerUID is the reacting definition's identity, which the reaction row
+	// holds. Empty leaves the row to the name, when one definition holds it.
+	OwnerUID  string
 	Scope     string
 	RunAt     string
 	Params    *EnqueueParams
@@ -633,14 +673,14 @@ func InsertReactionPendingRun(ctx context.Context, database *sql.DB, p pendingRe
 			(id, kind, name, source, scope, run_at, scheduled_by, created_at, status, params_json,
 			 origin_kind, origin_ref, reaction_depth, origin_env_json, owner_uid)
 		VALUES (?, ?, ?, ?, ?, ?, 'reactor', ?, 'pending', ?, 'reaction', ?, ?, ?,
-			CASE ?
+			COALESCE(NULLIF(?, ''), CASE ?
 			  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
 			  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-			END)`,
+			END))`,
 		id, p.Kind, p.Name, p.Source, scopeVal, p.RunAt,
 		time.Now().UTC().Format(time.RFC3339), paramsJSON,
 		p.OriginRef, p.Depth, envVal,
-		p.Kind, p.Name, p.Source, p.Name, p.Source)
+		p.OwnerUID, p.Kind, p.Name, p.Source, p.Name, p.Source)
 	if err != nil {
 		return "", err
 	}
