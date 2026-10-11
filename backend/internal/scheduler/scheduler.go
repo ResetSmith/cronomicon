@@ -261,6 +261,14 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
 
+	// What this reload will be remembered as having loaded, read BEFORE the
+	// entries: a sync that commits while the entries are being read or swapped
+	// is then newer than what is remembered, and its hook (or the backstop)
+	// reloads. Read afterwards, as it was until 2.4.0, such a sync was
+	// remembered as loaded when it was not, and nothing loaded it.
+	gen := s.currentGeneration(ctx)
+	fp := s.dbFingerprint(ctx)
+
 	jobs, err := s.loadJobEntries(ctx)
 	if err != nil {
 		return err
@@ -285,10 +293,8 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 		e.registered()
 	}
 
-	fp := s.dbFingerprint(ctx)
-
 	s.mu.Lock()
-	s.loadedGeneration = s.currentGeneration(ctx)
+	s.loadedGeneration = gen
 	s.loadedFingerprint = fp
 	s.reloads++
 	s.mu.Unlock()
