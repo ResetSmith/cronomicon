@@ -598,7 +598,8 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		return
 	}
 
-	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.gitCacheDir, r.jobName, r.jobSource, r.runType)
+	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.gitCacheDir,
+		execspec.JobRef{UID: r.jobUID, Name: r.jobName, Source: r.jobSource}, r.runType)
 	if err != nil {
 		sink.line("", "cronomicon: "+err.Error())
 		s.finalize(ctx, r, "failure", nil)
@@ -659,7 +660,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// A12/§13.2 — enforce the job's timeout so a hung or non-emitting step can't
 	// run forever (previously TimeoutSeconds was shipped but never enforced).
 	execCtx := runCtx
-	if to := s.jobTimeout(runCtx, r.jobName, r.jobSource); to > 0 {
+	if to := s.jobTimeout(runCtx, r.jobUID, r.jobName, r.jobSource); to > 0 {
 		var tcancel context.CancelFunc
 		execCtx, tcancel = context.WithTimeout(runCtx, to)
 		defer tcancel()
@@ -829,14 +830,19 @@ func (s *Service) injectedEnv(r claimedRun, resolved *runref.Resolved) map[strin
 	return out
 }
 
-// jobTimeout reads the (source-qualified) job's timeout_seconds as a Duration (0 ⇒ none).
-func (s *Service) jobTimeout(ctx context.Context, jobName, jobSource string) time.Duration {
+// jobTimeout reads the job's timeout_seconds as a Duration (0 ⇒ none): the
+// run's own job, by its uid, and by source and name only for a run that
+// records none. By name alone, a run of one of two jobs of a name was given
+// the other's timeout (present defect 4's family).
+func (s *Service) jobTimeout(ctx context.Context, jobUID, jobName, jobSource string) time.Duration {
 	if jobSource == "" {
 		jobSource = "git"
 	}
 	var secs sql.NullInt64
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT timeout_seconds FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).Scan(&secs)
+		`SELECT timeout_seconds FROM jobs
+		  WHERE CASE WHEN ? != '' THEN uid = ? ELSE source = ? AND name = ? END`,
+		jobUID, jobUID, jobSource, jobName).Scan(&secs)
 	if secs.Valid && secs.Int64 > 0 {
 		return time.Duration(secs.Int64) * time.Second
 	}

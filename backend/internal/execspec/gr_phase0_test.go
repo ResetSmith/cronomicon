@@ -1,30 +1,29 @@
 package execspec
 
-// Phase R0 of 2.4.0 found this by reading; this test reproduces it. It passes
-// on the code as it is and names the phase that inverts it. No production code
-// changes.
-
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
 )
 
-// Two agencies may each own an in-app job of one name (migration 1050 took
-// (source, name) uniqueness away from in-app jobs). A run knows which of the
-// two it is: runs.job_uid. But ResolveCommand, which is what turns a run into
-// the command it executes, is handed the job's NAME and SOURCE and nothing
-// else, and both of its callers (the agent's manifest and the local runner)
-// hold the run's job_uid and do not pass it. So a run of one agency's job and
-// a run of the other's resolve to the SAME body: one of the two is handed the
-// other agency's command, and its history looks normal, because the run row
-// names the right job.
+// Until this test was inverted (present defect 4, found by reading in 2.4.0's
+// Phase R0 and reproduced on 2026-10-09 by
+// TestGR0_ResolveCommandCannotTellSameNamedInAppJobsApart; in the released
+// 2.2.x) ResolveCommand, which is what turns a run into the command it
+// executes, was handed the job's NAME and SOURCE and nothing else, although
+// both of its callers (the agent's manifest and the local runner) held the
+// run's job_uid. Two agencies may each own an in-app job of one name
+// (migration 1050 took (source, name) uniqueness away from in-app jobs), so a
+// run of one agency's job and a run of the other's resolved to the SAME body:
+// one of the two was handed the other agency's command, and its history looked
+// normal, because the run row named the right job.
 //
-// Phase R5 inverts this: ResolveCommand takes the run's job uid. Until then
-// this is a present defect, and it is older than 2.4.0.
-func TestGR0_ResolveCommandCannotTellSameNamedInAppJobsApart(t *testing.T) {
+// Now it takes the run's job uid, and each run resolves to its own job's body.
+func TestResolveCommandTellsSameNamedJobsApart(t *testing.T) {
 	pool, err := db.Open(filepath.Join(t.TempDir(), "resolve.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -38,37 +37,40 @@ func TestGR0_ResolveCommandCannotTellSameNamedInAppJobsApart(t *testing.T) {
 		bodyA = "echo this is agency A's nightly"
 		bodyB = "echo this is agency B's nightly"
 	)
-	for _, j := range [][2]string{{"uid-nightly-a", bodyA}, {"uid-nightly-b", bodyB}} {
+	for _, j := range [][3]string{
+		{"uid-nightly-a", "nightly", bodyA}, {"uid-nightly-b", "nightly", bodyB},
+		{"uid-weekly", "weekly", "echo the only weekly"},
+	} {
 		if _, err := pool.ExecContext(ctx,
 			`INSERT INTO jobs(uid, name, source, run_type, command, synced_at)
-			 VALUES(?, 'nightly', 'cronomicon', 'bash', ?, '2026-01-01T00:00:00Z')`, j[0], j[1]); err != nil {
+			 VALUES(?, ?, 'cronomicon', 'bash', ?, '2026-01-01T00:00:00Z')`, j[0], j[1], j[2]); err != nil {
 			t.Fatalf("seed job %s: %v (two in-app jobs of one name must be insertable)", j[0], err)
 		}
 	}
+	resolve := func(uid, name string) (string, error) {
+		_, body, err := ResolveCommand(ctx, pool, t.TempDir(), JobRef{UID: uid, Name: name, Source: "cronomicon"}, "bash")
+		return body, err
+	}
 
-	// What dispatch can ask, for a run of EITHER job: the arguments are the
-	// same, because the name and the source are all it passes.
-	resolve := func() string {
-		t.Helper()
-		_, body, err := ResolveCommand(ctx, pool, t.TempDir(), "nightly", "cronomicon", "bash")
-		if err != nil {
-			t.Fatalf("ResolveCommand: %v", err)
+	// A run of each job, as dispatch asks: the same name, its own uid.
+	for uid, want := range map[string]string{"uid-nightly-a": bodyA, "uid-nightly-b": bodyB} {
+		if got, err := resolve(uid, "nightly"); err != nil || got != want {
+			t.Errorf("a run of %s resolves to %q (%v), want its own job's body %q", uid, got, err, want)
 		}
-		return body
 	}
-	forRunOfA, forRunOfB := resolve(), resolve()
 
-	if forRunOfA != bodyA && forRunOfA != bodyB {
-		t.Fatalf("resolved body %q is neither job's", forRunOfA)
+	// A run of a job that has gone is not handed another job of its name.
+	if got, err := resolve("uid-nightly-gone", "nightly"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("a run of a job that no longer exists resolves to %q (%v), want no row", got, err)
 	}
-	if forRunOfA != forRunOfB {
-		t.Fatalf("the two resolutions differ (%q, %q): the lookup is not even stable", forRunOfA, forRunOfB)
+
+	// A run that records no uid: refused when two jobs hold its name, and the
+	// one job's when one does.
+	var amb *AmbiguousJobError
+	if got, err := resolve("", "nightly"); !errors.As(err, &amb) || amb.Name != "nightly" {
+		t.Errorf("a run with no uid, of a name two jobs hold, resolves to %q (%v), want the refusal to pick", got, err)
 	}
-	// One body for both runs: whichever job it belongs to, the other job's run
-	// is handed it.
-	wrong := "B"
-	if forRunOfA == bodyB {
-		wrong = "A"
+	if got, err := resolve("", "weekly"); err != nil || got != "echo the only weekly" {
+		t.Errorf("a run with no uid, of a name one job holds, resolves to %q (%v), want that job's body", got, err)
 	}
-	t.Logf("a run of agency %s's job would execute %q", wrong, forRunOfA)
 }

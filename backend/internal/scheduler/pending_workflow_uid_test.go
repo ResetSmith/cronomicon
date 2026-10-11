@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -122,5 +123,44 @@ func TestAReactionParksItsOwnWorkflow(t *testing.T) {
 		reactionRow{ownerSource: "cronomicon", ownerKind: "workflow", ownerName: "nightly", ownerUID: "w-tax", name: "after-upstream"},
 		time.Now().UTC()); err == nil {
 		t.Fatalf("a reaction whose workflow is binned parked a run, because another workflow has its name")
+	}
+}
+
+// The job half (present defect 4's family): a parked run of a job that has
+// gone is missed, although another job has its name. It was promoted on the
+// source and the name, and the other job stood in for the one that had gone.
+func TestAParkedJobRunIsOfItsOwnJob(t *testing.T) {
+	pool := mustPool(t)
+	ctx := context.Background()
+	if _, err := pool.ExecContext(ctx, `INSERT INTO jobs (uid, name, source, run_type, command, enabled, synced_at)
+		VALUES ('j-other', 'nightly', 'cronomicon', 'bash', 'true', 1, 't')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	park := func(id, jobUID string) {
+		t.Helper()
+		params, _ := json.Marshal(EnqueueParams{JobName: "nightly", JobSource: "cronomicon", JobUID: jobUID,
+			RunType: "bash", TriggeredBy: "someone", TriggerKind: "manual"})
+		past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+		if _, err := pool.ExecContext(ctx, `
+			INSERT INTO pending_runs (id, kind, name, source, run_at, scheduled_by, created_at, status, params_json)
+			VALUES (?, 'job', 'nightly', 'cronomicon', ?, 'someone', ?, 'pending', ?)`, id, past, past, string(params)); err != nil {
+			t.Fatalf("park %s: %v", id, err)
+		}
+	}
+	park("p-gone", "j-gone")
+	park("p-live", "j-other")
+
+	s := New(pool, quietLog(), nil)
+	s.PromotePending(ctx)
+
+	if st, reason := parkedState(t, pool, "p-gone"); st != "missed" || reason != "job no longer exists" {
+		t.Errorf("the parked run of a job that no longer exists is %s (%q), want missed: another job has its name", st, reason)
+	}
+	if st, _ := parkedState(t, pool, "p-live"); st != "fired" {
+		t.Errorf("the parked run of the job that is there is %s, want fired", st)
+	}
+	var n int
+	if err := pool.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE job_name = 'nightly' AND status = 'queued'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("%d runs of nightly were queued (%v), want the one of the job that is there", n, err)
 	}
 }

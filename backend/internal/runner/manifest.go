@@ -90,7 +90,8 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// Resolve the command via the shared execspec path (same as sshexec). Git
 	// cache dir resolves identically to runners_mount.go (gitlab.DefaultCloneDir).
 	interp, body, err := execspec.ResolveCommand(
-		r.Context(), s.db, gitlab.DefaultCloneDir(), jobName, jobSource.String, runType)
+		r.Context(), s.db, gitlab.DefaultCloneDir(),
+		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String}, runType)
 	if err != nil {
 		s.log.Error("manifest resolve command", "trace_id", traceID, "error", err)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "command resolution failed")
@@ -275,8 +276,13 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	var timeoutSeconds sql.NullInt64
 	var envPassthroughJSON, projectRoot sql.NullString
+	// The run's own job, by its uid: by source and name, a run of one of two
+	// jobs of a name was handed the other's timeout and passthrough list
+	// (present defect 4's family). By name only for a run that records no uid.
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT timeout_seconds, env_passthrough, project_root FROM jobs WHERE name = ? AND source = ?`, jobName, js).
+		`SELECT timeout_seconds, env_passthrough, project_root FROM jobs
+		  WHERE CASE WHEN ? != '' THEN uid = ? ELSE source = ? AND name = ? END`,
+		jobUID.String, jobUID.String, js, jobName).
 		Scan(&timeoutSeconds, &envPassthroughJSON, &projectRoot); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.log.Error("manifest read job knobs", "job", jobName, "error", err)
 	}

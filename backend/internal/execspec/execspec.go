@@ -704,18 +704,61 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 	return ok, requires, nil
 }
 
+// JobRef names the job a run is of. UID is the run's job_uid and is what
+// decides; Name and Source are what the run is called, and are asked only for
+// a run that records no uid.
+type JobRef struct {
+	UID    string
+	Name   string
+	Source string
+}
+
+// AmbiguousJobError is the refusal to pick between two jobs of one name for a
+// run that does not record which it is of.
+type AmbiguousJobError struct{ Name string }
+
+func (e *AmbiguousJobError) Error() string {
+	return fmt.Sprintf("two jobs are called %q, and this run does not record which one it is of", e.Name)
+}
+
 // ResolveCommand returns the interpreter argv and the script body for a job
 // (EX.1). Exactly one of command/script/script_path is set (parse-time
 // validated); script_path is read from the synced clone.
-func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir, jobName, jobSource, runType string) (interp []string, body string, err error) {
+//
+// job says WHICH job: the run's job_uid. Until 2.4.0 this was handed the job's
+// name and source and nothing else, although both of its callers held the uid,
+// and two agencies may each own a job of one name: a run of one agency's job
+// was handed the other agency's command, and its history looked normal,
+// because the run row named the right job (present defect 4). A uid that no
+// job has is an error: the name is not asked instead, since the name may be
+// another job. A run that records no uid is resolved by its name and source
+// when ONE job holds them, and refused when two do.
+func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir string, job JobRef, runType string) (interp []string, body string, err error) {
+	jobName, jobSource := job.Name, job.Source
 	if jobSource == "" {
 		jobSource = "git" // legacy/git runs (NULL job_source) resolve the git-source job (A9)
 	}
 	var command, script, scriptPath sql.NullString
-	row := db.QueryRowContext(ctx,
-		`SELECT command, script, script_path FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource)
-	if err := row.Scan(&command, &script, &scriptPath); err != nil {
-		return nil, "", fmt.Errorf("read job command: %w", err)
+	if job.UID != "" {
+		if err := db.QueryRowContext(ctx,
+			`SELECT command, script, script_path FROM jobs WHERE uid = ?`, job.UID).
+			Scan(&command, &script, &scriptPath); err != nil {
+			return nil, "", fmt.Errorf("read job command: %w", err)
+		}
+	} else {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).Scan(&n); err != nil {
+			return nil, "", fmt.Errorf("read job command: %w", err)
+		}
+		if n > 1 {
+			return nil, "", fmt.Errorf("read job command: %w", &AmbiguousJobError{Name: jobName})
+		}
+		if err := db.QueryRowContext(ctx,
+			`SELECT command, script, script_path FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).
+			Scan(&command, &script, &scriptPath); err != nil {
+			return nil, "", fmt.Errorf("read job command: %w", err)
+		}
 	}
 
 	switch {

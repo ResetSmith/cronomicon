@@ -216,6 +216,33 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	if strings.Contains(logStr, "[REDACTED]") {
 		t.Errorf("unexpected redaction marker for a plain Variable:\n%s", logStr)
 	}
+
+	// Present defect 4: a run of one of two jobs of a name is run as ITS job.
+	// The local runner hands the command resolver the run's job_uid; with the
+	// name alone, a name two jobs hold is refused and the run fails.
+	for _, uid := range []string{"uid-twin-a", "uid-twin-b"} {
+		if _, err := pool.Exec(`INSERT INTO jobs(uid, name, source, run_type, command, concurrency_policy, synced_at)
+			VALUES(?, 'twin', 'cronomicon', 'bash', 'echo '||?, 'Allow', ?)`, uid, uid, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(`
+		INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		VALUES('run-twin','twin','cronomicon','uid-twin-b','bash','testscope','testhost','queued','tester','manual','runner',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the twin's run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-twin'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		twinLog, _ := os.ReadFile(filepath.Join(logDir, "run-twin.log"))
+		t.Fatalf("the run of one of two jobs of a name is %q, want success:\n%s", status, twinLog)
+	}
 }
 
 func TestSupportedRunType(t *testing.T) {

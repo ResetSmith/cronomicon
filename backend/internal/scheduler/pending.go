@@ -332,9 +332,14 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		// tick, a restore before the grace expires fires it, and a row still binned
 		// when the grace runs out expires through the ordinary path above with the
 		// honest "past the catch-up grace" reason.
+		//
+		// The parked run's own job, by the uid its frozen params carry: by
+		// source and name, another job of the name stood in for one that had
+		// gone, or was in the bin (present defect 4's family).
 		var jobBinned int
-		if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM jobs WHERE source = ? AND name = ?`,
-			params.jobSourceOrDefault(), params.JobName).Scan(&jobBinned); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM jobs
+			 WHERE CASE WHEN ? != '' THEN uid = ? ELSE source = ? AND name = ? END`,
+			params.JobUID, params.JobUID, params.jobSourceOrDefault(), params.JobName).Scan(&jobBinned); err != nil {
 			s.markPendingMissed(ctx, p, "job no longer exists")
 			return
 		}

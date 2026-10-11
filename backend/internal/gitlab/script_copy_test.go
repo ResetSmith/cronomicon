@@ -64,7 +64,7 @@ func TestAnInAppJobFollowsItsScript(t *testing.T) {
 	// What each job would execute now, asked the way dispatch asks.
 	runs := func(name, source string) string {
 		t.Helper()
-		_, body, err := execspec.ResolveCommand(ctx, svc.db, svc.cloneDir, name, source, "bash")
+		_, body, err := execspec.ResolveCommand(ctx, svc.db, svc.cloneDir, execspec.JobRef{Name: name, Source: source}, "bash")
 		if err != nil {
 			t.Fatalf("ResolveCommand(%s): %v", name, err)
 		}
