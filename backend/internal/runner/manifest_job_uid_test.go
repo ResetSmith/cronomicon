@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
 // The agent's half of present defect 4. The manifest holds the run's job_uid
@@ -186,9 +187,13 @@ func TestManifestBodyIsFromTheScriptsRepositorysClone(t *testing.T) {
 		`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
 		   ('s-g', 'global', 'plan', 'terraform', 'scripts/plan.args', 'h', 't'),
 		   ('s-a', 'repo-a', 'plan', 'terraform', 'scripts/plan.args', 'h', 't')`,
-		`INSERT INTO jobs (uid, name, source, repo_id, run_type, script_uid, script_path, synced_at) VALUES
-		   ('j-own',     'own',     'git', 'repo-a', 'terraform', 's-a', 'scripts/plan.args', 't'),
-		   ('j-borrows', 'borrows', 'git', 'repo-a', 'terraform', 's-g', 'scripts/plan.args', 't')`,
+		// The jobs are an agency's repository's, so they run on a scope of that
+		// agency's (GR-15, which the manifest asks).
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-a', 'a-hosts', 'cronomicon', 't')`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-a', 'ag-a')`,
+		`INSERT INTO jobs (uid, name, source, repo_id, scope, run_type, script_uid, script_path, synced_at) VALUES
+		   ('j-own',     'own',     'git', 'repo-a', 'a-hosts', 'terraform', 's-a', 'scripts/plan.args', 't'),
+		   ('j-borrows', 'borrows', 'git', 'repo-a', 'a-hosts', 'terraform', 's-g', 'scripts/plan.args', 't')`,
 	} {
 		if _, err := svc.db.Exec(q); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q)
@@ -197,9 +202,9 @@ func TestManifestBodyIsFromTheScriptsRepositorysClone(t *testing.T) {
 	for uid, c := range map[string]struct{ name, repo string }{"j-own": {"own", "repo-a"}, "j-borrows": {"borrows", "global"}} {
 		id := db.NewTraceID()
 		if _, err := svc.db.Exec(`
-			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, runner_id, executor,
+			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, status, runner_id, executor,
 			                 triggered_by, trigger_kind, started_at, created_at)
-			VALUES (?, ?, 'git', ?, 'terraform', 'running', ?, 'runner', 'test', 'manual', ?, ?)`,
+			VALUES (?, ?, 'git', ?, 'terraform', 'a-hosts', 'running', ?, 'runner', 'test', 'manual', ?, ?)`,
 			id, c.name, uid, runnerID, now(), now()); err != nil {
 			t.Fatalf("insert run of %s: %v", uid, err)
 		}
@@ -207,5 +212,72 @@ func TestManifestBodyIsFromTheScriptsRepositorysClone(t *testing.T) {
 		if want := "plan\n-var=repository=" + c.repo; m.Body != want {
 			t.Errorf("the run of %s is handed %q, want the body in the clone of %s", uid, m.Body, c.repo)
 		}
+	}
+}
+
+// GR-15 at the moment of dispatch. Every producer of a run refuses a job of an
+// agency's repository on a scope that is not that agency's. A run made BEFORE
+// its scope was given to another agency passed then: the manifest asks again,
+// and does not hand it out.
+func TestManifestRefusesARunWhoseScopeWasGivenAway(t *testing.T) {
+	svc := newTestService(t)
+	as := authSvc(t, svc)
+	runnerID, tok := "runner-conf", "crn_run_conf"
+	insertRunner(t, svc, runnerID, "conf", "online", []string{"terraform"})
+	bindRunnerToken(t, svc, tok, runnerID)
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := svc.db.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't'), ('ag-tax', 'Tax', 't')`)
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-fin', 'ag-fin', 'u', 'main')`)
+	exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-hosts', 'cronomicon', 't')`)
+	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin')`)
+	exec(`INSERT INTO jobs (uid, name, source, repo_id, scope, run_type, command, synced_at) VALUES
+	      ('j-fin',    'plan',        'git', 'repo-fin', 'fin-hosts', 'terraform', 'plan -var=secret-of-finance', 't'),
+	      ('j-global', 'global-plan', 'git', 'global',   'fin-hosts', 'terraform', 'plan -var=global',            't')`)
+	run := func(jobUID, jobName string) string {
+		t.Helper()
+		id := db.NewTraceID()
+		exec(`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, status, runner_id, executor,
+		                       triggered_by, trigger_kind, started_at, created_at)
+		      VALUES (?, ?, 'git', ?, 'terraform', 'fin-hosts', 'running', ?, 'runner', 'test', 'manual', ?, ?)`,
+			id, jobName, jobUID, runnerID, now(), now())
+		return id
+	}
+	fetch := func(traceID string) *httptest.ResponseRecorder {
+		h := as.RequireRunner(http.HandlerFunc(svc.HandleGetManifest))
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+traceID+"/manifest", nil)
+		req.SetPathValue("traceId", traceID)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// On its agency's scope the run is handed out.
+	if rec := fetch(run("j-fin", "plan")); rec.Code != http.StatusOK {
+		t.Fatalf("the run on its agency's scope was answered %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// The scope is given to another agency. A run made before that is refused,
+	// in the words every producer uses, and nothing of the job is in the answer.
+	queuedBefore := run("j-fin", "plan")
+	exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-fin'`)
+	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-tax')`)
+	rec := fetch(queuedBefore)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runref.CodeRepoScopeMismatch) ||
+		!strings.Contains(rec.Body.String(), runref.ReasonRepoScopeMismatch) {
+		t.Errorf("the run whose scope was given away was answered %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "secret-of-finance") {
+		t.Errorf("the refusal carries the job's command: %s", rec.Body.String())
+	}
+
+	// Global's repository's job on the same scope is nobody's to refuse.
+	if rec := fetch(run("j-global", "global-plan")); rec.Code != http.StatusOK {
+		t.Errorf("Global's repository's job on that scope was answered %d: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -539,6 +539,27 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	defer cancel()
 	go s.watchKill(runCtx, cancel, r.traceID)
 
+	// GR-15, asked once more for the run that is about to be executed, as the
+	// manifest asks it for an agent's. Every producer of a run asks it when the
+	// run is made; a run made before its scope was given to another agency
+	// passed then, and would otherwise run a job of one agency's repository on
+	// what is now another agency's hosts. Before anything of the run is
+	// resolved: no secret, command or target of a refused run is read. A check
+	// that cannot be made refuses too.
+	if stranded, serr := runref.RepoScopeMismatch(runCtx, s.db, r.jobUID, r.jobSource, r.jobName, r.scope); serr != nil || stranded {
+		reason := runref.ReasonRepoScopeMismatch
+		if serr != nil {
+			s.log.Error("ssh executor confinement check", "trace_id", r.traceID, "error", serr)
+			reason = "Refused: could not check that this job's repository may run on this scope"
+		}
+		if sink, err := s.openLog(runCtx, r, nil); err == nil {
+			sink.line("", "cronomicon: "+reason)
+			sink.close()
+		}
+		s.finalizeReason(ctx, r, "failure", nil, reason)
+		return
+	}
+
 	// Resolve the run's declared references BEFORE opening the log so the log
 	// redactor is seeded with the injected secret values (and key material). A
 	// nil resolved ⇒ injection is off (kill-switch, which intentionally reverts

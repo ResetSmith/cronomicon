@@ -87,6 +87,22 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// GR-15, asked once more for the run that is about to be handed out. Every
+	// producer of a run asks it when the run is made; a run made before its
+	// scope was given to another agency passed then, and would otherwise run a
+	// job of one agency's repository on what is now another agency's hosts.
+	// Before anything of the run is resolved: no command, target or secret of
+	// a refused run is read. The agent ends the run as failed, with this
+	// answer in its log, as for every refusal of the manifest.
+	if stranded, serr := runref.RepoScopeMismatch(r.Context(), s.db, jobUID.String, jobSource.String, jobName, scope.String); serr != nil {
+		s.log.Error("manifest confinement check", "trace_id", traceID, "error", serr)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "confinement check failed")
+		return
+	} else if stranded {
+		httpx.Fail(w, http.StatusConflict, runref.CodeRepoScopeMismatch, runref.ReasonRepoScopeMismatch)
+		return
+	}
+
 	// Resolve the command via the shared execspec path (same as sshexec). Git
 	// cache dir resolves identically to runners_mount.go (gitlab.DefaultCloneDir).
 	interp, body, err := execspec.ResolveCommand(

@@ -18,6 +18,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -286,6 +287,61 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	if status != "success" {
 		fileLog, _ := os.ReadFile(filepath.Join(logDir, "run-file.log"))
 		t.Fatalf("the run of a job whose body is in an agency's repository's clone is %q, want success:\n%s", status, fileLog)
+	}
+
+	// GR-15 at the moment of dispatch: a run of a job of an agency's
+	// repository, on a scope that is not that agency's, is not executed. It
+	// ends failed, with the reason every producer gives, stored and in its log.
+	for _, q := range []string{
+		`INSERT INTO jobs (uid, name, source, repo_id, run_type, command, concurrency_policy, synced_at)
+		   VALUES ('uid-conf', 'confined', 'git', 'repo-a', 'bash', 'echo hi', 'Allow', 't')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-stranded','confined','git','uid-conf','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the stranded run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	var reason sql.NullString
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-stranded'`).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || reason.String != runref.ReasonRepoScopeMismatch {
+		t.Fatalf("the run on a scope that is not its repository's agency's is %q (%q), want failure with the refusal", status, reason.String)
+	}
+	strandedLog, _ := os.ReadFile(filepath.Join(logDir, "run-stranded.log"))
+	if !strings.Contains(string(strandedLog), runref.ReasonRepoScopeMismatch) || strings.Contains(string(strandedLog), "[testhost]") {
+		t.Errorf("the refused run's log should say why and show nothing run on the host:\n%s", strandedLog)
+	}
+
+	// The same job on a scope that IS its agency's runs.
+	for _, q := range []string{
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-test', 'testscope', 'cronomicon', 't')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-test', 'ag-a')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-own-scope','confined','git','uid-conf','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the run on the agency's own scope: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-own-scope'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		ownLog, _ := os.ReadFile(filepath.Join(logDir, "run-own-scope.log"))
+		t.Fatalf("the run on its agency's own scope is %q, want success:\n%s", status, ownLog)
 	}
 }
 
