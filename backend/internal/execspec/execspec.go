@@ -713,6 +713,14 @@ type JobRef struct {
 	Source string
 }
 
+// CloneDirs says where a repository is cloned on this server (GR-12): each has
+// a directory of its own. The server's is gitlab.CloneDirFor.
+type CloneDirs func(repoID string) string
+
+// OneCloneDir is a CloneDirs with one directory for every repository: for a
+// caller that has one clone.
+func OneCloneDir(dir string) CloneDirs { return func(string) string { return dir } }
+
 // AmbiguousJobError is the refusal to pick between two jobs of one name for a
 // run that does not record which it is of.
 type AmbiguousJobError struct{ Name string }
@@ -733,16 +741,28 @@ func (e *AmbiguousJobError) Error() string {
 // job has is an error: the name is not asked instead, since the name may be
 // another job. A run that records no uid is resolved by its name and source
 // when ONE job holds them, and refused when two do.
-func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir string, job JobRef, runType string) (interp []string, body string, err error) {
+//
+// A body kept as a file (script_path) is read from the clone of the SCRIPT's
+// repository (GR-22): dirs says where that is. The job's path is a copy of its
+// script's, relative to the script's repository; an agency's job may use
+// Global's script (GR-16), and a job built in the app has no repository of its
+// own. Until 2.4.0 there was one clone, and both callers read Global's. A job
+// that has no script row (a path of its own, or a script that has gone) is
+// read in the job's own repository, and then in Global's, where it was read
+// before.
+func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef, runType string) (interp []string, body string, err error) {
 	jobName, jobSource := job.Name, job.Source
 	if jobSource == "" {
 		jobSource = "git" // legacy/git runs (NULL job_source) resolve the git-source job (A9)
 	}
 	var command, script, scriptPath sql.NullString
+	var repo string
+	const cols = `SELECT j.command, j.script, j.script_path,
+	       COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global')
+	  FROM jobs j `
 	if job.UID != "" {
-		if err := db.QueryRowContext(ctx,
-			`SELECT command, script, script_path FROM jobs WHERE uid = ?`, job.UID).
-			Scan(&command, &script, &scriptPath); err != nil {
+		if err := db.QueryRowContext(ctx, cols+`WHERE j.uid = ?`, job.UID).
+			Scan(&command, &script, &scriptPath, &repo); err != nil {
 			return nil, "", fmt.Errorf("read job command: %w", err)
 		}
 	} else {
@@ -754,9 +774,8 @@ func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir string, job Job
 		if n > 1 {
 			return nil, "", fmt.Errorf("read job command: %w", &AmbiguousJobError{Name: jobName})
 		}
-		if err := db.QueryRowContext(ctx,
-			`SELECT command, script, script_path FROM jobs WHERE name = ? AND source = ?`, jobName, jobSource).
-			Scan(&command, &script, &scriptPath); err != nil {
+		if err := db.QueryRowContext(ctx, cols+`WHERE j.name = ? AND j.source = ?`, jobName, jobSource).
+			Scan(&command, &script, &scriptPath, &repo); err != nil {
 			return nil, "", fmt.Errorf("read job command: %w", err)
 		}
 	}
@@ -769,7 +788,10 @@ func ResolveCommand(ctx context.Context, db *sql.DB, gitCacheDir string, job Job
 	case scriptPath.Valid && scriptPath.String != "":
 		// Execution needs the FULL body (limit 0 = uncapped); the 1 MiB cap is a
 		// display-only concern handled by the catalog content endpoint.
-		data, _, rerr := SafeReadRepoFile(gitCacheDir, scriptPath.String, 0)
+		if dirs == nil {
+			return nil, "", fmt.Errorf("job %q keeps its body in a file, and this caller has no clone to read it from", jobName)
+		}
+		data, _, rerr := SafeReadRepoFile(dirs(repo), scriptPath.String, 0)
 		if rerr != nil {
 			return nil, "", rerr
 		}

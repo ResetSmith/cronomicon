@@ -3,6 +3,8 @@ package runner
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -152,5 +154,58 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no_checkout_repo") {
 		t.Errorf("a run pinned to a repository that is gone was answered %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// GR-22, the dispatch half, through the handler and the server's own rule for
+// where a repository is cloned (gitlab.CloneDirFor): two repositories hold a
+// script at the same path, and the manifest hands each run the body in its
+// script's repository. It read Global's clone for every run.
+func TestManifestBodyIsFromTheScriptsRepositorysClone(t *testing.T) {
+	// Global's clone is the directory the variable names; any other
+	// repository's is a directory named by its id beside it.
+	root := t.TempDir()
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(root, "job-definitions"))
+	for repo, dir := range map[string]string{"global": "job-definitions", "repo-a": "repo-a"} {
+		if err := os.MkdirAll(filepath.Join(root, dir, "scripts"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, dir, "scripts", "plan.args"), []byte("plan\n-var=repository="+repo), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := newTestService(t)
+	as := authSvc(t, svc)
+	runnerID, tok := "runner-clones", "crn_run_clones"
+	insertRunner(t, svc, runnerID, "clones", "online", []string{"terraform"})
+	bindRunnerToken(t, svc, tok, runnerID)
+	for _, q := range []string{
+		`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`,
+		`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main')`,
+		`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
+		   ('s-g', 'global', 'plan', 'terraform', 'scripts/plan.args', 'h', 't'),
+		   ('s-a', 'repo-a', 'plan', 'terraform', 'scripts/plan.args', 'h', 't')`,
+		`INSERT INTO jobs (uid, name, source, repo_id, run_type, script_uid, script_path, synced_at) VALUES
+		   ('j-own',     'own',     'git', 'repo-a', 'terraform', 's-a', 'scripts/plan.args', 't'),
+		   ('j-borrows', 'borrows', 'git', 'repo-a', 'terraform', 's-g', 'scripts/plan.args', 't')`,
+	} {
+		if _, err := svc.db.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	for uid, c := range map[string]struct{ name, repo string }{"j-own": {"own", "repo-a"}, "j-borrows": {"borrows", "global"}} {
+		id := db.NewTraceID()
+		if _, err := svc.db.Exec(`
+			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, runner_id, executor,
+			                 triggered_by, trigger_kind, started_at, created_at)
+			VALUES (?, ?, 'git', ?, 'terraform', 'running', ?, 'runner', 'test', 'manual', ?, ?)`,
+			id, c.name, uid, runnerID, now(), now()); err != nil {
+			t.Fatalf("insert run of %s: %v", uid, err)
+		}
+		m := getManifest(t, svc, as, id, tok)
+		if want := "plan\n-var=repository=" + c.repo; m.Body != want {
+			t.Errorf("the run of %s is handed %q, want the body in the clone of %s", uid, m.Body, c.repo)
+		}
 	}
 }

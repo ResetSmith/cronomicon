@@ -396,6 +396,7 @@ func (s *Server) mountRunners(mux *http.ServeMux) {
 	// so SIGTERM unwinds it, and registered with the shutdown WaitGroup (PP-L15)
 	// so in-flight runs finalize before the pool closes.
 	sshSvc := sshexec.New(s.db, s.cfg, s.log, gitlab.DefaultCloneDir(), logDir).
+		WithCloneDirs(gitlab.CloneDirFor). // GR-22: each repository's own clone
 		WithShutdownWG(s.shutdownWG)
 	s.sshExec = sshSvc
 	sshSvc.Start(s.runCtx)

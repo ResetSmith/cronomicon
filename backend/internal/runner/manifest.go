@@ -90,7 +90,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	// Resolve the command via the shared execspec path (same as sshexec). Git
 	// cache dir resolves identically to runners_mount.go (gitlab.DefaultCloneDir).
 	interp, body, err := execspec.ResolveCommand(
-		r.Context(), s.db, gitlab.DefaultCloneDir(),
+		r.Context(), s.db, gitlab.CloneDirFor,
 		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String}, runType)
 	if err != nil {
 		s.log.Error("manifest resolve command", "trace_id", traceID, "error", err)

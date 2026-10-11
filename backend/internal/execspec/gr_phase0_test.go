@@ -48,7 +48,7 @@ func TestResolveCommandTellsSameNamedJobsApart(t *testing.T) {
 		}
 	}
 	resolve := func(uid, name string) (string, error) {
-		_, body, err := ResolveCommand(ctx, pool, t.TempDir(), JobRef{UID: uid, Name: name, Source: "cronomicon"}, "bash")
+		_, body, err := ResolveCommand(ctx, pool, OneCloneDir(t.TempDir()), JobRef{UID: uid, Name: name, Source: "cronomicon"}, "bash")
 		return body, err
 	}
 

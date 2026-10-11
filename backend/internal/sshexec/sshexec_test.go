@@ -243,6 +243,50 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 		twinLog, _ := os.ReadFile(filepath.Join(logDir, "run-twin.log"))
 		t.Fatalf("the run of one of two jobs of a name is %q, want success:\n%s", status, twinLog)
 	}
+
+	// GR-22: a body kept as a file is read from the clone of the script's
+	// repository. The file is in an agency's repository's clone and in no
+	// other: read anywhere else, there is no body and the run fails.
+	agencyClone := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(agencyClone, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agencyClone, "scripts", "only-here.sh"), []byte("echo hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+	svc.WithCloneDirs(func(repo string) string {
+		if repo == "repo-a" {
+			return agencyClone
+		}
+		return elsewhere
+	})
+	for _, q := range []string{
+		`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`,
+		`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main')`,
+		`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at)
+		   VALUES ('s-a', 'repo-a', 'only-here.sh', 'bash', 'scripts/only-here.sh', 'h', 't')`,
+		`INSERT INTO jobs (uid, name, source, run_type, script_uid, script_path, concurrency_policy, synced_at)
+		   VALUES ('uid-file', 'filejob', 'cronomicon', 'bash', 's-a', 'scripts/only-here.sh', 'Allow', 't')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-file','filejob','cronomicon','uid-file','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the file job's run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-file'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		fileLog, _ := os.ReadFile(filepath.Join(logDir, "run-file.log"))
+		t.Fatalf("the run of a job whose body is in an agency's repository's clone is %q, want success:\n%s", status, fileLog)
+	}
 }
 
 func TestSupportedRunType(t *testing.T) {

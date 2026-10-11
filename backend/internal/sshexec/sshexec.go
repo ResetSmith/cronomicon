@@ -48,13 +48,15 @@ func SupportedRunType(runType string) bool { return execspec.SupportedRunType(ru
 
 // Service is the SSH executor worker pool.
 type Service struct {
-	db          *sql.DB
-	cfg         *config.Config
-	log         *slog.Logger
-	sec         *secrets.Service
-	resolver    *runref.Resolver // dispatch-time reference injection (P1.3)
-	notifier    *notify.Dispatcher
-	gitCacheDir string
+	db       *sql.DB
+	cfg      *config.Config
+	log      *slog.Logger
+	sec      *secrets.Service
+	resolver *runref.Resolver // dispatch-time reference injection (P1.3)
+	notifier *notify.Dispatcher
+	// cloneDirs is where a repository is cloned: a job's body kept as a file
+	// is read from its script's repository's clone (GR-22).
+	cloneDirs execspec.CloneDirs
 	// logDir is held atomically because the operator can re-point the run-log
 	// directory while the executor is running (LU-5), and openLog reads it on
 	// every claimed run.
@@ -104,6 +106,15 @@ type Service struct {
 	shutdownWG *sync.WaitGroup
 }
 
+// WithCloneDirs says where each repository is cloned, so that a job's body
+// kept as a file is read from its script's repository's clone (GR-22). Without
+// it every repository is read in the one directory New was given, which is
+// right while an installation has one. Chainable; returns s.
+func (s *Service) WithCloneDirs(dirs execspec.CloneDirs) *Service {
+	s.cloneDirs = dirs
+	return s
+}
+
 // WithShutdownWG registers a WaitGroup that Start's goroutines (claim loop,
 // orphan reaper, in-flight runs) join, so the process can drain them on
 // shutdown before closing the DB pool (PP-L15). Chainable; returns s.
@@ -127,7 +138,8 @@ func (s *Service) track(fn func()) {
 	go fn()
 }
 
-// New builds the executor. gitCacheDir is where scriptPath jobs are read from;
+// New builds the executor. gitCacheDir is where scriptPath jobs are read from,
+// for every repository, until WithCloneDirs says where each one's clone is;
 // logDir is the per-run log directory (shared with the runner subsystem).
 func New(db *sql.DB, cfg *config.Config, log *slog.Logger, gitCacheDir, logDir string) *Service {
 	conc := cfg.SSHExecutorConcurrency
@@ -145,7 +157,7 @@ func New(db *sql.DB, cfg *config.Config, log *slog.Logger, gitCacheDir, logDir s
 		sec:         sec,
 		resolver:    runref.NewResolver(db, cfg, sec, log),
 		notifier:    notify.New(db, cfg, log),
-		gitCacheDir: gitCacheDir,
+		cloneDirs:   execspec.OneCloneDir(gitCacheDir),
 		concurrency: conc,
 		fanout:      4, // EX-D5 bounded-parallel within a run
 		slotFree:    make(chan struct{}, 1),
@@ -598,7 +610,7 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		return
 	}
 
-	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.gitCacheDir,
+	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.cloneDirs,
 		execspec.JobRef{UID: r.jobUID, Name: r.jobName, Source: r.jobSource}, r.runType)
 	if err != nil {
 		sink.line("", "cronomicon: "+err.Error())
