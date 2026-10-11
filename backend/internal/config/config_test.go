@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestNoConfigNameUnderReservedPrefix locks the namespace contract (§2, W4): no
@@ -199,5 +200,24 @@ func TestLocalRunnerSwitchRefusesAValueItDoesNotKnow(t *testing.T) {
 				t.Fatalf("Load with %q = %v, want a refusal naming the variable", value, err)
 			}
 		})
+	}
+}
+
+// The bound on one git transfer is ten minutes unless the environment says
+// otherwise (the owner's decision of 2026-10-10). Zero is not "no bound": a
+// transfer given no time fails at once, and so would every sync of every
+// repository, so zero or less stops the server where an operator will see it.
+func TestGitFetchTimeoutDefaultsToTenMinutesAndRefusesZero(t *testing.T) {
+	if c := loadWith(t, nil); c.GitFetchTimeout != 10*time.Minute {
+		t.Errorf("GitFetchTimeout default = %s, want 10m", c.GitFetchTimeout)
+	}
+	if c := loadWith(t, map[string]string{"CRONOMICON_GIT_FETCH_TIMEOUT": "90s"}); c.GitFetchTimeout != 90*time.Second {
+		t.Errorf("GitFetchTimeout = %s, want the 90s the environment says", c.GitFetchTimeout)
+	}
+	for _, v := range []string{"0", "0s", "-5m"} {
+		err := loadErrWith(t, map[string]string{"CRONOMICON_GIT_FETCH_TIMEOUT": v})
+		if !strings.Contains(err.Error(), "CRONOMICON_GIT_FETCH_TIMEOUT") {
+			t.Errorf("CRONOMICON_GIT_FETCH_TIMEOUT=%s: error %q should name the variable", v, err)
+		}
 	}
 }

@@ -171,6 +171,13 @@ type Config struct {
 	// publish-write (V1.1-10). Empty ⇒ fall back to the DB-backed
 	// Global's git_repos.branch, then "main". See gitlab.Service.writeBranch.
 	GitLabWriteBranch string
+	// GitFetchTimeout bounds ONE transfer of a sync: a fetch, a clone, or the
+	// update of one submodule. Every repository's syncs and publishes wait in
+	// one queue (GR-11), so a transfer that stalls would hold all of them; at
+	// the bound the sync fails, says so in the repository's sync problems, and
+	// the queue moves on. One figure for every repository. It has to leave
+	// room for the first clone of a large repository over a slow link.
+	GitFetchTimeout time.Duration
 
 	// SSH executor (execution-update.md EX.6). Opt-in: when enabled the app
 	// holds SSH private keys and opens outbound SSH to job targets. Default off.
@@ -256,6 +263,10 @@ func (o OIDCConfig) Enabled() bool {
 	return o.Issuer != "" && o.ClientID != "" && o.ClientSecret != "" && o.RedirectURL != ""
 }
 
+// DefaultGitFetchTimeout is GitFetchTimeout when the environment does not say
+// (CRONOMICON_GIT_FETCH_TIMEOUT), and for a Config that was not built by Load.
+const DefaultGitFetchTimeout = 10 * time.Minute
+
 // Load reads configuration from the environment, applying defaults.
 func Load() (*Config, error) {
 	// The KEK is app config, not a store secret, so it lives under CRONOMICON_KEK*,
@@ -316,6 +327,7 @@ func Load() (*Config, error) {
 		GitLabBaseURL:           env("CRONOMICON_GITLAB_BASE_URL", ""),
 		WebhookSecret:           env("CRONOMICON_GITLAB_WEBHOOK_SECRET", ""),
 		GitLabWriteBranch:       env("CRONOMICON_GITLAB_WRITE_BRANCH", ""),
+		GitFetchTimeout:         envDuration("CRONOMICON_GIT_FETCH_TIMEOUT", DefaultGitFetchTimeout),
 		SSHExecutorEnabled:      envBool("CRONOMICON_SSH_EXECUTOR_ENABLED", false),
 		SSHExecutorConcurrency:  envInt("CRONOMICON_SSH_EXECUTOR_CONCURRENCY", 4),
 		LocalRunnerForbid:       strings.EqualFold(strings.TrimSpace(env("CRONOMICON_LOCAL_RUNNER", "")), "forbid"),
@@ -343,6 +355,11 @@ func Load() (*Config, error) {
 	// its operator believes cannot run jobs.
 	if v := strings.TrimSpace(os.Getenv("CRONOMICON_LOCAL_RUNNER")); v != "" && !c.LocalRunnerForbid && !strings.EqualFold(v, "allow") {
 		return nil, fmt.Errorf("invalid CRONOMICON_LOCAL_RUNNER %q (want forbid, or allow, or leave it unset)", v)
+	}
+	// Zero is not "no bound": a transfer given no time fails at once, and so
+	// would every sync.
+	if c.GitFetchTimeout <= 0 {
+		return nil, fmt.Errorf("invalid CRONOMICON_GIT_FETCH_TIMEOUT %s (must be more than zero, e.g. 10m)", c.GitFetchTimeout)
 	}
 	if !validLogLevel(c.LogLevel) {
 		return nil, fmt.Errorf("invalid CRONOMICON_LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)

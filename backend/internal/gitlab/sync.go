@@ -1298,8 +1298,13 @@ func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repos
 		if auth != nil {
 			fetchOpts.Auth = auth
 		}
-		ferr := repo.FetchContext(ctx, fetchOpts)
-		if ferr != nil && ferr != gogit.NoErrAlreadyUpToDate {
+		ferr := s.transfer(ctx, func(tctx context.Context) error {
+			if err := repo.FetchContext(tctx, fetchOpts); err != gogit.NoErrAlreadyUpToDate {
+				return err
+			}
+			return nil
+		})
+		if ferr != nil {
 			return nil, fmt.Errorf("git fetch: %w", ferr)
 		}
 		// Hard-reset to origin/<branch>.
@@ -1343,7 +1348,11 @@ func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repos
 	if auth != nil {
 		cloneOpts.Auth = auth
 	}
-	repo, err = gogit.PlainCloneContext(ctx, s.cloneDir, false, cloneOpts)
+	err = s.transfer(ctx, func(tctx context.Context) error {
+		var cerr error
+		repo, cerr = gogit.PlainCloneContext(tctx, s.cloneDir, false, cloneOpts)
+		return cerr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("git clone %s: %w", s.repoURL, err)
 	}
@@ -1355,6 +1364,37 @@ func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repos
 		s.updateSubmodules(ctx, repo, wt, auth)
 	}
 	return repo, nil
+}
+
+// fetchTimeout is how long one transfer may take (config.GitFetchTimeout).
+func (s *Service) fetchTimeout() time.Duration {
+	if s.Cfg != nil && s.Cfg.GitFetchTimeout > 0 {
+		return s.Cfg.GitFetchTimeout
+	}
+	return config.DefaultGitFetchTimeout
+}
+
+// transfer runs one transfer (a fetch, a clone, the update of one submodule)
+// and gives it up when it has taken fetchTimeout. Until 2.4.0 a transfer had
+// no bound but the 30 seconds a server is given to begin its answer: one that
+// stalled part of the way held the queue, and with it every repository's
+// syncs and publishes, for as long as the connection stayed open.
+//
+// The bound is on the transfer and not on the sync: ctx itself has not ended
+// when it is reached, so the sync goes on to record its failure and to write
+// the repository's problem row, as for any fetch that fails.
+func (s *Service) transfer(ctx context.Context, do func(context.Context) error) error {
+	limit := s.fetchTimeout()
+	tctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	err := do(tctx)
+	if err != nil && ctx.Err() == nil && errors.Is(tctx.Err(), context.DeadlineExceeded) {
+		// Not go-git's own words for it, which differ by transport and by how
+		// far the transfer had got. And not when it is ctx that ended (a caller
+		// that went away, a Service that was stopped): that is not the bound.
+		return fmt.Errorf("given up after %s, the bound on one transfer (CRONOMICON_GIT_FETCH_TIMEOUT)", limit)
+	}
+	return err
 }
 
 // pointOriginAt makes the clone's `origin` name the configured URL and fetch
@@ -1466,8 +1506,8 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 		declared[cfg.Path] = true
 		// With the sync's context: a submodule fetch is a transfer like the
 		// repository's own, and a Service that is stopped must not have to wait
-		// for one that has stalled.
-		if err := sub.UpdateContext(ctx, opts); err != nil {
+		// for one that has stalled. And under the same bound, each on its own.
+		if err := s.transfer(ctx, func(tctx context.Context) error { return sub.UpdateContext(tctx, opts) }); err != nil {
 			s.logWarn("update submodule failed; its files will be skipped this sync",
 				"submodule", cfg.Name, "path", cfg.Path, "err", err)
 			continue
