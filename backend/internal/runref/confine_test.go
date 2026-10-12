@@ -6,9 +6,11 @@ import (
 )
 
 // GR-15 — a job of an agency's repository runs on that agency's scopes and on
-// no other. The property that matters as much as the refusal is what is NOT
-// refused: a job of Global's repository, and a job built in the app, on any
-// scope or none.
+// no other, and so does a job built in the app that is joined to a script of
+// an agency's repository (present defect 40). The property that matters as
+// much as the refusal is what is NOT refused: a job of Global's repository,
+// and a job built in the app on Global's script or on none, on any scope or
+// none.
 func TestRepoScopeMismatch(t *testing.T) {
 	f := newOwnerFixture(t) // agencies ag-a and ag-b
 	f.exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main')`)
@@ -32,6 +34,13 @@ func TestRepoScopeMismatch(t *testing.T) {
 	job("j-g", "of-global", "git", "global")
 	job("j-old", "from-before", "git", nil) // a Git job that records no repository
 	job("j-app", "built", "cronomicon", nil)
+	// Built in the app on a script: of repo-a's, and of Global's.
+	f.exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
+	        ('s-a', 'repo-a', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't'),
+	        ('s-g', 'global', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't')`)
+	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_ref, script_uid) VALUES
+	        ('j-app-a', 'built-on-a',      'cronomicon', 'bash', 't', 'run.sh', 's-a'),
+	        ('j-app-g', 'built-on-global', 'cronomicon', 'bash', 't', 'run.sh', 's-g')`)
 
 	ctx := context.Background()
 	for _, c := range []struct {
@@ -55,6 +64,18 @@ func TestRepoScopeMismatch(t *testing.T) {
 		{"a job built in the app", "j-app", "cronomicon", "built", "b-hosts", false},
 		{"a job built in the app, by name", "", "cronomicon", "of-a", "b-hosts", false},
 		{"a job that is not there", "no-such-job", "git", "nobody", "b-hosts", false},
+		{"built in the app on its agency's repository's script, its agency's scope", "j-app-a", "cronomicon", "built-on-a", "a-hosts", false},
+		{"the same, another agency's scope", "j-app-a", "cronomicon", "built-on-a", "b-hosts", true},
+		{"the same, Global's scope", "j-app-a", "cronomicon", "built-on-a", "g-hosts", true},
+		{"the same, no scope", "j-app-a", "cronomicon", "built-on-a", "", true},
+		{"the same, a scope several agencies share", "j-app-a", "cronomicon", "built-on-a", "shared-hosts", true},
+		{"the same, found by name, its agency's scope", "", "cronomicon", "built-on-a", "a-hosts", false},
+		{"the same, found by name, another agency's scope", "", "cronomicon", "built-on-a", "b-hosts", true},
+		{"its name asked for as a Git job's", "", "git", "built-on-a", "b-hosts", false},
+		{"its name asked for with the default source", "", "", "built-on-a", "b-hosts", false},
+		{"built in the app on Global's script, another agency's scope", "j-app-g", "cronomicon", "built-on-global", "b-hosts", false},
+		{"built in the app on Global's script, no scope", "j-app-g", "cronomicon", "built-on-global", "", false},
+		{"built in the app on Global's script, by name", "", "cronomicon", "built-on-global", "b-hosts", false},
 	} {
 		got, err := RepoScopeMismatch(ctx, f.pool, c.uid, c.src, c.name, c.scope)
 		if err != nil {
@@ -72,5 +93,15 @@ func TestRepoScopeMismatch(t *testing.T) {
 	f.exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-a', 'ag-b')`)
 	if got, err := RepoScopeMismatch(ctx, f.pool, "j-a", "git", "of-a", "a-hosts"); err != nil || !got {
 		t.Errorf("after its scope was given to another agency: refused = %v (%v), want true", got, err)
+	}
+	if got, err := RepoScopeMismatch(ctx, f.pool, "j-app-a", "cronomicon", "built-on-a", "a-hosts"); err != nil || !got {
+		t.Errorf("the job built in the app on that agency's script, after its scope was given away: refused = %v (%v), want true", got, err)
+	}
+	// Its script is removed: the job is joined to no repository's script, and
+	// this rule has nothing to say about it. (What it is handed then is
+	// another rule's: execspec.ErrScriptGone.)
+	f.exec(`DELETE FROM scripts WHERE uid = 's-a'`)
+	if got, err := RepoScopeMismatch(ctx, f.pool, "j-app-a", "cronomicon", "built-on-a", "a-hosts"); err != nil || got {
+		t.Errorf("the job built in the app, after its script was removed: refused = %v (%v), want false", got, err)
 	}
 }

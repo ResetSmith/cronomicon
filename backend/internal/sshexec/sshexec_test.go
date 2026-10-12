@@ -260,6 +260,11 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	})
 	for _, q := range []string{
 		`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`,
+		// The scope is that agency's: a job built in the app on a script of an
+		// agency's repository runs on that agency's scopes (present defect 40).
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-test', 'testscope', 'cronomicon', 't')`,
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-test', 'ag-a')`,
 		`INSERT INTO git_repos (id, agency_id, url, branch, last_sha) VALUES ('repo-a', 'ag-a', 'u', 'main', '` + agencySynced + `')`,
 		`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at)
 		   VALUES ('s-a', 'repo-a', 'only-here.sh', 'bash', 'scripts/only-here.sh', 'h', 't')`,
@@ -288,6 +293,33 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	// GR-15 at the moment of dispatch: a run of a job of an agency's
 	// repository, on a scope that is not that agency's, is not executed. It
 	// ends failed, with the reason every producer gives, stored and in its log.
+	// The scope is given away first, with a run of the job built in the app on
+	// that agency's script waiting: it is refused in the same words (present
+	// defect 40).
+	for _, q := range []string{
+		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-file-stranded','filejob','cronomicon','uid-file','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the in-app job's stranded run: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	var fileReason sql.NullString
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-file-stranded'`).Scan(&status, &fileReason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || fileReason.String != runref.ReasonRepoScopeMismatch {
+		t.Fatalf("the in-app job on an agency's script, on a scope that is no longer that agency's, is %q (%q), want failure with the refusal", status, fileReason.String)
+	}
+	if fileLog, _ := os.ReadFile(filepath.Join(logDir, "run-file-stranded.log")); strings.Contains(string(fileLog), "[testhost]") {
+		t.Errorf("the refused run ran on the host:\n%s", fileLog)
+	}
 	for _, q := range []string{
 		`INSERT INTO jobs (uid, name, source, repo_id, run_type, command, concurrency_policy, synced_at)
 		   VALUES ('uid-conf', 'confined', 'git', 'repo-a', 'bash', 'echo hi', 'Allow', 't')`,
@@ -348,7 +380,6 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 
 	// The same job on a scope that IS its agency's runs.
 	for _, q := range []string{
-		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-test', 'testscope', 'cronomicon', 't')`,
 		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,
 		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-test', 'ag-a')`,
 		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
