@@ -102,6 +102,17 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusConflict, runref.CodeRepoScopeMismatch, runref.ReasonRepoScopeMismatch)
 		return
 	}
+	// And the WORKFLOW's repository, for a run that is a workflow's step: the
+	// engine asked when the step was queued, and the check above does not see
+	// a step whose job is Global's (found by the review of Phase R5).
+	if outside, oerr := runref.StepOutsideWorkflowRepository(r.Context(), s.db, traceID, scope.String); oerr != nil {
+		s.log.Error("manifest workflow confinement check", "trace_id", traceID, "error", oerr)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "confinement check failed")
+		return
+	} else if outside {
+		httpx.Fail(w, http.StatusConflict, runref.CodeRepoScopeMismatch, runref.ReasonWorkflowScopeMismatch)
+		return
+	}
 
 	// A checkout run with no pinned commit is refused. Checkout mode is chosen
 	// below by the commit being there, so until 2.4.0 such a run fell through
@@ -134,7 +145,13 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		// Until 2.4.0 both were a 500 that said only "command resolution
 		// failed".
 		var unread *execspec.CommitReadError
+		var ambiguous *execspec.AmbiguousJobError
 		switch {
+		case errors.As(err, &ambiguous):
+			// The refusal to pick between two jobs of one name, for a run that
+			// records neither: said, as the local runner says it.
+			httpx.Fail(w, http.StatusConflict, "job_ambiguous", ambiguous.Error())
+			return
 		case errors.Is(err, execspec.ErrJobGone):
 			httpx.Fail(w, http.StatusConflict, "job_gone",
 				"the job this run is of no longer exists: it was removed after the run was queued")

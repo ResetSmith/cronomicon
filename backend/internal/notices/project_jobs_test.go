@@ -30,6 +30,13 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 		mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, script_uid, script_path, synced_at, deleted_at)
 		   VALUES (?, ?, ?, 'ansible', ?, ?, 'x', 't', ?)`, uid, uid, source, scope, script, deleted)
 	}
+	// A shell-type project and a job built in the app on it, in each agency.
+	mustExec(t, pool, `INSERT INTO scripts (uid, repo_id, name, run_type, script_path, project_root, content_hash, synced_at) VALUES
+	   ('s-shell', 'global', 'shell-proj', 'bash', 'scripts/shell-proj/run.sh', 'scripts/shell-proj', 'h', 't')`)
+	for _, j := range [][2]string{{"fin-shell", "fin-hosts"}, {"tax-shell", "tax-hosts"}} {
+		mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, script_uid, script_path, synced_at)
+		   VALUES (?, ?, 'cronomicon', 'bash', ?, 's-shell', 'x', 't')`, j[0], j[0], j[1])
+	}
 	job("fin-proj", "cronomicon", "fin-hosts", "s-proj", nil)   // the condition, in Finance
 	job("tax-proj", "cronomicon", "tax-hosts", "s-proj", nil)   // the condition, in Tax
 	job("free-proj", "cronomicon", nil, "s-proj", nil)          // the condition, with no scope: Global's
@@ -67,7 +74,7 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 
 	// No agent at all.
 	got := check()
-	only(got, "fin-proj", "tax-proj", "free-proj", "bound-proj")
+	only(got, "fin-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 	n := got["fin-proj"]
 	if n.AgencyID != "ag-fin" {
 		t.Errorf("the notice of Finance's job is filed under %q, want Finance", n.AgencyID)
@@ -85,21 +92,27 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 	}
 
 	// An agent with Ansible and no checkout serves Finance: nothing changes.
-	// Nor does the server's own runner count, whatever it advertises.
 	runner("fin-plain-agent", "agent", `["ansible","bash"]`, "ag-fin")
-	runner("the-server", "server", `["ansible","checkout"]`, "ag-fin", "ag-tax", "global")
-	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj")
+	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+
+	// The server's own runner serves Finance. It is no agent that allows
+	// checkout, whatever its row says, and the Ansible jobs keep their notices.
+	// The SHELL job it serves loses its own: the local runner would take that
+	// run and run it as a body, so "will fail" is not true of it. Tax's shell
+	// job, which it does not serve, keeps it.
+	runner("the-server", "server", `["bash","perl","powershell","python","checkout"]`, "ag-fin")
+	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj", "tax-shell")
 
 	// An agent started with -allow-checkout serves Finance. Finance's job on an
 	// unbound scope is served; the scope that names its runners does not name
 	// this one; Tax's and Global's are another agency's.
 	runner("fin-checkout-agent", "agent", `["ansible","checkout"]`, "ag-fin")
 	mustExec(t, pool, `INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc-bound', 'fin-plain-agent', 'fin-plain-agent', 't')`)
-	only(check(), "tax-proj", "free-proj", "bound-proj")
+	only(check(), "tax-proj", "free-proj", "bound-proj", "tax-shell")
 
 	// The scope names the capable agent too.
 	mustExec(t, pool, `INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc-bound', 'fin-checkout-agent', 'fin-checkout-agent', 't')`)
-	only(check(), "tax-proj", "free-proj")
+	only(check(), "tax-proj", "free-proj", "tax-shell")
 
 	// Global's and Tax's get theirs.
 	runner("global-checkout-agent", "agent", `["checkout","ansible"]`, "global")
@@ -108,7 +121,7 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 
 	// And it comes back when the agent goes.
 	mustExec(t, pool, `DELETE FROM runners WHERE id = 'tax-checkout-agent'`)
-	only(check(), "tax-proj")
+	only(check(), "tax-proj", "tax-shell")
 }
 
 func keys(m map[string]notices.Notice) []string {

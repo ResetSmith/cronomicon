@@ -246,7 +246,11 @@ func ReadSyncedFile(ctx context.Context, db *sql.DB, dirs CloneDirs, repoID, rel
 		return nil, false, fmt.Errorf("read the last synced commit of repository %s: %w", repoID, err)
 	}
 	if sha.String == "" {
-		return nil, false, notRead(relPath, "repository %s has not been synced: there is no commit to read it at", repoID)
+		return nil, false, notSynced(relPath, repoID)
 	}
 	return ReadCommitFile(dirs(repoID), sha.String, relPath, limit)
+}
+
+func notSynced(relPath, repoID string) error {
+	return notRead(relPath, "repository %s has not been synced: there is no commit to read it at", repoID)
 }

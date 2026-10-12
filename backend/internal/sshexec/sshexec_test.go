@@ -315,6 +315,37 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 		t.Errorf("the refused run's log should say why and show nothing run on the host:\n%s", strandedLog)
 	}
 
+	// And the WORKFLOW's repository (the review of Phase R5): a step of a
+	// workflow of an agency's repository, whose job is Global's and so is not
+	// refused above, on a scope that is not that agency's. The engine asked when
+	// the step was queued; the scope can be given away after that.
+	for _, q := range []string{
+		`INSERT INTO workflows (uid, name, source, repo_id, steps, synced_at) VALUES ('wf-a', 'flow', 'git', 'repo-a', '[]', 't')`,
+		`INSERT INTO workflow_runs (id, workflow_name, workflow_source, workflow_uid, status, triggered_by, trigger_kind, created_at)
+		   VALUES ('wfrun-a', 'flow', 'git', 'wf-a', 'running', 'tester', 'manual', '` + now + `')`,
+		`INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, workflow_run_id, created_at)
+		   VALUES('run-step-stranded','j1','bash','testscope','testhost','queued','tester','workflow','runner','wfrun-a','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the stranded step: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-step-stranded'`).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || reason.String != runref.ReasonWorkflowScopeMismatch {
+		t.Fatalf("the step of an agency's repository's workflow on a scope that is not that agency's is %q (%q), want failure with the refusal", status, reason.String)
+	}
+	stepLog, _ := os.ReadFile(filepath.Join(logDir, "run-step-stranded.log"))
+	if !strings.Contains(string(stepLog), runref.ReasonWorkflowScopeMismatch) || strings.Contains(string(stepLog), "[testhost]") {
+		t.Errorf("the refused step's log should say why and show nothing run on the host:\n%s", stepLog)
+	}
+
 	// The same job on a scope that IS its agency's runs.
 	for _, q := range []string{
 		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-test', 'testscope', 'cronomicon', 't')`,
@@ -338,6 +369,23 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	if status != "success" {
 		ownLog, _ := os.ReadFile(filepath.Join(logDir, "run-own-scope.log"))
 		t.Fatalf("the run on its agency's own scope is %q, want success:\n%s", status, ownLog)
+	}
+	// And so does a step of that agency's repository's workflow.
+	if _, err := pool.Exec(`INSERT INTO runs(id, job_name, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, workflow_run_id, created_at)
+		   VALUES('run-step-own','j1','bash','testscope','testhost','queued','tester','workflow','runner','wfrun-a','` + now + `')`); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the step on the agency's own scope: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status FROM runs WHERE id='run-step-own'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "success" {
+		ownLog, _ := os.ReadFile(filepath.Join(logDir, "run-step-own.log"))
+		t.Fatalf("the step on its workflow's agency's own scope is %q, want success:\n%s", status, ownLog)
 	}
 }
 

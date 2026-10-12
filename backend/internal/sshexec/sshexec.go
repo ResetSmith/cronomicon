@@ -559,6 +559,20 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		s.finalizeReason(ctx, r, "failure", nil, reason)
 		return
 	}
+	// And the workflow's repository, for a workflow's step (as the manifest).
+	if outside, oerr := runref.StepOutsideWorkflowRepository(runCtx, s.db, r.traceID, r.scope); oerr != nil || outside {
+		reason := runref.ReasonWorkflowScopeMismatch
+		if oerr != nil {
+			s.log.Error("ssh executor workflow confinement check", "trace_id", r.traceID, "error", oerr)
+			reason = "Refused: could not check that this workflow's repository may run on this scope"
+		}
+		if sink, err := s.openLog(runCtx, r, nil); err == nil {
+			sink.line("", "cronomicon: "+reason)
+			sink.close()
+		}
+		s.finalizeReason(ctx, r, "failure", nil, reason)
+		return
+	}
 
 	// Resolve the run's declared references BEFORE opening the log so the log
 	// redactor is seeded with the injected secret values (and key material). A

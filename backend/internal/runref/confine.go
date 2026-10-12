@@ -102,3 +102,30 @@ func ScopeOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope
 	}
 	return scope == "" || agencies != 1 || own != 1, nil
 }
+
+// StepOutsideWorkflowRepository asks ScopeOutsideRepository for a run that is
+// a workflow's step, at the moment it is dispatched: the workflow the run's
+// workflow run is of comes from an agency's repository, and scope is not that
+// agency's alone. The engine asks it when the step is queued. A scope can be
+// given to another agency after that, and the job's own check
+// (RepoScopeMismatch) does not see it when the step's job is Global's.
+//
+// False for a run that is no workflow's step, for a workflow built in the app
+// or of Global's repository, and for one that is no longer there: there is
+// then no repository to confine it to, as when the engine asked.
+func StepOutsideWorkflowRepository(ctx context.Context, database *sql.DB, traceID, scope string) (bool, error) {
+	var home string
+	err := database.QueryRowContext(ctx, `
+		SELECT COALESCE(w.repo_id, ?)
+		  FROM runs r
+		  JOIN workflow_runs wr ON wr.id = r.workflow_run_id
+		  JOIN workflows w ON w.uid = wr.workflow_uid
+		 WHERE r.id = ? AND w.source = 'git'`, repoid.Global, traceID).Scan(&home)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return ScopeOutsideRepository(ctx, database, home, scope)
+}

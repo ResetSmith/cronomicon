@@ -778,14 +778,19 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 	if jobSource == "" {
 		jobSource = "git" // legacy/git runs (NULL job_source) resolve the git-source job (A9)
 	}
-	var command, script, scriptPath sql.NullString
+	var command, script, scriptPath, synced sql.NullString
 	var repo string
+	// The repository's last synced commit is read WITH the job's row: one
+	// statement, one moment. Read after it, a sync that moved the file and
+	// committed in between would have the old path looked for in the new commit.
 	const cols = `SELECT j.command, j.script, j.script_path,
-	       COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global')
+	       COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global'),
+	       (SELECT g.last_sha FROM git_repos g
+	         WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global'))
 	  FROM jobs j `
 	if job.UID != "" {
 		if err := db.QueryRowContext(ctx, cols+`WHERE j.uid = ?`, job.UID).
-			Scan(&command, &script, &scriptPath, &repo); err != nil {
+			Scan(&command, &script, &scriptPath, &repo, &synced); err != nil {
 			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
 		}
 	} else {
@@ -798,7 +803,7 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 			return nil, "", fmt.Errorf("read job command: %w", &AmbiguousJobError{Name: jobName})
 		}
 		if err := db.QueryRowContext(ctx, cols+`WHERE j.name = ? AND j.source = ?`, jobName, jobSource).
-			Scan(&command, &script, &scriptPath, &repo); err != nil {
+			Scan(&command, &script, &scriptPath, &repo, &synced); err != nil {
 			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
 		}
 	}
@@ -825,8 +830,10 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 				entry = scriptPath.String
 			}
 			data, _, rerr = ReadCommitFile(dirs(pinned), at.SHA, entry, 0)
+		} else if synced.String == "" {
+			rerr = notSynced(scriptPath.String, repo)
 		} else {
-			data, _, rerr = ReadSyncedFile(ctx, db, dirs, repo, scriptPath.String, 0)
+			data, _, rerr = ReadCommitFile(dirs(repo), synced.String, scriptPath.String, 0)
 		}
 		if rerr != nil {
 			return nil, "", rerr

@@ -132,6 +132,13 @@ func TestAFileThatIsNotInTheObjectsIsRefusedWithAReason(t *testing.T) {
 	// Never synced: there is no commit to read at.
 	data, _, err := ReadSyncedFile(ctx, pool, OneCloneDir(clone), "global", "scripts/run.sh", 0)
 	refused("a repository that has not been synced", data, err, "global", "has not been synced")
+	// And so is a run, which reads the synced commit with its job's row.
+	if _, err := pool.ExecContext(ctx, `INSERT INTO jobs (uid, name, source, repo_id, run_type, script_path, synced_at)
+	      VALUES ('unsynced', 'unsynced', 'git', 'global', 'bash', 'scripts/run.sh', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	_, body, err := ResolveCommand(ctx, pool, OneCloneDir(clone), JobRef{UID: "unsynced"}, Pin{}, "bash")
+	refused("a run of a job whose repository has not been synced", []byte(body), err, "global", "has not been synced")
 
 	// A commit is recorded and the directory is not a clone.
 	const someCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"

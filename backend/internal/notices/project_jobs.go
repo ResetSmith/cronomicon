@@ -37,6 +37,13 @@ const KindInAppProjectJobNoCheckoutAgent = "inapp_project_job_no_checkout_agent"
 // job's scope (Global, for a job with no scope) and, where the scope names its
 // runners, is one of them. Registered, not online: an agent that is merely
 // offline is an ordinary wait.
+//
+// Nor is it raised where the SERVER's own runner serves the job and has its run
+// type (a shell-type project: the local runner takes no other). The local
+// runner runs such a job as a body and does not honour the pin, so "its runs
+// will fail" would not be true of it. That it runs so is a defect of its own
+// (the plan's R5 record, "Read, and not changed"), and not this notice's to
+// describe.
 func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.uid, j.name, COALESCE(j.scope, ''), s.name,
@@ -51,8 +58,10 @@ func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 		   AND COALESCE(s.project_root, '') != ''
 		   AND NOT EXISTS (
 		       SELECT 1 FROM runners rn
-		        WHERE rn.kind <> 'server'
-		          AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = 'checkout')
+		        WHERE ((rn.kind <> 'server'
+		                AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = 'checkout'))
+		               OR (rn.kind = 'server'
+		                   AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = j.run_type)))
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
 		               WHERE ra.runner_id = rn.id
