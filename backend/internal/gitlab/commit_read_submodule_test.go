@@ -118,8 +118,10 @@ func TestAScriptInASubmoduleIsReadFromTheSubmodulesObjects(t *testing.T) {
 		if got, err := read(first, path); err != nil || got != want {
 			t.Errorf("%s = %q (%v), want %q from the objects", path, got, err, want)
 		}
-		// Put back, as the sync would have: a submodule whose working tree
-		// differs from its commit is not updated by the next sync.
+		// Put back, so that the syncs below have nothing to repair: a submodule
+		// whose working tree differs from its commit is reset by the next sync
+		// (TestASubmoduleLeftHalfWrittenIsPutRightByTheNextSync), with a warning
+		// this test does not expect.
 		if err := os.WriteFile(filepath.Join(clone, path), []byte(want), 0o644); err != nil {
 			t.Fatal(err)
 		}

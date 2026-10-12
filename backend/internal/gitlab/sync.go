@@ -1507,7 +1507,18 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 		// With the sync's context: a submodule fetch is a transfer like the
 		// repository's own, and a Service that is stopped must not have to wait
 		// for one that has stalled. And under the same bound, each on its own.
-		if err := s.transfer(ctx, func(tctx context.Context) error { return sub.UpdateContext(tctx, opts) }); err != nil {
+		// One bound for the submodule and everything nested in it, as before.
+		var reset []string
+		err := s.transfer(ctx, func(tctx context.Context) error {
+			var uerr error
+			reset, uerr = updateSubmodule(tctx, sub, opts, int(opts.RecurseSubmodules))
+			return uerr
+		})
+		for _, path := range reset {
+			s.logWarn("a submodule's working tree differed from its commit and was reset to it",
+				"submodule", cfg.Name, "path", filepath.ToSlash(filepath.Join(cfg.Path, path)))
+		}
+		if err != nil {
 			s.logWarn("update submodule failed; its files will be skipped this sync",
 				"submodule", cfg.Name, "path", cfg.Path, "err", err)
 			continue
@@ -1515,6 +1526,82 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 		s.logInfo("submodule updated", "submodule", cfg.Name, "path", cfg.Path)
 	}
 	s.warnUndeclaredGitlinks(repo, declared)
+}
+
+// updateSubmodule fetches a submodule and checks it out at the commit its
+// parent pins, then does the same for the submodules nested in it, depth
+// levels down. It returns the paths, relative to sub ("." for sub itself), of
+// the submodules whose working tree had to be reset.
+//
+// It is go-git's own recursive update with one difference. A submodule's
+// update is a checkout that refuses a working tree that differs from its
+// commit, and a sync resets the repository's OWN tree hard and never a
+// submodule's. So a submodule whose tree was left different was refused on
+// every sync after, for good (present defect 42): one file cut short by a
+// server stopped while it checked the submodule out, a full disk, an edit by
+// hand; and, since go-git counts a nested submodule that is not at the commit
+// its parent pins as such a difference, any submodule that has a nested one
+// whose update failed once. A submodule that is refused for that is reset
+// hard to its pinned commit, as the repository's own tree is, and the walk
+// goes on into what is nested in it.
+//
+// The walk is this function's and not go-git's (RecurseSubmodules) because the
+// refusal has to be met at the level it happens at: a parent that has just
+// been reset is, until its nested submodules have been updated, exactly the
+// tree go-git refuses.
+func updateSubmodule(ctx context.Context, sub *gogit.Submodule, opts *gogit.SubmoduleUpdateOptions, depth int) (reset []string, err error) {
+	one := *opts
+	one.RecurseSubmodules = gogit.NoRecurseSubmodules
+	err = sub.UpdateContext(ctx, &one)
+	if errors.Is(err, gogit.ErrUnstagedChanges) {
+		if err = resetSubmoduleToPin(sub); err == nil {
+			reset = append(reset, ".")
+		}
+	}
+	if err != nil || depth <= 0 {
+		return reset, err
+	}
+	r, err := sub.Repository()
+	if err != nil {
+		return reset, err
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		return reset, err
+	}
+	nested, err := wt.Submodules()
+	if err != nil {
+		return reset, err
+	}
+	for _, n := range nested {
+		below, nerr := updateSubmodule(ctx, n, opts, depth-1)
+		for _, path := range below {
+			reset = append(reset, filepath.Join(n.Config().Path, path))
+		}
+		if nerr != nil {
+			return reset, nerr
+		}
+	}
+	return reset, nil
+}
+
+// resetSubmoduleToPin resets a submodule's working tree, index and HEAD hard
+// to the commit its parent pins for it. The refused update has fetched before
+// it was refused, so the commit is there.
+func resetSubmoduleToPin(sub *gogit.Submodule) error {
+	st, err := sub.Status()
+	if err != nil {
+		return err
+	}
+	r, err := sub.Repository()
+	if err != nil {
+		return err
+	}
+	wt, err := r.Worktree()
+	if err != nil {
+		return err
+	}
+	return wt.Reset(&gogit.ResetOptions{Commit: st.Expected, Mode: gogit.HardReset})
 }
 
 // warnUndeclaredGitlinks scans the HEAD tree for submodule gitlinks (mode
