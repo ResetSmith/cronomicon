@@ -219,20 +219,40 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			-- runner claims by the one claim, which does read them, and it
 			-- advertises no such token: a shell job carrying an ignored become
 			-- password would have waited for ever.
+			--
+			-- 2.4.0, present defect 39: a PROJECT job's run additionally REQUIRES
+			-- the 'checkout' token, injected the same way and for the same reason.
+			-- A checkout run is run only by an agent started with -allow-checkout,
+			-- which is the one that advertises the token. Until now nothing asked
+			-- for it at the claim: any agent with the run type took the run, and
+			-- one that does not allow checkout refused it and the run failed. On a
+			-- scope served by both kinds of agent the same job passed or failed by
+			-- which agent polled first. The run WAITS for a capable agent now. The
+			-- local runner advertises no such token and no longer takes a project
+			-- job's run, which it ran as a body with the pin ignored.
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE
-				          WHEN become_password_secret IS NOT NULL AND become_password_secret != ''
-				               AND run_type = 'ansible'
-				            THEN CASE WHEN EXISTS (
-				                        SELECT 1 FROM json_each(COALESCE(NULLIF(requires_json,''), '[]'))
-				                        WHERE value = 'become-file')
-				                      THEN requires_json
-				                      ELSE json_insert(COALESCE(NULLIF(requires_json,''), '[]'), '$[#]', 'become-file')
-				                 END
-				          WHEN requires_json IS NOT NULL AND requires_json != '[]'
-				            THEN requires_json
+				          WHEN r.project_root IS NULL OR r.project_root = '' THEN r.req
+				          WHEN EXISTS (
+				                 SELECT 1 FROM json_each(COALESCE(NULLIF(r.req,''), '[]'))
+				                 WHERE value = 'checkout')
+				            THEN r.req
+				          ELSE json_insert(COALESCE(NULLIF(r.req,''), '[]'), '$[#]', 'checkout')
 				        END
-				   FROM jobs WHERE uid = ?) END,
+				   FROM (SELECT project_root,
+				                CASE
+				                  WHEN become_password_secret IS NOT NULL AND become_password_secret != ''
+				                       AND run_type = 'ansible'
+				                    THEN CASE WHEN EXISTS (
+				                                SELECT 1 FROM json_each(COALESCE(NULLIF(requires_json,''), '[]'))
+				                                WHERE value = 'become-file')
+				                              THEN requires_json
+				                              ELSE json_insert(COALESCE(NULLIF(requires_json,''), '[]'), '$[#]', 'become-file')
+				                         END
+				                  WHEN requires_json IS NOT NULL AND requires_json != '[]'
+				                    THEN requires_json
+				                END AS req
+				           FROM jobs WHERE uid = ?) r) END,
 			?, ?, ?, ?,
 			-- R2-1/R2-5: the identity, resolved once by resolveEnqueueUID.
 			NULLIF(?, ''),

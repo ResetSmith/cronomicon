@@ -233,7 +233,16 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		}
 	}
 	if len(missing) > 0 {
-		return "no eligible runner advertises " + strings.Join(missing, ", "), nil
+		reason := "no eligible runner advertises " + strings.Join(missing, ", ")
+		for _, tok := range missing {
+			if tok == "checkout" {
+				// The one token an operator did not write (it is on every
+				// project job's run since 2.4.0), so what it means is said.
+				reason += " — this is a project's run, which only an agent started with -allow-checkout takes"
+				break
+			}
+		}
+		return reason, nil
 	}
 
 	// Every gate above passed individually but the combined predicate did not — the

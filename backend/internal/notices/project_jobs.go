@@ -20,12 +20,14 @@ import (
 //
 // What that changes for a job that ran: a checkout run is run only by an agent
 // started with -allow-checkout, which lists the repository and holds a
-// credential for it. On any other agent it is taken and refused, and the run
-// fails. This says so, for each such job that has no agent of that kind.
+// credential for it, and since present defect 39 was fixed it WAITS for one
+// (its run requires the "checkout" token). This says so, for each such job
+// that has no agent of that kind: its runs will wait for ever.
 
 // KindInAppProjectJobNoCheckoutAgent — a job built in the app on a project,
 // where no registered agent that serves the job is started with
-// -allow-checkout. Subject: the job's uid. Filed under the job's agency.
+// -allow-checkout, so that its runs wait. Subject: the job's uid. Filed under
+// the job's agency.
 const KindInAppProjectJobNoCheckoutAgent = "inapp_project_job_no_checkout_agent"
 
 // checkInAppProjectJobs reads the project off the SCRIPT (through
@@ -36,14 +38,8 @@ const KindInAppProjectJobNoCheckoutAgent = "inapp_project_job_no_checkout_agent"
 // An agent "serves the job" by the claim's rule: it serves the agency of the
 // job's scope (Global, for a job with no scope) and, where the scope names its
 // runners, is one of them. Registered, not online: an agent that is merely
-// offline is an ordinary wait.
-//
-// Nor is it raised where the SERVER's own runner serves the job and has its run
-// type (a shell-type project: the local runner takes no other). The local
-// runner runs such a job as a body and does not honour the pin, so "its runs
-// will fail" would not be true of it. That it runs so is a defect of its own
-// (the plan's R5 record, "Read, and not changed"), and not this notice's to
-// describe.
+// offline is an ordinary wait. The server's own runner is no such agent: it
+// advertises no "checkout" and does not take a project job's run.
 func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.uid, j.name, COALESCE(j.scope, ''), s.name,
@@ -58,10 +54,8 @@ func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 		   AND COALESCE(s.project_root, '') != ''
 		   AND NOT EXISTS (
 		       SELECT 1 FROM runners rn
-		        WHERE ((rn.kind <> 'server'
-		                AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = 'checkout'))
-		               OR (rn.kind = 'server'
-		                   AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = j.run_type)))
+		        WHERE rn.kind <> 'server'
+		          AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = 'checkout')
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
 		               WHERE ra.runner_id = rn.id
@@ -96,8 +90,8 @@ func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 				"the whole project out. Until now its runs were handed the project's entry file alone, without the roles "+
 				"and files beside it. A checkout run is run only by an agent started with -allow-checkout, which lists "+
 				"the repository and holds a credential for it, and no registered agent that serves this job is started "+
-				"that way: its runs will be taken by an agent that refuses them, and will fail. Either start an agent "+
-				"that serves it with -allow-checkout, or build the job on a script that is not a project.",
+				"that way: its runs will wait for one, and will not start. Either start an agent that serves it with "+
+				"-allow-checkout, or build the job on a script that is not a project.",
 				name, on, script),
 		})
 	}

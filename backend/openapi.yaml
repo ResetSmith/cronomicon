@@ -10181,8 +10181,9 @@ components:
               on a project (a script that is a directory checked out by the
               agent), where no registered agent that serves the job is started
               with `-allow-checkout`. From v2.4.0 such a job is a checkout job,
-              as one written in Git on a project has always been: its runs are
-              taken by an agent that refuses them, and fail. Until v2.4.0 its
+              as one written in Git on a project has always been, and a
+              checkout run requires such an agent (the `checkout` token): its
+              runs wait for one. The local runner is not one. Until v2.4.0 its
               runs were handed the project's entry file alone. Subject: the
               job's uid. Filed under the agency of the job's scope, or under
               Global. It clears when an agent started with `-allow-checkout`

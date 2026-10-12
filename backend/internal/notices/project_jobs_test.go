@@ -11,7 +11,8 @@ import (
 // Present defect 24's notice (the owner's decisions of 2026-10-09 and
 // 2026-10-12): a job built in the app on a project is a checkout job from
 // 2.4.0, and where no registered agent that serves it is started with
-// -allow-checkout its runs will fail. It is read off the SCRIPT, so it is
+// -allow-checkout its runs will wait (a checkout run requires such an agent
+// since present defect 39 was fixed). It is read off the SCRIPT, so it is
 // there at the first start, before any job carries the marker; it is filed
 // under the job's agency; and it resolves when such an agent is there.
 func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
@@ -79,13 +80,13 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 	if n.AgencyID != "ag-fin" {
 		t.Errorf("the notice of Finance's job is filed under %q, want Finance", n.AgencyID)
 	}
-	for _, want := range []string{"The job fin-proj", "the scope fin-hosts", "the project deploy-app", "-allow-checkout", "will fail"} {
+	for _, want := range []string{"The job fin-proj", "the scope fin-hosts", "the project deploy-app", "-allow-checkout", "will wait"} {
 		if !strings.Contains(n.Detail, want) {
 			t.Errorf("the detail does not say %q: %s", want, n.Detail)
 		}
 	}
-	if strings.Contains(n.Detail, "wait") {
-		t.Errorf("the detail says the runs will wait, which they do not: %s", n.Detail)
+	if strings.Contains(n.Detail, "fail") {
+		t.Errorf("the detail says the runs will fail; they wait: %s", n.Detail)
 	}
 	if got["free-proj"].AgencyID != "global" || !strings.Contains(got["free-proj"].Detail, "no scope") {
 		t.Errorf("the notice of the job with no scope: %+v, want it under Global", got["free-proj"])
@@ -96,12 +97,10 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 
 	// The server's own runner serves Finance. It is no agent that allows
-	// checkout, whatever its row says, and the Ansible jobs keep their notices.
-	// The SHELL job it serves loses its own: the local runner would take that
-	// run and run it as a body, so "will fail" is not true of it. Tax's shell
-	// job, which it does not serve, keeps it.
+	// checkout, whatever its row says, and it takes no project job's run, of a
+	// shell type or not: every notice stays.
 	runner("the-server", "server", `["bash","perl","powershell","python","checkout"]`, "ag-fin")
-	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj", "tax-shell")
+	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 
 	// An agent started with -allow-checkout serves Finance. Finance's job on an
 	// unbound scope is served; the scope that names its runners does not name
