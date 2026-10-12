@@ -2,6 +2,7 @@ package execspec
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -66,12 +67,13 @@ func TestABodyIsReadFromItsScriptsRepository(t *testing.T) {
 	job("app-on-agency", "cronomicon", nil, "s-a") // built in the app, on its agency's repository's script
 	job("app-on-global", "cronomicon", nil, "s-g") // built in the app, on Global's
 	job("own-path", "git", "repo-a", nil)          // a Git job with a path of its own: its own repository
-	job("app-script-gone", "cronomicon", nil, nil) // its script row has gone: Global's, as before
+	job("git-script-gone", "git", nil, nil)        // a Git job that records no repository and has no script: Global's, as before
+	job("app-script-gone", "cronomicon", nil, nil) // built in the app, and its script row has gone
 
 	for uid, repo := range map[string]string{
 		"git-own": "repo-a", "git-borrows": "global",
 		"app-on-agency": "repo-a", "app-on-global": "global",
-		"own-path": "repo-a", "app-script-gone": "global",
+		"own-path": "repo-a", "git-script-gone": "global",
 	} {
 		asked = nil
 		_, body, err := ResolveCommand(ctx, pool, dirs, JobRef{UID: uid}, Pin{}, "bash")
@@ -87,6 +89,45 @@ func TestABodyIsReadFromItsScriptsRepository(t *testing.T) {
 		}
 	}
 
+	// Present defect 41: a job built in the app whose script has gone has no
+	// repository that is its own to read in. It was read in Global's, which
+	// holds a file at this path: the job is refused, pinned or not, by uid or
+	// by name, and no clone is asked for anything.
+	for what, try := range map[string]func() (string, error){
+		"by uid": func() (string, error) {
+			_, b, err := ResolveCommand(ctx, pool, dirs, JobRef{UID: "app-script-gone"}, Pin{}, "bash")
+			return b, err
+		},
+		"by name": func() (string, error) {
+			_, b, err := ResolveCommand(ctx, pool, dirs, JobRef{Name: "app-script-gone", Source: "cronomicon"}, Pin{}, "bash")
+			return b, err
+		},
+		"pinned to Global's commit": func() (string, error) {
+			_, b, err := ResolveCommand(ctx, pool, dirs, JobRef{UID: "app-script-gone"},
+				Pin{Repo: "global", SHA: synced["global"], Entry: "scripts/run.sh"}, "bash")
+			return b, err
+		},
+	} {
+		asked = nil
+		body, err := try()
+		if !errors.Is(err, ErrScriptGone) || body != "" || len(asked) != 0 {
+			t.Errorf("a job built in the app whose script has gone, %s: body %q, err %v, clones asked %v; want ErrScriptGone and nothing read", what, body, err, asked)
+		}
+	}
+	for ref, want := range map[JobRef]bool{
+		{UID: "app-script-gone"}:                        true,
+		{Name: "app-script-gone", Source: "cronomicon"}: true,
+		{UID: "app-on-agency"}:                          false,
+		{UID: "git-script-gone"}:                        false,
+		{UID: "own-path"}:                               false,
+		{UID: "no-such-job"}:                            false,
+		{Name: "app-script-gone", Source: "git"}:        false,
+	} {
+		if got, err := ScriptGone(ctx, pool, ref); err != nil || got != want {
+			t.Errorf("ScriptGone(%+v) = %v (%v), want %v", ref, got, err, want)
+		}
+	}
+
 	// A run with no uid is read in its script's repository too.
 	if _, body, err := ResolveCommand(ctx, pool, dirs, JobRef{Name: "git-own", Source: "git"}, Pin{}, "bash"); err != nil ||
 		body != "echo the body in repo-a\n" {
@@ -98,8 +139,13 @@ func TestABodyIsReadFromItsScriptsRepository(t *testing.T) {
 	if _, _, err := ResolveCommand(ctx, pool, nil, JobRef{UID: "git-own"}, Pin{}, "bash"); err == nil {
 		t.Errorf("a body kept in a file was resolved by a caller that has no clone")
 	}
+	// It is a job built in the app with no script row: its body is its own
+	// copy, nothing is read anywhere, and it is not "its script has gone".
 	exec(`INSERT INTO jobs (uid, name, source, run_type, command, synced_at) VALUES ('inline', 'inline', 'cronomicon', 'bash', 'true', 't')`)
 	if _, body, err := ResolveCommand(ctx, pool, nil, JobRef{UID: "inline"}, Pin{}, "bash"); err != nil || body != "true" {
 		t.Errorf("a body kept on the job's row is %q (%v) for a caller with no clone, want it resolved", body, err)
+	}
+	if gone, err := ScriptGone(ctx, pool, JobRef{UID: "inline"}); err != nil || gone {
+		t.Errorf("ScriptGone for a job whose body is its own copy = %v (%v), want false", gone, err)
 	}
 }

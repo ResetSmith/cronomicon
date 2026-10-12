@@ -114,6 +114,21 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A job built in the app whose script has been removed has no repository to
+	// read its file in, and none to be pinned to (present defect 41). Said
+	// first: its run records an entry and no commit, and the refusal below
+	// would give the wrong reason for that.
+	if gone, gerr := execspec.ScriptGone(r.Context(), s.db,
+		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String}); gerr != nil {
+		s.log.Error("manifest script check", "trace_id", traceID, "error", gerr)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "command resolution failed")
+		return
+	} else if gone {
+		httpx.Fail(w, http.StatusConflict, "script_gone",
+			"the script this job is built on has been removed: build the job on a script that is there")
+		return
+	}
+
 	// A checkout run with no pinned commit is refused. Checkout mode is chosen
 	// below by the commit being there, so until 2.4.0 such a run fell through
 	// to a body run: the agent was handed the project's entry file alone,
@@ -151,6 +166,11 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 			// The refusal to pick between two jobs of one name, for a run that
 			// records neither: said, as the local runner says it.
 			httpx.Fail(w, http.StatusConflict, "job_ambiguous", ambiguous.Error())
+			return
+		case errors.Is(err, execspec.ErrScriptGone):
+			// Asked above; here for a job that lost its script in between.
+			httpx.Fail(w, http.StatusConflict, "script_gone",
+				"the script this job is built on has been removed: build the job on a script that is there")
 			return
 		case errors.Is(err, execspec.ErrJobGone):
 			httpx.Fail(w, http.StatusConflict, "job_gone",

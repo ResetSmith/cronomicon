@@ -734,6 +734,47 @@ type Pin struct {
 // names no job (or, for a run that records none, nothing holds its name).
 var ErrJobGone = errors.New("the job this run is of no longer exists")
 
+// ErrScriptGone is a job built in the app whose body is a file of a script
+// that is no longer there (present defect 41). Such a job holds a copy of its
+// script, and for a file the copy is a path. With the script's row gone the
+// job has no repository to read the path in: it has none of its own, and
+// which repository the script was in is no longer recorded. Until 2.4.0 Phase
+// R5 the path was read in Global's repository, which with a repository per
+// agency handed the job whatever the installation's own repository holds at a
+// path another repository's committers chose.
+var ErrScriptGone = errors.New("the script this job is built on has been removed")
+
+// scriptGoneSQL is true for the job j when it is one of those: built in the
+// app, its body a file, and joined to no script row.
+const scriptGoneSQL = `(j.source <> 'git'
+	AND COALESCE(j.command, '') = '' AND COALESCE(j.script, '') = '' AND COALESCE(j.script_path, '') <> ''
+	AND NOT EXISTS (SELECT 1 FROM scripts s WHERE s.uid = j.script_uid))`
+
+// ScriptGone reports whether the job a run is of is one ErrScriptGone refuses,
+// for a caller that must say so before it resolves the run (the manifest). A
+// job that is not there, and a name two jobs hold for a run with no uid, are
+// not this question's: false, and ResolveCommand answers them.
+func ScriptGone(ctx context.Context, db *sql.DB, job JobRef) (bool, error) {
+	source := job.Source
+	if source == "" {
+		source = "git"
+	}
+	var gone bool
+	var err error
+	if job.UID != "" {
+		err = db.QueryRowContext(ctx, `SELECT `+scriptGoneSQL+` FROM jobs j WHERE j.uid = ?`, job.UID).Scan(&gone)
+	} else {
+		err = db.QueryRowContext(ctx, `
+			SELECT `+scriptGoneSQL+` FROM jobs j
+			 WHERE j.name = ?1 AND j.source = ?2
+			   AND (SELECT COUNT(*) FROM jobs o WHERE o.name = ?1 AND o.source = ?2) = 1`, job.Name, source).Scan(&gone)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return gone, err
+}
+
 // AmbiguousJobError is the refusal to pick between two jobs of one name for a
 // run that does not record which it is of.
 type AmbiguousJobError struct{ Name string }
@@ -760,9 +801,10 @@ func (e *AmbiguousJobError) Error() string {
 // script's, relative to the script's repository; an agency's job may use
 // Global's script (GR-16), and a job built in the app has no repository of its
 // own. Until 2.4.0 there was one clone, and both callers read Global's. A job
-// that has no script row (a path of its own, or a script that has gone) is
-// read in the job's own repository, and then in Global's, where it was read
-// before.
+// from Git that has no script row (a path of its own, or a script that has
+// gone) is read in the job's own repository, and then in Global's, where it
+// was read before. A job built in the app that has none is ErrScriptGone: it
+// has no repository of its own, and Global's is not read in its place.
 //
 // The file is read from a commit's OBJECTS and never from the clone's working
 // tree, which a sync rewrites in place (present defect 27; commitread.go). A
@@ -783,14 +825,16 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 	// The repository's last synced commit is read WITH the job's row: one
 	// statement, one moment. Read after it, a sync that moved the file and
 	// committed in between would have the old path looked for in the new commit.
+	var scriptGone bool
 	const cols = `SELECT j.command, j.script, j.script_path,
 	       COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global'),
 	       (SELECT g.last_sha FROM git_repos g
-	         WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global'))
+	         WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global')),
+	       ` + scriptGoneSQL + `
 	  FROM jobs j `
 	if job.UID != "" {
 		if err := db.QueryRowContext(ctx, cols+`WHERE j.uid = ?`, job.UID).
-			Scan(&command, &script, &scriptPath, &repo, &synced); err != nil {
+			Scan(&command, &script, &scriptPath, &repo, &synced, &scriptGone); err != nil {
 			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
 		}
 	} else {
@@ -803,7 +847,7 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 			return nil, "", fmt.Errorf("read job command: %w", &AmbiguousJobError{Name: jobName})
 		}
 		if err := db.QueryRowContext(ctx, cols+`WHERE j.name = ? AND j.source = ?`, jobName, jobSource).
-			Scan(&command, &script, &scriptPath, &repo, &synced); err != nil {
+			Scan(&command, &script, &scriptPath, &repo, &synced, &scriptGone); err != nil {
 			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
 		}
 	}
@@ -816,6 +860,11 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 	case scriptPath.Valid && scriptPath.String != "":
 		// Execution needs the FULL body (limit 0 = uncapped); the 1 MiB cap is a
 		// display-only concern handled by the catalog content endpoint.
+		if scriptGone {
+			// Before anything is read, pinned or not: there is no repository
+			// that is this job's to read in.
+			return nil, "", ErrScriptGone
+		}
 		if dirs == nil {
 			return nil, "", fmt.Errorf("job %q keeps its body in a file, and this caller has no clone to read it from", jobName)
 		}

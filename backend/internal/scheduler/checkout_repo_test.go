@@ -45,7 +45,7 @@ func TestACheckoutRunIsPinnedToItsScriptsRepository(t *testing.T) {
 	job("app-on-global", "cronomicon", nil, "s-g", "scripts/proj") // built in the app, on Global's
 	job("never-synced", "git", "repo-never", "s-n", "scripts/proj")
 	job("git-script-gone", "git", "repo-a", nil, "scripts/proj")   // its script row has gone
-	job("app-script-gone", "cronomicon", nil, nil, "scripts/proj") // the same, built in the app
+	job("app-script-gone", "cronomicon", nil, nil, "scripts/proj") // the same, built in the app: no repository is its own
 	job("not-a-project", "git", "repo-a", "s-a", nil)              // a body job: no pin at all
 
 	for _, c := range []struct{ job, repo, sha string }{
@@ -55,7 +55,9 @@ func TestACheckoutRunIsPinnedToItsScriptsRepository(t *testing.T) {
 		{"app-on-global", "global", shaG},
 		{"never-synced", "repo-never", ""},
 		{"git-script-gone", "repo-a", shaA},
-		{"app-script-gone", "global", shaG},
+		// Present defect 41: not Global's. It is pinned to nothing, and refused
+		// at dispatch (execspec.ErrScriptGone).
+		{"app-script-gone", "", ""},
 		{"not-a-project", "", ""},
 	} {
 		var source string

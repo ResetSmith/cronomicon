@@ -182,17 +182,19 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			-- the tree are the script's files: an agency's job may use Global's
 			-- script (GR-16), and a job built in the app has no repository of its
 			-- own. Until 2.4.0 there was one repository and the commit was always
-			-- Global's. A project job whose script row has gone falls back to the
-			-- job's own repository and then to Global's, which is where it was
-			-- pinned before.
+			-- Global's. A project job FROM GIT whose script row has gone falls back
+			-- to the job's own repository and then to Global's, which is where it
+			-- was pinned before. One built in the app has no repository of its own
+			-- and is pinned to none (present defect 41): Global's is not its
+			-- script's, and the run is refused at dispatch (execspec.ErrScriptGone).
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE WHEN j.project_root IS NOT NULL AND j.project_root != ''
-				             THEN COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global') END
+				             THEN COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), CASE WHEN j.source = 'git' THEN COALESCE(j.repo_id, 'global') END) END
 				   FROM jobs j WHERE j.uid = ?) END,
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE WHEN j.project_root IS NOT NULL AND j.project_root != ''
 				             THEN (SELECT g.last_sha FROM git_repos g
-				                    WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global')) END
+				                    WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), CASE WHEN j.source = 'git' THEN COALESCE(j.repo_id, 'global') END)) END
 				   FROM jobs j WHERE j.uid = ?) END,
 			CASE WHEN ? = 1 THEN
 				(SELECT CASE WHEN project_root IS NOT NULL AND project_root != ''
