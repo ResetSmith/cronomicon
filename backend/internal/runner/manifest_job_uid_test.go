@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/gittest"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
@@ -167,13 +168,9 @@ func TestManifestBodyIsFromTheScriptsRepositorysClone(t *testing.T) {
 	// repository's is a directory named by its id beside it.
 	root := t.TempDir()
 	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(root, "job-definitions"))
+	synced := map[string]string{}
 	for repo, dir := range map[string]string{"global": "job-definitions", "repo-a": "repo-a"} {
-		if err := os.MkdirAll(filepath.Join(root, dir, "scripts"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, dir, "scripts", "plan.args"), []byte("plan\n-var=repository="+repo), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		synced[repo] = gittest.Commit(t, filepath.Join(root, dir), map[string]string{"scripts/plan.args": "plan\n-var=repository=" + repo})
 	}
 
 	svc := newTestService(t)
@@ -198,6 +195,9 @@ func TestManifestBodyIsFromTheScriptsRepositorysClone(t *testing.T) {
 		if _, err := svc.db.Exec(q); err != nil {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
+	}
+	for repo, sha := range synced {
+		gittest.Synced(t, svc.db, repo, sha)
 	}
 	for uid, c := range map[string]struct{ name, repo string }{"j-own": {"own", "repo-a"}, "j-borrows": {"borrows", "global"}} {
 		id := db.NewTraceID()
@@ -279,5 +279,71 @@ func TestManifestRefusesARunWhoseScopeWasGivenAway(t *testing.T) {
 	// Global's repository's job on the same scope is nobody's to refuse.
 	if rec := fetch(run("j-global", "global-plan")); rec.Code != http.StatusOK {
 		t.Errorf("Global's repository's job on that scope was answered %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Present defect 27, at the manifest: a script that cannot be read from its
+// repository's objects is the run's failure, and the answer says why. It was a
+// 500 that said "command resolution failed"; and the working tree is not read
+// in its place.
+func TestManifestRefusesAScriptThatIsNotInTheSyncedCommit(t *testing.T) {
+	root := t.TempDir()
+	clone := filepath.Join(root, "job-definitions")
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone)
+
+	svc := newTestService(t)
+	as := authSvc(t, svc)
+	runnerID, tok := "runner-unread", "crn_run_unread"
+	insertRunner(t, svc, runnerID, "unread", "online", []string{"bash"})
+	bindRunnerToken(t, svc, tok, runnerID)
+	gittest.CommitSynced(t, svc.db, "global", clone, map[string]string{"scripts/there.sh": "echo there\n"})
+	// In the working tree, and in no commit.
+	if err := os.WriteFile(filepath.Join(clone, "scripts", "gone.sh"), []byte("echo only in the working tree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO jobs (uid, name, source, repo_id, run_type, script_path, synced_at) VALUES
+		   ('j-there', 'there', 'git', 'global', 'bash', 'scripts/there.sh', 't'),
+		   ('j-gone',  'gone',  'git', 'global', 'bash', 'scripts/gone.sh',  't')`,
+	} {
+		if _, err := svc.db.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	run := func(uid, name string) string {
+		t.Helper()
+		id := db.NewTraceID()
+		if _, err := svc.db.Exec(`
+			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, runner_id, executor,
+			                 triggered_by, trigger_kind, started_at, created_at)
+			VALUES (?, ?, 'git', ?, 'bash', 'running', ?, 'runner', 'test', 'manual', ?, ?)`,
+			id, name, uid, runnerID, now(), now()); err != nil {
+			t.Fatalf("insert run of %s: %v", uid, err)
+		}
+		return id
+	}
+
+	if m := getManifest(t, svc, as, run("j-there", "there"), tok); m.Body != "echo there\n" {
+		t.Errorf("the run of a committed script is handed %q", m.Body)
+	}
+
+	h := as.RequireRunner(http.HandlerFunc(svc.HandleGetManifest))
+	id := run("j-gone", "gone")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+id+"/manifest", nil)
+	req.SetPathValue("traceId", id)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	answer := rec.Body.String()
+	if rec.Code != http.StatusConflict || !strings.Contains(answer, "script_unreadable") {
+		t.Fatalf("a script that is not in the synced commit = %d %s, want 409 script_unreadable", rec.Code, answer)
+	}
+	for _, want := range []string{"scripts/gone.sh", "not in commit"} {
+		if !strings.Contains(answer, want) {
+			t.Errorf("the refusal does not say %q: %s", want, answer)
+		}
+	}
+	if strings.Contains(answer, root) {
+		t.Errorf("the refusal names a path on the server: %s", answer)
 	}
 }

@@ -2,12 +2,12 @@ package execspec
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/gittest"
 )
 
 // GR-22, the dispatch half: a body kept as a file is read from the clone of
@@ -35,16 +35,12 @@ func TestABodyIsReadFromItsScriptsRepository(t *testing.T) {
 		}
 	}
 
-	// A clone per repository, each with scripts/run.sh.
+	// A clone per repository, each with scripts/run.sh committed in it.
 	root := t.TempDir()
 	clones := map[string]string{"global": filepath.Join(root, "global"), "repo-a": filepath.Join(root, "repo-a")}
+	synced := map[string]string{}
 	for repo, dir := range clones {
-		if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "scripts", "run.sh"), []byte("echo the body in "+repo+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		synced[repo] = gittest.Commit(t, dir, map[string]string{"scripts/run.sh": "echo the body in " + repo + "\n"})
 	}
 	var asked []string
 	dirs := func(repo string) string {
@@ -54,6 +50,9 @@ func TestABodyIsReadFromItsScriptsRepository(t *testing.T) {
 
 	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`)
 	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main')`)
+	for repo, sha := range synced {
+		gittest.Synced(t, pool, repo, sha)
+	}
 	exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
 	      ('s-g', 'global', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't'),
 	      ('s-a', 'repo-a', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't')`)

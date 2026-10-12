@@ -517,7 +517,7 @@ func (s *Server) loadScriptBody(w http.ResponseWriter, r *http.Request, name str
 	case script.Valid && script.String != "":
 		return script.String, true
 	case scriptPath.Valid && scriptPath.String != "":
-		data, _, rerr := execspec.SafeReadRepoFile(gitlab.DefaultCloneDir(), scriptPath.String, scriptBodyDisplayCap)
+		data, _, rerr := execspec.ReadSyncedFile(r.Context(), s.db, gitlab.CloneDirFor, repoid.Global, scriptPath.String, scriptBodyDisplayCap)
 		if rerr != nil {
 			httpx.Fail(w, http.StatusConflict, "script_unreadable",
 				"script file could not be read from the synced repository")

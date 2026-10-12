@@ -103,12 +103,23 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the command via the shared execspec path (same as sshexec). Git
-	// cache dir resolves identically to runners_mount.go (gitlab.DefaultCloneDir).
+	// Resolve the command via the shared execspec path (same as sshexec). A
+	// body kept as a file is read from the objects of its repository's clone
+	// (gitlab.CloneDirFor), at the last synced commit.
 	interp, body, err := execspec.ResolveCommand(
 		r.Context(), s.db, gitlab.CloneDirFor,
 		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String}, runType)
 	if err != nil {
+		// A script that cannot be read from the objects is the run's failure
+		// and not the server's, and it has a reason: the agent ends the run
+		// failed with the answer in its log. Until 2.4.0 this was a 500 that
+		// said only "command resolution failed".
+		var unread *execspec.CommitReadError
+		if errors.As(err, &unread) {
+			httpx.Fail(w, http.StatusConflict, "script_unreadable",
+				"the script of this run could not be read from its repository: "+unread.Error())
+			return
+		}
 		s.log.Error("manifest resolve command", "trace_id", traceID, "error", err)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "command resolution failed")
 		return

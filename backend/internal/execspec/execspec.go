@@ -750,6 +750,11 @@ func (e *AmbiguousJobError) Error() string {
 // that has no script row (a path of its own, or a script that has gone) is
 // read in the job's own repository, and then in Global's, where it was read
 // before.
+//
+// The file is read from a commit's OBJECTS and never from the clone's working
+// tree, which a sync rewrites in place (present defect 27; commitread.go): at
+// the last synced commit of that repository. A file that cannot be read from
+// the objects is a *CommitReadError, which is for the caller to show.
 func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef, runType string) (interp []string, body string, err error) {
 	jobName, jobSource := job.Name, job.Source
 	if jobSource == "" {
@@ -791,7 +796,7 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 		if dirs == nil {
 			return nil, "", fmt.Errorf("job %q keeps its body in a file, and this caller has no clone to read it from", jobName)
 		}
-		data, _, rerr := SafeReadRepoFile(dirs(repo), scriptPath.String, 0)
+		data, _, rerr := ReadSyncedFile(ctx, db, dirs, repo, scriptPath.String, 0)
 		if rerr != nil {
 			return nil, "", rerr
 		}
@@ -825,9 +830,11 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 
 // SafeReadRepoFile reads a repo-relative file from gitCacheDir behind the
 // canonical path-traversal guard (Clean → reject ../abs → Join → EvalSymlinks →
-// Rel re-check). It is the single reader shared by the SSH executor
-// (ResolveCommand), the sync hash/scan (gitlab.readBodyAt), and the catalog
-// content endpoint, so the guard cannot drift across the three.
+// Rel re-check). It reads the clone's WORKING TREE, and since 2.4.0 its one
+// caller is the sync itself (gitlab.readBodyAt, the hash and the scan), which
+// is what writes that tree and holds the queue while it reads. Dispatch and
+// the routes that show a body read a commit's objects (ReadCommitFile, present
+// defect 27), under the same rules for what a path may be.
 //
 // When limit > 0 the read is bounded: at most limit bytes are returned and
 // truncated reports whether the file was larger (the returned data is exactly

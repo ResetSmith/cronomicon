@@ -115,7 +115,10 @@ func (s *Server) getScriptContent(w http.ResponseWriter, r *http.Request) {
 	case script.Valid && script.String != "":
 		raw = []byte(script.String)
 	case scriptPath.Valid && scriptPath.String != "":
-		data, tr, rerr := execspec.SafeReadRepoFile(gitlab.DefaultCloneDir(), scriptPath.String, scriptBodyDisplayCap)
+		// From the objects of the last synced commit, as dispatch reads it, and
+		// not from the working tree, which a sync rewrites in place (present
+		// defect 27).
+		data, tr, rerr := execspec.ReadSyncedFile(r.Context(), s.db, gitlab.CloneDirFor, repoid.Global, scriptPath.String, scriptBodyDisplayCap)
 		if rerr != nil {
 			// A6/A3: never echo the absolute resolved path or 500 on a cold-start /
 			// renamed / unsynced file — map every read failure to a clean 409.

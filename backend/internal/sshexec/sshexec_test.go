@@ -18,6 +18,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/config"
 	"github.com/ResetSmith/cronomicon/internal/db"
+	"github.com/ResetSmith/cronomicon/internal/gittest"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"golang.org/x/crypto/ssh"
 )
@@ -249,12 +250,7 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	// repository. The file is in an agency's repository's clone and in no
 	// other: read anywhere else, there is no body and the run fails.
 	agencyClone := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(agencyClone, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(agencyClone, "scripts", "only-here.sh"), []byte("echo hi\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	agencySynced := gittest.Commit(t, agencyClone, map[string]string{"scripts/only-here.sh": "echo hi\n"})
 	elsewhere := t.TempDir()
 	svc.WithCloneDirs(func(repo string) string {
 		if repo == "repo-a" {
@@ -264,7 +260,7 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 	})
 	for _, q := range []string{
 		`INSERT INTO agencies (id, name, created_at) VALUES ('ag-a', 'A', 't')`,
-		`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main')`,
+		`INSERT INTO git_repos (id, agency_id, url, branch, last_sha) VALUES ('repo-a', 'ag-a', 'u', 'main', '` + agencySynced + `')`,
 		`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at)
 		   VALUES ('s-a', 'repo-a', 'only-here.sh', 'bash', 'scripts/only-here.sh', 'h', 't')`,
 		`INSERT INTO jobs (uid, name, source, run_type, script_uid, script_path, concurrency_policy, synced_at)

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/gittest"
 )
 
 // TestScriptContent exercises GET /script-content/{name}: inline bodies from the
@@ -19,14 +21,15 @@ func TestScriptContent(t *testing.T) {
 
 	clone := t.TempDir()
 	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone) // getScriptContent reads gitlab.DefaultCloneDir()
-	if err := os.MkdirAll(filepath.Join(clone, "scripts"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	deployBody := "#!/bin/bash\necho deploy\n"
-	if err := os.WriteFile(filepath.Join(clone, "scripts", "deploy.sh"), []byte(deployBody), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(clone, "scripts", "blob.sh"), []byte{0x00, 0xff, 0xfe}, 0o600); err != nil {
+	deployBody := "#!/bin/bash\necho deploy \"$CRONOMICON_SECRET_DB_PASS\"\n"
+	// Committed, and recorded as the synced commit: the body is read from the
+	// commit's objects (present defect 27).
+	gittest.CommitSynced(t, pool, "global", clone, map[string]string{
+		"scripts/deploy.sh": deployBody,
+		"scripts/blob.sh":   "\x00\xff\xfe",
+	})
+	// In the working tree and in no commit: not a body.
+	if err := os.WriteFile(filepath.Join(clone, "scripts", "nope.sh"), []byte("echo only in the working tree\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,6 +81,29 @@ func TestScriptContent(t *testing.T) {
 	assertStatus(t, client, ts.URL+"/api/v1/script-content/does-not-exist", http.StatusNotFound, clone)
 	// scriptPath whose file is absent -> 409, and the body must not leak the abs path.
 	assertStatus(t, client, ts.URL+"/api/v1/script-content/missing-file", http.StatusConflict, clone)
+
+	// Present defect 27: a sync rewrites the working tree in place. With the
+	// file truncated there, what is shown and what is scanned is still the
+	// committed file, whole.
+	if err := os.WriteFile(filepath.Join(clone, "scripts", "deploy.sh"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var again resp
+	getJSON(t, client, ts.URL+"/api/v1/script-content/path-script", &again)
+	if again.Content == nil || *again.Content != deployBody {
+		t.Errorf("with the working-tree file truncated the content shown = %q, want the committed file %q", derefOr(again.Content), deployBody)
+	}
+	var scan struct {
+		Suggested []struct {
+			Reference string `json:"reference"`
+		} `json:"suggested"`
+	}
+	getJSON(t, client, ts.URL+"/api/v1/script-reference-scan/path-script", &scan)
+	if len(scan.Suggested) != 1 || scan.Suggested[0].Reference != "CRONOMICON_SECRET_DB_PASS" {
+		t.Errorf("with the working-tree file truncated the scan suggests %+v, want the one reference in the committed file", scan.Suggested)
+	}
+	// A file that is only in the working tree is not scanned either.
+	assertStatus(t, client, ts.URL+"/api/v1/script-reference-scan/missing-file", http.StatusConflict, clone)
 }
 
 func assertStatus(t *testing.T, client *http.Client, url string, want int, secretPath string) {
