@@ -11,25 +11,21 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
 )
 
-// An in-app job built on a PROJECT script is not a checkout job. Today's
-// behaviour, pinned; no production code changes.
+// TestAnInAppJobOnAProjectIsACheckoutJob (present defect 24; decided by the
+// owner on 2026-10-09, built on 2026-10-12; this was the pin
+// TestGR0_AnInAppJobOnAProjectIsNotACheckoutJob, inverted).
 //
-// A project is a directory the agent checks out at a commit the server pins
-// when the run is queued. Whether a run is a checkout run is decided from the
-// JOB's own copy of its script's checkout marker (jobs.project_root). Sync
-// copies the marker onto a job that comes from Git. The composer does not copy
-// it onto a job built in the app. So a run of such a job is queued with no
-// pinned commit, and the agent is handed the project's entry file alone,
-// without the tree it sits in: a playbook that needs a role or a vars file
-// beside it fails, and one that needs nothing runs, on any agent that has
-// Ansible, with no checkout at all.
+// Whether a run is a checkout run is decided from the JOB's own copy of its
+// script's checkout marker (jobs.project_root). Sync copies the marker onto a
+// job written in Git. The composer did not copy it onto a job built in the
+// app: such a job's run was queued with no pinned commit and the agent was
+// handed the project's entry file alone, without its tree. A playbook that
+// needs a role or a vars file beside it failed; one that needs nothing ran on
+// any agent that has Ansible.
 //
-// Whether this is to change is the owner's to decide, because changing it is
-// not harmless: the job becomes a real checkout run, which an agent refuses
-// unless it was started with -allow-checkout, lists the repository and holds
-// a credential for it. A self-contained playbook that runs today would then
-// need such an agent. This test is inverted if that is decided.
-func TestGR0_AnInAppJobOnAProjectIsNotACheckoutJob(t *testing.T) {
+// The composer copies it. A job built in the app on a project is pinned at
+// enqueue exactly as the Git job on the same project is.
+func TestAnInAppJobOnAProjectIsACheckoutJob(t *testing.T) {
 	ts, pool := newTestServer(t)
 	ctx := context.Background()
 	exec := func(q string, args ...any) {
@@ -73,21 +69,15 @@ func TestGR0_AnInAppJobOnAProjectIsNotACheckoutJob(t *testing.T) {
 	job := func(source, name, column string) string {
 		return str(`SELECT COALESCE(`+column+`,'') FROM jobs WHERE source=? AND name=?`, source, name)
 	}
-	// The composed job has the entry and no marker.
+	// The composed job has the entry and the marker.
 	if got := job("cronomicon", "proj-app", "script_path"); got != "scripts/proj/site.yml" {
 		t.Fatalf("the composed job's script_path = %q, want the project's entry", got)
 	}
-	switch got := job("cronomicon", "proj-app", "project_root"); got {
-	case "":
-		// Today.
-	case "scripts/proj":
-		t.Errorf("the composed job carries the checkout marker: this has been decided and built, and the test is to be inverted")
-	default:
-		t.Errorf("the composed job's project_root = %q", got)
+	if got := job("cronomicon", "proj-app", "project_root"); got != "scripts/proj" {
+		t.Errorf("the composed job's project_root = %q, want the project's root: it is not a checkout job", got)
 	}
 
-	// The consequence, at enqueue: the Git job's run is pinned to the commit,
-	// the in-app job's run is not.
+	// The consequence, at enqueue: both runs are pinned to the commit.
 	enqueue := func(source, name string) string {
 		t.Helper()
 		id, err := scheduler.EnqueueRunWithID(ctx, pool, scheduler.EnqueueParams{
@@ -105,7 +95,35 @@ func TestGR0_AnInAppJobOnAProjectIsNotACheckoutJob(t *testing.T) {
 	if got := pinned(enqueue("git", "proj-git")); got != sha {
 		t.Errorf("a run of the Git job on the project has checkout_sha %q, want the pinned commit", got)
 	}
+	app := enqueue("cronomicon", "proj-app")
+	if got := pinned(app); got != sha {
+		t.Errorf("a run of the in-app job on the project has checkout_sha %q, want the pinned commit: it would be handed the entry file alone", got)
+	}
+	if got := str(`SELECT COALESCE(checkout_entry,'') || ' in ' || COALESCE(checkout_repo,'') FROM runs WHERE id=?`, app); got != "scripts/proj/site.yml in global" {
+		t.Errorf("the run of the in-app job is pinned to %q, want the project's entry in its script's repository", got)
+	}
+
+	// Saved again on a script that is no project, it stops being one: the
+	// marker follows the script the job is on.
+	exec(`INSERT INTO scripts(uid, repo_id, name, run_type, script_path, content_hash, synced_at)
+	      VALUES('s-plain','global','plain','ansible','scripts/plain.yml','sha256:q','t')`)
+	b, _ = json.Marshal(map[string]any{"name": "proj-app", "scriptRef": "plain", "scope": ""})
+	req, _ = http.NewRequest(http.MethodPut, ts.URL+"/api/v1/jobs/"+job("cronomicon", "proj-app", "rowid"), bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", csrf)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("PUT /jobs: %v", err)
+	}
+	raw, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /jobs = %d: %s", resp.StatusCode, raw)
+	}
+	if got := job("cronomicon", "proj-app", "project_root"); got != "" {
+		t.Errorf("saved on a script that is no project, the job's project_root = %q, want none", got)
+	}
 	if got := pinned(enqueue("cronomicon", "proj-app")); got != "" {
-		t.Errorf("a run of the in-app job on the project is pinned to %q: today it is expected to have no commit, and to be handed the entry file alone", got)
+		t.Errorf("a run of the job on a plain script is pinned to %q, want a body run", got)
 	}
 }

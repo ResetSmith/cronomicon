@@ -6735,6 +6735,17 @@ export interface components {
              *       of the repository that uses it; the detail names that
              *       repository's definitions. Written by sync, and cleared by it
              *       when the agency's repository no longer uses the row.
+             *     - `inapp_project_job_no_checkout_agent` — a job built in the app
+             *       on a project (a script that is a directory checked out by the
+             *       agent), where no registered agent that serves the job is started
+             *       with `-allow-checkout`. From v2.4.0 such a job is a checkout job,
+             *       as one written in Git on a project has always been: its runs are
+             *       taken by an agent that refuses them, and fail. Until v2.4.0 its
+             *       runs were handed the project's entry file alone. Subject: the
+             *       job's uid. Filed under the agency of the job's scope, or under
+             *       Global. It clears when an agent started with `-allow-checkout`
+             *       serves the job, or the job is built on a script that is not a
+             *       project.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.

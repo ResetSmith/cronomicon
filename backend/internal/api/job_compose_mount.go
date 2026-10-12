@@ -265,6 +265,14 @@ type composeScript struct {
 	// written to jobs.script_uid beside the name, and is what the job's
 	// script-declared reference bindings are found by.
 	uid string
+	// projectRoot is the script's checkout marker: set when the script is a
+	// PROJECT (a directory the agent checks out at a pinned commit), empty for
+	// a plain script. The run-row writer reads it off the JOB to decide whether
+	// a run is a checkout run. Sync has always copied it onto a Git job; until
+	// 2.4.0 the composer did not copy it onto a job built in the app, whose run
+	// was then handed the project's entry file alone, without its tree
+	// (present defect 24).
+	projectRoot string
 }
 
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
@@ -487,12 +495,12 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	// Global's, and never another agency's. The job's agency is its scope's.
 	home := s.scopeRepo(r.Context(), in.scopeOf())
 	var sc composeScript
-	var command, script, scriptPath, executor sql.NullString
+	var command, script, scriptPath, executor, projectRoot sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT uid, run_type, command, script, script_path, executor, content_hash
+		`SELECT uid, run_type, command, script, script_path, executor, content_hash, project_root
 		   FROM scripts WHERE name = ?1 AND repo_id IN (?2, ?3)
 		  ORDER BY (repo_id = ?2) DESC LIMIT 1`, in.ScriptRef, home, repoid.Global).
-		Scan(&sc.uid, &sc.runType, &command, &script, &scriptPath, &executor, &sc.contentHash)
+		Scan(&sc.uid, &sc.runType, &command, &script, &scriptPath, &executor, &sc.contentHash, &projectRoot)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scriptRef does not resolve to any script: "+in.ScriptRef)
 		return
@@ -502,6 +510,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		return
 	}
 	sc.command, sc.script, sc.scriptPath = command.String, script.String, scriptPath.String
+	sc.projectRoot = projectRoot.String
 	// The script's own `executor` is still copied onto the job's row, as it
 	// always was, and is no longer read by anything (LR-42). A composed job
 	// has no executor field of its own any more.
@@ -805,8 +814,8 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		                 command, script, script_path, executor, script_ref, content_hash,
 		                 created_by, created_at, last_modified_by, last_modified_at, env_json, prompts_json,
 		                 requires_json, prompt_enforcement, ssh_user, ssh_credential, env_passthrough,
-		                 become_password_secret, uid, script_uid)
-		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		                 become_password_secret, uid, script_uid, project_root)
+		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET
 			run_type=excluded.run_type, description=excluded.description, scope=excluded.scope,
 			target_host=excluded.target_host, schedule=excluded.schedule, tags=excluded.tags,
@@ -819,7 +828,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 			concurrency_key=excluded.concurrency_key, env_json=excluded.env_json, prompts_json=excluded.prompts_json,
 			command=excluded.command, script=excluded.script, script_path=excluded.script_path,
 			executor=excluded.executor, script_ref=excluded.script_ref, script_uid=excluded.script_uid,
-			content_hash=excluded.content_hash,
+			content_hash=excluded.content_hash, project_root=excluded.project_root,
 			last_modified_by=excluded.last_modified_by, last_modified_at=excluded.last_modified_at,
 			requires_json=excluded.requires_json, prompt_enforcement=excluded.prompt_enforcement,
 			ssh_user=excluded.ssh_user, ssh_credential=excluded.ssh_credential,
@@ -838,7 +847,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		// fresh uid, an edit collides on the existing one and lands in the DO
 		// UPDATE arm. (source, name) stopped being unique for cronomicon rows, so
 		// it can no longer be what an edit converges on.
-		uid, nullStrIf(sc.uid))
+		uid, nullStrIf(sc.uid), nullStrIf(sc.projectRoot))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return

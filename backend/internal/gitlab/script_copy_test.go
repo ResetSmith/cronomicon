@@ -95,12 +95,17 @@ func TestAnInAppJobFollowsItsScript(t *testing.T) {
 	if got := col("j-binned", "deleted_at"); got == "" {
 		t.Errorf("the refresh took the job out of the recycle bin")
 	}
-	// The job on a project is refreshed like any other and is NOT made a
-	// checkout job by it: the composer never gave it the marker, and whether it
-	// should have one is a decision this change does not take
-	// (TestGR0_AnInAppJobOnAProjectIsNotACheckoutJob, internal/api).
-	if got := col("j-proj", "project_root"); got != "" {
-		t.Errorf("the refresh gave the in-app job on a project a checkout marker (%q)", got)
+	// The job on a project is refreshed like any other, and since 2.4.0 the
+	// checkout marker is refreshed with the rest (present defect 24): a job
+	// built in the app before then, which the composer gave no marker, is a
+	// checkout job after the first sync
+	// (TestAnInAppJobOnAProjectIsACheckoutJob, internal/api).
+	if got := col("j-proj", "project_root"); got != "scripts/proj" {
+		t.Errorf("after the refresh the in-app job on a project has the checkout marker %q, want the project's root", got)
+	}
+	// And one on a script that is no project has none.
+	if got := col("j-app", "project_root"); got != "" {
+		t.Errorf("the refresh gave a job on a plain script a checkout marker (%q)", got)
 	}
 	if got := col("j-proj", "script_path"); got != "scripts/proj/site.yml" {
 		t.Errorf("the in-app job on a project has script_path %q, want the entry", got)

@@ -2138,10 +2138,11 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 		// last_modified_* is left alone: nobody edited the job.
 		//
 		// The columns are exactly the ones the composer copies when the job is
-		// saved (api.writeComposedJob). project_root, the checkout marker, is NOT
-		// among them and is not written here: the composer has never copied it,
-		// so an in-app job on a project is not a checkout job, and making it one
-		// is a change of its own that this does not make.
+		// saved (api.writeComposedJob). Since 2.4.0 project_root, the checkout
+		// marker, is among them (present defect 24): an in-app job on a project
+		// is a checkout job, as a Git job on it has always been, and a script
+		// that becomes a project or stops being one takes its in-app jobs with
+		// it.
 		//
 		// Of THIS repository's agency, when the repository is an agency's (2.4.0).
 		// An in-app job is joined to an agency's repository's script because it
@@ -2157,10 +2158,10 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE jobs
 			    SET run_type = ?, command = ?, script = ?, script_path = ?, executor = ?,
-			        content_hash = ?
+			        content_hash = ?, project_root = ?
 			  WHERE source = 'cronomicon' AND script_uid = ?`+ofThisAgency,
 			append([]any{rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
-				rs.contentHash, rs.uid}, ofThisAgencyArgs...)...); err != nil {
+				rs.contentHash, nullStr(rs.projectRoot), rs.uid}, ofThisAgencyArgs...)...); err != nil {
 			return fmt.Errorf("refresh in-app jobs of script %q: %w", name, err)
 		}
 		// And a job of ANOTHER repository that uses this script (GR-16: an
