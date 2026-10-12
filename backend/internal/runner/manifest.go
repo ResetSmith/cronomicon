@@ -103,6 +103,21 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A checkout run with no pinned commit is refused. Checkout mode is chosen
+	// below by the commit being there, so until 2.4.0 such a run fell through
+	// to a body run: the agent was handed the project's entry file alone,
+	// without its tree, and ran it. The run of a project job always records
+	// its entry, and since 2.4.0 its repository; it records no commit when
+	// that repository had not been synced when the run was queued, which a
+	// state row per repository makes reachable (it was one transaction with
+	// the job's own row before).
+	if checkoutSHA.String == "" && (checkoutEntry.String != "" || checkoutRepo.String != "") {
+		httpx.Fail(w, http.StatusConflict, "no_checkout_sha",
+			"this run is of a project and was queued with no pinned commit: its repository had not been synced. "+
+				"Sync the repository and run the job again")
+		return
+	}
+
 	// Resolve the command via the shared execspec path (same as sshexec). A
 	// body kept as a file is read from the objects of its repository's clone
 	// (gitlab.CloneDirFor): at the last synced commit, or, for a checkout run,
