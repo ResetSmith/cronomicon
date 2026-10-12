@@ -75,9 +75,10 @@ func (s *Service) trustedHostKeys(ctx context.Context, patterns ...string) ([]ss
 }
 
 // verifyHostKey returns the callback for one hop. what names it for the error
-// ("host db-01", "bastion jump-a"); patterns are the known_hosts hosts the key
-// may be approved under.
-func (s *Service) verifyHostKey(ctx context.Context, what string, patterns ...string) ssh.HostKeyCallback {
+// ("host db-01", "bastion jump-a"); via is the bastion the hop is reached
+// through, empty for one that is dialled directly; patterns are the
+// known_hosts hosts the key may be approved under.
+func (s *Service) verifyHostKey(ctx context.Context, what, via string, patterns ...string) ssh.HostKeyCallback {
 	return func(_ string, _ net.Addr, presented ssh.PublicKey) error {
 		// Under the dial's own context: a run that is killed mid-handshake
 		// stops here too, and a cancelled read is an unreadable trust store,
@@ -90,8 +91,8 @@ func (s *Service) verifyHostKey(ctx context.Context, what string, patterns ...st
 			return fmt.Errorf("could not read the approved host keys for %s: %w", what, err)
 		}
 		if len(keys) == 0 {
-			return fmt.Errorf("%w: the local runner has no approved host key for %s (%s) — scan it and approve its key "+
-				"under Runners → Local runner → Host keys", errHostKeyUnverified, what, patterns[0])
+			return fmt.Errorf("%w: the local runner has no approved host key for %s (%s) — %s "+
+				"under Runners → Local runner → Host keys", errHostKeyUnverified, what, patterns[0], approveAdvice(via))
 		}
 		for _, k := range keys {
 			if bytes.Equal(k.Marshal(), presented.Marshal()) {
@@ -107,7 +108,19 @@ func (s *Service) verifyHostKey(ctx context.Context, what string, patterns ...st
 // keys for the address it is dialled at. There is no insecure-ignore path
 // (EX-D3) and, since 2.3.0, no capture-on-first-connect either.
 func (s *Service) hostKeyCallback(ctx context.Context, t target) ssh.HostKeyCallback {
-	return s.verifyHostKey(ctx, "host "+t.Name, hostkeys.Pattern(hostkeys.Target(t)))
+	return s.verifyHostKey(ctx, "host "+t.Name, t.Via, hostkeys.Pattern(hostkeys.Target(t)))
+}
+
+// approveAdvice says how a hop's key comes to be approved. A host that is
+// dialled directly is scanned. One behind a bastion cannot be: a scan does not
+// go through a bastion and lists such a host as not scannable (hostkeys,
+// coverage.go), so its key is provided by hand. Until 2.4.0 both were told to
+// scan.
+func approveAdvice(via string) string {
+	if via != "" {
+		return "it is reached through bastion " + via + " and cannot be scanned: provide its key"
+	}
+	return "scan it and approve its key"
 }
 
 // bastionHostKeyCallback verifies the BASTION hop (SU-4), under the address the
@@ -120,7 +133,7 @@ func (s *Service) bastionHostKeyCallback(ctx context.Context, b target, via stri
 	if name == "" {
 		name = b.Name
 	}
-	return s.verifyHostKey(ctx, "bastion "+name, hostkeys.Pattern(hostkeys.Target(b)))
+	return s.verifyHostKey(ctx, "bastion "+name, "", hostkeys.Pattern(hostkeys.Target(b)))
 }
 
 // hostKeyAlgorithms is the list of host-key algorithms to ask a hop for: those

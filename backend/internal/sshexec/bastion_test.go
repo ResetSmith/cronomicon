@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +123,48 @@ func TestBastionHostKeyCallback(t *testing.T) {
 	}
 	if got := svc.hostKeyAlgorithms(context.Background(), "10.9.9.10"); got != nil {
 		t.Errorf("algorithms for a hop with nothing approved = %v, want the default (nil)", got)
+	}
+}
+
+// TestAHostBehindABastionIsToldToProvideItsKey (present defect 38, found on the
+// dev stack on 2026-10-10): a host the local runner has no approved key for was
+// told to scan it, whatever it was. A scan does not go through a bastion, and
+// the Host keys screen lists such a host as not scannable. A host with a
+// bastion is told to provide its key; one dialled directly, and the bastion
+// itself, are told to scan as before. The test connection repeats the callback's
+// words, so it says the same.
+func TestAHostBehindABastionIsToldToProvideItsKey(t *testing.T) {
+	svc, _ := newReaperService(t)
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	signer, _ := ssh.NewSignerFromKey(priv)
+	pub := signer.PublicKey()
+
+	behind := target{ID: "h1", Name: "db01", Address: "10.2.0.5", Port: 22, Via: "jump-a"}
+	err := svc.hostKeyCallback(context.Background(), behind)("", nil, pub)
+	if err == nil || !strings.Contains(err.Error(), HostKeyUnverified) {
+		t.Fatalf("a host with no approved key = %v, want %s", err, HostKeyUnverified)
+	}
+	if strings.Contains(err.Error(), "scan it") {
+		t.Errorf("a host behind a bastion was told to scan it, which the server cannot do: %v", err)
+	}
+	for _, want := range []string{"bastion jump-a", "provide its key", "Host keys"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the advice for a host behind a bastion lacks %q: %v", want, err)
+		}
+	}
+	status, msg := classifyDialErr(fmt.Errorf("ssh: handshake failed: %w", err))
+	if status != StatusUnverified || !strings.Contains(msg, "provide its key") || strings.Contains(msg, "scan it") {
+		t.Errorf("the test connection for a host behind a bastion = %q (%s), want unverified and the same advice", status, msg)
+	}
+
+	direct := target{ID: "h2", Name: "web01", Address: "10.2.0.6", Port: 22}
+	err = svc.hostKeyCallback(context.Background(), direct)("", nil, pub)
+	if err == nil || !strings.Contains(err.Error(), "scan it and approve its key") || strings.Contains(err.Error(), "provide its key") {
+		t.Errorf("a host dialled directly = %v, want the advice to scan it", err)
+	}
+	bastion := target{ID: "b1", Name: "jumphost", Address: "10.9.9.9", Port: 2222}
+	err = svc.bastionHostKeyCallback(context.Background(), bastion, "jump-a")("", nil, pub)
+	if err == nil || !strings.Contains(err.Error(), "scan it and approve its key") || strings.Contains(err.Error(), "provide its key") {
+		t.Errorf("a bastion = %v, want the advice to scan it", err)
 	}
 }
