@@ -114,6 +114,22 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// And the repository the run is PINNED to (runs.checkout_repo), which is
+	// what the agent is about to be sent to. The checks above ask about the
+	// job as it is now. A checkout run can wait a long time for its agent, and
+	// the job can be joined to another script meanwhile (its script removed
+	// and the name found again in Global's, or the job saved again): the pin
+	// still names the first repository, and the scope may no longer be that
+	// repository's agency's (found by the second review of Phase R5).
+	if outside, oerr := runref.PinOutsideRepository(r.Context(), s.db, checkoutRepo.String, scope.String); oerr != nil {
+		s.log.Error("manifest pinned-repository confinement check", "trace_id", traceID, "error", oerr)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "confinement check failed")
+		return
+	} else if outside {
+		httpx.Fail(w, http.StatusConflict, runref.CodeRepoScopeMismatch, runref.ReasonRepoScopeMismatch)
+		return
+	}
+
 	// A job built in the app whose script has been removed has no repository to
 	// read its file in, and none to be pinned to (present defect 41). Said
 	// first: its run records an entry and no commit, and the refusal below

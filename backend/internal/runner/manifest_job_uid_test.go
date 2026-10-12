@@ -115,18 +115,34 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 	}
 	if _, err := svc.db.Exec(`
 		INSERT INTO jobs(uid, name, source, run_type, command, script_path, project_root, synced_at)
-		VALUES ('uid-proj', 'proj', 'cronomicon', 'ansible', '- hosts: all', 'scripts/proj/site.yml', 'scripts/proj', ?)`, now()); err != nil {
+		VALUES ('uid-proj', 'proj', 'cronomicon', 'terraform', 'plan', 'scripts/proj/site.yml', 'scripts/proj', ?)`, now()); err != nil {
 		t.Fatal(err)
 	}
 	const sha = "0123456789abcdef0123456789abcdef01234567"
+	// A run pinned to an agency's repository runs on a scope of that agency's:
+	// the manifest asks that of the pin too (runref.PinOutsideRepository).
+	for _, q := range []string{
+		`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-a', 'a-hosts', 'cronomicon', 't')`,
+		`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-a', 'ag-a')`,
+	} {
+		if _, err := svc.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
 	run := func(repo any) string {
 		t.Helper()
 		id := db.NewTraceID()
+		var scope any
+		// On the agency's scope for a pin to Global's repository as well: a
+		// project of Global's may be run on any agency's scope.
+		if repo != nil {
+			scope = "a-hosts"
+		}
 		if _, err := svc.db.Exec(`
-			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, status, runner_id, executor,
+			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, status, runner_id, executor,
 			                 checkout_repo, checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at)
-			VALUES (?, 'proj', 'cronomicon', 'uid-proj', 'ansible', 'running', ?, 'runner', ?, ?, 'scripts/proj/site.yml',
-			        'test', 'manual', ?, ?)`, id, runnerID, repo, sha, now(), now()); err != nil {
+			VALUES (?, 'proj', 'cronomicon', 'uid-proj', 'terraform', ?, 'running', ?, 'runner', ?, ?, 'scripts/proj/site.yml',
+			        'test', 'manual', ?, ?)`, id, scope, runnerID, repo, sha, now(), now()); err != nil {
 			t.Fatalf("insert run: %v", err)
 		}
 		return id

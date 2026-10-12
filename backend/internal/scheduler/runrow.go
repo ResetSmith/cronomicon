@@ -231,13 +231,17 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			-- local runner advertises no such token and no longer takes a project
 			-- job's run, which it ran as a body with the pin ignored.
 			CASE WHEN ? = 1 THEN
+				-- A stored value that is not a JSON list (nothing writes one; a row
+				-- edited by hand could hold null, a string, or text that is not JSON)
+				-- is read as no requirements: json_insert adds nothing to a value
+				-- that is no list, and the run would then ask for nothing at all.
 				(SELECT CASE
 				          WHEN r.project_root IS NULL OR r.project_root = '' THEN r.req
 				          WHEN EXISTS (
-				                 SELECT 1 FROM json_each(COALESCE(NULLIF(r.req,''), '[]'))
+				                 SELECT 1 FROM json_each(CASE WHEN json_valid(r.req) AND json_type(r.req) = 'array' THEN r.req ELSE '[]' END)
 				                 WHERE value = 'checkout')
 				            THEN r.req
-				          ELSE json_insert(COALESCE(NULLIF(r.req,''), '[]'), '$[#]', 'checkout')
+				          ELSE json_insert(CASE WHEN json_valid(r.req) AND json_type(r.req) = 'array' THEN r.req ELSE '[]' END, '$[#]', 'checkout')
 				        END
 				   FROM (SELECT project_root,
 				                CASE

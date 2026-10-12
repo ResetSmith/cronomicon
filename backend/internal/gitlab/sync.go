@@ -1515,7 +1515,7 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 			return uerr
 		})
 		for _, path := range reset {
-			s.logWarn("a submodule's working tree differed from its commit and was reset to it",
+			s.logWarn("a submodule's working tree differed from its commit and was reset to it (files there that its commit does not hold were removed)",
 				"submodule", cfg.Name, "path", filepath.ToSlash(filepath.Join(cfg.Path, path)))
 		}
 		if err != nil {
@@ -1587,7 +1587,10 @@ func updateSubmodule(ctx context.Context, sub *gogit.Submodule, opts *gogit.Subm
 
 // resetSubmoduleToPin resets a submodule's working tree, index and HEAD hard
 // to the commit its parent pins for it. The refused update has fetched before
-// it was refused, so the commit is there.
+// it was refused, so the commit is there. A hard reset also removes the files
+// in that tree that the commit does not hold (untracked ones), as it does in
+// the repository's own tree; a submodule that is not refused is not reset and
+// keeps them.
 func resetSubmoduleToPin(sub *gogit.Submodule) error {
 	st, err := sub.Status()
 	if err != nil {

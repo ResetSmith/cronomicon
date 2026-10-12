@@ -150,8 +150,11 @@ func TestASubmoduleLeftHalfWrittenIsPutRightByTheNextSync(t *testing.T) {
 	if strings.Contains(said, "update submodule failed") {
 		t.Errorf("the submodule's update failed:\n%s", said)
 	}
-	if !strings.Contains(said, "path=scripts/playbooks/roles/common") && !strings.Contains(said, "path=scripts/playbooks ") {
-		t.Errorf("the sync does not say which submodule was reset:\n%s", said)
+	// Both were cut short, and each reset is said by its own path.
+	for _, path := range []string{"path=scripts/playbooks\n", "path=scripts/playbooks/roles/common\n"} {
+		if !strings.Contains(said, reset+" (files there that its commit does not hold were removed)\" submodule=scripts/playbooks "+path) {
+			t.Errorf("the sync does not say that the submodule at %q was reset:\n%s", strings.TrimSpace(path), said)
+		}
 	}
 
 	// The other way into the same state, with no file cut short at all: a

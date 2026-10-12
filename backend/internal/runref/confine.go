@@ -154,3 +154,27 @@ func StepOutsideWorkflowRepository(ctx context.Context, database *sql.DB, traceI
 	}
 	return ScopeOutsideRepository(ctx, database, home, scope)
 }
+
+// PinOutsideRepository asks ScopeOutsideRepository of the repository a
+// checkout run is PINNED to (runs.checkout_repo), at the moment it is
+// dispatched. RepoScopeMismatch asks about the job as it is now; a checkout
+// run can wait a long time for its agent, and the job can be joined to another
+// script meanwhile, while the pin still names the repository the agent is
+// about to be sent to.
+//
+// False for a run that is pinned to no repository or to Global's, and for a
+// repository that is no longer connected: the manifest has its own answer for
+// that one (no_checkout_repo), and there is then nowhere to send the agent.
+func PinOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope string) (bool, error) {
+	if repoID == "" || repoID == repoid.Global {
+		return false, nil
+	}
+	var there int
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repos WHERE id = ?`, repoID).Scan(&there); err != nil {
+		return false, err
+	}
+	if there == 0 {
+		return false, nil
+	}
+	return ScopeOutsideRepository(ctx, database, repoID, scope)
+}

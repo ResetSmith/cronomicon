@@ -40,6 +40,14 @@ func TestACheckoutRunWaitsForAnAgentThatAllowsCheckout(t *testing.T) {
 	exec(`INSERT INTO jobs (uid, name, run_type, script_path, project_root, requires_json, concurrency_policy, synced_at)
 	      VALUES ('uid-proj-vault', 'proj-vault', 'ansible', 'scripts/proj/site.yml', 'scripts/proj', '["vault"]', 'Allow', 't'),
 	             ('uid-proj-said',  'proj-said',  'ansible', 'scripts/proj/site.yml', 'scripts/proj', '["checkout"]', 'Allow', 't')`)
+	// A stored value that is not a list (a row edited by hand: nothing writes
+	// one) is read as no requirements, and the token is still added. Without
+	// that json_insert adds nothing, and the run asked for nothing at all.
+	exec(`INSERT INTO jobs (uid, name, run_type, script_path, project_root, requires_json, concurrency_policy, synced_at)
+	      VALUES ('uid-proj-null',   'proj-null',   'ansible', 'scripts/proj/site.yml', 'scripts/proj', 'null',      'Allow', 't'),
+	             ('uid-proj-string', 'proj-string', 'ansible', 'scripts/proj/site.yml', 'scripts/proj', '"vault"',   'Allow', 't'),
+	             ('uid-proj-junk',   'proj-junk',   'ansible', 'scripts/proj/site.yml', 'scripts/proj', 'not json',  'Allow', 't'),
+	             ('uid-proj-empty',  'proj-empty',  'ansible', 'scripts/proj/site.yml', 'scripts/proj', '',          'Allow', 't')`)
 	// A body job asks for nothing.
 	exec(`INSERT INTO jobs (uid, name, run_type, script, concurrency_policy, synced_at)
 	      VALUES ('uid-body-job', 'body-job', 'ansible', '- hosts: all', 'Allow', 't')`)
@@ -63,9 +71,13 @@ func TestACheckoutRunWaitsForAnAgentThatAllowsCheckout(t *testing.T) {
 	}
 
 	for job, want := range map[string]string{
-		"proj-vault": `["vault","checkout"]`,
-		"proj-said":  `["checkout"]`,
-		"body-job":   "",
+		"proj-vault":  `["vault","checkout"]`,
+		"proj-said":   `["checkout"]`,
+		"proj-null":   `["checkout"]`,
+		"proj-string": `["checkout"]`,
+		"proj-junk":   `["checkout"]`,
+		"proj-empty":  `["checkout"]`,
+		"body-job":    "",
 	} {
 		if got := requires(enqueue(job)); got != want {
 			t.Errorf("the run of %s records the requirements %q, want %q", job, got, want)
