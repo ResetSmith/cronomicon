@@ -105,17 +105,26 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve the command via the shared execspec path (same as sshexec). A
 	// body kept as a file is read from the objects of its repository's clone
-	// (gitlab.CloneDirFor), at the last synced commit.
+	// (gitlab.CloneDirFor): at the last synced commit, or, for a checkout run,
+	// at the commit, repository and entry the run was pinned to when it was
+	// queued. What a later sync did to the entry file does not reach a run
+	// that is already pinned (present defect 23).
 	interp, body, err := execspec.ResolveCommand(
 		r.Context(), s.db, gitlab.CloneDirFor,
-		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String}, runType)
+		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String},
+		execspec.Pin{Repo: checkoutRepo.String, SHA: checkoutSHA.String, Entry: checkoutEntry.String}, runType)
 	if err != nil {
-		// A script that cannot be read from the objects is the run's failure
-		// and not the server's, and it has a reason: the agent ends the run
-		// failed with the answer in its log. Until 2.4.0 this was a 500 that
-		// said only "command resolution failed".
+		// Two refusals that are the run's and not the server's, each with its
+		// reason: the agent ends the run failed with the answer in its log.
+		// Until 2.4.0 both were a 500 that said only "command resolution
+		// failed".
 		var unread *execspec.CommitReadError
-		if errors.As(err, &unread) {
+		switch {
+		case errors.Is(err, execspec.ErrJobGone):
+			httpx.Fail(w, http.StatusConflict, "job_gone",
+				"the job this run is of no longer exists: it was removed after the run was queued")
+			return
+		case errors.As(err, &unread):
 			httpx.Fail(w, http.StatusConflict, "script_unreadable",
 				"the script of this run could not be read from its repository: "+unread.Error())
 			return

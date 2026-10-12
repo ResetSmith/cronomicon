@@ -721,6 +721,19 @@ type CloneDirs func(repoID string) string
 // caller that has one clone.
 func OneCloneDir(dir string) CloneDirs { return func(string) string { return dir } }
 
+// Pin is the commit a checkout run was pinned to when it was queued
+// (runs.checkout_repo, checkout_sha, checkout_entry). The zero Pin is a run
+// that is not pinned.
+type Pin struct {
+	Repo  string // empty is Global's: a run from before 2.4.0 records none
+	SHA   string
+	Entry string
+}
+
+// ErrJobGone is a run whose job no longer exists: the uid the run records
+// names no job (or, for a run that records none, nothing holds its name).
+var ErrJobGone = errors.New("the job this run is of no longer exists")
+
 // AmbiguousJobError is the refusal to pick between two jobs of one name for a
 // run that does not record which it is of.
 type AmbiguousJobError struct{ Name string }
@@ -752,10 +765,15 @@ func (e *AmbiguousJobError) Error() string {
 // before.
 //
 // The file is read from a commit's OBJECTS and never from the clone's working
-// tree, which a sync rewrites in place (present defect 27; commitread.go): at
-// the last synced commit of that repository. A file that cannot be read from
-// the objects is a *CommitReadError, which is for the caller to show.
-func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef, runType string) (interp []string, body string, err error) {
+// tree, which a sync rewrites in place (present defect 27; commitread.go). A
+// run that is not pinned is read at the last synced commit of that repository.
+// A checkout run (at.SHA set) is read at the commit, in the repository and at
+// the entry it was pinned to when it was queued: what the agent will check
+// out, whatever a later sync did to the file (present defect 23).
+//
+// A job that has gone is ErrJobGone; a file that cannot be read from the
+// objects is a *CommitReadError. Both are for the caller to show.
+func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef, at Pin, runType string) (interp []string, body string, err error) {
 	jobName, jobSource := job.Name, job.Source
 	if jobSource == "" {
 		jobSource = "git" // legacy/git runs (NULL job_source) resolve the git-source job (A9)
@@ -768,7 +786,7 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 	if job.UID != "" {
 		if err := db.QueryRowContext(ctx, cols+`WHERE j.uid = ?`, job.UID).
 			Scan(&command, &script, &scriptPath, &repo); err != nil {
-			return nil, "", fmt.Errorf("read job command: %w", err)
+			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
 		}
 	} else {
 		var n int
@@ -781,7 +799,7 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 		}
 		if err := db.QueryRowContext(ctx, cols+`WHERE j.name = ? AND j.source = ?`, jobName, jobSource).
 			Scan(&command, &script, &scriptPath, &repo); err != nil {
-			return nil, "", fmt.Errorf("read job command: %w", err)
+			return nil, "", fmt.Errorf("read job command: %w", jobGone(err))
 		}
 	}
 
@@ -796,7 +814,20 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 		if dirs == nil {
 			return nil, "", fmt.Errorf("job %q keeps its body in a file, and this caller has no clone to read it from", jobName)
 		}
-		data, _, rerr := ReadSyncedFile(ctx, db, dirs, repo, scriptPath.String, 0)
+		var data []byte
+		var rerr error
+		if at.SHA != "" {
+			pinned, entry := at.Repo, at.Entry
+			if pinned == "" {
+				pinned = "global"
+			}
+			if entry == "" {
+				entry = scriptPath.String
+			}
+			data, _, rerr = ReadCommitFile(dirs(pinned), at.SHA, entry, 0)
+		} else {
+			data, _, rerr = ReadSyncedFile(ctx, db, dirs, repo, scriptPath.String, 0)
+		}
 		if rerr != nil {
 			return nil, "", rerr
 		}
@@ -826,6 +857,14 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 		return nil, "", fmt.Errorf("run-type %q has no command resolution", runType)
 	}
 	return interp, body, nil
+}
+
+// jobGone turns "no such row" into ErrJobGone and leaves any other error alone.
+func jobGone(err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrJobGone
+	}
+	return err
 }
 
 // SafeReadRepoFile reads a repo-relative file from gitCacheDir behind the

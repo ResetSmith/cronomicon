@@ -631,8 +631,11 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 		return
 	}
 
+	// No pin: the local runner runs a body, read at its repository's last
+	// synced commit. (It has never honoured a checkout pin: "Read, and not
+	// changed" in the plan's R5 record.)
 	interp, body, err := execspec.ResolveCommand(runCtx, s.db, s.cloneDirs,
-		execspec.JobRef{UID: r.jobUID, Name: r.jobName, Source: r.jobSource}, r.runType)
+		execspec.JobRef{UID: r.jobUID, Name: r.jobName, Source: r.jobSource}, execspec.Pin{}, r.runType)
 	if err != nil {
 		sink.line("", "cronomicon: "+err.Error())
 		s.finalize(ctx, r, "failure", nil)

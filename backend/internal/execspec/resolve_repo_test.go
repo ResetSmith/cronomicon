@@ -74,7 +74,7 @@ func TestABodyIsReadFromItsScriptsRepository(t *testing.T) {
 		"own-path": "repo-a", "app-script-gone": "global",
 	} {
 		asked = nil
-		_, body, err := ResolveCommand(ctx, pool, dirs, JobRef{UID: uid}, "bash")
+		_, body, err := ResolveCommand(ctx, pool, dirs, JobRef{UID: uid}, Pin{}, "bash")
 		if err != nil {
 			t.Errorf("ResolveCommand(%s): %v", uid, err)
 			continue
@@ -88,18 +88,18 @@ func TestABodyIsReadFromItsScriptsRepository(t *testing.T) {
 	}
 
 	// A run with no uid is read in its script's repository too.
-	if _, body, err := ResolveCommand(ctx, pool, dirs, JobRef{Name: "git-own", Source: "git"}, "bash"); err != nil ||
+	if _, body, err := ResolveCommand(ctx, pool, dirs, JobRef{Name: "git-own", Source: "git"}, Pin{}, "bash"); err != nil ||
 		body != "echo the body in repo-a\n" {
 		t.Errorf("a run of git-own with no uid is handed %q (%v), want the body in repo-a", strings.TrimSpace(body), err)
 	}
 
 	// A caller with no clone cannot run a body kept in a file, and says so; a
 	// body kept on the job's row needs no clone.
-	if _, _, err := ResolveCommand(ctx, pool, nil, JobRef{UID: "git-own"}, "bash"); err == nil {
+	if _, _, err := ResolveCommand(ctx, pool, nil, JobRef{UID: "git-own"}, Pin{}, "bash"); err == nil {
 		t.Errorf("a body kept in a file was resolved by a caller that has no clone")
 	}
 	exec(`INSERT INTO jobs (uid, name, source, run_type, command, synced_at) VALUES ('inline', 'inline', 'cronomicon', 'bash', 'true', 't')`)
-	if _, body, err := ResolveCommand(ctx, pool, nil, JobRef{UID: "inline"}, "bash"); err != nil || body != "true" {
+	if _, body, err := ResolveCommand(ctx, pool, nil, JobRef{UID: "inline"}, Pin{}, "bash"); err != nil || body != "true" {
 		t.Errorf("a body kept on the job's row is %q (%v) for a caller with no clone, want it resolved", body, err)
 	}
 }

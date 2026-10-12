@@ -2,7 +2,6 @@ package execspec
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -48,7 +47,7 @@ func TestResolveCommandTellsSameNamedJobsApart(t *testing.T) {
 		}
 	}
 	resolve := func(uid, name string) (string, error) {
-		_, body, err := ResolveCommand(ctx, pool, OneCloneDir(t.TempDir()), JobRef{UID: uid, Name: name, Source: "cronomicon"}, "bash")
+		_, body, err := ResolveCommand(ctx, pool, OneCloneDir(t.TempDir()), JobRef{UID: uid, Name: name, Source: "cronomicon"}, Pin{}, "bash")
 		return body, err
 	}
 
@@ -60,8 +59,8 @@ func TestResolveCommandTellsSameNamedJobsApart(t *testing.T) {
 	}
 
 	// A run of a job that has gone is not handed another job of its name.
-	if got, err := resolve("uid-nightly-gone", "nightly"); !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("a run of a job that no longer exists resolves to %q (%v), want no row", got, err)
+	if got, err := resolve("uid-nightly-gone", "nightly"); !errors.Is(err, ErrJobGone) {
+		t.Errorf("a run of a job that no longer exists resolves to %q (%v), want ErrJobGone", got, err)
 	}
 
 	// A run that records no uid: refused when two jobs hold its name, and the

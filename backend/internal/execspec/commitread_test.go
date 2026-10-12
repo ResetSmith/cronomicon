@@ -50,7 +50,7 @@ func TestARunsBodyIsReadFromTheCommitAndNotTheWorkingTree(t *testing.T) {
 	dirs := OneCloneDir(clone)
 	body := func() string {
 		t.Helper()
-		_, b, err := ResolveCommand(ctx, pool, dirs, JobRef{UID: "j1"}, "bash")
+		_, b, err := ResolveCommand(ctx, pool, dirs, JobRef{UID: "j1"}, Pin{}, "bash")
 		if err != nil {
 			t.Fatalf("ResolveCommand: %v", err)
 		}
