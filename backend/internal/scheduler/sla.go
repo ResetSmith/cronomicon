@@ -117,11 +117,21 @@ func (s *Scheduler) ScanSLA(ctx context.Context) {
 	now := time.Now().UTC()
 	loc := s.location()
 
+	// The run's own job, by the uid the run records. Until 2.4.0 the join was
+	// by name and source: with two jobs of one name (two agencies may each own
+	// an in-app one) a run was judged against both jobs' deadlines, and warned
+	// for the other job's. A run that records no uid is its name's job when one
+	// job holds the name, and nobody's when two do: nothing is guessed.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.id, r.job_name, COALESCE(r.job_source,'git'), COALESCE(r.scope,''), r.started_at,
 		       j.warn_after_seconds, j.must_finish_by
 		  FROM runs r
-		  JOIN jobs j ON j.name = r.job_name AND j.source = COALESCE(r.job_source,'git')
+		  JOIN jobs j ON CASE WHEN COALESCE(r.job_uid,'') != ''
+		                      THEN j.uid = r.job_uid
+		                      ELSE j.name = r.job_name AND j.source = COALESCE(r.job_source,'git')
+		                           AND (SELECT COUNT(*) FROM jobs o
+		                                 WHERE o.name = r.job_name AND o.source = COALESCE(r.job_source,'git')) = 1
+		                 END
 		 WHERE r.status = 'running'
 		   AND r.sla_warned_at IS NULL
 		   AND r.started_at IS NOT NULL
