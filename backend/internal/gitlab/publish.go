@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -221,10 +222,11 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 		msg = fmt.Sprintf("cronomicon: update %s", req.FilePath)
 	}
 
+	authorName, authorEmail := s.publishAuthor(ctx)
 	commit, err := wt.Commit(msg, &gogit.CommitOptions{
 		Author: &object.Signature{
-			Name:  "Cronomicon Scheduler",
-			Email: "cronomicon-bot@cronomicon.internal",
+			Name:  authorName,
+			Email: authorEmail,
 			When:  time.Now().UTC(),
 		},
 	})
@@ -268,6 +270,33 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 		CommitSHA: commit.String(),
 		Branch:    branch,
 	}, nil
+}
+
+// The author of a publish commit when the repository's connection names none:
+// what the connection's columns default to (migration 1310).
+const (
+	defaultBotName  = "cronomicon-bot"
+	defaultBotEmail = "cronomicon-bot@cronomicon.io"
+)
+
+// publishAuthor is the author of this repository's publish commits: the bot
+// name and email of its connection (git_repos.bot_name, bot_email), which the
+// connection's form has always shown and stored. Until 2.4.0 nothing read
+// them, and every publish commit was written as "Cronomicon Scheduler
+// <cronomicon-bot@cronomicon.internal>" (present defect 20; the owner's
+// decision of 2026-10-09). A connection that has no row yet, or an empty
+// value, gives the columns' defaults.
+func (s *Service) publishAuthor(ctx context.Context) (name, email string) {
+	var n, e sql.NullString
+	_ = s.db.QueryRowContext(ctx, `SELECT bot_name, bot_email FROM git_repos WHERE id = ?`, s.repo()).Scan(&n, &e)
+	name, email = strings.TrimSpace(n.String), strings.TrimSpace(e.String)
+	if name == "" {
+		name = defaultBotName
+	}
+	if email == "" {
+		email = defaultBotEmail
+	}
+	return name, email
 }
 
 // takeBackCommit puts a clone back where a publish found it, after a push that
