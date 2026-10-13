@@ -5,25 +5,25 @@ import (
 	"testing"
 )
 
-// PINNED, present defect 35 (found on 2026-10-10 while grounding 2.4.0's Phase
-// R4; in the released code).
+// An edit of a workflow asks the name pool, as its creation does (2.4.0 Phase
+// R6; present defect 35, found on 2026-10-10 while grounding Phase R4, in the
+// released code).
 //
-// A workflow built in the app shares its name only with workflows of OTHER
-// agencies: creating one whose name its agency already has is refused (409,
-// "name already in use"). Editing one is not checked at all. A workflow whose
-// steps are changed to another agency's jobs moves into that agency's names,
-// where the name may be taken: the agency then has two workflows of one name,
-// which creating either would have refused. What starts a workflow by its name
-// (present defect 34) then cannot tell them apart.
-//
-// When this is fixed (the edit asks the same question the create asks, leaving
-// the workflow's own row out), this test is inverted: the edit answers 409.
-func TestGR0_AWorkflowEditCanTakeANameItsNewAgencyAlreadyHas(t *testing.T) {
+// Two agencies may each hold a workflow of one name (R2-5), and one agency may
+// not hold two: creating the second is refused. A workflow's agency follows the
+// jobs it runs, so EDITING its steps can move it to an agency that already has
+// a workflow of the name. The edit did not ask, and that agency then had two:
+// what finds a workflow by its name could not tell them apart. It is refused
+// now, in the words the create uses, and nothing is written. This was the pin
+// TestGR0_AWorkflowEditCanTakeANameItsNewAgencyAlreadyHas.
+func TestAWorkflowEditIsRefusedANameItsNewAgencyAlreadyHas(t *testing.T) {
 	h, pool := gateServer(t) // fin-hosts is FIN's, tax-hosts is TAX's
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO jobs (name, source, run_type, scope, enabled, created_at) VALUES
-	      ('fin-job', 'cronomicon', 'bash', 'fin-hosts', 1, '2026-01-01T00:00:00Z'),
-	      ('tax-job', 'cronomicon', 'bash', 'tax-hosts', 1, '2026-01-01T00:00:00Z')`)
+	      ('fin-job',  'cronomicon', 'bash', 'fin-hosts', 1, '2026-01-01T00:00:00Z'),
+	      ('fin-job2', 'cronomicon', 'bash', 'fin-hosts', 1, '2026-01-01T00:00:00Z'),
+	      ('tax-job',  'cronomicon', 'bash', 'tax-hosts', 1, '2026-01-01T00:00:00Z'),
+	      ('tax-job2', 'cronomicon', 'bash', 'tax-hosts', 1, '2026-01-01T00:00:00Z')`)
 	const finSteps, taxSteps = `[{"type":"job","name":"fin-job"}]`, `[{"type":"job","name":"tax-job"}]`
 
 	// Each agency creates a workflow called nightly: two agencies, one name, allowed.
@@ -36,19 +36,45 @@ func TestGR0_AWorkflowEditCanTakeANameItsNewAgencyAlreadyHas(t *testing.T) {
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gFinAdmin, `{"name":"nightly","steps":`+finSteps+`}`); rec.Code != http.StatusConflict {
 		t.Fatalf("FIN creating a second nightly = %d, want 409 (%s)", rec.Code, rec.Body)
 	}
-
-	// TAX's nightly is edited to run FIN's job. It is FIN's now, by its steps,
-	// and FIN already has a nightly.
+	created := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gFinAdmin, `{"name":"nightly","steps":`+finSteps+`}`).Body.String()
+	nightlies := func(agency string) int {
+		return count(t, pool, `SELECT COUNT(*) FROM workflows WHERE name = 'nightly' AND source = 'cronomicon' AND owner_agency = ? AND deleted_at IS NULL`, agency)
+	}
 	tax := rowID(t, pool, `SELECT rowid FROM workflows WHERE name = 'nightly' AND owner_agency = 'ag:TAX'`)
+	stepsOf := func() string {
+		var s string
+		if err := pool.QueryRow(`SELECT steps FROM workflows WHERE rowid = ?`, tax).Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	before := stepsOf()
+
+	// TAX's nightly is edited to run FIN's job. It would be FIN's, by its
+	// steps, and FIN already has a nightly: refused, as the create is, and
+	// nothing is written.
 	rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+tax, gRoot, `{"steps":`+finSteps+`}`)
-	if rec.Code == http.StatusConflict {
-		t.Fatalf("PIN BROKEN: the edit was refused (%s). Present defect 35 is fixed: invert this test (want 409 and one FIN nightly)", rec.Body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the edit that would give FIN a second nightly = %d (%s), want 409", rec.Code, rec.Body)
 	}
-	if rec.Code/100 != 2 {
-		t.Fatalf("the edit = %d (%s)", rec.Code, rec.Body)
+	if rec.Body.String() != created {
+		t.Errorf("the edit's refusal is not the create's:\n%s\n%s", rec.Body, created)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM workflows WHERE name = 'nightly' AND source = 'cronomicon' AND owner_agency = 'ag:FIN' AND deleted_at IS NULL`); n != 2 {
-		t.Fatalf("FIN's workflows called nightly after the edit = %d; the pin expects the two", n)
+	if nightlies("ag:FIN") != 1 || nightlies("ag:TAX") != 1 || stepsOf() != before {
+		t.Fatalf("after the refused edit: FIN has %d nightly, TAX has %d, and TAX's steps are %s", nightlies("ag:FIN"), nightlies("ag:TAX"), stepsOf())
+	}
+
+	// An edit that keeps the workflow in its agency is not refused by its own
+	// name: its own row is left out of the question.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+tax, gRoot, `{"steps":[{"type":"job","name":"tax-job2"}]}`); rec.Code/100 != 2 {
+		t.Fatalf("an edit that keeps TAX's nightly in TAX = %d (%s), want it saved", rec.Code, rec.Body)
+	}
+	fin := rowID(t, pool, `SELECT rowid FROM workflows WHERE name = 'nightly' AND owner_agency = 'ag:FIN'`)
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+fin, gFinAdmin, `{"steps":[{"type":"job","name":"fin-job2"}]}`); rec.Code/100 != 2 {
+		t.Fatalf("FIN editing its own nightly = %d (%s), want it saved", rec.Code, rec.Body)
+	}
+	if nightlies("ag:FIN") != 1 || nightlies("ag:TAX") != 1 {
+		t.Fatalf("after the two edits: FIN has %d nightly and TAX has %d, want one each", nightlies("ag:FIN"), nightlies("ag:TAX"))
 	}
 }
 

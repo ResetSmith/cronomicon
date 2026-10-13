@@ -149,6 +149,23 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.Name = existing.Name // identity is immutable on edit
+	// The name pool, as createWorkflow asks it (R2-5), with this workflow's own
+	// row left out (present defect 35). A workflow's agency follows its steps,
+	// so an edit can move it to an agency that already has a workflow of the
+	// name: that agency then had two, which creating either would have refused,
+	// and whatever finds a workflow by its name could not tell them apart.
+	if steps, perr := workflow.ParseSteps(string(in.Steps)); perr == nil {
+		scopes := s.collectStepScopes(r, steps)
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, scopes, existing.UID)
+		if cerr != nil {
+			httpx.Fail500(w, s.log, "db_error", cerr)
+			return
+		}
+		if conflict {
+			httpx.Fail(w, http.StatusConflict, "conflict", execspec.NamePoolRefusal)
+			return
+		}
+	}
 	s.writeComposedWorkflow(w, r, in, id.Email, false, existing.UID)
 }
 
