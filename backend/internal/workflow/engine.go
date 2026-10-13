@@ -708,6 +708,21 @@ func (e *Engine) runJob(
 				"job", step.Name, "reference", keys[0].Reference, "detail", runref.KeyBindingRefusal(keys))
 		}
 	}
+	// Present defect 44 — a project step with no agent that allows checkout to
+	// wait for fails here, for the same reason: left queued for an agent that
+	// does not exist it would hold the workflow for its whole timeout.
+	if stepStatus == "queued" {
+		stuck, cerr := runref.CheckoutNeedsAgent(ctx, e.db, jd.uid, jobSrc, step.Name, effectiveScope)
+		if cerr != nil {
+			e.log.Error("workflow: check for an agent that allows checkout", "job", step.Name, "err", cerr)
+			return "danger", false
+		}
+		if stuck {
+			stepStatus, stepQueuedReason = "failure", runref.ReasonCheckoutNeedsAgent
+			e.log.Warn("workflow: step is a project and no agent that allows checkout serves its scope",
+				"job", step.Name, "scope", effectiveScope)
+		}
+	}
 
 	// RR-2: one writer. This engine used to build its own child-run INSERT —
 	// "the recurring reason things get missed here" — and it missed

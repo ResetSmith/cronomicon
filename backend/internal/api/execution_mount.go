@@ -1458,6 +1458,16 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			return
 		}
 	}
+	// Present defect 44 — a project job with no agent that allows checkout to
+	// wait for is refused here too, with what to do about it: the run would
+	// otherwise sit in the queue for ever and count against the cap.
+	if stuck, cerr := runref.CheckoutNeedsAgent(r.Context(), s.db, jr.UID, jr.Source, jr.Name, scope); cerr != nil {
+		httpx.Fail500(w, s.log, "db_error", cerr)
+		return
+	} else if stuck {
+		httpx.Fail(w, http.StatusUnprocessableEntity, runref.CodeCheckoutNeedsAgent, runref.CheckoutRefusal)
+		return
+	}
 
 	// M3 — ansibleLimit is a RAW --limit passthrough for ANSIBLE runs only (the
 	// escape hatch for patterns the projection can't model, OD-15). It is honored

@@ -401,6 +401,15 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 		s.refuseSighting(ctx, sightingID, runref.ReasonKeyBindingNeedsAgent)
 		return false, nil
 	}
+	// Present defect 44 — nor an arrival for a project job with no agent that
+	// allows checkout to wait for.
+	if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, jobUID.String, spec.JobSource, spec.JobName, scope); cerr != nil {
+		s.refuseSighting(ctx, sightingID, "could not check for an agent that allows checkout: "+cerr.Error())
+		return false, nil
+	} else if stuck {
+		s.refuseSighting(ctx, sightingID, runref.ReasonCheckoutNeedsAgent)
+		return false, nil
+	}
 
 	params := scheduler.EnqueueParams{
 		JobName:      spec.JobName,

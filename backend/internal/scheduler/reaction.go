@@ -705,6 +705,12 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 	if len(keys) > 0 {
 		return nil, fmt.Errorf("reacting job %q: %s", jobName, runref.KeyBindingRefusal(keys))
 	}
+	// Present defect 44 — nor a project job with no agent that allows checkout.
+	if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, jobUID.String, source, jobName, scope.String); cerr != nil {
+		return nil, fmt.Errorf("check for an agent that allows checkout for %q: %w", jobName, cerr)
+	} else if stuck {
+		return nil, fmt.Errorf("reacting job %q: %s", jobName, runref.CheckoutRefusal)
+	}
 
 	stampJSON, _ := json.Marshal(stamp)
 	return &EnqueueParams{

@@ -359,6 +359,16 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 			s.markPendingMissed(ctx, p, runref.ReasonRepoScopeMismatch)
 			return
 		}
+		// Present defect 44 — nor is a parked run of a project job promoted into
+		// a queue it would never leave, when no agent that allows checkout serves
+		// it now. Terminal, with the reason, as every other producer refuses it.
+		if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, params.JobUID, params.jobSourceOrDefault(), params.JobName, params.Scope); cerr != nil {
+			s.log.Error("scheduler: check a parked run for an agent that allows checkout", "job", params.JobName, "err", cerr)
+			return // tried again at the next tick
+		} else if stuck {
+			s.markPendingMissed(ctx, p, runref.ReasonCheckoutNeedsAgent)
+			return
+		}
 		// RX — restore the reaction context from the ROW, not from the frozen
 		// params. The reactor writes it to dedicated columns because a workflow
 		// target has no params_json to hold it, and because the delivery row that

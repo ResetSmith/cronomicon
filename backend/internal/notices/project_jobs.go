@@ -8,50 +8,62 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 )
 
-// A job built in the app on a project is a checkout job since 2.4.0 (present
-// defect 24). A script is a PROJECT when it is a directory the agent checks
-// out at a pinned commit (scripts.project_root). A job written in Git on such
-// a script has always been a checkout job: sync copies the marker onto it.
-// The composer did not copy it onto a job built in the app, whose runs were
-// handed the project's entry file alone, without the roles and files beside
-// it: a playbook that needs them failed, and one that needs nothing ran on any
-// agent that has Ansible. The composer copies the marker now, and so does the
-// next sync for a job that is already there.
+// A project job with no agent that allows checkout (2.4.0; present defects 24,
+// 39 and 44).
 //
-// What that changes for a job that ran: a checkout run is run only by an agent
+// A script is a PROJECT when it is a directory the agent checks out at a
+// pinned commit (project_root). A project job's run is run only by an agent
 // started with -allow-checkout, which lists the repository and holds a
-// credential for it, and since present defect 39 was fixed it WAITS for one
-// (its run requires the "checkout" token). This says so, for each such job
-// that has no agent of that kind: its runs will wait for ever.
-
-// KindInAppProjectJobNoCheckoutAgent — a job built in the app on a project,
-// where no registered agent that serves the job is started with
-// -allow-checkout, so that its runs wait. Subject: the job's uid. Filed under
-// the job's agency.
-const KindInAppProjectJobNoCheckoutAgent = "inapp_project_job_no_checkout_agent"
-
-// checkInAppProjectJobs reads the project off the SCRIPT (through
-// jobs.script_uid) and not off the job's own copy: at the first start of
-// 2.4.0 no job built in the app carries the marker yet, and the notice is to
-// be there before the sync or the save that gives it one, not after.
+// credential for it. Three things changed in 2.4.0, and this notice is where
+// an operator is told what they add up to:
 //
-// An agent "serves the job" by the claim's rule: it serves the agency of the
-// job's scope (Global, for a job with no scope) and, where the scope names its
-// runners, is one of them. Registered, not online: an agent that is merely
-// offline is an ordinary wait. The server's own runner is no such agent: it
-// advertises no "checkout" and does not take a project job's run.
-func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
+//   - A job BUILT IN THE APP on a project is a checkout job (present defect
+//     24). The composer did not copy the script's marker onto it, and its runs
+//     were handed the project's entry file alone, without the roles and files
+//     beside it: a playbook that needs them failed, and one that needs nothing
+//     ran on any agent that has Ansible.
+//   - A project job's run asks for such an agent at the claim (present defect
+//     39). Any agent with the run type used to take it, and one that does not
+//     allow checkout refused it.
+//   - Where no REGISTERED agent that serves the job allows checkout, the run is
+//     refused where it is produced (present defect 44), since a run left
+//     waiting for an agent that does not exist counts against the
+//     installation's concurrency cap for ever.
+//
+// So a project job with no such agent does not run at all: a scheduled fire is
+// recorded as skipped, a manual run is answered checkout_requires_agent, a
+// workflow's step fails. This names each such job, from Git or built in the
+// app.
+
+// KindProjectJobNoCheckoutAgent — a project job where no registered agent that
+// serves the job is started with -allow-checkout, so that its runs are
+// refused. Subject: the job's uid. Filed under the job's agency.
+const KindProjectJobNoCheckoutAgent = "project_job_no_checkout_agent"
+
+// checkProjectJobs reads the project off the job's own marker and, for a job
+// built in the app, off its SCRIPT as well (through jobs.script_uid): at the
+// first start of 2.4.0 no job built in the app carries the marker yet, and the
+// notice is to be there before the sync or the save that gives it one.
+//
+// An agent "serves the job" by the rule runref.CheckoutNeedsAgent refuses by:
+// it serves the agency of the job's scope (Global, for a job with no scope)
+// and, where the scope names its runners, is one of them. Registered, not
+// online: an agent that is merely offline is an ordinary wait. The server's
+// own runner is no such agent: it advertises no "checkout" and does not take a
+// project job's run.
+func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
-		SELECT j.uid, j.name, COALESCE(j.scope, ''), s.name,
+		SELECT j.uid, j.name, j.source, COALESCE(j.scope, ''),
+		       COALESCE((SELECT s.name FROM scripts s WHERE s.uid = j.script_uid), ''),
 		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 		                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
 		                  WHERE sc.name = j.scope), ?)
 		  FROM jobs j
-		  JOIN scripts s ON s.uid = j.script_uid
-		 WHERE j.source = 'cronomicon'
-		   AND j.deleted_at IS NULL
+		 WHERE j.deleted_at IS NULL
 		   AND COALESCE(j.uid, '') != ''
-		   AND COALESCE(s.project_root, '') != ''
+		   AND (COALESCE(j.project_root, '') != ''
+		        OR (j.source = 'cronomicon'
+		            AND EXISTS (SELECT 1 FROM scripts s WHERE s.uid = j.script_uid AND COALESCE(s.project_root, '') != '')))
 		   AND NOT EXISTS (
 		       SELECT 1 FROM runners rn
 		        WHERE rn.kind <> 'server'
@@ -73,8 +85,8 @@ func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 	}
 	var found []Finding
 	for rows.Next() {
-		var uid, name, scope, script, agency string
-		if err := rows.Scan(&uid, &name, &scope, &script, &agency); err != nil {
+		var uid, name, source, scope, script, agency string
+		if err := rows.Scan(&uid, &name, &source, &scope, &script, &agency); err != nil {
 			rows.Close()
 			return err
 		}
@@ -82,17 +94,22 @@ func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 		if scope != "" {
 			on = "the scope " + scope
 		}
+		what := fmt.Sprintf("The job %s (on %s) is a project", name, on)
+		remedy := "change the job in Git to use a script that is not a project"
+		if source != "git" {
+			what = fmt.Sprintf("The job %s (on %s) was built in the app on the project %s. From 2.4.0 it is a checkout job, as "+
+				"a job written in Git on a project has always been; until now its runs were handed the project's entry "+
+				"file alone, without the roles and files beside it", name, on, script)
+			remedy = "build the job on a script that is not a project"
+		}
 		found = append(found, Finding{
 			AgencyID: agency,
 			Subject:  uid,
-			Detail: fmt.Sprintf("The job %s (on %s) was built in the app on the project %s. From 2.4.0 it is a checkout job, as "+
-				"a job written in Git on a project has always been: each run is pinned to a commit and the agent checks "+
-				"the whole project out. Until now its runs were handed the project's entry file alone, without the roles "+
-				"and files beside it. A checkout run is run only by an agent started with -allow-checkout, which lists "+
-				"the repository and holds a credential for it, and no registered agent that serves this job is started "+
-				"that way: its runs will wait for one, and will not start. Either start an agent that serves it with "+
-				"-allow-checkout, or build the job on a script that is not a project.",
-				name, on, script),
+			Detail: fmt.Sprintf("%s. A project's run is pinned to a commit and the agent checks the whole project out, "+
+				"which only an agent started with -allow-checkout does (it lists the repository and holds a credential "+
+				"for it). No registered agent that serves this job is started that way, so its runs are refused: a "+
+				"scheduled run is recorded as skipped, a manual one is answered with the reason, a workflow's step "+
+				"fails. Either start an agent that serves it with -allow-checkout, or %s.", what, remedy),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -100,5 +117,5 @@ func checkInAppProjectJobs(ctx context.Context, database *sql.DB) error {
 		return err
 	}
 	rows.Close()
-	return Reconcile(ctx, database, KindInAppProjectJobNoCheckoutAgent, found)
+	return Reconcile(ctx, database, KindProjectJobNoCheckoutAgent, found)
 }

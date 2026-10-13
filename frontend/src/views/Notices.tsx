@@ -46,7 +46,7 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   local_runner_host_keys: { title: "The local runner has no approved key for some hosts", to: "/runners", toLabel: "Runners" },
   host_key_conflict: { title: "Two records for one address had different host keys", to: "/settings?tab=targets", toLabel: "SSH Targets" },
   leftover_executor_key: { title: "Jobs in Git still declare an executor, which is ignored", to: "/scopes", toLabel: "Scopes" },
-  inapp_project_job_no_checkout_agent: { title: "A job on a project has no agent that allows checkout", to: "/runners", toLabel: "Runners" },
+  project_job_no_checkout_agent: { title: "A job on a project has no agent that allows checkout", to: "/runners", toLabel: "Runners" },
 };
 
 export function Notices() {

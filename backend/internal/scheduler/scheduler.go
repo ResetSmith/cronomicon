@@ -709,6 +709,24 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 		}
 		return
 	}
+	// Present defect 44 — a project job with no agent that allows checkout to
+	// wait for. The same shape and the same argument as the key-bound job
+	// above: nobody is watching a cron fire, and a run that waits for an agent
+	// that does not exist holds the installation's cap at every fire.
+	if stuck, cerr := runref.CheckoutNeedsAgent(ctx, s.db, jobUID, source, jobName, scope); cerr != nil {
+		s.log.Error("scheduler: check for an agent that allows checkout", "job", jobName, "err", cerr)
+		return
+	} else if stuck {
+		s.log.Warn("scheduler: skip fire — a project job with no agent that allows checkout",
+			"job", jobName, "scope", scope)
+		if err := s.recordSuppression(ctx, EnqueueParams{
+			JobName: jobName, JobSource: source, JobUID: jobUID, RunType: runType, Scope: scope,
+			TargetHost: jobTargetHost.String, ScheduleName: scheduleName, Executor: executor,
+		}, s.standingRefusal(runref.ReasonCheckoutNeedsAgent)); err != nil {
+			s.log.Error("scheduler: record checkout skip", "job", jobName, "err", err)
+		}
+		return
+	}
 	params := EnqueueParams{
 		JobName:        jobName,
 		JobSource:      source,

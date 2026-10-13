@@ -8,14 +8,15 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/notices"
 )
 
-// Present defect 24's notice (the owner's decisions of 2026-10-09 and
-// 2026-10-12): a job built in the app on a project is a checkout job from
-// 2.4.0, and where no registered agent that serves it is started with
-// -allow-checkout its runs will wait (a checkout run requires such an agent
-// since present defect 39 was fixed). It is read off the SCRIPT, so it is
-// there at the first start, before any job carries the marker; it is filed
-// under the job's agency; and it resolves when such an agent is there.
-func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
+// The notice for a project job that no agent can run (present defects 24, 39
+// and 44; the owner's decisions of 2026-10-09, 2026-10-12 and 2026-10-13).
+// Where no registered agent that serves a project job is started with
+// -allow-checkout, its runs are refused where they are produced, and this
+// names the job: one from Git by its own marker, and one built in the app by
+// its SCRIPT's as well, so that it is there at the first start of 2.4.0,
+// before any such job carries the marker. It is filed under the job's agency
+// and resolves when such an agent is there.
+func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 	pool := open(t)
 	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't'), ('ag-tax', 'Tax', 't')`)
 	for _, s := range [][3]string{{"sc-fin", "fin-hosts", "ag-fin"}, {"sc-tax", "tax-hosts", "ag-tax"}, {"sc-bound", "fin-bound", "ag-fin"}} {
@@ -43,7 +44,10 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 	job("free-proj", "cronomicon", nil, "s-proj", nil)          // the condition, with no scope: Global's
 	job("bound-proj", "cronomicon", "fin-bound", "s-proj", nil) // the condition, on a scope that names its runners
 	job("fin-plain", "cronomicon", "fin-hosts", "s-plain", nil) // not on a project
-	job("git-proj", "git", "fin-hosts", "s-proj", nil)          // a Git job has always been a checkout job
+	job("git-proj", "git", "fin-hosts", "s-proj", nil)          // a Git job with no marker of its own is no project
+	// A Git job that IS a project, by the marker sync wrote on its own row.
+	mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, script_uid, script_path, project_root, synced_at)
+	   VALUES ('git-own-proj', 'git-own-proj', 'git', 'ansible', 'fin-hosts', 's-proj', 'scripts/deploy-app/site.yml', 'scripts/deploy-app', 't')`)
 	job("binned", "cronomicon", "fin-hosts", "s-proj", "2026-01-01T00:00:00Z")
 	job("scriptless", "cronomicon", "fin-hosts", nil, nil)
 
@@ -59,7 +63,7 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 		if err := notices.RunChecks(context.Background(), pool); err != nil {
 			t.Fatalf("checks: %v", err)
 		}
-		return openOf(t, pool, notices.KindInAppProjectJobNoCheckoutAgent)
+		return openOf(t, pool, notices.KindProjectJobNoCheckoutAgent)
 	}
 	only := func(got map[string]notices.Notice, want ...string) {
 		t.Helper()
@@ -75,18 +79,29 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 
 	// No agent at all.
 	got := check()
-	only(got, "fin-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+	only(got, "fin-proj", "git-own-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 	n := got["fin-proj"]
 	if n.AgencyID != "ag-fin" {
 		t.Errorf("the notice of Finance's job is filed under %q, want Finance", n.AgencyID)
 	}
-	for _, want := range []string{"The job fin-proj", "the scope fin-hosts", "the project deploy-app", "-allow-checkout", "will wait"} {
+	for _, want := range []string{"The job fin-proj", "the scope fin-hosts", "was built in the app on the project deploy-app", "-allow-checkout",
+		"its runs are refused", "build the job on a script that is not a project"} {
 		if !strings.Contains(n.Detail, want) {
 			t.Errorf("the detail does not say %q: %s", want, n.Detail)
 		}
 	}
-	if strings.Contains(n.Detail, "fail") {
-		t.Errorf("the detail says the runs will fail; they wait: %s", n.Detail)
+	if strings.Contains(n.Detail, "will wait") {
+		t.Errorf("the detail says the runs will wait; with no agent registered they are refused: %s", n.Detail)
+	}
+	// The Git job is told the same, in its own words.
+	g := got["git-own-proj"]
+	for _, want := range []string{"The job git-own-proj", "is a project", "its runs are refused", "change the job in Git"} {
+		if !strings.Contains(g.Detail, want) {
+			t.Errorf("the Git job's detail does not say %q: %s", want, g.Detail)
+		}
+	}
+	if g.AgencyID != "ag-fin" || strings.Contains(g.Detail, "built in the app") {
+		t.Errorf("the Git job's notice: agency %q, detail %s", g.AgencyID, g.Detail)
 	}
 	if got["free-proj"].AgencyID != "global" || !strings.Contains(got["free-proj"].Detail, "no scope") {
 		t.Errorf("the notice of the job with no scope: %+v, want it under Global", got["free-proj"])
@@ -94,13 +109,13 @@ func TestAnInAppJobOnAProjectWithNoCheckoutAgentIsReported(t *testing.T) {
 
 	// An agent with Ansible and no checkout serves Finance: nothing changes.
 	runner("fin-plain-agent", "agent", `["ansible","bash"]`, "ag-fin")
-	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+	only(check(), "fin-proj", "git-own-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 
 	// The server's own runner serves Finance. It is no agent that allows
 	// checkout, whatever its row says, and it takes no project job's run, of a
 	// shell type or not: every notice stays.
 	runner("the-server", "server", `["bash","perl","powershell","python","checkout"]`, "ag-fin")
-	only(check(), "fin-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+	only(check(), "fin-proj", "git-own-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 
 	// An agent started with -allow-checkout serves Finance. Finance's job on an
 	// unbound scope is served; the scope that names its runners does not name

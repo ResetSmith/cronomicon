@@ -6735,18 +6735,20 @@ export interface components {
              *       of the repository that uses it; the detail names that
              *       repository's definitions. Written by sync, and cleared by it
              *       when the agency's repository no longer uses the row.
-             *     - `inapp_project_job_no_checkout_agent` — a job built in the app
-             *       on a project (a script that is a directory checked out by the
-             *       agent), where no registered agent that serves the job is started
-             *       with `-allow-checkout`. From v2.4.0 such a job is a checkout job,
-             *       as one written in Git on a project has always been, and a
-             *       checkout run requires such an agent (the `checkout` token): its
-             *       runs wait for one. The local runner is not one. Until v2.4.0 its
-             *       runs were handed the project's entry file alone. Subject: the
-             *       job's uid. Filed under the agency of the job's scope, or under
-             *       Global. It clears when an agent started with `-allow-checkout`
-             *       serves the job, or the job is built on a script that is not a
-             *       project.
+             *     - `project_job_no_checkout_agent` — a job on a project (a script
+             *       that is a directory checked out by the agent), from Git or built
+             *       in the app, where no registered agent that serves the job is
+             *       started with `-allow-checkout`. From v2.4.0 a project job's run
+             *       requires such an agent (the `checkout` token) and waits for one
+             *       that is registered; with none registered the run is refused
+             *       where it is produced: a scheduled run is recorded as skipped, a
+             *       manual one answers 422 `checkout_requires_agent`, a workflow's
+             *       step fails. The local runner is not such an agent. A job built
+             *       in the app on a project is a checkout job from v2.4.0 (its runs
+             *       were handed the project's entry file alone). Subject: the job's
+             *       uid. Filed under the agency of the job's scope, or under Global.
+             *       It clears when an agent started with `-allow-checkout` serves
+             *       the job, or the job no longer uses a project.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
@@ -9627,11 +9629,25 @@ export interface operations {
              *     agency: it is another agency's, Global's, no scope at all, or the
              *     job's own scope has been given to another agency since the job was
              *     synced. A repository reaches its own agency's scopes and no other.
+             *     The same holds for a job built in the app that is joined to a
+             *     script of an agency's repository: it runs on that agency's scopes.
              *     It is refused for a global administrator too; a job of the
-             *     installation's own repository, and a job built in the app, are not
-             *     held to it. Scheduled, workflow, reaction and file-arrival fires
-             *     of such a job, and a deferred run when its time comes, record the
-             *     same refusal.
+             *     installation's own repository, and a job built in the app on one
+             *     of its scripts or on none, are not held to it. Scheduled,
+             *     workflow, reaction and file-arrival fires of such a job, and a
+             *     deferred run when its time comes, record the same refusal.
+             *     `checkout_requires_agent` (v2.4.0) — the job is a project (a
+             *     directory the agent checks out at a pinned commit) and NO
+             *     registered agent that serves the run's effective scope is started
+             *     with `-allow-checkout` (none of its agency's is, or the scope is
+             *     bound and none of the runners named is). A project's run requires
+             *     such an agent and waits for one; with none to wait for it is
+             *     refused rather than queued for nobody, where it would count
+             *     against the concurrency cap for ever. An agent that exists and is
+             *     offline is an ordinary wait, not this. The local runner is not
+             *     such an agent. Scheduled, workflow, reaction and file-arrival
+             *     fires of such a job, and a deferred run when its time comes,
+             *     record the same refusal as a skipped, failed or missed run.
              */
             422: {
                 headers: {
@@ -12612,7 +12628,8 @@ export interface operations {
              * @description Validation failed — the same `Error.code` set as `POST
              *     /jobs/{id}/run`, including `key_binding_requires_runner` (KB): a
              *     key-bound shell job with no agent to deliver the key is refused for
-             *     a token exactly as for a click. So is `repo_scope_mismatch`.
+             *     a token exactly as for a click. So are `repo_scope_mismatch` and
+             *     `checkout_requires_agent`.
              */
             422: {
                 headers: {

@@ -71,6 +71,12 @@ func seedGoldenJob(t *testing.T, pool *sql.DB) {
 		        '["vault","collection:community.vmware"]', 'vault:become', '{"JOB_LEVEL":"1"}',
 		        'deploy', 'cred-1')`)
 	mustExec(`INSERT INTO entity_codes (kind, source, name, uid, created_at) VALUES ('job', 'git', 'golden-job', 'uid-golden', '2026-01-01T00:00:00Z')`)
+	// The job is a project, and a project step with no REGISTERED agent that
+	// allows checkout is refused where it is produced (present defect 44). One
+	// is registered, offline: the step waits for it, as the golden has it.
+	mustExec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at)
+	          VALUES ('golden-agent', 'golden-agent', 'agent', 'offline', 'Linux', '["ansible","checkout"]', 0, 5, '1.0', 't', 't')`)
+	mustExec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES ('golden-agent', 'global')`)
 }
 
 func TestRunRowGolden_W4_RunJob(t *testing.T) {
