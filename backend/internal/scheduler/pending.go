@@ -593,7 +593,7 @@ func (s *Scheduler) reportPendingMiss(ctx context.Context, p pendingRow, reason 
 		params.Scope = p.scope.String
 	}
 	if params.RunType == "" {
-		params.RunType = s.runTypeOf(ctx, params.jobSourceOrDefault(), params.JobName)
+		params.RunType = s.runTypeOf(ctx, params.JobUID, params.jobSourceOrDefault(), params.JobName)
 	}
 	// The run is stamped at the instant it was MEANT to happen, not at the moment
 	// the sweep noticed, so History places it where the operator expects to find it.

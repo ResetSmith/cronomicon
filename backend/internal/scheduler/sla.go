@@ -550,10 +550,14 @@ func (s *Scheduler) recordMissedFire(ctx context.Context, e detectionEntry, t ti
 		s.recordMissedWorkflowFire(ctx, e, t)
 		return
 	}
+	// The record is the DEFINITION's (2.4.0): two agencies' jobs of one name
+	// that both miss a fire leave a record each. Written by name alone, the
+	// first one's record stood for the second's, here and in the detector's
+	// own reading of it, and the second was neither recorded nor alerted.
 	err := s.recordSuppression(ctx, EnqueueParams{
-		JobName: e.ownerName, JobSource: e.ownerSource, Scope: e.scope,
+		JobName: e.ownerName, JobSource: e.ownerSource, JobUID: e.ownerUID, Scope: e.scope,
 		ScheduleName: e.name,
-		RunType:      s.runTypeOf(ctx, e.ownerSource, e.ownerName),
+		RunType:      s.runTypeOf(ctx, e.ownerUID, e.ownerSource, e.ownerName),
 	}, skipRecord{
 		Reason: reasonMissedFire,
 		Mode:   dedupeEpisodeReason,
@@ -601,10 +605,15 @@ func (s *Scheduler) recordMissedWorkflowFire(ctx context.Context, e detectionEnt
 	}, "Missed run", "missed")
 }
 
-func (s *Scheduler) runTypeOf(ctx context.Context, source, name string) string {
+func (s *Scheduler) runTypeOf(ctx context.Context, uid, source, name string) string {
+	// By the identity where the caller has one: two agencies' jobs of one name
+	// need not be of one run type.
+	q, args := `SELECT run_type FROM jobs WHERE source = ? AND name = ?`, []any{source, name}
+	if uid != "" {
+		q, args = `SELECT run_type FROM jobs WHERE uid = ?`, []any{uid}
+	}
 	var rt string
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT run_type FROM jobs WHERE source = ? AND name = ?`, source, name).Scan(&rt); err != nil || rt == "" {
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&rt); err != nil || rt == "" {
 		return "bash"
 	}
 	return rt

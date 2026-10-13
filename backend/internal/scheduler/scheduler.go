@@ -1359,6 +1359,11 @@ func recordSkippedFire(ctx context.Context, database *sql.DB, p EnqueueParams, r
 // suppressions swallows neither, and vice versa. That independence is the actual
 // fix behind CAL-8; before it, "the most recent run is already skipped" made
 // every reason inherit whichever one happened to fire last.
+//
+// "The definition" is p.JobUID where the caller has one (2.4.0), as the
+// workflow arm's is: one agency's recorded skip does not stand for another
+// agency's job of the same name. A row that carries no identity is still found
+// by its name and source.
 func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams, rec skipRecord) (bool, error) {
 	switch rec.Mode {
 	case dedupeDay:
@@ -1384,10 +1389,10 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 		// clock rollback leaves dozens of future-dated rows ahead of today's.
 		rows, err := database.QueryContext(ctx, `
 			SELECT created_at FROM runs
-			 WHERE job_name = ? AND job_source = ? AND COALESCE(schedule_name,'') = ?
+			 WHERE `+jobRowsOfEntrySQL+` AND COALESCE(schedule_name,'') = ?4
 			   AND status = 'skipped' AND suppressed_by_calendar IS NOT NULL
 			 ORDER BY created_at DESC, rowid DESC LIMIT 50`,
-			p.JobName, p.jobSourceOrDefault(), p.ScheduleName)
+			p.JobUID, p.JobName, p.jobSourceOrDefault(), p.ScheduleName)
 		if err != nil {
 			return false, fmt.Errorf("check recorded calendar skips: %w", err)
 		}
@@ -1417,10 +1422,10 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 		var status, reason, createdAt string
 		err := database.QueryRowContext(ctx, `
 			SELECT status, COALESCE(queued_reason,''), created_at FROM runs
-			 WHERE job_name = ? AND job_source = ? AND COALESCE(schedule_name,'') = ?
+			 WHERE `+jobRowsOfEntrySQL+` AND COALESCE(schedule_name,'') = ?4
 			   AND suppressed_by_calendar IS NULL
 			 ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-			p.JobName, p.jobSourceOrDefault(), p.ScheduleName).Scan(&status, &reason, &createdAt)
+			p.JobUID, p.JobName, p.jobSourceOrDefault(), p.ScheduleName).Scan(&status, &reason, &createdAt)
 		if err != nil {
 			return false, nil // no prior run (or unreadable): record it
 		}
