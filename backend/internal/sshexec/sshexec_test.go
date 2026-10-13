@@ -378,6 +378,37 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 		t.Errorf("the refused step's log should say why and show nothing run on the host:\n%s", stepLog)
 	}
 
+	// And a job built in the app whose script has gone: the same list the
+	// manifest asks (runref.RefuseDispatch), so the run is refused before
+	// anything of it is resolved, and its reason says so. Until the list was
+	// one, the local runner said this only in the run's log, after the run's
+	// references had been resolved.
+	for _, q := range []string{
+		`INSERT INTO jobs (uid, name, source, run_type, script_ref, concurrency_policy, synced_at)
+		   VALUES ('uid-gone', 'built-gone', 'cronomicon', 'bash', 'was.sh', 'Allow', 't')`,
+		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
+		   VALUES('run-script-gone','built-gone','cronomicon','uid-gone','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
+	} {
+		if _, err := pool.Exec(q); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	claimed, err = claimAsLocal(t, svc, pool)
+	if err != nil || claimed == nil {
+		t.Fatalf("claim the run of the job whose script has gone: run=%v err=%v", claimed, err)
+	}
+	svc.execute(context.Background(), *claimed)
+	if err := pool.QueryRow(`SELECT status, queued_reason FROM runs WHERE id='run-script-gone'`).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failure" || reason.String != runref.ReasonScriptGone {
+		t.Fatalf("the run of a job whose script has gone is %q (%q), want failure with the refusal", status, reason.String)
+	}
+	goneLog, _ := os.ReadFile(filepath.Join(logDir, "run-script-gone.log"))
+	if !strings.Contains(string(goneLog), runref.ReasonScriptGone) || strings.Contains(string(goneLog), "[testhost]") {
+		t.Errorf("the refused run's log should say why and show nothing run on the host:\n%s", goneLog)
+	}
+
 	// The same job on a scope that IS its agency's runs.
 	for _, q := range []string{
 		`DELETE FROM scope_agencies WHERE scope_id = 'sc-test'`,

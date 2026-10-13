@@ -87,76 +87,20 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GR-15, asked once more for the run that is about to be handed out. Every
-	// producer of a run asks it when the run is made; a run made before its
-	// scope was given to another agency passed then, and would otherwise run a
-	// job of one agency's repository on what is now another agency's hosts.
-	// Before anything of the run is resolved: no command, target or secret of
-	// a refused run is read. The agent ends the run as failed, with this
-	// answer in its log, as for every refusal of the manifest.
-	if stranded, serr := runref.RepoScopeMismatch(r.Context(), s.db, jobUID.String, jobSource.String, jobName, scope.String); serr != nil {
-		s.log.Error("manifest confinement check", "trace_id", traceID, "error", serr)
-		httpx.Fail(w, http.StatusInternalServerError, "internal", "confinement check failed")
+	// May this run go ahead? Every producer of a run asks when the run is made;
+	// its scope, its job's script and its repository can each change while it
+	// waits, so what such a change can turn is asked again for the run that is
+	// about to be handed out, in one place that the local runner asks too
+	// (runref.RefuseDispatch has the list). Before anything of the run is
+	// resolved: no command, target or secret of a refused run is read. The
+	// agent ends the run as failed, with this answer in its log, as for every
+	// refusal of the manifest.
+	if refusal, derr := runref.RefuseDispatch(r.Context(), s.db, traceID); derr != nil {
+		s.log.Error("manifest dispatch check", "trace_id", traceID, "error", derr)
+		httpx.Fail(w, http.StatusInternalServerError, "internal", "dispatch check failed")
 		return
-	} else if stranded {
-		httpx.Fail(w, http.StatusConflict, runref.CodeRepoScopeMismatch, runref.ReasonRepoScopeMismatch)
-		return
-	}
-	// And the WORKFLOW's repository, for a run that is a workflow's step: the
-	// engine asked when the step was queued, and the check above does not see
-	// a step whose job is Global's (found by the review of Phase R5).
-	if outside, oerr := runref.StepOutsideWorkflowRepository(r.Context(), s.db, traceID, scope.String); oerr != nil {
-		s.log.Error("manifest workflow confinement check", "trace_id", traceID, "error", oerr)
-		httpx.Fail(w, http.StatusInternalServerError, "internal", "confinement check failed")
-		return
-	} else if outside {
-		httpx.Fail(w, http.StatusConflict, runref.CodeRepoScopeMismatch, runref.ReasonWorkflowScopeMismatch)
-		return
-	}
-
-	// And the repository the run is PINNED to (runs.checkout_repo), which is
-	// what the agent is about to be sent to. The checks above ask about the
-	// job as it is now. A checkout run can wait a long time for its agent, and
-	// the job can be joined to another script meanwhile (its script removed
-	// and the name found again in Global's, or the job saved again): the pin
-	// still names the first repository, and the scope may no longer be that
-	// repository's agency's (found by the second review of Phase R5).
-	if outside, oerr := runref.PinOutsideRepository(r.Context(), s.db, checkoutRepo.String, scope.String); oerr != nil {
-		s.log.Error("manifest pinned-repository confinement check", "trace_id", traceID, "error", oerr)
-		httpx.Fail(w, http.StatusInternalServerError, "internal", "confinement check failed")
-		return
-	} else if outside {
-		httpx.Fail(w, http.StatusConflict, runref.CodeRepoScopeMismatch, runref.ReasonRepoScopeMismatch)
-		return
-	}
-
-	// A job built in the app whose script has been removed has no repository to
-	// read its file in, and none to be pinned to (present defect 41). Said
-	// first: its run records an entry and no commit, and the refusal below
-	// would give the wrong reason for that.
-	if gone, gerr := execspec.ScriptGone(r.Context(), s.db,
-		execspec.JobRef{UID: jobUID.String, Name: jobName, Source: jobSource.String}); gerr != nil {
-		s.log.Error("manifest script check", "trace_id", traceID, "error", gerr)
-		httpx.Fail(w, http.StatusInternalServerError, "internal", "command resolution failed")
-		return
-	} else if gone {
-		httpx.Fail(w, http.StatusConflict, "script_gone",
-			"the script this job is built on has been removed: build the job on a script that is there")
-		return
-	}
-
-	// A checkout run with no pinned commit is refused. Checkout mode is chosen
-	// below by the commit being there, so until 2.4.0 such a run fell through
-	// to a body run: the agent was handed the project's entry file alone,
-	// without its tree, and ran it. The run of a project job always records
-	// its entry, and since 2.4.0 its repository; it records no commit when
-	// that repository had not been synced when the run was queued, which a
-	// state row per repository makes reachable (it was one transaction with
-	// the job's own row before).
-	if checkoutSHA.String == "" && (checkoutEntry.String != "" || checkoutRepo.String != "") {
-		httpx.Fail(w, http.StatusConflict, "no_checkout_sha",
-			"this run is of a project and was queued with no pinned commit: its repository had not been synced. "+
-				"Sync the repository and run the job again")
+	} else if refusal != nil {
+		httpx.Fail(w, http.StatusConflict, refusal.Code, refusal.Reason)
 		return
 	}
 
@@ -185,8 +129,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 			return
 		case errors.Is(err, execspec.ErrScriptGone):
 			// Asked above; here for a job that lost its script in between.
-			httpx.Fail(w, http.StatusConflict, "script_gone",
-				"the script this job is built on has been removed: build the job on a script that is there")
+			httpx.Fail(w, http.StatusConflict, runref.CodeScriptGone, runref.ReasonScriptGone)
 			return
 		case errors.Is(err, execspec.ErrJobGone):
 			httpx.Fail(w, http.StatusConflict, "job_gone",
