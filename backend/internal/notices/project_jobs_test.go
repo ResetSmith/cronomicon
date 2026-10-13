@@ -48,6 +48,12 @@ func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 	// A Git job that IS a project, by the marker sync wrote on its own row.
 	mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, script_uid, script_path, project_root, synced_at)
 	   VALUES ('git-own-proj', 'git-own-proj', 'git', 'ansible', 'fin-hosts', 's-proj', 'scripts/deploy-app/site.yml', 'scripts/deploy-app', 't')`)
+	// And one on a scope the catalogue does not hold (a scope of an agent's own
+	// inventory): its run is Global's agents', as a run with no scope is, and
+	// so is this notice's question (the review of 2.4.0 Phase R5's last part:
+	// the notice said "its runs are refused" of a job whose runs were not).
+	mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, script_uid, script_path, project_root, synced_at)
+	   VALUES ('git-elsewhere-proj', 'git-elsewhere-proj', 'git', 'ansible', 'not-in-the-catalogue', 's-proj', 'scripts/deploy-app/site.yml', 'scripts/deploy-app', 't')`)
 	job("binned", "cronomicon", "fin-hosts", "s-proj", "2026-01-01T00:00:00Z")
 	job("scriptless", "cronomicon", "fin-hosts", nil, nil)
 
@@ -79,7 +85,7 @@ func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 
 	// No agent at all.
 	got := check()
-	only(got, "fin-proj", "git-own-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+	only(got, "fin-proj", "git-own-proj", "git-elsewhere-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 	n := got["fin-proj"]
 	if n.AgencyID != "ag-fin" {
 		t.Errorf("the notice of Finance's job is filed under %q, want Finance", n.AgencyID)
@@ -103,32 +109,36 @@ func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 	if g.AgencyID != "ag-fin" || strings.Contains(g.Detail, "built in the app") {
 		t.Errorf("the Git job's notice: agency %q, detail %s", g.AgencyID, g.Detail)
 	}
+	if e := got["git-elsewhere-proj"]; e.AgencyID != "global" || !strings.Contains(e.Detail, "the scope not-in-the-catalogue") {
+		t.Errorf("the notice of the job on a scope that is not in the catalogue: %+v, want it under Global", e)
+	}
 	if got["free-proj"].AgencyID != "global" || !strings.Contains(got["free-proj"].Detail, "no scope") {
 		t.Errorf("the notice of the job with no scope: %+v, want it under Global", got["free-proj"])
 	}
 
 	// An agent with Ansible and no checkout serves Finance: nothing changes.
 	runner("fin-plain-agent", "agent", `["ansible","bash"]`, "ag-fin")
-	only(check(), "fin-proj", "git-own-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+	only(check(), "fin-proj", "git-own-proj", "git-elsewhere-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 
 	// The server's own runner serves Finance. It is no agent that allows
 	// checkout, whatever its row says, and it takes no project job's run, of a
 	// shell type or not: every notice stays.
 	runner("the-server", "server", `["bash","perl","powershell","python","checkout"]`, "ag-fin")
-	only(check(), "fin-proj", "git-own-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+	only(check(), "fin-proj", "git-own-proj", "git-elsewhere-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 
 	// An agent started with -allow-checkout serves Finance. Finance's job on an
 	// unbound scope is served; the scope that names its runners does not name
 	// this one; Tax's and Global's are another agency's.
 	runner("fin-checkout-agent", "agent", `["ansible","checkout"]`, "ag-fin")
 	mustExec(t, pool, `INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc-bound', 'fin-plain-agent', 'fin-plain-agent', 't')`)
-	only(check(), "tax-proj", "free-proj", "bound-proj", "tax-shell")
+	only(check(), "tax-proj", "free-proj", "git-elsewhere-proj", "bound-proj", "tax-shell")
 
 	// The scope names the capable agent too.
 	mustExec(t, pool, `INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc-bound', 'fin-checkout-agent', 'fin-checkout-agent', 't')`)
-	only(check(), "tax-proj", "free-proj", "tax-shell")
+	only(check(), "tax-proj", "free-proj", "git-elsewhere-proj", "tax-shell")
 
-	// Global's and Tax's get theirs.
+	// Global's and Tax's get theirs, and so does the job on a scope that is
+	// not in the catalogue: Global's agent is the one that takes its run.
 	runner("global-checkout-agent", "agent", `["checkout","ansible"]`, "global")
 	runner("tax-checkout-agent", "agent", `["checkout","ansible"]`, "ag-tax")
 	only(check())

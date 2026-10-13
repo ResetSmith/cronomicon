@@ -46,8 +46,9 @@ const KindProjectJobNoCheckoutAgent = "project_job_no_checkout_agent"
 // notice is to be there before the sync or the save that gives it one.
 //
 // An agent "serves the job" by the rule runref.CheckoutNeedsAgent refuses by:
-// it serves the agency of the job's scope (Global, for a job with no scope)
-// and, where the scope names its runners, is one of them. Registered, not
+// it serves the agency of the job's scope (Global, for a job with no scope or
+// with a scope the catalogue does not hold) and, where the scope names its
+// runners, is one of them. Registered, not
 // online: an agent that is merely offline is an ordinary wait. The server's
 // own runner is no such agent: it advertises no "checkout" and does not take a
 // project job's run.
@@ -71,7 +72,7 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
 		               WHERE ra.runner_id = rn.id
-		                 AND ((COALESCE(j.scope, '') = '' AND ra.agency_id = ?)
+		                 AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = COALESCE(j.scope, '')) AND ra.agency_id = ?)
 		                      OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                            JOIN scopes sc ON sc.id = sa.scope_id
 		                                           WHERE sc.name = j.scope)))
