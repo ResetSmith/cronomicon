@@ -1517,11 +1517,6 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 		// With the sync's context: a submodule fetch is a transfer like the
 		// repository's own, and a Service that is stopped must not have to wait
 		// for one that has stalled. And under the same bound, each on its own.
-		if cfg.Name != path.Clean(filepath.ToSlash(cfg.Path)) {
-			s.logWarn("a submodule's name in .gitmodules is not its path: the sync will be refused when its pin moves. "+
-				"Rename its section to its path and commit (a submodule added with --name, or moved with git mv)",
-				"submodule", cfg.Name, "path", cfg.Path)
-		}
 		// One bound for the submodule and everything nested in it, as before.
 		var reset []string
 		err := s.transfer(ctx, func(tctx context.Context) error {
@@ -1539,6 +1534,14 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 			continue
 		}
 		s.logInfo("submodule updated", "submodule", cfg.Name, "path", cfg.Path)
+		// Said ahead of time, and only here, for a submodule that has just
+		// been checked out: one that could not be fetched is not, and its pin
+		// moving stops nothing.
+		if cfg.Name != path.Clean(filepath.ToSlash(cfg.Path)) {
+			s.logWarn("a submodule's name in .gitmodules is not its path: the sync will be refused when its pin moves. "+
+				"Rename its section to its path and commit (a submodule added with --name, or moved with git mv)",
+				"submodule", cfg.Name, "path", cfg.Path)
+		}
 	}
 	s.warnUndeclaredGitlinks(repo, declared)
 }
@@ -1652,10 +1655,15 @@ func explainSubmoduleNotFound(err error) error {
 
 // misnamedSubmodulePin looks at the commit a repository is about to be checked
 // out at and returns a submodule of it that the checkout cannot do: one whose
-// name in THAT commit's .gitmodules is not its path, and whose pin there is
-// not the one in the index (what the checkout compares with). A submodule
-// that is new to the index is not one: go-git makes its directory without
-// asking for it by name. Nil when there is none.
+// name in THAT commit's .gitmodules is not its path, whose pin there is not
+// the one in the index (what the checkout compares with), and which has a
+// commit checked out in this clone. A submodule that is new to the index is
+// not one: go-git makes its directory without asking for it by name. Nor is
+// one that is not checked out: the checkout takes its pin from the index, sees
+// nothing to change, and goes through. That is every submodule of an agency's
+// repository (they are never fetched) and one of Global's that the server
+// cannot fetch, and such a repository synced before this check was there
+// (found by the review of this check). Nil when there is none.
 func misnamedSubmodulePin(repo *gogit.Repository, to plumbing.Hash) (*misnamedSubmoduleError, error) {
 	commit, err := repo.CommitObject(to)
 	if err != nil {
@@ -1694,9 +1702,34 @@ func misnamedSubmodulePin(repo *gogit.Repository, to plumbing.Hash) (*misnamedSu
 		if err != nil || have.Hash == pinned.Hash {
 			continue // new to the index, or its pin has not moved
 		}
+		if !submoduleCheckedOut(repo, at) {
+			continue
+		}
 		return &misnamedSubmoduleError{Path: at, Name: m.Name}, nil
 	}
 	return nil, nil
+}
+
+// submoduleCheckedOut reports whether the submodule at a path of this clone has
+// a commit checked out, as go-git sees it: declared in the working tree's
+// .gitmodules at that path, with a HEAD. False when it cannot be told.
+func submoduleCheckedOut(repo *gogit.Repository, at string) bool {
+	wt, err := repo.Worktree()
+	if err != nil {
+		return false
+	}
+	subs, err := wt.Submodules()
+	if err != nil {
+		return false
+	}
+	for _, sub := range subs {
+		if path.Clean(filepath.ToSlash(sub.Config().Path)) != at {
+			continue
+		}
+		st, err := sub.Status()
+		return err == nil && !st.Current.IsZero()
+	}
+	return false
 }
 
 // misnamedNestedPin asks misnamedSubmodulePin of the commit a submodule is
