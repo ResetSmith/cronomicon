@@ -126,7 +126,19 @@ func (s *Service) publishTarget(req PublishRequest) PublishTarget {
 		return t
 	}
 	t.Name, t.NewScope, t.NewParsed = jobNameAndScope([]byte(req.Content))
-	if old, err := os.ReadFile(filepath.Join(s.cloneDir, cleaned)); err == nil { //nolint:gosec // cleaned passed validatePublishPath above
+	// Never through a symbolic link (publishPath): a path that is one, or
+	// passes through one, is reported as a file that is there and whose scope
+	// is unknown, which no departmental caller can be authorized to replace,
+	// and nothing of what it points to is read.
+	abs, exists, perr := publishPath(s.cloneDir, cleaned)
+	if perr != nil {
+		t.OldExists = true
+		return t
+	}
+	if !exists {
+		return t
+	}
+	if old, err := os.ReadFile(abs); err == nil { //nolint:gosec // abs is inside the clone and no link (publishPath)
 		t.OldExists = true
 		_, t.OldScope, t.OldParsed = jobNameAndScope(old)
 	} else if !os.IsNotExist(err) {
@@ -157,6 +169,18 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 	// PP-B3: never join an untrusted path into the clone — re-validate here so the
 	// guard holds even for a caller that bypasses the handler. Maps to 422.
 	if err := validatePublishPath(req.FilePath); err != nil {
+		return nil, &ValidationFailedError{
+			Errors:  []ValidationError{{Field: "filePath", Message: err.Error()}},
+			Message: err.Error(),
+		}
+	}
+
+	// And never through a symbolic link: the path is read (for the diff of a
+	// refusal) and written below, in the clone, and a link committed to the
+	// repository would take either out of it (publishPath). Asked here, inside
+	// the queue, so that no sync changes the clone between the question and
+	// the write.
+	if _, _, err := publishPath(s.cloneDir, req.FilePath); err != nil {
 		return nil, &ValidationFailedError{
 			Errors:  []ValidationError{{Field: "filePath", Message: err.Error()}},
 			Message: err.Error(),
@@ -314,6 +338,55 @@ func (s *Service) publishAuthor(ctx context.Context) (name, email string) {
 	return name, email
 }
 
+// errPublishThroughLink is publishPath's refusal.
+var errPublishThroughLink = errors.New("filePath is, or passes through, a symbolic link in the repository: " +
+	"a publish does not read or write through a link. Publish the file the link points to, or replace the link in Git")
+
+// publishPath is where a publish reads and writes a file of the repository:
+// the path inside the clone, and whether a file is there. It refuses a path
+// any part of which is a SYMBOLIC LINK, the file itself or a directory on the
+// way to it (2.4.0; found by the review of Phase R6).
+//
+// The path a publish names is held to the repository's directories as a string
+// (validatePublishPath). A file of the repository can be a link, committed by
+// whoever commits to the repository, and reading or writing it by its path
+// follows the link: out of the clone, to any file the server can read or
+// write. The diff of a refused publish then carried that file's contents, and
+// a publish on the right base overwrote it (the clone's own .git/config, in
+// the test that found it). A sync refuses a link that leads out of the
+// repository (containedReader) and follows one that stays inside; a publish
+// follows none: writing through a link changes a file other than the one that
+// was named.
+//
+// relPath must have passed validatePublishPath.
+func publishPath(cloneDir, relPath string) (abs string, exists bool, err error) {
+	abs = cloneDir
+	parts := strings.Split(filepath.ToSlash(filepath.Clean(relPath)), "/")
+	for i, part := range parts {
+		abs = filepath.Join(abs, part)
+		fi, lerr := os.Lstat(abs)
+		if os.IsNotExist(lerr) {
+			// Nothing here, so nothing below it either: a new file, and new
+			// directories on the way to it.
+			return filepath.Join(cloneDir, filepath.Clean(relPath)), false, nil
+		}
+		if lerr != nil {
+			return "", false, lerr
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return "", false, errPublishThroughLink
+		}
+		last := i == len(parts)-1
+		if !last && !fi.IsDir() {
+			return "", false, fmt.Errorf("filePath passes through %s, which is a file", filepath.ToSlash(filepath.Join(parts[:i+1]...)))
+		}
+		if last && !fi.Mode().IsRegular() {
+			return "", false, fmt.Errorf("filePath names something in the repository that is not a file")
+		}
+	}
+	return abs, true, nil
+}
+
 // takeBackCommit puts a clone back where a publish found it, after a push that
 // failed: the branch HEAD was on, at the commit it was at, with HEAD on it, and
 // the index and the working tree reset hard to that commit (which removes the
@@ -376,8 +449,16 @@ func (s *Service) buildDiff(repo *gogit.Repository, relPath, newContent string) 
 	if err := validatePublishPath(relPath); err != nil {
 		return "", err
 	}
-	absPath := filepath.Join(s.cloneDir, relPath)
-	existingBytes, err := os.ReadFile(absPath)
+	absPath, exists, err := publishPath(s.cloneDir, relPath)
+	if err != nil {
+		return "", err
+	}
+	var existingBytes []byte
+	if exists {
+		existingBytes, err = os.ReadFile(absPath) //nolint:gosec // absPath is inside the clone and no link (publishPath)
+	} else {
+		err = os.ErrNotExist
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			// New file — diff is the entire content.
