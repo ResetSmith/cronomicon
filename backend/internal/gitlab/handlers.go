@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ResetSmith/cronomicon/internal/metrics"
@@ -266,10 +267,6 @@ func (h *Handlers) WebhookGitLab(w http.ResponseWriter, r *http.Request) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w http.ResponseWriter, r *http.Request) {
-	svc := h.service(w)
-	if svc == nil {
-		return
-	}
 	baseSHA := r.Header.Get("If-Match")
 	if baseSHA == "" {
 		writeError(w, http.StatusBadRequest, "missing_if_match", "If-Match header with base_sha is required")
@@ -294,14 +291,37 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 		})
 		return
 	}
-	// GC-9: the route's permission says the caller may publish SOMEWHERE; this
-	// asks whether they may publish THIS file. Decided before Publish takes the
-	// sync mutex, and before anything is written.
+	// The repository the publish names (GR-24); none named is Global's, as it
+	// always was.
+	repoID := strings.TrimSpace(req.RepoID)
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	svc := h.serviceOf(repoID)
+	target := PublishTarget{Repo: repoID, NoSuchRepo: true}
+	if svc != nil {
+		target = svc.publishTarget(req)
+		target.Repo, target.Agency = repoID, svc.agency()
+	}
+	// GC-9, GR-24: the route's permission says the caller may publish
+	// SOMEWHERE; this asks whether they may publish THIS file to THIS
+	// repository. Decided before Publish takes its turn in the queue, and
+	// before anything is written; and before the caller is told whether the
+	// repository is there.
 	if authorize != nil {
-		if msg := authorize(r, svc.publishTarget(req)); msg != "" {
+		if msg := authorize(r, target); msg != "" {
 			writeError(w, http.StatusForbidden, "forbidden", msg)
 			return
 		}
+	}
+	if svc == nil {
+		if repoID == repoid.Global {
+			writeError(w, http.StatusServiceUnavailable, "unavailable",
+				"the repository's sync service is not running; try again in a moment")
+			return
+		}
+		writeError(w, http.StatusNotFound, "not_found", "no such repository")
+		return
 	}
 
 	result, err := svc.Publish(r.Context(), req, baseSHA, actor)
@@ -367,6 +387,7 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 	now := time.Now().UTC().Format(time.RFC3339)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":            result.CommitSHA, // use commit SHA as the push ID
+		"repoId":        repoID,
 		"userEmail":     actor,
 		"commitSha":     result.CommitSHA,
 		"branch":        result.Branch,
@@ -391,6 +412,10 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 
 	args := []any{}
 	where := "1=1"
+	if repo := strings.TrimSpace(r.URL.Query().Get("repo")); repo != "" {
+		where += " AND repo_id=?"
+		args = append(args, repo)
+	}
 	if statusFilter != "" {
 		where += " AND status=?"
 		args = append(args, statusFilter)
@@ -425,7 +450,11 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 
 	listArgs := append(args, pageSize, offset)
 	rows, err := db.QueryContext(r.Context(),
-		"SELECT id, at, actor, schedule_file, base_sha, new_sha, status, details FROM schedule_pushes WHERE "+where+orderBy+" LIMIT ? OFFSET ?",
+		"SELECT id, at, actor, schedule_file, base_sha, new_sha, status, details, repo_id, "+
+			// The branch of the repository's connection as it is NOW: a publish
+			// records no branch. (It was the literal \"main\", whatever the branch.)
+			"COALESCE((SELECT NULLIF(g.branch, '') FROM git_repos g WHERE g.id = schedule_pushes.repo_id), 'main') "+
+			"FROM schedule_pushes WHERE "+where+orderBy+" LIMIT ? OFFSET ?",
 		listArgs...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db_error", err.Error())
@@ -435,6 +464,7 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 
 	type push struct {
 		ID            int      `json:"id"`
+		RepoID        string   `json:"repoId"`
 		UserEmail     string   `json:"userEmail"`
 		CommitSha     any      `json:"commitSha"`
 		Branch        string   `json:"branch"`
@@ -456,15 +486,18 @@ func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http
 			newSHA    sql.NullString
 			status    string
 			details   sql.NullString
+			repo      string
+			branch    string
 		)
-		if err := rows.Scan(&id, &at, &actor, &schedFile, &baseSHA, &newSHA, &status, &details); err != nil {
+		if err := rows.Scan(&id, &at, &actor, &schedFile, &baseSHA, &newSHA, &status, &details, &repo, &branch); err != nil {
 			writeError(w, http.StatusInternalServerError, "db_error", err.Error())
 			return
 		}
 		p := push{
 			ID:            id,
+			RepoID:        repo,
 			UserEmail:     actor,
-			Branch:        "main",
+			Branch:        branch,
 			FilesChanged:  []string{schedFile},
 			ScheduleSlots: schedFile,
 			Status:        status,

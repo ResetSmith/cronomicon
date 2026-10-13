@@ -7,6 +7,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // mountGit wires B3 (GitLab integration + schedule write-path) routes.
@@ -164,8 +165,20 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 		}
 		return msg
 	}
+	// GR-24: a repository other than Global's takes publishes from those who
+	// hold publishSchedule on ITS agency. One sentence for another agency's
+	// repository and for one that is not there.
+	ownRepo := t.Repo != "" && t.Repo != repoid.Global
+	if ownRepo && (t.NoSuchRepo || !id.CanAgency(perm, t.Agency)) {
+		return deny("repository "+t.Repo, "insufficient permissions: publishSchedule is required on the agency that repository belongs to")
+	}
 	if t.Kind != "job" {
-		return deny(t.Kind+" file", "schedule and workflow files are shared by every agency — "+
+		if ownRepo {
+			// The agency's own schedules and workflows, in the agency's own
+			// repository: its publishers'. (Sync confines what they may name.)
+			return ""
+		}
+		return deny(t.Kind+" file", "schedule and workflow files of the shared repository are shared by every agency — "+
 			"only an administrator whose publish permission covers every agency may publish them")
 	}
 	if !t.NewParsed || t.NewScope == "" {
@@ -189,8 +202,16 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 		return deny("replaces file", taken)
 	}
 	{
+		// Of THIS repository (2.4.0): a name is a job in each repository that
+		// has one, and sync upserts by name within a repository. Asked of every
+		// repository, a job of that name in another agency's repository refused
+		// the publish as "outside your access", and so said the name was taken.
+		repo := t.Repo
+		if repo == "" {
+			repo = repoid.Global
+		}
 		rows, err := s.db.QueryContext(r.Context(),
-			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ?`, t.Name)
+			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ? AND COALESCE(repo_id, ?) = ?`, t.Name, repoid.Global, repo)
 		if err != nil {
 			return deny("db error", "could not verify the job name; try again")
 		}

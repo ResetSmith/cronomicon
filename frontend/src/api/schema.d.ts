@@ -1510,6 +1510,18 @@ export interface paths {
          *     synced commit alone and the push was forced, which silently discarded
          *     commits pushed to the branch since the last sync.
          *
+         *     **Which repository, and who (v2.4.0, GR-24).** `repoId` in the body
+         *     names the repository; without it the publish is to Global's. A
+         *     repository other than Global's takes publishes from those who hold
+         *     `publishSchedule` on ITS agency: job files in scopes they hold it on,
+         *     and the agency's own `schedules/` and `workflows/` files. Another
+         *     agency's repository and one that is not there are refused 403 in the
+         *     same words; a global publisher is answered 404 for one that is not
+         *     there. Global's repository is as before (GC-9): a global publisher may
+         *     publish anything; anyone else, a job file in a scope they hold the
+         *     permission on, and no `schedules/` or `workflows/` file. Whether a
+         *     job's name is already taken is asked of the repository published to.
+         *
          *     A push that delivers nothing is a failure (503), where it was answered
          *     as a success. The fetch and the push are each given up after
          *     `CRONOMICON_GIT_FETCH_TIMEOUT`. Publishes and syncs are serialized
@@ -6563,8 +6575,16 @@ export interface components {
         };
         SchedulePush: {
             readonly id?: string;
+            /** @description v2.4.0 — the repository the publish was to; `global` for Global's. */
+            readonly repoId?: string;
             readonly userEmail?: string;
             readonly commitSha?: string | null;
+            /**
+             * @description In the answer to a publish, the branch it was pushed to. In the list
+             *     of past publishes, the branch of the repository's connection as it
+             *     is now: a publish records no branch (until v2.4.0 the list said
+             *     `main` whatever the branch).
+             */
             branch?: string;
             filesChanged?: string[];
             /** @description Human summary of the schedule diff. */
@@ -6590,6 +6610,12 @@ export interface components {
              * @default false
              */
             new: boolean;
+            /**
+             * @description v2.4.0 (GR-24) — the repository to publish to (see `GET /git-repos`).
+             *     Omitted, or `global`: Global's repository, as a publish always meant.
+             *     If-Match is then that repository's last synced commit.
+             */
+            repoId?: string;
         };
         Scope: {
             /**
@@ -12001,6 +12027,8 @@ export interface operations {
     listSchedulePushes: {
         parameters: {
             query?: {
+                /** @description v2.4.0 — one repository's publishes; omitted, every repository's. */
+                repo?: string;
                 status?: "success" | "failed";
                 /** @description Inclusive ISO 8601 lower bound. */
                 from?: components["parameters"]["from"];

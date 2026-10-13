@@ -26,6 +26,9 @@ type PublishRequest struct {
 	Content       string `json:"content"`
 	CommitMessage string `json:"commitMessage"`
 	New           bool   `json:"new"`
+	// RepoID is the repository to publish to (2.4.0, GR-24). Empty, as every
+	// request was before a repository was a row, is Global's.
+	RepoID string `json:"repoId,omitempty"`
 }
 
 // PublishResult is the outcome of a successful publish.
@@ -76,6 +79,12 @@ func (e *PreconditionError) Error() string {
 // authorize (GC-9). The gitlab package knows how to read a definition file; it
 // does not know who the caller is, so it reports facts and the route decides.
 type PublishTarget struct {
+	// Repo is the repository the publish names, and Agency the agency it
+	// belongs to (GR-24). NoSuchRepo: there is no such repository, and nothing
+	// else here is set; the route decides who may be told so.
+	Repo       string
+	Agency     string
+	NoSuchRepo bool
 	// Kind is "job", "schedule" or "workflow", from the directory the path is in.
 	Kind string
 	// Name and NewScope come from the INCOMING content. NewParsed is false when
