@@ -199,3 +199,91 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 		t.Errorf("a global administrator connecting an agency that is not there = %d, want 404", code)
 	}
 }
+
+// Disconnecting (GR-28): by who may connect, with what was removed in the
+// answer; refused for Global's, and while a scope of the repository is bound
+// to runners with work queued. An agency whose repository is gone can connect
+// another.
+func TestAnAgencysAdministratorDisconnectsTheirAgencysRepository(t *testing.T) {
+	h, pool := gateServer(t)
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO settings (key, value, last_modified_by, last_modified_at) VALUES ('gitAllowedHosts', '["git.example.com"]', 't', 't')`)
+	const conn = `{"repoUrl":"https://git.example.com/fin/definitions.git"}`
+	rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/git-repo", gFinAdmin, conn)
+	var made struct{ ID string }
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &made) != nil || made.ID == "" {
+		t.Fatalf("connect: %d %s", rec.Code, rec.Body)
+	}
+	// What the repository's sync would have written, and a scope of it that is
+	// bound to a runner.
+	exec(`INSERT INTO jobs (uid, name, source, repo_id, run_type, scope, source_path, synced_at) VALUES ('j-fin', 'fin-git-job', 'git', ?, 'bash', 'fin-hosts', 'jobs/fin.yaml', 't')`, made.ID)
+	exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES ('s-fin', ?, 'fin.sh', 'bash', 'scripts/fin.sh', 'h', 't')`, made.ID)
+	exec(`INSERT INTO scopes (id, name, source, repo_id, created_at, synced_at) VALUES ('sc:fin-git', 'fin-git-hosts', 'git', ?, 't', 't')`, made.ID)
+	exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at)
+	      VALUES ('agent-fin', 'agent-fin', 'agent', 'offline', 'Linux', '["bash"]', 0, 5, '1.0', 't', 't')`)
+	exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc:fin-git', 'agent-fin', 'agent-fin', 't')`)
+	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, executor, triggered_by, trigger_kind, created_at)
+	      VALUES ('r-wait', 'fin-git-job', 'bash', 'fin-git-hosts', 'queued', 'runner', 'u', 'manual', 't')`)
+	del := func(who, agency string) (int, string) {
+		t.Helper()
+		rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/"+agency+"/git-repo", who, "")
+		return rec.Code, rec.Body.String()
+	}
+	connected := func() int {
+		var n int
+		if err := pool.QueryRow(`SELECT COUNT(*) FROM git_repos WHERE id = ?`, made.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	// The read says what a disconnect would remove.
+	rec = gateReq(t, h, http.MethodGet, "/api/v1/agencies/ag:FIN/git-repo", gFinAdmin, "")
+	if !strings.Contains(rec.Body.String(), `"supplies":{"jobs":1,"workflows":0,"scripts":1,"schedules":0,"scopes":1}`) {
+		t.Errorf("the repository's read does not say what it supplies: %s", rec.Body)
+	}
+
+	for _, who := range []string{gTaxAdmin, gFinApprover, gFinViewer, gAllViewer} {
+		if code, _ := del(who, "ag:FIN"); code != http.StatusForbidden {
+			t.Errorf("%s disconnecting FIN's repository = %d, want 403", who, code)
+		}
+	}
+	if code, _ := del(gFinAdmin, "ag:TAX"); code != http.StatusForbidden {
+		t.Errorf("FIN's administrator disconnecting TAX's = %d, want 403", code)
+	}
+	if code, _ := del(gFinAdmin, "global"); code != http.StatusForbidden {
+		t.Errorf("FIN's administrator disconnecting Global's = %d, want 403", code)
+	}
+	if code, body := del(gRoot, "global"); code != http.StatusConflict || !strings.Contains(body, "global_repo") {
+		t.Errorf("a global administrator disconnecting Global's = %d %s, want 409 global_repo", code, body)
+	}
+	if code, body := del(gRoot, "ag:TAX"); code != http.StatusNotFound || !strings.Contains(body, "not_connected") {
+		t.Errorf("disconnecting an agency that has none = %d %s, want 404 not_connected", code, body)
+	}
+
+	// Work is queued on its bound scope.
+	if code, body := del(gFinAdmin, "ag:FIN"); code != http.StatusConflict || !strings.Contains(body, "scopes_busy") || !strings.Contains(body, "fin-git-hosts") {
+		t.Fatalf("disconnecting with work queued on a bound scope = %d %s, want 409 scopes_busy naming it", code, body)
+	}
+	if connected() != 1 {
+		t.Fatalf("the refused disconnect removed the connection")
+	}
+	exec(`DELETE FROM runs WHERE id = 'r-wait'`)
+
+	code, body := del(gFinAdmin, "ag:FIN")
+	if code != http.StatusOK || !strings.Contains(body, `"removed":{"jobs":1,"workflows":0,"scripts":1,"schedules":0,"scopes":1}`) {
+		t.Fatalf("FIN's administrator disconnecting FIN's = %d %s, want 200 with what was removed", code, body)
+	}
+	var left int
+	if err := pool.QueryRow(`SELECT (SELECT COUNT(*) FROM jobs WHERE repo_id = ?1) + (SELECT COUNT(*) FROM scripts WHERE repo_id = ?1) +
+	                                (SELECT COUNT(*) FROM scopes WHERE repo_id = ?1) + (SELECT COUNT(*) FROM git_repos WHERE id = ?1)`, made.ID).Scan(&left); err != nil || left != 0 {
+		t.Errorf("after the disconnect %d rows of the repository are left (%v)", left, err)
+	}
+	if code, _ := del(gFinAdmin, "ag:FIN"); code != http.StatusNotFound {
+		t.Errorf("disconnecting it again = %d, want 404", code)
+	}
+	// The agency can connect another.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/git-repo", gFinAdmin, conn); rec.Code != http.StatusCreated {
+		t.Errorf("connecting again after a disconnect = %d %s, want 201", rec.Code, rec.Body)
+	}
+}

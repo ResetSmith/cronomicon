@@ -7,6 +7,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
@@ -26,6 +27,7 @@ func (s *Server) mountGitRepos(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/git-repos", configure(http.HandlerFunc(s.handleListGitRepos)))
 	mux.Handle("GET /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleGetAgencyGitRepo)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handlePutAgencyGitRepo)))
+	mux.Handle("DELETE /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleDeleteAgencyGitRepo)))
 }
 
 // requireRepoAgency is GR-9's gate: configureApp on the agency whose
@@ -140,4 +142,48 @@ func (s *Server) handlePutAgencyGitRepo(w http.ResponseWriter, r *http.Request) 
 		status = http.StatusCreated
 	}
 	httpx.JSON(w, status, repo)
+}
+
+// handleDeleteAgencyGitRepo disconnects an agency's repository (GR-28): every
+// row it supplied goes, with its connection and its clone, and the answer says
+// how many. What it would remove is in the repository's own read (`supplies`),
+// for the confirm. Refused for Global's, and while one of the repository's
+// scopes is bound to runners and has work queued.
+func (s *Server) handleDeleteAgencyGitRepo(w http.ResponseWriter, r *http.Request) {
+	agencyID := r.PathValue("agencyId")
+	id, ok := s.requireRepoAgency(w, r, agencyID)
+	if !ok {
+		return
+	}
+	if agencyID == agencyid.Global {
+		httpx.Fail(w, http.StatusConflict, "global_repo", gitlab.ErrGlobalRepo.Error())
+		return
+	}
+	repoID, err := settings.RepoOfAgency(r.Context(), s.db, agencyID)
+	if errors.Is(err, settings.ErrRepoNotFound) {
+		httpx.Fail(w, http.StatusNotFound, "not_connected", "this agency has no repository connected")
+		return
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if s.git == nil {
+		httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", "the repositories' sync services are not running; try again in a moment")
+		return
+	}
+	removed, err := s.git.Disconnect(r.Context(), repoID, id.Email)
+	var busy *gitlab.ErrScopesBusy
+	switch {
+	case errors.As(err, &busy):
+		httpx.Fail(w, http.StatusConflict, "scopes_busy", busy.Error())
+		return
+	case errors.Is(err, settings.ErrRepoNotFound):
+		httpx.Fail(w, http.StatusNotFound, "not_connected", "this agency has no repository connected")
+		return
+	case err != nil:
+		httpx.Fail500(w, s.log, "disconnect_failed", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"repoId": repoID, "removed": removed})
 }

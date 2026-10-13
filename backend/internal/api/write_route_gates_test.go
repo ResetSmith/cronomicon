@@ -104,6 +104,7 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/git/sync":                                         {clsGlobal, "one repository for the installation"},
 	"POST /api/v1/scopes/resync":                                    {clsGlobal, "one repository for the installation"},
 	"PUT /api/v1/agencies/{agencyId}/git-repo":                      {clsObject, "requireRepoAgency — configureApp on the repository's agency; Global's is a global administrator's (GR-9)"},
+	"DELETE /api/v1/agencies/{agencyId}/git-repo":                   {clsObject, "requireRepoAgency, as the PUT (GR-9, GR-28)"},
 	"POST /api/v1/jobs":                                             {clsCompose, "requireComposeScope on the job's scope"},
 	"PUT /api/v1/jobs/{jobId}":                                      {clsCompose, "requireComposeScope on the existing scope and the new one"},
 	"DELETE /api/v1/jobs/{jobId}":                                   {clsCompose, "requireComposeScope on the job's scope"},

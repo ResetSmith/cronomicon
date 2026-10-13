@@ -6599,6 +6599,57 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/Validation' }
+    delete:
+      tags: [Agencies]
+      operationId: deleteAgencyGitRepo
+      summary: Disconnect an agency's repository (v2.4.0)
+      description: |
+        Removes the repository and EVERY row it supplied (GR-28): its Git jobs
+        and workflows with their schedule entries and pauses, its scripts, its
+        Git schedules, its scopes with their hosts and imported host records,
+        its sync problems, its connection and the server's clone of it. The
+        answer says how many of each; the same counts are `supplies` in the
+        repository's read, for a confirm to show before this is called.
+
+        What stays: a job built in the app on one of its scripts is joined to
+        nothing and does not run (the notice `job_script_gone` names it); a
+        definition built in the app on one of its schedules keeps the timing it
+        has; the history of its syncs and publishes.
+
+        Needs `configureApp` on the agency (GR-9). Refused 409 `global_repo`
+        for Global's repository (clear its URL to stop syncing it), and 409
+        `scopes_busy` while one of the repository's scopes is bound to runners
+        and has runs queued or parked: the message names them, and nothing is
+        removed. 404 `not_connected` when the agency has none. An agency cannot
+        be deleted while it has a repository.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      responses:
+        '200':
+          description: Disconnected.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repoId, removed]
+                properties:
+                  repoId: { type: string }
+                  removed:
+                    type: object
+                    required: [jobs, workflows, scripts, schedules, scopes]
+                    properties:
+                      jobs: { type: integer }
+                      workflows: { type: integer }
+                      scripts: { type: integer }
+                      schedules: { type: integer }
+                      scopes: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Global's repository (`global_repo`), or a scope with work queued (`scopes_busy`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /agencies/{agencyId}/vault-prefixes:
     get:

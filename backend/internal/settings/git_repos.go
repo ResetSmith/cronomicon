@@ -133,7 +133,9 @@ func ListRepos(ctx context.Context, database *sql.DB, appCfg *config.Config) ([]
 // CountRepoRows counts what a repository supplies. A row of Global's
 // repository from before a repository was a row records none, and is
 // Global's.
-func CountRepoRows(ctx context.Context, database *sql.DB, repoID string) (RepoCounts, error) {
+func CountRepoRows(ctx context.Context, database interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, repoID string) (RepoCounts, error) {
 	var c RepoCounts
 	for _, q := range []struct {
 		into  *int

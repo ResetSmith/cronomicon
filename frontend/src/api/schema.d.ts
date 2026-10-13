@@ -4017,7 +4017,28 @@ export interface paths {
          */
         put: operations["putAgencyGitRepo"];
         post?: never;
-        delete?: never;
+        /**
+         * Disconnect an agency's repository (v2.4.0)
+         * @description Removes the repository and EVERY row it supplied (GR-28): its Git jobs
+         *     and workflows with their schedule entries and pauses, its scripts, its
+         *     Git schedules, its scopes with their hosts and imported host records,
+         *     its sync problems, its connection and the server's clone of it. The
+         *     answer says how many of each; the same counts are `supplies` in the
+         *     repository's read, for a confirm to show before this is called.
+         *
+         *     What stays: a job built in the app on one of its scripts is joined to
+         *     nothing and does not run (the notice `job_script_gone` names it); a
+         *     definition built in the app on one of its schedules keeps the timing it
+         *     has; the history of its syncs and publishes.
+         *
+         *     Needs `configureApp` on the agency (GR-9). Refused 409 `global_repo`
+         *     for Global's repository (clear its URL to stop syncing it), and 409
+         *     `scopes_busy` while one of the repository's scopes is bound to runners
+         *     and has runs queued or parked: the message names them, and nothing is
+         *     removed. 404 `not_connected` when the agency has none. An agency cannot
+         *     be deleted while it has a repository.
+         */
+        delete: operations["deleteAgencyGitRepo"];
         options?: never;
         head?: never;
         patch?: never;
@@ -16455,6 +16476,53 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["Validation"];
+        };
+    };
+    deleteAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description The agency's id; `global` for Global's repository. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        repoId: string;
+                        removed: {
+                            jobs: number;
+                            workflows: number;
+                            scripts: number;
+                            schedules: number;
+                            scopes: number;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Global's repository (`global_repo`), or a scope with work queued (`scopes_busy`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getAgencyVaultPrefixes: {
