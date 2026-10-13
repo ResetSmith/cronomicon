@@ -560,7 +560,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 
 	// Operator pause (migration 030; 170 made it source/owner_kind aware): a
 	// paused job's cron fires are skipped.
-	if s.isPaused(ctx, source, "job", jobName) {
+	if s.isPaused(ctx, source, "job", jobName, jobUID) {
 		s.log.Info("scheduler: skip fire — job paused", "job", jobName, "source", source, "schedule", scheduleName)
 		// SL-A: record it. A pause is an EXPECTED miss, and the missed-run
 		// detector can only call a fire expected if the suppression left a row —
@@ -581,7 +581,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// BEFORE the concurrency cap on purpose: a fire suppressed by policy must be
 	// recorded as suppressed-by-policy, not swallowed by a cap that happened to be
 	// full at the same moment. Bindings are read fresh per fire (calendar_gate.go).
-	if g := s.calendarVerdict(ctx, source, "job", jobName, scheduleName); g.Suppressed() {
+	if g := s.calendarVerdict(ctx, source, "job", jobName, jobUID, scheduleName); g.Suppressed() {
 		v := g.Verdict
 		s.log.Info("scheduler: skip fire — suppressed by calendar",
 			"job", jobName, "source", source, "schedule", scheduleName, "day", g.Day,
@@ -925,7 +925,7 @@ func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSO
 		return
 	}
 
-	if s.isPaused(ctx, source, "workflow", workflowName) {
+	if s.isPaused(ctx, source, "workflow", workflowName, uid) {
 		s.log.Info("scheduler: skip fire — workflow paused", "workflow", workflowName, "source", source, "schedule", scheduleName)
 		// SL-A — the workflow half. CAL-32 already argued why this cannot reuse
 		// recordSkippedFire: that one is job-shaped throughout.
@@ -940,7 +940,7 @@ func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSO
 	// own schedule entry suppresses the WHOLE run; the step jobs' calendars are
 	// deliberately not consulted (§2.6), because a per-step calendar would mean a
 	// workflow that half-runs, which is worse than either outcome.
-	if g := s.calendarVerdict(ctx, source, "workflow", workflowName, scheduleName); g.Suppressed() {
+	if g := s.calendarVerdict(ctx, source, "workflow", workflowName, uid, scheduleName); g.Suppressed() {
 		v := g.Verdict
 		s.log.Info("scheduler: skip fire — suppressed by calendar",
 			"workflow", workflowName, "source", source, "schedule", scheduleName, "day", g.Day,
@@ -977,8 +977,10 @@ func (s *Scheduler) fireWorkflow(uid, source, workflowName, scheduleName, envJSO
 // isPaused reports whether a paused_jobs row exists for a definition, keyed by
 // (source, owner_kind, name) since migration 170 (Q-G retired the "__wf__" name
 // prefix in favor of an explicit owner_kind column).
-func (s *Scheduler) isPaused(ctx context.Context, source, ownerKind, name string) bool {
-	return IsPaused(ctx, s.db, source, ownerKind, name)
+//
+// By the definition's IDENTITY where the caller has it (2.4.0): see IsPausedUID.
+func (s *Scheduler) isPaused(ctx context.Context, source, ownerKind, name, uid string) bool {
+	return IsPausedUID(ctx, s.db, source, ownerKind, name, uid)
 }
 
 // IsPaused is the DB-level twin of (*Scheduler).isPaused, exported for trigger
@@ -988,10 +990,28 @@ func (s *Scheduler) isPaused(ctx context.Context, source, ownerKind, name string
 // each trigger path, one gate per producer (see the reaction.go note). A new
 // producer that skips this check fires paused jobs.
 func IsPaused(ctx context.Context, database *sql.DB, source, ownerKind, name string) bool {
+	return IsPausedUID(ctx, database, source, ownerKind, name, "")
+}
+
+// IsPausedUID is IsPaused for ONE definition (2.4.0).
+//
+// A pause is written with the identity of the definition it pauses
+// (paused_jobs.owner_uid), and was read by source, kind and NAME. A name can be
+// held by a definition in each agency: pausing one agency's `nightly` paused
+// every agency's, and resuming it resumed none of the others' own pauses
+// correctly either. A caller that has the definition's uid is answered for
+// that definition: the pause that records it, or a pause of the name that
+// records no owner (written before a pause recorded one, when there was one
+// definition of the name). A caller with no uid is answered by the name, as
+// before.
+func IsPausedUID(ctx context.Context, database *sql.DB, source, ownerKind, name, uid string) bool {
 	var n int
-	_ = database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM paused_jobs WHERE source = ? AND owner_kind = ? AND name = ?`,
-		source, ownerKind, name).Scan(&n)
+	_ = database.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM paused_jobs
+		 WHERE owner_kind = ?1
+		   AND ((?2 <> '' AND owner_uid = ?2)
+		        OR ((owner_uid IS NULL OR ?2 = '') AND source = ?3 AND name = ?4))`,
+		ownerKind, uid, source, name).Scan(&n)
 	return n > 0
 }
 
@@ -1444,7 +1464,7 @@ func skipAlreadyRecorded(ctx context.Context, database *sql.DB, p EnqueueParams,
 // table rebuild was needed; queued_reason and suppressed_by_calendar arrive with
 // migration 870.
 func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, uid, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
-	dupe, err := workflowSkipAlreadyRecorded(ctx, database, source, workflowName, scheduleName, rec)
+	dupe, err := workflowSkipAlreadyRecorded(ctx, database, uid, source, workflowName, scheduleName, rec)
 	if err != nil {
 		return false, err
 	}
@@ -1496,19 +1516,29 @@ func recordSkippedWorkflowFire(ctx context.Context, database *sql.DB, uid, sourc
 // dedupeEpisodeReason rules, keyed on the workflow instead of the job. There is
 // still no plain episode mode: workflows have no Forbid path, so no workflow
 // skip ever carries a concurrency key.
-func workflowSkipAlreadyRecorded(ctx context.Context, database *sql.DB, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
+//
+// THIS workflow's rows (2.4.0): a row is stamped with the workflow it is of
+// (workflow_uid), and the question was asked by name and source. Two agencies'
+// workflows of one name, each with a schedule entry of one name: one's recorded
+// skip passed for the other's, whose own was then never written. With the
+// workflow's uid the rows are the ones stamped with it, and the ones of the
+// name that are stamped with none (written before a row was stamped). With no
+// uid, by the name, as before.
+func workflowSkipAlreadyRecorded(ctx context.Context, database *sql.DB, uid, source, workflowName, scheduleName string, rec skipRecord) (bool, error) {
 	if source == "" {
 		source = "git"
 	}
+	const mine = `((?1 <> '' AND workflow_uid = ?1)
+	               OR ((workflow_uid IS NULL OR ?1 = '') AND workflow_name = ?2 AND COALESCE(workflow_source,'git') = ?3))`
 	if rec.Mode == dedupeEpisodeReason {
 		var status, reason string
 		err := database.QueryRowContext(ctx, `
 			SELECT status, COALESCE(queued_reason,'') FROM workflow_runs
-			 WHERE workflow_name = ? AND COALESCE(workflow_source,'git') = ?
-			   AND COALESCE(schedule_name,'') = ?
+			 WHERE `+mine+`
+			   AND COALESCE(schedule_name,'') = ?4
 			   AND suppressed_by_calendar IS NULL
 			 ORDER BY created_at DESC, rowid DESC LIMIT 1`,
-			workflowName, source, scheduleName).Scan(&status, &reason)
+			uid, workflowName, source, scheduleName).Scan(&status, &reason)
 		if err != nil {
 			return false, nil // no prior run (or unreadable): record it
 		}
@@ -1519,11 +1549,11 @@ func workflowSkipAlreadyRecorded(ctx context.Context, database *sql.DB, source, 
 	}
 	rows, err := database.QueryContext(ctx, `
 		SELECT created_at FROM workflow_runs
-		 WHERE workflow_name = ? AND COALESCE(workflow_source,'git') = ?
-		   AND COALESCE(schedule_name,'') = ?
+		 WHERE `+mine+`
+		   AND COALESCE(schedule_name,'') = ?4
 		   AND status = 'skipped' AND suppressed_by_calendar IS NOT NULL
 		 ORDER BY created_at DESC, rowid DESC LIMIT 50`,
-		workflowName, source, scheduleName)
+		uid, workflowName, source, scheduleName)
 	if err != nil {
 		return false, fmt.Errorf("check recorded workflow calendar skips: %w", err)
 	}

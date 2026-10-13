@@ -222,7 +222,7 @@ func (s *Scheduler) promoteOne(ctx context.Context, p pendingRow, now time.Time)
 		origin = OriginPromotionAdHoc
 	}
 	if g := Evaluate(ctx, s.db, s.log, GateRequest{
-		Origin: origin, Source: p.source, OwnerKind: p.kind, Name: p.name,
+		Origin: origin, Source: p.source, OwnerKind: p.kind, Name: p.name, UID: p.ownerUID,
 	}, s.location()); !g.Allowed {
 		// STAMPED, not just logged. A held row's run_at is already in the past, and
 		// /schedules/upcoming admits a past-dated row only when a gate names it —

@@ -316,7 +316,11 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 			j.concurrency_policy AS concurrency_policy, j.tags AS tags,
 			j.synced_at AS synced_at, j.created_at AS created_at, j.last_modified_at AS last_modified_at, j.source_path AS source_path,
 			j.uid AS uid,
-			(SELECT COUNT(*) FROM paused_jobs p WHERE p.source = j.source AND p.owner_kind = 'job' AND p.name = j.name) AS paused_count,
+			-- THIS job's pause (2.4.0): the one that records it, or one of its
+			-- name that records no owner. By the name, pausing one agency's job
+			-- showed every agency's job of that name as paused.
+			(SELECT COUNT(*) FROM paused_jobs p WHERE p.owner_kind = 'job'
+			    AND (p.owner_uid = j.uid OR (p.owner_uid IS NULL AND p.source = j.source AND p.name = j.name))) AS paused_count,
 			lr.status AS last_run_status,
 			COALESCE(lr.scope, '') AS last_run_scope,
 			lr.created_at AS last_run_at,
@@ -714,7 +718,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 		return nil
 	}
 
-	status := s.deriveJobStatus(r, j.source, j.name, j.enabled, j.schedule.String)
+	status := s.deriveJobStatus(r, j.source, j.name, j.uid.String, j.enabled, j.schedule.String)
 	jr := &jobRow{
 		ID:                j.rowid,
 		Name:              j.name,
@@ -1563,7 +1567,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 		origin = scheduler.OriginToken
 	}
 	if g := scheduler.Evaluate(r.Context(), s.db, s.log, scheduler.GateRequest{
-		Origin: origin, Source: jobSrc, OwnerKind: "job", Name: jr.Name,
+		Origin: origin, Source: jobSrc, OwnerKind: "job", Name: jr.Name, UID: jr.UID,
 	}, s.appLocation()); !g.Allowed {
 		// The cap keeps its own status code and message: integrations already
 		// distinguish it, and it is transient where the other two are decisions.
@@ -2023,7 +2027,7 @@ func (s *Server) resumeJob(w http.ResponseWriter, r *http.Request) {
 		Kind: "config", Actor: id.Email, Category: "Jobs", Action: "Resumed", Target: jr.Name,
 	})
 
-	jr.Status = s.deriveJobStatus(r, src, jr.Name, 1, func() string {
+	jr.Status = s.deriveJobStatus(r, src, jr.Name, jr.UID, 1, func() string {
 		if jr.Schedule != nil {
 			return *jr.Schedule
 		}
@@ -2506,7 +2510,8 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT w.rowid, w.name, w.source, COALESCE(w.description,''), w.steps, w.schedule, w.enabled,
 			w.created_at, w.last_modified_at, w.source_path, w.tags, w.uid,
 			COALESCE(w.repo_id, ''), COALESCE(w.owner_agency, 'global'),
-			(SELECT COUNT(*) FROM paused_jobs p WHERE p.source = w.source AND p.owner_kind = 'workflow' AND p.name = w.name) AS paused_count,
+			(SELECT COUNT(*) FROM paused_jobs p WHERE p.owner_kind = 'workflow'
+			    AND (p.owner_uid = w.uid OR (p.owner_uid IS NULL AND p.source = w.source AND p.name = w.name))) AS paused_count,
 			lr.created_at AS last_run_at,
 			lr.status AS last_run_status,
 			ls.created_at AS last_skipped_at,
@@ -2983,7 +2988,7 @@ func (s *Server) triggerWorkflow(eng *workflow.Engine) http.HandlerFunc {
 		// path skips it: promotion re-judges at the instant that matters.
 		if runAt == "" {
 			if g := scheduler.Evaluate(r.Context(), s.db, s.log, scheduler.GateRequest{
-				Origin: scheduler.OriginManual, Source: wr.Source, OwnerKind: "workflow", Name: wr.Name,
+				Origin: scheduler.OriginManual, Source: wr.Source, OwnerKind: "workflow", Name: wr.Name, UID: wr.UID,
 			}, s.appLocation()); !g.Allowed && g.Gate == "calendar" {
 				httpx.Fail(w, http.StatusConflict, "suppressed_by_calendar", g.Reason)
 				return
@@ -3104,7 +3109,7 @@ func (s *Server) fetchWorkflowByID(r *http.Request, wfID string) *workflowRow {
 		Tags:        tagutil.Parse(wf.tagsJSON),
 		Steps:       steps,
 		Status:      "idle",
-		Disabled:    s.isWorkflowDisabled(r, wf.source, wf.name),
+		Disabled:    s.isWorkflowDisabled(r, wf.source, wf.name, wf.uid.String),
 	}
 	// AN-2 — the full annotation on the detail path; see fetchJobDetail's twin
 	// for why this is a follow-up query rather than a join.
@@ -3172,13 +3177,8 @@ func (s *Server) updateWorkflowTags(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, wr)
 }
 
-func (s *Server) isWorkflowDisabled(r *http.Request, source, name string) bool {
-	// Read-status display check keyed by name and source since migration 170 / Q-G
-	// retired the __wf__ prefix.
-	var n int
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM paused_jobs WHERE source = ? AND owner_kind = 'workflow' AND name = ?`, source, name).Scan(&n)
-	return n > 0
+func (s *Server) isWorkflowDisabled(r *http.Request, source, name, uid string) bool {
+	return scheduler.IsPausedUID(r.Context(), s.db, source, "workflow", name, uid)
 }
 
 // workflowLastRun returns the created_at and mapped display status of the most
@@ -4999,15 +4999,12 @@ func (s *Server) listChangeLog(w http.ResponseWriter, r *http.Request) {
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-func (s *Server) deriveJobStatus(r *http.Request, source, jobName string, enabled int, schedule string) string {
+func (s *Server) deriveJobStatus(r *http.Request, source, jobName, jobUID string, enabled int, schedule string) string {
 	if enabled == 0 {
 		return "paused"
 	}
-	// Check paused_jobs table (source-aware columns since migration 170).
-	var n int
-	_ = s.db.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM paused_jobs WHERE source = ? AND owner_kind = 'job' AND name = ?`, source, jobName).Scan(&n)
-	if n > 0 {
+	// THIS job's pause (scheduler.IsPausedUID), as the scheduler reads it.
+	if scheduler.IsPausedUID(r.Context(), s.db, source, "job", jobName, jobUID) {
 		return "paused"
 	}
 	// Check for active runs.

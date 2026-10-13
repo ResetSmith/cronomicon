@@ -329,7 +329,7 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// row is still written (the UNIQUE index above claimed it), so the file does
 	// not silently re-fire later, and the refusal reason says what stopped it.
 	if g := scheduler.Evaluate(ctx, s.db, s.log, scheduler.GateRequest{
-		Origin: scheduler.OriginFileArrival, Source: spec.JobSource, OwnerKind: "job", Name: spec.JobName,
+		Origin: scheduler.OriginFileArrival, Source: spec.JobSource, OwnerKind: "job", Name: spec.JobName, UID: jobUID.String,
 	}, nil); !g.Allowed {
 		s.refuseSighting(ctx, sightingID, g.Reason)
 		return false, nil

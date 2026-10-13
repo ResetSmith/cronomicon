@@ -172,6 +172,11 @@ type GateRequest struct {
 	Source    string // git | cronomicon
 	OwnerKind string // job | workflow
 	Name      string
+	// UID is the definition's identity, where the producer has it (2.4.0). The
+	// catalog state and the pause are then THAT definition's: a name can be
+	// held by a definition in each agency, and by the name one's pause, or its
+	// being switched off, was the other's too.
+	UID string
 }
 
 // GateOutcome is what the gates decided.
@@ -215,11 +220,11 @@ func Evaluate(ctx context.Context, database *sql.DB, log logger, req GateRequest
 	// Catalog state first: "this definition must not run at all" outranks "not
 	// right now", and reporting the weaker reason for the stronger condition
 	// sends an operator to resume a job that would still not have run.
-	if pol.enabledCheck && definitionDisabled(ctx, database, kind, req.Source, req.Name) {
+	if pol.enabledCheck && definitionDisabled(ctx, database, kind, req.Source, req.Name, req.UID) {
 		return GateOutcome{Gate: "disabled", Reason: reasonDefinitionDisabled}
 	}
 
-	if pol.pause && IsPaused(ctx, database, req.Source, kind, req.Name) {
+	if pol.pause && IsPausedUID(ctx, database, req.Source, kind, req.Name, req.UID) {
 		return GateOutcome{Gate: "pause", Reason: reasonJobPaused}
 	}
 
@@ -283,15 +288,19 @@ const reasonDefinitionDisabled = "Skipped: the definition is disabled"
 // its own handling (FX-A3 holds the row and names the bin on expiry), and
 // collapsing it into "disabled" would report the wrong remedy — restore, not
 // re-enable.
-func definitionDisabled(ctx context.Context, database *sql.DB, kind, source, name string) bool {
+func definitionDisabled(ctx context.Context, database *sql.DB, kind, source, name, uid string) bool {
 	table := "jobs"
 	if kind == "workflow" {
 		table = "workflows"
 	}
 	var enabled int
+	q, args := "SELECT enabled FROM "+table+" WHERE source = ? AND name = ?", []any{source, name}
+	if uid != "" {
+		// The definition itself, where the producer says which.
+		q, args = "SELECT enabled FROM "+table+" WHERE uid = ?", []any{uid}
+	}
 	//nolint:gosec // table is a package-local constant chosen by the kind switch
-	err := database.QueryRowContext(ctx,
-		"SELECT enabled FROM "+table+" WHERE source = ? AND name = ?", source, name).Scan(&enabled)
+	err := database.QueryRowContext(ctx, q, args...).Scan(&enabled)
 	if err != nil {
 		return false // absent, or unreadable — not this gate's question
 	}

@@ -489,12 +489,12 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 		return "expired", fmt.Sprintf("upstream finished %s ago, past the %s catch-up grace",
 			now.Sub(ev.completedAt).Truncate(time.Minute), reactionMissGrace)
 	}
-	if enabled, known := s.definitionEnabled(ctx, r.ownerSource, r.ownerKind, r.ownerName); known && !enabled {
+	if enabled, known := s.definitionEnabled(ctx, r.ownerSource, r.ownerKind, r.ownerName, r.ownerUID); known && !enabled {
 		// jobs.enabled / workflows.enabled is a separate lever from paused_jobs,
 		// and a disabled definition must no more react than a paused one.
 		return "suppressed_disabled", "the reacting definition is disabled"
 	}
-	if s.isPaused(ctx, r.ownerSource, r.ownerKind, r.ownerName) {
+	if s.isPaused(ctx, r.ownerSource, r.ownerKind, r.ownerName, r.ownerUID) {
 		// promoteOne does NOT check this, so the reactor must. A paused
 		// definition not reacting is not arguable.
 		return "suppressed_paused", "the reacting definition is paused"
@@ -742,13 +742,20 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 // when the definition does not exist, which the caller treats as "not a reason
 // to suppress" — a missing definition fails later, at promotion, with a message
 // about the definition rather than about a flag.
-func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name string) (enabled, known bool) {
-	q := `SELECT enabled FROM jobs WHERE source = ? AND name = ? AND deleted_at IS NULL`
+func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name, uid string) (enabled, known bool) {
+	table := "jobs"
 	if kind == "workflow" {
-		q = `SELECT enabled FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL`
+		table = "workflows"
+	}
+	q, args := `SELECT enabled FROM `+table+` WHERE source = ? AND name = ? AND deleted_at IS NULL`, []any{source, name}
+	if uid != "" {
+		// The reacting definition itself (2.4.0), and not whichever definition
+		// of its name was read first.
+		q, args = `SELECT enabled FROM `+table+` WHERE uid = ? AND deleted_at IS NULL`, []any{uid}
 	}
 	var n int
-	if err := s.db.QueryRowContext(ctx, q, source, name).Scan(&n); err != nil {
+	//nolint:gosec // table is one of two literals
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 		return false, false
 	}
 	return n == 1, true
