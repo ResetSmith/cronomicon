@@ -3864,12 +3864,15 @@ func (s *Service) ListSyncEvents(ctx context.Context, page, pageSize int, orderB
 	offset := (page - 1) * pageSize
 
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_sync_events`).Scan(&total); err != nil {
+	// This repository's syncs (2.4.0). The list had no repository in it: with a
+	// second repository it showed both, and the publish form, which takes its
+	// base commit from the first row, was handed the other repository's.
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_sync_events WHERE repo_id = ?`, s.repo()).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, triggered_by, sha, status, jobs_synced, scripts_synced, schedules_synced, wfs_synced, scopes_synced, error_message, started_at, finished_at
-		FROM git_sync_events`+orderBy+` LIMIT ? OFFSET ?`, pageSize, offset)
+		FROM git_sync_events WHERE repo_id = ?`+orderBy+` LIMIT ? OFFSET ?`, s.repo(), pageSize, offset)
 	if err != nil {
 		return nil, 0, err
 	}

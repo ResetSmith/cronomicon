@@ -230,3 +230,53 @@ func PutAgencyRepo(ctx context.Context, database *sql.DB, appCfg *config.Config,
 	repo, err = GetRepo(ctx, database, appCfg, repoID)
 	return repo, created, err
 }
+
+// RepoProblem is one thing a repository's last sync had to say about a file
+// or about the repository (GR-30, git_sync_problems).
+type RepoProblem struct {
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Severity  string `json:"severity"`
+	Message   string `json:"message"`
+	FirstSeen string `json:"firstSeen"`
+	LastSeen  string `json:"lastSeen"`
+}
+
+// ListRepoProblems reads a repository's problems as of its last sync: errors
+// first, then by file.
+func ListRepoProblems(ctx context.Context, database *sql.DB, repoID string) ([]RepoProblem, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT path, kind, severity, message, first_seen, last_seen
+		  FROM git_sync_problems WHERE repo_id = ?
+		 ORDER BY (severity = 'error') DESC, path, kind, message`, repoID)
+	if err != nil {
+		return nil, fmt.Errorf("read the repository's problems: %w", err)
+	}
+	defer rows.Close()
+	out := []RepoProblem{}
+	for rows.Next() {
+		var p RepoProblem
+		if err := rows.Scan(&p.Path, &p.Kind, &p.Severity, &p.Message, &p.FirstSeen, &p.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// RepoAgency is the agency a repository belongs to. Global's is Global's
+// whether or not its row is there; any other without a row is ErrRepoNotFound.
+func RepoAgency(ctx context.Context, database *sql.DB, repoID string) (string, error) {
+	if repoID == "" || repoID == repoid.Global {
+		return agencyid.Global, nil
+	}
+	var agency string
+	err := database.QueryRowContext(ctx, `SELECT agency_id FROM git_repos WHERE id = ?`, repoID).Scan(&agency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrRepoNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("read the repository's agency: %w", err)
+	}
+	return agency, nil
+}

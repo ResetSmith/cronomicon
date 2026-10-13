@@ -101,7 +101,7 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/webhooks/gitlab":                                  {clsWebhook, "X-Gitlab-Token shared secret; triggers a sync, takes no input"},
 	"POST /api/v1/webhooks/gitlab/{repoId}":                         {clsWebhook, "the named repository's X-Gitlab-Token secret; triggers that repository's sync, takes no input (GR-20)"},
 	"POST /api/v1/schedules/publish":                                {clsObject, "authorizePublish — the scope on both sides of the write (GC-9)"},
-	"POST /api/v1/git/sync":                                         {clsGlobal, "one repository for the installation"},
+	"POST /api/v1/git/sync":                                         {clsObject, "configurableRepo — configureApp on the agency of the repository ?repo= names; Global's without it, a global administrator's (GR-9)"},
 	"POST /api/v1/scopes/resync":                                    {clsGlobal, "one repository for the installation"},
 	"PUT /api/v1/agencies/{agencyId}/git-repo":                      {clsObject, "requireRepoAgency — configureApp on the repository's agency; Global's is a global administrator's (GR-9)"},
 	"DELETE /api/v1/agencies/{agencyId}/git-repo":                   {clsObject, "requireRepoAgency, as the PUT (GR-9, GR-28)"},

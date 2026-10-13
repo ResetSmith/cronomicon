@@ -84,17 +84,36 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 	)
 
 	// ── Git sync status (operator GET — no CSRF for reads) ─────────────────
+	//
+	// Each of the three takes ?repo= (2.4.0, GR-9, GR-26); without it, it means
+	// Global's repository, as it always did. The status and the history of a
+	// repository are read by its agency's people and by those who reach every
+	// agency, Global's by every session (readableRepo). A sync is started by
+	// who may configure the repository: its agency's administrator, or for
+	// Global's a global administrator, as before (configurableRepo).
 	mux.Handle("GET /api/v1/git/sync",
-		s.auth.RequireSession(http.HandlerFunc(h.GetSyncStatus)))
+		s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if repo, ok := s.readableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.GetSyncStatusOf(repo, w, r)
+			}
+		})))
 
 	// ── Git sync trigger (ConfigureApp, PP-B1) ─────────────────────────────
 	mux.Handle("POST /api/v1/git/sync",
-		s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(h.PostSync)),
+		s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if repo, ok := s.configurableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.PostSyncOf(repo, w, r)
+			}
+		})),
 	)
 
 	// ── Git sync history (operator GET) ───────────────────────────────────
 	mux.Handle("GET /api/v1/git/history",
-		s.auth.RequireSession(http.HandlerFunc(h.ListGitHistory)))
+		s.auth.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if repo, ok := s.readableRepo(w, r, r.URL.Query().Get("repo")); ok {
+				h.ListGitHistoryOf(repo, w, r)
+			}
+		})))
 
 	// ── Scope resync (ConfigureApp, PP-B1) ─────────────────────────────────
 	mux.Handle("POST /api/v1/scopes/resync",

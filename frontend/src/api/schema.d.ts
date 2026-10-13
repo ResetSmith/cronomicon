@@ -4674,13 +4674,58 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * A repository's last sync
+         * @description The commit, time and status of the repository's last sync. Global's is
+         *     read by every session. An agency's (v2.4.0, `?repo=`) is read by that
+         *     agency's people, whatever their role, and by those whose grant reaches
+         *     every agency (GR-26); for anyone else, and for a repository that is not
+         *     there, 404.
+         */
+        get: operations["getGitSyncStatus"];
         put?: never;
         /**
          * Trigger an immediate Git sync (operator)
-         * @description Same pipeline as the GitLab webhook and the sync at start-up (§3.1). Nothing polls the repository on a timer: it is synced when the server starts, when its connection is saved, on a webhook delivery, and by this route. A sync asked for while one is running is not dropped; one more runs after it. CSRF required.
+         * @description Same pipeline as the GitLab webhook and the sync at start-up (§3.1).
+         *     Nothing polls a repository on a timer: it is synced when the server
+         *     starts, when its connection is saved, on a webhook delivery, when a
+         *     publish finds commits that were not synced, and by this route. A sync
+         *     asked for while one is running is not dropped; one more runs after it.
+         *     CSRF required.
+         *
+         *     **Who (v2.4.0, GR-9).** `configureApp` on the agency of the repository
+         *     `?repo=` names: an agency's administrator syncs their agency's
+         *     repository. Global's, which is what the route means without `repo`,
+         *     needs a global administrator, as before. Everybody else is answered 403
+         *     whether or not the repository is there; a global administrator is
+         *     answered 404 for one that is not.
          */
         post: operations["triggerGitSync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git-repos/{repoId}/problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What a repository's last sync had to say about its files (v2.4.0)
+         * @description The repository's sync problems as of its last sync (GR-30): each file
+         *     error and each warning, errors first. Replaced by every sync of the
+         *     repository. The inbox carries one notice for a repository that has
+         *     errors; this is the list behind it. Read as the repository's history is
+         *     (GR-26): Global's by every session; an agency's by its people and by
+         *     those who reach every agency; 404 otherwise.
+         */
+        get: operations["listGitRepoProblems"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4694,7 +4739,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Git sync history */
+        /**
+         * List Git sync history
+         * @description One repository's syncs: Global's, or (v2.4.0) the one `?repo=` names.
+         *     Until v2.4.0 the list had no repository in it. Read as
+         *     `GET /git/sync` is.
+         */
         get: operations["listGitHistory"];
         put?: never;
         post?: never;
@@ -17205,9 +17255,47 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    getGitSyncStatus: {
+        parameters: {
+            query?: {
+                /**
+                 * @description v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+                 *     `global`: Global's repository, as this route always meant.
+                 */
+                repo?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The last sync. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        lastSHA?: string;
+                        lastSyncedAt?: string;
+                        lastStatus?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     triggerGitSync: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+                 *     `global`: Global's repository, as this route always meant.
+                 */
+                repo?: string;
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
@@ -17231,6 +17319,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             /** @description GitLab unreachable; serving stale clone (§11.4). */
             503: {
                 headers: {
@@ -17242,9 +17331,51 @@ export interface operations {
             };
         };
     };
+    listGitRepoProblems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The repository's id; `global` for Global's. */
+                repoId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The problems. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        repoId: string;
+                        items: {
+                            /** @description The file */
+                            path: string;
+                            kind: string;
+                            /** @enum {string} */
+                            severity: "error" | "warning";
+                            message: string;
+                            firstSeen?: string;
+                            lastSeen?: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listGitHistory: {
         parameters: {
             query?: {
+                /**
+                 * @description v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+                 *     `global`: Global's repository, as this route always meant.
+                 */
+                repo?: string;
                 /** @description Sort column (TS-20; see /runs sort). Omitted ⇒ newest first. */
                 sort?: "timestamp" | "action" | "status";
                 /** @description Direction for `sort` (TS-20): asc or desc, default asc. Ignored when no sort key is sent. Status-keyed sorts order by severity rank (worst first ascending), not alphabetically; empty cells sort last in both directions. Any other value is a 400. */

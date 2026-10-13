@@ -9,6 +9,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
 
@@ -28,6 +29,7 @@ func (s *Server) mountGitRepos(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleGetAgencyGitRepo)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handlePutAgencyGitRepo)))
 	mux.Handle("DELETE /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleDeleteAgencyGitRepo)))
+	mux.Handle("GET /api/v1/git-repos/{repoId}/problems", s.auth.RequireSession(http.HandlerFunc(s.handleListRepoProblems)))
 }
 
 // requireRepoAgency is GR-9's gate: configureApp on the agency whose
@@ -186,4 +188,76 @@ func (s *Server) handleDeleteAgencyGitRepo(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"repoId": repoID, "removed": removed})
+}
+
+// readableRepo resolves the repository a READ names (GR-26; "" is Global's)
+// and asks whether the caller may read it: Global's is every session's, an
+// agency's is its own people's and those who reach every agency
+// (Identity.ReadsAgency). A repository that is not there and one the caller
+// may not read are one answer, 404, as every read gate answers.
+func (s *Server) readableRepo(w http.ResponseWriter, r *http.Request, repoID string) (string, bool) {
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return "", false
+	}
+	agency, err := settings.RepoAgency(r.Context(), s.db, repoID)
+	if err != nil && !errors.Is(err, settings.ErrRepoNotFound) {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return "", false
+	}
+	if err != nil || !id.ReadsAgency(agency) {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "no such repository")
+		return "", false
+	}
+	return repoID, true
+}
+
+// configurableRepo resolves the repository a WRITE names ("" is Global's) and
+// asks GR-9's question of its agency. Everybody who may not is answered 403,
+// whether or not the repository is there; a global administrator is told when
+// it is not (404).
+func (s *Server) configurableRepo(w http.ResponseWriter, r *http.Request, repoID string) (string, bool) {
+	if repoID == "" {
+		repoID = repoid.Global
+	}
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return "", false
+	}
+	agency, err := settings.RepoAgency(r.Context(), s.db, repoID)
+	if err != nil && !errors.Is(err, settings.ErrRepoNotFound) {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return "", false
+	}
+	if err != nil {
+		if id.GlobalAdmin(auth.PermConfigureApp) {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "no such repository")
+			return "", false
+		}
+		agency = "(unknown)"
+	}
+	if _, ok := s.requireRepoAgency(w, r, agency); !ok {
+		return "", false
+	}
+	return repoID, true
+}
+
+// handleListRepoProblems lists what a repository's last sync had to say about
+// its files (GR-30). Until 2.4.0 the notice was the only place they showed.
+func (s *Server) handleListRepoProblems(w http.ResponseWriter, r *http.Request) {
+	repoID, ok := s.readableRepo(w, r, r.PathValue("repoId"))
+	if !ok {
+		return
+	}
+	items, err := settings.ListRepoProblems(r.Context(), s.db, repoID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"repoId": repoID, "items": items})
 }

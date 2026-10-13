@@ -1,11 +1,55 @@
 package api_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// repoGateServer is gateServer for the tests that connect a repository. A
+// connection that is accepted is synced at once, in the background, so:
+//
+//   - the clones go under the test's own directory, not the machine's;
+//   - the hosts allowed for an agency's repository are git.example.com, which
+//     the tests name and never reach, and 127.0.0.1:1, where the connections
+//     they make point: the outbound guard refuses loopback at the dial, so the
+//     sync fails at once and nothing leaves the machine.
+func repoGateServer(t *testing.T) (http.Handler, *sql.DB) {
+	t.Helper()
+	t.Setenv("CRONOMICON_GIT_CACHE_DIR", filepath.Join(t.TempDir(), "git-cache", "job-definitions"))
+	h, pool := gateServer(t)
+	mustExec(t, pool)(`INSERT INTO settings (key, value, last_modified_by, last_modified_at)
+	                   VALUES ('gitAllowedHosts', '["git.example.com","127.0.0.1:1"]', 't', 't')`)
+	return h, pool
+}
+
+// syncsSettled waits until the background syncs have stopped writing: the
+// count of sync events has not moved for a while.
+func syncsSettled(t *testing.T, pool *sql.DB) {
+	t.Helper()
+	count := func() int {
+		var n int
+		if err := pool.QueryRow(`SELECT COUNT(*) FROM git_sync_events`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	last, since := count(), time.Now()
+	for time.Since(since) < 500*time.Millisecond {
+		if time.Now().After(deadline) {
+			t.Fatalf("the background syncs did not settle")
+		}
+		time.Sleep(50 * time.Millisecond)
+		if n := count(); n != last {
+			last, since = n, time.Now()
+		}
+	}
+}
 
 // A repository per agency (2.4.0 Phase R6; GR-9, GR-10).
 //
@@ -14,9 +58,7 @@ import (
 // has listed. They cannot do it for another agency or for Global, and are told
 // nothing about either. A global administrator can for any.
 func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
-	h, pool := gateServer(t)
-	exec := mustExec(t, pool)
-	exec(`INSERT INTO settings (key, value, last_modified_by, last_modified_at) VALUES ('gitAllowedHosts', '["git.example.com"]', 't', 't')`)
+	h, pool := repoGateServer(t)
 
 	type repo struct {
 		ID, AgencyID, AgencyName, RepoUrl, Pat, WriteBranch, BotName string
@@ -58,7 +100,7 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 		}
 		return n
 	}
-	const conn = `{"repoUrl":"https://git.example.com/fin/definitions.git","pat":"glpat-fin-secret-1234","writeBranch":"main","webhookEnabled":true}`
+	const conn = `{"repoUrl":"http://127.0.0.1:1/fin/definitions.git","pat":"glpat-fin-secret-1234","writeBranch":"main","webhookEnabled":true}`
 
 	// Nothing is connected yet: an administrator of the agency is told so, and
 	// nobody else is told anything.
@@ -96,6 +138,7 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 		`{"repoUrl":"file:///var/lib/cronomicon/git-cache/job-definitions"}`,
 		`{"repoUrl":"/var/lib/cronomicon/git-cache/job-definitions"}`,
 		`{"repoUrl":"https://tok@git.example.com/fin.git"}`,
+		`{"repoUrl":"http://127.0.0.1:2/fin.git"}`,
 	} {
 		code, _, body := put(gFinAdmin, "ag:FIN", bad)
 		if code != http.StatusUnprocessableEntity || !strings.Contains(body, "repo_url_not_allowed") {
@@ -115,7 +158,7 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 		t.Fatalf("FIN's administrator connecting FIN's repository = %d %s, want 201", code, body)
 	}
 	if made.AgencyID != "ag:FIN" || made.AgencyName != "FIN" || !strings.HasPrefix(made.ID, "repo-") ||
-		made.RepoUrl != "https://git.example.com/fin/definitions.git" || made.BotName != "cronomicon-bot" {
+		made.RepoUrl != "http://127.0.0.1:1/fin/definitions.git" || made.BotName != "cronomicon-bot" {
 		t.Errorf("the connected repository reads %+v", made)
 	}
 	if !made.PatSet || strings.Contains(body, "glpat-fin-secret") {
@@ -165,9 +208,9 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 
 	// An edit is an edit of the same repository (200), and a mask sent back
 	// keeps the token.
-	edit := `{"repoUrl":"https://git.example.com/fin/moved.git","pat":"` + made.Pat + `","writeBranch":"release","botName":"Finance Bot","botEmail":"fin@example.com"}`
+	edit := `{"repoUrl":"http://127.0.0.1:1/fin/moved.git","pat":"` + made.Pat + `","writeBranch":"release","botName":"Finance Bot","botEmail":"fin@example.com"}`
 	code, edited, body := put(gFinAdmin, "ag:FIN", edit)
-	if code != http.StatusOK || edited.ID != made.ID || edited.RepoUrl != "https://git.example.com/fin/moved.git" ||
+	if code != http.StatusOK || edited.ID != made.ID || edited.RepoUrl != "http://127.0.0.1:1/fin/moved.git" ||
 		edited.WriteBranch != "release" || edited.BotName != "Finance Bot" {
 		t.Fatalf("the edit = %d %s", code, body)
 	}
@@ -183,16 +226,17 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 	if code, _, _ := put(gFinAdmin, "ag:FIN", `{"repoUrl":"https://evil.example.net/fin.git"}`); code != http.StatusUnprocessableEntity {
 		t.Errorf("an edit to an unlisted host = %d, want 422", code)
 	}
-	if _, got := get(gFinAdmin, "ag:FIN"); got.RepoUrl != "https://git.example.com/fin/moved.git" {
+	if _, got := get(gFinAdmin, "ag:FIN"); got.RepoUrl != "http://127.0.0.1:1/fin/moved.git" {
 		t.Errorf("after a refused edit the URL is %q", got.RepoUrl)
 	}
 
 	// A global administrator may connect any agency's, and writes Global's
 	// through the same route with any URL (Global's is exempt from the list).
-	if code, tax, body := put(gRoot, "ag:TAX", `{"repoUrl":"https://git.example.com/tax.git"}`); code != http.StatusCreated || tax.AgencyID != "ag:TAX" {
+	if code, tax, body := put(gRoot, "ag:TAX", `{"repoUrl":"http://127.0.0.1:1/tax.git"}`); code != http.StatusCreated || tax.AgencyID != "ag:TAX" {
 		t.Errorf("a global administrator connecting TAX's = %d %s", code, body)
 	}
-	if code, g, body := put(gRoot, "global", `{"repoUrl":"https://anywhere.example.org/global.git","writeBranch":"main"}`); code != http.StatusOK || g.ID != "global" {
+	// (A port that is not on the list: the list does not govern Global's.)
+	if code, g, body := put(gRoot, "global", `{"repoUrl":"http://127.0.0.1:2/global.git","writeBranch":"main"}`); code != http.StatusOK || g.ID != "global" {
 		t.Errorf("a global administrator writing Global's through this route = %d %s", code, body)
 	}
 	if code, _, _ := put(gRoot, "ag:NOPE", conn); code != http.StatusNotFound {
@@ -205,10 +249,9 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 // to runners with work queued. An agency whose repository is gone can connect
 // another.
 func TestAnAgencysAdministratorDisconnectsTheirAgencysRepository(t *testing.T) {
-	h, pool := gateServer(t)
+	h, pool := repoGateServer(t)
 	exec := mustExec(t, pool)
-	exec(`INSERT INTO settings (key, value, last_modified_by, last_modified_at) VALUES ('gitAllowedHosts', '["git.example.com"]', 't', 't')`)
-	const conn = `{"repoUrl":"https://git.example.com/fin/definitions.git"}`
+	const conn = `{"repoUrl":"http://127.0.0.1:1/fin/definitions.git"}`
 	rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/git-repo", gFinAdmin, conn)
 	var made struct{ ID string }
 	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &made) != nil || made.ID == "" {

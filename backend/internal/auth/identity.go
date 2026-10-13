@@ -282,6 +282,28 @@ func (i Identity) CanAgency(perm, agencyID string) bool {
 	return false
 }
 
+// ReadsAgency reports whether the actor may READ what belongs to an agency
+// (2.4.0, GR-26): the rows an agency's repository supplies, its sync history
+// and problems. Global's are every session's. An agency's are its own people's:
+// anyone who holds a grant on that agency, whatever the role, and anyone whose
+// grant reaches every agency (a global administrator, and a viewer of
+// everything, who reads every scope already). An empty agency id is no agency,
+// and nobody reads it.
+func (i Identity) ReadsAgency(agencyID string) bool {
+	if agencyID == agencyid.Global {
+		return true
+	}
+	if agencyID == "" {
+		return false
+	}
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() || g.Agency == agencyID {
+			return true
+		}
+	}
+	return false
+}
+
 // AgenciesFor lists the agency IDs this actor holds perm on through a DEPARTMENTAL
 // grant, sorted and de-duplicated. Unrestricted grants contribute nothing — they
 // reach every agency without naming one, so there is no id to return, and a caller

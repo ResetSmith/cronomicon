@@ -7419,17 +7419,62 @@ paths:
 
   # ── Git ────────────────────────────────────────────────────────────────────
   /git/sync:
+    get:
+      tags: [Git]
+      operationId: getGitSyncStatus
+      summary: A repository's last sync
+      description: |
+        The commit, time and status of the repository's last sync. Global's is
+        read by every session. An agency's (v2.4.0, `?repo=`) is read by that
+        agency's people, whatever their role, and by those whose grant reaches
+        every agency (GR-26); for anyone else, and for a repository that is not
+        there, 404.
+      parameters:
+        - name: repo
+          in: query
+          description: |
+            v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+            `global`: Global's repository, as this route always meant.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The last sync.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lastSHA: { type: string }
+                  lastSyncedAt: { type: string }
+                  lastStatus: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [Git]
       operationId: triggerGitSync
       summary: Trigger an immediate Git sync (operator)
-      description: >-
+      description: |
         Same pipeline as the GitLab webhook and the sync at start-up (§3.1).
-        Nothing polls the repository on a timer: it is synced when the server
-        starts, when its connection is saved, on a webhook delivery, and by
-        this route. A sync asked for while one is running is not dropped; one
-        more runs after it. CSRF required.
-      parameters: [{ $ref: '#/components/parameters/csrf' }]
+        Nothing polls a repository on a timer: it is synced when the server
+        starts, when its connection is saved, on a webhook delivery, when a
+        publish finds commits that were not synced, and by this route. A sync
+        asked for while one is running is not dropped; one more runs after it.
+        CSRF required.
+
+        **Who (v2.4.0, GR-9).** `configureApp` on the agency of the repository
+        `?repo=` names: an agency's administrator syncs their agency's
+        repository. Global's, which is what the route means without `repo`,
+        needs a global administrator, as before. Everybody else is answered 403
+        whether or not the repository is there; a global administrator is
+        answered 404 for one that is not.
+      parameters:
+        - { $ref: '#/components/parameters/csrf' }
+        - name: repo
+          in: query
+          description: |
+            v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+            `global`: Global's repository, as this route always meant.
+          schema: { type: string }
       responses:
         '202':
           description: Sync started.
@@ -7441,18 +7486,72 @@ paths:
                   startedAt: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '503':
           description: GitLab unreachable; serving stale clone (§11.4).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /git-repos/{repoId}/problems:
+    get:
+      tags: [Git]
+      operationId: listGitRepoProblems
+      summary: What a repository's last sync had to say about its files (v2.4.0)
+      description: |
+        The repository's sync problems as of its last sync (GR-30): each file
+        error and each warning, errors first. Replaced by every sync of the
+        repository. The inbox carries one notice for a repository that has
+        errors; this is the list behind it. Read as the repository's history is
+        (GR-26): Global's by every session; an agency's by its people and by
+        those who reach every agency; 404 otherwise.
+      parameters:
+        - name: repoId
+          in: path
+          required: true
+          schema: { type: string }
+          description: The repository's id; `global` for Global's.
+      responses:
+        '200':
+          description: The problems.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repoId, items]
+                properties:
+                  repoId: { type: string }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, kind, severity, message]
+                      properties:
+                        path: { type: string, description: The file, relative to the repository's root; empty for a problem of the repository itself. }
+                        kind: { type: string }
+                        severity: { type: string, enum: [error, warning] }
+                        message: { type: string }
+                        firstSeen: { type: string }
+                        lastSeen: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /git/history:
     get:
       tags: [Git]
       operationId: listGitHistory
       summary: List Git sync history
+      description: |
+        One repository's syncs: Global's, or (v2.4.0) the one `?repo=` names.
+        Until v2.4.0 the list had no repository in it. Read as
+        `GET /git/sync` is.
       parameters:
+        - name: repo
+          in: query
+          description: |
+            v2.4.0 — the repository's id (see `GET /git-repos`). Omitted, or
+            `global`: Global's repository, as this route always meant.
+          schema: { type: string }
         - name: sort
           in: query
           description: Sort column (TS-20; see /runs sort). Omitted ⇒ newest first.
