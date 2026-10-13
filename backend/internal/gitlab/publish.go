@@ -172,6 +172,12 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 		return nil, &ValidationFailedError{Errors: valErrs, Message: strings.Join(msgs, "; ")}
 	}
 
+	// GR-10, as a sync asks it: an agency's repository on a host that is no
+	// longer allowed is not pushed to.
+	if err := s.checkURL(ctx); err != nil {
+		return nil, err
+	}
+
 	// 2. Open the clone (must exist — sync must have run first or clone is empty).
 	repo, err := gogit.PlainOpen(s.cloneDir)
 	if err != nil {

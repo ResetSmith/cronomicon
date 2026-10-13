@@ -12106,6 +12106,28 @@ components:
                   description: >-
                     Makes the timeout ABSOLUTE — measured from login, so activity does not extend it
                     and everyone re-authenticates every N minutes. Off, the timeout is the idle cap.
+            gitAllowedHosts:
+              type: array
+              items: { type: string }
+              description: |
+                v2.4.0 (GR-10) — the hosts an AGENCY's repository may be on. An
+                agency's administrator connects the agency's repository, which is
+                a URL this server then fetches; that URL must be `https://` (or
+                `http://`), carry no user or password, and name a host on this
+                list. Each entry is a host name, which allows that host on any
+                port, or `host:port`, which allows that port alone (an IPv6
+                address in brackets when it carries a port). No scheme, path, user
+                or wildcard: such an entry is rejected with 422. Compared without
+                regard to case; stored lower-cased, without duplicates, sorted.
+
+                An EMPTY list allows no host: no agency's repository can be
+                connected, and none is synced or published to, until a global
+                administrator names one. The list is asked again at every sync and
+                publish, so a host taken off it stops being fetched. Global's
+                repository is exempt.
+
+                Always present when read. On a write, OMITTING the field leaves
+                the list as it is; an empty list empties it.
 
         - $ref: '#/components/schemas/AuditFields'
 

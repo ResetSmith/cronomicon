@@ -41,6 +41,11 @@ type GlobalSettings struct {
 	MaxConcurrent     int            `json:"maxConcurrent"`
 	JobTimeoutSeconds int            `json:"jobTimeoutSeconds"`
 	SessionPolicy     *SessionPolicy `json:"sessionPolicy,omitempty"`
+	// GitAllowedHosts is the hosts an agency's repository may be on (GR-10;
+	// git_allowed_hosts.go). Always present when read. On a write, ABSENT means
+	// "leave it as it is": the form that writes the other fields was built
+	// before this one existed, and a write from it must not empty the list.
+	GitAllowedHosts *[]string `json:"gitAllowedHosts,omitempty"`
 }
 
 // SessionPolicy is a nested object within GeneralSettings.
@@ -85,6 +90,14 @@ func UpdateGlobalSettings(ctx context.Context, database *sql.DB, inp GlobalSetti
 		}
 	}
 
+	var allowedHosts []string
+	if inp.GitAllowedHosts != nil {
+		var err error
+		if allowedHosts, err = normalizeGitAllowedHosts(*inp.GitAllowedHosts); err != nil {
+			return nil, err
+		}
+	}
+
 	kvs := flattenGlobalSettings(inp)
 	for k, v := range kvs {
 		_, err := database.ExecContext(ctx,
@@ -96,6 +109,11 @@ func UpdateGlobalSettings(ctx context.Context, database *sql.DB, inp GlobalSetti
 			k, v, actor, now)
 		if err != nil {
 			return nil, fmt.Errorf("upsert setting %q: %w", k, err)
+		}
+	}
+	if inp.GitAllowedHosts != nil {
+		if err := writeGitAllowedHosts(ctx, database, allowedHosts, actor, now); err != nil {
+			return nil, err
 		}
 	}
 	audit(ctx, database, actor, "Settings", "updated", "general", "")
@@ -129,6 +147,8 @@ func assembleGlobalSettings(kv map[string]string) *GlobalSettings {
 			s.SessionPolicy = &sp
 		}
 	}
+	hosts := parseGitAllowedHosts(kv[gitAllowedHostsKey])
+	s.GitAllowedHosts = &hosts
 	return s
 }
 

@@ -1285,6 +1285,9 @@ func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repos
 	if s.repoURL == "" {
 		return nil, fmt.Errorf("CRONOMICON_GITLAB_BASE_URL not configured")
 	}
+	if err := s.checkURL(ctx); err != nil {
+		return nil, err
+	}
 	s.installGuardedGitTransport() // SU-7/SU-8: guard go-git http(s) egress (once)
 
 	auth := s.gitAuth()
@@ -1410,6 +1413,24 @@ func (s *Service) transfer(ctx context.Context, do func(context.Context) error) 
 		return fmt.Errorf("given up after %s, the bound on one transfer (CRONOMICON_GIT_FETCH_TIMEOUT)", limit)
 	}
 	return err
+}
+
+// testLocalRemotes is set by this package's tests alone (main_test.go). An
+// agency's repository is reached over http or https, on a host a global
+// administrator has listed (GR-10); a test's second repository is a directory
+// on the test's own disk. Nothing outside this package's tests can set it.
+var testLocalRemotes bool
+
+// checkURL is GR-10, asked before every transfer of a sync and of a publish:
+// an agency's repository's URL is http or https, on an allowed host
+// (settings.CheckRepoURL). Global's repository is exempt. Asked here as well
+// as when the connection is written, so that a host taken off the list stops
+// being fetched and a row written around the API is held to the list too.
+func (s *Service) checkURL(ctx context.Context) error {
+	if testLocalRemotes && !strings.Contains(s.repoURL, "://") {
+		return nil
+	}
+	return settings.CheckRepoURL(ctx, s.db, s.repo(), s.repoURL)
 }
 
 // pointOriginAt makes the clone's `origin` name the configured URL and fetch
