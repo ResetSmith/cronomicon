@@ -280,3 +280,48 @@ func RepoAgency(ctx context.Context, database *sql.DB, repoID string) (string, e
 	}
 	return agency, nil
 }
+
+// RepoTest is what a test of a connection reaches: the URL, the token and the
+// branch, each from the request when the request gives it and from the stored
+// connection otherwise.
+type RepoTest struct {
+	URL, Token, Branch string
+}
+
+// ResolveRepoTest works out what "test this connection" is to reach. A URL,
+// token or branch the request leaves out (for the token: or sends as the mask
+// a read returned) is the stored one, when a repository is connected. The URL
+// of an agency's repository is held to GR-10 before anything is reached.
+func ResolveRepoTest(ctx context.Context, database *sql.DB, appCfg *config.Config, repoID string, connected bool, inp GitlabConfig) (RepoTest, error) {
+	t := RepoTest{URL: strings.TrimSpace(inp.RepoUrl), Branch: strings.TrimSpace(inp.WriteBranch)}
+	if inp.Pat != "" && !isMaskedSecret(inp.Pat) {
+		t.Token = inp.Pat
+	}
+	if connected || repoID == repoid.Global {
+		storedURL, storedToken, err := ResolveRepoRuntime(ctx, database, appCfg, repoID)
+		if err != nil && !errors.Is(err, ErrRepoNotFound) {
+			return t, err
+		}
+		if t.URL == "" {
+			t.URL = storedURL
+		}
+		if t.Token == "" {
+			t.Token = storedToken
+		}
+		if t.Branch == "" {
+			if conn, cerr := GetGitlabConfig(ctx, database, appCfg, repoID); cerr == nil {
+				t.Branch = conn.WriteBranch
+			}
+		}
+	}
+	if t.URL == "" {
+		return t, fmt.Errorf("%w: repoUrl is required to test a connection", ErrValidation)
+	}
+	if t.Branch == "" {
+		t.Branch = "main"
+	}
+	if err := CheckRepoURL(ctx, database, repoID, t.URL); err != nil {
+		return t, err
+	}
+	return t, nil
+}

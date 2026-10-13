@@ -4056,6 +4056,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agencies/{agencyId}/git-repo/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a repository's connection (v2.4.0)
+         * @description Asks the repository's remote for its branches, with the connection in
+         *     the request, and stores nothing: what a connection's form calls before
+         *     it saves. Needs `configureApp` on the agency (GR-9); `global` is
+         *     Global's, a global administrator's.
+         *
+         *     `repoUrl`, `pat` and `writeBranch` are read from the request; one that
+         *     is left out is the stored one, when the agency has a repository (for
+         *     `pat`: left out, or the mask a read returned). The URL of an agency's
+         *     repository is held to GR-10 first (422 `repo_url_not_allowed`), so a
+         *     test cannot be aimed where a connection could not be saved. The request
+         *     to the remote goes through the outbound guard and is given up after 30
+         *     seconds.
+         *
+         *     The answer is 200 whether or not the remote answered: `ok` says which.
+         */
+        post: operations["testAgencyGitRepo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/git-repo/webhook-secret/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate an agency's repository's webhook secret (v2.4.0)
+         * @description Each repository has its own webhook route,
+         *     `/webhooks/gitlab/{repoId}`, and its own secret (GR-20). This rotates
+         *     the secret of the agency's repository, exactly as
+         *     `POST /settings/gitlab/webhook-secret/rotate` rotates Global's: the
+         *     answer carries the new secret, once; the previous one goes on being
+         *     accepted until `overlapUntil`. Needs `configureApp` on the agency
+         *     (GR-9). 404 `not_connected` when the agency has no repository.
+         *
+         *     With `updateGitlab` (the default) the repository's hook is updated by a
+         *     request to the repository's host, carrying the repository's token: for
+         *     an agency's repository that host is held to GR-10 (422
+         *     `repo_url_not_allowed`), and it is GitLab's hooks API that is called.
+         *     With `updateGitlab: false` only the stored secret changes, and the hook
+         *     is set by hand from the answer.
+         */
+        post: operations["rotateAgencyGitRepoWebhookSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/vault-prefixes": {
         parameters: {
             query?: never;
@@ -16594,6 +16660,100 @@ export interface operations {
             404: components["responses"]["NotFound"];
             /** @description Global's repository (`global_repo`), or a scope with work queued (`scopes_busy`). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    testAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GitlabConfig"];
+            };
+        };
+        responses: {
+            /** @description The test was made. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The remote answered and listed its refs. */
+                        ok: boolean;
+                        /** @description The branch the connection names. */
+                        branch: string;
+                        /** @description That branch is on the remote. */
+                        branchFound: boolean;
+                        branches: string[];
+                        /** @description The remote's own words when it did not answer. */
+                        error?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
+        };
+    };
+    rotateAgencyGitRepoWebhookSecret: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @default true */
+                    updateGitlab?: boolean;
+                    /** @default 5 */
+                    overlapMinutes?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Rotated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        secret?: string;
+                        gitlabUpdated?: boolean;
+                        /** Format: date-time */
+                        overlapUntil?: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
+            /** @description The repository's host could not be reached to update the hook. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

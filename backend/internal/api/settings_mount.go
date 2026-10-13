@@ -2367,7 +2367,13 @@ func (s *Server) handleRotateGitlabWebhookSecret(w http.ResponseWriter, r *http.
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
+	s.rotateWebhookSecret(w, r, repoid.Global, id.Email)
+}
 
+// rotateWebhookSecret rotates one repository's webhook secret and answers with
+// the new one. The caller has decided who may (a global administrator for
+// Global's; configureApp on the agency for an agency's, GR-9).
+func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request, repoID, actor string) {
 	var inp struct {
 		UpdateGitlab   *bool `json:"updateGitlab"`
 		OverlapMinutes *int  `json:"overlapMinutes"`
@@ -2394,11 +2400,15 @@ func (s *Server) handleRotateGitlabWebhookSecret(w http.ResponseWriter, r *http.
 		}
 	}
 
-	secret, gitlabUpdated, overlapUntil, err := settings.RotateWebhookSecret(r.Context(), s.db, s.cfg, repoid.Global, updateGitlab, overlapMinutes, id.Email)
+	secret, gitlabUpdated, overlapUntil, err := settings.RotateWebhookSecret(r.Context(), s.db, s.cfg, repoID, updateGitlab, overlapMinutes, actor)
 	if err != nil {
 		switch {
 		case errors.Is(err, settings.ErrWebhookSecretEnvPinned):
 			httpx.Fail(w, http.StatusConflict, "env_pinned", err.Error())
+		case errors.Is(err, settings.ErrRepoNotFound):
+			httpx.Fail(w, http.StatusNotFound, "not_connected", "this agency has no repository connected")
+		case errors.Is(err, settings.ErrRepoURLNotAllowed):
+			httpx.Fail(w, http.StatusUnprocessableEntity, "repo_url_not_allowed", err.Error())
 		case errors.Is(err, settings.ErrRotateNotConfigured):
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
 		case errors.Is(err, settings.ErrGitlabUnreachable):

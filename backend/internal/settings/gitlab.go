@@ -389,6 +389,12 @@ func RotateWebhookSecret(ctx context.Context, database *sql.DB, appCfg *config.C
 		if gitlabCfg.RepoUrl == "" {
 			return "", false, time.Time{}, fmt.Errorf("%w: repo URL not set", ErrRotateNotConfigured)
 		}
+		// GR-10: the hook is updated by a request to the repository's host,
+		// carrying the repository's token. An agency's repository's host is
+		// held to the allowed list here as at every sync.
+		if err := CheckRepoURL(ctx, database, repoID, gitlabCfg.RepoUrl); err != nil {
+			return "", false, time.Time{}, err
+		}
 
 		var pat string
 		if tok := envToken(repoID); tok != "" {

@@ -30,6 +30,8 @@ func (s *Server) mountGitRepos(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handlePutAgencyGitRepo)))
 	mux.Handle("DELETE /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleDeleteAgencyGitRepo)))
 	mux.Handle("GET /api/v1/git-repos/{repoId}/problems", s.auth.RequireSession(http.HandlerFunc(s.handleListRepoProblems)))
+	mux.Handle("POST /api/v1/agencies/{agencyId}/git-repo/webhook-secret/rotate", configure(http.HandlerFunc(s.handleRotateAgencyWebhookSecret)))
+	mux.Handle("POST /api/v1/agencies/{agencyId}/git-repo/test", configure(http.HandlerFunc(s.handleTestAgencyGitRepo)))
 }
 
 // requireRepoAgency is GR-9's gate: configureApp on the agency whose
@@ -260,4 +262,71 @@ func (s *Server) handleListRepoProblems(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"repoId": repoID, "items": items})
+}
+
+// handleRotateAgencyWebhookSecret rotates the webhook secret of an agency's
+// repository (GR-9, GR-20: one secret set per repository). The answer carries
+// the new secret, once: it is what the repository's hook is to send, at
+// /api/v1/webhooks/gitlab/{the repository's id}.
+func (s *Server) handleRotateAgencyWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	agencyID := r.PathValue("agencyId")
+	id, ok := s.requireRepoAgency(w, r, agencyID)
+	if !ok {
+		return
+	}
+	repoID, err := settings.RepoOfAgency(r.Context(), s.db, agencyID)
+	if errors.Is(err, settings.ErrRepoNotFound) {
+		httpx.Fail(w, http.StatusNotFound, "not_connected", "this agency has no repository connected")
+		return
+	}
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	s.rotateWebhookSecret(w, r, repoID, id.Email)
+}
+
+// handleTestAgencyGitRepo asks a repository's remote for its branches, with
+// the connection in the request, and stores nothing (GR-9: "testing"). It is
+// what a connection's form calls before it saves. A token left out, or the
+// mask a read returned, means the stored one. The URL of an agency's
+// repository is held to GR-10 first, so a test cannot be aimed where a
+// connection could not be saved.
+func (s *Server) handleTestAgencyGitRepo(w http.ResponseWriter, r *http.Request) {
+	agencyID := r.PathValue("agencyId")
+	if _, ok := s.requireRepoAgency(w, r, agencyID); !ok {
+		return
+	}
+	var inp settings.GitlabConfig
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+			return
+		}
+	}
+	repoID, err := settings.RepoOfAgency(r.Context(), s.db, agencyID)
+	connected := err == nil
+	if err != nil && !errors.Is(err, settings.ErrRepoNotFound) {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if !connected {
+		// Not connected yet: the test is of what the form holds. Any id that is
+		// not Global's holds the URL to the list.
+		repoID = "repo-untested"
+	}
+	target, err := settings.ResolveRepoTest(r.Context(), s.db, s.cfg, repoID, connected, inp)
+	switch {
+	case errors.Is(err, settings.ErrRepoURLNotAllowed):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "repo_url_not_allowed", err.Error())
+		return
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	case err != nil:
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	res := gitlab.TestConnection(r.Context(), s.cfg, target.URL, target.Token, target.Branch)
+	httpx.JSON(w, http.StatusOK, res)
 }

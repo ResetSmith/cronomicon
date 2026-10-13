@@ -6667,6 +6667,113 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /agencies/{agencyId}/git-repo/test:
+    post:
+      tags: [Agencies]
+      operationId: testAgencyGitRepo
+      summary: Test a repository's connection (v2.4.0)
+      description: |
+        Asks the repository's remote for its branches, with the connection in
+        the request, and stores nothing: what a connection's form calls before
+        it saves. Needs `configureApp` on the agency (GR-9); `global` is
+        Global's, a global administrator's.
+
+        `repoUrl`, `pat` and `writeBranch` are read from the request; one that
+        is left out is the stored one, when the agency has a repository (for
+        `pat`: left out, or the mask a read returned). The URL of an agency's
+        repository is held to GR-10 first (422 `repo_url_not_allowed`), so a
+        test cannot be aimed where a connection could not be saved. The request
+        to the remote goes through the outbound guard and is given up after 30
+        seconds.
+
+        The answer is 200 whether or not the remote answered: `ok` says which.
+      parameters:
+        - { $ref: '#/components/parameters/csrf' }
+        - name: agencyId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitlabConfig' }
+      responses:
+        '200':
+          description: The test was made.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, branch, branchFound, branches]
+                properties:
+                  ok: { type: boolean, description: The remote answered and listed its refs. }
+                  branch: { type: string, description: The branch the connection names. }
+                  branchFound: { type: boolean, description: That branch is on the remote. }
+                  branches:
+                    type: array
+                    items: { type: string }
+                  error: { type: string, description: The remote's own words when it did not answer. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /agencies/{agencyId}/git-repo/webhook-secret/rotate:
+    post:
+      tags: [Agencies]
+      operationId: rotateAgencyGitRepoWebhookSecret
+      summary: Rotate an agency's repository's webhook secret (v2.4.0)
+      description: |
+        Each repository has its own webhook route,
+        `/webhooks/gitlab/{repoId}`, and its own secret (GR-20). This rotates
+        the secret of the agency's repository, exactly as
+        `POST /settings/gitlab/webhook-secret/rotate` rotates Global's: the
+        answer carries the new secret, once; the previous one goes on being
+        accepted until `overlapUntil`. Needs `configureApp` on the agency
+        (GR-9). 404 `not_connected` when the agency has no repository.
+
+        With `updateGitlab` (the default) the repository's hook is updated by a
+        request to the repository's host, carrying the repository's token: for
+        an agency's repository that host is held to GR-10 (422
+        `repo_url_not_allowed`), and it is GitLab's hooks API that is called.
+        With `updateGitlab: false` only the stored secret changes, and the hook
+        is set by hand from the answer.
+      parameters:
+        - { $ref: '#/components/parameters/csrf' }
+        - name: agencyId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                updateGitlab: { type: boolean, default: true }
+                overlapMinutes: { type: integer, default: 5, minimum: 5 }
+      responses:
+        '200':
+          description: Rotated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  gitlabUpdated: { type: boolean }
+                  overlapUntil: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+        '503':
+          description: The repository's host could not be reached to update the hook.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /agencies/{agencyId}/vault-prefixes:
     get:
       tags: [Agencies]
