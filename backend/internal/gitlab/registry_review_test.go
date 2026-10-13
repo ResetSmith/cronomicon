@@ -6,6 +6,7 @@ package gitlab
 import (
 	"context"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -408,40 +409,77 @@ func TestPublishLandsOnTheConnectionsBranch(t *testing.T) {
 	}
 }
 
-// Present defect 30, found by the review of Phase R2; pinned, NOT fixed. A
-// publish says it succeeded and pushes nothing when the connection's branch
-// has no local branch in the clone: the push's refspec matches nothing, go-git
-// answers "already up to date", and that is read as success. The commit is
-// made on whatever branch the clone was on and is thrown away by the next
-// successful sync.
+// A publish that delivers nothing is a failure, and leaves nothing behind
+// (2.4.0; present defect 30, found by the review of Phase R2, the owner's
+// decision of 2026-10-10). Until 2.4.0 a publish said it had succeeded and
+// pushed nothing when the connection's branch had no local branch in the
+// clone: the push's refspec matched nothing, go-git answered "already up to
+// date", and that was read as success. The commit was made on whatever branch
+// the clone was on and was thrown away by the next successful sync. This was
+// the pin TestGR0_APublishToABranchTheCloneDoesNotHaveReportsSuccess.
 //
-// Until Phase R2 that was every publish after any change of the connection's
-// branch, because no sync succeeded after one (present defect 26). Since R2 it
-// needs a branch that has not been synced yet or that the repository does not
-// have. This passes on the code as it is.
-func TestGR0_APublishToABranchTheCloneDoesNotHaveReportsSuccess(t *testing.T) {
-	svc, bare, _ := bareFixture(t)
+// Two ways there, and both are errors now. A branch the repository does not
+// have is found by the fetch a publish starts with, before anything is
+// written. And a branch the repository has, with no local branch of that name
+// to push (made here by removing it from under the publish), is the push's
+// "already up to date" after a commit: an error, with the commit taken back
+// off the clone.
+func TestAPublishThatDeliversNothingIsAFailure(t *testing.T) {
+	svc, bare, first := bareFixture(t)
 	ctx := context.Background()
 	r := svc.SyncBlocking(ctx, "manual")
 	if r.Status == "failed" {
 		t.Fatal(r.ErrorMessage)
 	}
 	before := sysGit(t, bare, "for-each-ref")
+	cloneHead := func() string { return sysGit(t, svc.cloneDir, "rev-parse", "HEAD") }
+	clean := func(what string) {
+		t.Helper()
+		if got := cloneHead(); got != r.SHA {
+			t.Errorf("%s: the clone's head is %s, want it where the last sync left it, %s", what, got, r.SHA)
+		}
+		if st := sysGit(t, svc.cloneDir, "status", "--porcelain"); st != "" {
+			t.Errorf("%s: the clone is not clean:\n%s", what, st)
+		}
+		if after := sysGit(t, bare, "for-each-ref"); after != before {
+			t.Errorf("%s: the publish reached the remote:\n%s", what, after)
+		}
+	}
+
+	// A branch the repository does not have.
 	svc.Cfg.GitLabWriteBranch = "no-such-branch"
 	if bad := svc.SyncBlocking(ctx, "manual"); bad.Status != "failed" {
 		t.Fatalf("a sync of a branch the repository does not have: %q", bad.Status)
 	}
 	res, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p1.yaml", Content: jobYAML("p1")}, r.SHA, "a@example.com")
-	after := sysGit(t, bare, "for-each-ref")
-	switch {
-	case err != nil:
-		t.Errorf("the publish was refused (%v): this is fixed, and the test is to be inverted", err)
-	case after != before:
+	if err == nil || !strings.Contains(err.Error(), "git fetch") {
+		t.Fatalf("a publish to a branch the repository does not have answered %+v, %v; want the fetch's error", res, err)
+	}
+	clean("a branch the repository does not have")
+
+	// The repository's own branch, and nothing to push when the push comes:
+	// the local branch is gone by then.
+	svc.Cfg.GitLabWriteBranch = first
+	svc.beforePush = func() {
+		sysGit(t, svc.cloneDir, "update-ref", "-d", "refs/heads/"+first)
+	}
+	res, err = svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: jobYAML("p2")}, r.SHA, "a@example.com")
+	svc.beforePush = nil
+	if err == nil {
+		t.Fatalf("a publish whose push delivered nothing answered success: %+v", res)
+	}
+	if !strings.Contains(err.Error(), "git push") {
+		t.Errorf("the error is %v, want the push's", err)
+	}
+	if after := sysGit(t, bare, "for-each-ref"); after != before {
 		t.Errorf("the publish reached the remote:\n%s", after)
-	default:
-		// Today: success is reported, with a commit the remote never received.
-		if res == nil || res.CommitSHA == "" || res.Branch != "no-such-branch" {
-			t.Errorf("the publish's answer: %+v", res)
-		}
+	}
+	if _, serr := os.Stat(filepath.Join(svc.cloneDir, "jobs", "p2.yaml")); serr == nil {
+		t.Errorf("the failed publish left its file in the clone")
+	}
+	clean("a push that delivered nothing")
+	// Nothing is left in the way of the next publish.
+	if _, err := svc.Publish(ctx, PublishRequest{FilePath: "jobs/p2.yaml", Content: jobYAML("p2")}, r.SHA, "a@example.com"); err != nil {
+		t.Fatalf("the publish after the failed one: %v", err)
 	}
 }

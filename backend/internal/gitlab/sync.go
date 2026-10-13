@@ -119,6 +119,11 @@ type Service struct {
 	// and before anything is parsed. Tests use it to act "during a sync".
 	afterFetch func()
 
+	// beforePush, when set, is called by a publish once its commit is made and
+	// before it is pushed. Tests use it to act between a publish's fetch and
+	// its push.
+	beforePush func()
+
 	// problems collects what the sync that is under way has to say about the
 	// repository's files (GR-30, problems.go). nil between syncs. One sync of a
 	// Service runs at a time (the queue), so there is one collector at a time;

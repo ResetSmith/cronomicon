@@ -279,9 +279,19 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 	if err != nil {
 		// Check for precondition failure (412).
 		if pe, ok := err.(*PreconditionError); ok {
+			msg := "File changed since your edit was based on this commit — review the diff and retry."
+			if pe.Unsynced {
+				// The branch has commits the last sync does not have. Nothing
+				// polls a repository on a timer, and whoever publishes may not
+				// be somebody who can start a sync, so one is started here: the
+				// retry this answer asks for then finds the clone caught up.
+				svc.TriggerSync(r.Context(), "poll")
+				msg = "The repository's branch has commits that had not been synced here. A sync has been started — " +
+					"wait for it, review what changed, and publish again."
+			}
 			writeJSON(w, http.StatusPreconditionFailed, map[string]any{
 				"code":       "base_sha_mismatch",
-				"message":    "File changed since your edit was based on this commit — review the diff and retry.",
+				"message":    msg,
 				"baseSha":    pe.BaseSHA,
 				"currentSha": pe.CurrentSHA,
 				"diff":       pe.Diff,

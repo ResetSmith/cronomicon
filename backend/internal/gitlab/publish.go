@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	gogit "github.com/go-git/go-git/v5"
 	gogitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	gogithttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"gopkg.in/yaml.v3"
@@ -31,11 +33,17 @@ type PublishResult struct {
 	Branch    string
 }
 
-// PreconditionError is returned when the If-Match base_sha doesn't match the current HEAD.
+// PreconditionError is returned when a publish is not based on what the
+// repository's branch is now: the If-Match base_sha, the clone's HEAD (the last
+// sync) and the branch's head on the remote must all be one commit.
 type PreconditionError struct {
-	BaseSHA    string // stale SHA the client sent
-	CurrentSHA string // current HEAD
+	BaseSHA    string // the SHA the client sent
+	CurrentSHA string // the branch's head on the remote, fetched for this publish
 	Diff       string // unified diff for the UI
+	// Unsynced: the remote has moved since the last sync, so the clone is
+	// behind it and nothing can be published until a sync has brought the
+	// clone up. The handler starts one.
+	Unsynced bool
 }
 
 func (e *PreconditionError) Error() string {
@@ -49,6 +57,20 @@ func (e *PreconditionError) Error() string {
 // every repository waits in (Service.enter, GR-11), so it never works in a
 // clone while a sync is fetching into it or resetting it. Until 2.4.0 it held a
 // mutex that a running sync did not hold.
+//
+// What a publish is based on (2.4.0; present defects 30 and 32, the owner's
+// decisions of 2026-10-10 and 2026-10-12). It FETCHES the branch first, and
+// goes ahead only when the caller's base, the clone's HEAD and the branch's
+// head on the remote are one commit. It pushes WITHOUT force. Until 2.4.0 it
+// compared the base with the clone alone, which is the last sync, and pushed
+// with force: a commit somebody had pushed since the last sync was discarded
+// from the branch, in silence. And a push that delivers nothing is a failure,
+// which leaves no commit on the clone: the remote reporting "already up to
+// date" after a commit was made means the commit went nowhere, and it was
+// answered as a success.
+//
+// The fetch and the push are each bounded as a sync's transfers are
+// (Service.transfer, CRONOMICON_GIT_FETCH_TIMEOUT).
 // PublishTarget describes what a publish would write, for the caller to
 // authorize (GC-9). The gitlab package knows how to read a definition file; it
 // does not know who the caller is, so it reports facts and the route decides.
@@ -155,17 +177,24 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 		return nil, fmt.Errorf("open clone (run a sync first): %w", err)
 	}
 
-	// 3. Check If-Match precondition (A2/D2/D13).
-	currentSHA, err := s.headSHA(repo)
+	// 3. What the branch is on the remote NOW, and the If-Match precondition
+	// (A2/D2/D13) against it.
+	remoteSHA, err := s.fetchBranchHead(ctx, repo, branch)
+	if err != nil {
+		return nil, fmt.Errorf("git fetch: %w", err)
+	}
+	cloneRef, err := repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("read HEAD: %w", err)
 	}
-	if baseSHA != currentSHA {
+	cloneSHA := cloneRef.Hash().String()
+	if baseSHA != remoteSHA || cloneSHA != remoteSHA {
 		diff, _ := s.buildDiff(repo, req.FilePath, req.Content)
 		return nil, &PreconditionError{
 			BaseSHA:    baseSHA,
-			CurrentSHA: currentSHA,
+			CurrentSHA: remoteSHA,
 			Diff:       diff,
+			Unsynced:   cloneSHA != remoteSHA,
 		}
 	}
 
@@ -203,24 +232,89 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 		return nil, fmt.Errorf("git commit: %w", err)
 	}
 
-	// 6. Push to GitLab, explicitly targeting the configured branch.
+	// 6. Push to GitLab, explicitly targeting the configured branch. Not
+	// forced: the branch was fetched a moment ago and this commit is on top of
+	// it, so the push is a fast-forward unless somebody pushed in between, and
+	// then it is refused by the remote and nothing of theirs is lost.
 	pushOpts := &gogit.PushOptions{
 		RemoteName: "origin",
 		RefSpecs: []gogitconfig.RefSpec{
-			gogitconfig.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/heads/%s", branch, branch)),
+			gogitconfig.RefSpec(fmt.Sprintf("refs/heads/%s:refs/heads/%s", branch, branch)),
 		},
 	}
 	if s.token != "" {
 		pushOpts.Auth = &gogithttp.BasicAuth{Username: "oauth2", Password: s.token}
 	}
-	if err := repo.PushContext(ctx, pushOpts); err != nil && err != gogit.NoErrAlreadyUpToDate {
-		return nil, fmt.Errorf("git push: %w", err)
+	if s.beforePush != nil {
+		s.beforePush()
+	}
+	perr := s.transfer(ctx, func(tctx context.Context) error { return repo.PushContext(tctx, pushOpts) })
+	if errors.Is(perr, gogit.NoErrAlreadyUpToDate) {
+		// After a commit, this is not a success: the remote took nothing.
+		perr = errors.New("the remote had nothing to receive, so the commit was not delivered")
+	}
+	if perr != nil {
+		// The commit is not left on the clone: the next sync would reset it
+		// away in any case, and until then the clone would be ahead of the
+		// branch and every publish refused.
+		if uerr := takeBackCommit(repo, wt, cloneRef); uerr != nil {
+			s.logError("publish: the push failed and the commit could not be taken back off the clone; the next sync resets it",
+				"repo_id", s.repo(), "err", uerr)
+		}
+		return nil, fmt.Errorf("git push: %w", perr)
 	}
 
 	return &PublishResult{
 		CommitSHA: commit.String(),
 		Branch:    branch,
 	}, nil
+}
+
+// takeBackCommit puts a clone back where a publish found it, after a push that
+// failed: the branch HEAD was on, at the commit it was at, with HEAD on it, and
+// the index and the working tree reset hard to that commit (which removes the
+// file the publish added). The branch and HEAD are set as a sync sets them,
+// and not left to the reset, so that this holds whatever state the failed push
+// left the clone's refs in.
+func takeBackCommit(repo *gogit.Repository, wt *gogit.Worktree, was *plumbing.Reference) error {
+	if was.Name().IsBranch() {
+		if err := repo.Storer.SetReference(plumbing.NewHashReference(was.Name(), was.Hash())); err != nil {
+			return err
+		}
+		if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, was.Name())); err != nil {
+			return err
+		}
+	}
+	return wt.Reset(&gogit.ResetOptions{Commit: was.Hash(), Mode: gogit.HardReset})
+}
+
+// fetchBranchHead fetches the connection's branch from the remote, bounded as
+// a sync's fetch is, and returns its head there. The clone's working tree, its
+// HEAD and its local branch are not touched: only the remote-tracking ref
+// moves, as a sync's fetch moves it.
+func (s *Service) fetchBranchHead(ctx context.Context, repo *gogit.Repository, branch string) (string, error) {
+	refSpec := gogitconfig.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch))
+	if err := s.pointOriginAt(repo, refSpec); err != nil {
+		return "", err
+	}
+	opts := &gogit.FetchOptions{RemoteName: "origin", Force: true, RefSpecs: []gogitconfig.RefSpec{refSpec}}
+	if auth := s.gitAuth(); auth != nil {
+		opts.Auth = auth
+	}
+	err := s.transfer(ctx, func(tctx context.Context) error {
+		if ferr := repo.FetchContext(tctx, opts); ferr != gogit.NoErrAlreadyUpToDate {
+			return ferr
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	ref, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", branch), true)
+	if err != nil {
+		return "", fmt.Errorf("the branch %q is not on the remote: %w", branch, err)
+	}
+	return ref.Hash().String(), nil
 }
 
 // ValidationFailedError wraps validation errors for 422 responses.

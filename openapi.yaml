@@ -2680,13 +2680,29 @@ paths:
       operationId: publishSchedule
       summary: Publish a schedule edit (or new job YAML) to GitLab
       description: |
-        Commits the YAML to main as the bot identity and returns the new commit
-        SHA (A2). The If-Match header carries the base_sha the edit was based
-        on — REQUIRED (hard contract per A2/D2/D13). On mismatch the server
-        rejects with 412 and returns the diff so the UI can show "someone else
-        changed this — review and retry." Pushes are serialized server-side
-        with a DB row lock (§3.4). The validator enforces apiVersion and the
-        YAML schema (T10), returning line-numbered 422 errors. CSRF required.
+        Commits the YAML to the connection's branch as the bot identity and
+        returns the new commit SHA (A2). The If-Match header carries the
+        base_sha the edit was based on — REQUIRED (hard contract per
+        A2/D2/D13). The validator enforces apiVersion and the YAML schema
+        (T10), returning line-numbered 422 errors. CSRF required.
+
+        **What a publish is based on (v2.4.0).** The server fetches the branch
+        first, and goes ahead only when the base_sha, the last synced commit
+        and the branch's head on the remote are one commit. Otherwise it
+        answers 412 with the diff and `currentSha`, the branch's head on the
+        remote, which is the base a retry carries. When the branch has commits
+        the last sync does not have, the 412's message says so and the server
+        starts a sync: the retry goes through once that sync has run. The push
+        is not forced, so a commit that somebody pushes between the fetch and
+        the push is not lost: the publish fails (503) and nothing of it is
+        left on the server. Until v2.4.0 the base was compared with the last
+        synced commit alone and the push was forced, which silently discarded
+        commits pushed to the branch since the last sync.
+
+        A push that delivers nothing is a failure (503), where it was answered
+        as a success. The fetch and the push are each given up after
+        `CRONOMICON_GIT_FETCH_TIMEOUT`. Publishes and syncs are serialized
+        server-side (one queue).
       parameters:
         - { $ref: '#/components/parameters/csrf' }
         - name: If-Match
@@ -2708,13 +2724,19 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '412':
-          description: base_sha mismatch — file changed since the edit was based.
+          description: |
+            base_sha mismatch — the edit is not based on the branch's head, or
+            the branch has commits that have not been synced (a sync is then
+            started; retry with `currentSha` once it has run).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PreconditionFailed' }
         '422': { $ref: '#/components/responses/Validation' }
         '503':
-          description: GitLab unreachable — retry later (§11.4 degradation matrix).
+          description: |
+            GitLab unreachable, or the fetch or the push failed or was refused
+            by the remote — retry later (§11.4 degradation matrix). Nothing of
+            the publish is left on the server.
           headers:
             Retry-After:
               schema: { type: integer }
