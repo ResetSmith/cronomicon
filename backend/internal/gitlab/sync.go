@@ -2338,24 +2338,48 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 		// after the trigger that would have cleared it had already run.
 		const scriptless = `source = 'cronomicon' AND script_ref = ?
 				    AND (script_uid IS NULL OR script_uid NOT IN (SELECT uid FROM scripts))`
+		// The jobs it joins are named (RETURNING), so that the sync can say so.
+		var rejoined *sql.Rows
 		var rejoinErr error
 		switch {
 		case s.repo() != repoid.Global:
-			_, rejoinErr = tx.ExecContext(ctx,
-				`UPDATE jobs SET script_uid = ? WHERE `+scriptless+` AND `+jobsAgencySQL+` = ?`,
+			rejoined, rejoinErr = tx.QueryContext(ctx,
+				`UPDATE jobs SET script_uid = ? WHERE `+scriptless+` AND `+jobsAgencySQL+` = ? RETURNING name`,
 				rs.uid, name, s.agency())
 		case otherRepositories(ctx, tx):
-			_, rejoinErr = tx.ExecContext(ctx,
+			rejoined, rejoinErr = tx.QueryContext(ctx,
 				`UPDATE jobs SET script_uid = ? WHERE `+scriptless+`
 				    AND NOT EXISTS (SELECT 1 FROM scripts x JOIN git_repos g ON g.id = x.repo_id
 				                     WHERE x.name = jobs.script_ref AND g.id <> ?
-				                       AND g.agency_id = `+jobsAgencySQL+`)`,
+				                       AND g.agency_id = `+jobsAgencySQL+`) RETURNING name`,
 				rs.uid, name, repoid.Global)
 		default:
-			_, rejoinErr = tx.ExecContext(ctx, `UPDATE jobs SET script_uid = ? WHERE `+scriptless, rs.uid, name)
+			rejoined, rejoinErr = tx.QueryContext(ctx, `UPDATE jobs SET script_uid = ? WHERE `+scriptless+` RETURNING name`, rs.uid, name)
 		}
 		if rejoinErr != nil {
 			return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, rejoinErr)
+		}
+		var rejoinedJobs []string
+		for rejoined.Next() {
+			var job string
+			if err := rejoined.Scan(&job); err != nil {
+				rejoined.Close()
+				return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, err)
+			}
+			rejoinedJobs = append(rejoinedJobs, job)
+		}
+		rejoined.Close()
+		if err := rejoined.Err(); err != nil {
+			return fmt.Errorf("rejoin in-app jobs to script %q: %w", name, err)
+		}
+		// Said, since 2.4.0, because of what it now means: a job built in the app
+		// runs its script as synced, so a job that had no script did not run, and
+		// from this sync it runs THIS repository's script of that name. That may
+		// not be the script it was built on: Global's repository takes in a job
+		// whose own agency's script of the name has been removed (GR-16).
+		for _, job := range rejoinedJobs {
+			s.logWarn("a job built in the app had no script and is joined to this repository's script of the name it was built on: it runs that script from now on",
+				"job", job, "script", name, "repo_id", s.repo())
 		}
 		// An in-app job follows its script (the owner's decision of 2026-10-09).
 		// A job holds a COPY of its script: the run type, the body or the path to

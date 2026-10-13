@@ -171,7 +171,13 @@ func InsertRun(ctx context.Context, database *sql.DB, r RunRow) (string, error) 
 			         (SELECT printf('%08x', code) FROM entity_codes
 			           WHERE kind = 'job' AND uid = ? AND deleted_at IS NULL)),
 			(SELECT script_ref FROM jobs WHERE uid = ?),
-			(SELECT content_hash FROM jobs WHERE uid = ?),
+			-- The hash of what will run. For a job built in the app that is the
+			-- SCRIPT's, since dispatch reads the script's record and not the
+			-- job's copy of it (execspec.ResolveCommand); for every other job it
+			-- is the job's own.
+			(SELECT COALESCE((SELECT s.content_hash FROM scripts s
+			                   WHERE s.uid = j.script_uid AND j.source <> 'git'), j.content_hash)
+			   FROM jobs j WHERE j.uid = ?),
 			-- §7/RX.2: a checkout job (project_root set) pins, AT ENQUEUE, the
 			-- repository its tree is fetched from, that repository's last synced
 			-- commit, and the entry playbook, so a mid-run sync can't retarget the

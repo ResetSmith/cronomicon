@@ -734,21 +734,32 @@ type Pin struct {
 // names no job (or, for a run that records none, nothing holds its name).
 var ErrJobGone = errors.New("the job this run is of no longer exists")
 
-// ErrScriptGone is a job built in the app whose body is a file of a script
-// that is no longer there (present defect 41). Such a job holds a copy of its
-// script, and for a file the copy is a path. With the script's row gone the
-// job has no repository to read the path in: it has none of its own, and
-// which repository the script was in is no longer recorded. Until 2.4.0 Phase
-// R5 the path was read in Global's repository, which with a repository per
-// agency handed the job whatever the installation's own repository holds at a
-// path another repository's committers chose.
+// ErrScriptGone is a job built in the app whose script is no longer there
+// (present defects 41 and 45; the owner's decision of 2026-10-13).
+//
+// A job built in the app runs its SCRIPT, as the server last synced it from
+// Git: ResolveCommand reads the body from the script's record at every run.
+// The job's row holds a copy of the script too, which sync keeps for display
+// and which was what ran until 2.4.0 Phase R5. With the script's row gone
+// there is nothing for the job to run. Running the copy went against what a
+// script is (it comes from Git, and this one no longer does), and had two
+// consequences that were found one at a time: a copy that is a file's path was
+// read in Global's repository, which handed the job whatever the
+// installation's own repository holds at a path another repository's
+// committers chose (41); and a job refused because its scope had been given
+// to another agency ran again, on that agency's hosts, the day the first
+// agency's committers removed the script (45).
 var ErrScriptGone = errors.New("the script this job is built on has been removed")
 
 // scriptGoneSQL is true for the job j when it is one of those: built in the
-// app, its body a file, and joined to no script row.
+// app ON A SCRIPT (it names one, or its body is a file, which only a script
+// has), and joined to no script row. A job built in the app that names no
+// script and holds its own inline body is from before scripts were what a job
+// is built on, and runs that body as it always has.
 const scriptGoneSQL = `(j.source <> 'git'
-	AND COALESCE(j.command, '') = '' AND COALESCE(j.script, '') = '' AND COALESCE(j.script_path, '') <> ''
-	AND NOT EXISTS (SELECT 1 FROM scripts s WHERE s.uid = j.script_uid))`
+	AND (COALESCE(j.script_ref, '') <> ''
+	     OR (COALESCE(j.command, '') = '' AND COALESCE(j.script, '') = '' AND COALESCE(j.script_path, '') <> ''))
+	AND NOT EXISTS (SELECT 1 FROM scripts sg WHERE sg.uid = j.script_uid))`
 
 // ScriptGone reports whether the job a run is of is one ErrScriptGone refuses,
 // for a caller that must say so before it resolves the run (the manifest). A
@@ -803,8 +814,12 @@ func (e *AmbiguousJobError) Error() string {
 // own. Until 2.4.0 there was one clone, and both callers read Global's. A job
 // from Git that has no script row (a path of its own, or a script that has
 // gone) is read in the job's own repository, and then in Global's, where it
-// was read before. A job built in the app that has none is ErrScriptGone: it
-// has no repository of its own, and Global's is not read in its place.
+// was read before.
+//
+// A job BUILT IN THE APP is read through its script's record and not from the
+// job's own copy: the inline body, or the path of the file, is the script's as
+// the server last synced it. One whose script has gone is ErrScriptGone,
+// whatever kind its body was.
 //
 // The file is read from a commit's OBJECTS and never from the clone's working
 // tree, which a sync rewrites in place (present defect 27; commitread.go). A
@@ -826,12 +841,15 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 	// statement, one moment. Read after it, a sync that moved the file and
 	// committed in between would have the old path looked for in the new commit.
 	var scriptGone bool
-	const cols = `SELECT j.command, j.script, j.script_path,
-	       COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global'),
-	       (SELECT g.last_sha FROM git_repos g
-	         WHERE g.id = COALESCE((SELECT s.repo_id FROM scripts s WHERE s.uid = j.script_uid), j.repo_id, 'global')),
+	// For a job built in the app that is joined to a script, the three body
+	// columns are the SCRIPT's (s.*); for every other job they are the job's.
+	const cols = `SELECT CASE WHEN j.source <> 'git' AND s.uid IS NOT NULL THEN s.command ELSE j.command END,
+	       CASE WHEN j.source <> 'git' AND s.uid IS NOT NULL THEN s.script ELSE j.script END,
+	       CASE WHEN j.source <> 'git' AND s.uid IS NOT NULL THEN s.script_path ELSE j.script_path END,
+	       COALESCE(s.repo_id, j.repo_id, 'global'),
+	       (SELECT g.last_sha FROM git_repos g WHERE g.id = COALESCE(s.repo_id, j.repo_id, 'global')),
 	       ` + scriptGoneSQL + `
-	  FROM jobs j `
+	  FROM jobs j LEFT JOIN scripts s ON s.uid = j.script_uid `
 	if job.UID != "" {
 		if err := db.QueryRowContext(ctx, cols+`WHERE j.uid = ?`, job.UID).
 			Scan(&command, &script, &scriptPath, &repo, &synced, &scriptGone); err != nil {
@@ -852,6 +870,11 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 		}
 	}
 
+	if scriptGone {
+		// Before anything is read or handed out, pinned or not, and whatever
+		// kind the body was.
+		return nil, "", ErrScriptGone
+	}
 	switch {
 	case command.Valid && command.String != "":
 		body = command.String
@@ -860,11 +883,6 @@ func ResolveCommand(ctx context.Context, db *sql.DB, dirs CloneDirs, job JobRef,
 	case scriptPath.Valid && scriptPath.String != "":
 		// Execution needs the FULL body (limit 0 = uncapped); the 1 MiB cap is a
 		// display-only concern handled by the catalog content endpoint.
-		if scriptGone {
-			// Before anything is read, pinned or not: there is no repository
-			// that is this job's to read in.
-			return nil, "", ErrScriptGone
-		}
 		if dirs == nil {
 			return nil, "", fmt.Errorf("job %q keeps its body in a file, and this caller has no clone to read it from", jobName)
 		}

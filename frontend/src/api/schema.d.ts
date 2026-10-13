@@ -6749,6 +6749,16 @@ export interface components {
              *       uid. Filed under the agency of the job's scope, or under Global.
              *       It clears when an agent started with `-allow-checkout` serves
              *       the job, or the job no longer uses a project.
+             *     - `job_script_gone` — a job built in the app whose script is no
+             *       longer there: removed from its repository, or renamed. From
+             *       v2.4.0 a job built in the app runs its script as the server last
+             *       synced it, so this job does not run: each run is refused ("the
+             *       script this job is built on has been removed"). Until v2.4.0 it
+             *       went on running the copy it held. Subject: the job's uid. Filed
+             *       under the agency of the job's scope, or under Global. It clears
+             *       when a script of that name is there for the job again (the next
+             *       sync joins it), when the job is saved on another script, or when
+             *       the job is removed.
              *
              *     Later releases add kinds; a client should show one it does not know
              *     by its `detail`.
