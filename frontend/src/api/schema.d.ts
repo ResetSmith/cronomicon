@@ -1545,10 +1545,13 @@ export interface paths {
          *     and the agency's own `schedules/` and `workflows/` files. Another
          *     agency's repository and one that is not there are refused 403 in the
          *     same words; a global publisher is answered 404 for one that is not
-         *     there. Global's repository is as before (GC-9): a global publisher may
-         *     publish anything; anyone else, a job file in a scope they hold the
-         *     permission on, and no `schedules/` or `workflows/` file. Whether a
-         *     job's name is already taken is asked of the repository published to.
+         *     there. **Global's repository takes publishes from a global publisher
+         *     only** (an administrator whose `publishSchedule` covers every agency):
+         *     403 for anyone else, whatever the file. From v2.2.2 to v2.3.x an
+         *     agency's approver could publish there a job file in a scope they held
+         *     the permission on; an agency now publishes to its own repository, and
+         *     one that has none asks a global publisher. Whether a job's name is
+         *     already taken is asked of the repository published to.
          *
          *     A push that delivers nothing is a failure (503), where it was answered
          *     as a success. The fetch and the push are each given up after

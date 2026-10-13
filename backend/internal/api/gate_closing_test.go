@@ -597,8 +597,14 @@ func publishBody(path, content string) string {
 	return string(b)
 }
 
-// GC-9 — publish is checked per file. The route itself only asks whether the
-// caller may publish somewhere.
+// GC-9, then GR-24 — a publish is checked past the route, which only asks
+// whether the caller may publish somewhere.
+//
+// This server has one repository, Global's, and Global's takes publishes from
+// a global publisher only (2.4.0; the owner's decision of 2026-10-13). From
+// v2.2.2 to 2.3.x an agency's approver could publish there a job file of their
+// own scope (GC-9), checked per file; that check is now of an agency's own
+// repository (TestAPublishNamesARepositoryAndIsGatedByItsAgency).
 func TestGC_PublishIsCheckedPerFile(t *testing.T) {
 	clone := t.TempDir()
 	t.Setenv("CRONOMICON_GIT_CACHE_DIR", clone)
@@ -632,14 +638,22 @@ func TestGC_PublishIsCheckedPerFile(t *testing.T) {
 			t.Errorf("fin approver publishing %s = %d, want 403", c.name, code)
 		}
 	}
-	// Its own job in its own scope passes the gate. (What happens next depends on
-	// a real repository, which this test does not have — anything but 403.)
-	if code := publish(gFinApprover, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts")); code == http.StatusForbidden {
-		t.Errorf("fin approver publishing its own job = 403, want the gate to pass")
+	// Its own job in its own scope too: Global's repository is not an
+	// agency's to publish to. And an administrator of an agency, the same.
+	for who, name := range map[string]string{gFinApprover: "FIN's approver", gFinAdmin: "FIN's administrator"} {
+		if code := publish(who, "jobs/fin-new.yaml", jobYAML("fin-new", "fin-hosts")); code != http.StatusForbidden {
+			t.Errorf("%s publishing its own job to Global's repository = %d, want 403", name, code)
+		}
 	}
-	// A global publisher is not narrowed.
-	if code := publish(gRoot, "schedules/nightly.yaml", "apiVersion: cronomicon.io/v1\nkind: Schedule\n"); code == http.StatusForbidden {
-		t.Errorf("root publishing a schedule file = 403, want the gate to pass")
+	// A global publisher is not narrowed: any file. (What happens next depends
+	// on a real repository, which this test does not have — anything but 403.)
+	for path, content := range map[string]string{
+		"schedules/nightly.yaml": "apiVersion: cronomicon.io/v1\nkind: Schedule\n",
+		"jobs/fin-new.yaml":      jobYAML("fin-new", "fin-hosts"),
+	} {
+		if code := publish(gRoot, path, content); code == http.StatusForbidden {
+			t.Errorf("root publishing %s = 403, want the gate to pass", path)
+		}
 	}
 }
 

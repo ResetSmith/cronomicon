@@ -137,23 +137,26 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 	)
 }
 
-// authorizePublish is the per-file half of the publish gate (GC-9).
+// authorizePublish is the per-file half of the publish gate (GR-24).
 //
-// The route asks only whether the caller holds publishSchedule SOMEWHERE. Until
-// v2.2.2 nothing asked more, so an approver in one agency could write any
-// `jobs/`, `schedules/` or `workflows/` file naming any scope — authoring
-// another department's job through the one shared repository. The rule now:
+// The route asks only whether the caller holds publishSchedule SOMEWHERE. The
+// rule, by the repository the publish names:
 //
 //   - a global publisher (an unrestricted grant carrying the permission) may
-//     publish anything, as before;
-//   - anyone else may publish only a JOB file, whose incoming content names a
-//     scope they hold the permission on — and, when the publish REPLACES
-//     something, the scope it replaces must be theirs too. "Replaces" covers
-//     both the file already at that path and any git job that already uses the
-//     incoming name (sync upserts by name, so a second file with a taken name
-//     would rewrite the first one's row);
-//   - a schedule or workflow file, an unscoped job, or content whose scope
-//     cannot be read is a global publisher's alone.
+//     publish anything, to any repository;
+//   - GLOBAL's repository takes publishes from a global publisher only (the
+//     owner's decision of 2026-10-13, on 2.4.0's question 19). From v2.2.2 to
+//     2.3.x (GC-9) an agency's approver could publish there a job file of a
+//     scope of their own; an agency now publishes to its own repository;
+//   - an AGENCY's repository takes publishes from those who hold the
+//     permission on that agency: its schedules and workflows as they are, and a
+//     JOB file whose incoming content names a scope they hold the permission
+//     on — and, when the publish REPLACES something, the scope it replaces
+//     must be theirs too. "Replaces" covers both the file already at that path
+//     and any job of that repository that already uses the incoming name (sync
+//     upserts by name, so a second file with a taken name would rewrite the
+//     first one's row). An unscoped job, or content whose scope cannot be
+//     read, is a global publisher's alone.
 //
 // It returns "" to allow, or the 403 message, having written the audit row.
 func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) string {
@@ -174,18 +177,18 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 	// GR-24: a repository other than Global's takes publishes from those who
 	// hold publishSchedule on ITS agency. One sentence for another agency's
 	// repository and for one that is not there.
-	ownRepo := t.Repo != "" && t.Repo != repoid.Global
-	if ownRepo && (t.NoSuchRepo || !id.CanAgency(perm, t.Agency)) {
+	if t.Repo == "" || t.Repo == repoid.Global {
+		// Whatever the file: Global's repository is the installation's.
+		return deny("Global's repository", "Global's repository takes publishes only from an administrator whose "+
+			"publish permission covers every agency; publish to your own agency's repository")
+	}
+	if t.NoSuchRepo || !id.CanAgency(perm, t.Agency) {
 		return deny("repository "+t.Repo, "insufficient permissions: publishSchedule is required on the agency that repository belongs to")
 	}
 	if t.Kind != "job" {
-		if ownRepo {
-			// The agency's own schedules and workflows, in the agency's own
-			// repository: its publishers'. (Sync confines what they may name.)
-			return ""
-		}
-		return deny(t.Kind+" file", "schedule and workflow files of the shared repository are shared by every agency — "+
-			"only an administrator whose publish permission covers every agency may publish them")
+		// The agency's own schedules and workflows, in the agency's own
+		// repository: its publishers'. (Sync confines what they may name.)
+		return ""
 	}
 	if !t.NewParsed || t.NewScope == "" {
 		return deny("no scope", "a job you publish must name a scope you hold publishSchedule on; "+
@@ -212,12 +215,8 @@ func (s *Server) authorizePublish(r *http.Request, t gitlab.PublishTarget) strin
 		// has one, and sync upserts by name within a repository. Asked of every
 		// repository, a job of that name in another agency's repository refused
 		// the publish as "outside your access", and so said the name was taken.
-		repo := t.Repo
-		if repo == "" {
-			repo = repoid.Global
-		}
 		rows, err := s.db.QueryContext(r.Context(),
-			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ? AND COALESCE(repo_id, ?) = ?`, t.Name, repoid.Global, repo)
+			`SELECT COALESCE(scope,'') FROM jobs WHERE source = 'git' AND name = ? AND repo_id = ?`, t.Name, t.Repo)
 		if err != nil {
 			return deny("db error", "could not verify the job name; try again")
 		}
