@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1312,6 +1313,15 @@ func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repos
 		if err != nil {
 			return nil, fmt.Errorf("resolve origin/%s: %w", branch, err)
 		}
+		// A submodule whose name is not its path, with its pin moved, is what
+		// the reset below cannot do (present defect 43): refused here, in a
+		// sentence, before a ref or a file has been moved, so that the clone
+		// stays whole at the commit it was last synced to.
+		if bad, merr := misnamedSubmodulePin(repo, remoteRef.Hash()); merr != nil {
+			return nil, fmt.Errorf("read the repository's submodules: %w", merr)
+		} else if bad != nil {
+			return nil, bad
+		}
 		// The local branch of that name, at that commit, with HEAD on it: what
 		// `git checkout -B <branch> origin/<branch>` does. On a clone made at
 		// this branch it changes nothing (the reset below moves the same ref).
@@ -1328,7 +1338,7 @@ func (s *Service) cloneOrFetch(ctx context.Context, branch string) (*gogit.Repos
 			Commit: remoteRef.Hash(),
 			Mode:   gogit.HardReset,
 		}); err != nil {
-			return nil, fmt.Errorf("git reset --hard: %w", err)
+			return nil, fmt.Errorf("git reset --hard: %w", explainSubmoduleNotFound(err))
 		}
 		// Pull any submodules up to their pinned commits so their files are
 		// present for discovery (e.g. scripts/playbooks). Best-effort.
@@ -1507,6 +1517,11 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 		// With the sync's context: a submodule fetch is a transfer like the
 		// repository's own, and a Service that is stopped must not have to wait
 		// for one that has stalled. And under the same bound, each on its own.
+		if cfg.Name != path.Clean(filepath.ToSlash(cfg.Path)) {
+			s.logWarn("a submodule's name in .gitmodules is not its path: the sync will be refused when its pin moves. "+
+				"Rename its section to its path and commit (a submodule added with --name, or moved with git mv)",
+				"submodule", cfg.Name, "path", cfg.Path)
+		}
 		// One bound for the submodule and everything nested in it, as before.
 		var reset []string
 		err := s.transfer(ctx, func(tctx context.Context) error {
@@ -1552,7 +1567,16 @@ func (s *Service) updateSubmodules(ctx context.Context, repo *gogit.Repository, 
 func updateSubmodule(ctx context.Context, sub *gogit.Submodule, opts *gogit.SubmoduleUpdateOptions, depth int) (reset []string, err error) {
 	one := *opts
 	one.RecurseSubmodules = gogit.NoRecurseSubmodules
-	err = sub.UpdateContext(ctx, &one)
+	// A submodule NESTED in this one whose name is not its path, with its pin
+	// moved in the commit this one is about to be checked out at: the checkout
+	// would stop there, part of the way through (present defect 43). This
+	// submodule is left whole at the commit it is at, and the sync says why.
+	if bad, merr := misnamedNestedPin(ctx, sub, &one); merr != nil {
+		return reset, merr
+	} else if bad != nil {
+		return reset, bad
+	}
+	err = explainSubmoduleNotFound(sub.UpdateContext(ctx, &one))
 	if errors.Is(err, gogit.ErrUnstagedChanges) {
 		if err = resetSubmoduleToPin(sub); err == nil {
 			reset = append(reset, ".")
@@ -1583,6 +1607,122 @@ func updateSubmodule(ctx context.Context, sub *gogit.Submodule, opts *gogit.Subm
 		}
 	}
 	return reset, nil
+}
+
+// misnamedSubmoduleError is the refusal to move the pin of a submodule whose
+// name in .gitmodules is not its path (present defect 43).
+//
+// A submodule has a name and a path, and they are the same unless somebody
+// made them differ: `git submodule add --name`, or a submodule moved with
+// `git mv`, which keeps the name it had. go-git (5.19.2) finds a submodule by
+// NAME, and when a checkout changes a submodule's pin it asks for it by PATH
+// (worktree.go, checkoutChangeSubmodule): it does not find it, and the
+// checkout stops where it was. At the top level that was "git reset --hard:
+// submodule not found" on every sync from the pin's first move, and Global's
+// repository stopped syncing; one level down it left the parent submodule
+// part of the way through a checkout.
+type misnamedSubmoduleError struct {
+	// Path and Name as the .gitmodules that declares it has them. In is the
+	// path of the submodule whose .gitmodules that is, empty for the
+	// repository's own.
+	Path, Name, In string
+}
+
+func (e *misnamedSubmoduleError) Error() string {
+	where, whose := e.Path, ".gitmodules"
+	if e.In != "" {
+		where, whose = e.In+"/"+e.Path, "the .gitmodules of the submodule at "+e.In
+	}
+	return fmt.Sprintf("the submodule at %s is named %q in %s and its pin has moved: a submodule whose name is not its path "+
+		"cannot be synced. Rename its section there to [submodule %q], commit, and sync again",
+		where, e.Name, whose, e.Path)
+}
+
+// explainSubmoduleNotFound turns go-git's "submodule not found" into that
+// sentence's general form, for a clone that is already in the state the check
+// before the reset exists to prevent (it was refused this way before 2.4.0,
+// and its HEAD has moved since).
+func explainSubmoduleNotFound(err error) error {
+	if errors.Is(err, gogit.ErrSubmoduleNotFound) {
+		return fmt.Errorf("%w: a submodule whose pin has moved is not named by its path in .gitmodules "+
+			"(a submodule added with --name, or moved with git mv). Rename its section to its path, commit, and sync again", err)
+	}
+	return err
+}
+
+// misnamedSubmodulePin looks at the commit a repository is about to be checked
+// out at and returns a submodule of it that the checkout cannot do: one whose
+// name in THAT commit's .gitmodules is not its path, and whose pin there is
+// not the one in the index (what the checkout compares with). A submodule
+// that is new to the index is not one: go-git makes its directory without
+// asking for it by name. Nil when there is none.
+func misnamedSubmodulePin(repo *gogit.Repository, to plumbing.Hash) (*misnamedSubmoduleError, error) {
+	commit, err := repo.CommitObject(to)
+	if err != nil {
+		return nil, nil // not here to be read: the checkout will say so
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, err
+	}
+	f, err := tree.File(".gitmodules")
+	if err != nil {
+		return nil, nil // no submodules declared
+	}
+	content, err := f.Contents()
+	if err != nil {
+		return nil, err
+	}
+	modules := gitconfig.NewModules()
+	if err := modules.Unmarshal([]byte(content)); err != nil {
+		return nil, nil // go-git reads the same file and says what is wrong with it
+	}
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range modules.Submodules {
+		at := path.Clean(filepath.ToSlash(m.Path))
+		if m.Name == at {
+			continue
+		}
+		pinned, err := tree.FindEntry(at)
+		if err != nil || pinned.Mode != filemode.Submodule {
+			continue
+		}
+		have, err := idx.Entry(at)
+		if err != nil || have.Hash == pinned.Hash {
+			continue // new to the index, or its pin has not moved
+		}
+		return &misnamedSubmoduleError{Path: at, Name: m.Name}, nil
+	}
+	return nil, nil
+}
+
+// misnamedNestedPin asks misnamedSubmodulePin of the commit a submodule is
+// about to be checked out at. That commit has to be here to be read, so the
+// submodule is fetched first; the update that follows finds it fetched.
+func misnamedNestedPin(ctx context.Context, sub *gogit.Submodule, opts *gogit.SubmoduleUpdateOptions) (*misnamedSubmoduleError, error) {
+	st, err := sub.Status()
+	if err != nil || st.Current.IsZero() || st.Current == st.Expected {
+		return nil, nil // never checked out, or nothing to check out
+	}
+	r, err := sub.Repository()
+	if err != nil {
+		return nil, nil
+	}
+	if _, err := r.CommitObject(st.Expected); err != nil {
+		ferr := r.FetchContext(ctx, &gogit.FetchOptions{Auth: opts.Auth})
+		if ferr != nil && ferr != gogit.NoErrAlreadyUpToDate {
+			return nil, nil // the update will fail on the same fetch, and say so
+		}
+	}
+	bad, err := misnamedSubmodulePin(r, st.Expected)
+	if err != nil || bad == nil {
+		return nil, nil
+	}
+	bad.In = filepath.ToSlash(sub.Config().Path)
+	return bad, nil
 }
 
 // resetSubmoduleToPin resets a submodule's working tree, index and HEAD hard
