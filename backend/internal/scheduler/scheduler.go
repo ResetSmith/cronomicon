@@ -86,6 +86,11 @@ type Scheduler struct {
 	wfFirer           WorkflowFirer        // set via SetWorkflowFirer; nil ⇒ workflows don't fire
 	pendingWfFirer    PendingWorkflowFirer // set via SetPendingWorkflowFirer; nil ⇒ pending workflow rows retry
 	notifier          notify.Notifier      // SL — set via SetNotifier; nil ⇒ no SLA/missed-run alerts
+
+	// ownerlessLogged is the schedule entries already reported by
+	// logOwnerlessEntries, so that each is said once and not at every reload.
+	// Read and written under reloadMu.
+	ownerlessLogged map[string]bool
 }
 
 // newCronEngine builds a cron engine that fires in loc. robfig/cron fixes its
@@ -292,6 +297,7 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.logOwnerlessEntries(ctx)
 
 	// The engine as it is now. A timezone change swaps the engine for a new one
 	// and then reloads; if it swaps while this reload is under way, this one
@@ -314,6 +320,49 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 	s.reloads++
 	s.mu.Unlock()
 	return nil
+}
+
+// logOwnerlessEntries says, once for each, which schedule entries the two
+// loaders left out because they record no owner and two definitions hold
+// their name (see loadJobEntries). Such an entry does not fire, and this line
+// is what says so: saving the definition it belongs to again writes its
+// entries with their owner. Called by Reload, under reloadMu.
+func (s *Scheduler) logOwnerlessEntries(ctx context.Context) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ds.owner_kind, ds.owner_source, ds.owner_name, ds.name
+		  FROM definition_schedules ds
+		 WHERE ds.owner_uid IS NULL
+		   AND CASE ds.owner_kind
+		         WHEN 'job' THEN (SELECT COUNT(*) FROM jobs o WHERE o.name = ds.owner_name AND o.source = ds.owner_source)
+		         ELSE            (SELECT COUNT(*) FROM workflows o WHERE o.name = ds.owner_name AND o.source = ds.owner_source)
+		       END > 1
+		 ORDER BY ds.owner_kind, ds.owner_source, ds.owner_name, ds.name`)
+	if err != nil {
+		s.log.Error("scheduler: read schedule entries with no owner", "err", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, source, owner, entry string
+		if err := rows.Scan(&kind, &source, &owner, &entry); err != nil {
+			s.log.Error("scheduler: read schedule entries with no owner", "err", err)
+			return
+		}
+		key := kind + "\x00" + source + "\x00" + owner + "\x00" + entry
+		if s.ownerlessLogged[key] {
+			continue
+		}
+		if s.ownerlessLogged == nil {
+			s.ownerlessLogged = map[string]bool{}
+		}
+		s.ownerlessLogged[key] = true
+		s.log.Warn("scheduler: a schedule entry records no owner and more than one definition holds its name: it does not fire. "+
+			"Save the definition it belongs to again, which writes its schedule entries with their owner",
+			"kind", kind, "source", source, "definition", owner, "entry", entry)
+	}
+	if err := rows.Err(); err != nil {
+		s.log.Error("scheduler: read schedule entries with no owner", "err", err)
+	}
 }
 
 // dbFingerprint generates a simple string fingerprint of the jobs, workflows, and
@@ -355,13 +404,23 @@ func (s *Scheduler) loadJobEntries(ctx context.Context) ([]scheduleEntry, error)
 	// with no error and nothing in the log, so a uid-only join would turn any
 	// missed writer into silently unscheduled work. Same shape as the cascade
 	// triggers (migration 1020), for the same reason.
+	//
+	// The name arm holds only where ONE job holds the name (2.4.0; the owner's
+	// decision of 2026-10-13, R5's question 11). Since a name can be held by a
+	// job in each agency, an entry with no owner under a name two jobs hold
+	// joined them both, and each ran at the other's times, on its own hosts.
+	// Which of them the entry belongs to is not recorded (the upgrade to
+	// schedule identity, migration 1300, left such an entry as it found it),
+	// so it fires neither, and logOwnerlessEntries says so. Every job of the
+	// name counts, one in the recycle bin too: the entry may be its.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ds.name, ds.cron, ds.env, ds.start_at, ds.end_at, ds.interval,
 		       j.name, j.source, j.run_type, j.scope, j.concurrency_policy, j.concurrency_key,
 		       COALESCE(j.uid,'')
 		FROM definition_schedules ds
 		JOIN jobs j ON (ds.owner_uid IS NOT NULL AND j.uid = ds.owner_uid)
-		            OR (ds.owner_uid IS NULL AND j.name = ds.owner_name AND j.source = ds.owner_source)
+		            OR (ds.owner_uid IS NULL AND j.name = ds.owner_name AND j.source = ds.owner_source
+		                AND (SELECT COUNT(*) FROM jobs o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		-- RH: a binned definition must stop firing. The soft delete is an UPDATE,
 		-- so the AFTER DELETE cascade never ran and ds still has its rows — this
 		-- filter is what actually retires the entry.
@@ -435,9 +494,11 @@ func (s *Scheduler) loadWorkflowEntries(ctx context.Context) ([]scheduleEntry, e
 		       COALESCE(w.uid, '')
 		FROM definition_schedules ds
 		-- R2-3 — uid-keyed with a name arm, exactly as loadJobEntries above; see the
-		-- comment there for why the fallback is mandatory rather than defensive.
+		-- comment there for why the fallback is mandatory rather than defensive,
+		-- and why it holds only where one workflow holds the name.
 		JOIN workflows w ON (ds.owner_uid IS NOT NULL AND w.uid = ds.owner_uid)
-		                 OR (ds.owner_uid IS NULL AND w.name = ds.owner_name AND w.source = ds.owner_source)
+		                 OR (ds.owner_uid IS NULL AND w.name = ds.owner_name AND w.source = ds.owner_source
+		                     AND (SELECT COUNT(*) FROM workflows o WHERE o.name = ds.owner_name AND o.source = ds.owner_source) = 1)
 		WHERE ds.owner_kind = 'workflow' AND w.enabled = 1 AND w.deleted_at IS NULL -- RH
 	`)
 	if err != nil {
