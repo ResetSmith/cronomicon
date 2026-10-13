@@ -1926,6 +1926,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/reactionOwnerKind' }
         - { $ref: '#/components/parameters/reactionOwnerName' }
+        - { $ref: '#/components/parameters/reactionOwnerUid' }
       responses:
         '200':
           description: This definition's reactions.
@@ -1959,6 +1960,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/reactionOwnerKind' }
         - { $ref: '#/components/parameters/reactionOwnerName' }
+        - { $ref: '#/components/parameters/reactionOwnerUid' }
         - { $ref: '#/components/parameters/csrf' }
       requestBody:
         required: true
@@ -2005,6 +2007,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/reactionOwnerKind' }
         - { $ref: '#/components/parameters/reactionOwnerName' }
+        - { $ref: '#/components/parameters/reactionOwnerUid' }
         - name: name
           in: path
           required: true
@@ -7910,6 +7913,19 @@ components:
       in: path
       required: true
       description: The owning definition's name.
+      schema: { type: string }
+    reactionOwnerUid:
+      name: uid
+      in: query
+      description: |
+        v2.4.0 — the owning definition's `uid`. A name can be held by a
+        definition in each agency, and the name alone does not then say which
+        definition's reactions are meant. With `uid`, it is that definition's
+        (404 when no definition of that kind and name has it). Without it the
+        name must be enough: a WRITE under a name that more than one definition
+        holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+        v2.4.0 such a write replaced every reaction of every definition of the
+        name.
       schema: { type: string }
     csrf:
       name: X-CSRF-Token

@@ -9300,6 +9300,17 @@ export interface components {
         reactionOwnerKind: "job" | "workflow";
         /** @description The owning definition's name. */
         reactionOwnerName: string;
+        /**
+         * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+         *     definition in each agency, and the name alone does not then say which
+         *     definition's reactions are meant. With `uid`, it is that definition's
+         *     (404 when no definition of that kind and name has it). Without it the
+         *     name must be enough: a WRITE under a name that more than one definition
+         *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+         *     v2.4.0 such a write replaced every reaction of every definition of the
+         *     name.
+         */
+        reactionOwnerUid: string;
         /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
         csrf: string;
         page: number;
@@ -11347,7 +11358,19 @@ export interface operations {
     };
     getDefinitionReactions: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+                 *     definition in each agency, and the name alone does not then say which
+                 *     definition's reactions are meant. With `uid`, it is that definition's
+                 *     (404 when no definition of that kind and name has it). Without it the
+                 *     name must be enough: a WRITE under a name that more than one definition
+                 *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+                 *     v2.4.0 such a write replaced every reaction of every definition of the
+                 *     name.
+                 */
+                uid?: components["parameters"]["reactionOwnerUid"];
+            };
             header?: never;
             path: {
                 /** @description Which kind of definition owns the reaction — the one that RUNS. */
@@ -11373,7 +11396,19 @@ export interface operations {
     };
     replaceDefinitionReactions: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+                 *     definition in each agency, and the name alone does not then say which
+                 *     definition's reactions are meant. With `uid`, it is that definition's
+                 *     (404 when no definition of that kind and name has it). Without it the
+                 *     name must be enough: a WRITE under a name that more than one definition
+                 *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+                 *     v2.4.0 such a write replaced every reaction of every definition of the
+                 *     name.
+                 */
+                uid?: components["parameters"]["reactionOwnerUid"];
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
@@ -11433,7 +11468,19 @@ export interface operations {
     };
     deleteReaction: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — the owning definition's `uid`. A name can be held by a
+                 *     definition in each agency, and the name alone does not then say which
+                 *     definition's reactions are meant. With `uid`, it is that definition's
+                 *     (404 when no definition of that kind and name has it). Without it the
+                 *     name must be enough: a WRITE under a name that more than one definition
+                 *     holds is refused 409 `ambiguous_definition`, and changes nothing. Until
+                 *     v2.4.0 such a write replaced every reaction of every definition of the
+                 *     name.
+                 */
+                uid?: components["parameters"]["reactionOwnerUid"];
+            };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];

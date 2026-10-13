@@ -1,7 +1,10 @@
 package api_test
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -78,42 +81,127 @@ func TestAWorkflowEditIsRefusedANameItsNewAgencyAlreadyHas(t *testing.T) {
 	}
 }
 
-// PINNED, present defect 36 (found on 2026-10-10 while grounding 2.4.0's Phase
-// R4; in the released code).
+// The reactions of a definition are written by its identity (2.4.0 Phase R6;
+// present defect 36, found on 2026-10-10 while grounding Phase R4, in the
+// released code).
 //
 // The reactions of a definition built in the app are written through a route
 // that names the definition: PUT /reactions/{kind}/{name}. Two agencies may
-// each hold a job of one name (R2-5). The route finds "the" definition by the
-// name, replaces every reaction row of that source, kind and NAME, and stamps
-// the new rows' owner only when one definition holds the name. So saving one
-// twin's reactions deletes the other twin's, and the rows it writes belong to
-// neither by identity.
+// each hold a job of one name (R2-5). The route found "the" definition by the
+// name, replaced every reaction row of that source, kind and NAME, and stamped
+// the new rows' owner only when one definition held the name: saving one
+// twin's reactions deleted the other twin's, and the rows it wrote belonged to
+// neither by identity. This was the pin
+// TestGR0_SavingOneTwinsReactionsDeletesTheOthers.
 //
-// It belongs with the uid on those routes (Phase R6). When it is fixed this
-// test is inverted: the other twin's reaction is still there.
-func TestGR0_SavingOneTwinsReactionsDeletesTheOthers(t *testing.T) {
+// ?uid= says which definition. A write that does not say, under a name more
+// than one definition holds, is refused and changes nothing. A write touches
+// its own definition's rows and stamps them with its identity.
+func TestADefinitionsReactionsAreWrittenByItsIdentity(t *testing.T) {
 	api, pool := newRxAPI(t)
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO jobs (name, uid, source, run_type, enabled, synced_at) VALUES
-	      ('extract', 'uid-extract', 'cronomicon', 'bash', 1, 't'),
-	      ('load', 'uid-load-fin', 'cronomicon', 'bash', 1, 't'),
-	      ('load', 'uid-load-tax', 'cronomicon', 'bash', 1, 't')`)
-	// The other twin's reaction, as its own save would have left it had it been
-	// the only `load` at the time: tied to it by identity.
+	      ('extract', 'uid-extract',  'cronomicon', 'bash', 1, 't'),
+	      ('load',    'uid-load-fin', 'cronomicon', 'bash', 1, 't'),
+	      ('load',    'uid-load-tax', 'cronomicon', 'bash', 1, 't'),
+	      ('solo',    'uid-solo',     'cronomicon', 'bash', 1, 't')`)
+	// The other twin's reaction, tied to it by identity; and under the name one
+	// job holds, a row from before a reaction recorded its owner.
 	exec(`INSERT INTO reactions (owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name, on_outcome,
 	                             delay_seconds, min_interval_seconds, include_workflow_children, enabled, position, owner_uid, on_uid)
-	      VALUES ('cronomicon', 'job', 'load', 'tax-after-extract', 'cronomicon', 'job', 'extract', 'success', 0, 0, 0, 1, 0, 'uid-load-tax', 'uid-extract')`)
+	      VALUES ('cronomicon', 'job', 'load', 'tax-after-extract', 'cronomicon', 'job', 'extract', 'success', 0, 0, 0, 1, 0, 'uid-load-tax', 'uid-extract'),
+	             ('cronomicon', 'job', 'solo', 'old-row',           'cronomicon', 'job', 'extract', 'success', 0, 0, 0, 1, 0, NULL,           'uid-extract')`)
+	one := func(name, outcome string) map[string]any {
+		return map[string]any{"reactions": []map[string]any{{"name": name, "onKind": "job", "onName": "extract", "onSource": "cronomicon", "onOutcome": outcome}}}
+	}
+	ownerOf := func(reaction string) string {
+		t.Helper()
+		var uid sql.NullString
+		err := pool.QueryRow(`SELECT owner_uid FROM reactions WHERE name = ?`, reaction).Scan(&uid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "(gone)"
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !uid.Valid {
+			return "(no owner)"
+		}
+		return uid.String
+	}
 
-	code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/load", map[string]any{
-		"reactions": []map[string]any{{"name": "fin-after-extract", "onKind": "job", "onName": "extract", "onSource": "cronomicon", "onOutcome": "failure"}},
-	})
+	// A name two jobs hold, and no uid: refused, and nothing is changed.
+	code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/load", one("fin-after-extract", "failure"))
+	if code != http.StatusConflict || !strings.Contains(string(body), "ambiguous_definition") {
+		t.Fatalf("a write that does not say which load = %d (%s), want 409 ambiguous_definition", code, body)
+	}
+	if ownerOf("tax-after-extract") != "uid-load-tax" || ownerOf("fin-after-extract") != "(gone)" {
+		t.Fatalf("the refused write changed the reactions: tax's is %s, fin's is %s", ownerOf("tax-after-extract"), ownerOf("fin-after-extract"))
+	}
+	// A uid that is not a job of that name.
+	if code, _ := api.doRaw(http.MethodPut, "/api/v1/reactions/job/load?uid=uid-solo", one("x", "failure")); code != http.StatusNotFound {
+		t.Errorf("a uid that is another job's = %d, want 404", code)
+	}
+
+	// FIN's load, by its uid: its reaction is written as its own, and TAX's
+	// load's reaction is where it was.
+	code, body = api.doRaw(http.MethodPut, "/api/v1/reactions/job/load?uid=uid-load-fin", one("fin-after-extract", "failure"))
 	if code != http.StatusOK {
-		t.Fatalf("PUT = %d (%s)", code, body)
+		t.Fatalf("FIN's load's reactions = %d (%s)", code, body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM reactions WHERE name = 'tax-after-extract'`); n != 0 {
-		t.Fatalf("PIN BROKEN: the other twin's reaction survived the save. Present defect 36 is fixed: invert this test (want it kept)")
+	if strings.Contains(string(body), "tax-after-extract") || !strings.Contains(string(body), "fin-after-extract") {
+		t.Errorf("the answer is not FIN's load's reactions alone: %s", body)
 	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM reactions WHERE name = 'fin-after-extract' AND owner_uid IS NULL`); n != 1 {
-		t.Fatalf("the saved reaction with no owner identity: %d rows; the pin expects the one", n)
+	if got := ownerOf("tax-after-extract"); got != "uid-load-tax" {
+		t.Fatalf("the other twin's reaction after the save is %s, want it kept, its own", got)
+	}
+	if got := ownerOf("fin-after-extract"); got != "uid-load-fin" {
+		t.Fatalf("the saved reaction's owner is %s, want uid-load-fin", got)
+	}
+	// Each twin's list is its own.
+	for uid, want := range map[string]string{"uid-load-fin": "fin-after-extract", "uid-load-tax": "tax-after-extract"} {
+		other := map[string]string{"uid-load-fin": "tax-after-extract", "uid-load-tax": "fin-after-extract"}[uid]
+		_, body := api.doRaw(http.MethodGet, "/api/v1/reactions/job/load?uid="+uid, nil)
+		if !strings.Contains(string(body), want) || strings.Contains(string(body), other) {
+			t.Errorf("the reactions of %s: %s", uid, body)
+		}
+	}
+	// Saving FIN's again replaces FIN's, and still not TAX's.
+	if code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/load?uid=uid-load-fin", one("fin-second", "success")); code != http.StatusOK {
+		t.Fatalf("FIN's load's reactions, again = %d (%s)", code, body)
+	}
+	if ownerOf("fin-after-extract") != "(gone)" || ownerOf("fin-second") != "uid-load-fin" || ownerOf("tax-after-extract") != "uid-load-tax" {
+		t.Fatalf("after FIN's second save: fin-after-extract %s, fin-second %s, tax-after-extract %s",
+			ownerOf("fin-after-extract"), ownerOf("fin-second"), ownerOf("tax-after-extract"))
+	}
+
+	// Removing one: the same rule.
+	if code, _ := api.doRaw(http.MethodDelete, "/api/v1/reactions/job/load/fin-second", nil); code != http.StatusConflict {
+		t.Errorf("removing a reaction without saying which load = %d, want 409", code)
+	}
+	if code, _ := api.doRaw(http.MethodDelete, "/api/v1/reactions/job/load/fin-second?uid=uid-load-tax", nil); code != http.StatusNotFound {
+		t.Errorf("removing FIN's reaction as TAX's load's = %d, want 404", code)
+	}
+	if ownerOf("fin-second") != "uid-load-fin" {
+		t.Fatalf("a refused removal removed the reaction")
+	}
+	if code, _ := api.doRaw(http.MethodDelete, "/api/v1/reactions/job/load/fin-second?uid=uid-load-fin", nil); code != http.StatusNoContent {
+		t.Errorf("removing FIN's reaction as FIN's load's = %d, want 204", code)
+	}
+	if ownerOf("fin-second") != "(gone)" || ownerOf("tax-after-extract") != "uid-load-tax" {
+		t.Fatalf("after the removal: fin-second %s, tax-after-extract %s", ownerOf("fin-second"), ownerOf("tax-after-extract"))
+	}
+
+	// A name ONE job holds needs no uid, as before. Its rows are stamped with
+	// its identity, and a row of the name that records no owner is its and is
+	// replaced with the rest.
+	if code, body := api.doRaw(http.MethodPut, "/api/v1/reactions/job/solo", one("solo-after-extract", "success")); code != http.StatusOK {
+		t.Fatalf("the reactions of a job whose name is its own = %d (%s)", code, body)
+	}
+	if ownerOf("old-row") != "(gone)" || ownerOf("solo-after-extract") != "uid-solo" {
+		t.Fatalf("after solo's save: old-row %s, solo-after-extract %s", ownerOf("old-row"), ownerOf("solo-after-extract"))
+	}
+	if ownerOf("tax-after-extract") != "uid-load-tax" {
+		t.Fatalf("solo's save touched another job's reaction")
 	}
 }

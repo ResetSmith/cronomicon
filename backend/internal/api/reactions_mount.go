@@ -115,6 +115,25 @@ func (s *Server) getDefinitionReactions(w http.ResponseWriter, r *http.Request) 
 	// definitions' reactions into one list. A missing definition simply yields
 	// no rows rather than a 404: a caller listing reactions for something that
 	// does not exist wants an empty list, not an error.
+	//
+	// With ?uid= it is ONE definition's reactions (present defect 36): a name
+	// can be held by a definition in each agency, and by the name alone their
+	// lists are one list.
+	if uid := r.URL.Query().Get("uid"); uid != "" {
+		owner, status := s.reactionOwner(r, kind, name)
+		if status != 0 {
+			httpx.JSON(w, http.StatusOK, []reactionOut{})
+			return
+		}
+		cond, args := owner.rowsSQL(kind, name)
+		rows, err := s.loadReactionsWhere(r, cond, args)
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, rows)
+		return
+	}
 	source, _ := s.definitionSource(r, kind, name)
 	rows, err := s.loadReactions(r, kind, source, name)
 	if err != nil {
@@ -122,6 +141,120 @@ func (s *Server) getDefinitionReactions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	httpx.JSON(w, http.StatusOK, rows)
+}
+
+// reactionOwner is the ONE definition a per-definition reactions route
+// addresses (present defect 36).
+//
+// The routes name a definition by its kind and name, and a name can be held by
+// a definition in each agency. The write found "the" definition by the name,
+// replaced every reaction row of that source, kind and NAME, and stamped the
+// new rows' owner only when one definition held the name: saving one twin's
+// reactions deleted the other twin's, and the rows it wrote belonged to
+// neither by identity.
+//
+// ?uid= says which definition. Without it the name must be enough: where more
+// than one definition of the source holds it, a write is refused (409) and
+// told to say which.
+type reactionOwner struct {
+	source string
+	uid    string // "" only for a definition that records none
+	// alone: no other definition of the source holds the name, so a reaction
+	// row of the name that records no owner is this definition's.
+	alone bool
+}
+
+// reactionOwner resolves it. status is 0, or the HTTP status of the refusal:
+// 404 (no such definition), 409 (the name does not say which).
+func (s *Server) reactionOwner(r *http.Request, kind, name string) (reactionOwner, int) {
+	table := "jobs"
+	if kind == "workflow" {
+		table = "workflows"
+	}
+	uid := r.URL.Query().Get("uid")
+	var o reactionOwner
+	if uid != "" {
+		//nolint:gosec // table is a package-local constant chosen by the kind switch
+		if err := s.db.QueryRowContext(r.Context(),
+			"SELECT source FROM "+table+" WHERE uid = ? AND name = ?", uid, name).Scan(&o.source); err != nil {
+			return o, http.StatusNotFound
+		}
+		o.uid = uid
+	} else {
+		src, ok := s.definitionSource(r, kind, name)
+		if !ok {
+			return o, http.StatusNotFound
+		}
+		o.source = src
+	}
+	//nolint:gosec // as above
+	rows, err := s.db.QueryContext(r.Context(),
+		"SELECT COALESCE(uid, '') FROM "+table+" WHERE source = ? AND name = ?", o.source, name)
+	if err != nil {
+		return o, http.StatusNotFound
+	}
+	defer rows.Close()
+	var uids []string
+	for rows.Next() {
+		var u string
+		if rows.Scan(&u) == nil {
+			uids = append(uids, u)
+		}
+	}
+	o.alone = len(uids) == 1
+	if uid == "" {
+		if !o.alone {
+			return o, http.StatusConflict
+		}
+		o.uid = uids[0]
+	}
+	return o, 0
+}
+
+// rowsSQL is the condition over `reactions` for the rows that are this
+// definition's, with its arguments: the rows that record it as their owner,
+// and, where no other definition holds the name, the rows of the name that
+// record no owner (written before a reaction recorded one).
+func (o reactionOwner) rowsSQL(kind, name string) (string, []any) {
+	switch {
+	case o.uid == "":
+		return "owner_source = ? AND owner_kind = ? AND owner_name = ?", []any{o.source, kind, name}
+	case o.alone:
+		return "owner_kind = ? AND (owner_uid = ? OR (owner_uid IS NULL AND owner_source = ? AND owner_name = ?))",
+			[]any{kind, o.uid, o.source, name}
+	default:
+		return "owner_kind = ? AND owner_uid = ?", []any{kind, o.uid}
+	}
+}
+
+// refuseReactionOwner writes the answer for a definition reactionOwner could
+// not settle on.
+func refuseReactionOwner(w http.ResponseWriter, status int, kind, name string) {
+	if status == http.StatusConflict {
+		httpx.Fail(w, http.StatusConflict, "ambiguous_definition",
+			"more than one "+kind+" is called "+name+": say which by its uid (?uid=)")
+		return
+	}
+	httpx.Fail(w, http.StatusNotFound, "not_found", kind+" not found")
+}
+
+// binned reports whether THIS definition is in the recycle bin (see
+// definitionIsBinned, which asks by the name).
+func (s *Server) reactionOwnerBinned(r *http.Request, kind, name string, o reactionOwner) bool {
+	if o.uid == "" {
+		return s.definitionIsBinned(r, kind, o.source, name)
+	}
+	table := "jobs"
+	if kind == "workflow" {
+		table = "workflows"
+	}
+	var binned int
+	//nolint:gosec // table is a package-local constant chosen by the kind switch
+	if err := s.db.QueryRowContext(r.Context(),
+		"SELECT deleted_at IS NOT NULL FROM "+table+" WHERE uid = ?", o.uid).Scan(&binned); err != nil {
+		return false
+	}
+	return binned == 1
 }
 
 // replaceDefinitionReactions replaces one definition's whole reaction list.
@@ -137,16 +270,17 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 		httpx.Fail(w, http.StatusBadRequest, "bad_request", "ownerKind must be job or workflow")
 		return
 	}
-	source, ok := s.definitionSource(r, kind, name)
-	if !ok {
-		httpx.Fail(w, http.StatusNotFound, "not_found", kind+" not found")
+	owner, status := s.reactionOwner(r, kind, name)
+	if status != 0 {
+		refuseReactionOwner(w, status, kind, name)
 		return
 	}
+	source := owner.source
 	// FX-A4: no authoring a standing instruction onto a definition in the recycle
 	// bin — it would go live, unannounced, the moment the definition was restored.
 	// Matches updateJob/updateWorkflow/updateScheduleDef, which all refuse to edit
 	// a binned definition. Listing and deleting stay open (see definitionIsBinned).
-	if s.definitionIsBinned(r, kind, source, name) {
+	if s.reactionOwnerBinned(r, kind, name, owner) {
 		httpx.Fail(w, http.StatusConflict, "conflict",
 			kind+" is in the recycle bin — restore it before editing its reactions")
 		return
@@ -163,8 +297,8 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	owner := reactionRef{Source: source, Kind: kind, Name: name}
-	if err := s.validateReactions(r, owner, body.Reactions); err != nil {
+	ownerRef := reactionRef{Source: source, Kind: kind, Name: name}
+	if err := s.validateReactions(r, ownerRef, body.Reactions); err != nil {
 		if ve, ok := errors.AsType[*reactionValidationError](err); ok {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", ve.Error())
 			return
@@ -180,9 +314,9 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(r.Context(),
-		`DELETE FROM reactions WHERE owner_source=? AND owner_kind=? AND owner_name=?`,
-		source, kind, name); err != nil {
+	// THIS definition's rows, and no other definition's of the name.
+	mine, mineArgs := owner.rowsSQL(kind, name)
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM reactions WHERE `+mine, mineArgs...); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -202,10 +336,10 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 			                       include_workflow_children, enabled, position,
 			                       owner_uid, on_uid)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,
-				CASE ?
-				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
-				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
-				END,
+				-- The owner is the definition the route addressed, by its
+				-- identity. (It was "the one definition of the name", and NULL
+				-- when two held it.)
+				NULLIF(?, ''),
 				CASE ?
 				  WHEN 'job'      THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM jobs      WHERE name = ? AND source = ?)
 				  WHEN 'workflow' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MAX(uid) END FROM workflows WHERE name = ? AND source = ?)
@@ -214,7 +348,7 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 			onSource, in.OnKind, in.OnName, in.OnOutcome,
 			in.DelaySeconds, in.MinIntervalSeconds,
 			boolToInt(in.IncludeWorkflowChildren), enabled, i,
-			kind, name, source, name, source,
+			owner.uid,
 			in.OnKind, in.OnName, onSource, in.OnName, onSource); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -228,8 +362,7 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 	// identity and fires on nothing.
 	if _, err := tx.ExecContext(r.Context(), `
 		UPDATE reactions SET on_uid = `+scheduler.ReactionUpstreamByNameSQL+`
-		 WHERE owner_source = ? AND owner_kind = ? AND owner_name = ? AND on_source = 'git'`,
-		source, kind, name); err != nil {
+		 WHERE `+mine+` AND on_source = 'git'`, mineArgs...); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -240,7 +373,7 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 
 	s.auditReaction(r, id.Email, "Replaced", kind+"/"+name,
 		"Reactions replaced ("+strconv.Itoa(len(body.Reactions))+" entries)")
-	rows, err := s.loadReactions(r, kind, source, name)
+	rows, err := s.loadReactionsWhere(r, mine, mineArgs)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -255,17 +388,17 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusBadRequest, "bad_request", "ownerKind must be job or workflow")
 		return
 	}
-	source, ok := s.definitionSource(r, kind, name)
-	if !ok {
-		httpx.Fail(w, http.StatusNotFound, "not_found", kind+" not found")
+	owner, status := s.reactionOwner(r, kind, name)
+	if status != 0 {
+		refuseReactionOwner(w, status, kind, name)
 		return
 	}
-	if !s.requireCronomiconOwner(w, kind, source, name) {
+	if !s.requireCronomiconOwner(w, kind, owner.source, name) {
 		return
 	}
+	mine, mineArgs := owner.rowsSQL(kind, name)
 	res, err := s.db.ExecContext(r.Context(),
-		`DELETE FROM reactions WHERE owner_source=? AND owner_kind=? AND owner_name=? AND name=?`,
-		source, kind, name, entry)
+		`DELETE FROM reactions WHERE `+mine+` AND name = ?`, append(mineArgs, entry)...)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -669,18 +802,27 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 // definition's entries in as in-app rows. The next sync restores the git ones,
 // leaving both, and one upstream completion produces two runs.
 func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]reactionOut, error) {
+	cond, args := "", []any(nil)
+	if kind != "" {
+		cond = `owner_kind = ? AND owner_name = ?`
+		args = append(args, kind, name)
+		if source != "" {
+			cond += ` AND owner_source = ?`
+			args = append(args, source)
+		}
+	}
+	return s.loadReactionsWhere(r, cond, args)
+}
+
+// loadReactionsWhere is loadReactions over the rows a condition picks (none:
+// every row), with the same filter on what the caller may read.
+func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([]reactionOut, error) {
 	q := `SELECT owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name,
 	             on_outcome, delay_seconds, min_interval_seconds,
 	             include_workflow_children, enabled, position
 	        FROM reactions`
-	var args []any
-	if kind != "" {
-		q += ` WHERE owner_kind = ? AND owner_name = ?`
-		args = append(args, kind, name)
-		if source != "" {
-			q += ` AND owner_source = ?`
-			args = append(args, source)
-		}
+	if cond != "" {
+		q += ` WHERE ` + cond
 	}
 	rows, err := s.db.QueryContext(r.Context(), q, args...)
 	if err != nil {
