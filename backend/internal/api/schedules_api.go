@@ -48,12 +48,27 @@ type scheduleEntryResp struct {
 // viewer's wall clock.
 // It issues no nested query, so callers must invoke it only after any outer rows
 // iterator is drained (SQLite pool rule, see db.maxOpenConns).
-func (s *Server) loadSchedules(ctx context.Context, ownerSource, ownerKind, ownerName string, paused bool) []scheduleEntryResp {
+//
+// The entries are the DEFINITION's (2.4.0): the ones that carry its uid, and
+// one that records no owner only where the definition is the one holder of
+// its name, which is the scheduler's own join (loadJobEntries). Read by
+// source, kind and name, as they were, the detail of one agency's `load`
+// showed the entries of another agency's `load` beside its own, their
+// environment included, and the edit form, which sends back what the detail
+// gave it, saved them as this definition's.
+func (s *Server) loadSchedules(ctx context.Context, ownerUID, ownerSource, ownerKind, ownerName string, paused bool) []scheduleEntryResp {
+	holders := "jobs"
+	if ownerKind == "workflow" {
+		holders = "workflows"
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT name, cron, env, source_ref, start_at, end_at, interval FROM definition_schedules
-		WHERE owner_source = ? AND owner_kind = ? AND owner_name = ?
+		WHERE owner_source = ?2 AND owner_kind = ?3 AND owner_name = ?4
+		  AND ((?1 <> '' AND owner_uid = ?1)
+		    OR ((owner_uid IS NULL OR ?1 = '')
+		        AND (SELECT COUNT(*) FROM `+holders+` o WHERE o.name = ?4 AND o.source = ?2) <= 1))
 		ORDER BY position, name
-	`, ownerSource, ownerKind, ownerName)
+	`, ownerUID, ownerSource, ownerKind, ownerName)
 	if err != nil {
 		return nil
 	}

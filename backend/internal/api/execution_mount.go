@@ -877,7 +877,7 @@ func (s *Server) fetchJobDetail(r *http.Request, whereCol, arg string) *jobRow {
 	}
 
 	// Multi-entry schedules + per-definition nextRunAt (nil when paused).
-	jr.Schedules = s.loadSchedules(r.Context(), j.source, "job", j.name, status == "paused")
+	jr.Schedules = s.loadSchedules(r.Context(), j.uid.String, j.source, "job", j.name, status == "paused")
 	jr.NextRunAt = earliestNextRunAt(jr.Schedules)
 	// AR — surface the earliest parked ad-hoc run so the job row can say
 	// "1 scheduled run · Wed 5:00 PM" without a second endpoint.
@@ -3140,7 +3140,7 @@ func (s *Server) fetchWorkflowByID(r *http.Request, wfID string) *workflowRow {
 			wr.Status = st
 		}
 	}
-	wr.Schedules = s.loadSchedules(r.Context(), wf.source, "workflow", wf.name, wr.Disabled)
+	wr.Schedules = s.loadSchedules(r.Context(), wf.uid.String, wf.source, "workflow", wf.name, wr.Disabled)
 	wr.NextRunAt = earliestNextRunAt(wr.Schedules)
 	return wr
 }
