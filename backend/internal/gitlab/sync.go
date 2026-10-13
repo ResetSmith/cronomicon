@@ -2431,24 +2431,33 @@ func (s *Service) upsertScripts(ctx context.Context, tx *sql.Tx, resolved map[st
 		// that becomes a project or stops being one takes its in-app jobs with
 		// it.
 		//
-		// Of THIS repository's agency, when the repository is an agency's (2.4.0).
-		// An in-app job is joined to an agency's repository's script because it
-		// is that agency's (GR-16). If its scope is given to another agency
-		// afterwards, the join is still there; what must not go on is the
-		// repository's committers changing the body of a job that now runs on
-		// another agency's hosts. Such a job keeps the copy it has. Global's
-		// script reaches every in-app job joined to it, as before.
-		ofThisAgency, ofThisAgencyArgs := "", []any{}
-		if s.repo() != repoid.Global {
-			ofThisAgency, ofThisAgencyArgs = ` AND `+jobsAgencySQL+` = ?`, []any{s.agency()}
-		}
+		// EVERY in-app job joined to the script, whatever agency its scope is
+		// in now (the owner's decision of 2026-10-13; present defect 46). An
+		// in-app job is joined to an agency's repository's script because it
+		// was that agency's (GR-16), and its scope can be given to another
+		// agency afterwards. From the review of Phase R4 until this decision
+		// such a job kept the copy it had, so that the repository's committers
+		// could not change the body of a job that now ran on another agency's
+		// hosts. Two things have changed since. That job is refused on those
+		// hosts wherever a run is produced and at dispatch
+		// (runref.RepoScopeMismatch asks about the script's repository). And
+		// dispatch reads the body from the script's record, not from this copy
+		// (execspec.ResolveCommand), while the run's TYPE, its project marker
+		// and its entry are still the copy's. A copy that is not refreshed
+		// protected nothing, and let the job run its script's new body under
+		// its copy's old interpreter on a scope of the script's own agency.
+		// The job's row and the script's are written together, for every job.
+		//
+		// The same job's SCHEDULE is another matter and is not refreshed
+		// (upsertSchedules, the propagate statement): its timing is not confined by
+		// anything else.
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE jobs
 			    SET run_type = ?, command = ?, script = ?, script_path = ?, executor = ?,
 			        content_hash = ?, project_root = ?
-			  WHERE source = 'cronomicon' AND script_uid = ?`+ofThisAgency,
-			append([]any{rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
-				rs.contentHash, nullStr(rs.projectRoot), rs.uid}, ofThisAgencyArgs...)...); err != nil {
+			  WHERE source = 'cronomicon' AND script_uid = ?`,
+			rs.runType, nullStr(rs.command), nullStr(rs.script), nullStr(rs.scriptPath), nullStr(rs.executor),
+			rs.contentHash, nullStr(rs.projectRoot), rs.uid); err != nil {
 			return fmt.Errorf("refresh in-app jobs of script %q: %w", name, err)
 		}
 		// And a job of ANOTHER repository that uses this script (GR-16: an
@@ -2672,10 +2681,13 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 		// are left to the rewrite further down, as before.
 		//
 		// An in-app definition follows an AGENCY's repository's schedule only
-		// while it is that agency's, like a job its script (upsertScripts): one
-		// whose scope has since been given to another agency keeps the timing it
-		// has. Global's repository's schedules reach every in-app definition
-		// bound to them, with the statement they always had.
+		// while it is that agency's: one whose scope has since been given to
+		// another agency keeps the timing it has. (Its copy of its SCRIPT is
+		// refreshed whatever agency it is in, since 2026-10-13: upsertScripts
+		// says why. Nothing but this condition keeps one agency's committers
+		// from retiming a job that runs on another's hosts.) Global's
+		// repository's schedules reach every in-app definition bound to them,
+		// with the statement they always had.
 		inApp, inAppArgs := `owner_source = 'cronomicon'`, []any{}
 		if s.repo() != repoid.Global {
 			inApp = `(owner_source = 'cronomicon' AND ? = CASE owner_kind

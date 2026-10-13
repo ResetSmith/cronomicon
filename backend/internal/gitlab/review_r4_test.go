@@ -18,14 +18,24 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 )
 
-// An in-app job follows its agency's repository's script and schedule only
-// while it IS that agency's. Its scope given to another agency, the
-// repository's committers no longer change the body, or the timing, of a job
-// that now runs on another agency's hosts: it keeps the copy it has.
+// An in-app job follows its agency's repository's SCHEDULE only while it IS
+// that agency's. Its scope given to another agency, the repository's
+// committers no longer change the timing of a job that now runs on another
+// agency's hosts: its entry keeps the timing it has.
 //
 // As Phase R4 was first built the refresh asked only "is this in-app job
-// joined to the script", and a scope move left the join in place.
-func TestGR4_AnInAppJobStopsFollowingARepositoryItsAgencyNoLongerOwns(t *testing.T) {
+// joined to the schedule", and a scope move left the join in place.
+//
+// Its copy of the SCRIPT is another matter, and follows whatever agency its
+// scope is in (the owner's decision of 2026-10-13; present defect 46). From
+// the review of Phase R4 until then the copy was held back as the timing is.
+// That job is refused on the other agency's hosts in any case
+// (runref.RepoScopeMismatch), and dispatch reads the body from the script's
+// record while the run's type, project marker and entry are the copy's: a
+// copy held back ran the script's new body under the copy's old interpreter,
+// on a scope of the script's own agency. This was the pin
+// TestGR0_AJobWhoseCopyIsNotRefreshedRunsItsScriptsBodyUnderItsOldRunType.
+func TestGR4_AnInAppJobsTimingStopsFollowingARepositoryItsAgencyNoLongerOwnsAndItsScriptCopyDoesNot(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
 	grSync(t, a, "Global's repository")
 	b, repoB, remoteB := grSecondRepo(t, a) // ag-b owns hosts-of-repo-b
@@ -56,7 +66,17 @@ func TestGR4_AnInAppJobStopsFollowingARepositoryItsAgencyNoLongerOwns(t *testing
 		t.Helper()
 		return grString(t, a.db, `SELECT j.content_hash || ' ' || d.cron FROM jobs j JOIN definition_schedules d ON d.owner_uid = j.uid WHERE j.uid = ?`, "j-"+job)
 	}
-	before := state("moves")
+	// The whole copy, as the composer and sync write it.
+	copyOf := func(job string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT run_type || '|' || COALESCE(script, '') || '|' || COALESCE(script_path, '') || '|' || COALESCE(project_root, '') || '|' || content_hash
+		                            FROM jobs WHERE uid = ?`, "j-"+job)
+	}
+	scriptsRecord := func() string {
+		t.Helper()
+		return grString(t, a.db, `SELECT run_type || '|' || COALESCE(script, '') || '|' || COALESCE(script_path, '') || '|' || COALESCE(project_root, '') || '|' || content_hash
+		                            FROM scripts WHERE uid = ?`, script)
+	}
 
 	// One job's scope is given to another agency. Then the repository edits both.
 	if _, err := a.db.Exec(`INSERT OR IGNORE INTO agencies (id, name, created_at) VALUES ('ag-c', 'Agency C', 't')`); err != nil {
@@ -72,13 +92,29 @@ func TestGR4_AnInAppJobStopsFollowingARepositoryItsAgencyNoLongerOwns(t *testing
 		"scripts/tool.sh":       "#!/bin/bash\necho two\n",
 		"schedules/yearly.yaml": grSchedule("0 4 4 4 *"),
 	}, "the agency edits its script and schedule")
+	// The moved job's copy is, by now, wrong in every column a sync writes: as
+	// a copy held back since the move would be once the script had changed
+	// its type.
+	if _, err := a.db.Exec(`UPDATE jobs SET run_type = 'python', script = 'print("held back")', script_path = 'scripts/old.py',
+	                               project_root = 'scripts/old', content_hash = 'stale' WHERE uid = 'j-moves'`); err != nil {
+		t.Fatal(err)
+	}
 	grSync(t, b, "the agency's repository, edited")
 
 	if got, want := state("stays"), hash()+" 0 4 4 4 *"; got != want {
 		t.Errorf("the job that is still the agency's is %q after the edit, want it following: %q", got, want)
 	}
-	if got := state("moves"); got != before {
-		t.Errorf("the job whose scope is another agency's now is %q after the repository's edit; want it as it was, %q", got, before)
+	// The timing is held back; the script's copy is not.
+	if got, want := state("moves"), hash()+" 0 3 1 1 *"; got != want {
+		t.Errorf("the job whose scope is another agency's now is %q after the repository's edit; want its script's new hash and its OLD timing, %q", got, want)
+	}
+	for _, j := range []string{"stays", "moves"} {
+		if got, want := copyOf(j), scriptsRecord(); got != want {
+			t.Errorf("the copy of the job that %s is %q, want it as its script's record is, %q", j, got, want)
+		}
+	}
+	if got := grString(t, a.db, `SELECT run_type FROM jobs WHERE uid = 'j-moves'`); got != "bash" {
+		t.Errorf("the moved job's run type is %q after the sync, want its script's (bash): a run takes its type from this row", got)
 	}
 }
 
