@@ -39,7 +39,9 @@ func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 		mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, script_uid, script_path, synced_at)
 		   VALUES (?, ?, 'cronomicon', 'bash', ?, 's-shell', 'x', 't')`, j[0], j[0], j[1])
 	}
-	job("fin-proj", "cronomicon", "fin-hosts", "s-proj", nil)   // the condition, in Finance
+	job("fin-proj", "cronomicon", "fin-hosts", "s-proj", nil) // the condition, in Finance
+	// This one has been synced since 2.4.0 started: its own row carries the marker.
+	mustExec(t, pool, `UPDATE jobs SET project_root = 'scripts/deploy-app' WHERE uid = 'fin-proj'`)
 	job("tax-proj", "cronomicon", "tax-hosts", "s-proj", nil)   // the condition, in Tax
 	job("free-proj", "cronomicon", nil, "s-proj", nil)          // the condition, with no scope: Global's
 	job("bound-proj", "cronomicon", "fin-bound", "s-proj", nil) // the condition, on a scope that names its runners
@@ -98,6 +100,16 @@ func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 	}
 	if strings.Contains(n.Detail, "will wait") {
 		t.Errorf("the detail says the runs will wait; with no agent registered they are refused: %s", n.Detail)
+	}
+	// The refusal reads the marker on the job's own row. fin-proj carries one;
+	// bound-proj is as the first start of 2.4.0 finds it, with the marker on
+	// its script only, and is told what is true of it until a sync or a save.
+	if strings.Contains(n.Detail, "will be refused") {
+		t.Errorf("a job whose own row carries the marker is told its runs WILL be refused; they are: %s", n.Detail)
+	}
+	if b := got["bound-proj"].Detail; !strings.Contains(b, "its runs will be refused from the next sync") ||
+		!strings.Contains(b, "Until then they run as they did before 2.4.0") || strings.Contains(b, "so its runs are refused") {
+		t.Errorf("a job whose own row carries no marker yet is told: %s", b)
 	}
 	// The Git job is told the same, in its own words.
 	g := got["git-own-proj"]

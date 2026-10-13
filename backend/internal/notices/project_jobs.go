@@ -58,6 +58,7 @@ const KindProjectJobNoCheckoutAgent = "project_job_no_checkout_agent"
 func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.uid, j.name, j.source, COALESCE(j.scope, ''),
+		       COALESCE(j.project_root, '') != '',
 		       COALESCE((SELECT s.name FROM scripts s WHERE s.uid = j.script_uid), ''),
 		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 		                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
@@ -90,7 +91,8 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 	var found []Finding
 	for rows.Next() {
 		var uid, name, source, scope, script, agency string
-		if err := rows.Scan(&uid, &name, &source, &scope, &script, &agency); err != nil {
+		var marked bool
+		if err := rows.Scan(&uid, &name, &source, &scope, &marked, &script, &agency); err != nil {
 			rows.Close()
 			return err
 		}
@@ -106,14 +108,26 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 				"file alone, without the roles and files beside it", name, on, script)
 			remedy = "build the job on a script that is not a project"
 		}
+		// The refusal reads the marker on the job's OWN row
+		// (runref.CheckoutNeedsAgent). A job built in the app is named here by
+		// its script's marker before its own row carries one, which is from
+		// the first start of 2.4.0 until the next sync of its script's
+		// repository, or until the job is saved. Until then its runs are not
+		// refused: they are what they were, and the words say so.
+		refused := "so its runs are refused: a scheduled run is recorded as skipped, a manual one is answered with the " +
+			"reason, a workflow's step fails"
+		if !marked {
+			refused = "so its runs will be refused from the next sync of its script's repository, or when the job is next " +
+				"saved (a scheduled run recorded as skipped, a manual one answered with the reason, a workflow's step " +
+				"failed). Until then they run as they did before 2.4.0"
+		}
 		found = append(found, Finding{
 			AgencyID: agency,
 			Subject:  uid,
 			Detail: fmt.Sprintf("%s. A project's run is pinned to a commit and the agent checks the whole project out, "+
 				"which only an agent started with -allow-checkout does (it lists the repository and holds a credential "+
-				"for it). No registered agent that serves this job is started that way, so its runs are refused: a "+
-				"scheduled run is recorded as skipped, a manual one is answered with the reason, a workflow's step "+
-				"fails. Either start an agent that serves it with -allow-checkout, or %s.", what, remedy),
+				"for it). No registered agent that serves this job is started that way, %s. Either start an agent that "+
+				"serves it with -allow-checkout, or %s.", what, refused, remedy),
 		})
 	}
 	if err := rows.Err(); err != nil {
