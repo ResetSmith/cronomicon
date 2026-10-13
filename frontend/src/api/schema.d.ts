@@ -2102,6 +2102,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/scopes/{scopeId}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clone a scope to an agency (v2.4.0)
+         * @description Makes a NEW scope, built in the app, owned by the agency named, with a
+         *     name of its own, from the scope in the path, whatever that scope's
+         *     source (a scope that comes from Git stays Git's; its clone is not). The
+         *     clone is a snapshot: it does not follow the original afterwards. It is
+         *     how a second agency gets a set of hosts without the first agency's
+         *     jobs being stranded, which moving the scope does.
+         *
+         *     **Copied:** the hosts, the groups and their nesting, the host and group
+         *     variables, the inventory as written, and the tags.
+         *
+         *     **Not copied:** the runner bindings (the receiving agency has its own
+         *     agents); the approved host keys (each runner approves its own); the
+         *     jobs (they are the giving agency's); and, of the host records, the SSH
+         *     key and the bastion. Each host's record (address, port, user, operating
+         *     system) is copied into a record of the clone, the receiving agency's,
+         *     with the key and the bastion unset: the clone connects to nothing until
+         *     its agency sets its own. `note` in the answer says so.
+         *
+         *     **Who:** who may move the scope to that agency: `configureApp` on the
+         *     agency the scope is in AND on the agency the clone is for (a global
+         *     administrator for Global, on either side). A clone shows one agency's
+         *     host list to another. 409 when a scope already has the name (a scope's
+         *     name is unique across the installation). CSRF required.
+         */
+        post: operations["cloneScope"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/scopes/{scopeId}/agency": {
         parameters: {
             query?: never;
@@ -13271,6 +13313,55 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            422: components["responses"]["Validation"];
+        };
+    };
+    cloneScope: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                scopeId: components["parameters"]["scopeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The agency the clone is for; omitted or empty */
+                    agencyId?: string;
+                    /** @description The clone's own name. */
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The clone. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        scope: components["schemas"]["Scope"];
+                        copied: {
+                            hosts?: number;
+                            groups?: number;
+                            hostVars?: number;
+                            groupVars?: number;
+                            hostRecords?: number;
+                        };
+                        note: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             422: components["responses"]["Validation"];
         };
     };

@@ -33,6 +33,8 @@ func (s *Server) mountAgencies(mux *http.ServeMux) {
 	mux.Handle("PUT /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleUpdateAgency)))
 	mux.Handle("DELETE /api/v1/agencies/{agencyId}", s.requireGlobal(auth.PermConfigureApp)(http.HandlerFunc(s.handleDeleteAgency)))
 	mux.Handle("PUT /api/v1/scopes/{scopeId}/agency", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleSetScopeAgency)))
+	// 2.4.0: a scope cloned to an agency, by whoever may move it there.
+	mux.Handle("POST /api/v1/scopes/{scopeId}/clone", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(s.handleCloneScope)))
 	// RB-22: the agency-scoped member setter — replace ONE AGENCY's member list.
 	// The inverse of the per-kind matrices below; it touches only rows with this
 	// agency_id, so edits to two different agencies cannot race by construction.
@@ -873,4 +875,57 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 	default:
 		httpx.JSON(w, http.StatusOK, vaultPrefixesJSON{AgencyID: agencyID, Prefixes: prefixes})
 	}
+}
+
+// handleCloneScope clones a scope to an agency (the owner's decision of
+// 2026-10-13; settings.CloneScope says what is and is not copied).
+//
+// Who may: who may MOVE the scope to that agency, an administrator of the
+// agency it is in and of the one the clone is for, or a global administrator
+// (requireMove). A clone shows one agency's host list to another, which is
+// what moving the scope would do.
+func (s *Server) handleCloneScope(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	sid := r.PathValue("scopeId")
+	var inp struct {
+		AgencyID string `json:"agencyId"`
+		Name     string `json:"name"`
+	}
+	// The gate first, on what the path and the body name, before the body is
+	// held to anything else: a caller who may not is told nothing more.
+	_ = json.NewDecoder(r.Body).Decode(&inp)
+	target := strings.TrimSpace(inp.AgencyID)
+	if target == "" {
+		target = agencyid.Global
+	}
+	if !s.requireMove(w, r, id, settings.MemberScope, sid, []string{target}) {
+		return
+	}
+	sc, copied, err := settings.CloneScope(r.Context(), s.db, sid, inp.Name, target, id.Email)
+	switch {
+	case errors.Is(err, settings.ErrNoSuchScope):
+		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
+		return
+	case errors.Is(err, settings.ErrUnknownAgency):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the referenced agency does not exist")
+		return
+	case errors.Is(err, settings.ErrScopeNameTaken):
+		httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists")
+		return
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return
+	case err != nil:
+		httpx.Fail500(w, s.log, "clone_failed", err)
+		return
+	}
+	note := "The clone is a scope of its own and does not follow the original. Its runners are not bound and no host key is approved for it."
+	if copied.HostRecords > 0 {
+		note += " Its host records were copied without their SSH keys and bastions: it connects to nothing until its agency sets its own."
+	}
+	httpx.JSON(w, http.StatusCreated, map[string]any{"scope": sc, "copied": copied, "note": note})
 }

@@ -73,6 +73,7 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/agencies":                                           {clsGlobal, "the agency catalog is the installation's"},
 	"PUT /api/v1/agencies/{agencyId}":                                 {clsGlobal, "the agency catalog is the installation's"},
 	"DELETE /api/v1/agencies/{agencyId}":                              {clsGlobal, "the agency catalog is the installation's"},
+	"POST /api/v1/scopes/{scopeId}/clone":                             {clsObject, "requireMove: configureApp on the scope's agency and on the agency the clone is for"},
 	"PUT /api/v1/scopes/{scopeId}/agency":                             {clsObject, "requireMove: configureApp on the scope's agency and on the one it is going to (LR-7); Global is a global administrator's on either side"},
 	"PUT /api/v1/agencies/{agencyId}/vault-prefixes":                  {clsGlobal, "which part of the installation's one Vault an agency may point at (LR-80)"},
 	"PUT /api/v1/agencies/{agencyId}/members":                         {clsObject, "per member: requireMove on both sides for an add, the permission on this agency for a removal; a scope like every other kind; a runner by its OWNER either way (requireRunnerOwner)"},

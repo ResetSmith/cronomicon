@@ -3717,6 +3717,71 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '422': { $ref: '#/components/responses/Validation' }
 
+  /scopes/{scopeId}/clone:
+    post:
+      tags: [Scopes]
+      operationId: cloneScope
+      summary: Clone a scope to an agency (v2.4.0)
+      description: |
+        Makes a NEW scope, built in the app, owned by the agency named, with a
+        name of its own, from the scope in the path, whatever that scope's
+        source (a scope that comes from Git stays Git's; its clone is not). The
+        clone is a snapshot: it does not follow the original afterwards. It is
+        how a second agency gets a set of hosts without the first agency's
+        jobs being stranded, which moving the scope does.
+
+        **Copied:** the hosts, the groups and their nesting, the host and group
+        variables, the inventory as written, and the tags.
+
+        **Not copied:** the runner bindings (the receiving agency has its own
+        agents); the approved host keys (each runner approves its own); the
+        jobs (they are the giving agency's); and, of the host records, the SSH
+        key and the bastion. Each host's record (address, port, user, operating
+        system) is copied into a record of the clone, the receiving agency's,
+        with the key and the bastion unset: the clone connects to nothing until
+        its agency sets its own. `note` in the answer says so.
+
+        **Who:** who may move the scope to that agency: `configureApp` on the
+        agency the scope is in AND on the agency the clone is for (a global
+        administrator for Global, on either side). A clone shows one agency's
+        host list to another. 409 when a scope already has the name (a scope's
+        name is unique across the installation). CSRF required.
+      parameters: [{ $ref: '#/components/parameters/scopeId' }, { $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                agencyId: { type: string, description: The agency the clone is for; omitted or empty, Global. }
+                name: { type: string, description: The clone's own name. }
+      responses:
+        '201':
+          description: The clone.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scope, copied, note]
+                properties:
+                  scope: { $ref: '#/components/schemas/Scope' }
+                  copied:
+                    type: object
+                    properties:
+                      hosts: { type: integer }
+                      groups: { type: integer }
+                      hostVars: { type: integer }
+                      groupVars: { type: integer }
+                      hostRecords: { type: integer }
+                  note: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /scopes/{scopeId}/agency:
     put:
       tags: [Scopes]
