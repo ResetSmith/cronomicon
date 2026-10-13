@@ -6504,6 +6504,102 @@ paths:
         '404': { description: No such role. }
         '409': { description: Built-in, or still referenced by an access grant. }
 
+  /git-repos:
+    get:
+      tags: [Agencies]
+      operationId: listGitRepos
+      summary: The repositories the caller may configure (v2.4.0)
+      description: |
+        Each agency may have a repository of its own definitions beside Global's
+        (GR-1). This lists the repositories whose agency the caller holds
+        `configureApp` on: a global administrator sees them all, Global's first;
+        an agency's administrator sees their agency's. Needs `configureApp`
+        somewhere (403 otherwise).
+      responses:
+        '200':
+          description: The repositories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/GitRepo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /agencies/{agencyId}/git-repo:
+    parameters:
+      - name: agencyId
+        in: path
+        required: true
+        schema: { type: string }
+        description: The agency's id; `global` for Global's repository.
+    get:
+      tags: [Agencies]
+      operationId: getAgencyGitRepo
+      summary: An agency's repository and its connection (v2.4.0)
+      description: |
+        Needs `configureApp` on the agency (GR-9); Global's needs a global
+        administrator. 403 for anyone else, whether or not the agency or its
+        repository is there. 404 `not_connected` when the agency has none.
+      responses:
+        '200':
+          description: The repository; `pat` is always masked on read.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitRepo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Agencies]
+      operationId: putAgencyGitRepo
+      summary: Connect an agency's repository, or edit its connection (v2.4.0)
+      description: |
+        Writes the connection of the agency's repository, connecting one when
+        the agency has none (201). An agency has at most one repository beside
+        Global's. Needs `configureApp` on the agency (GR-9): an agency's
+        administrator connects their own agency's repository, with the agency's
+        own token. Global's needs a global administrator, and is written here
+        exactly as `PUT /settings/gitlab` writes it.
+
+        **The URL of an agency's repository (GR-10).** `repoUrl` is required,
+        must be `https://` (or `http://`), must carry no user or password, and
+        must name a host on `gitAllowedHosts` (the general settings, written by
+        a global administrator). Otherwise 422 `repo_url_not_allowed`, and
+        nothing is stored. Global's repository is exempt.
+
+        Omit `pat` to keep the stored token; the masked value a read returns is
+        taken the same way when it is sent back. `writeBranch`, `botName`,
+        `botEmail` and `tokenExpiryNotifyDays` take their defaults when left
+        out of a first write. The connection is applied when it is saved: the
+        repository's sync service is started (or rebuilt) from it and syncs at
+        once.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GitlabConfig' }
+      responses:
+        '200':
+          description: The connection was edited.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitRepo' }
+        '201':
+          description: A repository was connected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitRepo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Validation' }
+
   /agencies/{agencyId}/vault-prefixes:
     get:
       tags: [Agencies]
@@ -12158,6 +12254,38 @@ components:
                 mr: { type: boolean }
                 tag: { type: boolean }
         - $ref: '#/components/schemas/AuditFields'
+
+    GitRepo:
+      description: |
+        v2.4.0 — one repository of definitions: whose it is, its connection, its
+        last sync, and how much it supplies.
+      allOf:
+        - type: object
+          required: [id, agencyId, supplies]
+          properties:
+            id:
+              type: string
+              description: The repository's id; `global` for Global's. It is the `{repoId}` of the webhook route.
+            agencyId:
+              type: string
+              description: The agency the repository belongs to; `global` for Global's.
+            agencyName: { type: string }
+            lastSha: { type: string, description: The commit of the last sync that fetched. }
+            lastSyncedAt: { type: string }
+            lastStatus: { type: string, description: success, partial or failed; empty before the first sync. }
+            supplies:
+              type: object
+              description: |
+                The rows this repository's sync has written, which a disconnect
+                removes (GR-28).
+              required: [jobs, workflows, scripts, schedules, scopes]
+              properties:
+                jobs: { type: integer }
+                workflows: { type: integer }
+                scripts: { type: integer }
+                schedules: { type: integer }
+                scopes: { type: integer }
+        - $ref: '#/components/schemas/GitlabConfig'
 
     VaultConfig:
       allOf:

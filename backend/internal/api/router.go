@@ -354,6 +354,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountAccess(mux)               // LB3: /roles, /ad-group-mappings/*, /scope-restrictions
 	s.mountAccessGrants(mux)         // RB-18: /access-grants (INERT — nothing authorizes on it yet)
 	s.mountAgencies(mux)             // agency-support.md M1: /agencies/*, /scopes/{id}/agency (network-isolation zones)
+	s.mountGitRepos(mux)             // 2.4.0 R6: /git-repos, /agencies/{id}/git-repo (a repository per agency)
 	s.mountScopeRunners(mux)         // SB-1: /scopes/{id}/runners, /scope-runners/replace, /scope-binding-notices (scope↔runner bindings)
 	s.mountNotices(mux)              // LR-85: /notices, /notices/dismiss (the one inbox for standing conditions)
 	// ET-A/B: /service-accounts (machine principals) + /trigger/* (the only

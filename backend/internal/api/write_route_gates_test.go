@@ -103,6 +103,7 @@ var writeRouteGates = map[string]routeGate{
 	"POST /api/v1/schedules/publish":                                {clsObject, "authorizePublish — the scope on both sides of the write (GC-9)"},
 	"POST /api/v1/git/sync":                                         {clsGlobal, "one repository for the installation"},
 	"POST /api/v1/scopes/resync":                                    {clsGlobal, "one repository for the installation"},
+	"PUT /api/v1/agencies/{agencyId}/git-repo":                      {clsObject, "requireRepoAgency — configureApp on the repository's agency; Global's is a global administrator's (GR-9)"},
 	"POST /api/v1/jobs":                                             {clsCompose, "requireComposeScope on the job's scope"},
 	"PUT /api/v1/jobs/{jobId}":                                      {clsCompose, "requireComposeScope on the existing scope and the new one"},
 	"DELETE /api/v1/jobs/{jobId}":                                   {clsCompose, "requireComposeScope on the job's scope"},

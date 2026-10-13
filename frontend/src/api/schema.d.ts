@@ -3952,6 +3952,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/git-repos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The repositories the caller may configure (v2.4.0)
+         * @description Each agency may have a repository of its own definitions beside Global's
+         *     (GR-1). This lists the repositories whose agency the caller holds
+         *     `configureApp` on: a global administrator sees them all, Global's first;
+         *     an agency's administrator sees their agency's. Needs `configureApp`
+         *     somewhere (403 otherwise).
+         */
+        get: operations["listGitRepos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agencies/{agencyId}/git-repo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agency's id; `global` for Global's repository. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * An agency's repository and its connection (v2.4.0)
+         * @description Needs `configureApp` on the agency (GR-9); Global's needs a global
+         *     administrator. 403 for anyone else, whether or not the agency or its
+         *     repository is there. 404 `not_connected` when the agency has none.
+         */
+        get: operations["getAgencyGitRepo"];
+        /**
+         * Connect an agency's repository, or edit its connection (v2.4.0)
+         * @description Writes the connection of the agency's repository, connecting one when
+         *     the agency has none (201). An agency has at most one repository beside
+         *     Global's. Needs `configureApp` on the agency (GR-9): an agency's
+         *     administrator connects their own agency's repository, with the agency's
+         *     own token. Global's needs a global administrator, and is written here
+         *     exactly as `PUT /settings/gitlab` writes it.
+         *
+         *     **The URL of an agency's repository (GR-10).** `repoUrl` is required,
+         *     must be `https://` (or `http://`), must carry no user or password, and
+         *     must name a host on `gitAllowedHosts` (the general settings, written by
+         *     a global administrator). Otherwise 422 `repo_url_not_allowed`, and
+         *     nothing is stored. Global's repository is exempt.
+         *
+         *     Omit `pat` to keep the stored token; the masked value a read returns is
+         *     taken the same way when it is sent back. `writeBranch`, `botName`,
+         *     `botEmail` and `tokenExpiryNotifyDays` take their defaults when left
+         *     out of a first write. The connection is applied when it is saved: the
+         *     repository's sync service is started (or rebuilt) from it and syncs at
+         *     once.
+         */
+        put: operations["putAgencyGitRepo"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/vault-prefixes": {
         parameters: {
             query?: never;
@@ -8314,6 +8385,33 @@ export interface components {
                 tag?: boolean;
             };
         } & components["schemas"]["AuditFields"];
+        /**
+         * @description v2.4.0 — one repository of definitions: whose it is, its connection, its
+         *     last sync, and how much it supplies.
+         */
+        GitRepo: {
+            /** @description The repository's id; `global` for Global's. It is the `{repoId}` of the webhook route. */
+            id: string;
+            /** @description The agency the repository belongs to; `global` for Global's. */
+            agencyId: string;
+            agencyName?: string;
+            /** @description The commit of the last sync that fetched. */
+            lastSha?: string;
+            lastSyncedAt?: string;
+            /** @description success */
+            lastStatus?: string;
+            /**
+             * @description The rows this repository's sync has written, which a disconnect
+             *     removes (GR-28).
+             */
+            supplies: {
+                jobs: number;
+                workflows: number;
+                scripts: number;
+                schedules: number;
+                scopes: number;
+            };
+        } & components["schemas"]["GitlabConfig"];
         VaultConfig: {
             addr?: string;
             /** @enum {string} */
@@ -16264,6 +16362,99 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    listGitRepos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The repositories. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["GitRepo"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agency's id; `global` for Global's repository. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The repository; `pat` is always masked on read. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepo"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    putAgencyGitRepo: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path: {
+                /** @description The agency's id; `global` for Global's repository. */
+                agencyId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitlabConfig"];
+            };
+        };
+        responses: {
+            /** @description The connection was edited. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepo"];
+                };
+            };
+            /** @description A repository was connected. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepo"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["Validation"];
         };
     };
     getAgencyVaultPrefixes: {

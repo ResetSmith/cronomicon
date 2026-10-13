@@ -409,6 +409,10 @@ type AgencyInUseError struct {
 	// given another owner on its own form.
 	Hosts    int
 	Bastions int
+	// Repository is 1 when the agency has a repository connected (GR-28). Its
+	// definitions, scripts, schedules and scopes are the agency's, and they go
+	// when the repository is disconnected, by the route that says how many.
+	Repository int
 }
 
 func (e *AgencyInUseError) Error() string {
@@ -439,6 +443,7 @@ func (e *AgencyInUseError) Blockers() []string {
 		}
 		out = append(out, strconv.Itoa(n)+" "+noun+" ("+fix+")")
 	}
+	add(e.Repository, "connected repository", "connected repositories", "disconnect the agency's repository first")
 	add(e.Runners, "runner", "runners", "re-enroll the runner in another agency")
 	// Scopes first among the membership kinds: an agency exists to own scopes, so
 	// that is the likeliest blocker and the one with the plainest remedy.
@@ -546,7 +551,11 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 		`SELECT COUNT(*) FROM bastions WHERE owner_agency = ?`, id).Scan(&inUse.Bastions); err != nil {
 		return false, fmt.Errorf("delete agency: count bastions: %w", err)
 	}
-	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 {
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM git_repos WHERE agency_id = ?`, id).Scan(&inUse.Repository); err != nil {
+		return false, fmt.Errorf("delete agency: count repositories: %w", err)
+	}
+	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 || inUse.Repository > 0 {
 		return false, inUse
 	}
 	res, err := database.ExecContext(ctx, `DELETE FROM agencies WHERE id=?`, id)
