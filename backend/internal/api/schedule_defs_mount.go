@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -116,8 +117,18 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		args = append(args, fargs...)
 	}
 
+	// GR-26: a schedule of an agency's repository is that agency's people's to
+	// read, and theirs who reach every agency. (A schedule built in the app
+	// records no repository and is not filtered here: who reads those is
+	// 2.5.0's.) Both statements below read the table as `sc`.
+	if id, ok := auth.IdentityFrom(r.Context()); ok {
+		frag, fargs := readableRepoSQL(id, "sc.repo_id")
+		where += frag
+		args = append(args, fargs...)
+	}
+
 	var total int
-	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM schedules"+where, args...).Scan(&total)
+	_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM schedules sc"+where, args...).Scan(&total)
 
 	// usedBy count is a correlated subquery (one round-trip; no nested-iterator
 	// pool deadlock). Counted by source_ref (D1c) — the exact reverse index: only

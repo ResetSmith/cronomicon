@@ -79,7 +79,13 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/schedule-pushes",
 		s.auth.RequireSession(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				h.ListSchedulePushes(s.db, w, r)
+				// GR-26: the publishes to Global's repository, and to the
+				// repositories of the agencies the caller is of.
+				cond, args := "", []any(nil)
+				if id, ok := auth.IdentityFrom(r.Context()); ok {
+					cond, args = readableRepoSQL(id, "repo_id")
+				}
+				h.ListSchedulePushes(s.db, cond, args, w, r)
 			}),
 		),
 	)

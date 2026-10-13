@@ -22,6 +22,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runner"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/scheduler"
@@ -2324,7 +2325,13 @@ func (s *Server) updateJobTags(w http.ResponseWriter, r *http.Request) {
 type workflowRow struct {
 	ID int64 `json:"id"`
 	// UID — the stable surrogate identity (AF-4a); see jobRow.UID.
-	UID         string   `json:"uid,omitempty"`
+	UID string `json:"uid,omitempty"`
+	// RepoID is the repository a Git workflow is of (2.4.0); empty for one built
+	// in the app. OwnerAgency is the agency the workflow belongs to
+	// (workflows.owner_agency, migration 1360): a Git workflow's is its
+	// repository's, one built in the app's is as of its last save.
+	RepoID      string   `json:"repoId,omitempty"`
+	OwnerAgency string   `json:"ownerAgency"`
 	Name        string   `json:"name"`
 	Source      string   `json:"source"`               // git | cronomicon (A9)
 	SourcePath  *string  `json:"sourcePath,omitempty"` // repo-relative file path (folder browsing)
@@ -2495,9 +2502,10 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 	// and page query share one filter slice (CC.14).
 	// RH: both strings carry the filter — a total counted over a different row
 	// set than the page it describes is its own bug.
-	cq := `SELECT COUNT(*) FROM workflows WHERE deleted_at IS NULL`
+	cq := `SELECT COUNT(*) FROM workflows w WHERE w.deleted_at IS NULL`
 	query := `SELECT w.rowid, w.name, w.source, COALESCE(w.description,''), w.steps, w.schedule, w.enabled,
 			w.created_at, w.last_modified_at, w.source_path, w.tags, w.uid,
+			COALESCE(w.repo_id, ''), COALESCE(w.owner_agency, 'global'),
 			(SELECT COUNT(*) FROM paused_jobs p WHERE p.source = w.source AND p.owner_kind = 'workflow' AND p.name = w.name) AS paused_count,
 			lr.created_at AS last_run_at,
 			lr.status AS last_run_status,
@@ -2527,8 +2535,18 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 			ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1)
 		WHERE w.deleted_at IS NULL`
 	var args []any
+	// GR-26: a workflow of an agency's repository is that agency's people's to
+	// read, and theirs who reach every agency. The list had no filter at all.
+	// (A workflow built in the app is not filtered here: who reads those is
+	// 2.5.0's, with the other confidential reads.)
+	if id, ok := auth.IdentityFrom(r.Context()); ok {
+		frag, fargs := readableRepoSQL(id, "w.repo_id")
+		cq += frag
+		query += frag
+		args = append(args, fargs...)
+	}
 	if search != "" {
-		cq += " AND name LIKE ?"
+		cq += " AND w.name LIKE ?"
 		query += " AND w.name LIKE ?"
 		args = append(args, "%"+search+"%")
 	}
@@ -2561,6 +2579,7 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		sourcePath                sql.NullString
 		tagsJSON                  string
 		uid                       sql.NullString
+		repoID, ownerAgency       string
 		pausedCount               int
 		lastRunAt                 sql.NullString
 		lastSkippedAt             sql.NullString
@@ -2574,6 +2593,7 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		var wf wfBase
 		if err := rows.Scan(&wf.rowid, &wf.name, &wf.source, &wf.desc, &wf.stepsJSON, &wf.schedule, &wf.enabled,
 			&wf.createdAt, &wf.lastModifiedAt, &wf.sourcePath, &wf.tagsJSON, &wf.uid,
+			&wf.repoID, &wf.ownerAgency,
 			&wf.pausedCount, &wf.lastRunAt, &wf.lastRunStatus,
 			&wf.lastSkippedAt, &wf.lastSkipReason, &wf.critical, &wf.contact); err != nil {
 			continue
@@ -2672,6 +2692,8 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		wr := workflowRow{
 			ID:          wf.rowid,
 			UID:         wf.uid.String,
+			RepoID:      wf.repoID,
+			OwnerAgency: wf.ownerAgency,
 			Name:        wf.name,
 			Source:      wf.source,
 			Description: wf.desc,
@@ -2725,6 +2747,11 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
 	wfID := r.PathValue("workflowId")
 	wr := s.fetchWorkflowByID(r, wfID)
+	// GR-26: a workflow of an agency's repository reads as absent to anyone
+	// who is not of that agency and does not reach every agency.
+	if wr != nil && !s.workflowRepoReadable(r, wr) {
+		wr = nil
+	}
 	if wr == nil || wr.DeletedAt != nil {
 		// RH/FX-A4: a binned workflow reads as absent, exactly as getJob treats a
 		// binned job. fetchWorkflowByID deliberately returns binned rows for the
@@ -2734,6 +2761,27 @@ func (s *Server) getWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, wr)
+}
+
+// workflowRepoReadable is GR-26 for one workflow: true for a workflow built in
+// the app and for one of Global's repository; for one of an agency's
+// repository, whether the caller is of that agency or reaches every agency.
+// False when it cannot be told.
+func (s *Server) workflowRepoReadable(r *http.Request, wr *workflowRow) bool {
+	if wr.RepoID == "" || wr.RepoID == repoid.Global {
+		return true
+	}
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		return false
+	}
+	agency, err := settings.RepoAgency(r.Context(), s.db, wr.RepoID)
+	if err != nil {
+		// A repository that is no longer connected: its rows are on their way
+		// out, and whose they were is the workflow's own record.
+		agency = wr.OwnerAgency
+	}
+	return id.ReadsAgency(agency)
 }
 
 // workflowScopesReadable is the scope guard a workflow write has to pass, shared
@@ -3032,12 +3080,15 @@ func (s *Server) fetchWorkflowByID(r *http.Request, wfID string) *workflowRow {
 		layoutJSON                sql.NullString
 		deletedAt                 sql.NullString
 		uid                       sql.NullString
+		repoID, ownerAgency       string
 	}
 	err := s.db.QueryRowContext(r.Context(), `
-		SELECT rowid, name, source, COALESCE(description,''), steps, schedule, enabled, created_at, last_modified_at, source_path, tags, layout_json, deleted_at, uid
+		SELECT rowid, name, source, COALESCE(description,''), steps, schedule, enabled, created_at, last_modified_at, source_path, tags, layout_json, deleted_at, uid,
+		       COALESCE(repo_id, ''), COALESCE(owner_agency, 'global')
 		FROM workflows WHERE rowid = ?
 	`, wfID).Scan(&wf.rowid, &wf.name, &wf.source, &wf.desc, &wf.stepsJSON, &wf.schedule, &wf.enabled,
-		&wf.createdAt, &wf.lastModifiedAt, &wf.sourcePath, &wf.tagsJSON, &wf.layoutJSON, &wf.deletedAt, &wf.uid)
+		&wf.createdAt, &wf.lastModifiedAt, &wf.sourcePath, &wf.tagsJSON, &wf.layoutJSON, &wf.deletedAt, &wf.uid,
+		&wf.repoID, &wf.ownerAgency)
 	if err != nil {
 		return nil
 	}
@@ -3045,6 +3096,8 @@ func (s *Server) fetchWorkflowByID(r *http.Request, wfID string) *workflowRow {
 	wr := &workflowRow{
 		ID:          wf.rowid,
 		UID:         wf.uid.String,
+		RepoID:      wf.repoID,
+		OwnerAgency: wf.ownerAgency,
 		Name:        wf.name,
 		Source:      wf.source,
 		Description: wf.desc,

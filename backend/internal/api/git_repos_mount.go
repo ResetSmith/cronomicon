@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
@@ -329,4 +330,26 @@ func (s *Server) handleTestAgencyGitRepo(w http.ResponseWriter, r *http.Request)
 	}
 	res := gitlab.TestConnection(r.Context(), s.cfg, target.URL, target.Token, target.Branch)
 	httpx.JSON(w, http.StatusOK, res)
+}
+
+// readableRepoSQL is GR-26 as a condition over a column that holds a row's
+// repository (NULL is Global's, as it was before a repository was a row): the
+// row is of Global's repository, which every session reads, or of the
+// repository of an agency the caller holds a grant on. No condition for a
+// caller whose grant reaches every agency. It is readableRepo for a list.
+func readableRepoSQL(id auth.Identity, repoCol string) (string, []any) {
+	everywhere, agencies := id.AgenciesRead()
+	if everywhere {
+		return "", nil
+	}
+	cond := " AND (COALESCE(" + repoCol + ", 'global') = 'global'"
+	args := []any{}
+	if len(agencies) > 0 {
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(agencies)), ",")
+		cond += " OR " + repoCol + " IN (SELECT g.id FROM git_repos g WHERE g.agency_id IN (" + marks + "))"
+		for _, a := range agencies {
+			args = append(args, a)
+		}
+	}
+	return cond + ")", args
 }

@@ -304,6 +304,26 @@ func (i Identity) ReadsAgency(agencyID string) bool {
 	return false
 }
 
+// AgenciesRead is ReadsAgency as a list, for a query that filters rows:
+// everywhere is true when one of the actor's grants reaches every agency, and
+// then the list is not needed; otherwise agencies is the ids of the agencies
+// the actor holds a grant on, sorted. Global's rows are every session's and
+// are not in the list.
+func (i Identity) AgenciesRead() (everywhere bool, agencies []string) {
+	seen := map[string]bool{}
+	for _, g := range i.RoleGrants() {
+		if g.Unrestricted() {
+			return true, nil
+		}
+		if g.Agency != "" && !seen[g.Agency] {
+			seen[g.Agency] = true
+			agencies = append(agencies, g.Agency)
+		}
+	}
+	slices.Sort(agencies)
+	return false, agencies
+}
+
 // AgenciesFor lists the agency IDs this actor holds perm on through a DEPARTMENTAL
 // grant, sorted and de-duplicated. Unrestricted grants contribute nothing — they
 // reach every agency without naming one, so there is no id to return, and a caller

@@ -403,15 +403,18 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 // GET /api/v1/schedule-pushes — list push audit records
 // ──────────────────────────────────────────────────────────────────────────────
 
-func (h *Handlers) ListSchedulePushes(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+// readable is the caller's condition on which repositories' publishes are
+// listed (GR-26), as SQL beginning " AND …" over the column repo_id, with its
+// arguments; empty for a caller who reads every repository's.
+func (h *Handlers) ListSchedulePushes(db *sql.DB, readable string, readableArgs []any, w http.ResponseWriter, r *http.Request) {
 	statusFilter := r.URL.Query().Get("status")
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 	page, pageSize := pageParams(r)
 	offset := (page - 1) * pageSize
 
-	args := []any{}
-	where := "1=1"
+	args := append([]any{}, readableArgs...)
+	where := "1=1" + readable
 	if repo := strings.TrimSpace(r.URL.Query().Get("repo")); repo != "" {
 		where += " AND repo_id=?"
 		args = append(args, repo)

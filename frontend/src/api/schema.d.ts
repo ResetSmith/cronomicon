@@ -351,7 +351,13 @@ export interface paths {
          *     in the GitLab clone at sync time and cached read-only (Git wins on read,
          *     §2.4); jobs reference a script via scriptRef. Read-only over the API —
          *     authoring goes through the Git publish flow. Each row carries usedByCount,
-         *     the number of jobs referencing it (blast-radius visibility).
+         *     the number of jobs referencing it (blast-radius visibility), and since
+         *     v2.4.0 `repoId`, the repository it is of.
+         *
+         *     **Who reads what (v2.4.0, GR-26).** A row of Global's repository is every
+         *     session's. A row of an agency's repository is that agency's people's,
+         *     whatever their role, and theirs whose grant reaches every agency; to
+         *     anyone else it is not there.
          */
         get: operations["listScripts"];
         put?: never;
@@ -372,7 +378,8 @@ export interface paths {
         /**
          * Get a script
          * @description Returns the script plus usedBy — the names of every job referencing it,
-         *     the reverse index that makes a shared script's blast radius visible.
+         *     the reverse index that makes a shared script's blast radius visible. The
+         *     answer carries an inline body (`command`, `script`).
          */
         get: operations["getScript"];
         put?: never;
@@ -397,8 +404,9 @@ export interface paths {
          *     synced clone (path-traversal guarded, capped at 1 MiB for display —
          *     execution and content-hashing are uncapped). A non-UTF8 body returns
          *     encoding=binary with content null. Read-only, served to any authenticated
-         *     session. 409 when the file cannot be read from the synced repository (e.g.
-         *     not yet synced, renamed, removed).
+         *     session for a script of Global's repository; a script of an agency's
+         *     repository is read as `repo` says. 409 when the file cannot be read from
+         *     the synced repository (e.g. not yet synced, renamed, removed).
          */
         get: operations["getScriptContent"];
         put?: never;
@@ -791,6 +799,12 @@ export interface paths {
          *     is a DISTINCT resource from GET /schedules (the per-binding owner
          *     projection). source ∈ {git, cronomicon}; git rows are Git-authored, cronomicon
          *     rows are operator-authored (Phase 3+). Each row carries usedByCount.
+         *
+         *     **Who reads what (v2.4.0, GR-26).** A row of Global's repository is every
+         *     session's. A row of an agency's repository is that agency's people's,
+         *     whatever their role, and theirs whose grant reaches every agency; to
+         *     anyone else it is not there.
+         *     A schedule built in the app is listed for every session.
          */
         get: operations["listScheduleDefs"];
         put?: never;
@@ -850,7 +864,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List workflows */
+        /**
+         * List workflows
+         * @description **Who reads what (v2.4.0, GR-26).** A row of Global's repository is every
+         *     session's. A row of an agency's repository is that agency's people's,
+         *     whatever their role, and theirs whose grant reaches every agency; to
+         *     anyone else it is not there.
+         *     A workflow built in the app is listed for every session.
+         */
         get: operations["listWorkflows"];
         put?: never;
         /**
@@ -897,7 +918,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a workflow */
+        /**
+         * Get a workflow
+         * @description 404 for a workflow of an agency's repository when the caller is not of
+         *     that agency and does not reach every agency (v2.4.0, GR-26).
+         */
         get: operations["getWorkflow"];
         /**
          * Edit an cronomicon-source workflow (A11)
@@ -1469,7 +1494,10 @@ export interface paths {
         };
         /**
          * List schedule push audit records
-         * @description Records of Cronomicon→GitLab pushes. 1-year retention per A4.
+         * @description Records of Cronomicon→GitLab pushes. 1-year retention per A4. Since
+         *     v2.4.0 (GR-26) a publish to an agency's repository is listed for that
+         *     agency's people and for those whose grant reaches every agency;
+         *     publishes to Global's, for every session.
          */
         get: operations["listSchedulePushes"];
         put?: never;
@@ -5389,6 +5417,11 @@ export interface components {
          */
         Script: {
             readonly name?: string;
+            /**
+             * @description v2.4.0 — the repository the script is of; `global` for Global's. A
+             *     name is a script in each repository that has one.
+             */
+            readonly repoId?: string;
             readonly description?: string | null;
             runType?: components["schemas"]["RunType"];
             /** @description Inline one-liner executable source. Exactly one of command/script/scriptPath is set. */
@@ -5685,6 +5718,16 @@ export interface components {
         };
         Workflow: {
             readonly id?: number;
+            /** @description v2.4.0 — the repository a Git workflow is of; absent for one built in the app. */
+            readonly repoId?: string;
+            /**
+             * @description v2.4.0 — the id of the agency the workflow belongs to. A Git
+             *     workflow's is its repository's agency. One built in the app records
+             *     it when it is saved, from the scopes of the jobs it runs (`global`
+             *     when they are of several agencies or of none), and it is as of that
+             *     save.
+             */
+            readonly ownerAgency?: string;
             /** @description AF-4a — stable surrogate identity; see Job.uid. */
             readonly uid?: string;
             readonly name?: string;
@@ -10093,6 +10136,8 @@ export interface operations {
     listScripts: {
         parameters: {
             query?: {
+                /** @description v2.4.0 — one repository's scripts; omitted, every repository's the caller reads. */
+                repo?: string;
                 type?: components["schemas"]["RunType"];
                 /** @description Free-text search on name. */
                 q?: string;
@@ -10130,7 +10175,15 @@ export interface operations {
     };
     getScript: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — which repository's script of this name (see
+                 *     `GET /git-repos`); omitted, Global's. A name is a script in each
+                 *     repository that has one. 404 when the caller does not read that
+                 *     repository, as when it is not there (GR-26).
+                 */
+                repo?: string;
+            };
             header?: never;
             path: {
                 /**
@@ -10160,7 +10213,15 @@ export interface operations {
     };
     getScriptContent: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description v2.4.0 — which repository's script of this name (see
+                 *     `GET /git-repos`); omitted, Global's. A name is a script in each
+                 *     repository that has one. 404 when the caller does not read that
+                 *     repository, as when it is not there (GR-26).
+                 */
+                repo?: string;
+            };
             header?: never;
             path: {
                 /**
