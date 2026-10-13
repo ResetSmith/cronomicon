@@ -3741,10 +3741,11 @@ paths:
         with the key and the bastion unset: the clone connects to nothing until
         its agency sets its own. `note` in the answer says so.
 
-        **Who:** who may move the scope to that agency: `configureApp` on the
-        agency the scope is in AND on the agency the clone is for (a global
-        administrator for Global, on either side). A clone shows one agency's
-        host list to another. 409 when a scope already has the name (a scope's
+        **Who:** `configureApp` on the agency the scope is in AND on the agency
+        the clone is for (a global administrator for Global, on either side).
+        A clone shows one agency's host list to another, so it takes both. It
+        does not take what MOVING the scope takes (a global administrator): the
+        scope stays where it is. 409 when a scope already has the name (a scope's
         name is unique across the installation). CSRF required.
       parameters: [{ $ref: '#/components/parameters/scopeId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
@@ -3795,11 +3796,14 @@ paths:
         work, on a runner that serves Global, and no department's runner claims
         them. 422 (code=unknown_agency) if the id is not in the catalog.
 
-        Moving a scope takes `configureApp` on BOTH sides: on the agency the scope
-        is in and on the one it is going to (a global administrator for Global,
-        on either side). Until v2.3.0 it took a global administrator. A scope
-        that predates v2.3.0 and is in several agencies is settled on the one
-        named. CSRF required.
+        **Moving a scope to another agency takes a global administrator**
+        (v2.4.0): 403 for anyone else, an administrator of both agencies
+        included, who may clone the scope to the other one
+        (`POST /scopes/{scopeId}/clone`). In v2.3.x it took `configureApp` on
+        both sides. Naming the agency the scope is in already moves nothing and
+        takes `configureApp` on that agency. A scope that predates v2.3.0 and
+        is in several agencies is settled on one of them by whoever holds
+        `configureApp` on all of them. CSRF required.
 
         A scope whose inventory is in an AGENCY's repository belongs to that
         agency and cannot be moved (v2.4.0): 409 `scope_agency_fixed`. It leaves
@@ -6997,8 +7001,9 @@ paths:
         Adding an entity is a re-homing act and carries the RF-1b guard per added
         entity: the caller needs the kind's permission on the agency that has the
         entity today AND on this agency. Removing needs the permission on this
-        agency alone. A scope follows the same rule as the other kinds since
-        v2.3.0; no one is signed out.
+        agency alone. No one is signed out. A SCOPE is added by a global
+        administrator only (v2.4.0): adding one moves it here, and a scope is
+        moved by nobody else.
 
         A scope, secret, variable and SSH key belongs to exactly ONE agency
         (v2.3.0, LR-7, LR-54), so this route adds only what is **Global's**: the
@@ -7141,6 +7146,10 @@ paths:
         `PUT /runner-agencies`. Every scope and
         agency id is validated before ANY write, so a bad id cannot leave half a
         matrix applied: 422 `unknown_member` / `unknown_agency`. CSRF required.
+
+        A row that names an agency the scope is not in today MOVES the scope,
+        and that takes a global administrator (v2.4.0; see
+        `PUT /scopes/{scopeId}/agency`): 403 for anyone else.
 
         Gated on **ConfigureApp**, the same gate as the agency catalog, runner
         membership and the scope binding. Membership is an isolation-zone

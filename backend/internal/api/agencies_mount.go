@@ -178,8 +178,61 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 //
 // An entity in NO agency may be placed by a global administrator (the repair
 // path; see requireEntityAgencyOrRepair).
+//
+// A SCOPE is moved by a global administrator only (the owner's decision of
+// 2026-10-13, on 2.4.0's question 21). A scope's agency decides whose
+// repository's jobs may name it and which workflows are one agency's (GR-7),
+// and a scope that comes from an agency's repository cannot be moved at all
+// (GR-18): what was left, a scope built in the app or one of Global's
+// repository passing between two agencies on the word of somebody who
+// administers both, was the one way round the rule that a save which makes a
+// workflow span agencies is a global administrator's. The two-sided rule is
+// asked first all the same, so a caller with no authority over the scope is
+// told what they were always told. A MOVE is a request that names an agency
+// the scope is not in today. One that names only where it is moves nothing,
+// and one that narrows a scope two agencies share from before 2.3.0 to one of
+// them is those agencies' to settle, as it was: both are held to the
+// two-sided rule alone. So is a CLONE of a scope (requireBothSides), which
+// leaves the scope where it is.
 func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Identity,
 	kind settings.MemberKind, entityID string, targets []string) bool {
+
+	current, ok := s.requireBothSides(w, r, id, kind, entityID, targets)
+	if !ok {
+		return false
+	}
+	if kind != settings.MemberScope || !namesAnother(current, targets) {
+		return true
+	}
+	perm, _, _, _ := membershipAuthzFor(kind)
+	if !id.GlobalAdmin(perm) {
+		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
+			"a scope is moved to another agency by a global administrator only; "+
+				"an administrator of both agencies may clone it to the other one")
+		return false
+	}
+	return true
+}
+
+// namesAnother reports whether targets names an agency that is not in current.
+func namesAnother(current, targets []string) bool {
+	in := make(map[string]bool, len(current))
+	for _, a := range current {
+		in[a] = true
+	}
+	for _, a := range targets {
+		if !in[a] {
+			return true
+		}
+	}
+	return false
+}
+
+// requireBothSides is requireMove's two-sided rule on its own: the kind's
+// permission on every agency the entity is in today and on every agency
+// named. It returns the agencies the entity is in.
+func (s *Server) requireBothSides(w http.ResponseWriter, r *http.Request, id auth.Identity,
+	kind settings.MemberKind, entityID string, targets []string) ([]string, bool) {
 
 	perm, joinTable, joinCol, label := membershipAuthzFor(kind)
 	// The source side is EVERY agency the entity is in today, not any one of
@@ -192,7 +245,7 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 		`SELECT agency_id FROM `+joinTable+` WHERE `+joinCol+` = ? ORDER BY agency_id`, entityID)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
-		return false
+		return nil, false
 	}
 	var current []string
 	for rows.Next() {
@@ -200,21 +253,21 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 		if err := rows.Scan(&a); err != nil {
 			rows.Close()
 			httpx.Fail500(w, s.log, "db_error", err)
-			return false
+			return nil, false
 		}
 		current = append(current, a)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		httpx.Fail500(w, s.log, "db_error", err)
-		return false
+		return nil, false
 	}
 	rows.Close()
 	if len(current) == 0 {
 		// In no agency (damage: the repair path), or no such entity (the
 		// handler's 404 or 422, for a global administrator).
 		if !s.requireEntityAgencyOrRepair(w, r, id, perm, joinTable, joinCol, entityID, label) {
-			return false
+			return nil, false
 		}
 	}
 	for _, aid := range current {
@@ -224,7 +277,7 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 		if aid == agencyid.Global {
 			s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
 				"this "+label+" is Global's, so only a global administrator may move it")
-			return false
+			return nil, false
 		}
 		msg := "you do not have " + perm + " on the agency that has this " + label
 		if len(current) > 1 {
@@ -232,16 +285,16 @@ func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Ide
 				" on all of them; moving it takes every one of them, or a global administrator"
 		}
 		s.denyEntityAgency(w, r, id, perm, aid, msg)
-		return false
+		return nil, false
 	}
 	for _, aid := range targets {
 		if !id.CanAgency(perm, aid) {
 			s.denyEntityAgency(w, r, id, perm, aid,
 				"you do not have "+perm+" on agency "+aid+", so you cannot move this "+label+" into it")
-			return false
+			return nil, false
 		}
 	}
-	return true
+	return current, true
 }
 
 // handleSetAgencyMembership replaces the agency set of each posted entity
@@ -880,10 +933,11 @@ func (s *Server) handleSetVaultPrefixes(w http.ResponseWriter, r *http.Request) 
 // handleCloneScope clones a scope to an agency (the owner's decision of
 // 2026-10-13; settings.CloneScope says what is and is not copied).
 //
-// Who may: who may MOVE the scope to that agency, an administrator of the
-// agency it is in and of the one the clone is for, or a global administrator
-// (requireMove). A clone shows one agency's host list to another, which is
-// what moving the scope would do.
+// Who may: an administrator of the agency the scope is in and of the one the
+// clone is for, or a global administrator (requireBothSides). A clone shows
+// one agency's host list to another, so it takes both. It is NOT held to the
+// rule for moving a scope (a global administrator only, requireMove): the
+// scope stays where it is, and the clone is a new scope of the other agency.
 func (s *Server) handleCloneScope(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -902,7 +956,7 @@ func (s *Server) handleCloneScope(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = agencyid.Global
 	}
-	if !s.requireMove(w, r, id, settings.MemberScope, sid, []string{target}) {
+	if _, ok := s.requireBothSides(w, r, id, settings.MemberScope, sid, []string{target}); !ok {
 		return
 	}
 	sc, copied, err := settings.CloneScope(r.Context(), s.db, sid, inp.Name, target, id.Email)

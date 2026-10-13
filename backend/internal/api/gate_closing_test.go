@@ -215,14 +215,45 @@ func TestGC_ScopesAreAdministeredByTheirOwnAgency(t *testing.T) {
 		}
 	}
 
-	// Someone who administers both agencies moves a scope between them, and it
-	// is in exactly one afterwards. A scope never has two (LR-7).
+	// Somebody with no authority over the scope is told what they were always
+	// told (whose it is), and not the rule for moving one.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:tax/agency", gFinAdmin, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), "on the agency that has this scope") {
+		t.Errorf("FIN's administrator pulling TAX's scope in = %d %s, want 403 saying they hold nothing on the agency that has it", rec.Code, rec.Body)
+	}
+	// Somebody who administers BOTH agencies does not move a scope between
+	// them either: a scope is moved by a global administrator only (the
+	// owner's decision of 2026-10-13; it was the two-sided rule from 2.3.0,
+	// LR-7). On each of the three setters, and nothing moves. A request that
+	// names where the scope already is moves nothing, and is theirs.
 	both := gFinAdmin + "," + gTaxAdmin
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scope-agencies", both, `[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
+	for _, c := range []struct{ path, body string }{
+		{"/api/v1/scopes/sc:fin/agency", `{"agencyId":"ag:TAX"}`},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["ag:TAX"]}]`},
+		{"/api/v1/scope-agencies", `[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`},
+		{"/api/v1/agencies/ag:TAX/members", `{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"sc:fin"}]}`},
+	} {
+		rec := gateReq(t, h, http.MethodPut, c.path, both, c.body)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "global administrator only") {
+			t.Errorf("an administrator of both agencies moving a scope: PUT %s %s = %d, want 403 naming a global administrator (%s)", c.path, c.body, rec.Code, rec.Body)
+		}
+	}
+	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:fin' AND agency_id='ag:FIN'`); n != 1 {
+		t.Fatal("the scope moved under an administrator of both agencies")
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", both, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusOK {
+		t.Errorf("naming the agency the scope is in already = %d, want 200: nothing moves (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gFinAdmin, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusOK {
+		t.Errorf("FIN's administrator naming the agency its scope is in already = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	// A global administrator moves it, and it is in exactly one agency
+	// afterwards. A scope never has two (LR-7).
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scope-agencies", gRoot, `[{"id":"sc:fin","agencyIds":["ag:FIN","ag:TAX"]}]`); rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "one_agency" {
 		t.Errorf("putting a scope in two agencies = %d %s, want 422 one_agency (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
 	}
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", both, `{"agencyId":"ag:TAX"}`); rec.Code != http.StatusOK {
-		t.Fatalf("an administrator of both agencies moving a scope = %d, want 200 (%s)", rec.Code, rec.Body)
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:fin/agency", gRoot, `{"agencyId":"ag:TAX"}`); rec.Code != http.StatusOK {
+		t.Fatalf("a global administrator moving a scope = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:fin' AND agency_id='ag:TAX'`); n != 1 {
 		t.Error("the scope did not move")
