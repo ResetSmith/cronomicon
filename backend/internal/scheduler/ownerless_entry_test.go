@@ -97,7 +97,7 @@ func TestAScheduleEntryWithNoOwnerFiresOnlyWhereOneDefinitionHoldsItsName(t *tes
 
 	// The log names each entry that was left out, and what to do.
 	said := logs.String()
-	for _, want := range []string{"entry=whose-is-this", "entry=whose-flow", "it does not fire", "Save the definition it belongs to again"} {
+	for _, want := range []string{"entry=whose-is-this", "entry=whose-flow", "it does not fire", "Add the schedule to the definition it belongs to", "schedule_entry_no_owner"} {
 		if !strings.Contains(said, want) {
 			t.Errorf("the log does not say %q:\n%s", want, said)
 		}

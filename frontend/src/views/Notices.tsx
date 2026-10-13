@@ -36,6 +36,7 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   git_sync_problems: { title: "A repository's last sync reported errors", to: "/runs?tab=git-sync", toLabel: "Git Sync" },
   schedule_gone: { title: "A schedule in use was removed from Git", to: "/schedules", toLabel: "Schedules" },
   workflow_spans_agencies: { title: "A workflow runs jobs of more than one agency", to: "/workflows", toLabel: "Workflows" },
+  schedule_entry_no_owner: { title: "A schedule entry with no owner no longer fires", to: "/schedules", toLabel: "Schedules" },
   prune_deferred: { title: "Something this agency's repository uses was removed from the installation's", to: "/runs?tab=git-sync", toLabel: "Git Sync" },
   may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
   mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },

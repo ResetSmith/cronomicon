@@ -10767,6 +10767,17 @@ components:
               comes to span later (a scope given to another agency). Subject:
               the workflow's uid. Filed under Global. It clears when the
               workflow's jobs are all one agency's.
+            - `schedule_entry_no_owner` — a schedule entry records no owner (it
+              was left by restoring a schedule from the recycle bin before
+              v2.4.0) and more than one definition holds its name. Until v2.4.0
+              it fired every one of them; it now fires none, because whose it
+              is cannot be told, and it is shown on none of them. The detail
+              names the entry, its timing and the agencies of the definitions.
+              The schedule is put back by adding it to the definition it
+              belongs to; the notice is then dismissed. Subject:
+              `<job|workflow>:<source>:<definition name>:<entry name>`. Filed
+              under Global. It clears by itself when one definition is left
+              with the name, which the entry is then joined to.
             - `prune_deferred` — a script or a schedule was removed from the
               installation's own repository while an agency's repository still
               uses it (v2.4.0). It is kept as it was until none of that

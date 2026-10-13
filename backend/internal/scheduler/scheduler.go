@@ -324,9 +324,10 @@ func (s *Scheduler) Reload(ctx context.Context) error {
 
 // logOwnerlessEntries says, once for each, which schedule entries the two
 // loaders left out because they record no owner and two definitions hold
-// their name (see loadJobEntries). Such an entry does not fire, and this line
-// is what says so: saving the definition it belongs to again writes its
-// entries with their owner. Called by Reload, under reloadMu.
+// their name (see loadJobEntries). Such an entry does not fire. The notice
+// schedule_entry_no_owner says so in the inbox, with the agencies of the
+// definitions; this line is the server's own record of it. Called by Reload,
+// under reloadMu.
 func (s *Scheduler) logOwnerlessEntries(ctx context.Context) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ds.owner_kind, ds.owner_source, ds.owner_name, ds.name
@@ -357,7 +358,7 @@ func (s *Scheduler) logOwnerlessEntries(ctx context.Context) {
 		}
 		s.ownerlessLogged[key] = true
 		s.log.Warn("scheduler: a schedule entry records no owner and more than one definition holds its name: it does not fire. "+
-			"Save the definition it belongs to again, which writes its schedule entries with their owner",
+			"Add the schedule to the definition it belongs to; the notice schedule_entry_no_owner names the entry and the definitions",
 			"kind", kind, "source", source, "definition", owner, "entry", entry)
 	}
 	if err := rows.Err(); err != nil {
