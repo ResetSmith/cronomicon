@@ -79,7 +79,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	if reqJSON == "" {
 		reqJSON = "[]"
 	}
-	lcaps := effectiveCapsSQL("rn")
+	lcaps := EffectiveCapsSQL("rn")
 	var localOff bool
 	if err := database.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -119,7 +119,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// 2. Can anything online run this TYPE? Against the runner's EFFECTIVE
 	// capabilities — what it declared minus what the operator masked off — as the
 	// claim does: a runner whose mask lists this type will never take the run.
-	caps := effectiveCapsSQL("rn")
+	caps := EffectiveCapsSQL("rn")
 	typeClause := `? IN ` + caps
 	n, err = count(typeClause, runType.String)
 	if err != nil {

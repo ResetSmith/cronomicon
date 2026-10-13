@@ -24,7 +24,7 @@ import (
 // EffectiveCaps subtracts a runner's server-managed capability mask from the
 // capability tokens it declared. The mask is subtract-only (it lists run types
 // the operator has switched off for this runner). Order-preserving; an empty
-// mask returns caps unchanged. The claim calls this; effectiveCapsSQL is the
+// mask returns caps unchanged. The claim calls this; EffectiveCapsSQL is the
 // same rule for the two mirrors, and a test holds them to one answer.
 func EffectiveCaps(caps, mask []string) []string {
 	if len(mask) == 0 {
@@ -43,11 +43,14 @@ func EffectiveCaps(caps, mask []string) []string {
 	return out
 }
 
-// effectiveCapsSQL is EffectiveCaps as a one-column subquery over the runners
+// EffectiveCapsSQL is EffectiveCaps as a one-column subquery over the runners
 // row aliased `alias`: the declared tokens that the mask does not list. A
 // managed_settings blob that is absent, not JSON, or carries no mask subtracts
 // nothing — as LoadManagedSettings reads it.
-func effectiveCapsSQL(alias string) string {
+//
+// Exported for the questions that must give the claim's answer about what an
+// agent can take: runref.CheckoutNeedsAgent and the notice that mirrors it.
+func EffectiveCapsSQL(alias string) string {
 	return `(SELECT ec.value FROM json_each(COALESCE(` + alias + `.capabilities, '[]')) ec
 	          WHERE ec.value NOT IN (
 	                SELECT em.value FROM json_each(

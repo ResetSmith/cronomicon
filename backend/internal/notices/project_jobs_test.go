@@ -126,10 +126,17 @@ func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 	runner("the-server", "server", `["bash","perl","powershell","python","checkout"]`, "ag-fin")
 	only(check(), "fin-proj", "git-own-proj", "git-elsewhere-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
 
+	// An agent that declares checkout serves Finance, and an administrator has
+	// masked it: the claim hands it no project's run, and every notice stays.
+	runner("fin-masked-agent", "agent", `["ansible","checkout"]`, "ag-fin")
+	mustExec(t, pool, `UPDATE runners SET managed_settings = '{"capabilityMask":["checkout"]}' WHERE id = 'fin-masked-agent'`)
+	only(check(), "fin-proj", "git-own-proj", "git-elsewhere-proj", "tax-proj", "free-proj", "bound-proj", "fin-shell", "tax-shell")
+
 	// An agent started with -allow-checkout serves Finance. Finance's job on an
 	// unbound scope is served; the scope that names its runners does not name
 	// this one; Tax's and Global's are another agency's.
 	runner("fin-checkout-agent", "agent", `["ansible","checkout"]`, "ag-fin")
+	mustExec(t, pool, `UPDATE runners SET managed_settings = '{"capabilityMask":["ansible"]}' WHERE id = 'fin-checkout-agent'`)
 	mustExec(t, pool, `INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc-bound', 'fin-plain-agent', 'fin-plain-agent', 't')`)
 	only(check(), "tax-proj", "free-proj", "git-elsewhere-proj", "bound-proj", "tax-shell")
 

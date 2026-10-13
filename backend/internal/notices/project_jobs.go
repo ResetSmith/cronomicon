@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 )
 
 // A project job with no agent that allows checkout (2.4.0; present defects 24,
@@ -51,7 +52,9 @@ const KindProjectJobNoCheckoutAgent = "project_job_no_checkout_agent"
 // runners, is one of them. Registered, not
 // online: an agent that is merely offline is an ordinary wait. The server's
 // own runner is no such agent: it advertises no "checkout" and does not take a
-// project job's run.
+// project job's run. Nor is an agent whose "checkout" an administrator has
+// masked: the capabilities are read as the claim reads them
+// (execspec.EffectiveCapsSQL), as the refusal reads them.
 func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.uid, j.name, j.source, COALESCE(j.scope, ''),
@@ -68,7 +71,7 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 		   AND NOT EXISTS (
 		       SELECT 1 FROM runners rn
 		        WHERE rn.kind <> 'server'
-		          AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = 'checkout')
+		          AND 'checkout' IN `+execspec.EffectiveCapsSQL("rn")+`
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
 		               WHERE ra.runner_id = rn.id

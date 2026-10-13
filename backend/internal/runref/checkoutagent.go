@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 )
 
 // CheckoutNeedsAgent reports whether a run of a job is one that no registered
@@ -28,6 +30,12 @@ import (
 // (Global's, for a run with no scope or with a scope that is not there) and,
 // where the scope names its runners, one of them. The server's own runner is
 // no such agent: it advertises no "checkout".
+//
+// "Advertises" is what the CLAIM reads: the tokens the agent declares, less
+// the ones an administrator has masked (execspec.EffectiveCapsSQL). An agent
+// whose "checkout" is masked takes no project's run, so it is no agent to wait
+// for: read as declared, its runs waited for ever and counted against the
+// installation's concurrency cap, which is what this rule is there to stop.
 //
 // The job is found by its uid; a caller that has none names it by source and
 // name, and it is then a project when one job holds the name and that job is
@@ -58,7 +66,7 @@ func CheckoutNeedsAgent(ctx context.Context, database *sql.DB, jobUID, jobSource
 		SELECT EXISTS (
 			SELECT 1 FROM runners rn
 			 WHERE rn.kind <> 'server'
-			   AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value = 'checkout')
+			   AND 'checkout' IN `+execspec.EffectiveCapsSQL("rn")+`
 			   AND EXISTS (
 			       SELECT 1 FROM runner_agencies ra
 			        WHERE ra.runner_id = rn.id

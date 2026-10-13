@@ -62,9 +62,17 @@ func TestCheckoutNeedsAgent(t *testing.T) {
 	ask("no scope, with only the server's runner for Global", "j-proj", "git", "proj", "", true)
 	ask("another agency's agent allows it, its own scope", "j-proj", "git", "proj", "b-hosts", false)
 
+	// One that declares it and has it masked by an administrator: the claim
+	// hands it no project's run, so it is no agent to wait for.
+	runner("a-masked", "agent", `["ansible","checkout"]`, "ag-a")
+	f.exec(`UPDATE runners SET managed_settings = '{"capabilityMask":["checkout"]}' WHERE id = 'a-masked'`)
+	ask("an agent whose checkout is masked", "j-proj", "git", "proj", "a-hosts", true)
+
 	// One of the scope's agency's that allows it: registered, offline, and
-	// enough. The run waits for it.
+	// enough. The run waits for it. A mask of another token takes nothing from
+	// this one.
 	runner("a-checkout", "agent", `["ansible","checkout"]`, "ag-a")
+	f.exec(`UPDATE runners SET managed_settings = '{"capabilityMask":["ansible"]}' WHERE id = 'a-checkout'`)
 	ask("an agent of the scope's agency allows it", "j-proj", "git", "proj", "a-hosts", false)
 	ask("the same, for the job built in the app", "j-app", "cronomicon", "built", "a-hosts", false)
 	ask("the same, for no scope: that agent is not Global's", "j-proj", "git", "proj", "", true)

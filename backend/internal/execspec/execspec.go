@@ -676,7 +676,7 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 	if reqJSON == "" {
 		reqJSON = "[]"
 	}
-	caps := effectiveCapsSQL("rn")
+	caps := EffectiveCapsSQL("rn")
 	err = db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM runners rn
