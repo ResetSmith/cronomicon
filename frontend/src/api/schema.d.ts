@@ -3486,11 +3486,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get GitLab connection config (PAT masked) */
+        /**
+         * Get GitLab connection config (PAT masked)
+         * @deprecated
+         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `GET /agencies/{agencyId}/git-repo`, where the id `global` is Global's.
+         */
         get: operations["getGitlabConfig"];
         /**
          * Update GitLab connection config
-         * @description Omit `pat` to keep the stored token; the masked value a read returns in `pat` is taken the same way when it is sent back. The connection is applied when it is saved, with no restart of the server: the repository's sync service is rebuilt from it and syncs at once. The environment variables `CRONOMICON_GITLAB_BASE_URL` and `CRONOMICON_GITLAB_TOKEN`, when set, override the stored URL and token of this repository (§11.2).
+         * @deprecated
+         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's repository only: use `PUT /agencies/{agencyId}/git-repo`, where the id `global` is Global's. Omit `pat` to keep the stored token; the masked value a read returns in `pat` is taken the same way when it is sent back. The connection is applied when it is saved, with no restart of the server: the repository's sync service is rebuilt from it and syncs at once. The environment variables `CRONOMICON_GITLAB_BASE_URL` and `CRONOMICON_GITLAB_TOKEN`, when set, override the stored URL and token of this repository (§11.2).
          */
         put: operations["updateGitlabConfig"];
         post?: never;
@@ -3511,7 +3516,13 @@ export interface paths {
         put?: never;
         /**
          * Rotate the GitLab webhook secret (S15)
-         * @description Two-step rotation per S15 — writes the new secret to Cronomicon and (if
+         * @deprecated
+         * @description Deprecated in 2.4.0, kept for one minor release. It addresses Global's
+         *     repository only: use
+         *     `POST /agencies/{agencyId}/git-repo/webhook-secret/rotate`, where the id
+         *     `global` is Global's.
+         *
+         *     Two-step rotation per S15 — writes the new secret to Cronomicon and (if
          *     updateGitlab=true) updates the webhook config in GitLab via API. Both
          *     old and new secrets are accepted for an overlap window (>= 5 min). If
          *     GitLab cannot be updated automatically, the response notes manual

@@ -5763,6 +5763,11 @@ paths:
       tags: [Settings]
       operationId: getGitlabConfig
       summary: Get GitLab connection config (PAT masked)
+      deprecated: true
+      description: >-
+        Deprecated in 2.4.0, kept for one minor release. It addresses Global's
+        repository only: use `GET /agencies/{agencyId}/git-repo`, where the
+        id `global` is Global's.
       responses:
         '200':
           description: Config; pat is always masked on read.
@@ -5775,7 +5780,11 @@ paths:
       tags: [Settings]
       operationId: updateGitlabConfig
       summary: Update GitLab connection config
+      deprecated: true
       description: >-
+        Deprecated in 2.4.0, kept for one minor release. It addresses Global's
+        repository only: use `PUT /agencies/{agencyId}/git-repo`, where the
+        id `global` is Global's.
         Omit `pat` to keep the stored token; the masked value a read returns in
         `pat` is taken the same way when it is sent back. The connection is
         applied when it is saved, with no restart of the server: the
@@ -5804,7 +5813,13 @@ paths:
       tags: [Settings]
       operationId: rotateWebhookSecret
       summary: Rotate the GitLab webhook secret (S15)
+      deprecated: true
       description: |
+        Deprecated in 2.4.0, kept for one minor release. It addresses Global's
+        repository only: use
+        `POST /agencies/{agencyId}/git-repo/webhook-secret/rotate`, where the id
+        `global` is Global's.
+
         Two-step rotation per S15 — writes the new secret to Cronomicon and (if
         updateGitlab=true) updates the webhook config in GitLab via API. Both
         old and new secrets are accepted for an overlap window (>= 5 min). If
