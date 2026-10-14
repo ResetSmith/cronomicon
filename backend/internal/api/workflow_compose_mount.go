@@ -860,10 +860,14 @@ func (s *Server) spanningBefore(w http.ResponseWriter, r *http.Request, tx *sql.
 // which has been asked on its own account; "" for a job's save.
 //
 // The refusal names the workflow only to somebody who holds compose on the
-// agency it belongs to, who may read it. That is everybody who can get here
-// (the parent's jobs were one agency's, and the job or the child being saved
-// was among them, so the saver holds compose there); the words for anybody
-// else say neither which workflow nor that there is one.
+// agency it belongs to, who may read it. That is the usual saver: the job or
+// the child being saved was among the parent's, all of one agency's. Not
+// always: a composer of ANOTHER agency who creates a job, or a workflow, of a
+// name that one of the parent's steps names and nothing holds yet makes the
+// parent span too (found by the review of R7). Such a saver is given words
+// that say neither which workflow nor that there is one; that the save was
+// refused at all still tells them something waits on the name, which is one
+// bit, and is left so.
 func (s *Server) refuseNewSpan(w http.ResponseWriter, r *http.Request, tx *sql.Tx, id auth.Identity, before map[string]bool, self string) bool {
 	if id.GlobalAdmin(auth.PermCompose) {
 		return true

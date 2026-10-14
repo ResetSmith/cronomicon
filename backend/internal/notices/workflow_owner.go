@@ -63,6 +63,16 @@ type SpanningWorkflow struct {
 func SpanningWorkflows(ctx context.Context, q interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }) ([]SpanningWorkflow, error) {
+	// The graph is read ONCE (2.4.0, review 5). Every save by anybody but a
+	// global administrator runs this twice inside its write transaction, so
+	// its cost is a lock every other writer waits on. Written first with the
+	// per-step rows as a plain CTE that the final SELECT asked of each
+	// workflow, it re-read the whole graph per workflow: 200 workflows with a
+	// sub-workflow each took five seconds, 2,000 eight minutes. Now the steps'
+	// jobs, their agencies and the count per workflow are each MATERIALIZED
+	// once, and a step's job and a sub-workflow are found through the
+	// (source, name) index (a name alone does not use it; a source is one of
+	// the two there are).
 	rows, err := q.QueryContext(ctx, `
 		WITH RECURSIVE
 		reach(root, wf, depth) AS (
@@ -70,7 +80,7 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		  UNION
 		    SELECT r.root,
 		           (SELECT c.rowid FROM workflows c
-		             WHERE c.name = json_extract(n.value, '$.workflow')
+		             WHERE c.source IN ('git', 'cronomicon') AND c.name = json_extract(n.value, '$.workflow')
 		               AND c.enabled = 1 AND c.deleted_at IS NULL
 		             ORDER BY (c.source = p.source) DESC, c.rowid LIMIT 1),
 		           r.depth + 1
@@ -80,40 +90,47 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		        ON n.type = 'object' AND json_extract(n.value, '$.type') = 'workflow'
 		     WHERE r.depth < 3
 		),
-		step(root, agency) AS (
+		stepjob(root, jrow) AS MATERIALIZED (
 		    SELECT r.root,
-		           (SELECT CASE
-		                     WHEN COALESCE(j.scope, '') = '' THEN ?1
-		                     ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                                      FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                                     WHERE sc.name = j.scope), ?1)
-		                   END
-		              FROM jobs j
-		             WHERE j.deleted_at IS NULL
-		               AND CASE
-		                     WHEN COALESCE(json_extract(n.value, '$.jobUid'), '') <> ''
-		                       THEN j.uid = json_extract(n.value, '$.jobUid')
-		                     WHEN COALESCE(json_extract(n.value, '$.jobSource'), '') <> ''
-		                       THEN j.name = json_extract(n.value, '$.name') AND j.source = json_extract(n.value, '$.jobSource')
-		                     ELSE j.name = json_extract(n.value, '$.name')
-		                   END
-		             ORDER BY (j.source = p.source) DESC, j.rowid
-		             LIMIT 1)
+		           CASE WHEN COALESCE(json_extract(n.value, '$.jobUid'), '') <> ''
+		             THEN (SELECT j.rowid FROM jobs j
+		                    WHERE j.uid = json_extract(n.value, '$.jobUid') AND j.deleted_at IS NULL)
+		             ELSE (SELECT j.rowid FROM jobs j
+		                    WHERE j.source IN ('git', 'cronomicon') AND j.name = json_extract(n.value, '$.name')
+		                      AND j.deleted_at IS NULL
+		                      AND (COALESCE(json_extract(n.value, '$.jobSource'), '') = ''
+		                           OR j.source = json_extract(n.value, '$.jobSource'))
+		                    ORDER BY (j.source = p.source) DESC, j.rowid
+		                    LIMIT 1)
+		           END
 		      FROM reach r
 		      JOIN workflows p ON p.rowid = r.wf
 		      JOIN json_tree(CASE WHEN json_valid(p.steps) THEN p.steps ELSE '[]' END) n
 		        ON n.type = 'object'
 		       AND COALESCE(json_extract(n.value, '$.type'), '') IN ('', 'job')
 		       AND COALESCE(json_extract(n.value, '$.name'), '') <> ''
+		),
+		step(root, agency) AS MATERIALIZED (
+		    SELECT s.root,
+		           CASE
+		             WHEN COALESCE(j.scope, '') = '' THEN ?1
+		             ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+		                              FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+		                             WHERE sc.name = j.scope), ?1)
+		           END
+		      FROM stepjob s JOIN jobs j ON j.rowid = s.jrow
+		),
+		counted(root, n) AS MATERIALIZED (
+		    SELECT root, COUNT(DISTINCT agency) FROM step GROUP BY root
 		)
 		SELECT w.uid, w.name,
 		       (SELECT GROUP_CONCAT(name, ', ') FROM (
 		            SELECT DISTINCT COALESCE(a.name, s.agency) AS name
 		              FROM step s LEFT JOIN agencies a ON a.id = s.agency
-		             WHERE s.root = w.uid AND s.agency IS NOT NULL ORDER BY 1))
+		             WHERE s.root = w.uid ORDER BY 1))
 		  FROM workflows w
+		  JOIN counted c ON c.root = w.uid AND c.n > 1
 		 WHERE w.source = 'cronomicon' AND w.deleted_at IS NULL
-		   AND (SELECT COUNT(DISTINCT s.agency) FROM step s WHERE s.root = w.uid AND s.agency IS NOT NULL) > 1
 		 ORDER BY w.name`, agencyid.Global)
 	if err != nil {
 		return nil, err
