@@ -55,6 +55,8 @@ func (f *unclaimFixture) runner(id, status string, caps string, agency string, i
 	        VALUES(?,?,?,?,?,'t','t')`, id, id, status, caps, injection)
 	if agency != "" {
 		f.exec(`INSERT INTO runner_agencies(runner_id,agency_id) VALUES(?,?)`, id, agency)
+		// Owned by it, as an agent enrolled for it is (§0a: its owner's work only).
+		f.exec(`UPDATE runners SET owner_agency = ? WHERE id = ?`, agency, id)
 	}
 }
 

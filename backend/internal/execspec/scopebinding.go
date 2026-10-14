@@ -61,7 +61,7 @@ const boundRunnersSelect = `
 	         WHEN rn.id IS NULL THEN 0
 	         ELSE EXISTS (SELECT 1 FROM scope_agencies sa
 	                        JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
-	                       WHERE sa.scope_id = sr.scope_id AND ra.runner_id = sr.runner_id)
+	                       WHERE sa.scope_id = sr.scope_id AND ra.runner_id = sr.runner_id AND ra.agency_id = rn.owner_agency)
 	       END
 	  FROM scope_runners sr
 	  LEFT JOIN runners rn ON rn.id = sr.runner_id`
@@ -173,6 +173,7 @@ func RunnerEligibleForScope(ctx context.Context, q rowQueryer, scopeID, runnerID
 		SELECT EXISTS (SELECT 1 FROM runners rn WHERE rn.id = ?)
 		   AND EXISTS (SELECT 1 FROM scope_agencies sa
 		                 JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
+		                 JOIN runners rown ON rown.id = ra.runner_id AND rown.owner_agency = ra.agency_id
 		                WHERE sa.scope_id = ? AND ra.runner_id = ?)`,
 		runnerID, scopeID, runnerID).Scan(&ok)
 	return ok, err

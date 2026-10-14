@@ -629,13 +629,21 @@ func TestG3_BindingTakesTheScopeNotTheRunner(t *testing.T) {
 		rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/"+scope+"/runners", who, string(body))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
-	// FIN binds its scope to the legacy placement, which serves FIN and is
-	// Global's. Until 2.3.0 this needed authority over the runner.
-	if code, ec := bind(gFinAdmin, "sc:fin", "r-legacy", "r-fin"); code != 200 {
-		t.Fatalf("FIN binding its scope to a runner that serves FIN = %d %s, want 200", code, ec)
+	// FIN binds its scope to its own agent.
+	if code, ec := bind(gFinAdmin, "sc:fin", "r-fin"); code != 200 {
+		t.Fatalf("FIN binding its scope to its own agent = %d %s, want 200", code, ec)
 	}
+	// Not to the legacy placement, listed as serving FIN and Global's: since
+	// §0a (the owner's yes to question 29) it takes its owner's work only, so
+	// it does not serve FIN. (Until then FIN might bind its scope to it.)
+	if code, ec := bind(gFinAdmin, "sc:fin", "r-legacy", "r-fin"); code != 422 || ec != "runner_not_eligible" {
+		t.Errorf("FIN binding its scope to the legacy placement = %d %s, want 422 runner_not_eligible", code, ec)
+	}
+	// A binding to it from before stays, for the replace below.
+	exec := mustExec(t, pool)
+	exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc:fin', 'r-legacy', 'legacy', 't')`)
 	if n := count(t, pool, `SELECT COUNT(*) FROM scope_runners WHERE scope_id = 'sc:fin'`); n != 2 {
-		t.Errorf("%d bindings written, want 2", n)
+		t.Errorf("%d bindings, want 2", n)
 	}
 	// Not to a runner that does not serve FIN, whoever owns it.
 	for _, r := range []string{"r-tax", "r-global"} {
@@ -665,7 +673,6 @@ func TestG3_BindingTakesTheScopeNotTheRunner(t *testing.T) {
 	if code, ec := replace(gFinAdmin, "r-legacy", "r-tax"); code != 422 || ec != "runner_not_eligible" {
 		t.Errorf("FIN replacing with a runner that does not serve FIN = %d %s, want 422 runner_not_eligible", code, ec)
 	}
-	exec := mustExec(t, pool)
 	seedBindingRunner(exec, "r-fin-2", "fin-agent-2", "ag:FIN")
 	if code, ec := replace(gFinAdmin, "r-legacy", "r-fin-2"); code != 200 {
 		t.Errorf("FIN replacing the legacy placement on its scope with its own agent = %d %s, want 200", code, ec)

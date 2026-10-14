@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -113,9 +114,27 @@ func RunLocalRunnerUpgradePass(ctx context.Context, database *sql.DB, log *slog.
 			add = append(add, a)
 		}
 		sort.Strings(add)
+		// §0a (IN-3): the local runner serves Global only. An installation that
+		// comes from before 2.3.0 straight to 2.4.0 runs this pass after
+		// migration 1380, so it must not put agencies back on the list: the
+		// agencies it would have placed are added to 1380's record instead, and
+		// local_runner_served tells each of them that its shell jobs wait for an
+		// agent of its own.
+		var others []string
 		for _, a := range add {
-			// Written directly: the local runner's list may be any non-empty
-			// set (CheckRunnerPlacement, local), and this only ever adds.
+			if a != agencyid.Global {
+				others = append(others, a)
+			}
+		}
+		if err := recordLocalRunnerServed(ctx, tx, others); err != nil {
+			return nil, fmt.Errorf("local runner upgrade: %w", err)
+		}
+		for _, a := range add {
+			if a != agencyid.Global {
+				continue
+			}
+			// Written directly: the local runner's list is Global's, and this
+			// only ever adds Global.
 			r, err := tx.ExecContext(ctx,
 				`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES (?, ?)`, localID, a)
 			if err != nil {
@@ -275,4 +294,38 @@ func shellServing22(ctx context.Context, database *sql.DB) (served map[string]st
 		}
 	}
 	return served, agenciesOf, nil
+}
+
+// recordLocalRunnerServed adds agencies to the record of what the local runner
+// served before 2.4.0 (migration 1380's, notices.LocalRunnerServedKey), in the
+// caller's transaction, keeping what is there.
+func recordLocalRunnerServed(ctx context.Context, tx *sql.Tx, agencies []string) error {
+	if len(agencies) == 0 {
+		return nil
+	}
+	var raw string
+	err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, notices.LocalRunnerServedKey).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var have []string
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &have); err != nil {
+			return fmt.Errorf("read the record of what the local runner served: %w", err)
+		}
+	}
+	for _, a := range agencies {
+		if !slices.Contains(have, a) {
+			have = append(have, a)
+		}
+	}
+	sort.Strings(have)
+	b, err := json.Marshal(have)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO settings (key, value, last_modified_by, last_modified_at) VALUES (?, ?, 'upgrade', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, notices.LocalRunnerServedKey, string(b))
+	return err
 }

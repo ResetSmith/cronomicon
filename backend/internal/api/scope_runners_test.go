@@ -432,9 +432,9 @@ func TestStuckRunHintNamesTheScopeBinding(t *testing.T) {
 	exec(`INSERT INTO scopes (id,name,source,created_at) VALUES ('s-dmz','dmz-web','cronomicon','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO scope_agencies (scope_id,agency_id) VALUES ('s-dmz','ag-fin')`)
 	// An online Finance runner that can run bash, but is not the bound one.
-	exec(`INSERT INTO runners (id,name,status,capabilities,registered_at,created_at)
-	      VALUES ('r-other','runner-fin-02','online','["bash"]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('r-other','ag-fin')`)
+	exec(`INSERT INTO runners (id,name,status,capabilities,registered_at,created_at,owner_agency)
+	      VALUES ('r-other','runner-fin-02','online','["bash"]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','ag-fin')`)
+	exec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES ('r-other','ag-fin')`)
 	// The bound runner is gone; its binding is not.
 	exec(`INSERT INTO scope_runners (scope_id,runner_id,runner_name,bound_at) VALUES ('s-dmz','r-gone','runner-dmz-01','t')`)
 	exec(`INSERT INTO runs (id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind,

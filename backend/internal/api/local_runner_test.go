@@ -340,17 +340,17 @@ func TestLocalRunner_ItsHostKeysAreAGlobalAdministratorsToDecide(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
 	id := localRunnerID(t, pool)
-	exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, 'ag:FIN')`, id) // it serves FIN
+	// Since §0a (IN-3) the local runner serves Global only, so FIN is no guest
+	// of it: until then it might serve FIN, and FIN scan its own scope with it.
 	exec(`INSERT INTO ssh_hosts (id, hostname, address, port, scope_id, source, created_by, created_at, last_modified_by, last_modified_at)
 	      VALUES ('h-fin1', 'fin1', '10.5.0.1', 22, 'sc:fin', 'git', 't', 't', 't', 't')`)
 	exec(`INSERT OR IGNORE INTO scope_hosts (scope_id, host) VALUES ('sc:fin', 'fin1')`)
 
-	// FIN may queue a scan of its own scope with it...
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/keyscan", gFinAdmin, `{"scopeId":"sc:fin"}`)
-	if rec.Code != http.StatusAccepted {
-		t.Errorf("FIN scanning its own scope with the local runner = %d (%s), want 202", rec.Code, rec.Body)
+	if rec.Code == http.StatusAccepted {
+		t.Errorf("FIN scanning its own scope with the local runner = %d (%s), want it refused", rec.Code, rec.Body)
 	}
-	// ...and nothing else: not typed hosts, not another agency's scope.
+	// Nor anything else: not typed hosts, not another agency's scope.
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/keyscan", gFinAdmin, `{"hosts":["10.5.0.9"]}`); rec.Code != http.StatusForbidden {
 		t.Errorf("FIN scanning typed hosts from the server = %d, want 403", rec.Code)
 	}
@@ -358,17 +358,16 @@ func TestLocalRunner_ItsHostKeysAreAGlobalAdministratorsToDecide(t *testing.T) {
 		t.Errorf("FIN scanning TAX's scope with the local runner = %d", rec.Code)
 	}
 
-	// A key found for FIN's host: FIN sees it and cannot approve it — not even
-	// a first key.
+	// A key found for a host (from before): FIN neither sees nor approves it.
 	line, keyType, fp := realHostKey(t, "10.5.0.1")
 	exec(`INSERT OR REPLACE INTO pending_host_keys (id, runner_id, host, key_type, fingerprint, known_hosts_line, scanned_at, scope_id, scope_name, host_name)
 	      VALUES ('pk-local', ?, '10.5.0.1', ?, ?, ?, '2026-01-01T00:00:00Z', 'sc:fin', 'fin-hosts', 'fin1')`, id, keyType, fp, line)
-	if rec := gateReq(t, h, http.MethodGet, "/api/v1/runners/"+id+"/host-keys/pending", gFinAdmin, ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), fp) {
-		t.Errorf("FIN listing what its scan found = %d (%s), want the key", rec.Code, rec.Body)
+	if rec := gateReq(t, h, http.MethodGet, "/api/v1/runners/"+id+"/host-keys/pending", gFinAdmin, ""); rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), fp) {
+		t.Errorf("FIN listed the local runner's pending key (%s)", rec.Body)
 	}
 	rec = gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/host-keys/resolve-batch", gFinAdmin, `{"approve":["pk-local"]}`)
-	if rec.Code != http.StatusForbidden || errCode(rec.Body.Bytes()) != "owner_required" {
-		t.Fatalf("FIN approving a key on the local runner = %d %s, want 403 owner_required (%s)", rec.Code, errCode(rec.Body.Bytes()), rec.Body)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("FIN approving a key on the local runner = %d (%s), want 403", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM host_key_ledger WHERE runner_id = ?`, id); n != 0 {
 		t.Fatalf("a refused approval wrote %d ledger row(s)", n)

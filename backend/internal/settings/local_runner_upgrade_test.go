@@ -108,13 +108,20 @@ func TestLocalRunnerUpgradePassWhenTheSSHExecutorWasOn(t *testing.T) {
 	if !res.Ran || !res.WasOn {
 		t.Fatalf("result = %+v, want it to have run with the executor on", res)
 	}
-	// Placed in Finance and Tax (the server ran their shell jobs); Global it
-	// served already, so the jobs with no scope need nothing.
-	if !slices.Equal(res.PlacedAgencies, []string{"Finance", "Tax"}) {
-		t.Errorf("placed in %v, want Finance and Tax", res.PlacedAgencies)
+	// Not placed anywhere (§0a, IN-3: the local runner serves Global only;
+	// until then it was placed in Finance and Tax, whose shell jobs the server
+	// ran). Those two are recorded, as migration 1380 records what it narrows,
+	// and told that their shell jobs wait for an agent of their own.
+	if len(res.PlacedAgencies) != 0 {
+		t.Errorf("placed in %v, want nowhere", res.PlacedAgencies)
 	}
-	if got := serveList(t, pool, localID); !slices.Equal(got, []string{"ag-fin", "ag-tax", "global"}) {
-		t.Errorf("the local runner serves %v, want Finance, Tax and Global", got)
+	if got := serveList(t, pool, localID); !slices.Equal(got, []string{"global"}) {
+		t.Errorf("the local runner serves %v, want Global alone", got)
+	}
+	var served string
+	_ = pool.QueryRow(`SELECT value FROM settings WHERE key = ?`, notices.LocalRunnerServedKey).Scan(&served)
+	if served != `["ag-fin","ag-tax"]` {
+		t.Errorf("the record of what it served = %q, want Finance and Tax", served)
 	}
 	// The two rows that were waiting are the runner executor's now; history is
 	// left as it was.
@@ -143,11 +150,11 @@ func TestLocalRunnerUpgradePassWhenTheSSHExecutorWasOn(t *testing.T) {
 			t.Errorf("scope %s recorded as %q, want %q", id, rec.Scopes[id], how)
 		}
 	}
-	// Each placement is in the activity feed.
+	// No placement, so none in the activity feed.
 	var placements int
 	_ = pool.QueryRow(`SELECT COUNT(*) FROM activity WHERE actor = 'upgrade' AND runner_name = ?`, LocalRunnerName).Scan(&placements)
-	if placements != 2 {
-		t.Errorf("activity rows for the placements = %d, want 2", placements)
+	if placements != 0 {
+		t.Errorf("activity rows for placements = %d, want 0", placements)
 	}
 
 	// It runs once.
@@ -157,13 +164,13 @@ func TestLocalRunnerUpgradePassWhenTheSSHExecutorWasOn(t *testing.T) {
 	}
 
 	open := openNotices(t, pool)
+	// The local runner serves neither Finance's nor Tax's scopes, so what it
+	// could take there is not asked (may_run_on_agent/s-fin, mixed_scope/s-tax
+	// and agency_placed went with its placement). Finance and Tax each have an
+	// agent of their own here, so local_runner_served is not open for either.
 	for key, agency := range map[string]string{
-		"may_run_on_agent/s-fin":                     "ag-fin", // ran from the server; Finance's agent can take it now
-		"mixed_scope/s-tax":                          "ag-tax",
 		"may_run_on_server/s-agents":                 "global", // ran on agents; the local runner serves Global
 		"may_run_on_agent/" + notices.NoScopeSubject: "global",
-		"agency_placed/ag-fin":                       "global",
-		"agency_placed/ag-tax":                       "global",
 	} {
 		n, ok := open[key]
 		if !ok {
@@ -179,31 +186,10 @@ func TestLocalRunnerUpgradePassWhenTheSSHExecutorWasOn(t *testing.T) {
 			t.Errorf("a notice about a scope the pass does not look at: %s", key)
 		}
 	}
-	if d := open["may_run_on_agent/s-fin"].Detail; !strings.Contains(d, "fin-web") || !strings.Contains(d, "r-fin") ||
-		!strings.Contains(d, "restart") || !strings.Contains(d, "known_hosts") || !strings.Contains(d, "bind the scope") {
-		t.Errorf("the notice must name the scope, the agent, the jobs, what differs and the remedy: %q", d)
-	}
-
-	// The remedy resolves it: bind the scope, and where its jobs run is decided.
-	if _, err := pool.Exec(`INSERT INTO scope_runners(scope_id, runner_id, runner_name, bound_at) VALUES('s-fin','r-fin','r-fin','t')`); err != nil {
-		t.Fatal(err)
-	}
-	// And so does the other runner going away: no agent serves Tax any more.
-	if _, err := pool.Exec(`DELETE FROM runners WHERE id = 'r-tax'`); err != nil {
-		t.Fatal(err)
-	}
-	// And taking Tax off the local runner's list settles its placement notice.
-	if _, err := pool.Exec(`DELETE FROM runner_agencies WHERE runner_id = ? AND agency_id = 'ag-tax'`, localID); err != nil {
-		t.Fatal(err)
-	}
-	open = openNotices(t, pool)
-	for _, key := range []string{"may_run_on_agent/s-fin", "mixed_scope/s-tax", "agency_placed/ag-tax"} {
+	for _, key := range []string{"may_run_on_agent/s-fin", "mixed_scope/s-tax", "agency_placed/ag-fin", "agency_placed/ag-tax"} {
 		if _, still := open[key]; still {
-			t.Errorf("%s is still open after its cause went away", key)
+			t.Errorf("%s is open, though the local runner was placed in no agency", key)
 		}
-	}
-	if _, ok := open["agency_placed/ag-fin"]; !ok {
-		t.Error("agency_placed/ag-fin was resolved although the local runner still serves Finance")
 	}
 }
 
@@ -255,17 +241,23 @@ func TestLocalRunnerUpgradePassReadsTheOldGlobalDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Only "rotate" (fin-web) said ssh itself: Finance is placed, Tax is not.
-	if !slices.Equal(res.PlacedAgencies, []string{"Finance"}) {
-		t.Errorf("placed in %v, want Finance only", res.PlacedAgencies)
+	// Only "rotate" (fin-web) said ssh itself: Finance would have been placed,
+	// Tax not. Since §0a nothing is placed; Finance is recorded.
+	if len(res.PlacedAgencies) != 0 {
+		t.Errorf("placed in %v, want nowhere", res.PlacedAgencies)
+	}
+	var served string
+	_ = pool.QueryRow(`SELECT value FROM settings WHERE key = ?`, notices.LocalRunnerServedKey).Scan(&served)
+	if served != `["ag-fin"]` {
+		t.Errorf("the record of what it served = %q, want Finance only", served)
 	}
 	rec, _ := notices.ReadLocalRunnerUpgrade(ctx, pool)
 	if rec.Scopes["s-fin"] != notices.ServedByBoth || rec.Scopes["s-tax"] != notices.ServedByAgents ||
 		rec.Scopes[notices.NoScopeSubject] != notices.ServedByAgents {
 		t.Errorf("recorded %v; want fin-web both, tax-web agents, no-scope agents", rec.Scopes)
 	}
-	if got := serveList(t, pool, localID); !slices.Equal(got, []string{"ag-fin", "global"}) {
-		t.Errorf("the local runner serves %v, want Finance and Global", got)
+	if got := serveList(t, pool, localID); !slices.Equal(got, []string{"global"}) {
+		t.Errorf("the local runner serves %v, want Global alone", got)
 	}
 }
 
@@ -341,7 +333,7 @@ func TestSSHExecutorWasOnIsTheSeedNotTheSwitch(t *testing.T) {
 // jobs nobody can run now — no agent of its own, not on the local runner's
 // list — is told so, whenever that becomes true.
 func TestNoRunnerForShellJobsNotice(t *testing.T) {
-	pool, localID := upgradeFixture(t)
+	pool, _ := upgradeFixture(t)
 	const key = "no_runner_for_shell_jobs/ag-tax"
 	// Every agency has an agent with bash: nothing to report.
 	if _, ok := openNotices(t, pool)[key]; ok {
@@ -357,17 +349,21 @@ func TestNoRunnerForShellJobsNotice(t *testing.T) {
 		t.Fatalf("no notice for Tax, whose shell jobs have no runner (open: %v)", keysOf(open))
 	}
 	if n.AgencyID != "ag-tax" || !strings.Contains(n.Detail, "export") || !strings.Contains(n.Detail, "ledger") ||
-		!strings.Contains(n.Detail, "Settings → Local runner") {
-		t.Errorf("notice = %+v, want Tax's, naming its shell jobs and both ways out", n)
+		!strings.Contains(n.Detail, "Add Runner") || strings.Contains(n.Detail, "Settings → Local runner") {
+		t.Errorf("notice = %+v, want Tax's, naming its shell jobs and the way out (an agent of its own: since §0a not the local runner)", n)
 	}
 	if _, ok := open["no_runner_for_shell_jobs/ag-fin"]; ok {
 		t.Error("Finance was reported although its agent is registered")
 	}
-	// A global administrator puts Tax on the local runner's list.
-	if _, err := pool.Exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES (?, 'ag-tax')`, localID); err != nil {
+	// Tax enrols an agent of its own.
+	if _, err := pool.Exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at, owner_agency)
+	                        VALUES ('r-tax-new', 'r-tax-new', 'agent', 'online', 'Linux', '["bash"]', 0, 1, '1', 't', 't', 'ag-tax')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES ('r-tax-new', 'ag-tax')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := openNotices(t, pool)[key]; ok {
-		t.Error("still reported although the local runner serves Tax now")
+		t.Error("still reported although Tax has an agent of its own now")
 	}
 }

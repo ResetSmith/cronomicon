@@ -617,7 +617,7 @@ func AgenciesHaveOnlineRunner(ctx context.Context, db *sql.DB, agencies []string
 		SELECT EXISTS(
 			SELECT 1 FROM runner_agencies ra
 			JOIN agencies a  ON a.id  = ra.agency_id
-			JOIN runners  rn ON rn.id = ra.runner_id
+			JOIN runners  rn ON rn.id = ra.runner_id AND rn.owner_agency = ra.agency_id
 			WHERE a.name IN (SELECT value FROM json_each(?)) AND rn.status = 'online'
 		)`, MarshalAgencies(agencies)).Scan(&exists)
 	if err != nil {

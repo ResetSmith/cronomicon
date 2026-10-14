@@ -99,6 +99,9 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 						if kind == "server" && !allowInjection {
 							continue // LR-46: secret injection is fixed on for it
 						}
+						if kind == "server" && runnerAgency != "global" {
+							continue // §0a (IN-3): the local runner serves Global only, and cannot be placed in an agency
+						}
 						// One runner, rebuilt per shape: nothing else is ever online.
 						exec(`DELETE FROM runners`)
 						insertRunner(t, svc, "r1", "r1", "online", rs.caps)

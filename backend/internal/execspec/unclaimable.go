@@ -88,7 +88,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 			   AND ? IN `+lcaps+`
 			   AND NOT EXISTS (SELECT 1 FROM json_each(?) je WHERE je.value NOT IN `+lcaps+`)
 			   AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-			                WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))
+			                WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))
 			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ?)
 			        OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
 			                    WHERE sc.name = ? AND sr.runner_id = rn.id))
@@ -136,7 +136,7 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// which every runner belongs to a department cannot take it at all.
 	agencyClause := typeClause + ` AND EXISTS (
 		SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-		 WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))`
+		 WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))`
 	n, err = count(agencyClause, runType.String, ag)
 	if err != nil {
 		return "", err

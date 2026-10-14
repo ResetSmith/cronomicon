@@ -672,7 +672,7 @@ func runnersServingScopeAgency(ctx context.Context, database *sql.DB, scopeID st
 		  FROM runners rn
 		 WHERE EXISTS (SELECT 1 FROM scope_agencies sa
 		                 JOIN runner_agencies ra ON ra.agency_id = sa.agency_id
-		                WHERE sa.scope_id = ? AND ra.runner_id = rn.id)
+		                WHERE sa.scope_id = ? AND ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency)
 		 ORDER BY rn.name, rn.id`, scopeID)
 	if err != nil {
 		return nil, err

@@ -20,6 +20,14 @@ func addRunnerAgency(t *testing.T, svc *Service, runnerID, agencyID string) {
 	if _, err := svc.db.Exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES(?,?)`, runnerID, agencyID); err != nil {
 		t.Fatalf("addRunnerAgency: %v", err)
 	}
+	// The first agency a Global-owned runner is placed in is its owner, as an
+	// agent enrolled for that agency is (MA-1). Since §0a a runner takes its
+	// owner's work only, so a fixture that meant "alpha's runner" must say so;
+	// a second agency added after is a legacy placement, listed and not served.
+	if _, err := svc.db.Exec(`UPDATE runners SET owner_agency = ? WHERE id = ? AND owner_agency = 'global' AND ? <> 'global'`,
+		agencyID, runnerID, agencyID); err != nil {
+		t.Fatalf("addRunnerAgency: %v", err)
+	}
 }
 
 func insertQueuedRunAgency(t *testing.T, svc *Service, traceID, runType, agency string) {

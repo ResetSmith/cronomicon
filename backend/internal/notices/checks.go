@@ -493,9 +493,10 @@ func checkLegacyPlacement(ctx context.Context, database *sql.DB) error {
 			rows.Close()
 			return err
 		}
-		detail := fmt.Sprintf("The runner %s serves %s and is owned by %s. Since 2.3.0 an agent serves exactly the agency "+
-			"that owns it; this one predates that and keeps working as it did, with the same toolchains and keys on a "+
-			"machine these agencies share. It can be narrowed and never widened, and only a global administrator manages it. ",
+		detail := fmt.Sprintf("The runner %s is listed as serving %s and is owned by %s. Since 2.3.0 an agent serves exactly "+
+			"the agency that owns it, and since 2.4.0 it takes that agency's work only: this one predates the rule, and the "+
+			"runs of the other agencies on its list wait for an agent of their own. It can be narrowed and never widened, "+
+			"and only a global administrator manages it. ",
 			name, serves.String, owner)
 		if n == 1 {
 			detail += "It serves one agency now: hand it to that agency (Hand to an agency) and this is settled."

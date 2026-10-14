@@ -65,6 +65,11 @@ func TestAProjectJobWithNoCheckoutAgentIsReported(t *testing.T) {
 		for _, a := range agencies {
 			mustExec(t, pool, `INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES (?, ?)`, id, a)
 		}
+		// Owned by the agency it serves, as an agent enrolled for it is: since
+		// §0a a runner takes its owner's work only.
+		if len(agencies) > 0 {
+			mustExec(t, pool, `UPDATE runners SET owner_agency = ? WHERE id = ?`, agencies[0], id)
+		}
 	}
 	check := func() map[string]notices.Notice {
 		t.Helper()

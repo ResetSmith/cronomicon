@@ -139,6 +139,7 @@ func runnerAgencyNames(ctx context.Context, database *sql.DB, runnerID string) (
 	rows, err := database.QueryContext(ctx, `
 		SELECT a.name FROM runner_agencies ra
 		  JOIN agencies a ON a.id = ra.agency_id
+		  JOIN runners rn ON rn.id = ra.runner_id AND rn.owner_agency = ra.agency_id -- its owner's only (§0a)
 		 WHERE ra.runner_id = ?`, runnerID)
 	if err != nil {
 		return nil, err

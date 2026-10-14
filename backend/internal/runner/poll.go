@@ -652,6 +652,10 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			              WHERE rag.run_id = runs.id
 			                AND rag.agency IN (SELECT a.name FROM runner_agencies ra
 			                                   JOIN agencies a ON a.id = ra.agency_id
+			                                   -- §0a (IN-6): its owner's work only. A
+			                                   -- legacy placement's other agencies (MA-9)
+			                                   -- are listed, and not served.
+			                                   JOIN runners rown ON rown.id = ra.runner_id AND rown.owner_agency = ra.agency_id
 			                                   WHERE ra.runner_id = ?))
 			  -- SB-1 scope binding (mig. 1180). A scope with rows in scope_runners
 			  -- is claimable only by a runner named there; a scope with none, and

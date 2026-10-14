@@ -242,6 +242,8 @@ func TestPreviewScopeRunners(t *testing.T) {
 	exec(`INSERT INTO runners(id, name, status, capabilities, managed_settings, registered_at, created_at)
 	      VALUES('r-junk','runner-junk','online','["bash"]','not json','t','t')`)
 	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-junk','ag-fin')`)
+	// Finance's agents are Finance's (since §0a a runner takes its owner's work only).
+	exec(`UPDATE runners SET owner_agency = 'ag-fin' WHERE id IN ('r-full', 'r-thin', 'r-junk')`)
 
 	names := func(js []PreviewJob) string {
 		out := ""
@@ -251,7 +253,8 @@ func TestPreviewScopeRunners(t *testing.T) {
 		return out
 	}
 
-	// The local runner serves Finance too, and legacy binds an SSH key.
+	// The local runner, which serves Global only (§0a; until then it served Finance
+	// too, and lost and gained the scope below with the agents), and legacy binds an SSH key.
 	exec(`INSERT INTO runners(id, name, kind, status, capabilities, allow_secret_injection, registered_at, created_at)
 	      VALUES('r-local','Local runner','server','online','["bash","perl","powershell","python"]',1,'t','t')`)
 	exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r-local','ag-fin')`)
@@ -274,8 +277,8 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if p.CurrentlyBound || !p.WillBeBound {
 		t.Errorf("bound state = %v → %v, want false → true", p.CurrentlyBound, p.WillBeBound)
 	}
-	if got := who(p.RunnersLosing); got != "Local runner runner-junk " {
-		t.Errorf("runners losing the scope = %q, want the local runner and runner-junk", got)
+	if got := who(p.RunnersLosing); got != "runner-junk " {
+		t.Errorf("runners losing the scope = %q, want runner-junk", got)
 	}
 	if len(p.RunnersGaining) != 0 {
 		t.Errorf("runners gaining the scope = %q, want none when binding an open scope", who(p.RunnersGaining))
@@ -358,7 +361,7 @@ func TestPreviewScopeRunners(t *testing.T) {
 	if !p.CurrentlyBound || p.WillBeBound {
 		t.Errorf("bound state = %v → %v, want true → false", p.CurrentlyBound, p.WillBeBound)
 	}
-	if got := who(p.RunnersGaining); got != "Local runner runner-junk runner-thin " {
+	if got := who(p.RunnersGaining); got != "runner-junk runner-thin " {
 		t.Errorf("runners gaining the scope on clear = %q, want everyone in Finance but the one already bound", got)
 	}
 	if len(p.RunnersLosing) != 0 || len(p.JobsNeedingAgent) != 0 {

@@ -253,7 +253,7 @@ func scopeServing(ctx context.Context, database *sql.DB, scopeID string) (*servi
 		SELECT rn.name, rn.kind = 'server'
 		  FROM runners rn
 		 WHERE EXISTS (SELECT 1 FROM runner_agencies ra
-		                WHERE ra.runner_id = rn.id AND ra.agency_id IN (SELECT value FROM json_each(?)))
+		                WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND ra.agency_id IN (SELECT value FROM json_each(?)))
 		   AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c WHERE c.value IN `+shellTypesSQL+`)
 		 ORDER BY rn.name, rn.id`, string(agencyJSON))
 	if err != nil {
@@ -319,7 +319,7 @@ func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 		        WHERE rn.kind <> 'server'
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
-		               WHERE ra.runner_id = rn.id
+		               WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
 		                 AND ((COALESCE(j.scope, '') = '' AND ra.agency_id = ?)
 		                      OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                            JOIN scopes sc ON sc.id = sa.scope_id
@@ -385,7 +385,7 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 		            SELECT DISTINCT s2.job AS job FROM shell_jobs s2 WHERE s2.agency = a.id ORDER BY s2.job LIMIT 5))
 		  FROM agencies a JOIN shell_jobs sj ON sj.agency = a.id
 		 WHERE NOT EXISTS (
-		       SELECT 1 FROM runners rn JOIN runner_agencies ra ON ra.runner_id = rn.id
+		       SELECT 1 FROM runners rn JOIN runner_agencies ra ON ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
 		        WHERE ra.agency_id = a.id
 		          AND EXISTS (SELECT 1 FROM json_each(COALESCE(rn.capabilities, '[]')) c
 		                       WHERE c.value IN `+shellTypesSQL+`))
@@ -410,11 +410,10 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: id,
 			Subject:  id,
-			Detail: fmt.Sprintf("%s has shell jobs (%s) and no runner that can run them: no agent of its own, and the "+
-				"local runner does not serve it. Until 2.3.0 the server ran every agency's shell jobs; it now runs "+
-				"those of the agencies on the local runner's list, so a run of these jobs waits. Either enrol an "+
-				"agent for %s (Runners → Add Runner), or have a global administrator add %s to the agencies the "+
-				"local runner serves (Settings → Local runner).", name, list, name, name),
+			Detail: fmt.Sprintf("%s has shell jobs (%s) and no runner that can run them: no agent of its own. "+
+				"Until 2.3.0 the server ran every agency's shell jobs; since 2.4.0 the local runner is Global's and "+
+				"runs Global's only, so a run of these jobs waits. Enrol an agent for %s (Runners → Add Runner).",
+				name, list, name),
 		})
 	}
 	if err := rows.Err(); err != nil {

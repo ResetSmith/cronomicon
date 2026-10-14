@@ -75,7 +75,7 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 		          AND 'checkout' IN `+execspec.EffectiveCapsSQL("rn")+`
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
-		               WHERE ra.runner_id = rn.id
+		               WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
 		                 AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = COALESCE(j.scope, '')) AND ra.agency_id = ?)
 		                      OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                            JOIN scopes sc ON sc.id = sa.scope_id
