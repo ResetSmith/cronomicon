@@ -81,6 +81,7 @@ func composeRBACServer(t *testing.T) (http.Handler, *sql.DB) {
 	// deliberately global one.
 	exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
+	agenciesGetTheirOwnRepository(t, pool)
 	seedJob := func(name string, scope any) {
 		exec(`INSERT INTO jobs(name, source, run_type, command, scope, content_hash, created_at)
 		      VALUES(?,'cronomicon','bash','pg_dump mydb',?,'sha256:bbb','2026-01-01T00:00:00Z')`, name, scope)

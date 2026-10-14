@@ -55,7 +55,8 @@ func TestWorkflowSpansAgenciesIsAWorkflowOfSeveralAgenciesJobs(t *testing.T) {
 	if !ok || n.AgencyID != "global" {
 		t.Fatalf("the spanning workflow's notice: found %v, agency %q; want it under Global", ok, n.AgencyID)
 	}
-	for _, want := range []string{"The workflow wf-spans", "Finance", "Tax", "global administrator"} {
+	// §0a: nobody may save it; until then "a global administrator" might.
+	for _, want := range []string{"The workflow wf-spans", "Finance", "Tax", "its own agency's jobs only"} {
 		if !strings.Contains(n.Detail, want) {
 			t.Errorf("the detail does not say %q: %s", want, n.Detail)
 		}

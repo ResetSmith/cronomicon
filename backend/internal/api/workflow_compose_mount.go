@@ -21,7 +21,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/notices"
-	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
@@ -363,19 +362,16 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	// GR-7 — whose the workflow is: the one agency its jobs belong to. One whose
-	// jobs are several agencies' is Global's, and saving it is a global
-	// administrator's. Holding compose in each of the agencies is not enough:
-	// what such a workflow does crosses agencies, and nobody who administers
-	// one agency answers for that.
+	// jobs are several agencies' is refused, for everyone (§0a, IN-8: a
+	// workflow's jobs are its agency's). Until §0a it was Global's, and saving
+	// it a global administrator's.
 	owner, spans, oerr := s.workflowOwner(r, steps)
 	if oerr != nil {
 		httpx.Fail500(w, s.log, "db_error", oerr)
 		return
 	}
-	if spans && !actorID.GlobalAdmin(auth.PermCompose) {
-		s.denyEntityAgency(w, r, actorID, auth.PermCompose, auth.AllScopes,
-			"this workflow runs jobs of more than one agency, so it belongs to Global: only an administrator "+
-				"whose compose grant covers every agency may save it. A workflow whose jobs are all one agency's is that agency's")
+	if spans {
+		httpx.Fail(w, http.StatusConflict, CodeWorkflowSpansAgencies, MsgWorkflowSpansAgencies)
 		return
 	}
 	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules},
@@ -852,8 +848,10 @@ func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner st
 // that name that is not in the recycle bin (the authorization below walks what
 // it runs). Otherwise its child is chosen among the workflows of the name the
 // saver may compose: one built in the app of an agency they hold compose on
-// (any, for a global administrator), else a Git one of Global's repository or
-// of such an agency's. One is pinned; several are refused, naming the step, for
+// (any, for a global administrator), else a Git one of such an agency's
+// repository (Global's included, for one who holds compose on Global; until
+// §0a, Global's for anybody). A child of another agency than the parent's is
+// then refused as a span (refuseNewSpan). One is pinned; several are refused, naming the step, for
 // the saver to give the identity; none leaves the step by name (validation has
 // said the name exists, and the authorization below refuses a child whose jobs
 // the saver may not compose).
@@ -955,7 +953,13 @@ func (s *Server) childToPin(ctx context.Context, step, name, given string, id au
 			}
 			continue
 		}
-		if repo == "" || repo == repoid.Global || everywhere || (repoAgency != "" && id.CanAgency(auth.PermCompose, repoAgency)) {
+		// A Git row with no repository is Global's repository's. Global's is
+		// one agency's like the others (§0a, IN-3): until then anybody might
+		// choose its workflows.
+		if repo == "" {
+			repoAgency = agencyid.Global
+		}
+		if everywhere || (repoAgency != "" && id.CanAgency(auth.PermCompose, repoAgency)) {
 			fromGit = append(fromGit, uid)
 		}
 	}
@@ -976,30 +980,34 @@ func (s *Server) childToPin(ctx context.Context, step, name, given string, id au
 	return "", "", nil
 }
 
+// CodeWorkflowSpansAgencies (409, `crosses_agencies`: a code that names no
+// workflow, for the saver who may not be told of one) refuses a save that would make a workflow
+// run jobs of more than one agency (§0a, IN-8), whoever asks.
+const CodeWorkflowSpansAgencies = "crosses_agencies"
+
+// MsgWorkflowSpansAgencies is its message for the workflow being saved.
+const MsgWorkflowSpansAgencies = "this workflow runs jobs of more than one agency: a workflow runs its own agency's jobs " +
+	"and workflows only. Copy what it needs into this agency"
+
 // spanningBefore and refuseNewSpan are GR-7 held AFTER a save (2.4.0; the
 // owner's decision on R4's question 9, built when question 21 was answered).
 //
-// A workflow whose jobs are several agencies' is Global's, and saving one is
-// a global administrator's (writeComposedWorkflow). That asks about the
-// workflow being saved. The same graph was reached two other ways by somebody
-// who is not one: by saving a CHILD workflow, or a JOB, that a workflow
-// already saved runs, so that the parent comes to span. The parent was
-// reported (`workflow_spans_agencies`) and nothing was refused.
+// A workflow whose jobs are several agencies' is refused
+// (writeComposedWorkflow). That asks about the workflow being saved. The same
+// graph is reached two other ways: by saving a CHILD workflow, or a JOB, that
+// a workflow already saved runs, so that the parent comes to span.
 //
-// So a save by anybody but a global administrator reads which workflows span
-// before it writes (spanningBefore) and again before it commits
-// (refuseNewSpan), in its own transaction, and is refused and rolled back when
-// a workflow spans that did not. The reading is the notice's
-// (notices.SpanningWorkflows): sub-workflows followed to the depth the engine
-// follows them, so the walk is bounded as the engine's is. A global
-// administrator's save is not asked, and the notice says what it made.
+// So a save reads which workflows span before it writes (spanningBefore) and
+// again before it commits (refuseNewSpan), in its own transaction, and is
+// refused and rolled back when a workflow spans that did not. The reading is
+// the notice's (notices.SpanningWorkflows): sub-workflows followed to the
+// depth the engine follows them, so the walk is bounded as the engine's is.
+// Until §0a (IN-8) a global administrator's save was not asked, and the
+// workflow it made was Global's; now nobody's is exempt.
 //
 // The other way a workflow came to span, a scope given to another agency, is
-// a global administrator's alone since bee2b35.
-func (s *Server) spanningBefore(w http.ResponseWriter, r *http.Request, tx *sql.Tx, id auth.Identity) (map[string]bool, bool) {
-	if id.GlobalAdmin(auth.PermCompose) {
-		return nil, true
-	}
+// a global administrator's alone since bee2b35 (and a repair from I4).
+func (s *Server) spanningBefore(w http.ResponseWriter, r *http.Request, tx *sql.Tx, _ auth.Identity) (map[string]bool, bool) {
 	spanning, err := notices.SpanningWorkflows(r.Context(), tx)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -1027,9 +1035,6 @@ func (s *Server) spanningBefore(w http.ResponseWriter, r *http.Request, tx *sql.
 // refused at all still tells them something waits on the name, which is one
 // bit, and is left so.
 func (s *Server) refuseNewSpan(w http.ResponseWriter, r *http.Request, tx *sql.Tx, id auth.Identity, before map[string]bool, self string) bool {
-	if id.GlobalAdmin(auth.PermCompose) {
-		return true
-	}
 	spanning, err := notices.SpanningWorkflows(r.Context(), tx)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -1054,16 +1059,14 @@ func (s *Server) refuseNewSpan(w http.ResponseWriter, r *http.Request, tx *sql.T
 	if newly == 0 {
 		return true
 	}
-	msg := "insufficient permissions: this change takes an administrator whose compose grant covers every agency"
+	// Words that say neither which workflow nor that there is one (see above).
+	msg := "this change is refused: it would take a definition across agencies"
 	if len(named) == newly {
-		msg = "this change would make the workflow " + strings.Join(named, ", ") + " run jobs of more than one agency. " +
-			"Such a workflow belongs to Global: only an administrator whose compose grant covers every agency may make the change"
+		msg = "this change would make the workflow " + strings.Join(named, ", ") + " run jobs of more than one agency, " +
+			"which is refused: a workflow runs its own agency's jobs and workflows only"
 	}
-	// The save is undone BEFORE the refusal is written: the refusal's audit row
-	// goes through another connection, which would wait on this transaction's
-	// write lock until it gave up, and be lost.
 	_ = tx.Rollback()
-	s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes, msg)
+	httpx.Fail(w, http.StatusConflict, CodeWorkflowSpansAgencies, msg)
 	return false
 }
 

@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/ResetSmith/cronomicon/internal/runref"
@@ -57,8 +58,10 @@ func TestRunOfAnAgencysRepositorysJobOnAnotherAgencysScopeIsRefused(t *testing.T
 	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc:fin', 'ag:TAX')`)
 	refused("a run of the job after its scope was given to another agency", "")
 
-	// Global's repository's job on that agency's scope is nobody's to refuse here.
-	if rec := gateReq(t, h, http.MethodPost, runPath(t, pool, "global-job"), gRoot, ""); rec.Code/100 != 2 {
-		t.Errorf("a run of Global's repository's job on an agency's scope = %d, want it accepted (%s)", rec.Code, rec.Body)
+	// Global's repository's job on an agency's scope is refused too (§0a,
+	// IN-3; until then it was nobody's to refuse).
+	if rec := gateReq(t, h, http.MethodPost, runPath(t, pool, "global-job"), gRoot, ""); rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), "repo_scope_mismatch") {
+		t.Errorf("a run of Global's repository's job on an agency's scope = %d, want 422 repo_scope_mismatch (%s)", rec.Code, rec.Body)
 	}
 }

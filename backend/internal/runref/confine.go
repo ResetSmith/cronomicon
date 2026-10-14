@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
@@ -26,8 +27,10 @@ import (
 // the other's hosts. What a repository may reach is the rule, and it reaches a
 // job through its script as well as through its own file.
 //
-// A job of Global's repository, and a job built in the app on Global's script
-// or on none, are not confined by it.
+// A job of Global's repository is confined to Global's scopes, or none (a run
+// with no scope is Global's), since §0a (IN-3; until then it might name any
+// agency's). A job built in the app on Global's script or on none is not
+// confined by this (an agency's job on Global's script is question 31).
 
 // ReasonRepoScopeMismatch is what is stored (runs.queued_reason, a reaction's
 // delivery, a file sighting's refusal, a pending run's miss) and shown. A
@@ -66,11 +69,13 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 		SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?2),
 		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
 		         WHERE sc.name = ?2 AND sa.agency_id = g.agency_id)`
-	rows, err := database.QueryContext(ctx, counts+`
+	// The third column says the row is Global's repository's: for it, a run
+	// with no scope is its own.
+	rows, err := database.QueryContext(ctx, counts+`, g.id = ?3
 		  FROM jobs j JOIN git_repos g ON g.id = j.repo_id
-		 WHERE j.source = 'git' AND g.id <> ?3
+		 WHERE j.source = 'git'
 		   AND ((?1 <> '' AND j.uid = ?1) OR (?5 = 1 AND j.name = ?4))
-		UNION ALL`+counts+`
+		UNION ALL`+counts+`, 0
 		  FROM jobs j
 		  JOIN scripts s ON s.uid = j.script_uid
 		  JOIN git_repos g ON g.id = s.repo_id
@@ -83,8 +88,12 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 	defer rows.Close()
 	for rows.Next() {
 		var agencies, own int
-		if err := rows.Scan(&agencies, &own); err != nil {
+		var global bool
+		if err := rows.Scan(&agencies, &own, &global); err != nil {
 			return false, err
+		}
+		if global && scope == "" {
+			continue
 		}
 		if scope == "" || agencies != 1 || own != 1 {
 			return true, nil
@@ -94,65 +103,88 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 }
 
 // ReasonWorkflowScopeMismatch is the stored reason of a workflow step refused
-// by ScopeOutsideRepository.
-const ReasonWorkflowScopeMismatch = "Refused: this workflow comes from an agency's repository, and this step would run on a scope that does not belong to that agency"
+// by ScopeOutsideAgency.
+const ReasonWorkflowScopeMismatch = "Refused: this step would run on a scope that is not its workflow's agency's: a workflow runs its own agency's jobs only"
 
-// ScopeOutsideRepository reports whether a scope is one a workflow of the
-// repository repoID may NOT run a step on: the repository belongs to an
-// agency, and the scope is not that agency's alone (another agency's,
-// Global's, several agencies', none at all, or not there). Global's
-// repository, and no repository, may run on any.
+// ScopeOutsideAgency reports whether a scope is one a workflow of the agency
+// agencyID may NOT run a step on: the scope is not that agency's alone
+// (another agency's, several agencies', not there), or there is none and the
+// agency is not Global (a run with no scope is Global's).
 //
-// RepoScopeMismatch asks this of a JOB's repository. A workflow needs it asked
-// of its own: a step of an agency's repository's workflow may resolve to a job
-// of GLOBAL's repository (GR-16), and a Global job may name any agency's scope
-// (GR-14). Without this an agency's committers could run Global's job on
-// another agency's hosts, on their schedule and with their environment.
-func ScopeOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope string) (bool, error) {
-	if repoID == "" || repoID == repoid.Global {
-		return false, nil
+// RepoScopeMismatch asks about a JOB. A workflow needs it asked of its own
+// agency: a workflow is its agency's, and its jobs must be too (§0a, IN-8).
+// Until §0a this was asked of a workflow of an agency's repository only;
+// Global's repository's and a workflow built in the app might run any
+// agency's job, the first for GR-16, the second as GR-7's spanning workflow.
+// What spans at an upgrade stops here, step by step, with this reason (§0a,
+// open point 1).
+func ScopeOutsideAgency(ctx context.Context, database *sql.DB, agencyID, scope string) (bool, error) {
+	if scope == "" {
+		return agencyID != agencyid.Global, nil
 	}
 	var agencies, own int
 	err := database.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1),
 		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		         WHERE sc.name = ?1 AND sa.agency_id = g.agency_id)
-		  FROM git_repos g WHERE g.id = ?2`, scope, repoID).Scan(&agencies, &own)
+		         WHERE sc.name = ?1 AND sa.agency_id = ?2)`, scope, agencyID).Scan(&agencies, &own)
+	if err != nil {
+		return false, err
+	}
+	return agencies != 1 || own != 1, nil
+}
+
+// ScopeOutsideRepository is ScopeOutsideAgency for the agency of a
+// repository. No repository ("") confines nothing; a repository that is not
+// there has no agency to run for, and confines everything.
+func ScopeOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope string) (bool, error) {
+	if repoID == "" {
+		return false, nil
+	}
+	var agency string
+	err := database.QueryRowContext(ctx, `SELECT agency_id FROM git_repos WHERE id = ?`, repoID).Scan(&agency)
 	if err == sql.ErrNoRows {
-		// A repository that is not there has no agency to run for.
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return scope == "" || agencies != 1 || own != 1, nil
+	return ScopeOutsideAgency(ctx, database, agency, scope)
 }
 
-// StepOutsideWorkflowRepository asks ScopeOutsideRepository for a run that is
-// a workflow's step, at the moment it is dispatched: the workflow the run's
-// workflow run is of comes from an agency's repository, and scope is not that
-// agency's alone. The engine asks it when the step is queued. A scope can be
-// given to another agency after that, and the job's own check
-// (RepoScopeMismatch) does not see it when the step's job is Global's.
+// WorkflowAgencySQL and DefinitionAgencySQL: agencyid's, here for the callers
+// that already speak to this package.
+const (
+	WorkflowAgencySQL   = agencyid.WorkflowSQL
+	DefinitionAgencySQL = agencyid.DefinitionSQL
+)
+
+// StepOutsideWorkflowRepository asks ScopeOutsideAgency for a run that is a
+// workflow's step, at the moment it is dispatched, of the agency of the
+// workflow the run's workflow run is of. The engine asks it when the step is
+// queued. A scope can be given to another agency after that, and the job's own
+// check (RepoScopeMismatch) does not see it.
 //
-// False for a run that is no workflow's step, for a workflow built in the app
-// or of Global's repository, and for one that is no longer there: there is
-// then no repository to confine it to, as when the engine asked.
+// False for a run that is no workflow's step, and for a workflow that is no
+// longer there. A Git workflow whose repository is gone has no agency to run
+// for: true.
 func StepOutsideWorkflowRepository(ctx context.Context, database *sql.DB, traceID, scope string) (bool, error) {
-	var home string
+	var agency sql.NullString
 	err := database.QueryRowContext(ctx, `
-		SELECT COALESCE(w.repo_id, ?)
+		SELECT `+WorkflowAgencySQL+`
 		  FROM runs r
 		  JOIN workflow_runs wr ON wr.id = r.workflow_run_id
 		  JOIN workflows w ON w.uid = wr.workflow_uid
-		 WHERE r.id = ? AND w.source = 'git'`, repoid.Global, traceID).Scan(&home)
+		 WHERE r.id = ?`, traceID).Scan(&agency)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return ScopeOutsideRepository(ctx, database, home, scope)
+	if !agency.Valid {
+		return true, nil
+	}
+	return ScopeOutsideAgency(ctx, database, agency.String, scope)
 }
 
 // PinOutsideRepository asks ScopeOutsideRepository of the repository a

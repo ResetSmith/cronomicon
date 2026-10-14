@@ -32,6 +32,7 @@ func r7reviewJob(name, scope, extra string) string {
 func TestGR0_ASavesAnswerIsAnotherAgencysDefinitionOfTheName(t *testing.T) {
 	h, pool := gateServer(t)
 	mustExec(t, pool)(r7reviewScript)
+	agenciesGetTheirOwnRepository(t, pool)
 	mustExec(t, pool)(`INSERT INTO jobs (uid, name, source, run_type, scope, enabled, created_at) VALUES
 	      ('j-fin-step', 'fin-step', 'cronomicon', 'bash', 'fin-hosts', 1, 't'), ('j-tax-step', 'tax-step', 'cronomicon', 'bash', 'tax-hosts', 1, 't')`)
 	created := func(who, path, body string) string {
@@ -80,6 +81,7 @@ func TestGR0_ASavesAnswerIsAnotherAgencysDefinitionOfTheName(t *testing.T) {
 func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 	h, pool := gateServer(t)
 	mustExec(t, pool)(r7reviewScript)
+	agenciesGetTheirOwnRepository(t, pool)
 	for _, c := range []struct{ who, path, body string }{
 		{gFinAdmin, "/api/v1/jobs", r7reviewJob("fin-a", "fin-hosts", "")},
 		{gFinAdmin, "/api/v1/jobs", r7reviewJob("fin-d", "fin-hosts", "")},
@@ -196,12 +198,14 @@ func TestGR0_AScopesJobsPassToTheAgencyThatTakesItsOldName(t *testing.T) {
 	h, pool := gateServer(t)
 	exec := mustExec(t, pool)
 	exec(r7reviewScript)
+	agenciesGetTheirOwnRepository(t, pool)
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin, r7reviewJob("fa", "fin-hosts", "")); rec.Code != http.StatusCreated {
 		t.Fatalf("FIN's job: %d %s", rec.Code, rec.Body)
 	}
 	// A job from Global's repository that names FIN's scope (I-7), and one from
 	// FIN's own repository.
-	exec(`INSERT INTO git_repos (id, agency_id, url) VALUES ('repo-fin', 'ag:FIN', 'http://127.0.0.1:1/fin.git')`)
+	exec(`UPDATE git_repos SET id = 'repo-fin', url = 'http://127.0.0.1:1/fin.git' WHERE agency_id = 'ag:FIN'`)
+	exec(`UPDATE scripts SET repo_id = 'repo-fin' WHERE repo_id = 'repo-ag:FIN'`)
 	exec(`INSERT INTO jobs (uid, name, source, repo_id, run_type, scope, enabled, synced_at) VALUES
 	        ('j-glob', 'glob-job', 'git', 'global',   'bash', 'fin-hosts', 1, 't'),
 	        ('j-own',  'own-job',  'git', 'repo-fin', 'bash', 'fin-own',   1, 't'),

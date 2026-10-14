@@ -71,14 +71,15 @@ func TestAReactionWrittenInTheAppPinsItsAgencysRepositorysDefinition(t *testing.
 			t.Errorf("a refused save left %d reaction row(s) for %s", n, owner)
 		}
 	}
-	// Global's repository gets one: both mean it.
+	// Global's repository gets one: Global's job means it. B's job does not
+	// (§0a, IN-8; until then Global's was its agency's job's second home).
 	gitJob("n-g", "global")
-	put("load-b")
 	put("load-g")
-	for _, owner := range []string{"load-b", "load-g"} {
-		if got := pinned(owner); got != "n-g" {
-			t.Errorf("with Global's nightly, %s's reaction is pinned to %q; want Global's", owner, got)
-		}
+	if got := pinned("load-g"); got != "n-g" {
+		t.Errorf("with Global's nightly, Global's job's reaction is pinned to %q; want Global's", got)
+	}
+	if code, body := try("load-b", "nightly"); code != http.StatusUnprocessableEntity {
+		t.Errorf("B's job reacting to a job only Global's repository has: %d %s; want 422", code, body)
 	}
 	// Agency B's repository gets its own: B's job means that one, Global's job Global's.
 	gitJob("n-b", "repo-b")
@@ -93,7 +94,8 @@ func TestAReactionWrittenInTheAppPinsItsAgencysRepositorysDefinition(t *testing.
 }
 
 // The job composer takes a script, and a Git schedule, from the repository of
-// the job's agency, then from Global's, and not from another agency's.
+// the job's agency, and not from another's (§0a, IN-8; until then Global's
+// was looked in next).
 // Between a schedule built in the app and Git's of the same name the app's
 // still comes first, as it always has.
 func TestTheComposerResolvesAScriptAndAScheduleInItsAgencysRepository(t *testing.T) {
@@ -145,7 +147,6 @@ func TestTheComposerResolvesAScriptAndAScheduleInItsAgencysRepository(t *testing
 	}{
 		{"FIN's job, a name every repository has", gFinAdmin, "fin-own", "fin-hosts", "deploy.sh", "nightly", "s-fin", "d-fin"},
 		{"TAX's job, the same names", gTaxAdmin, "tax-own", "tax-hosts", "deploy.sh", "nightly", "s-tax", "d-tax"},
-		{"FIN's job, names only Global's has", gFinAdmin, "fin-shared", "fin-hosts", "shared.sh", "weekly", "s-shared", "d-shared"},
 		{"FIN's job, a schedule the app and Git both have", gFinAdmin, "fin-both", "fin-hosts", "deploy.sh", "both", "s-fin", "d-both-app"},
 	} {
 		if code := compose(c.who, c.job, c.scope, c.script, c.schedule); code/100 != 2 {
@@ -156,12 +157,25 @@ func TestTheComposerResolvesAScriptAndAScheduleInItsAgencysRepository(t *testing
 			t.Errorf("%s: joined to script %q and schedule %q; want %q and %q", c.what, gotScript, gotSchedule, c.wantScript, c.wantSchedule)
 		}
 	}
-	// Names only ANOTHER agency's repository has do not resolve.
-	if code := compose(gFinAdmin, "fin-wants-tax-script", "fin-hosts", "tax-only.sh", "weekly"); code != http.StatusUnprocessableEntity {
+	// Names only ANOTHER agency's repository has do not resolve, nor (§0a,
+	// IN-8; until then they did) names only Global's has.
+	if code := compose(gFinAdmin, "fin-wants-tax-script", "fin-hosts", "tax-only.sh", "nightly"); code != http.StatusUnprocessableEntity {
 		t.Errorf("FIN's job naming a script only TAX's repository has = %d, want 422", code)
 	}
-	if code := compose(gFinAdmin, "fin-wants-tax-schedule", "fin-hosts", "shared.sh", "tax-only"); code != http.StatusUnprocessableEntity {
+	if code := compose(gFinAdmin, "fin-wants-tax-schedule", "fin-hosts", "deploy.sh", "tax-only"); code != http.StatusUnprocessableEntity {
 		t.Errorf("FIN's job naming a schedule only TAX's repository has = %d, want 422", code)
+	}
+	if code := compose(gFinAdmin, "fin-wants-global-script", "fin-hosts", "shared.sh", "nightly"); code != http.StatusUnprocessableEntity {
+		t.Errorf("FIN's job naming a script only Global's repository has = %d, want 422", code)
+	}
+	if code := compose(gFinAdmin, "fin-wants-global-schedule", "fin-hosts", "deploy.sh", "weekly"); code != http.StatusUnprocessableEntity {
+		t.Errorf("FIN's job naming a schedule only Global's repository has = %d, want 422", code)
+	}
+	// Global's own job takes Global's.
+	if code := compose(gRoot, "global-shared", "", "shared.sh", "weekly"); code/100 != 2 {
+		t.Errorf("Global's job naming Global's script and schedule = %d, want it saved", code)
+	} else if gotScript, gotSchedule := joined("global-shared"); gotScript != "s-shared" || gotSchedule != "d-shared" {
+		t.Errorf("Global's job is joined to %q and %q; want Global's s-shared and d-shared", gotScript, gotSchedule)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM jobs WHERE name LIKE 'fin-wants-%'`); n != 0 {
 		t.Errorf("%d jobs were saved on another agency's script or schedule", n)
@@ -223,13 +237,20 @@ func TestAWorkflowOfAJobOnAnUnknownScopeIsGlobals(t *testing.T) {
 	      ('fin-job', 'cronomicon', 'bash', 'fin-hosts', 1, '2026-01-01T00:00:00Z'),
 	      ('odd-job', 'cronomicon', 'bash', 'no-such-scope', 1, '2026-01-01T00:00:00Z')`)
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
-		`{"name":"odd-flow","steps":[{"type":"job","name":"fin-job"},{"type":"job","name":"odd-job"}]}`)
+		`{"name":"odd-flow","steps":[{"type":"job","name":"odd-job"}]}`)
 	if rec.Code/100 != 2 {
 		t.Fatalf("composing = %d (%s)", rec.Code, rec.Body)
 	}
 	var owner string
 	_ = pool.QueryRow(`SELECT owner_agency FROM workflows WHERE name = 'odd-flow'`).Scan(&owner)
 	if owner != "global" {
-		t.Errorf("a workflow of FIN's job and a job on a scope that is not there is %q's; want Global's", owner)
+		t.Errorf("a workflow of a job on a scope that is not there is %q's; want Global's", owner)
+	}
+	// With FIN's job beside it, the workflow spans, and is refused (§0a,
+	// IN-8; until then it was saved, Global's).
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
+		`{"name":"odd-and-fin","steps":[{"type":"job","name":"fin-job"},{"type":"job","name":"odd-job"}]}`)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("a workflow of FIN's job and a Global job = %d, want 409 (%s)", rec.Code, rec.Body)
 	}
 }

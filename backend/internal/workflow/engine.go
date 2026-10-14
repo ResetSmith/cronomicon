@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -684,20 +685,22 @@ func (e *Engine) runJob(
 				"job", step.Name, "scope", effectiveScope)
 		}
 	}
-	// And the WORKFLOW's repository: a step of an agency's repository's workflow
-	// runs on that agency's scopes, whoever's job it resolved to. The check
-	// above asks about the job's repository, and a job of Global's may name any
-	// agency's scope; this is what stops an agency's workflow from running it
-	// there, on its own schedule and with its own environment.
+	// And the WORKFLOW's agency: a workflow's step runs on its agency's scopes,
+	// whoever's job it resolved to (§0a, IN-8). The check above asks about the
+	// job's repository; this is what stops a workflow from running another
+	// agency's job there, on its own schedule and with its own environment.
+	// Until §0a it was asked of a workflow of an agency's repository only; a
+	// workflow that spans agencies (one built in the app, saved before §0a)
+	// now fails its other agencies' steps here (§0a, open point 1).
 	if stepStatus == "queued" {
-		outside, oerr := runref.ScopeOutsideRepository(ctx, e.db, e.Home(ctx, wfID), effectiveScope)
+		outside, oerr := e.stepOutsideWorkflowAgency(ctx, wfID, effectiveScope)
 		if oerr != nil {
-			e.log.Error("workflow: check the step's scope against the workflow's repository", "job", step.Name, "err", oerr)
+			e.log.Error("workflow: check the step's scope against the workflow's agency", "job", step.Name, "err", oerr)
 			return "danger", false
 		}
 		if outside {
 			stepStatus, stepQueuedReason = "failure", runref.ReasonWorkflowScopeMismatch
-			e.log.Warn("workflow: the workflow comes from an agency's repository and this step's scope is not that agency's",
+			e.log.Warn("workflow: this step's scope is not the workflow's agency's",
 				"job", step.Name, "scope", effectiveScope)
 		}
 	}
@@ -1211,9 +1214,11 @@ func StepKey(s Step) string { return StepRefOf(s).Key() }
 // A Git workflow cannot pin a step to a job's identity (sync strips `jobUid`:
 // names are the law in Git), so its name-only steps need a rule for a name
 // that more than one repository holds. The rule is the one every other
-// reference follows: the workflow's own repository, then Global's, and never
-// another agency's. With no home the older rule stands: a name that one Git
-// job holds is that job, and a name that several hold is refused.
+// reference follows: the workflow's own repository, and no other (§0a, IN-8;
+// from GR-16 until §0a, then Global's). With no home the older rule stands: a
+// name that one Git job holds is that job, and a name that several hold is
+// refused; whatever it finds runs only on the workflow's agency's scopes
+// (stepOutsideWorkflowAgency).
 //
 // Whoever AUTHORIZES a workflow must ask with the same home the engine runs it
 // with (JobScopesAt), or the walk authorizes one job and the engine runs
@@ -1227,19 +1232,37 @@ func (e *Engine) Home(ctx context.Context, workflowID int64) string {
 	return repo
 }
 
-// homeThenGlobal is where a Git name is looked up for a workflow whose home is
-// known: its repository, then Global's.
-// agencyOfHome is the agency a workflow's home repository belongs to, when the
-// home is an AGENCY's: "" for Global's repository and for no home.
+// stepOutsideWorkflowAgency reports whether a step of the workflow of a rowid
+// would run on a scope that is not the workflow's agency's (runref
+// .ScopeOutsideAgency). A workflow that is no longer there confines nothing; a
+// Git workflow whose repository is gone has no agency to run for.
+func (e *Engine) stepOutsideWorkflowAgency(ctx context.Context, workflowID int64, scope string) (bool, error) {
+	var agency sql.NullString
+	err := e.db.QueryRowContext(ctx,
+		`SELECT `+runref.WorkflowAgencySQL+` FROM workflows w WHERE w.rowid = ?`, workflowID).Scan(&agency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !agency.Valid {
+		return true, nil
+	}
+	return runref.ScopeOutsideAgency(ctx, e.db, agency.String, scope)
+}
+
+// agencyOfHome is the agency a workflow's home repository belongs to: Global
+// for Global's repository (since §0a), "" for no home.
 //
-// A workflow of an agency's repository is confined to that agency in what it
-// names as well as in what it runs on. Its Git names are its repository's and
-// Global's (homeThenGlobal). The names it finds among the definitions built in
-// the app are that agency's and nobody else's: the older rule, "the one in-app
-// definition of the name", is another agency's job the moment that agency
-// builds one.
+// A workflow of a repository is confined to its agency in what it names as
+// well as in what it runs on. Its Git names are its repository's. The names it
+// finds among the definitions built in the app are that agency's and nobody
+// else's: the older rule, "the one in-app definition of the name", is another
+// agency's job the moment that agency builds one. (Until §0a, IN-8, Global's
+// repository's workflows took any agency's.)
 func (e *Engine) agencyOfHome(ctx context.Context, home string) string {
-	if home == "" || home == repoid.Global {
+	if home == "" {
 		return ""
 	}
 	var agency string
@@ -1251,17 +1274,11 @@ func (e *Engine) agencyOfHome(ctx context.Context, home string) string {
 }
 
 // jobOfAgencySQL is "this row of `jobs` is the agency ?'s": its scope belongs
-// to that agency alone.
-const jobOfAgencySQL = ` AND (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+// to that agency alone, or, for Global, it has no scope that one agency owns
+// (a job with no scope is Global's, as its runs are).
+const jobOfAgencySQL = ` AND COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 	                          FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-	                         WHERE sc.name = jobs.scope) = ?`
-
-func homeThenGlobal(home string) []string {
-	if home == repoid.Global {
-		return []string{repoid.Global}
-	}
-	return []string{home, repoid.Global}
-}
+	                         WHERE sc.name = jobs.scope), '` + agencyid.Global + `') = ?`
 
 // lookupJobDefs resolves each step's referenced job def. A step pinning a uid
 // (R2F-2) resolves by identity alone; otherwise the A11 step-source precedence
@@ -1557,16 +1574,14 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource, home 
 
 	for _, src := range StepSourceOrder(ref.Source, wfSource) {
 		// GR-16 — a Git name, for a workflow whose home is known: its own
-		// repository's job, then Global's. Each repository holds a name once,
-		// so there is nothing ambiguous to refuse; and a job of that name in
-		// ANOTHER agency's repository is not found at all, however many there
-		// are. (The existence rule of FX-A1 holds within each: a binned or
-		// disabled job of the home repository stops the search there.)
+		// repository's job (and, until §0a, then Global's). A repository holds
+		// a name once, so there is nothing ambiguous to refuse; and a job of
+		// that name in ANOTHER repository is not found at all, however many
+		// there are. (The existence rule of FX-A1 holds: a binned or disabled
+		// job of the home repository is the one found.)
 		if src == "git" && home != "" {
-			for _, repo := range homeThenGlobal(home) {
-				if _, jd, ok := scan(`name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`, name, repoid.Global, repo); ok {
-					return src, jd, true
-				}
+			if _, jd, ok := scan(`name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`, name, repoid.Global, home); ok {
+				return src, jd, true
 			}
 			continue
 		}

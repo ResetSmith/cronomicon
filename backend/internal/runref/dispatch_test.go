@@ -15,9 +15,9 @@ func TestRefuseDispatch(t *testing.T) {
 	ctx := context.Background()
 	f.exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main')`)
 	f.exec(`INSERT INTO scopes (id, name, source, created_at) VALUES
-	        ('s-a', 'a-hosts', 'cronomicon', 't'), ('s-b', 'b-hosts', 'cronomicon', 't')`)
-	f.exec(`DELETE FROM scope_agencies WHERE scope_id IN ('s-a', 's-b')`)
-	f.exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-a', 'ag-a'), ('s-b', 'ag-b')`)
+	        ('s-a', 'a-hosts', 'cronomicon', 't'), ('s-b', 'b-hosts', 'cronomicon', 't'), ('s-g', 'g-hosts', 'cronomicon', 't')`)
+	f.exec(`DELETE FROM scope_agencies WHERE scope_id IN ('s-a', 's-b', 's-g')`)
+	f.exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-a', 'ag-a'), ('s-b', 'ag-b'), ('s-g', 'global')`)
 	f.exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
 	        ('sc-a', 'repo-a', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't'),
 	        ('sc-g', 'global', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't')`)
@@ -46,22 +46,25 @@ func TestRefuseDispatch(t *testing.T) {
 	run("r-stranded", "of-a", "git", "j-a", "b-hosts", none, nil)
 	run("r-app-stranded", "built-on-a", "cronomicon", "j-app-a", "b-hosts", none, nil)
 	run("r-global", "of-global", "git", "j-g", "b-hosts", none, nil)
+	run("r-global-own", "of-global", "git", "j-g", "g-hosts", none, nil)
+	run("r-global-none", "of-global", "git", "j-g", "", none, nil)
 	run("r-app-global", "built-on-g", "cronomicon", "j-app-g", "", none, nil)
-	run("r-step-outside", "of-global", "git", "j-g", "b-hosts", none, "wr-a")
-	run("r-step-inside", "of-global", "git", "j-g", "a-hosts", none, "wr-a")
-	run("r-step-app", "of-global", "git", "j-g", "b-hosts", none, "wr-app")
+	run("r-step-outside", "of-global", "git", "j-g", "g-hosts", none, "wr-a")
+	run("r-step-inside", "of-a", "git", "j-a", "a-hosts", none, "wr-a")
+	run("r-step-app", "of-global", "git", "j-g", "g-hosts", none, "wr-app")
+	run("r-step-app-outside", "of-a", "git", "j-a", "a-hosts", none, "wr-app")
 	run("r-pin-outside", "built-on-g", "cronomicon", "j-app-g", "b-hosts", [3]any{"repo-a", "abc123", "scripts/p/site.yml"}, nil)
 	run("r-pin-inside", "built-on-g", "cronomicon", "j-app-g", "a-hosts", [3]any{"repo-a", "abc123", "scripts/p/site.yml"}, nil)
-	run("r-pin-global", "of-global", "git", "j-g", "b-hosts", [3]any{"global", "abc123", "scripts/p/site.yml"}, nil)
+	run("r-pin-global", "built-on-g", "cronomicon", "j-app-g", "b-hosts", [3]any{"global", "abc123", "scripts/p/site.yml"}, nil)
 	run("r-gone", "built-gone", "cronomicon", "j-gone", "a-hosts", none, nil)
 	run("r-gone-unpinned", "built-gone", "cronomicon", "j-gone", "a-hosts", [3]any{nil, nil, "scripts/p/site.yml"}, nil)
-	run("r-unpinned-entry", "of-global", "git", "j-g", "a-hosts", [3]any{nil, nil, "scripts/p/site.yml"}, nil)
-	run("r-unpinned-repo", "of-global", "git", "j-g", "a-hosts", [3]any{"global", nil, nil}, nil)
-	run("r-unpinned-empty", "of-global", "git", "j-g", "a-hosts", [3]any{"global", "", "scripts/p/site.yml"}, nil)
+	run("r-unpinned-entry", "of-global", "git", "j-g", "g-hosts", [3]any{nil, nil, "scripts/p/site.yml"}, nil)
+	run("r-unpinned-repo", "of-global", "git", "j-g", "g-hosts", [3]any{"global", nil, nil}, nil)
+	run("r-unpinned-empty", "of-global", "git", "j-g", "g-hosts", [3]any{"global", "", "scripts/p/site.yml"}, nil)
 	// Refused by two rules: the first of the list is the one that is said.
 	run("r-stranded-step", "of-a", "git", "j-a", "b-hosts", none, "wr-a")
 	run("r-stranded-unpinned", "of-a", "git", "j-a", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
-	run("r-pin-outside-unpinned", "of-global", "git", "j-g", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
+	run("r-pin-outside-unpinned", "built-on-g", "cronomicon", "j-app-g", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
 
 	for _, c := range []struct {
 		what, run  string
@@ -70,13 +73,20 @@ func TestRefuseDispatch(t *testing.T) {
 		{"a job of an agency's repository on its agency's scope", "r-ok", "", ""},
 		{"the same on another agency's scope", "r-stranded", CodeRepoScopeMismatch, ReasonRepoScopeMismatch},
 		{"built in the app on that repository's script, on another agency's scope", "r-app-stranded", CodeRepoScopeMismatch, ReasonRepoScopeMismatch},
-		{"a job of Global's repository on any scope", "r-global", "", ""},
+		// §0a (IN-3): Global's repository is confined too; until then any scope went ahead.
+		{"a job of Global's repository on an agency's scope", "r-global", CodeRepoScopeMismatch, ReasonRepoScopeMismatch},
+		{"a job of Global's repository on Global's scope", "r-global-own", "", ""},
+		{"a job of Global's repository on no scope", "r-global-none", "", ""},
 		{"built in the app on Global's script, on no scope", "r-app-global", "", ""},
 		{"a step of an agency's repository's workflow, outside that agency", "r-step-outside", CodeRepoScopeMismatch, ReasonWorkflowScopeMismatch},
-		{"the same step on that agency's scope", "r-step-inside", "", ""},
-		{"a step of a workflow built in the app", "r-step-app", "", ""},
+		{"the same workflow's step on its agency's scope", "r-step-inside", "", ""},
+		// §0a (IN-8): a workflow built in the app is its owner's (Global's here);
+		// until then its steps went ahead anywhere.
+		{"a step of a workflow built in the app, on its agency's scope", "r-step-app", "", ""},
+		{"a step of a workflow built in the app, on another agency's", "r-step-app-outside", CodeRepoScopeMismatch, ReasonWorkflowScopeMismatch},
 		{"pinned to an agency's repository, on another agency's scope", "r-pin-outside", CodeRepoScopeMismatch, ReasonRepoScopeMismatch},
 		{"pinned to an agency's repository, on its scope", "r-pin-inside", "", ""},
+		// Question 31: an in-app job on Global's script is left as it was.
 		{"pinned to Global's repository, on any scope", "r-pin-global", "", ""},
 		{"built in the app on a script that has gone", "r-gone", CodeScriptGone, ReasonScriptGone},
 		{"the same with an entry and no commit: the script is the reason", "r-gone-unpinned", CodeScriptGone, ReasonScriptGone},

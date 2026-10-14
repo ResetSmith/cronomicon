@@ -12,6 +12,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
+	"github.com/ResetSmith/cronomicon/internal/runref"
 )
 
 // Sub-workflows: a workflow as a step of another workflow (SW,
@@ -180,6 +181,20 @@ func (e *Engine) runChildWorkflowOnce(
 			"Refused: the referenced workflow does not exist or is disabled")
 		return "danger", ""
 	}
+	// A workflow's sub-workflows are its agency's (§0a, IN-8). What spans at
+	// an upgrade (a parent built in the app before §0a) fails this step here.
+	if parentWorkflow != 0 {
+		same, serr := e.sameAgency(ctx, parentWorkflow, wfID)
+		if serr != nil {
+			e.log.Error("workflow: compare the sub-workflow's agency with its parent's", "parent", parentName, "child", childName, "err", serr)
+			return "danger", ""
+		}
+		if !same {
+			e.log.Warn("workflow: sub-workflow is another agency's", "parent", parentName, "child", childName)
+			e.recordRefusedChild(ctx, parentTraceID, nodeID, childName, actor, parentSource, childDepth, ReasonChildOtherAgency)
+			return "danger", ""
+		}
+	}
 
 	// Only the step's explicit inputs cross the boundary — see the table above.
 	var envJSON string
@@ -211,6 +226,22 @@ func (e *Engine) runChildWorkflowOnce(
 	return status, res.TraceID
 }
 
+// ReasonChildOtherAgency is the stored reason of a sub-workflow step whose
+// child is another agency's workflow.
+const ReasonChildOtherAgency = "Refused: the referenced workflow is another agency's: a workflow runs its own agency's workflows only"
+
+// sameAgency reports whether two workflows, by rowid, are one agency's (a Git
+// workflow's repository's, the owner of one built in the app). One whose
+// agency cannot be told (a Git workflow whose repository is gone) is no
+// agency's, and matches nothing.
+func (e *Engine) sameAgency(ctx context.Context, a, b int64) (bool, error) {
+	var same bool
+	err := e.db.QueryRowContext(ctx, `
+		SELECT COALESCE((SELECT `+runref.WorkflowAgencySQL+` FROM workflows w WHERE w.rowid = ?1)
+		              = (SELECT `+runref.WorkflowAgencySQL+` FROM workflows w WHERE w.rowid = ?2), 0)`, a, b).Scan(&same)
+	return same, err
+}
+
 // parentContext reads the depths and source the child inherits from.
 func (e *Engine) parentContext(ctx context.Context, parentTraceID string) (workflowDepth, reactionDepth int, source string) {
 	var src sql.NullString
@@ -236,13 +267,16 @@ func (e *Engine) parentContext(ctx context.Context, parentTraceID string) (workf
 //
 // Otherwise, by the A11 source precedence: the parent's source first, then the
 // other. home is the PARENT's (Engine.Home). For a Git parent whose home is
-// known, a Git child is its own repository's workflow of the name, then
-// Global's, and never another agency's (GR-16). For a parent built in the app
-// that pins nothing (one saved before 2.4.0): a child built in the app only
-// when ONE workflow built in the app holds the name, as a step's job is
-// refused when several do; and a Git child of Global's repository, the only
-// one a parent of that age can have meant. childHome is where the child's own
-// names are then looked up: a Git child's repository.
+// known, a Git child is its own repository's workflow of the name, and no
+// other's (§0a, IN-8; from GR-16 until then, Global's next). For a parent
+// built in the app that pins nothing (one saved before 2.4.0): a child built
+// in the app only when ONE workflow built in the app holds the name, as a
+// step's job is refused when several do; and a Git child of Global's
+// repository, the only one a parent of that age can have meant. childHome is
+// where the child's own names are then looked up: a Git child's repository.
+//
+// Whatever is found here runs only when it is the parent's agency's: the
+// caller refuses a child of another agency (§0a, IN-8).
 func (e *Engine) loadChildWorkflow(ctx context.Context, ref WorkflowRef, parentSource, home string) (source string, steps []Step, wfID int64, childHome string, ok bool) {
 	name := ref.Name
 	if ref.UID != "" {
@@ -279,25 +313,19 @@ func (e *Engine) loadChildWorkflow(ctx context.Context, ref WorkflowRef, parentS
 		err := sql.ErrNoRows
 		switch agency := e.agencyOfHome(ctx, home); {
 		case src == "git" && home != "":
-			for _, in := range homeThenGlobal(home) {
-				// The repository's own workflow of the name stops the search even
-				// when it may not run. A disabled one is NOT replaced by Global's
-				// of the same name: the step fails, as a step whose job is disabled
-				// does, rather than run a different workflow under the name.
-				var off bool
-				err = e.db.QueryRowContext(ctx, `
-					SELECT rowid, steps, repo_id, enabled = 0 OR deleted_at IS NOT NULL FROM workflows
-					 WHERE name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`,
-					name, repoid.Global, in).Scan(&rowid, &raw, &repo, &off)
-				if err == nil && off {
-					return "", nil, 0, "", false
-				}
-				if err == nil {
-					break
-				}
+			// The repository's own workflow of the name, and no other's (§0a,
+			// IN-8; until then Global's next). One that may not run fails the
+			// step, as a step whose job is disabled does.
+			var off bool
+			err = e.db.QueryRowContext(ctx, `
+				SELECT rowid, steps, repo_id, enabled = 0 OR deleted_at IS NOT NULL FROM workflows
+				 WHERE name = ? AND source = 'git' AND COALESCE(repo_id, ?) = ?`,
+				name, repoid.Global, home).Scan(&rowid, &raw, &repo, &off)
+			if err == nil && off {
+				return "", nil, 0, "", false
 			}
 		case src == "cronomicon" && agency != "":
-			// A workflow built in the app, for a parent of an AGENCY's repository:
+			// A workflow built in the app, for a parent of a repository:
 			// that agency's, and no other's (see agencyOfHome).
 			err = e.db.QueryRowContext(ctx, `
 				SELECT rowid, steps, repo_id FROM workflows

@@ -1185,7 +1185,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 			// R2F-2/R2F-Q3 — a Git workflow's step names its job. A step MAY carry
 			// `jobUid` in the API (the composer writes it, so a step can name one of
 			// two same-named jobs), but in a repository the step is resolved by name:
-			// the workflow's own repository's job of that name, else Global's
+			// the workflow's own repository's job of that name (until §0a, else Global's)
 			// (GR-16; a name is one job in each repository). An identity in a
 			// hand-edited file buys nothing and rots the first time the repo is
 			// replayed into a different installation. Warn and ignore rather than
@@ -1194,7 +1194,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 			if step := firstStepWithJobUID(wf.Spec.Steps); step != "" {
 				warnings = append(warnings, ValidationError{File: path, Field: "spec.steps",
 					Message: fmt.Sprintf("step %q sets jobUid, which is ignored in git-sourced workflows — "+
-						"a step names its job, which is looked for in the workflow's own repository and then in Global's, "+
+						"a step names its job, which is looked for in the workflow's own repository, "+
 						"and a stored identity would not survive replay into another installation", step)})
 			}
 			resolveScheduleRefs(path, wf.Spec.ScheduleRefs)

@@ -38,6 +38,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindScheduleBindingAmbiguous, checkScheduleBindingAmbiguous},
 		{KindScheduleGone, checkScheduleGone},
 		{KindWorkflowSpansAgencies, checkWorkflowSpansAgencies},
+		{KindReactionOtherAgency, checkReactionOtherAgency},
 		{KindScheduleEntryNoOwner, checkScheduleEntryNoOwner},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},

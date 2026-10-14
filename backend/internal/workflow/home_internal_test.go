@@ -8,7 +8,7 @@ import (
 )
 
 // GR-16 (2.4.0) in the engine: a Git workflow's name-only steps, and its
-// sub-workflows, resolve in the workflow's own repository, then in Global's,
+// sub-workflows, resolve in the workflow's own repository (until §0a, then in Global's),
 // and never in another agency's.
 //
 // A Git workflow cannot pin a step to a job's identity (sync strips `jobUid`).
@@ -80,7 +80,7 @@ func (f *homeFixture) workflowRow(uid, name, repo, steps string) int64 {
 	return rowid
 }
 
-func TestAGitWorkflowsStepResolvesInItsRepositoryThenGlobals(t *testing.T) {
+func TestAGitWorkflowsStepResolvesInItsRepositoryOnly(t *testing.T) {
 	f := newHomeFixture(t)
 	ctx := context.Background()
 	f.job("d-g", "deploy", "global", "g-hosts")
@@ -108,19 +108,22 @@ func TestAGitWorkflowsStepResolvesInItsRepositoryThenGlobals(t *testing.T) {
 		{"the same, from repo-c", "deploy", "", "repo-c", "d-c", true},
 		{"the same, from Global's", "deploy", "", "global", "d-g", true},
 		{"the same, the step saying git", "deploy", "git", "repo-b", "d-b", true},
-		{"a name only Global's has", "only-global", "", "repo-b", "og", true},
+		// §0a (IN-8): an agency's repository takes nothing from Global's (until
+		// then, Global's job of the name was found next).
+		{"a name only Global's has", "only-global", "", "repo-b", "", false},
 		{"a name only another agency's has", "only-c", "", "repo-b", "", false},
 		{"the same, the step saying git", "only-c", "git", "repo-b", "", false},
 		{"a name only another agency's has, from Global's", "only-b", "", "global", "", false},
-		// Among the jobs built in the app, a workflow of an AGENCY's repository
-		// finds its own agency's and no other's; Global's repository's finds
-		// any, as it always has.
+		// Among the jobs built in the app, a workflow of a repository finds its
+		// own agency's and no other's; Global's repository's too since §0a
+		// (IN-8; until then it found any).
 		{"the app's job of the workflow's own agency, second", "b-app-job", "", "repo-b", "app-b", true},
 		{"the same, the step saying so", "b-app-job", "cronomicon", "repo-b", "app-b", true},
 		{"the app's job of ANOTHER agency", "c-app-job", "", "repo-b", "", false},
 		{"the same, the step saying so", "c-app-job", "cronomicon", "repo-b", "", false},
 		{"the app's job that is Global's", "g-app-job", "", "repo-b", "", false},
-		{"the app's job of any agency, from Global's repository", "c-app-job", "", "global", "app-c", true},
+		{"the app's job of an agency, from Global's repository", "c-app-job", "", "global", "", false},
+		{"the app's job that is Global's, from Global's repository", "g-app-job", "", "global", "app-g", true},
 	} {
 		uid, unavailable, found := resolve(c.name, c.stepSource, c.home)
 		if found != c.wantFound || uid != c.wantUID || unavailable != "" {
@@ -145,9 +148,9 @@ func TestAGitWorkflowsStepResolvesInItsRepositoryThenGlobals(t *testing.T) {
 	f.exec(`UPDATE jobs SET deleted_at = NULL WHERE uid = 'd-b'`)
 
 	// What is authorized is what would run: the scopes of the workflow's own
-	// repository's jobs.
+	// repository's jobs (Global's no longer among an agency's, since §0a).
 	steps := []Step{{Type: "job", Name: "deploy"}, {Type: "job", Name: "only-global"}}
-	for home, want := range map[string]string{"repo-b": "b-hosts,g-hosts", "repo-c": "c-hosts,g-hosts", "global": "g-hosts"} {
+	for home, want := range map[string]string{"repo-b": "b-hosts", "repo-c": "c-hosts", "global": "g-hosts"} {
 		scopes, err := f.e.JobScopesAt(ctx, steps, "git", home)
 		if err != nil {
 			t.Fatal(err)
@@ -170,7 +173,7 @@ func joinSorted(in []string) string {
 	return strings.Join(out, ",")
 }
 
-func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
+func TestAGitWorkflowsSubWorkflowIsItsRepositorysOnly(t *testing.T) {
 	f := newHomeFixture(t)
 	ctx := context.Background()
 	f.job("d-g", "deploy", "global", "g-hosts")
@@ -182,7 +185,7 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
 	rowG := f.workflowRow("f-g", "flow", "global", child)
 	rowB := f.workflowRow("f-b", "flow", "repo-b", child)
 	f.workflowRow("only-c", "theirs", "repo-c", child)
-	rowGonly := f.workflowRow("only-g", "shared", "global", child)
+	f.workflowRow("only-g", "shared", "global", child)
 	// Built in the app: another agency's (the older row), and the workflow's own.
 	f.exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency) VALUES
 	        ('app-c', 'month-end', 'cronomicon', '[]', 1, 't', 'ag-c'),
@@ -207,7 +210,7 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
 		{"from repo-b", "flow", "repo-b", rowB, "repo-b"},
 		{"from repo-c", "flow", "repo-c", rowC, "repo-c"},
 		{"from Global's", "flow", "global", rowG, "global"},
-		{"a name only Global's has, from repo-b", "shared", "repo-b", rowGonly, "global"},
+		{"a name only Global's has, from repo-b (§0a; until then Global's)", "shared", "repo-b", 0, ""},
 		{"a name only another agency's has, from repo-b", "theirs", "repo-b", 0, ""},
 		// With no home, Global's repository's (2.4.0, present defect 50): the
 		// oldest of the name was another agency's.
@@ -237,8 +240,8 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := joinSorted(scopes); got != "b-hosts,g-hosts" {
-		t.Errorf("the scopes reached through a repo-b workflow's sub-workflows = %q, want b-hosts (its own flow) and g-hosts (Global's shared)", got)
+	if got := joinSorted(scopes); got != "b-hosts" {
+		t.Errorf("the scopes reached through a repo-b workflow's sub-workflows = %q, want b-hosts (its own flow), and nothing of Global's (§0a)", got)
 	}
 	if rowB == 0 || rowG == 0 {
 		t.Fatal("fixture")

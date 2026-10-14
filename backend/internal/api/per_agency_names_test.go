@@ -32,6 +32,7 @@ func TestPerAgencyJobNames(t *testing.T) {
 	seed(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('sc-fin','ag-fin'),('sc-dss','ag-dss')`)
 	seed(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES('backup-db','bash','pg_dump','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
+	agenciesGetTheirOwnRepository(t, pool)
 
 	compose := func(name, scope string) (int, string) {
 		t.Helper()

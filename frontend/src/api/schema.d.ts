@@ -154,14 +154,15 @@ export interface paths {
          * Edit an cronomicon-source job (A11)
          * @description Edits an in-app job. Git-source jobs are read-only here (409). Requires Compose.
          *
-         *     **A save may not make another workflow span agencies (v2.4.0, GR-7).**
-         *     A workflow built in the app whose jobs are several agencies' belongs to
-         *     Global, and only an administrator whose compose grant covers every
-         *     agency may save one. The same holds for a save that would make a
-         *     workflow ALREADY saved span: a job it runs saved into another agency's
-         *     scope, or a workflow it runs as a step saved onto another agency's
-         *     jobs. 403 for anybody else, and nothing is written; the message names
-         *     the workflow.
+         *     **A save may not make a workflow span agencies (v2.4.0).** A workflow
+         *     runs its own agency's jobs and workflows only, so a workflow built in
+         *     the app whose jobs would be several agencies' is refused, for everyone,
+         *     a global administrator included. The same holds for a save that would
+         *     make a workflow ALREADY saved span: a job it runs saved into another
+         *     agency's scope, or a workflow it runs as a step saved onto another
+         *     agency's jobs. 409 `crosses_agencies`, and nothing is written;
+         *     the message names the workflow to a saver who may compose in its
+         *     agency.
          */
         put: operations["updateJob"];
         post?: never;
@@ -937,14 +938,15 @@ export interface paths {
          * Edit an cronomicon-source workflow (A11)
          * @description Edits an in-app workflow's step graph + schedules. Git-source workflows are read-only here (409). Requires Compose.
          *
-         *     **A save may not make another workflow span agencies (v2.4.0, GR-7).**
-         *     A workflow built in the app whose jobs are several agencies' belongs to
-         *     Global, and only an administrator whose compose grant covers every
-         *     agency may save one. The same holds for a save that would make a
-         *     workflow ALREADY saved span: a job it runs saved into another agency's
-         *     scope, or a workflow it runs as a step saved onto another agency's
-         *     jobs. 403 for anybody else, and nothing is written; the message names
-         *     the workflow.
+         *     **A save may not make a workflow span agencies (v2.4.0).** A workflow
+         *     runs its own agency's jobs and workflows only, so a workflow built in
+         *     the app whose jobs would be several agencies' is refused, for everyone,
+         *     a global administrator included. The same holds for a save that would
+         *     make a workflow ALREADY saved span: a job it runs saved into another
+         *     agency's scope, or a workflow it runs as a step saved onto another
+         *     agency's jobs. 409 `crosses_agencies`, and nothing is written;
+         *     the message names the workflow to a saver who may compose in its
+         *     agency.
          */
         put: operations["updateWorkflow"];
         post?: never;
@@ -7137,14 +7139,20 @@ export interface components {
              *       own. (When another
              *       schedule holds the name it is `schedule_binding_ambiguous`.)
              *     - `workflow_spans_agencies` — a workflow built in the app runs jobs
-             *       of more than one agency, so it belongs to Global, and from v2.4.0
-             *       only a global administrator may save it. It runs as before.
-             *       Raised for the workflows the upgrade found so, and for one that
-             *       comes to span later by a global administrator's hand (a scope
-             *       given to another agency, or a save that anybody else is refused).
-             *       Subject:
-             *       the workflow's uid. Filed under Global. It clears when the
-             *       workflow's jobs are all one agency's.
+             *       of more than one agency. A workflow runs its own agency's jobs
+             *       only (v2.4.0): each of its steps on a scope that is not its
+             *       agency's fails when it runs, with the reason, and nobody may save
+             *       it as it is. Raised for the workflows the upgrade found so, and
+             *       for one that comes to span later (a scope given to another
+             *       agency). Subject: the workflow's uid. Filed under Global. It
+             *       clears when the workflow's jobs are all one agency's.
+             *     - `reaction_other_agency` — a reaction is pinned to a definition of
+             *       another agency than its own (v2.4.0). A reaction watches its own
+             *       agency's definitions only: it does not fire, and each run of the
+             *       definition it watches is recorded as a refused delivery. Subject:
+             *       `<owner uid>:<reaction name>`. Filed under the owner's agency. It
+             *       clears when the reaction watches its own agency's definition, or
+             *       is removed.
              *     - `schedule_entry_no_owner` — a schedule entry records no owner (it
              *       was left by restoring a schedule from the recycle bin before
              *       v2.4.0) and more than one definition holds its name. Until v2.4.0

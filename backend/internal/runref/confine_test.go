@@ -58,7 +58,10 @@ func TestRepoScopeMismatch(t *testing.T) {
 		{"found by name, its agency's scope", "", "git", "of-a", "a-hosts", false},
 		{"found by name, another agency's scope", "", "git", "of-a", "b-hosts", true},
 		{"found by default source, another agency's scope", "", "", "of-a", "b-hosts", true},
-		{"Global's repository's job, another agency's scope", "j-g", "git", "of-global", "b-hosts", false},
+		// §0a (IN-3): confined to Global's scopes, or none; until then any.
+		{"Global's repository's job, another agency's scope", "j-g", "git", "of-global", "b-hosts", true},
+		{"Global's repository's job, Global's scope", "j-g", "git", "of-global", "g-hosts", false},
+		{"Global's repository's job, a scope several agencies share", "j-g", "git", "of-global", "shared-hosts", true},
 		{"Global's repository's job, no scope", "j-g", "git", "of-global", "", false},
 		{"a Git job with no repository", "j-old", "git", "from-before", "b-hosts", false},
 		{"a job built in the app", "j-app", "cronomicon", "built", "b-hosts", false},

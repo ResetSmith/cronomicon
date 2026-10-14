@@ -12,14 +12,16 @@ import (
 // than one agency (2.4.0, GR-7).
 //
 // A workflow belongs to one agency, like everything else: the one its job
-// steps belong to. One whose jobs are several agencies' is Global's, and from
-// 2.4.0 only a global administrator may save it. Such a workflow could be
-// saved, until then, by anybody who held compose in each of the agencies.
+// steps belong to. One whose jobs are several agencies' is Global's (the
+// upgrade, migration 1360, made it so), and since §0a (IN-8) nobody may save
+// one: its steps of any other agency fail when it runs, each with the reason
+// (§0a, open point 1). Until §0a a global administrator might save it, and
+// before 2.4.0 anybody who held compose in each of the agencies.
 //
-// Nothing stops running. This tells the installation's administrators which
-// workflows those are: the ones the upgrade made Global's, and any that comes
-// to span later, when a scope is given to another agency. It resolves when
-// the workflow's jobs are all one agency's.
+// This tells the installation's administrators which workflows those are:
+// the ones the upgrade made Global's, and any that comes to span later, when
+// a scope is given to another agency. It resolves when the workflow's jobs
+// are all one agency's.
 //
 // The steps are read here as migration 1360 read them, and as the engine
 // resolves them: sub-workflows followed, a step's job found by its uid, its
@@ -39,10 +41,10 @@ func checkWorkflowSpansAgencies(ctx context.Context, database *sql.DB) error {
 		found = append(found, Finding{
 			AgencyID: agencyid.Global,
 			Subject:  w.UID,
-			Detail: fmt.Sprintf("The workflow %s runs jobs of more than one agency (%s), so it belongs to Global. It runs as "+
-				"before. From 2.4.0 only a global administrator may save it; until then anybody who held compose in each "+
-				"of those agencies could. To give it to one agency, make every job it runs one of that agency's, or split "+
-				"it into a workflow for each. This notice clears when its jobs are all one agency's.",
+			Detail: fmt.Sprintf("The workflow %s runs jobs of more than one agency (%s). A workflow runs its own "+
+				"agency's jobs only: when it runs, each step on a scope that is not its agency's fails, with the reason, "+
+				"and it cannot be saved as it is. Copy what it needs into one agency, or split it into a workflow for each. "+
+				"This notice clears when its jobs are all one agency's.",
 				w.Name, w.Agencies),
 		})
 	}

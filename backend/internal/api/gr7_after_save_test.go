@@ -15,11 +15,15 @@ import (
 // CHILD workflow that a workflow already saved runs, and by saving a JOB it
 // runs into another agency's scope. The parent came to span, a notice said
 // so, and nothing was refused. Each is refused now, and nothing is written.
+//
+// Since §0a (IN-8) nobody saves such a workflow, a global administrator
+// included, and the refusal is a 409 for everyone.
 func TestASaveMayNotMakeAnotherWorkflowSpanAgencies(t *testing.T) {
 	h, pool := gateServer(t) // fin-hosts is FIN's, tax-hosts is TAX's
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`)
+	agenciesGetTheirOwnRepository(t, pool)
 	const both = gFinAdmin + "," + gTaxAdmin
 	job := func(name, scope string) string {
 		return `{"name":"` + name + `","scriptRef":"backup-db","scope":"` + scope + `"}`
@@ -52,23 +56,23 @@ func TestASaveMayNotMakeAnotherWorkflowSpanAgencies(t *testing.T) {
 		}
 		return s
 	}
-	denied := 0
+	// §0a (IN-8): the refusal is a rule, not a permission, and is the same for
+	// everyone: 409 workflow_spans_agencies. Until then it was a 403, recorded
+	// as a denial, and a global administrator's save was not asked.
 	refused := func(what, method, path, who, body string) string {
 		t.Helper()
 		before := state()
+		denied := count(t, pool, `SELECT COUNT(*) FROM auth_events WHERE kind = 'denied'`)
 		rec := gateReq(t, h, method, path, who, body)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("%s = %d, want 403 (%s)", what, rec.Code, rec.Body)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"crosses_agencies"`) {
+			t.Errorf("%s = %d, want 409 crosses_agencies (%s)", what, rec.Code, rec.Body)
 		}
 		if after := state(); after != before {
 			t.Errorf("%s was refused and still wrote:\n before %s\n after  %s", what, before, after)
 		}
-		// The refusal is on record (it is written after the save is undone;
-		// written while the save's transaction is open, it waits and is lost).
-		if n := count(t, pool, `SELECT COUNT(*) FROM auth_events WHERE kind = 'denied'`); n != denied+1 {
-			t.Errorf("%s left %d refusals on record, want one more than the %d before", what, n, denied)
+		if n := count(t, pool, `SELECT COUNT(*) FROM auth_events WHERE kind = 'denied'`); n != denied {
+			t.Errorf("%s was recorded as a permission denial", what)
 		}
-		denied++
 		return rec.Body.String()
 	}
 
@@ -99,13 +103,14 @@ func TestASaveMayNotMakeAnotherWorkflowSpanAgencies(t *testing.T) {
 	}
 	exec(`UPDATE workflows SET owner_agency = 'ag:FIN' WHERE name = 'direct'`)
 
-	// ── A workflow that spans ALREADY is not laid at the door of a later save.
-	must("a global administrator's workflow of both agencies' jobs", http.MethodPost, "/api/v1/workflows", gRoot, `{"name":"spans","steps":[`+stepA+`,`+stepTax+`]}`)
+	// ── A workflow that spans ALREADY (as an upgrade leaves one: nobody can
+	// save one since §0a) is not laid at the door of a later save.
+	refused("a global administrator's workflow of both agencies' jobs", http.MethodPost, "/api/v1/workflows", gRoot, `{"name":"spans","steps":[`+stepA+`,`+stepTax+`]}`)
+	exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency) VALUES ('wf-spans', 'spans', 'cronomicon', ?, 1, 't', 'global')`,
+		`[`+stepA+`,`+stepTax+`]`)
 	must("FIN's administrator saving a job the spanning workflow runs, as it is", http.MethodPut, "/api/v1/jobs/"+id("jobs", "fin-a"), gFinAdmin, job("fin-a", "fin-hosts"))
 
-	// ── A global administrator makes either change, and the notice says so.
-	must("a global administrator saving the job into TAX's scope", http.MethodPut, "/api/v1/jobs/"+id("jobs", "fin-b"), gRoot, job("fin-b", "tax-hosts"))
-	if n := count(t, pool, `SELECT COUNT(*) FROM jobs WHERE name = 'fin-b' AND scope = 'tax-hosts'`); n != 1 {
-		t.Errorf("the global administrator's save did not take")
-	}
+	// ── A global administrator is refused either change too (§0a; until then
+	// theirs to make).
+	refused("a global administrator saving the job into TAX's scope", http.MethodPut, "/api/v1/jobs/"+id("jobs", "fin-b"), gRoot, job("fin-b", "tax-hosts"))
 }

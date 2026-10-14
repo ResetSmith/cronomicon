@@ -1125,6 +1125,7 @@ func TestGC_ARunsTargetHostMustBeInTheScope(t *testing.T) {
 	// The composer refuses to author one, and accepts a host of the scope.
 	exec(`INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
 	      VALUES ('say-hi','bash','true','ssh','h1','scripts/say-hi.yaml','2026-01-01T00:00:00Z')`)
+	agenciesGetTheirOwnRepository(t, pool)
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin,
 		`{"name":"fin-new","scriptRef":"say-hi","scope":"fin-hosts","targetHost":"tax01"}`)
 	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_membership") {

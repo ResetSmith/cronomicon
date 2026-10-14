@@ -81,14 +81,27 @@ func TestScheduledFireOfAStrandedJobIsRecordedNotEnqueued(t *testing.T) {
 		t.Errorf("skipped rows after two refused fires of one day = %d, want 1", n)
 	}
 
-	// Global's repository's job on the same scope is nobody's to refuse.
+	// Global's repository's job on an agency's scope is refused the same way
+	// (§0a, IN-3; until then it was nobody's to refuse), and with no scope it
+	// is Global's and fires.
 	seedJobRow(t, pool, "of-global", 1)
 	if _, err := pool.Exec(`UPDATE jobs SET repo_id = 'global', scope = 'fin-hosts' WHERE name = 'of-global'`); err != nil {
 		t.Fatal(err)
 	}
 	s.fire("git", "of-global", "uid-of-global", "bash", "fin-hosts", "Allow", "", "nightly", "")
-	if n := runsOf(t, pool, "of-global", "queued"); n != 1 {
-		t.Errorf("queued runs of Global's repository's job = %d, want 1", n)
+	if n := runsOf(t, pool, "of-global", "queued"); n != 0 {
+		t.Errorf("queued runs of Global's repository's job on an agency's scope = %d, want 0", n)
+	}
+	if n := runsOf(t, pool, "of-global", "skipped"); n != 1 {
+		t.Errorf("skipped runs of Global's repository's job on an agency's scope = %d, want 1", n)
+	}
+	seedJobRow(t, pool, "of-global-free", 1)
+	if _, err := pool.Exec(`UPDATE jobs SET repo_id = 'global', scope = NULL WHERE name = 'of-global-free'`); err != nil {
+		t.Fatal(err)
+	}
+	s.fire("git", "of-global-free", "uid-of-global-free", "bash", "", "Allow", "", "nightly", "")
+	if n := runsOf(t, pool, "of-global-free", "queued"); n != 1 {
+		t.Errorf("queued runs of Global's repository's job with no scope = %d, want 1", n)
 	}
 }
 
@@ -165,14 +178,14 @@ func TestParkedRunOfAStrandedJobIsMissedNotEnqueued(t *testing.T) {
 
 // GR-16 (2.4.0) in the reaction engine: by NAME, a reaction to a Git
 // definition fires on the definition of that name in its owner's own
-// repository, else on Global's, and on no other repository's.
+// repository, and on no other repository's (until §0a, then on Global's).
 //
 // A reaction has no usable upstream identity when its upstream had not synced
 // when it was written, or was pruned and has returned. Until Phase R4 it then
 // fired on "the one live definition of that name, wherever it is": a reaction
 // in one agency's repository fired on ANOTHER agency's job whenever that was
 // the only one of the name.
-func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionThenGlobals(t *testing.T) {
+func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionOnly(t *testing.T) {
 	pool := mustPool(t)
 	s := New(pool, quietLog(), nil)
 	exec := func(q string, a ...any) {
@@ -235,21 +248,22 @@ func TestAReactionByNameFiresOnItsOwnRepositorysDefinitionThenGlobals(t *testing
 	finish("n-c")
 	expect("only another agency's nightly", map[string]int{"after-b": 0, "after-app": 0, "after-g": 0})
 
-	// Global's repository gets one. Its run fires all three (theirs then
-	// Global's; Global's own); the other agency's run still fires none.
+	// Global's repository gets one. Its run fires Global's reaction only
+	// (§0a, IN-8; until then the agency's two fired too, Global's being their
+	// second home); the other agency's run still fires none.
 	job("n-g", "nightly", "git", "global", nil)
 	finish("n-g")
-	expect("Global's nightly ran", map[string]int{"after-b": 1, "after-app": 1, "after-g": 1})
+	expect("Global's nightly ran", map[string]int{"after-b": 0, "after-app": 0, "after-g": 1})
 	finish("n-c")
-	expect("the other agency's nightly ran again", map[string]int{"after-b": 1, "after-app": 1, "after-g": 1})
+	expect("the other agency's nightly ran again", map[string]int{"after-b": 0, "after-app": 0, "after-g": 1})
 
-	// repo-b gets its own. Now its own comes first for repo-b's reaction and
-	// for the in-app job of repo-b's agency; Global's reaction still means Global's.
+	// repo-b gets its own: it fires repo-b's reaction and the in-app job of
+	// repo-b's agency; Global's reaction still means Global's.
 	job("n-b", "nightly", "git", "repo-b", nil)
 	finish("n-g")
-	expect("Global's nightly ran, repo-b having its own", map[string]int{"after-b": 1, "after-app": 1, "after-g": 2})
+	expect("Global's nightly ran, repo-b having its own", map[string]int{"after-b": 0, "after-app": 0, "after-g": 2})
 	finish("n-b")
-	expect("repo-b's nightly ran", map[string]int{"after-b": 2, "after-app": 2, "after-g": 2})
+	expect("repo-b's nightly ran", map[string]int{"after-b": 1, "after-app": 1, "after-g": 2})
 }
 
 // With ONLY Global's repository the reaction engine's name rule is the one it
@@ -365,12 +379,12 @@ func TestAReactionByNameResolvesWorkflowsTheSameWay(t *testing.T) {
 	expect("only another agency's nightly", map[string]int{"after-b": 0, "after-app": 0, "after-g": 0})
 	wf("n-g", "nightly", "git", "global", "global")
 	finish("n-g")
-	expect("Global's nightly ran", map[string]int{"after-b": 1, "after-app": 1, "after-g": 1})
+	expect("Global's nightly ran", map[string]int{"after-b": 0, "after-app": 0, "after-g": 1}) // §0a: Global's only
 	wf("n-b", "nightly", "git", "repo-b", "ag-b")
 	finish("n-g")
-	expect("Global's nightly ran, repo-b having its own", map[string]int{"after-b": 1, "after-app": 1, "after-g": 2})
+	expect("Global's nightly ran, repo-b having its own", map[string]int{"after-b": 0, "after-app": 0, "after-g": 2})
 	finish("n-b")
-	expect("repo-b's nightly ran", map[string]int{"after-b": 2, "after-app": 2, "after-g": 2})
+	expect("repo-b's nightly ran", map[string]int{"after-b": 1, "after-app": 1, "after-g": 2})
 }
 
 // A job built in the app whose scope several agencies share is Global's for

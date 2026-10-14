@@ -53,21 +53,17 @@ func TestAWorkflowBelongsToTheAgencyOfItsJobs(t *testing.T) {
 		t.Errorf("a workflow of FIN's jobs is %q's, want ag:FIN's", got)
 	}
 
-	// Two agencies' jobs: not for somebody who administers both, directly or
-	// through a sub-workflow.
+	// Two agencies' jobs, directly or through a sub-workflow: refused for
+	// everyone, a global administrator included (§0a, IN-8; until then the
+	// global administrator saved it, and it was Global's).
 	for name, body := range map[string]string{"span-flow": spanning, "span-child-flow": viaChild} {
-		if code := post(both, body, name); code != http.StatusForbidden {
-			t.Errorf("an administrator of both agencies saving %s = %d, want 403", name, code)
-		}
-		if got := owner(name); got != "(not saved)" {
-			t.Errorf("the refused workflow %s was saved, as %q's", name, got)
-		}
-		// A global administrator saves it, and it is Global's.
-		if code := post(gRoot, body, name); code/100 != 2 {
-			t.Errorf("a global administrator saving %s = %d, want 2xx", name, code)
-		}
-		if got := owner(name); got != "global" {
-			t.Errorf("the workflow %s, whose jobs are two agencies', is %q's, want Global's", name, got)
+		for who, as := range map[string]string{both: "an administrator of both agencies", gRoot: "a global administrator"} {
+			if code := post(who, body, name); code != http.StatusConflict {
+				t.Errorf("%s saving %s = %d, want 409", as, name, code)
+			}
+			if got := owner(name); got != "(not saved)" {
+				t.Errorf("the refused workflow %s was saved, as %q's", name, got)
+			}
 		}
 	}
 
@@ -77,16 +73,19 @@ func TestAWorkflowBelongsToTheAgencyOfItsJobs(t *testing.T) {
 		t.Errorf("a workflow of an unscoped job: %d, %q's; want saved, Global's", code, owner("free-flow"))
 	}
 	// An agency's job beside an unscoped one is two agencies': the unscoped
-	// job is Global's, so the workflow is not that agency's.
-	if code := post(gRoot, withFree, "fin-and-free-flow"); code/100 != 2 || owner("fin-and-free-flow") != "global" {
-		t.Errorf("a workflow of FIN's job and an unscoped job: %d, %q's; want saved, Global's", code, owner("fin-and-free-flow"))
+	// job is Global's, so the workflow spans, and is refused (§0a).
+	if code := post(gRoot, withFree, "fin-and-free-flow"); code != http.StatusConflict || owner("fin-and-free-flow") != "(not saved)" {
+		t.Errorf("a workflow of FIN's job and an unscoped job: %d, %q's; want 409, not saved", code, owner("fin-and-free-flow"))
 	}
 	if code := post(gFinAdmin, empty, "empty-flow"); code/100 != 2 || owner("empty-flow") != "global" {
 		t.Errorf("a workflow with no steps: %d, %q's; want saved, Global's", code, owner("empty-flow"))
 	}
 
 	// The owner follows the steps: saved again with one agency's jobs, the
-	// spanning workflow is that agency's.
+	// spanning workflow is that agency's. (It is seeded as an upgrade leaves
+	// one: nobody saves one since §0a.)
+	exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency)
+	      VALUES ('wf-span', 'span-flow', 'cronomicon', '[{"type":"job","name":"fin-job"},{"type":"job","name":"tax-job"}]', 1, 't', 'global')`)
 	id := rowID(t, pool, `SELECT rowid FROM workflows WHERE name = 'span-flow'`)
 	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+id, gRoot, fmt.Sprintf(oneAgency, "span-flow")); rec.Code/100 != 2 {
 		t.Fatalf("saving the workflow again with one agency's jobs = %d (%s)", rec.Code, rec.Body)
@@ -97,8 +96,8 @@ func TestAWorkflowBelongsToTheAgencyOfItsJobs(t *testing.T) {
 	// And the other way: FIN's workflow edited to span is refused for an
 	// administrator of both, and stays FIN's.
 	fin := rowID(t, pool, `SELECT rowid FROM workflows WHERE name = 'fin-flow'`)
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+fin, both, fmt.Sprintf(spanning, "fin-flow")); rec.Code != http.StatusForbidden {
-		t.Errorf("an administrator of both agencies making FIN's workflow span = %d, want 403 (%s)", rec.Code, rec.Body)
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+fin, both, fmt.Sprintf(spanning, "fin-flow")); rec.Code != http.StatusConflict {
+		t.Errorf("an administrator of both agencies making FIN's workflow span = %d, want 409 (%s)", rec.Code, rec.Body)
 	}
 	if got := owner("fin-flow"); got != "ag:FIN" {
 		t.Errorf("after the refused edit the workflow is %q's", got)

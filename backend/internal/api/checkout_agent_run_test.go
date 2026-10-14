@@ -16,11 +16,14 @@ import (
 func TestRunOfAProjectJobWithNoCheckoutAgentIsRefused(t *testing.T) {
 	h, pool := gateServer(t) // fin-hosts is FIN's
 	exec := mustExec(t, pool)
-	exec(`UPDATE git_repos SET last_sha = '1111111111111111111111111111111111111111' WHERE id = 'global'`)
+	// FIN's repository's jobs on FIN's scope (§0a: a job of Global's
+	// repository on FIN's scope is refused before this is asked).
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch, last_sha)
+	      VALUES ('repo-fin', 'ag:FIN', 'https://git.example/fin.git', 'main', '1111111111111111111111111111111111111111')`)
 	exec(`INSERT INTO jobs (uid, name, source, run_type, script_path, project_root, scope, enabled, synced_at, repo_id)
-	      VALUES ('j-proj', 'proj-job', 'git', 'ansible', 'scripts/proj/site.yml', 'scripts/proj', 'fin-hosts', 1, 't', 'global')`)
+	      VALUES ('j-proj', 'proj-job', 'git', 'ansible', 'scripts/proj/site.yml', 'scripts/proj', 'fin-hosts', 1, 't', 'repo-fin')`)
 	exec(`INSERT INTO jobs (uid, name, source, run_type, command, scope, enabled, synced_at, repo_id)
-	      VALUES ('j-body', 'body-job', 'git', 'bash', 'echo hi', 'fin-hosts', 1, 't', 'global')`)
+	      VALUES ('j-body', 'body-job', 'git', 'bash', 'echo hi', 'fin-hosts', 1, 't', 'repo-fin')`)
 	path := runPath(t, pool, "proj-job")
 	runs := func(job string) int {
 		t.Helper()

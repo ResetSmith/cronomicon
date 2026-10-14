@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -491,15 +492,14 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	// Resolve + denormalize the referenced Git Script (Decision 7).
 	//
 	// A name is unique per repository (1290). Which repository an in-app job's
-	// name means is GR-16's rule: the repository of the job's agency, then
-	// Global's, and never another agency's. The job's agency is its scope's.
+	// name means: the repository of the job's agency, and no other (§0a, IN-8;
+	// from GR-16 until then, Global's next). The job's agency is its scope's.
 	home := s.scopeRepo(r.Context(), in.scopeOf())
 	var sc composeScript
 	var command, script, scriptPath, executor, projectRoot sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
 		`SELECT uid, run_type, command, script, script_path, executor, content_hash, project_root
-		   FROM scripts WHERE name = ?1 AND repo_id IN (?2, ?3)
-		  ORDER BY (repo_id = ?2) DESC LIMIT 1`, in.ScriptRef, home, repoid.Global).
+		   FROM scripts WHERE name = ?1 AND repo_id = ?2`, in.ScriptRef, home).
 		Scan(&sc.uid, &sc.runType, &command, &script, &scriptPath, &executor, &sc.contentHash, &projectRoot)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scriptRef does not resolve to any script: "+in.ScriptRef)
@@ -994,17 +994,22 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 		// been.
 		//
 		// Among Git's, GR-16 (2.4.0): the schedule of the definition's own
-		// agency's repository, then Global's, and never another agency's. Two
-		// repositories may each hold a schedule of the name, and until now this
-		// took whichever the query returned. (GR-16 as written also puts Git's
+		// agency's repository (then Global's, until §0a), and never another
+		// agency's. Two repositories may each hold a schedule of the name, and
+		// until then this took whichever the query returned. (GR-16 as written also puts Git's
 		// BEFORE the in-app one; that would reverse what a name has always meant
 		// here, and is left as it is until the owner says.)
+		//
+		// §0a (IN-8): Git's is the definition's own agency's repository's, and
+		// no other's. The in-app one is still any of the name: every schedule
+		// built in the app is Global's (the API makes no other owner), so
+		// confining it would leave an agency none (question 32).
 		err := s.db.QueryRowContext(ctx,
 			`SELECT uid, cron, env, start_at, end_at, interval, skip_calendars, only_calendars
 			   FROM schedules
 			  WHERE name = ?1 AND deleted_at IS NULL
-			    AND (source = 'cronomicon' OR COALESCE(repo_id, ?3) IN (?2, ?3))
-			  ORDER BY (source = 'cronomicon') DESC, (COALESCE(repo_id, ?3) = ?2) DESC LIMIT 1`, ref, home, repoid.Global).
+			    AND (source = 'cronomicon' OR COALESCE(repo_id, ?3) = ?2)
+			  ORDER BY (source = 'cronomicon') DESC LIMIT 1`, ref, home, repoid.Global).
 			Scan(&refUID, &cron, &envJSON, &refStart, &refEnd, &refInterval, &refSkip, &refOnly)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "scheduleRef does not resolve to any schedule: " + ref
@@ -1134,12 +1139,16 @@ func nullIfZeroInt(v int) any {
 }
 
 // agencyRepo is the repository of an agency: the one its definitions' names
-// are looked up in first (GR-16). Global's when the agency has none of its
-// own, which is every agency until one connects a repository.
+// are looked up in (GR-16). Global's for Global. "" for an agency that has
+// none, whose definitions find no Git name (§0a, IN-8: until then Global's
+// stood in for it; I3 gives every agency a repository).
 func (s *Server) agencyRepo(ctx context.Context, agencyID string) string {
-	var repo string
-	if err := s.db.QueryRowContext(ctx, `SELECT id FROM git_repos WHERE agency_id = ?`, agencyID).Scan(&repo); err != nil || repo == "" {
+	if agencyID == agencyid.Global {
 		return repoid.Global
+	}
+	var repo string
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM git_repos WHERE agency_id = ?`, agencyID).Scan(&repo); err != nil {
+		return ""
 	}
 	return repo
 }

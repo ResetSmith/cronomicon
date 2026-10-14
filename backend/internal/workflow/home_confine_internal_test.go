@@ -45,14 +45,20 @@ func TestAStepOfAnAgencysWorkflowRunsOnThatAgencysScopesOnly(t *testing.T) {
 			t.Errorf("an agency's workflow running Global's %s: %q, %q; want it failed with %q", step, status, reason, runref.ReasonWorkflowScopeMismatch)
 		}
 	}
-	// Global's job on the agency's OWN scope is what GR-16 is for.
-	if status, reason := run(parentB, "patch-b"); status == "failure" || strings.HasPrefix(reason, "Refused") {
-		t.Errorf("an agency's workflow running Global's job on its own scope: %q, %q; want it queued", status, reason)
+	// §0a (IN-3, IN-8): Global's job on the agency's own scope was what GR-16
+	// was for. Now it is refused: a Global job is confined to Global's scopes,
+	// and an agency's workflow runs its own agency's jobs only.
+	if status, reason := run(parentB, "patch-b"); status != "failure" || !strings.HasPrefix(reason, "Refused") {
+		t.Errorf("an agency's workflow running Global's job on its own scope: %q, %q; want it refused", status, reason)
 	}
-	// Global's repository's workflow runs on any scope, as before.
+	// Global's repository's workflow is confined too (until §0a it ran on any
+	// scope): Global's job on an agency's scope is refused, on none it runs.
 	f.exec(`DELETE FROM runs`)
-	if status, reason := run(parentG, "patch-c"); status == "failure" || strings.HasPrefix(reason, "Refused") {
-		t.Errorf("Global's workflow running Global's job on an agency's scope: %q, %q; want it queued", status, reason)
+	if status, reason := run(parentG, "patch-c"); status != "failure" || !strings.HasPrefix(reason, "Refused") {
+		t.Errorf("Global's workflow running Global's job on an agency's scope: %q, %q; want it refused", status, reason)
+	}
+	if status, reason := run(parentG, "patch-all"); status == "failure" || strings.HasPrefix(reason, "Refused") {
+		t.Errorf("Global's workflow running Global's job with no scope: %q, %q; want it queued", status, reason)
 	}
 }
 

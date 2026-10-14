@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/reaction"
@@ -706,54 +708,81 @@ func (s *Server) definitionExists(r *http.Request, ref reactionRef) (bool, error
 }
 
 // upstreamExistsFor is definitionExists as the reaction's OWNER would find the
-// upstream (2.4.0, GR-16). A definition built in the app is found by its name,
-// as before. A Git one is the owner's repository's, then Global's: the owner's
-// repository is a Git owner's own, and for an owner built in the app the
-// repository of its agency. This is the question the engine asks when the
-// upstream finishes, so "missing" here is "will not fire".
+// upstream: a definition of the owner's agency, and no other's (§0a, IN-8). A
+// Git one is of the owner agency's repository (from GR-16 until §0a, Global's
+// next); one built in the app is the owner agency's (until §0a, any of the
+// name). This is the question the engine asks when the upstream finishes, so
+// "missing" here is "will not fire".
 func (s *Server) upstreamExistsFor(r *http.Request, owner, upstream reactionRef) (bool, error) {
-	if upstream.Source != "git" {
-		return s.definitionExists(r, upstream)
-	}
-	home := repoid.Global
-	ownerTable := "jobs"
-	if owner.Kind == "workflow" {
-		ownerTable = "workflows"
-	}
-	if owner.Source == "git" {
-		var repo sql.NullString
-		//nolint:gosec // the table is one of two literals
-		_ = s.db.QueryRowContext(r.Context(),
-			"SELECT repo_id FROM "+ownerTable+" WHERE source = 'git' AND name = ? ORDER BY rowid LIMIT 1", owner.Name).Scan(&repo)
-		if repo.Valid && repo.String != "" {
-			home = repo.String
-		}
-	} else if owner.Kind == "workflow" {
-		var agency sql.NullString
-		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT owner_agency FROM workflows WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&agency)
-		if agency.Valid {
-			home = s.agencyRepo(r.Context(), agency.String)
-		}
-	} else {
-		var scope sql.NullString
-		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT scope FROM jobs WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&scope)
-		home = s.scopeRepo(r.Context(), scope.String)
-	}
-	table := "jobs"
-	if upstream.Kind == "workflow" {
-		table = "workflows"
-	}
+	agency := s.reactionOwnerAgency(r.Context(), owner)
 	var one int
-	//nolint:gosec // the table is one of two literals
-	err := s.db.QueryRowContext(r.Context(),
-		"SELECT 1 FROM "+table+" WHERE source = 'git' AND name = ? AND deleted_at IS NULL AND COALESCE(repo_id, ?) IN (?, ?) LIMIT 1",
-		upstream.Name, repoid.Global, home, repoid.Global).Scan(&one)
+	var err error
+	switch {
+	case upstream.Source == "git":
+		table := "jobs"
+		if upstream.Kind == "workflow" {
+			table = "workflows"
+		}
+		//nolint:gosec // the table is one of two literals
+		err = s.db.QueryRowContext(r.Context(),
+			"SELECT 1 FROM "+table+" WHERE source = 'git' AND name = ? AND deleted_at IS NULL AND COALESCE(repo_id, ?) = ? LIMIT 1",
+			upstream.Name, repoid.Global, s.agencyRepo(r.Context(), agency)).Scan(&one)
+	case upstream.Kind == "workflow":
+		err = s.db.QueryRowContext(r.Context(),
+			`SELECT 1 FROM workflows WHERE source = ? AND name = ? AND deleted_at IS NULL AND owner_agency = ? LIMIT 1`,
+			upstream.Source, upstream.Name, agency).Scan(&one)
+	default:
+		err = s.db.QueryRowContext(r.Context(),
+			`SELECT 1 FROM jobs WHERE source = ? AND name = ? AND deleted_at IS NULL AND `+inAppJobAgencySQL+` = ? LIMIT 1`,
+			upstream.Source, upstream.Name, agency).Scan(&one)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// inAppJobAgencySQL is the agency of the row `jobs`: its scope's, when one
+// agency alone owns it, and Global's otherwise (no scope, or one several
+// share), as its runs are.
+const inAppJobAgencySQL = `COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+	FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = jobs.scope), '` + agencyid.Global + `')`
+
+// reactionOwnerAgency is the agency of a reaction's owner: a Git owner's
+// repository's, a workflow built in the app's owner, a job built in the app's
+// scope's (Global's for none).
+func (s *Server) reactionOwnerAgency(ctx context.Context, owner reactionRef) string {
+	agency := agencyid.Global
+	switch {
+	case owner.Source == "git":
+		table := "jobs"
+		if owner.Kind == "workflow" {
+			table = "workflows"
+		}
+		var a sql.NullString
+		//nolint:gosec // the table is one of two literals
+		_ = s.db.QueryRowContext(ctx,
+			"SELECT g.agency_id FROM "+table+" d JOIN git_repos g ON g.id = COALESCE(d.repo_id, ?) WHERE d.source = 'git' AND d.name = ? ORDER BY d.rowid LIMIT 1",
+			repoid.Global, owner.Name).Scan(&a)
+		if a.Valid {
+			agency = a.String
+		}
+	case owner.Kind == "workflow":
+		var a sql.NullString
+		_ = s.db.QueryRowContext(ctx,
+			`SELECT owner_agency FROM workflows WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&a)
+		if a.Valid {
+			agency = a.String
+		}
+	default:
+		var a sql.NullString
+		_ = s.db.QueryRowContext(ctx,
+			`SELECT `+inAppJobAgencySQL+` FROM jobs WHERE source = 'cronomicon' AND name = ? ORDER BY rowid LIMIT 1`, owner.Name).Scan(&a)
+		if a.Valid {
+			agency = a.String
+		}
+	}
+	return agency
 }
 
 // definitionReadable answers §2.9's can-the-author-see-it question against the

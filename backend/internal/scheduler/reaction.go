@@ -254,17 +254,20 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 	return out
 }
 
-// reactionHomeSQL is the repository a reaction's names are looked up in first
+// reactionHomeSQL is the repository a reaction's names are looked up in
 // (GR-16), as an expression over the row `reactions`: the repository of a Git
-// owner; for an owner built in the app, the repository of its agency (a job's
-// scope's one agency, a workflow's owner). Global's when there is none to say.
-const reactionHomeSQL = `COALESCE(
+// owner (Global's for a row with none); for an owner built in the app, the
+// repository of its agency (a job's scope's one agency, Global's for a job
+// with no scope or one several share; a workflow's owner). NULL for an agency
+// that has no repository, whose reactions find no Git name (§0a, IN-8: until
+// then Global's stood in for it).
+const reactionHomeSQL = `(
 	CASE WHEN reactions.owner_source = 'git' THEN
 	          CASE reactions.owner_kind
-	            WHEN 'job' THEN (SELECT repo_id FROM jobs      WHERE uid = reactions.owner_uid)
-	            ELSE            (SELECT repo_id FROM workflows WHERE uid = reactions.owner_uid)
+	            WHEN 'job' THEN (SELECT COALESCE(repo_id, 'global') FROM jobs      WHERE uid = reactions.owner_uid)
+	            ELSE            (SELECT COALESCE(repo_id, 'global') FROM workflows WHERE uid = reactions.owner_uid)
 	          END
-	     ELSE (SELECT g.id FROM git_repos g WHERE g.agency_id =
+	     ELSE (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
 	          CASE reactions.owner_kind
 	            WHEN 'job' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 	                               FROM jobs j
@@ -272,12 +275,12 @@ const reactionHomeSQL = `COALESCE(
 	                               JOIN scope_agencies sa ON sa.scope_id = sc.id
 	                              WHERE j.uid = reactions.owner_uid)
 	            ELSE            (SELECT owner_agency FROM workflows WHERE uid = reactions.owner_uid)
-	          END)
-	END, 'global')`
+	          END, 'global'))
+	END)`
 
 // reactionUpstreamByNameSQL is the uid of the Git definition a reaction's
 // upstream NAME means: the live one of that name in the reaction's home, else
-// in Global's repository, else NULL.
+// NULL (§0a, IN-8; from GR-16 until then, Global's repository's next).
 const reactionUpstreamByNameSQL = ReactionUpstreamByNameSQL
 
 // ReactionUpstreamByNameSQL is exported for the one other place that must
@@ -286,16 +289,12 @@ const reactionUpstreamByNameSQL = ReactionUpstreamByNameSQL
 // pinned a different definition than the engine would find by the name would
 // be the engine's rule defeated at the door.
 const ReactionUpstreamByNameSQL = `(CASE reactions.on_kind
-	WHEN 'job' THEN COALESCE(
+	WHEN 'job' THEN
 	    (SELECT uid FROM jobs WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
-	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `),
-	    (SELECT uid FROM jobs WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
-	        AND COALESCE(repo_id, 'global') = 'global'))
-	ELSE COALESCE(
+	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `)
+	ELSE
 	    (SELECT uid FROM workflows WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
-	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `),
-	    (SELECT uid FROM workflows WHERE source = 'git' AND name = reactions.on_name AND deleted_at IS NULL
-	        AND COALESCE(repo_id, 'global') = 'global'))
+	        AND COALESCE(repo_id, 'global') = ` + reactionHomeSQL + `)
 	END)`
 
 // deliverEvent matches one event against every reaction watching it, and
@@ -331,9 +330,9 @@ func (s *Scheduler) deliverEvent(ctx context.Context, ev srcEvent, now time.Time
 		   -- each hold a "nightly", and a reaction in one agency's repository
 		   -- must not fire on another agency's. The name resolves where every
 		   -- other reference of the reaction's owner does: in the owner's own
-		   -- repository, then in Global's. So by name a reaction fires on THAT
-		   -- definition's runs and on no other's, however many repositories
-		   -- hold the name, and on nobody's when neither of the two does. (A
+		   -- repository (until §0a, then in Global's). So by name a reaction
+		   -- fires on THAT definition's runs and on no other's, however many
+		   -- repositories hold the name, and on nobody's when it does not. (A
 		   -- run from before a run recorded its definition keeps the older
 		   -- rule: there is nothing to compare.)
 		   --
@@ -485,6 +484,16 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 	if !r.enabled {
 		return "suppressed_disabled", "the reaction is disabled"
 	}
+	// §0a (IN-8): a reaction watches its own agency's definitions. One that
+	// watches another agency's (written before §0a, or left by a scope given
+	// to another agency) does not fire, and says why (open point 1). Recorded
+	// as an error: the result's list is a table constraint, and this is not a
+	// switch anybody turned.
+	if other, err := s.reactionCrossesAgencies(ctx, ev, r); err != nil {
+		s.log.Error("reactor: compare the reaction's agency with its upstream's", "reaction", r.name, "err", err)
+	} else if other {
+		return "error", ReasonReactionOtherAgency
+	}
 	if now.Sub(ev.completedAt) > reactionMissGrace {
 		return "expired", fmt.Sprintf("upstream finished %s ago, past the %s catch-up grace",
 			now.Sub(ev.completedAt).Truncate(time.Minute), reactionMissGrace)
@@ -532,6 +541,31 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 		}
 	}
 	return "fired", ""
+}
+
+// ReasonReactionOtherAgency is a delivery's detail when the reaction watches
+// another agency's definition.
+const ReasonReactionOtherAgency = "Refused: this reaction watches another agency's definition: a reaction watches its own agency's definitions only"
+
+// reactionCrossesAgencies reports whether a reaction's owner and the
+// definition whose run it was matched to are two agencies' definitions. False
+// when either cannot be told (a run that records no definition, an owner with
+// no identity, a row that is gone): there is then nothing to compare.
+func (s *Scheduler) reactionCrossesAgencies(ctx context.Context, ev srcEvent, r reactionRow) (bool, error) {
+	if ev.uid == "" || r.ownerUID == "" {
+		return false, nil
+	}
+	var owner, upstream sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, r.ownerUID, r.ownerKind).Scan(&owner); err != nil {
+		return false, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT `+runref.DefinitionAgencySQL, ev.uid, ev.kind).Scan(&upstream); err != nil {
+		return false, err
+	}
+	if !owner.Valid || !upstream.Valid {
+		return false, nil
+	}
+	return owner.String != upstream.String, nil
 }
 
 // fireReaction resolves a decided reaction into a pending_runs row.
