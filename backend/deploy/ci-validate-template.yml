@@ -72,6 +72,10 @@ validate-job-definitions:
   script:
     - |
       set -eu
+      case "$CRONOMICON_REPO_KIND" in
+        global|agency) ;;
+        *) echo "CRONOMICON_REPO_KIND must be \"global\" or \"agency\", not \"$CRONOMICON_REPO_KIND\"" >&2; exit 2 ;;
+      esac
       flags=""
       if [ -n "${CRONOMICON_LIBRARY_URL:-}" ]; then
         auth=""

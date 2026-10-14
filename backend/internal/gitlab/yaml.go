@@ -946,7 +946,12 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 
 	// 1. scripts/ — collect declared names (and flag duplicates).
 	scriptNames := map[string]bool{}
-	scripts, sErrs := discoverScripts(filepath.Join(dir, "scripts"))
+	// Every file is read as sync reads its clone (containedReader): a symbolic
+	// link that leads out of the checkout, or into its .git, is not followed,
+	// and is the error it is at sync. (Until the review of R7 the validator
+	// followed one, and passed what sync refuses.)
+	read := containedReader(dir)
+	scripts, sErrs := discoverScriptsWith(filepath.Join(dir, "scripts"), read)
 	for _, se := range sErrs {
 		if ve, ok := se.(ValidationError); ok {
 			errs = append(errs, ve)
@@ -972,7 +977,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 		// script's `executor` was the one a job that referenced it ran under.
 		if strings.TrimSpace(sc.Spec.Executor) != "" {
 			path := filepath.Join(dir, sc.SourcePath)
-			if data, rErr := os.ReadFile(path); rErr == nil { //nolint:gosec // a sidecar discoverScripts found under dir
+			if data, rErr := read(path); rErr == nil {
 				warnings = append(warnings, retiredJobKeyWarnings(path, data)...)
 			}
 		}
@@ -1003,7 +1008,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 	// read the top level only, so a definition in a sub-folder was synced and
 	// never validated.
 	walk := func(sub string) ([]manifestFile, error) {
-		files, werrs := walkManifests(filepath.Join(dir, sub), os.ReadFile)
+		files, werrs := walkManifests(filepath.Join(dir, sub), read)
 		for _, we := range werrs {
 			errs = append(errs, ValidationError{File: filepath.Join(dir, sub), Message: we.Error()})
 		}
@@ -1240,7 +1245,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 	// pragma and the sidecar beside it are resolved together. The TOP LEVEL
 	// only, as sync reads it: a file in a sub-folder of inventory/ is never a
 	// scope, and is said to be one that sync does not read.
-	invErrs, invWarnings, ownScopes, invErr := validateInventoryDir(filepath.Join(dir, "inventory"))
+	invErrs, invWarnings, ownScopes, invErr := validateInventoryDir(dir, read)
 	if invErr != nil {
 		return nil, nil, invErr
 	}
@@ -1300,8 +1305,16 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 //
 // scopes is the names of the scopes the directory supplies: the .ini files
 // sync would accept as one (a file refused for a secret is not).
-func validateInventoryDir(dir string) (errs, warnings []ValidationError, scopes map[string]bool, err error) {
+func validateInventoryDir(root string, read fileReader) (errs, warnings []ValidationError, scopes map[string]bool, err error) {
 	scopes = map[string]bool{}
+	dir := filepath.Join(root, "inventory")
+	// inventory/ itself may be a link: sync refuses one that leads out of the
+	// repository, or into its .git, before listing it (parseInventories).
+	if fi, lerr := os.Lstat(dir); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if cerr := directoryInside(root, dir); cerr != nil {
+			return []ValidationError{{File: dir, Message: cerr.Error()}}, nil, scopes, nil
+		}
+	}
 	entries, rerr := os.ReadDir(dir)
 	if rerr != nil {
 		if os.IsNotExist(rerr) {
@@ -1330,14 +1343,21 @@ func validateInventoryDir(dir string) (errs, warnings []ValidationError, scopes 
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, derr := os.ReadFile(path)
+		data, derr := read(path)
 		if derr != nil {
-			errs = append(errs, ValidationError{File: path, Message: derr.Error()})
+			// Sync skips a sidecar it cannot read, in silence: so does this,
+			// aloud.
+			warnings = append(warnings, ValidationError{File: path,
+				Message: "cannot be read (" + derr.Error() + "): Git sync ignores it"})
 			continue
 		}
 		var sc sidecarYAML
 		if yerr := yaml.Unmarshal(data, &sc); yerr != nil {
-			errs = append(errs, ValidationError{File: path, Message: "not YAML: " + yerr.Error()})
+			// A WARNING: sync skips a sidecar that is not YAML and takes the
+			// scope's owner and description from its pragma alone, and an error
+			// would fail CI on what sync accepts (found by the review of R7).
+			warnings = append(warnings, ValidationError{File: path,
+				Message: "is not YAML (" + yerr.Error() + "): Git sync ignores it, and the scope's owner and description come from its pragma alone"})
 			continue
 		}
 		base := strings.TrimSuffix(e.Name(), ".cronomicon.yaml")
@@ -1349,7 +1369,7 @@ func validateInventoryDir(dir string) (errs, warnings []ValidationError, scopes 
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, derr := os.ReadFile(path)
+		data, derr := read(path)
 		if derr != nil {
 			errs = append(errs, ValidationError{File: path, Message: derr.Error()})
 			continue
@@ -1398,14 +1418,15 @@ func readLibrary(dir string) (*libraryIndex, error) {
 	l := &libraryIndex{names: map[string]map[string]bool{
 		"script": {}, "schedule": {}, "job": {}, "workflow": {},
 	}}
-	scripts, _ := discoverScripts(filepath.Join(dir, "scripts"))
+	read := containedReader(dir) // as sync reads Global's clone
+	scripts, _ := discoverScriptsWith(filepath.Join(dir, "scripts"), read)
 	for _, sc := range scripts {
 		if sc.Metadata.Name != "" {
 			l.names["script"][sc.Metadata.Name] = true
 		}
 	}
 	for kind, sub := range map[string]string{"schedule": "schedules", "job": "jobs", "workflow": "workflows"} {
-		files, _ := walkManifests(filepath.Join(dir, sub), os.ReadFile)
+		files, _ := walkManifests(filepath.Join(dir, sub), read)
 		for _, f := range files {
 			var doc struct {
 				Metadata struct {

@@ -1926,9 +1926,21 @@ func (s *Service) readCloned(path string) ([]byte, error) {
 // readClonedDir says where a directory of the clone really is, refusing one
 // that, with its links followed, is outside the clone or in its .git.
 func (s *Service) readClonedDir(dir string) (string, error) {
-	root, err := filepath.EvalSymlinks(s.cloneDir)
+	return resolveDirInside(s.cloneDir, dir)
+}
+
+// directoryInside is readClonedDir's question for any checkout, `cronomicon
+// validate`'s included: nil when dir, with its links followed, is inside root
+// and not in its .git.
+func directoryInside(root, dir string) error {
+	_, err := resolveDirInside(root, dir)
+	return err
+}
+
+func resolveDirInside(cloneDir, dir string) (string, error) {
+	root, err := filepath.EvalSymlinks(cloneDir)
 	if err != nil {
-		root = s.cloneDir
+		root = cloneDir
 	}
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
