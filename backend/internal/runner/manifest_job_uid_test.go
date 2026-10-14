@@ -133,9 +133,10 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 		t.Helper()
 		id := db.NewTraceID()
 		var scope any
-		// On the agency's scope for a pin to Global's repository as well: a
-		// project of Global's may be run on any agency's scope.
-		if repo != nil {
+		// On the agency's scope for a pin to the agency's repository; a pin to
+		// Global's is a Global run, on no scope (since §0a a project of Global's
+		// runs on Global's scopes only; until then on any agency's).
+		if repo != nil && repo != "global" {
 			scope = "a-hosts"
 		}
 		if _, err := svc.db.Exec(`

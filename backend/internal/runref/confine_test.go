@@ -76,9 +76,9 @@ func TestRepoScopeMismatch(t *testing.T) {
 		{"the same, found by name, another agency's scope", "", "cronomicon", "built-on-a", "b-hosts", true},
 		{"its name asked for as a Git job's", "", "git", "built-on-a", "b-hosts", false},
 		{"its name asked for with the default source", "", "", "built-on-a", "b-hosts", false},
-		{"built in the app on Global's script, another agency's scope", "j-app-g", "cronomicon", "built-on-global", "b-hosts", false},
+		{"built in the app on Global's script, another agency's scope", "j-app-g", "cronomicon", "built-on-global", "b-hosts", true}, // §0a, question 31; until then false
 		{"built in the app on Global's script, no scope", "j-app-g", "cronomicon", "built-on-global", "", false},
-		{"built in the app on Global's script, by name", "", "cronomicon", "built-on-global", "b-hosts", false},
+		{"built in the app on Global's script, by name", "", "cronomicon", "built-on-global", "b-hosts", true}, // §0a, question 31
 	} {
 		got, err := RepoScopeMismatch(ctx, f.pool, c.uid, c.src, c.name, c.scope)
 		if err != nil {

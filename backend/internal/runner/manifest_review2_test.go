@@ -63,14 +63,15 @@ func TestManifestRefusesARunPinnedToARepositoryItsScopeLeft(t *testing.T) {
 		t.Fatalf("on Finance's scope the pinned run was answered %d: %s", code, answer)
 	}
 
-	// The scope goes to Tax, and the job is joined to Global's script of the
-	// name, as a sync does for a job whose script has gone.
+	// The scope goes to Tax, and the job's script leaves Finance's repository:
+	// the job keeps an inline copy and is joined to no script, so its own check
+	// passes and what refuses the run is the pin. (Until §0a this joined the
+	// job to Global's script of the name; since then Global's script on Tax's
+	// scope is refused by the job's own check, question 31.)
 	exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-fin'`)
 	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-tax')`)
 	exec(`DELETE FROM scripts WHERE uid = 's-fin'`)
-	exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script, content_hash, synced_at) VALUES
-	        ('s-glob', 'global', 'run.sh', 'bash', 'echo global inline', 'h', 't')`)
-	exec(`UPDATE jobs SET script_uid = 's-glob', script = 'echo global inline', script_path = NULL, project_root = NULL WHERE uid = 'j-app'`)
+	exec(`UPDATE jobs SET script_uid = NULL, script = 'echo inline', script_path = NULL, project_root = NULL WHERE uid = 'j-app'`)
 	if stranded, err := runref.RepoScopeMismatch(context.Background(), svc.db, "j-app", "cronomicon", "app-job", "fin-hosts"); err != nil || stranded {
 		t.Fatalf("the job as it is now is refused (%v, %v): the fixture does not reach the pin's check", stranded, err)
 	}

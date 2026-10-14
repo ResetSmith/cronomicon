@@ -27,10 +27,11 @@ import (
 // the other's hosts. What a repository may reach is the rule, and it reaches a
 // job through its script as well as through its own file.
 //
-// A job of Global's repository is confined to Global's scopes, or none (a run
-// with no scope is Global's), since §0a (IN-3; until then it might name any
-// agency's). A job built in the app on Global's script or on none is not
-// confined by this (an agency's job on Global's script is question 31).
+// A job of Global's repository, and a job built in the app on Global's script,
+// are confined to Global's scopes, or none (a run with no scope is Global's),
+// since §0a (IN-3; until then the first might name any agency's scope, and the
+// second run on any; the second is the owner's yes to question 31). A job
+// built in the app on no script is not confined by this.
 
 // ReasonRepoScopeMismatch is what is stored (runs.queued_reason, a reaction's
 // delivery, a file sighting's refusal, a pending run's miss) and shown. A
@@ -70,16 +71,19 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
 		         WHERE sc.name = ?2 AND sa.agency_id = g.agency_id)`
 	// The third column says the row is Global's repository's: for it, a run
-	// with no scope is its own.
-	rows, err := database.QueryContext(ctx, counts+`, g.id = ?3
+	// with no scope is its own. The fourth, that it is a job built in the app
+	// on Global's script: for it a run is refused only on a scope that another
+	// agency holds (question 31), since a job on no scope, or on a scope that
+	// is not there, is Global's, as its runs are.
+	rows, err := database.QueryContext(ctx, counts+`, g.id = ?3, 0
 		  FROM jobs j JOIN git_repos g ON g.id = j.repo_id
 		 WHERE j.source = 'git'
 		   AND ((?1 <> '' AND j.uid = ?1) OR (?5 = 1 AND j.name = ?4))
-		UNION ALL`+counts+`, 0
+		UNION ALL`+counts+`, g.id = ?3, g.id = ?3
 		  FROM jobs j
 		  JOIN scripts s ON s.uid = j.script_uid
 		  JOIN git_repos g ON g.id = s.repo_id
-		 WHERE j.source <> 'git' AND g.id <> ?3
+		 WHERE j.source <> 'git'
 		   AND ((?1 <> '' AND j.uid = ?1) OR (?6 = 1 AND j.name = ?4 AND j.source = ?7))`,
 		jobUID, scope, repoid.Global, jobName, byNameGit, byNameApp, jobSource)
 	if err != nil {
@@ -88,11 +92,17 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 	defer rows.Close()
 	for rows.Next() {
 		var agencies, own int
-		var global bool
-		if err := rows.Scan(&agencies, &own, &global); err != nil {
+		var global, onGlobalScript bool
+		if err := rows.Scan(&agencies, &own, &global, &onGlobalScript); err != nil {
 			return false, err
 		}
 		if global && scope == "" {
+			continue
+		}
+		if onGlobalScript {
+			if agencies > 0 && (agencies != 1 || own != 1) {
+				return true, nil
+			}
 			continue
 		}
 		if scope == "" || agencies != 1 || own != 1 {
@@ -194,11 +204,13 @@ func StepOutsideWorkflowRepository(ctx context.Context, database *sql.DB, traceI
 // script meanwhile, while the pin still names the repository the agent is
 // about to be sent to.
 //
-// False for a run that is pinned to no repository or to Global's, and for a
-// repository that is no longer connected: the manifest has its own answer for
-// that one (no_checkout_repo), and there is then nowhere to send the agent.
+// False for a run that is pinned to no repository, and for a repository that
+// is no longer connected: the manifest has its own answer for that one
+// (no_checkout_repo), and there is then nowhere to send the agent. A pin to
+// Global's repository is asked too since §0a (question 31): Global's checkout
+// runs on Global's scopes only.
 func PinOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope string) (bool, error) {
-	if repoID == "" || repoID == repoid.Global {
+	if repoID == "" {
 		return false, nil
 	}
 	var there int

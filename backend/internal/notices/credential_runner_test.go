@@ -51,6 +51,37 @@ func TestI1_AJobBindingOnlyGlobalsSecretIsReported(t *testing.T) {
 	}
 }
 
+// An agency's job built in the app on a script of Global's repository is
+// reported to the agency (§0a; the owner's yes to question 31), and the notice
+// clears when the job is built on a script of its own. Global's own job on
+// Global's script is not reported.
+func TestI1_AnAgencysJobOnGlobalsScriptIsReported(t *testing.T) {
+	pool := open(t)
+	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-tax', 'Tax', 't')`)
+	mustExec(t, pool, `INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-tax', 'tax-hosts', 'cronomicon', 't')`)
+	mustExec(t, pool, `INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-tax', 'ag-tax')`)
+	mustExec(t, pool, `INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-tax', 'ag-tax', 'u', 'main')`)
+	mustExec(t, pool, `INSERT INTO scripts (uid, repo_id, name, run_type, command, content_hash, synced_at) VALUES
+	                   ('s-g', 'global', 'run.sh', 'bash', 'true', 'h', 't'), ('s-tax', 'repo-tax', 'run.sh', 'bash', 'true', 'h', 't')`)
+	mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, script_uid, synced_at) VALUES
+	                   ('j-tax', 'tax-job', 'cronomicon', 'bash', 'tax-hosts', 's-g', 't'), ('j-g', 'g-job', 'cronomicon', 'bash', NULL, 's-g', 't')`)
+	check := func() map[string]notices.Notice {
+		t.Helper()
+		if err := notices.RunChecks(context.Background(), pool); err != nil {
+			t.Fatalf("checks: %v", err)
+		}
+		return openOf(t, pool, notices.KindGlobalScriptJob)
+	}
+	got := check()
+	if n, ok := got["j-tax"]; len(got) != 1 || !ok || n.AgencyID != "ag-tax" || !strings.Contains(n.Detail, "tax-job") {
+		t.Fatalf("open notices = %v; want Tax's job alone, filed under Tax", got)
+	}
+	mustExec(t, pool, `UPDATE jobs SET script_uid = 's-tax' WHERE uid = 'j-tax'`)
+	if got := check(); len(got) != 0 {
+		t.Errorf("after Tax's job was built on Tax's script: %v", got)
+	}
+}
+
 // An agency the local runner served until 2.4.0 is told its shell jobs wait
 // for an agent of its own (§0a, IN-3), until one serves it.
 func TestI1_AnAgencyTheLocalRunnerServedIsTold(t *testing.T) {

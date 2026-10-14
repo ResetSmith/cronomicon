@@ -172,17 +172,14 @@ func TestGR4_GlobalsRepositoryBorrowsNothing(t *testing.T) {
 }
 
 // An in-app job that has lost its script is joined to a returning script of
-// that name in ITS agency's repository, then in Global's (Phase R4, GR-16).
-// An agency's repository joins only its own agency's in-app jobs; Global's
-// joins the others, and leaves a job whose own agency's repository has a
-// script of the name to that repository.
+// that name in ITS agency's repository, and in no other (§0a; the owner's yes
+// to question 31). An agency's repository joins only its own agency's in-app
+// jobs, and Global's only Global's (a job with no scope).
 //
 // Until Phase R4 only Global's repository joined anything, and joined every
-// in-app job of the name.
-//
-// §0a leaves this as it is for now: an agency's in-app job on Global's script
-// is question 31 (I1), and until it is answered this pins today's behaviour.
-func TestGR4_AnInAppJobIsRejoinedInItsAgencysRepositoryThenGlobals(t *testing.T) {
+// in-app job of the name; from R4 until §0a Global's joined the other
+// agencies' jobs too, when their own repository had no script of the name.
+func TestI1_AnInAppJobIsRejoinedInItsAgencysRepositoryOnly(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	grCommitFiles(t, repoA, remoteA, map[string]string{
 		"scripts/task.sh":        "#!/bin/bash\necho task-of-global\n",
@@ -224,24 +221,18 @@ func TestGR4_AnInAppJobIsRejoinedInItsAgencysRepositoryThenGlobals(t *testing.T)
 	grSync(t, a, "Global's repository")
 	for job, want := range map[string]string{
 		"j-global":  "global/task.sh",
-		"j-b":       "(none)", // its own agency's repository has a task.sh: that one's to join
-		"j-b-other": "global/only-global.sh",
+		"j-b":       "(none)", // the agency's: its own repository's to join
+		"j-b-other": "(none)", // the agency's: Global's script is not its (§0a; until then joined)
 	} {
 		if got := joined(job); got != want {
 			t.Errorf("after Global's sync %s is joined to %s, want %s", job, got, want)
 		}
 	}
 	// A join is said by the sync that makes it (2.4.0, with the owner's
-	// decision of 2026-10-13): a job built in the app runs its script as
-	// synced, so a job that had none did not run, and from here it runs this
-	// repository's script of the name. Global's sync joined two jobs, one of
-	// them an AGENCY's job to Global's script; it says nothing of the job it
-	// left alone.
+	// decision of 2026-10-13). Global's sync joined Global's job alone.
 	global := grProblems(t, a, "global")
-	for _, job := range []string{"app-j-global", "app-j-b-other"} {
-		if !grHas(global, "warning", "had no script and is joined", job) {
-			t.Errorf("Global's sync does not say that it joined %s to its script:\n%s", job, strings.Join(global, "\n"))
-		}
+	if !grHas(global, "warning", "had no script and is joined", "app-j-global") {
+		t.Errorf("Global's sync does not say that it joined app-j-global to its script:\n%s", strings.Join(global, "\n"))
 	}
 	said := 0
 	for _, line := range global {
@@ -249,8 +240,8 @@ func TestGR4_AnInAppJobIsRejoinedInItsAgencysRepositoryThenGlobals(t *testing.T)
 			said++
 		}
 	}
-	if said != 2 {
-		t.Errorf("Global's sync says %d joins, want the two it made and not the job it left to the agency's repository:\n%s", said, strings.Join(global, "\n"))
+	if said != 1 {
+		t.Errorf("Global's sync says %d joins, want the one it made:\n%s", said, strings.Join(global, "\n"))
 	}
 
 	// And a job that has a script is not moved to another.

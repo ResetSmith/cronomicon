@@ -26,6 +26,7 @@ func TestRefuseDispatch(t *testing.T) {
 	        ('j-g',     'of-global',  'git',        'bash', 't', 'global', NULL,     NULL,   'true'),
 	        ('j-app-a', 'built-on-a', 'cronomicon', 'bash', 't', NULL,     'run.sh', 'sc-a', NULL),
 	        ('j-app-g', 'built-on-g', 'cronomicon', 'bash', 't', NULL,     'run.sh', 'sc-g', NULL),
+	        ('j-free',  'built-free', 'cronomicon', 'bash', 't', NULL,     NULL,     NULL,   'true'),
 	        ('j-gone',  'built-gone', 'cronomicon', 'bash', 't', NULL,     'was.sh', NULL,   NULL)`)
 	f.exec(`INSERT INTO workflows (uid, name, source, steps, synced_at, repo_id) VALUES
 	        ('w-a',   'flow-of-a', 'git',        '[]', 't', 'repo-a'),
@@ -53,9 +54,9 @@ func TestRefuseDispatch(t *testing.T) {
 	run("r-step-inside", "of-a", "git", "j-a", "a-hosts", none, "wr-a")
 	run("r-step-app", "of-global", "git", "j-g", "g-hosts", none, "wr-app")
 	run("r-step-app-outside", "of-a", "git", "j-a", "a-hosts", none, "wr-app")
-	run("r-pin-outside", "built-on-g", "cronomicon", "j-app-g", "b-hosts", [3]any{"repo-a", "abc123", "scripts/p/site.yml"}, nil)
-	run("r-pin-inside", "built-on-g", "cronomicon", "j-app-g", "a-hosts", [3]any{"repo-a", "abc123", "scripts/p/site.yml"}, nil)
-	run("r-pin-global", "built-on-g", "cronomicon", "j-app-g", "b-hosts", [3]any{"global", "abc123", "scripts/p/site.yml"}, nil)
+	run("r-pin-outside", "built-free", "cronomicon", "j-free", "b-hosts", [3]any{"repo-a", "abc123", "scripts/p/site.yml"}, nil)
+	run("r-pin-inside", "built-free", "cronomicon", "j-free", "a-hosts", [3]any{"repo-a", "abc123", "scripts/p/site.yml"}, nil)
+	run("r-pin-global", "built-free", "cronomicon", "j-free", "b-hosts", [3]any{"global", "abc123", "scripts/p/site.yml"}, nil)
 	run("r-gone", "built-gone", "cronomicon", "j-gone", "a-hosts", none, nil)
 	run("r-gone-unpinned", "built-gone", "cronomicon", "j-gone", "a-hosts", [3]any{nil, nil, "scripts/p/site.yml"}, nil)
 	run("r-unpinned-entry", "of-global", "git", "j-g", "g-hosts", [3]any{nil, nil, "scripts/p/site.yml"}, nil)
@@ -64,7 +65,7 @@ func TestRefuseDispatch(t *testing.T) {
 	// Refused by two rules: the first of the list is the one that is said.
 	run("r-stranded-step", "of-a", "git", "j-a", "b-hosts", none, "wr-a")
 	run("r-stranded-unpinned", "of-a", "git", "j-a", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
-	run("r-pin-outside-unpinned", "built-on-g", "cronomicon", "j-app-g", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
+	run("r-pin-outside-unpinned", "built-free", "cronomicon", "j-free", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
 
 	for _, c := range []struct {
 		what, run  string
@@ -87,7 +88,7 @@ func TestRefuseDispatch(t *testing.T) {
 		{"pinned to an agency's repository, on another agency's scope", "r-pin-outside", CodeRepoScopeMismatch, ReasonRepoScopeMismatch},
 		{"pinned to an agency's repository, on its scope", "r-pin-inside", "", ""},
 		// Question 31: an in-app job on Global's script is left as it was.
-		{"pinned to Global's repository, on any scope", "r-pin-global", "", ""},
+		{"pinned to Global's repository, on an agency's scope", "r-pin-global", CodeRepoScopeMismatch, ReasonRepoScopeMismatch},
 		{"built in the app on a script that has gone", "r-gone", CodeScriptGone, ReasonScriptGone},
 		{"the same with an entry and no commit: the script is the reason", "r-gone-unpinned", CodeScriptGone, ReasonScriptGone},
 		{"a project's run with an entry and no commit", "r-unpinned-entry", CodeNoCheckoutSHA, ReasonNoCheckoutSHA},
