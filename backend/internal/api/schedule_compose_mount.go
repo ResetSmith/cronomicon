@@ -44,14 +44,36 @@ import (
 // runs unbound, with no scope check" — a non-issue rather than a bypass of RB-26.
 // Do not widen them without reading requireCompose's note in job_compose_mount.go.
 func (s *Server) mountScheduleCompose(mux *http.ServeMux) {
-	mux.Handle("POST /api/v1/schedule-defs", s.requireComposeAdmin(http.HandlerFunc(s.createScheduleDef)))
-	mux.Handle("PUT /api/v1/schedule-defs/{name}", s.requireComposeAdmin(http.HandlerFunc(s.updateScheduleDef)))
-	mux.Handle("DELETE /api/v1/schedule-defs/{name}", s.requireComposeAdmin(http.HandlerFunc(s.deleteScheduleDef)))
+	// A schedule built in the app is its owner's (§0a; the owner's answer to
+	// question 32): writing one takes compose on that agency, checked in each
+	// handler. Until then every one was Global's, and a compose administrator
+	// over every agency's alone to write.
+	compose := func(h http.HandlerFunc) http.Handler {
+		return s.requirePerm(auth.PermCompose, func(p rolePermissions) bool { return p.Compose })(h)
+	}
+	mux.Handle("POST /api/v1/schedule-defs", compose(s.createScheduleDef))
+	mux.Handle("PUT /api/v1/schedule-defs/{name}", compose(s.updateScheduleDef))
+	mux.Handle("DELETE /api/v1/schedule-defs/{name}", compose(s.deleteScheduleDef))
+}
+
+// requireScheduleOwner answers 403 unless the caller holds compose on the
+// agency a schedule is (or is to be) owned by.
+func (s *Server) requireScheduleOwner(w http.ResponseWriter, r *http.Request, owner string) bool {
+	id, _ := auth.IdentityFrom(r.Context())
+	if id.CanAgency(auth.PermCompose, owner) {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes,
+		"a schedule built in the app belongs to one agency, and writing it takes compose on that agency")
+	return false
 }
 
 // scheduleInput is the request body for create/update (the ScheduleInput schema).
 type scheduleInput struct {
-	Name        string            `json:"name"`
+	Name string `json:"name"`
+	// OwnerAgency is the agency a new schedule belongs to (§0a, question 32):
+	// Global's when empty. Read on create only; a schedule keeps its owner.
+	OwnerAgency string            `json:"ownerAgency,omitempty"`
 	Cron        string            `json:"cron"`
 	Env         map[string]string `json:"env,omitempty"`
 	Description string            `json:"description"`
@@ -94,6 +116,23 @@ func (s *Server) createScheduleDef(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid schedule name (want "+composeNameRe.String()+")")
 		return
 	}
+	// Whose it is: the agency named, Global's when none is (§0a, question 32).
+	in.OwnerAgency = strings.TrimSpace(in.OwnerAgency)
+	if in.OwnerAgency == "" {
+		in.OwnerAgency = agencyid.Global
+	}
+	var known int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, in.OwnerAgency).Scan(&known); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if known == 0 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "ownerAgency names no agency")
+		return
+	}
+	if !s.requireScheduleOwner(w, r, in.OwnerAgency) {
+		return
+	}
 	s.writeComposedSchedule(w, r, in, id.Email, true)
 }
 
@@ -106,6 +145,9 @@ func (s *Server) updateScheduleDef(w http.ResponseWriter, r *http.Request) {
 		return
 	case scheduleGitOnly:
 		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source schedules are editable in-app; git schedules round-trip through the publish flow")
+		return
+	}
+	if !s.requireScheduleOwner(w, r, s.inAppScheduleOwner(r.Context(), name)) {
 		return
 	}
 	if deleted, err := s.definitionIsDeleted(r.Context(), revKindSchedule, name); err != nil {
@@ -164,9 +206,12 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		// still holds its name — say so, or the operator has no way to know why.
 		var exists int
 		var deleted sql.NullString
+		// Whoever owns it: a schedule built in the app has a name unique across
+		// the installation until names are per agency (I2), so that a route's
+		// name means one schedule.
 		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`,
-			agencyid.Global, in.Name).Scan(&exists, &deleted)
+			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='cronomicon' AND name=?`,
+			in.Name).Scan(&exists, &deleted)
 		if exists > 0 {
 			msg := "an cronomicon schedule with this name already exists"
 			if deleted.Valid {
@@ -222,9 +267,9 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 			windowArg(startAt), windowArg(endAt), nullStrIf(interval),
 			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)),
 			actor, now, actor, now, db.NewID(),
-			// An in-app schedule is Global's until its author can choose an owner
-			// (GR-6; the picker arrives with the screens). It has no repository.
-			agencyid.Global); err != nil {
+			// Its owner, as the create named it (§0a, question 32; until then
+			// every one was Global's). It has no repository.
+			ownerOrGlobal(in.OwnerAgency)); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -251,11 +296,18 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		// The activation window rides along with cron/env (AW-4): a ref expansion is
 		// a copy of the catalog row, so an edited window must reach the runtime
 		// entries or the catalog and the scheduler would disagree.
+		//
+		// Only the definitions of the schedule's own agency (§0a, IN-8; the
+		// owner's answer to question 32): another agency's definition bound to
+		// it before §0a keeps the timing it copied, and the notice
+		// global_schedule_bound says so.
 		if _, err := tx.ExecContext(r.Context(),
 			`UPDATE definition_schedules SET cron=?, env=?, start_at=?, end_at=?, interval=?,
-			                                 skip_calendars=?, only_calendars=? WHERE schedule_uid=?`,
+			                                 skip_calendars=?, only_calendars=? WHERE schedule_uid=?
+			    AND `+agencyid.DefinitionOf("definition_schedules.owner_uid", "definition_schedules.owner_kind")+`
+			      = (SELECT owner_agency FROM schedules WHERE uid = ?)`,
 			cron, envJSON, windowArg(startAt), windowArg(endAt), nullStrIf(interval),
-			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)), editUID); err != nil {
+			nullStrIf(calendar.MarshalNames(skipCals)), nullStrIf(calendar.MarshalNames(onlyCals)), editUID, editUID); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -276,7 +328,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	}
 	var schedUID string
 	_ = tx.QueryRowContext(r.Context(),
-		`SELECT uid FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, agencyid.Global, in.Name).Scan(&schedUID)
+		`SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, in.Name).Scan(&schedUID)
 	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "cronomicon", in.Name, schedUID, actor, action, in); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -311,6 +363,9 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 		return
 	case scheduleGitOnly:
 		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source schedules are deletable in-app")
+		return
+	}
+	if !s.requireScheduleOwner(w, r, s.inAppScheduleOwner(r.Context(), name)) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
@@ -443,16 +498,16 @@ const (
 // scheduleSourceState reports whether a name is an editable cronomicon schedule, a
 // read-only git schedule, or absent — driving the 404 vs 409 vs proceed branch.
 //
-// Among Global's schedules: a name is unique per source AND owner since
-// migration 1300, and the schedule routes carry a name only. Until a route can
-// say which agency's schedule it means (2.4.0, Phase R6) it means Global's,
-// which is every schedule there is today.
+// The schedule routes carry a name only. A schedule built in the app has an
+// owner since §0a (question 32), and its name is unique across the
+// installation until names are per agency (I2), so a name means one of them
+// whoever owns it. A Git one is Global's here, as before.
 func (s *Server) scheduleSourceState(ctx context.Context, name string) scheduleState {
 	var cronomicon, git int
 	_ = s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(CASE WHEN source='cronomicon' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN source='git'     THEN 1 ELSE 0 END), 0)
-		FROM schedules WHERE owner_agency=? AND name=?`, agencyid.Global, name).Scan(&cronomicon, &git)
+		       COALESCE(SUM(CASE WHEN source='git' AND owner_agency=? THEN 1 ELSE 0 END), 0)
+		FROM schedules WHERE name=?`, agencyid.Global, name).Scan(&cronomicon, &git)
 	switch {
 	case cronomicon > 0:
 		return scheduleCronomicon
@@ -463,15 +518,23 @@ func (s *Server) scheduleSourceState(ctx context.Context, name string) scheduleS
 	}
 }
 
-// inAppScheduleUID resolves an in-app schedule's NAME to its uid, among
-// Global's (see scheduleSourceState). "" when there is none. Binned or live:
-// the callers decide what a binned schedule may have done to it.
+// inAppScheduleUID resolves an in-app schedule's NAME to its uid, whoever owns
+// it (see scheduleSourceState). "" when there is none. Binned or live: the
+// callers decide what a binned schedule may have done to it.
 func (s *Server) inAppScheduleUID(ctx context.Context, name string) string {
 	var uid sql.NullString
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT uid FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`,
-		agencyid.Global, name).Scan(&uid)
+		`SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, name).Scan(&uid)
 	return uid.String
+}
+
+// inAppScheduleOwner is the agency an in-app schedule of a name belongs to,
+// "" when there is none.
+func (s *Server) inAppScheduleOwner(ctx context.Context, name string) string {
+	var owner sql.NullString
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT owner_agency FROM schedules WHERE source='cronomicon' AND name=?`, name).Scan(&owner)
+	return owner.String
 }
 
 type scheduleOwner struct{ source, kind, name string }
@@ -757,7 +820,7 @@ func scheduleEnvJSON(env map[string]string) any {
 func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name string, status int) {
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, agencyid.Global, name)
+		FROM schedules WHERE source='cronomicon' AND name=?`, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -788,4 +851,12 @@ func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name s
 	}
 	sd.UsedByCount = len(sd.UsedBy)
 	httpx.JSON(w, status, sd)
+}
+
+// ownerOrGlobal is an owner as given, Global's when none is.
+func ownerOrGlobal(owner string) string {
+	if strings.TrimSpace(owner) == "" {
+		return agencyid.Global
+	}
+	return owner
 }

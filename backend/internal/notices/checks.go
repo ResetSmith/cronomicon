@@ -43,6 +43,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindGlobalCredentialBound, checkGlobalCredentialBound},
 		{KindLocalRunnerServed, checkLocalRunnerServed},
 		{KindGlobalScriptJob, checkGlobalScriptJob},
+		{KindGlobalScheduleBound, checkGlobalScheduleBound},
 		{KindScheduleEntryNoOwner, checkScheduleEntryNoOwner},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},

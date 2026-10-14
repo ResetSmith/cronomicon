@@ -738,7 +738,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 
 	// Resolve schedule entries: inline + referenced first-class schedules (A10a).
-	entries, verr := s.resolveComposeSchedules(r.Context(), in, s.scopeRepo(r.Context(), in.scopeOf()))
+	entries, verr := s.resolveComposeSchedules(r.Context(), in, s.scopeAgency(r.Context(), in.scopeOf()))
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
@@ -945,7 +945,8 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 //
 // home is the repository of the definition's agency (scopeRepo, agencyRepo):
 // where a Git schedule of a name is looked for before Global's.
-func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput, home string) ([]composeScheduleEntry, string) {
+func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput, agency string) ([]composeScheduleEntry, string) {
+	home := s.agencyRepo(ctx, agency)
 	seen := map[string]bool{}
 	out := []composeScheduleEntry{}
 	for _, e := range in.Schedules {
@@ -1001,15 +1002,14 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 		// here, and is left as it is until the owner says.)
 		//
 		// §0a (IN-8): Git's is the definition's own agency's repository's, and
-		// no other's. The in-app one is still any of the name: every schedule
-		// built in the app is Global's (the API makes no other owner), so
-		// confining it would leave an agency none (question 32).
+		// the in-app one the definition's own agency's (the owner's answer to
+		// question 32; until then any of the name, every one being Global's).
 		err := s.db.QueryRowContext(ctx,
 			`SELECT uid, cron, env, start_at, end_at, interval, skip_calendars, only_calendars
 			   FROM schedules
 			  WHERE name = ?1 AND deleted_at IS NULL
-			    AND (source = 'cronomicon' OR COALESCE(repo_id, ?3) = ?2)
-			  ORDER BY (source = 'cronomicon') DESC LIMIT 1`, ref, home, repoid.Global).
+			    AND ((source = 'cronomicon' AND owner_agency = ?4) OR (source = 'git' AND COALESCE(repo_id, ?3) = ?2))
+			  ORDER BY (source = 'cronomicon') DESC LIMIT 1`, ref, home, repoid.Global, agency).
 			Scan(&refUID, &cron, &envJSON, &refStart, &refEnd, &refInterval, &refSkip, &refOnly)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "scheduleRef does not resolve to any schedule: " + ref
@@ -1157,14 +1157,21 @@ func (s *Server) agencyRepo(ctx context.Context, agencyID string) string {
 // scope, a scope that is not there, and a scope several agencies share are
 // Global's, as their runs are.
 func (s *Server) scopeRepo(ctx context.Context, scope string) string {
+	return s.agencyRepo(ctx, s.scopeAgency(ctx, scope))
+}
+
+// scopeAgency is the agency a job on a scope is: the scope's, when one agency
+// alone owns it; Global's for no scope, a scope that is not there, and one
+// several share, as their runs are.
+func (s *Server) scopeAgency(ctx context.Context, scope string) string {
 	if strings.TrimSpace(scope) == "" {
-		return repoid.Global
+		return agencyid.Global
 	}
 	var agency sql.NullString
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 		  FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?`, scope).Scan(&agency); err != nil || !agency.Valid {
-		return repoid.Global
+		return agencyid.Global
 	}
-	return s.agencyRepo(ctx, agency.String)
+	return agency.String
 }

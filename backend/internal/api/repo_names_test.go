@@ -124,7 +124,7 @@ func TestTheComposerResolvesAScriptAndAScheduleInItsAgencysRepository(t *testing
 	schedule("d-shared", "git", "weekly", "0 0 4 * * 1", "global", "global")
 	schedule("d-taxonly", "git", "tax-only", "0 0 5 * * *", "repo-tax", "ag:TAX")
 	schedule("d-both-git", "git", "both", "0 0 6 * * *", "repo-fin", "ag:FIN")
-	schedule("d-both-app", "cronomicon", "both", "0 0 7 * * *", nil, "global")
+	schedule("d-both-app", "cronomicon", "both", "0 0 7 * * *", nil, "ag:FIN") // FIN's own (§0a, question 32: an in-app schedule binds its agency's definitions only)
 
 	compose := func(who, name, scope, scriptRef, scheduleRef string) int {
 		t.Helper()

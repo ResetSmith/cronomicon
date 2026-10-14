@@ -41,6 +41,7 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   global_credential_bound: { title: "A job binds a secret, variable or key only Global has", to: "/env-vars", toLabel: "Env Vars" },
   local_runner_served: { title: "The local runner no longer serves this agency", to: "/runners", toLabel: "Runners" },
   global_script_job: { title: "A job is built on a script of Global's repository", to: "/jobs", toLabel: "Jobs" },
+  global_schedule_bound: { title: "A job or workflow is bound to a schedule of Global's", to: "/schedules", toLabel: "Schedules" },
   schedule_entry_no_owner: { title: "A schedule entry with no owner no longer fires", to: "/schedules", toLabel: "Schedules" },
   may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
   mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },

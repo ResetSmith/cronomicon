@@ -131,6 +131,44 @@ func TestI1_AnAgencysJobTakesNothingFromGlobalsRepository(t *testing.T) {
 	}
 }
 
+// A Git schedule's edit reaches the in-app definitions of its repository's
+// agency only (§0a; the owner's answer to question 32): an agency's in-app
+// job bound to Global's schedule before §0a keeps the timing it copied, and
+// Global's own in-app job follows. Until §0a Global's repository's schedules
+// retimed every in-app definition bound to them.
+func TestI1_GlobalsScheduleEditReachesGlobalsDefinitionsOnly(t *testing.T) {
+	a, repoA, remoteA := newSyncFixture(t)
+	grCommitFiles(t, repoA, remoteA, map[string]string{"schedules/yearly.yaml": grSchedule("0 3 1 1 *")}, "Global's schedule")
+	grSync(t, a, "Global's repository")
+	grSecondRepo(t, a) // its agency owns hosts-of-repo-b
+	for _, j := range [][2]string{{"j-b", "hosts-of-repo-b"}, {"j-g", ""}} {
+		var scope any
+		if j[1] != "" {
+			scope = j[1]
+		}
+		if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, scope) VALUES(?, ?, 'cronomicon', 'bash', 't', ?)`, j[0], "app-"+j[0], scope); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.db.Exec(`INSERT INTO definition_schedules (owner_source, owner_kind, owner_name, name, cron, position, owner_uid, schedule_uid, source_ref)
+		                        SELECT 'cronomicon', 'job', ?, 'yearly', '0 3 1 1 *', 1, ?, uid, 'yearly' FROM schedules WHERE repo_id = 'global' AND name = 'yearly'`,
+			"app-"+j[0], j[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitCommitFile(t, repoA, remoteA, "schedules/yearly.yaml", grSchedule("0 4 4 4 *"), "Global edits its schedule")
+	grSync(t, a, "Global's repository, edited")
+	cronOf := func(uid string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT cron FROM definition_schedules WHERE owner_uid = ? AND name = 'yearly'`, uid)
+	}
+	if got := cronOf("j-g"); got != "0 4 4 4 *" {
+		t.Errorf("Global's in-app job fires at %q after Global's edit, want the new timing", got)
+	}
+	if got := cronOf("j-b"); got != "0 3 1 1 *" {
+		t.Errorf("the agency's in-app job fires at %q after Global's edit; want the timing it copied", got)
+	}
+}
+
 // Global's own repository takes nothing from anywhere: a name it has no file
 // for does not resolve, as before.
 func TestGR4_GlobalsRepositoryBorrowsNothing(t *testing.T) {

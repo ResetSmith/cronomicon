@@ -375,7 +375,7 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules},
-		s.agencyRepo(r.Context(), owner))
+		ownerOrGlobal(owner))
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return

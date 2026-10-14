@@ -2703,42 +2703,27 @@ func (s *Service) upsertSchedules(ctx context.Context, tx *sql.Tx, resolved map[
 		// edit has always reached its users (D1c). The same columns that edit
 		// propagates, found the same way: by schedule_uid.
 		//
-		// And a definition of ANOTHER repository that uses this schedule (2.4.0,
-		// GR-16: an agency's definition may use Global's). Its copy was written
-		// by its own repository's last sync. This repository's own definitions
-		// are left to the rewrite further down, as before.
+		// This repository's own definitions are left to the rewrite further
+		// down, as before. (From 2.4.0's GR-16 until §0a another repository's
+		// definitions that used this schedule were reached here too; since §0a
+		// none can.)
 		//
-		// An in-app definition follows an AGENCY's repository's schedule only
-		// while it is that agency's: one whose scope has since been given to
-		// another agency keeps the timing it has. (Its copy of its SCRIPT is
-		// refreshed whatever agency it is in, since 2026-10-13: upsertScripts
-		// says why. Nothing but this condition keeps one agency's committers
-		// from retiming a job that runs on another's hosts.) Global's
-		// repository's schedules reach every in-app definition bound to them,
-		// with the statement they always had.
-		inApp, inAppArgs := `owner_source = 'cronomicon'`, []any{}
-		if s.repo() != repoid.Global {
-			inApp = `(owner_source = 'cronomicon' AND ? = CASE owner_kind
-				WHEN 'job' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-				                   FROM jobs j
-				                   JOIN scopes sc         ON sc.name = j.scope
-				                   JOIN scope_agencies sa ON sa.scope_id = sc.id
-				                  WHERE j.uid = definition_schedules.owner_uid)
-				ELSE (SELECT owner_agency FROM workflows w WHERE w.uid = definition_schedules.owner_uid)
-			END)`
-			inAppArgs = []any{s.agency()}
-		}
+		// An in-app definition follows a repository's schedule only while it is
+		// that repository's agency's: one whose scope has since been given to
+		// another agency keeps the timing it has, and since §0a (the owner's
+		// answer to question 32) so does another agency's definition bound to
+		// one of Global's before then: it keeps the timing it copied, and the
+		// notice global_schedule_bound says so. (Until §0a Global's repository's
+		// schedules reached every in-app definition bound to them.) Nothing but
+		// this condition keeps one agency's committers from retiming a job that
+		// runs on another's hosts.
 		propagate := []any{rs.cron, envJSON, nullStr(rs.startAt), nullStr(rs.endAt), nullStr(rs.interval),
-			nullStr(calendar.MarshalNames(rs.skipCals)), nullStr(calendar.MarshalNames(rs.onlyCals)), rs.uid}
-		propagate = append(propagate, inAppArgs...)
-		propagate = append(propagate, s.repo(), s.repo())
+			nullStr(calendar.MarshalNames(rs.skipCals)), nullStr(calendar.MarshalNames(rs.onlyCals)), rs.uid, s.agency()}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE definition_schedules
 			   SET cron=?, env=?, start_at=?, end_at=?, interval=?, skip_calendars=?, only_calendars=?
-			 WHERE schedule_uid = ? AND (`+inApp+` OR owner_uid IN (
-				SELECT uid FROM jobs      WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?
-				UNION ALL
-				SELECT uid FROM workflows WHERE source = 'git' AND repo_id IS NOT NULL AND repo_id <> ?))`,
+			 WHERE schedule_uid = ? AND owner_source = 'cronomicon'
+			   AND `+agencyid.DefinitionOf("definition_schedules.owner_uid", "definition_schedules.owner_kind")+` = ?`,
 			propagate...); err != nil {
 			return fmt.Errorf("propagate schedule %q to the definitions that use it: %w", name, err)
 		}

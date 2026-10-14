@@ -822,7 +822,7 @@ export interface paths {
          * Author an cronomicon-source schedule (schedule-builder)
          * @description Creates an in-app (source='cronomicon') first-class Schedule — a named cron (+
          *     optional plaintext env) authored without a Git round-trip. Requires the
-         *     Compose capability (Admin-only in v20). Git-source schedules are read-only
+         *     Compose capability on the owner agency (ownerAgency; v2.4.0, see ScheduleInput). Git-source schedules are read-only
          *     here; they are authored through the Git publish flow.
          */
         post: operations["createScheduleDef"];
@@ -850,7 +850,7 @@ export interface paths {
          * @description Edits an in-app schedule and PROPAGATES the new cron/env to every job and
          *     workflow that referenced it — so the change actually takes effect, not just in
          *     the catalog (the scheduleRefs snapshot is updated by source_ref). Git-source
-         *     schedules are read-only here (409). Requires Compose.
+         *     schedules are read-only here (409). Requires Compose on the schedule's owner; reaches that agency's definitions only (v2.4.0).
          */
         put: operations["updateScheduleDef"];
         post?: never;
@@ -859,7 +859,7 @@ export interface paths {
          * @description Deletes an in-app schedule. Blocked with 409 when still referenced unless
          *     ?force=true, which also detaches the expanded entries from referencing
          *     definitions (resyncing their legacy schedule mirror). Git-source schedules are
-         *     read-only here (409). Requires Compose.
+         *     read-only here (409). Requires Compose on the schedule's owner (v2.4.0).
          */
         delete: operations["deleteScheduleDef"];
         options?: never;
@@ -6007,11 +6007,23 @@ export interface components {
         /**
          * @description Request body for authoring (POST) or editing (PUT) an cronomicon-source
          *     first-class Schedule (schedule-builder). On edit, name is taken from the path
-         *     and is immutable; cron/env propagate to every referencing job/workflow.
+         *     and is immutable; cron/env propagate to every referencing job/workflow of
+         *     the schedule's own agency (v2.4.0: another agency's definition bound to
+         *     it before keeps the timing it copied; `global_schedule_bound`).
+         *
+         *     A schedule built in the app belongs to one agency (v2.4.0), named by
+         *     `ownerAgency` on create (Global's when absent). Creating, editing or
+         *     deleting one takes compose on that agency (403 otherwise); until v2.4.0
+         *     every one was Global's and only an administrator holding compose and
+         *     configureApp on every agency wrote them. A job or workflow binds its own
+         *     agency's schedules only. The name is unique across the installation
+         *     (409 when any agency's schedule holds it) until names are per agency.
          */
         ScheduleInput: {
             /** @description Schedule name (slug, [a-z0-9][a-z0-9_-]*). Required on create; immutable on edit. */
             name?: string;
+            /** @description The agency id the new schedule belongs to (create only; Global when absent). An unknown id is 422 unknown_agency. */
+            ownerAgency?: string;
             /** @description Cron expression (6-field with seconds */
             cron: string;
             /** @description Optional plaintext env injected when this schedule fires. */
@@ -7162,6 +7174,13 @@ export interface components {
              *       `<job uid>:<secret|var|key>:<name>`. Filed under the job's agency.
              *       It clears when the agency has a row of the name, or the binding
              *       goes.
+             *     - `global_schedule_bound` — a job or workflow of an agency is bound
+             *       to a schedule of Global's (allowed before v2.4.0). A schedule's
+             *       edits reach its own agency's definitions only: this one keeps the
+             *       timing it copied, and fires on it. Subject:
+             *       `<definition uid>:<entry name>`. Filed under the definition's
+             *       agency. It clears when the entry is bound to a schedule of its own
+             *       agency's, given a timing of its own, or removed.
              *     - `global_script_job` — a job an agency built in the app is built on
              *       a script of Global's repository (allowed before v2.4.0). A
              *       definition takes nothing from Global's: its runs are refused,

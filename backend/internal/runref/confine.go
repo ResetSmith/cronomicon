@@ -163,10 +163,9 @@ func ScopeOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope
 
 // WorkflowAgencySQL and DefinitionAgencySQL: agencyid's, here for the callers
 // that already speak to this package.
-const (
-	WorkflowAgencySQL   = agencyid.WorkflowSQL
-	DefinitionAgencySQL = agencyid.DefinitionSQL
-)
+const WorkflowAgencySQL = agencyid.WorkflowSQL
+
+var DefinitionAgencySQL = agencyid.DefinitionSQL
 
 // StepOutsideWorkflowRepository asks ScopeOutsideAgency for a run that is a
 // workflow's step, at the moment it is dispatched, of the agency of the

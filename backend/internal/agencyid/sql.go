@@ -19,12 +19,18 @@ const WorkflowSQL = `(CASE WHEN w.source = 'git'
 // built in the app, its scope's when one agency alone owns it, and Global's
 // otherwise (no scope, or one several share), as its runs are; a workflow
 // built in the app, its owner. NULL for no such row.
-const DefinitionSQL = `(CASE ?2
-	WHEN 'job' THEN (SELECT CASE WHEN j.source = 'git'
-	                   THEN (SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(j.repo_id, 'global'))
+var DefinitionSQL = DefinitionOf("?1", "?2")
+
+// DefinitionOf is DefinitionSQL over two SQL expressions, the definition's uid
+// and its kind ('job' or 'workflow'), for a statement that has them as columns.
+func DefinitionOf(uidExpr, kindExpr string) string {
+	return `(CASE ` + kindExpr + `
+	WHEN 'job' THEN (SELECT CASE WHEN dj.source = 'git'
+	                   THEN (SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(dj.repo_id, 'global'))
 	                   ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 	                                    FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-	                                   WHERE sc.name = j.scope), '` + Global + `') END
-	                   FROM jobs j WHERE j.uid = ?1)
-	ELSE (SELECT ` + WorkflowSQL + ` FROM workflows w WHERE w.uid = ?1)
+	                                   WHERE sc.name = dj.scope), '` + Global + `') END
+	                   FROM jobs dj WHERE dj.uid = ` + uidExpr + `)
+	ELSE (SELECT ` + WorkflowSQL + ` FROM workflows w WHERE w.uid = ` + uidExpr + `)
 	END)`
+}
