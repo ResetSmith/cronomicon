@@ -490,7 +490,9 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	s.forceScheduleReload(r.Context())
 
 	var rowid int64
-	_ = s.db.QueryRowContext(r.Context(), `SELECT rowid FROM workflows WHERE source='cronomicon' AND name=?`, in.Name).Scan(&rowid)
+	// The workflow this save wrote, by its uid (present defect 49), not the
+	// first of its name, which may be another agency's.
+	_ = s.db.QueryRowContext(r.Context(), `SELECT rowid FROM workflows WHERE uid = ?`, uid).Scan(&rowid)
 	wr := s.fetchWorkflowByID(r, strconv.FormatInt(rowid, 10))
 	status := http.StatusOK
 	if isCreate {

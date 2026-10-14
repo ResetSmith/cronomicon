@@ -929,7 +929,10 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	})
 	s.forceScheduleReload(r.Context())
 
-	jr := s.fetchJobByName(r, in.Name, "cronomicon")
+	// The answer is the job this save wrote, by its uid (present defect 49):
+	// by its name it was the first job of the name, which may be another
+	// agency's, with its scope, its environment and its schedule entries.
+	jr := s.fetchJobByUID(r, uid)
 	status := http.StatusOK
 	if isCreate {
 		status = http.StatusCreated
@@ -1044,11 +1047,11 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 	return out, ""
 }
 
-// fetchJobByName fetches a job by (name, source) — the disjoint dual-source key.
-func (s *Server) fetchJobByName(r *http.Request, name, source string) *jobRow {
+// fetchJobByUID fetches a job by its identity.
+func (s *Server) fetchJobByUID(r *http.Request, uid string) *jobRow {
 	var rowid int64
 	if err := s.db.QueryRowContext(r.Context(),
-		`SELECT rowid FROM jobs WHERE source=? AND name=?`, source, name).Scan(&rowid); err != nil {
+		`SELECT rowid FROM jobs WHERE uid = ?`, uid).Scan(&rowid); err != nil {
 		return nil
 	}
 	return s.fetchJobByID(r, strconv.FormatInt(rowid, 10))

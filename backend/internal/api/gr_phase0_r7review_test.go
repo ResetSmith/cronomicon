@@ -13,9 +13,9 @@ import (
 )
 
 // Three defects found by the review of R6's second part and R7 (2026-10-14),
-// each older than the range reviewed. Pinned as they are, NOT changed: each is
-// a change of behaviour for the owner to decide (present defects 49, 50, 51 in
-// the plan). A fix inverts the assertion that says so.
+// each older than the range reviewed (present defects 49, 50, 51 in the plan).
+// Pinned as they were, then fixed on the owner's yes (questions 24 to 26): each
+// test now holds the fix.
 
 const r7reviewScript = `INSERT INTO scripts(name, run_type, command, executor, content_hash, source_path, synced_at)
       VALUES('backup-db','bash','pg_dump mydb','ssh','sha256:aaa','scripts/backup-db.yaml','t')`
@@ -24,25 +24,44 @@ func r7reviewJob(name, scope, extra string) string {
 	return `{"name":"` + name + `","scriptRef":"backup-db","scope":"` + scope + `"` + extra + `}`
 }
 
-// Present defect 49: the answer to a save of a job is fetched by NAME
-// (fetchJobByName; the workflow's save the same), so the second agency to save
-// a job of a name is answered with the FIRST agency's job: its scope, its
-// environment, its schedule entries and theirs.
+// Present defect 49, FIXED (the owner's yes to question 24, 2026-10-14): the
+// answer to a save of a job was fetched by NAME (fetchJobByName; the workflow's
+// save the same), so the second agency to save a job of a name was answered
+// with the FIRST agency's job: its scope, its environment, its schedule entries
+// and theirs. A save is answered with the definition it wrote, by its uid.
 func TestGR0_ASavesAnswerIsAnotherAgencysDefinitionOfTheName(t *testing.T) {
 	h, pool := gateServer(t)
 	mustExec(t, pool)(r7reviewScript)
-	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin, r7reviewJob("load", "fin-hosts",
-		`,"env":{"FIN_ONLY":"fin-value"},"schedules":[{"name":"fin-nightly","cron":"0 1 * * *","env":{"FIN_SCHED":"fin-sched-value"}}]`)); rec.Code != http.StatusCreated {
-		t.Fatalf("FIN creates load: %d %s", rec.Code, rec.Body)
+	mustExec(t, pool)(`INSERT INTO jobs (uid, name, source, run_type, scope, enabled, created_at) VALUES
+	      ('j-fin-step', 'fin-step', 'cronomicon', 'bash', 'fin-hosts', 1, 't'), ('j-tax-step', 'tax-step', 'cronomicon', 'bash', 'tax-hosts', 1, 't')`)
+	created := func(who, path, body string) string {
+		t.Helper()
+		rec := gateReq(t, h, http.MethodPost, path, who, body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%s POST %s: %d %s", who, path, rec.Code, rec.Body)
+		}
+		return rec.Body.String()
 	}
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gTaxAdmin, r7reviewJob("load", "tax-hosts", ""))
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("TAX creates load: %d %s", rec.Code, rec.Body)
+	created(gFinAdmin, "/api/v1/jobs", r7reviewJob("load", "fin-hosts",
+		`,"env":{"FIN_ONLY":"fin-value"},"schedules":[{"name":"fin-nightly","cron":"0 1 * * *","env":{"FIN_SCHED":"fin-sched-value"}}]`))
+	body := created(gTaxAdmin, "/api/v1/jobs", r7reviewJob("load", "tax-hosts", ""))
+	if strings.Contains(body, "fin-value") || strings.Contains(body, "fin-hosts") || strings.Contains(body, "fin-sched-value") {
+		t.Errorf("TAX's save of load is answered with FIN's load: %s", body)
 	}
-	body := rec.Body.String()
-	// AS IT IS: TAX is answered with FIN's job.
-	if !strings.Contains(body, "fin-value") || !strings.Contains(body, "fin-hosts") {
-		t.Errorf("TAX's save of load is no longer answered with FIN's load (defect 49 fixed? invert this test): %s", body)
+	if !strings.Contains(body, `"scope":"tax-hosts"`) {
+		t.Errorf("TAX's save of load is not answered with TAX's load: %s", body)
+	}
+	// An edit, the same.
+	taxLoad := rowID(t, pool, `SELECT rowid FROM jobs WHERE name = 'load' AND scope = 'tax-hosts'`)
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/jobs/"+taxLoad, gTaxAdmin, r7reviewJob("load", "tax-hosts", "")); rec.Code != http.StatusOK ||
+		strings.Contains(rec.Body.String(), "fin-value") || !strings.Contains(rec.Body.String(), `"scope":"tax-hosts"`) {
+		t.Errorf("TAX's edit of load is not answered with TAX's load: %d %s", rec.Code, rec.Body)
+	}
+	// And a workflow's.
+	created(gFinAdmin, "/api/v1/workflows", `{"name":"nightly","steps":[{"type":"job","name":"fin-step"}]}`)
+	body = created(gTaxAdmin, "/api/v1/workflows", `{"name":"nightly","steps":[{"type":"job","name":"tax-step"}]}`)
+	if strings.Contains(body, "fin-step") || !strings.Contains(body, "tax-step") {
+		t.Errorf("TAX's save of nightly is not answered with TAX's nightly: %s", body)
 	}
 }
 
