@@ -959,6 +959,10 @@ func (s *Server) handleCloneScope(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireBothSides(w, r, id, settings.MemberScope, sid, []string{target}); !ok {
 		return
 	}
+	// A clone takes a name, as a create does (present defect 51).
+	if !s.refuseClaimedScopeName(w, r, id, strings.TrimSpace(inp.Name), target) {
+		return
+	}
 	sc, copied, err := settings.CloneScope(r.Context(), s.db, sid, inp.Name, target, id.Email)
 	switch {
 	case errors.Is(err, settings.ErrNoSuchScope):

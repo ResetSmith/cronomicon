@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"path/filepath"
 	"strings"
@@ -598,10 +599,21 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 	// than by remembering to write the UPDATE.
 	var broken []BrokenReference
 	if oldName != newName {
-		// Lint: find broken references in env_vars and secrets (scope column).
-		// Use the tx (not the pool) to avoid a deadlock on the single-connection pool.
+		// A job carries its scope by NAME. The jobs built in the app go with the
+		// scope to its new name (present defect 51, the owner's yes to question
+		// 26): left on the old one, they belonged to whatever scope took that
+		// name next, another agency's included, listed to it and run on its
+		// hosts. A job from Git keeps what its file says, and is reported below.
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE jobs SET scope = ? WHERE source = 'cronomicon' AND scope = ?`, newName, oldName); err != nil {
+			return nil, nil, fmt.Errorf("move the scope's jobs to its new name: %w", err)
+		}
+		// Lint: find broken references in env_vars, secrets and Git jobs (scope
+		// column). Use the tx (not the pool) to avoid a deadlock on the
+		// single-connection pool.
 		broken = append(broken, brokenEnvVarRefsTx(ctx, tx, oldName)...)
 		broken = append(broken, brokenSecretRefsTx(ctx, tx, oldName)...)
+		broken = append(broken, brokenGitJobRefs(ctx, tx, oldName)...)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -762,6 +774,48 @@ func brokenSecretRefs(ctx context.Context, q dbQuerier, oldScope string) []Broke
 		out = append(out, BrokenReference{Entity: "secrets", Name: k})
 	}
 	return out
+}
+
+// brokenGitJobRefs finds the jobs from Git that still name oldScope: a rename
+// cannot change a file, so each is the repository's to change.
+func brokenGitJobRefs(ctx context.Context, q dbQuerier, oldScope string) []BrokenReference {
+	rows, _ := q.QueryContext(ctx, `SELECT name FROM jobs WHERE source = 'git' AND scope = ? ORDER BY name`, oldScope)
+	if rows == nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []BrokenReference
+	for rows.Next() {
+		var n string
+		_ = rows.Scan(&n)
+		out = append(out, BrokenReference{Entity: "jobs", Name: n})
+	}
+	return out
+}
+
+// ErrScopeNameClaimed refuses a scope that would take a name jobs of another
+// agency still name (present defect 51; the owner's yes to question 26). A job
+// carries its scope by name, so a scope of that name takes those jobs: listed
+// to its agency and run on its hosts. Mapped 409 `scope_name_in_use`.
+var ErrScopeNameClaimed = errors.New("jobs of another agency name a scope of this name, and a scope of it would take them; " +
+	"choose another name, or have a global administrator create it")
+
+// ScopeNameClaimed reports whether a scope of agency `agency` taking the name
+// `name` would take jobs that are not that agency's: a job from an agency's
+// repository is that agency's, one from Global's repository Global's; one built
+// in the app has its agency by its scope alone, and with no scope of that name
+// whose it is cannot be told, so it is counted as another's.
+func ScopeNameClaimed(ctx context.Context, q interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}, name, agency string) (bool, error) {
+	var n int
+	if err := q.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM jobs j LEFT JOIN git_repos g ON g.id = j.repo_id
+		 WHERE j.scope = ?1 AND j.deleted_at IS NULL
+		   AND (j.source <> 'git' OR COALESCE(g.agency_id, ?3) <> ?2)`, name, agency, agencyid.Global).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // brokenEnvVarRefsTx is like brokenEnvVarRefs but uses a transaction.

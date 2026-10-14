@@ -2868,6 +2868,13 @@ paths:
       tags: [Scopes]
       operationId: createScope
       summary: Create a local (Cronomicon-source) scope (S8)
+      description: |
+        **A scope may not take a name that jobs of another agency name**
+        (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
+        scope of that name would take those jobs, listed to its agency and run
+        on its hosts. A job from an agency's repository is that agency's, one
+        from Global's repository Global's; one built in the app whose scope is
+        gone is counted as another's. A global administrator is not refused.
       parameters: [{ $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -2909,8 +2916,17 @@ paths:
       summary: Update a local scope (S8/S9)
       description: |
         Only Cronomicon-source scopes are editable (Git scopes are edited in
-        GitLab). Rename does NOT cascade to job/workflow/env-var references in
-        v1 (S9) — the response includes brokenReferences so the UI can warn.
+        GitLab). A rename takes the jobs built in the app that name the scope
+        to its new name (v2.4.0); it does not change a job from Git, a variable
+        or a secret, which keep the old name and are listed in
+        brokenReferences (`entity` jobs, envVars, secrets) so the UI can warn.
+
+        **A scope may not take a name that jobs of another agency name**
+        (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
+        scope of that name would take those jobs, listed to its agency and run
+        on its hosts. A job from an agency's repository is that agency's, one
+        from Global's repository Global's; one built in the app whose scope is
+        gone is counted as another's. A global administrator is not refused.
 
         A rename is refused (409 code=scope_bound_busy) while the scope is bound
         to runners and has runs queued or scheduled under its current name: a run
@@ -3752,6 +3768,13 @@ paths:
         clone is a snapshot: it does not follow the original afterwards. It is
         how a second agency gets a set of hosts without the first agency's
         jobs being stranded, which moving the scope does.
+
+        **A scope may not take a name that jobs of another agency name**
+        (v2.4.0): 409 `scope_name_in_use`. A job carries its scope by name, so a
+        scope of that name would take those jobs, listed to its agency and run
+        on its hosts. A job from an agency's repository is that agency's, one
+        from Global's repository Global's; one built in the app whose scope is
+        gone is counted as another's. A global administrator is not refused.
 
         **Copied:** the hosts, the groups and their nesting, the host and group
         variables, the inventory as written, and the tags.

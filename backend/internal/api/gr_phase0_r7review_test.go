@@ -111,37 +111,82 @@ func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 	}
 }
 
-// Present defect 51: a scope's jobs pass to another agency with no write to
-// scope_agencies. A job carries its scope by NAME; renaming the scope leaves
-// its jobs on the old name (the rename's brokenReferences does not look at
-// jobs), and a scope that another agency's administrator then creates under
-// the old name takes them: listed to that agency, runnable on its hosts. Two
-// ordinary acts by two administrators, each within their own agency, and a
-// way round the rule that a scope is moved by a global administrator only
-// (bee2b35).
+// Present defect 51, FIXED (the owner's yes to question 26, 2026-10-14): a
+// scope's jobs passed to another agency with no write to scope_agencies. A job
+// carries its scope by NAME; a rename left its jobs on the old name (and its
+// brokenReferences did not look at jobs), and a scope another agency's
+// administrator then created under the old name took them: listed to that
+// agency, runnable on its hosts. A way round the rule that a scope is moved by
+// a global administrator only (bee2b35).
+//
+// Now a rename takes the jobs built in the app with it and names the jobs from
+// Git that stay on the old name; and a scope may not take a name that jobs of
+// another agency name (create, clone or rename: 409 scope_name_in_use), unless
+// a global administrator takes it.
 func TestGR0_AScopesJobsPassToTheAgencyThatTakesItsOldName(t *testing.T) {
 	h, pool := gateServer(t)
-	mustExec(t, pool)(r7reviewScript)
+	exec := mustExec(t, pool)
+	exec(r7reviewScript)
 	if rec := gateReq(t, h, http.MethodPost, "/api/v1/jobs", gFinAdmin, r7reviewJob("fa", "fin-hosts", "")); rec.Code != http.StatusCreated {
 		t.Fatalf("FIN's job: %d %s", rec.Code, rec.Body)
 	}
+	// A job from Global's repository that names FIN's scope (I-7), and one from
+	// FIN's own repository.
+	exec(`INSERT INTO git_repos (id, agency_id, url) VALUES ('repo-fin', 'ag:FIN', 'http://127.0.0.1:1/fin.git')`)
+	exec(`INSERT INTO jobs (uid, name, source, repo_id, run_type, scope, enabled, synced_at) VALUES
+	        ('j-glob', 'glob-job', 'git', 'global',   'bash', 'fin-hosts', 1, 't'),
+	        ('j-own',  'own-job',  'git', 'repo-fin', 'bash', 'fin-own',   1, 't'),
+	        ('j-lost', 'lost-job', 'cronomicon', NULL, 'bash', 'ghost',     1, 't')`)
+	scopeOf := func(job string) string {
+		var sc string
+		if err := pool.QueryRow(`SELECT COALESCE(scope,'') FROM jobs WHERE name = ?`, job).Scan(&sc); err != nil {
+			t.Fatal(err)
+		}
+		return sc
+	}
+
 	rec := gateReq(t, h, http.MethodPatch, "/api/v1/scopes/sc:fin", gFinAdmin, `{"scope":"fin-renamed","hosts":[]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("FIN renames its scope: %d %s", rec.Code, rec.Body)
 	}
-	if !strings.Contains(rec.Body.String(), `"brokenReferences":[]`) {
-		t.Logf("the rename's brokenReferences: %s", rec.Body)
+	if got := scopeOf("fa"); got != "fin-renamed" {
+		t.Errorf("FIN's job built in the app stayed on %q, want it on the scope's new name", got)
 	}
-	if rec := gateReq(t, h, http.MethodPost, "/api/v1/scopes", gTaxAdmin, `{"scope":"fin-hosts","hosts":["tax-box"],"agencyIds":["ag:TAX"]}`); rec.Code != http.StatusCreated {
-		t.Fatalf("TAX creates a scope of the old name: %d %s", rec.Code, rec.Body)
+	if got := scopeOf("glob-job"); got != "fin-hosts" {
+		t.Errorf("the job from Git was rewritten to %q: its file says fin-hosts", got)
 	}
-	var agency string
-	if err := pool.QueryRow(`SELECT sa.agency_id FROM jobs j JOIN scopes sc ON sc.name = j.scope
-	                          JOIN scope_agencies sa ON sa.scope_id = sc.id WHERE j.name = 'fa'`).Scan(&agency); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(rec.Body.String(), `{"entity":"jobs","name":"glob-job"}`) {
+		t.Errorf("the rename does not name the job from Git left on the old name: %s", rec.Body)
 	}
-	// AS IT IS: FIN's job is TAX's, and TAX lists it.
-	if agency != "ag:TAX" || !strings.Contains(gateReq(t, h, http.MethodGet, "/api/v1/jobs", gTaxAdmin, "").Body.String(), `"name":"fa"`) {
-		t.Errorf("FIN's job is in agency %q, and TAX's list does not show it (defect 51 fixed? invert this test)", agency)
+
+	// The old name, which Global's job still names, is not TAX's to take: not
+	// by a create, a clone or a rename.
+	refused := func(what, method, path, who, body string) {
+		t.Helper()
+		rec := gateReq(t, h, method, path, who, body)
+		if rec.Code != http.StatusConflict || errCode(rec.Body.Bytes()) != "scope_name_in_use" {
+			t.Errorf("%s = %d %s, want 409 scope_name_in_use", what, rec.Code, rec.Body)
+		}
+	}
+	refused("TAX creating a scope of the old name", http.MethodPost, "/api/v1/scopes", gTaxAdmin, `{"scope":"fin-hosts","hosts":["tax-box"],"agencyIds":["ag:TAX"]}`)
+	refused("TAX renaming its scope to the old name", http.MethodPatch, "/api/v1/scopes/sc:tax", gTaxAdmin, `{"scope":"fin-hosts","hosts":[]}`)
+	refused("TAX cloning a scope to the old name", http.MethodPost, "/api/v1/scopes/sc:tax/clone", gTaxAdmin, `{"agencyId":"ag:TAX","name":"fin-hosts"}`)
+	// A job built in the app whose scope is gone is nobody's that can be told:
+	// FIN may not take its name either.
+	refused("FIN creating a scope of a name a lost job names", http.MethodPost, "/api/v1/scopes", gFinAdmin, `{"scope":"ghost","hosts":[],"agencyIds":["ag:FIN"]}`)
+	if n := count(t, pool, `SELECT COUNT(*) FROM scopes WHERE name IN ('fin-hosts', 'ghost')`); n != 0 {
+		t.Errorf("a refused scope was written: %d", n)
+	}
+	if got := scopeOf("glob-job"); got != "fin-hosts" {
+		t.Errorf("Global's job now names %q", got)
+	}
+
+	// A name that only the agency's own jobs name is the agency's to take.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/scopes", gFinAdmin, `{"scope":"fin-own","hosts":[],"agencyIds":["ag:FIN"]}`); rec.Code != http.StatusCreated {
+		t.Errorf("FIN creating a scope that FIN's own repository's job names = %d %s, want 201", rec.Code, rec.Body)
+	}
+	// And a global administrator gives a name, and its jobs, to an agency.
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/scopes", gRoot, `{"scope":"fin-hosts","hosts":[],"agencyIds":["ag:TAX"]}`); rec.Code != http.StatusCreated {
+		t.Errorf("a global administrator creating the scope = %d %s, want 201", rec.Code, rec.Body)
 	}
 }
