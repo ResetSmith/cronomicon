@@ -34,15 +34,18 @@ func TestManifestRefusesAWorkflowsStepWhoseScopeWasGivenAway(t *testing.T) {
 	exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-fin', 'ag-fin', 'u', 'main')`)
 	exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-hosts', 'cronomicon', 't')`)
 	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin')`)
-	// Global's job, which may name any agency's scope.
+	// A job built in the app on no repository's script: its own check (the
+	// job's repository) never refuses it, so what is asked here is the
+	// workflow's. (Until §0a this was a job of Global's repository, which might
+	// name any agency's scope; since §0a its own check refuses that.)
 	exec(`INSERT INTO jobs (uid, name, source, repo_id, scope, run_type, command, synced_at) VALUES
-	      ('j-global', 'global-plan', 'git', 'global', 'fin-hosts', 'terraform', 'plan -var=global', 't')`)
+	      ('j-global', 'global-plan', 'cronomicon', NULL, 'fin-hosts', 'terraform', 'plan -var=global', 't')`)
 	// Three workflows that run it: Finance's repository's, Global's, and one
-	// built in the app. Each has a run under way.
-	exec(`INSERT INTO workflows (uid, name, source, repo_id, steps, synced_at) VALUES
-	      ('wf-fin',    'fin-flow',    'git',        'repo-fin', '[]', 't'),
-	      ('wf-global', 'global-flow', 'git',        'global',   '[]', 't'),
-	      ('wf-app',    'app-flow',    'cronomicon', NULL,       '[]', 't')`)
+	// built in the app, Finance's. Each has a run under way.
+	exec(`INSERT INTO workflows (uid, name, source, repo_id, steps, synced_at, owner_agency) VALUES
+	      ('wf-fin',    'fin-flow',    'git',        'repo-fin', '[]', 't', 'ag-fin'),
+	      ('wf-global', 'global-flow', 'git',        'global',   '[]', 't', 'global'),
+	      ('wf-app',    'app-flow',    'cronomicon', NULL,       '[]', 't', 'ag-fin')`)
 	for _, wf := range [][3]string{{"wfrun-fin", "fin-flow", "wf-fin"}, {"wfrun-global", "global-flow", "wf-global"}, {"wfrun-app", "app-flow", "wf-app"}} {
 		source := "git"
 		if wf[2] == "wf-app" {
@@ -80,20 +83,23 @@ func TestManifestRefusesAWorkflowsStepWhoseScopeWasGivenAway(t *testing.T) {
 	exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-fin'`)
 	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-tax')`)
 
-	rec := fetch(fin)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runref.CodeRepoScopeMismatch) ||
-		!strings.Contains(rec.Body.String(), runref.ReasonWorkflowScopeMismatch) {
-		t.Errorf("the step of Finance's repository's workflow on what is now Tax's scope was answered %d: %s", rec.Code, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "-var=global") {
-		t.Errorf("the refusal carries the job's command: %s", rec.Body.String())
-	}
-	// Global's workflow, a workflow built in the app, and the job run on its
-	// own are not a repository's to confine.
-	for what, id := range map[string]string{"Global's workflow's step": global, "an in-app workflow's step": app, "the job run on its own": alone} {
-		if rec := fetch(id); rec.Code != http.StatusOK {
-			t.Errorf("%s on that scope was answered %d: %s", what, rec.Code, rec.Body.String())
+	// Every workflow's step is refused on what is now Tax's scope: Finance's
+	// repository's, Finance's built in the app, and Global's (§0a, IN-8; until
+	// then the last two were nobody's to confine).
+	for what, id := range map[string]string{"Finance's repository's workflow's step": fin, "Finance's in-app workflow's step": app,
+		"Global's workflow's step": global} {
+		rec := fetch(id)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), runref.CodeRepoScopeMismatch) ||
+			!strings.Contains(rec.Body.String(), runref.ReasonWorkflowScopeMismatch) {
+			t.Errorf("%s on what is now Tax's scope was answered %d: %s", what, rec.Code, rec.Body.String())
 		}
+		if strings.Contains(rec.Body.String(), "-var=global") {
+			t.Errorf("the refusal carries the job's command: %s", rec.Body.String())
+		}
+	}
+	// The job run on its own is not a workflow's to confine.
+	if rec := fetch(alone); rec.Code != http.StatusOK {
+		t.Errorf("the job run on its own on that scope was answered %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

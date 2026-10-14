@@ -118,14 +118,14 @@ func TestOwnedBeatsSharedWithinAScope(t *testing.T) {
 	if got != "teama-tok" {
 		t.Errorf("owned row did not win: got %q, want teama-tok", got)
 	}
-	// A department with no row of its own still falls through to the shared row —
-	// today's behaviour, and the reason this is not a tightening.
-	got, err = f.resolveSecret(t, "TOKEN", "prod", []string{"TeamB"})
-	if err != nil {
-		t.Fatalf("TeamB resolve: %v", err)
+	// A department with no row of its own does NOT fall through to Global's row
+	// (§0a, IN-6; until then it did, LR-23). Global's own run gets Global's.
+	if got, err := f.resolveSecret(t, "TOKEN", "prod", []string{"TeamB"}); err == nil {
+		t.Errorf("TeamB, with no row of its own, resolved Global's row: %q", got)
 	}
-	if got != "shared-tok" {
-		t.Errorf("fallback to the shared row broke: got %q, want shared-tok", got)
+	got, err = f.resolveSecret(t, "TOKEN", "prod", []string{"Global"})
+	if err != nil || got != "shared-tok" {
+		t.Errorf("Global's run: got %q (%v), want Global's row shared-tok", got, err)
 	}
 }
 
@@ -448,7 +448,15 @@ func TestAnOwnerThatNamesNoAgencyIsNobodysNotGlobals(t *testing.T) {
 	exec(`INSERT INTO secrets (id, key, source, created_at) VALUES ('s1', 'TOKEN', 'stored', 't')`)
 	exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('k1', 'deploy', 'stored', 't')`)
 
-	runs := [][]string{{"Global"}, {"Tax"}, nil}
+	// Global's runs (an empty set is Global's). Since §0a (IN-6) a run of Tax
+	// does not resolve Global's row at all; until then it did.
+	runs := [][]string{{"Global"}, nil}
+	if _, found, err := LookupEntityID(ctx, pool, KindSecret, "TOKEN", "", []string{"Tax"}); err != nil || found {
+		t.Errorf("Global's secret resolved for a run of Tax (found=%v, err=%v)", found, err)
+	}
+	if _, found, err := LookupEntityID(ctx, pool, KindKey, "deploy", "", []string{"Tax"}); err != nil || found {
+		t.Errorf("Global's key resolved for a run of Tax (found=%v, err=%v)", found, err)
+	}
 	for _, run := range runs {
 		if _, found, err := LookupEntityID(ctx, pool, KindSecret, "TOKEN", "", run); err != nil || !found {
 			t.Fatalf("precondition: Global's secret resolves for a run in %v (found=%v, err=%v)", run, found, err)

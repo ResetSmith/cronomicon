@@ -97,7 +97,7 @@ func TestTwoAgenciesAliasToOneName(t *testing.T) {
 	mk := func(key, agency, value string) {
 		t.Helper()
 		scope := "prod"
-		s, err := sec.Create(ctx, secrets.CreateInput{Key: key, Source: "stored", Scope: &scope, Value: value}, "seed")
+		s, err := sec.Create(ctx, secrets.CreateInput{Key: key, Source: "stored", Scope: &scope, Value: value, OwnerAgency: agency}, "seed")
 		if err != nil {
 			t.Fatalf("seed secret %s: %v", key, err)
 		}
@@ -148,12 +148,12 @@ func TestAliasIsNotABypass(t *testing.T) {
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-a','TeamA',?)`, now)
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-b','TeamB',?)`, now)
 
-	secretB, err := sec.Create(ctx, secrets.CreateInput{Key: "TEAMB_SUDO", Source: "stored", Value: "teamb-pw"}, "seed")
+	secretB, err := sec.Create(ctx, secrets.CreateInput{Key: "TEAMB_SUDO", Source: "stored", Value: "teamb-pw", OwnerAgency: "ag-b"}, "seed")
 	if err != nil {
 		t.Fatalf("seed TeamB secret: %v", err)
 	}
 	exec(`INSERT INTO secret_agencies(secret_id, agency_id) VALUES(?,?)`, secretB.ID, "ag-b")
-	secretA, err := sec.Create(ctx, secrets.CreateInput{Key: "TEAMA_SUDO", Source: "stored", Value: "teama-pw"}, "seed")
+	secretA, err := sec.Create(ctx, secrets.CreateInput{Key: "TEAMA_SUDO", Source: "stored", Value: "teama-pw", OwnerAgency: "ag-a"}, "seed")
 	if err != nil {
 		t.Fatalf("seed TeamA secret: %v", err)
 	}

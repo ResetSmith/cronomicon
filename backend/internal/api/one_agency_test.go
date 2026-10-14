@@ -156,12 +156,13 @@ func TestOneAgency_ARunsConnectAsKeyIsItsOwnAgencys(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM runs WHERE job_name='fin-job' AND ssh_credential='deploy'`); n != 1 {
 		t.Errorf("%d runs carry the chosen credential, want 1", n)
 	}
-	// Global's key takes a global administrator's permission over it to select.
-	if res := run(gFinAdmin, "shared"); res.StatusCode != http.StatusForbidden {
-		t.Errorf("FIN's administrator selecting a Global key = %d, want 403 (it is a global administrator's to hand out)", res.StatusCode)
-	}
-	if res := run(gRoot, "shared"); res.StatusCode/100 != 2 {
-		t.Errorf("a global administrator selecting a Global key = %d, want 2xx", res.StatusCode)
+	// Global's key is not usable by FIN's run, whoever selects it (§0a, IN-6;
+	// until then a global administrator might hand it out): it does not
+	// resolve, as another agency's does not.
+	for _, who := range []string{gFinAdmin, gRoot} {
+		if res := run(who, "shared"); res.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s selecting a Global key for FIN's run = %d, want 422", who, res.StatusCode)
+		}
 	}
 }
 

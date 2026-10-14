@@ -53,14 +53,21 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 			t.Errorf("singleton %s missing", tbl)
 		}
 	}
-	// Global's repository (migration 1310): one row, with what the last sync
-	// saw, and NO URL: the demo data is in no repository, and a URL would send
-	// the sync service to clone it.
+	// A repository for Global (migration 1310) and one for each agency (§0a:
+	// each agency's Git definitions are its own repository's), with NO URL:
+	// the demo data is in no repository, and a URL would send the sync service
+	// to clone it. Global's has what the last sync saw.
 	var repos int
 	var repoURL, lastSHA string
-	_ = pool.QueryRow(`SELECT COUNT(*), COALESCE(MAX(url),''), COALESCE(MAX(last_sha),'') FROM git_repos`).Scan(&repos, &repoURL, &lastSHA)
-	if repos != 1 || repoURL != "" || lastSHA == "" {
-		t.Errorf("git_repos after the seed: %d rows, url %q, last_sha %q; want Global's row alone, no URL, a last SHA", repos, repoURL, lastSHA)
+	_ = pool.QueryRow(`SELECT COUNT(*), COALESCE(MAX(url),''), (SELECT COALESCE(last_sha,'') FROM git_repos WHERE id = 'global') FROM git_repos`).Scan(&repos, &repoURL, &lastSHA)
+	if repos != 3 || repoURL != "" || lastSHA == "" {
+		t.Errorf("git_repos after the seed: %d rows, url %q, Global's last_sha %q; want Global's and the two agencies', no URL, a last SHA", repos, repoURL, lastSHA)
+	}
+	var misplaced int
+	_ = pool.QueryRow(`SELECT COUNT(*) FROM jobs j JOIN git_repos g ON g.id = j.repo_id
+	                    WHERE j.source = 'git' AND g.agency_id <> COALESCE((SELECT sa.agency_id FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = j.scope), 'global')`).Scan(&misplaced)
+	if misplaced != 0 {
+		t.Errorf("%d seeded Git jobs are in another agency's repository than their scope's", misplaced)
 	}
 
 	// Every row belongs to an agency, and to the right one (migration 1220): a

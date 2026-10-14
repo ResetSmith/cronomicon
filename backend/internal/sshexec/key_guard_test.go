@@ -76,10 +76,12 @@ func TestKeyGuardChecksAKeyNamedByID(t *testing.T) {
 	if _, err := load(fin, "no-such-credential"); !errors.Is(err, errKeyNotUsable) {
 		t.Errorf("a finance run loading a missing id: err = %v, want errKeyNotUsable", err)
 	}
-	for _, own := range []string{"fin", "shared"} {
-		if got, err := load(fin, ids[own]); err != nil || got != pubs[own] {
-			t.Errorf("a finance run loading the %s key: err = %v", own, err)
-		}
+	if got, err := load(fin, ids["fin"]); err != nil || got != pubs["fin"] {
+		t.Errorf("a finance run loading its own key: err = %v", err)
+	}
+	// Global's key is Global's runs' only (§0a, IN-6; until then every agency's).
+	if _, err := load(fin, ids["shared"]); !errors.Is(err, errKeyNotUsable) {
+		t.Errorf("a finance run loading Global's key: err = %v, want errKeyNotUsable", err)
 	}
 	// A snapshot with no agency at all (a finished pre-2.3.0 row, never a new
 	// run) may use Global's keys only.
@@ -116,21 +118,26 @@ func TestKeyGuardChecksAKeyNamedByName(t *testing.T) {
 	if got, err := load(fin, "CRONOMICON_KEY_finkey"); err != nil || got != pubs["fin"] {
 		t.Errorf("a finance run naming its own key: err = %v", err)
 	}
-	// One label, FIN's and a shared one: FIN's run gets FIN's; TAX's run gets the
-	// shared one. `LIMIT 1` gave whichever row came first to both.
+	// One label, FIN's and Global's: FIN's run gets FIN's; TAX's run gets
+	// neither (§0a, IN-6; until then Global's). `LIMIT 1` once gave whichever
+	// row came first to both.
 	if got, err := load(fin, "CRONOMICON_KEY_deploy"); err != nil || got != pubs["fin-dup"] {
 		t.Errorf("a finance run naming `deploy` did not get FIN's own (err = %v)", err)
 	}
 	tax := keyGuard{checked: true, scope: "tax-prod", agencies: []string{"tax"}}
-	if got, err := load(tax, "CRONOMICON_KEY_deploy"); err != nil || got != pubs["shared-dup"] {
-		t.Errorf("a tax run naming `deploy` did not get the shared key (err = %v)", err)
+	if _, err := load(tax, "CRONOMICON_KEY_deploy"); !errors.Is(err, errKeyNotUsable) {
+		t.Errorf("a tax run naming `deploy` got Global's key (err = %v), want errKeyNotUsable", err)
 	}
 
 	// A private key kept as a variable is scoped: another scope's is not this run's.
+	// Each variable is its agency's, as the write path makes it.
 	_, pem := newKey(t)
 	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := svc.db.Exec(`INSERT INTO env_vars (id, key, scope, value, created_at) VALUES ('v-tax','TAX_PEM','tax-prod',?,?), ('v-fin','FIN_PEM','fin-prod',?,?)`,
+	if _, err := svc.db.Exec(`INSERT INTO env_vars (id, key, scope, value, created_at, owner_agency) VALUES ('v-tax','TAX_PEM','tax-prod',?,?,'ag:tax'), ('v-fin','FIN_PEM','fin-prod',?,?,'ag:fin')`,
 		pem, now, pem, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.db.Exec(`INSERT INTO env_var_agencies (env_var_id, agency_id) VALUES ('v-tax','ag:tax'), ('v-fin','ag:fin')`); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"TAX_PEM", "CRONOMICON_VAR_TAX_PEM"} {

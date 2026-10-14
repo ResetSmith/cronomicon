@@ -806,6 +806,8 @@ func failAgencyRule(w http.ResponseWriter, err error) bool {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "serve_list_fixed", err.Error())
 	case errors.Is(err, settings.ErrOwnerChangeRefused):
 		httpx.Fail(w, http.StatusUnprocessableEntity, "owner_change_refused", err.Error())
+	case errors.Is(err, settings.ErrLocalRunnerGlobalOnly):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "local_runner_global_only", err.Error())
 	default:
 		return false
 	}

@@ -231,7 +231,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"python-metrics-export", "python", "Reporting", "report-01", "0 6 * * *", `["reporting","monitoring"]`, 1},
 		{"k8s-node-drain", "bash", "Cluster-A", "", "", `["k8s","maintenance"]`, 1},
 		{"ansible-deploy-app", "ansible", "Staging", "", "", `["deploy","staging"]`, 1},
-		{"disk-usage-audit", "bash", "", "", "*/30 * * * *", `["monitoring"]`, 1},
+		{"disk-usage-audit", "bash", "Production", "", "*/30 * * * *", `["monitoring"]`, 1}, // agency-alpha's, as prod-release is (§0a)
 		{"vault-token-rotate", "bash", "Production", "vault-01", "0 1 * * *", `["security","secrets"]`, 0},
 	}
 	for _, j := range jobs {
@@ -272,8 +272,8 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	}{
 		{"prod-release", "Plan → apply → smoke test the production release",
 			`[{"type":"job","name":"terraform-plan-prod","label":"Plan"},{"type":"job","name":"terraform-apply-prod","label":"Apply"},{"type":"job","name":"disk-usage-audit","label":"Verify"}]`, "", 1},
-		{"patch-and-report", "Patch the fleet then generate the compliance report",
-			`[{"type":"job","name":"ansible-patch-tuesday","label":"Patch"},{"type":"job","name":"perl-report-gen","label":"Report"}]`, "0 3 * * 2", 1},
+		{"patch-and-report", "Patch the fleet then check the Windows hosts (one agency's jobs, §0a)",
+			`[{"type":"job","name":"ansible-patch-tuesday","label":"Patch"},{"type":"job","name":"win-update-check","label":"Windows"}]`, "0 3 * * 2", 1},
 		{"nightly-maintenance", "Backups, log rotation and cert checks",
 			`[{"type":"parallel","jobs":[{"type":"job","name":"nightly-db-backup","label":"Backup"},{"type":"job","name":"log-rotate-web","label":"Rotate"}]},{"type":"job","name":"cert-renewal","label":"Certs"}]`, "0 0 * * *", 1},
 	}
@@ -402,7 +402,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 			[][2]string{{"terraform-plan-prod", "terraform"}, {"terraform-apply-prod", "terraform"}, {"disk-usage-audit", "bash"}},
 			[]string{"success", "success", "success"}, 26 * hour},
 		{"patch-and-report", 2, "warning", "Production", "default",
-			[][2]string{{"ansible-patch-tuesday", "ansible"}, {"perl-report-gen", "perl"}},
+			[][2]string{{"ansible-patch-tuesday", "ansible"}, {"win-update-check", "powershell"}},
 			[]string{"success", "warning"}, 50 * hour},
 		{"nightly-maintenance", 3, "failure", "Production", "default",
 			[][2]string{{"nightly-db-backup", "bash"}, {"log-rotate-web", "bash"}, {"cert-renewal", "bash"}},
@@ -445,7 +445,7 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 		{"gitsync", "failure", "poll", "", "", "", "Git", "sync", "Clone failed: auth error", "infra/job-defs", "main", "", 10 * hour},
 		{"push", "success", "alice@corp.example", "", "", "Production", "Schedule", "publish", "Published nightly-db-backup schedule", "infra/job-defs", "main", "f00ba12", 3 * hour},
 		{"run-end", "failure", "bob@corp.example", "k8s-node-drain", "", "Cluster-A", "", "", "Run killed by operator", "", "", "", 6 * hour},
-		{"run-end", "success", "scheduler@cronomicon", "disk-usage-audit", "", "", "", "", "All hosts under threshold", "", "", "", 30 * minute},
+		{"run-end", "success", "scheduler@cronomicon", "disk-usage-audit", "", "Production", "", "", "All hosts under threshold", "", "", "", 30 * minute},
 		{"run-end", "warning", "scheduler@cronomicon", "win-update-check", "", "Windows-Fleet", "", "", "Reboot pending on win-app-01", "", "", "", 12 * hour},
 	}
 	for _, a := range acts {
@@ -780,6 +780,22 @@ func Seed(ctx context.Context, database *sql.DB, log *slog.Logger) error {
 	for _, tbl := range []string{"jobs", "workflows", "scopes"} {
 		exec(`UPDATE ` + tbl + ` SET repo_id = 'global' WHERE source = 'git' AND repo_id IS NULL`)
 	}
+	// Each agency's definitions are its own repository's (§0a, IN-1, IN-3):
+	// Global's repository supplies Global's alone. Each agency has a
+	// repository, its URL left empty as Global's is, and what is an agency's
+	// in Git (a scope it owns, a job on such a scope, a workflow of such jobs)
+	// is that repository's.
+	for _, a := range agencies {
+		exec(`INSERT INTO git_repos (id, agency_id, url, branch, last_modified_by, last_modified_at) VALUES (?, ?, '', 'main', ?, ?)`,
+			"repo-"+a.name, a.id, dev, ago(9*day))
+	}
+	const scopeRepo = `(SELECT g.id FROM git_repos g JOIN scope_agencies sa ON sa.agency_id = g.agency_id
+	                     JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = %s AND g.agency_id <> 'global')`
+	exec(`UPDATE scopes SET repo_id = COALESCE(` + fmt.Sprintf(scopeRepo, "scopes.name") + `, repo_id) WHERE source = 'git'`)
+	exec(`UPDATE jobs SET repo_id = COALESCE(` + fmt.Sprintf(scopeRepo, "jobs.scope") + `, repo_id) WHERE source = 'git'`)
+	exec(`UPDATE workflows SET repo_id = COALESCE((SELECT j.repo_id FROM jobs j, json_each(workflows.steps) s
+	                                             WHERE s.value ->> 'type' = 'job' AND j.name = s.value ->> 'name' AND j.source = 'git'
+	                                             LIMIT 1), repo_id) WHERE source = 'git'`)
 
 	settings := map[string]string{
 		"appName":           "Cronomicon",

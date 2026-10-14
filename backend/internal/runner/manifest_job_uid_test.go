@@ -292,8 +292,10 @@ func TestManifestRefusesARunWhoseScopeWasGivenAway(t *testing.T) {
 		t.Errorf("the refusal carries the job's command: %s", rec.Body.String())
 	}
 
-	// Global's repository's job on the same scope is nobody's to refuse.
-	if rec := fetch(run("j-global", "global-plan")); rec.Code != http.StatusOK {
+	// Global's repository's job on the same scope is refused too (§0a, IN-3;
+	// until then it was nobody's to refuse).
+	if rec := fetch(run("j-global", "global-plan")); rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), runref.CodeRepoScopeMismatch) {
 		t.Errorf("Global's repository's job on that scope was answered %d: %s", rec.Code, rec.Body.String())
 	}
 }

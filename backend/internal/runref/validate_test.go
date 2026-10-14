@@ -264,7 +264,7 @@ func TestAgencyPredicateAG_Q1b(t *testing.T) {
 		if scope != "" {
 			sp = &scope
 		}
-		s, err := sec.Create(ctx, secrets.CreateInput{Key: key, Source: "stored", Scope: sp, Value: "v"}, "seed")
+		s, err := sec.Create(ctx, secrets.CreateInput{Key: key, Source: "stored", Scope: sp, Value: "v", OwnerAgency: agency}, "seed")
 		if err != nil {
 			t.Fatalf("seed secret %s: %v", key, err)
 		}
@@ -293,7 +293,7 @@ func TestAgencyPredicateAG_Q1b(t *testing.T) {
 	}{
 		{"unrestricted row, general-pool run", "FREE", "prod", nil, true,
 			"an empty membership set means NO restriction — this is what keeps global secrets global"},
-		{"unrestricted row, agency run", "FREE", "prod", []string{"A"}, true, ""},
+		{"Global's row, agency run", "FREE", "prod", []string{"A"}, false, "§0a (IN-6): Global's rows are Global's runs' only"},
 		{"agency row, matching run", "IN_A", "prod", []string{"A"}, true, ""},
 		{"agency row, non-matching run", "IN_A", "prod", []string{"B"}, false,
 			"the AG-Q1(b) agency clause"},
@@ -335,6 +335,7 @@ func TestKeyTighteningAG_Q5(t *testing.T) {
 	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-a','A','2026-01-01T00:00:00Z')`)
 	exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id)
 	      SELECT id, 'ag-a' FROM ssh_credentials WHERE label='a_key'`)
+	exec(`UPDATE ssh_credentials SET owner_agency = 'ag-a' WHERE label = 'a_key'`) // as the write path makes it
 
 	r := NewResolver(pool, cfg, sec, nilLog())
 	resolves := func(label string, agencies []string) error {
@@ -347,8 +348,9 @@ func TestKeyTighteningAG_Q5(t *testing.T) {
 	if err := resolves("free_key", nil); err != nil {
 		t.Errorf("a key with no membership must stay reachable: %v", err)
 	}
-	if err := resolves("free_key", []string{"A"}); err != nil {
-		t.Errorf("a key with no membership must stay reachable from any agency: %v", err)
+	// §0a (IN-6): Global's key is Global's runs' only; until then any agency's.
+	if err := resolves("free_key", []string{"A"}); err == nil {
+		t.Errorf("Global's key resolved for a run of agency A")
 	}
 	// The tightening itself.
 	if err := resolves("a_key", []string{"A"}); err != nil {

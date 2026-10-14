@@ -640,7 +640,7 @@ func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request,
 	if len(agencyIDs) > 1 {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "one_agency",
 			"a new "+label+" belongs to exactly one agency: name the one that owns it. "+
-				"What several agencies need is a copy in each, or one that is Global's")
+				"What several agencies need is a copy in each")
 		return nil, false
 	}
 	for _, a := range agencyIDs {

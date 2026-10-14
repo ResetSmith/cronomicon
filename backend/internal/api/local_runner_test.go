@@ -211,33 +211,30 @@ func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndAgenciesBindToIt(t *t
 		t.Fatalf("a refused write changed the serve list to %v", got)
 	}
 
-	// A global administrator widens it, Global beside an agency.
-	if code, ec := set(gRoot, "global", "ag:FIN"); code != 200 {
-		t.Fatalf("a global admin adding FIN = %d %s", code, ec)
+	// A global administrator cannot widen it either: the local runner is
+	// Global's and serves Global only (§0a, IN-3; until then a global
+	// administrator gave it any agencies).
+	if code, ec := set(gRoot, "global", "ag:FIN"); code != 422 || ec != "local_runner_global_only" {
+		t.Errorf("a global admin adding FIN = %d %s, want 422 local_runner_global_only", code, ec)
 	}
-	if got := served(t, pool, id); !slices.Equal(got, []string{"ag:FIN", "global"}) {
-		t.Fatalf("it serves %v, want FIN and Global", got)
+	if code, ec := set(gRoot, "ag:FIN"); code != 422 || ec != "local_runner_global_only" {
+		t.Errorf("a global admin giving it FIN alone = %d %s, want 422 local_runner_global_only", code, ec)
+	}
+	if got := served(t, pool, id); !slices.Equal(got, []string{"global"}) {
+		t.Fatalf("it serves %v, want Global alone", got)
 	}
 	if code, ec := set(gRoot); code != 422 || ec != "agency_required" {
 		t.Errorf("an empty serve list = %d %s, want 422 agency_required", code, ec)
 	}
-	// It is not a legacy placement, whatever it serves.
+	// It is not a legacy placement.
 	for k := range listNotices(t, h, gRoot) {
 		if k == "legacy_placement/"+id {
 			t.Error("the local runner was reported as a legacy placement")
 		}
 	}
-
-	// Now it serves FIN: FIN binds its own scope to it, with no authority over
-	// the runner; TAX still cannot bind theirs.
-	if code, ec := bind(gFinAdmin, "sc:fin"); code != 200 {
-		t.Errorf("FIN binding its scope to the local runner that serves it = %d %s, want 200", code, ec)
-	}
-	if code, ec := bind(gTaxAdmin, "sc:tax"); code != 422 || ec != "runner_not_eligible" {
-		t.Errorf("TAX binding its scope to a local runner that does not serve TAX = %d %s, want 422 runner_not_eligible", code, ec)
-	}
-	if n := count(t, pool, `SELECT COUNT(*) FROM scope_runners WHERE runner_id = ? AND scope_id = 'sc:fin'`, id); n != 1 {
-		t.Errorf("FIN's scope has %d binding(s) to the local runner, want 1", n)
+	// FIN still cannot bind its scope to it.
+	if code, ec := bind(gFinAdmin, "sc:fin"); code != 422 || ec != "runner_not_eligible" {
+		t.Errorf("FIN binding its scope to the local runner = %d %s, want 422 runner_not_eligible", code, ec)
 	}
 	// Its owner never changes.
 	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/owner", gRoot, `{"agencyId":"ag:FIN"}`)

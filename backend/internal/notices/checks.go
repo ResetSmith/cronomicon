@@ -40,6 +40,8 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindWorkflowSpansAgencies, checkWorkflowSpansAgencies},
 		{KindReactionOtherAgency, checkReactionOtherAgency},
 		{KindGlobalJobOnAgencyScope, checkGlobalJobOnAgencyScope},
+		{KindGlobalCredentialBound, checkGlobalCredentialBound},
+		{KindLocalRunnerServed, checkLocalRunnerServed},
 		{KindScheduleEntryNoOwner, checkScheduleEntryNoOwner},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},
@@ -318,7 +320,8 @@ func SetRecordKeyNameCheck(fn func(ctx context.Context, database *sql.DB) ([]Fin
 }
 
 // checkRecordKeyOutsideOwner lists hand-written host records and bastions whose
-// SSH key is neither their owner's nor Global's (LR-72). A write refuses that
+// SSH key is not their owner's (LR-72; since §0a, IN-6, Global's is not usable by
+// another agency's record either). A write refuses that
 // now; a record from before 2.3.0, when it belonged to nobody, may still name
 // any key. What that costs differs by kind, and the notice says which:
 //
@@ -340,8 +343,8 @@ func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
 			  FROM `+k.table+` t JOIN ssh_credentials c ON c.id = t.auth_credential_id
 			 WHERE `+k.where+`NOT EXISTS (
 			         SELECT 1 FROM ssh_credential_agencies m
-			          WHERE m.credential_id = c.id AND m.agency_id IN (t.owner_agency, ?))
-			 ORDER BY t.id`, agencyid.Global)
+			          WHERE m.credential_id = c.id AND m.agency_id = t.owner_agency)
+			 ORDER BY t.id`)
 		if err != nil {
 			return err
 		}
@@ -354,8 +357,8 @@ func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
 			found = append(found, Finding{
 				AgencyID: owner,
 				Subject:  k.kind + ":" + id,
-				Detail: fmt.Sprintf("The %s %s belongs to %s and names the SSH key %s, which is neither %s's nor Global's. %s "+
-					"Give the %s a key of its own agency or one that is Global's, or give the %s to the agency whose key it names.",
+				Detail: fmt.Sprintf("The %s %s belongs to %s and names the SSH key %s, which is not %s's. %s "+
+					"Give the %s a key of its own agency, or give the %s to the agency whose key it names.",
 					k.noun, name, ownerName, label, ownerName, k.cost, k.noun, k.noun),
 			})
 		}

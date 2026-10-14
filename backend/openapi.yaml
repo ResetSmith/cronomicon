@@ -7128,9 +7128,11 @@ paths:
         `agency_required`, and Global beside a named agency is 422 `global_mixed`
         (a runner that serves Global claims Global's runs and no department's).
 
-        The **local runner** (kind `server`) is the one runner with a serve list:
-        for it this route takes any non-empty set of agencies, Global beside
-        others included, from a global administrator.
+        The **local runner** (kind `server`) is Global's and serves Global only
+        (v2.4.0): for it this route takes exactly Global, and anything else is
+        422 `local_runner_global_only`. (From v2.3.0 a global administrator gave
+        it any non-empty set of agencies; the upgrade narrows it, and the notice
+        `local_runner_served` names each agency it served.)
 
         **An agent serves exactly the agency that owns it** (v2.3.0, MA-11), so
         this route no longer places one: the list written must be exactly the
@@ -10836,6 +10838,17 @@ components:
               keeps it as it was rather than removing it. Subject: the job's
               uid. Filed under Global. It clears when its file names a scope
               of Global's, or none, or leaves the repository.
+            - `global_credential_bound` — a job of an agency binds a secret, a
+              variable or an SSH key by a name only Global holds (v2.4.0). A row
+              of Global's is used by Global's runs only: the job's runs do not
+              find it, and fail, naming it. Subject:
+              `<job uid>:<secret|var|key>:<name>`. Filed under the job's agency.
+              It clears when the agency has a row of the name, or the binding
+              goes.
+            - `local_runner_served` — the local runner served this agency until
+              v2.4.0, and serves Global only now; the agency's shell jobs wait
+              for an agent of its own. Subject: the agency's id. Filed under the
+              agency. It clears when an agent the agency owns serves it.
             - `reaction_other_agency` — a reaction is pinned to a definition of
               another agency than its own (v2.4.0). A reaction watches its own
               agency's definitions only: it does not fire, and each run of the

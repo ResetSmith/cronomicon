@@ -1735,7 +1735,7 @@ func (s *Server) requireKeyUsableBy(w http.ResponseWriter, r *http.Request, cred
 	}
 	if !usable {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_credential",
-			"no SSH key with that id is usable by this "+label+"'s agency — choose a key of its own agency, or one that is Global's")
+			"no SSH key with that id is usable by this "+label+"'s agency — choose a key of its own agency")
 		return false
 	}
 	return true

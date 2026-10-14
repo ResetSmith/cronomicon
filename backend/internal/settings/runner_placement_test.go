@@ -32,7 +32,10 @@ func TestCheckRunnerPlacement(t *testing.T) {
 		{"a legacy placement cannot be emptied", false, "global", []string{"ag-a", "ag-b"}, []string{}, ErrAgencyRequired},
 		{"a legacy placement may be settled as its owner's", false, "global", []string{"ag-a", "ag-b"}, []string{"global"}, nil},
 		{"a repeated id is one id", false, "ag-a", []string{"ag-a"}, []string{"ag-a", "ag-a"}, nil},
-		{"the local runner takes any non-empty list", true, "global", []string{"global"}, []string{"ag-a", "ag-b"}, nil},
+		// §0a (IN-3): Global alone; until then any non-empty list.
+		{"the local runner serves Global", true, "global", []string{"global"}, []string{"global"}, nil},
+		{"the local runner cannot serve an agency", true, "global", []string{"global"}, []string{"ag-a", "ag-b"}, ErrLocalRunnerGlobalOnly},
+		{"nor Global beside one", true, "global", []string{"global"}, []string{"global", "ag-a"}, ErrLocalRunnerGlobalOnly},
 		{"the local runner's list cannot be emptied", true, "global", []string{"global"}, nil, ErrAgencyRequired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

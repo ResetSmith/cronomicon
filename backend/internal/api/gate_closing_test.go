@@ -503,7 +503,7 @@ func TestGC_ARecordNamesOnlyAKeyItsOwnerMayUse(t *testing.T) {
 			want             int
 		}{
 			{gFinAdmin, "k-fin", "ag:FIN", http.StatusCreated},
-			{gFinAdmin, "k-shared", "ag:FIN", http.StatusCreated},
+			{gFinAdmin, "k-shared", "ag:FIN", http.StatusUnprocessableEntity}, // §0a (IN-6): Global's key is not FIN's
 			{gFinAdmin, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
 			{gFinAdmin, "k-nope", "ag:FIN", http.StatusUnprocessableEntity},
 			{gRoot, "k-tax", "ag:FIN", http.StatusUnprocessableEntity},
@@ -1038,10 +1038,12 @@ func TestGC_AHostRecordMayNotNameAnotherAgencysKey(t *testing.T) {
 	if n := count(t, pool, `SELECT COUNT(*) FROM ssh_hosts WHERE id='h-fin' AND auth_credential_id IS NOT NULL`); n != 0 {
 		t.Fatal("a refused write changed the host record's key")
 	}
-	for _, cred := range []string{"k-fin", "k-shared"} {
-		if rec := put(gFinAdmin, cred); rec.Code != http.StatusOK {
-			t.Errorf("fin admin naming %s = %d, want 200 (%s)", cred, rec.Code, rec.Body)
-		}
+	if rec := put(gFinAdmin, "k-fin"); rec.Code != http.StatusOK {
+		t.Errorf("fin admin naming k-fin = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	// Global's key is not FIN's record's (§0a, IN-6; until then it was).
+	if rec := put(gFinAdmin, "k-shared"); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("fin admin naming Global's key k-shared = %d, want 422 (%s)", rec.Code, rec.Body)
 	}
 	// A global administrator is bound by it too since 2.3.0 (LR-72): the record
 	// is FIN's scope's, and TAX's key is not FIN's to use whoever names it. An
