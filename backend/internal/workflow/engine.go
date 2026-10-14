@@ -1429,6 +1429,10 @@ func (e *Engine) SubWorkflowJobScopesAt(ctx context.Context, steps []Step, wfSou
 	return out, nil
 }
 
+// CollectWorkflowRefs exposes collectWorkflowRefs to `cronomicon validate`,
+// which checks a Git workflow's sub-workflow steps against its checkout.
+func CollectWorkflowRefs(steps []Step) []string { return collectWorkflowRefs(steps) }
+
 // collectWorkflowRefs lists the sub-workflow names a graph references, walking
 // the same containers collectStepRefs walks.
 func collectWorkflowRefs(steps []Step) []string {

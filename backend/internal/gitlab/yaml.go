@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/ResetSmith/cronomicon/internal/inventory"
+	"github.com/ResetSmith/cronomicon/internal/workflow"
 	"gopkg.in/yaml.v3"
 
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -977,6 +979,88 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 	}
 	referencedSchedules := map[string]bool{}
 
+	// References that name a job or a workflow, held until every file has
+	// been read (a job's reaction may name a workflow read after it).
+	//
+	//   - A reaction's upstream (spec.reactions[].onName), as sync checks it
+	//     (badReactions): a definition of this repository, of the kind named; one
+	//     that names none is an ERROR, and sync does not write the definition. One
+	//     whose onSource is `cronomicon` names a definition built in the app, which
+	//     a checkout cannot see, and is not checked. A definition that reacts to
+	//     itself is an error, as at sync.
+	//   - A workflow's step: its job (collectStepRefs) and its sub-workflow
+	//     (collectWorkflowRefs). Sync does not check these; the engine resolves
+	//     them when the workflow runs, and a step whose source is not given falls
+	//     back to the definitions built in the app. So one that names nothing in
+	//     the checkout is a WARNING: an error would fail CI on a workflow that sync
+	//     accepts. A step that says `jobSource: cronomicon` is not checked.
+	seenJobNames := map[string]string{}      // job name → the file that defines it
+	seenWorkflowNames := map[string]string{} // workflow name → the file that defines it
+	type pendingRef struct {
+		file, field, kind, name string
+		step, sourceGiven      bool
+	}
+	var pending []pendingRef
+	pendReactions := func(file, ownerKind, ownerName string, rs []ReactionEntry) {
+		norm, _ := NormalizeReactions(rs) // shape errors are validateYAMLBytes's
+		for _, e := range norm {
+			if e.OnSourceOrDefault() != "git" {
+				continue
+			}
+			field := "spec.reactions[" + e.Name + "].onName"
+			if e.OnKind == ownerKind && e.OnName == ownerName {
+				errs = append(errs, ValidationError{File: file, Field: field, Message: "a definition cannot react to itself"})
+				continue
+			}
+			pending = append(pending, pendingRef{file: file, field: field, kind: e.OnKind, name: e.OnName})
+		}
+	}
+	pendSteps := func(file string, raw []any) {
+		data, jerr := json.Marshal(raw)
+		if jerr != nil {
+			return
+		}
+		var steps []workflow.Step
+		if json.Unmarshal(data, &steps) != nil {
+			return
+		}
+		for _, ref := range workflow.CollectStepRefs(steps) {
+			if ref.Source == "cronomicon" {
+				continue
+			}
+			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "job", name: ref.Name,
+				step: true, sourceGiven: ref.Source == "git"})
+		}
+		for _, name := range workflow.CollectWorkflowRefs(steps) {
+			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "workflow", name: name, step: true})
+		}
+	}
+	resolvePending := func() {
+		for _, p := range pending {
+			var ok bool
+			if p.kind == "workflow" {
+				_, ok = seenWorkflowNames[p.name]
+			} else {
+				_, ok = seenJobNames[p.name]
+			}
+			if ok {
+				continue
+			}
+			switch {
+			case !p.step:
+				errs = append(errs, ValidationError{File: p.file, Field: p.field,
+					Message: fmt.Sprintf("no such %s %q (source git)", p.kind, p.name)})
+			case p.sourceGiven:
+				warnings = append(warnings, ValidationError{File: p.file, Field: p.field,
+					Message: fmt.Sprintf("step job %q is not a job of this repository: the step fails when the workflow runs", p.name)})
+			default:
+				warnings = append(warnings, ValidationError{File: p.file, Field: p.field,
+					Message: fmt.Sprintf("step %s %q is not a %s of this repository: when the workflow runs it is looked for "+
+						"among the %ss built in the app, and the step fails if there is none", p.kind, p.name, p.kind, p.kind)})
+			}
+		}
+	}
+
 	// resolveScheduleRefs validates each scheduleRef of an owner against the
 	// collected schedule set (dangling = hard error), marking each referenced.
 	resolveScheduleRefs := func(path string, refs []string) {
@@ -1005,7 +1089,6 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 	// same metadata.name silently WON (last file iterated replaced the first),
 	// which was survivable-by-luck while the DB's PK also enforced uniqueness
 	// and is a data-loss hazard now that only this validator stands in the way.
-	seenJobNames := map[string]string{}
 	referenced := map[string]bool{}
 	jobFiles, _ := walk("jobs")
 	for _, f := range jobFiles {
@@ -1052,10 +1135,10 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 					Message: fmt.Sprintf("target_host %q contains an ansible pattern character; it cannot be expressed as a --limit, so runs of this job will be REFUSED (409) rather than silently targeting the full inventory", j.Spec.TargetHost)})
 			}
 			resolveScheduleRefs(path, j.Spec.ScheduleRefs)
+			pendReactions(path, "job", j.Metadata.Name, j.Spec.Reactions)
 		}
 	}
 
-	seenWorkflowNames := map[string]string{}
 	// 2b. workflows/ — validate each + resolve scheduleRefs (A10a).
 	wfFiles, _ := walk("workflows")
 	for _, f := range wfFiles {
@@ -1071,21 +1154,32 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 				}
 				seenWorkflowNames[n] = path
 			}
-			// R2F-2/R2F-Q3 — names are the law in git. A step MAY carry `jobUid` in
-			// the API (the composer writes it, so a step can name one of two
-			// same-named jobs), but the git pool is name-unique by constraint, so an
-			// identity in a hand-edited file buys nothing and rots the first time the
-			// repo is replayed into a different installation. Warn and ignore rather
-			// than refuse: ignore-unknown is this parser's standing posture, and a
-			// hard error would break a repo exported from an API-composed workflow.
+			// R2F-2/R2F-Q3 — a Git workflow's step names its job. A step MAY carry
+			// `jobUid` in the API (the composer writes it, so a step can name one of
+			// two same-named jobs), but in a repository the step is resolved by name:
+			// the workflow's own repository's job of that name, else Global's
+			// (GR-16; a name is one job in each repository). An identity in a
+			// hand-edited file buys nothing and rots the first time the repo is
+			// replayed into a different installation. Warn and ignore rather than
+			// refuse: ignore-unknown is this parser's standing posture, and a hard
+			// error would break a repo exported from an API-composed workflow.
 			if step := firstStepWithJobUID(wf.Spec.Steps); step != "" {
 				warnings = append(warnings, ValidationError{File: path, Field: "spec.steps",
 					Message: fmt.Sprintf("step %q sets jobUid, which is ignored in git-sourced workflows — "+
-						"names identify jobs in a repository (one name per repo), and a stored identity would not survive replay into another installation", step)})
+						"a step names its job, which is looked for in the workflow's own repository and then in Global's, "+
+						"and a stored identity would not survive replay into another installation", step)})
 			}
 			resolveScheduleRefs(path, wf.Spec.ScheduleRefs)
+			pendReactions(path, "workflow", wf.Metadata.Name, wf.Spec.Reactions)
+			pendSteps(path, wf.Spec.Steps)
 		}
 	}
+
+	// 2d. The references sync resolves, and the ones the engine resolves when
+	// a workflow runs, now that every definition of the checkout is known
+	// (2.4.0; until then a workflow step's job and a reaction's upstream were
+	// checked by nothing here). See resolvePending.
+	resolvePending()
 
 	// 2c. inventory/ — each scope's file, checked as sync checks it
 	// (parseInventories): a file that carries a secret is refused, and the
