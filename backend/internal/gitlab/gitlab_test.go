@@ -283,6 +283,29 @@ CREATE TABLE IF NOT EXISTS git_repos (
 );
 INSERT OR IGNORE INTO git_repos (id, agency_id) VALUES ('global', 'global');
 
+-- Whose an in-app job is: its scope's one agency (jobsAgencySQL), Global's
+-- repository's lookups included since §0a. The columns are the ones
+-- scripts_test.go creates the table with.
+CREATE TABLE IF NOT EXISTS scopes (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE,
+    source TEXT,
+    source_path TEXT,
+    git_meta_json TEXT,
+    synced_at TEXT,
+    description TEXT,
+    created_by TEXT,
+    created_at TEXT,
+    raw_inventory TEXT,
+    inventory_format TEXT,
+    repo_id TEXT
+);
+CREATE TABLE IF NOT EXISTS scope_agencies (
+    scope_id  TEXT NOT NULL,
+    agency_id TEXT NOT NULL,
+    PRIMARY KEY (scope_id, agency_id)
+);
+
 CREATE TABLE IF NOT EXISTS git_sync_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     repo_id       TEXT NOT NULL DEFAULT 'global', -- migration 1310

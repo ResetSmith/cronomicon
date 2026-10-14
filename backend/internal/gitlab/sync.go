@@ -639,27 +639,18 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	collect(schedResolveErrs)
 	schedsOK = schedsOK && len(schedResolveErrs) == 0
 
-	// What this repository's definitions take from Global's (GR-16, borrow.go):
-	// a script, a schedule or a definition to react to that this repository has
-	// no file for and the installation's own repository supplies.
-	borrow := s.newBorrowing(ctx, scripts, scheds)
-	// elsewhere is the end of a "does not resolve" message: where was looked.
-	elsewhere := ""
-	if s.repo() != repoid.Global {
-		elsewhere = " of this repository, nor to one of the installation's own"
-	}
+	// A reference resolves in this repository and nowhere else (§0a, IN-1,
+	// IN-8): an agency's repository takes nothing from Global's (as it did from
+	// 2.4.0's GR-16 until §0a), and Global's nothing from an agency's.
 
 	// dangleScheduleRefs reports any scheduleRef that resolves to no schedule, as a
 	// hard sync error (caught at sync/MR time, not run time — same as script_ref).
 	dangleScheduleRefs := func(file string, refs []string) bool {
 		bad := false
 		for _, ref := range refs {
-			if _, ok := resolvedScheds[ref]; ok {
-				continue
-			}
-			if _, ok := borrow.schedule(ref); !ok {
+			if _, ok := resolvedScheds[ref]; !ok {
 				ve := ValidationError{File: file, Field: "spec.scheduleRefs",
-					Message: fmt.Sprintf("scheduleRef %q does not resolve to any schedules/*.yaml%s", ref, elsewhere)}
+					Message: fmt.Sprintf("scheduleRef %q does not resolve to any schedules/*.yaml", ref)}
 				allErrs = append(allErrs, ve.Error())
 				res.Errors = append(res.Errors, ve)
 				bad = true
@@ -754,23 +745,21 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 	definitionExists := func(kind, source, name string) bool {
 		if source == "git" {
-			// This repository's own, then Global's (GR-16). Global's are in the
-			// tables already: they are not what this sync is writing, so asking
-			// the tables for them is not the race the note above describes.
+			// This repository's own, and no other's (§0a, IN-8).
 			if kind == "workflow" {
-				return incomingWfs[name] || s.globalHas(ctx, kind, name)
+				return incomingWfs[name]
 			}
-			return incomingJobs[name] || s.globalHas(ctx, kind, name)
+			return incomingJobs[name]
 		}
 		table := "jobs"
 		if kind == "workflow" {
 			table = "workflows"
 		}
-		// A definition built in the app, for a reaction in an AGENCY's
-		// repository: one of that agency's, and no other's (2.4.0). "Any in-app
-		// definition of the name" told a repository's committers which names
-		// other agencies hold (this file's error, or its absence), and then the
-		// timing and outcome of their runs. Global's repository asks as before.
+		// A definition built in the app: one of this repository's agency's, and
+		// no other's (2.4.0; Global's repository too since §0a, IN-8). "Any
+		// in-app definition of the name" told a repository's committers which
+		// names other agencies hold (this file's error, or its absence), and
+		// then the timing and outcome of their runs.
 		ofAgency, ofAgencyArgs := s.inAppOfThisAgency(kind)
 		var one int
 		//nolint:gosec // table is chosen from two literals by the kind switch
@@ -829,13 +818,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	goodJobs := make([]JobYAML, 0, len(jobs))
 	for _, j := range jobs {
 		if j.Spec.ScriptRef != "" {
-			_, ok := resolved[j.Spec.ScriptRef]
-			if !ok {
-				_, ok = borrow.script(j.Spec.ScriptRef)
-			}
-			if !ok {
+			if _, ok := resolved[j.Spec.ScriptRef]; !ok {
 				ve := ValidationError{File: "jobs/" + j.Metadata.Name + ".yaml", Field: "spec.script_ref",
-					Message: fmt.Sprintf("script_ref %q does not resolve to any script in scripts/%s", j.Spec.ScriptRef, elsewhere)}
+					Message: fmt.Sprintf("script_ref %q does not resolve to any script in scripts/", j.Spec.ScriptRef)}
 				allErrs = append(allErrs, ve.Error())
 				res.Errors = append(res.Errors, ve)
 				continue
@@ -926,7 +911,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
-		if uErr := s.upsertJobs(ctx, tx, goodJobs, borrow.withScripts(resolved), borrow.withScheds(resolvedScheds), nowStr, sha); uErr != nil {
+		if uErr := s.upsertJobs(ctx, tx, goodJobs, resolved, resolvedScheds, nowStr, sha); uErr != nil {
 			allErrs = append(allErrs, "upsert jobs: "+uErr.Error())
 			dbErr = uErr
 		} else {
@@ -935,7 +920,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	}
 
 	if dbErr == nil {
-		if uErr := s.upsertWorkflows(ctx, tx, goodWfs, borrow.withScheds(resolvedScheds), nowStr, sha); uErr != nil {
+		if uErr := s.upsertWorkflows(ctx, tx, goodWfs, resolvedScheds, nowStr, sha); uErr != nil {
 			allErrs = append(allErrs, "upsert workflows: "+uErr.Error())
 			dbErr = uErr
 		} else {
@@ -1073,15 +1058,12 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	if scriptsOK {
 		// This repository's scripts only (1290, GR-13). The statement used to ask
 		// neither for a Git row nor for a repository, so a second repository's
-		// sync deleted every script the first had supplied.
-		//
-		// Not one that a job of ANOTHER repository is joined to (GR-17,
-		// deferred.go): it is kept as it was, and that repository's agency is
-		// told, until nothing of another repository's uses it.
+		// sync deleted every script the first had supplied. (From GR-17 until
+		// §0a it also waited while another repository's job used the script;
+		// no other repository's job can now.)
 		prunedScripts = prune("scripts", `
 			DELETE FROM scripts
-			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?
-			  AND NOT `+scriptUsedElsewhere, repoID, repoID)
+			WHERE synced_at < ? AND source_path LIKE 'scripts/%' AND repo_id = ?`, repoID)
 	} else {
 		skipped = append(skipped, "scripts")
 	}
@@ -1091,12 +1073,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	if schedsOK {
 		// This repository's schedules only (1300, GR-13), like the scripts
 		// above and for the same reason: the column arrived with this phase.
-		// Nor one that a definition of another repository takes its timing from
-		// (GR-17).
 		prune("schedules", `
 			DELETE FROM schedules
-			WHERE source = 'git' AND synced_at < ? AND repo_id = ?
-			  AND NOT `+scheduleUsedElsewhere, repoID, repoID, repoID)
+			WHERE source = 'git' AND synced_at < ? AND repo_id = ?`, repoID)
 	} else {
 		skipped = append(skipped, "schedules")
 	}
@@ -1144,14 +1123,6 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 			  AND NOT `+settings.BoundScopeBusySQL, repoID)
 	} else {
 		skipped = append(skipped, "scopes")
-	}
-
-	// The prunes this sync deferred, said to whoever they wait for (GR-17).
-	if dbErr == nil {
-		if err := s.noteDeferredPrunes(ctx, tx, nowStr, scriptsOK, schedsOK); err != nil {
-			allErrs = append(allErrs, "note the deferred prunes: "+err.Error())
-			dbErr = err
-		}
 	}
 
 	// PP-B2 (B2-3): a skipped prune leaves stale rows — surface it. The parse
@@ -3977,14 +3948,27 @@ func nullIfZero(v int) any {
 
 // inAppOfThisAgency is the condition, over the table of a kind, that confines
 // a lookup of a definition BUILT IN THE APP to this repository's agency: a
-// job whose scope is that agency's alone, a workflow that agency owns. Nothing
-// for Global's repository, which may name any.
+// job whose scope is that agency's alone, a workflow that agency owns. For
+// Global's repository, Global's: a job with no scope, or on a scope that is not
+// one agency's, is Global's, as its runs are. (Until §0a, IN-8, Global's
+// repository might name any.)
 func (s *Service) inAppOfThisAgency(kind string) (string, []any) {
-	if s.repo() == repoid.Global {
-		return "", nil
-	}
 	if kind == "workflow" {
 		return ` AND owner_agency = ?`, []any{s.agency()}
 	}
-	return ` AND ` + jobsAgencySQL + ` = ?`, []any{s.agency()}
+	return ` AND COALESCE(` + jobsAgencySQL + `, '` + agencyid.Global + `') = ?`, []any{s.agency()}
 }
+
+// otherRepositories reports whether any repository but Global's is connected.
+func otherRepositories(ctx context.Context, tx *sql.Tx) bool {
+	var n int
+	_ = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repos WHERE id <> ?`, repoid.Global).Scan(&n)
+	return n > 0
+}
+
+// jobsAgencySQL is the one agency of an in-app job, as a scalar subquery over
+// the row `jobs`: its scope's agency when the scope has exactly one, and NULL
+// otherwise (no scope, or a scope from before 2.3.0 that several share).
+const jobsAgencySQL = `(SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+                         FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+                        WHERE sc.name = jobs.scope)`

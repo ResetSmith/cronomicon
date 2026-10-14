@@ -115,23 +115,22 @@ func TestValidatePaths(t *testing.T) {
 		}
 	})
 
-	// -agency and -library (2.4.0, GR-14, GR-25): what the checkout is.
-	t.Run("agency and library", func(t *testing.T) {
-		repo, lib := t.TempDir(), t.TempDir()
+	// -agency (2.4.0, GR-14): what the checkout is. A reference the checkout
+	// does not have is an error either way (§0a, IN-8); `-library`, which
+	// looked in a checkout of Global's repository too, is gone.
+	t.Run("agency", func(t *testing.T) {
+		repo := t.TempDir()
 		writeFixture(t, filepath.Join(repo, "inventory", "fin.ini"), "[web]\nhost1\n")
 		writeFixture(t, filepath.Join(repo, "jobs", "borrows.yaml"),
 			"apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: borrows\nspec:\n  script_ref: global-script\n  scope: fin\n")
-		writeFixture(t, filepath.Join(lib, "scripts", "global-script.yaml"),
-			"apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: global-script\nspec:\n  run_type: bash\n  command: echo\n")
 		for _, c := range []struct {
 			args []string
 			code int
 			says string
 		}{
-			{[]string{repo}, 1, `script_ref "global-script" does not resolve`},           // Global's: nothing to borrow from
-			{[]string{"-agency", repo}, 0, "pass -library"},                               // a warning, which names the flag
-			{[]string{"-library", lib, repo}, 0, ": ok"},                                  // found in Global's checkout
-			{[]string{"-library", filepath.Join(lib, "nope"), repo}, 1, "not a directory"}, // a library that is not there
+			{[]string{repo}, 1, `script_ref "global-script" does not resolve`},
+			{[]string{"-agency", repo}, 1, `script_ref "global-script" does not resolve`},
+			{[]string{"-library", repo, repo}, 2, "usage:"}, // the flag is gone
 			{[]string{"-no-such-flag", repo}, 2, "usage:"},
 		} {
 			var out, errOut bytes.Buffer

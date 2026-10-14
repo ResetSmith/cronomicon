@@ -9,20 +9,19 @@ import (
 // `cronomicon validate` is told what a checkout is (2.4.0 Phase R7; GR-14,
 // GR-25, R0's item 3 for R7, R4's note for R7).
 //
-// A checkout cannot say which repository it is, and the rules differ. Global's
-// repository has nothing to borrow from: a reference it does not have is an
-// error, and a job may name any scope or none. An agency's repository borrows
-// from Global's (GR-16), so a job that validated could be refused at sync
-// (GR-14: no scope) and one sync accepts on Global's script failed here.
+// A checkout cannot say which repository it is, and one rule differs: an
+// agency's job must name a scope (GR-14: sync refuses one with none), where
+// Global's may name none (it is Global's then).
 //
 //   - With no option, the checkout is Global's: as before.
 //   - -agency: a job with no scope is an error; one whose scope is not the
-//     checkout's own is a warning; a reference the checkout does not have is a
-//     WARNING that names -library (GR-25).
-//   - -library <Global's checkout>: such a reference is looked for there, and
-//     one found in neither is the error. It implies -agency.
+//     checkout's own is a warning.
+//   - In both, a reference the checkout does not have is an ERROR, as at sync
+//     (§0a, IN-8). From R7 until §0a an agency's was a warning that named
+//     `-library`, which looked in a checkout of Global's repository too; that
+//     flag went with borrowing (§0a, open point 3).
 func TestValidateRepoIsToldWhatTheCheckoutIs(t *testing.T) {
-	repo, lib := t.TempDir(), t.TempDir()
+	repo := t.TempDir()
 	job := func(name, spec string) string {
 		return "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: " + name + "\nspec:\n" + spec
 	}
@@ -35,12 +34,6 @@ func TestValidateRepoIsToldWhatTheCheckoutIs(t *testing.T) {
 	mustWrite(t, filepath.Join(repo, "jobs", "dangling.yaml"), job("dangling", "  script_ref: nowhere\n  scope: fin\n"))
 	mustWrite(t, filepath.Join(repo, "workflows", "flow.yaml"),
 		"apiVersion: cronomicon.io/v1\nkind: Workflow\nmetadata:\n  name: flow\nspec:\n  steps:\n    - {type: job, name: global-job}\n")
-
-	mustWrite(t, filepath.Join(lib, "scripts", "global-script.yaml"),
-		"apiVersion: cronomicon.io/v1\nkind: Script\nmetadata:\n  name: global-script\nspec:\n  run_type: bash\n  command: echo\n")
-	mustWrite(t, filepath.Join(lib, "schedules", "nights", "g.yaml"),
-		"apiVersion: cronomicon.io/v1\nkind: Schedule\nmetadata:\n  name: global-nightly\nspec:\n  cron: '0 2 * * *'\n")
-	mustWrite(t, filepath.Join(lib, "jobs", "team", "global-job.yaml"), job("global-job", "  run_type: bash\n  command: echo\n"))
 
 	type found struct{ errs, warnings []ValidationError }
 	run := func(opt ValidateOptions) found {
@@ -88,7 +81,7 @@ func TestValidateRepoIsToldWhatTheCheckoutIs(t *testing.T) {
 		t.Errorf("Global's checkout: the step is not the plain warning: %v", g.warnings)
 	}
 
-	// ── An agency's, without a library.
+	// ── An agency's.
 	a := run(ValidateOptions{Agency: true})
 	if !in(a.errs, "jobs/noscope.yaml", "spec.scope", "must name one of that agency's scopes") {
 		t.Errorf("an agency's checkout: a job with no scope is not an error: %v", a.errs)
@@ -96,36 +89,30 @@ func TestValidateRepoIsToldWhatTheCheckoutIs(t *testing.T) {
 	if !in(a.warnings, "jobs/other.yaml", "spec.scope", `the scope "built-in-app" is not one of this repository's`) {
 		t.Errorf("an agency's checkout: a scope not the checkout's own is not a warning: %v", a.warnings)
 	}
-	if n := len(of(a.errs, "jobs/borrows.yaml")) + len(of(a.errs, "jobs/dangling.yaml")) + len(of(a.errs, "jobs/other.yaml")); n != 0 {
-		t.Errorf("an agency's checkout without a library: %d errors for what may be Global's or its agency's: %v", n, a.errs)
+	if n := len(of(a.errs, "jobs/other.yaml")); n != 0 {
+		t.Errorf("an agency's checkout: a scope built in the app is an error, where sync may accept it: %v", a.errs)
 	}
 	for _, c := range []struct{ file, field, text string }{
 		{"jobs/borrows.yaml", "spec.script_ref", `"global-script"`},
 		{"jobs/borrows.yaml", "spec.scheduleRefs", `"global-nightly"`},
 		{"jobs/borrows.yaml", "spec.reactions[after].onName", `no such job "global-job"`},
 		{"jobs/dangling.yaml", "spec.script_ref", `"nowhere"`},
-		{"workflows/flow.yaml", "spec.steps", "may be Global's"},
 	} {
-		if !in(a.warnings, c.file, c.field, c.text) || !in(a.warnings, c.file, c.field, "-library") {
-			t.Errorf("an agency's checkout without a library: %s %s is not a warning that names -library: %v", c.file, c.text, a.warnings)
+		if !in(a.errs, c.file, c.field, c.text) {
+			t.Errorf("an agency's checkout: %s %s is not an error (a repository takes nothing from Global's): %v", c.file, c.text, a.errs)
 		}
 	}
-	if len(of(a.errs, "jobs/borrows.yaml"))+len(of(a.warnings, "jobs/borrows.yaml")) == 0 || in(a.warnings, "jobs/borrows.yaml", "spec.scope", "") {
+	for _, list := range [][]ValidationError{a.errs, a.warnings} {
+		for _, e := range list {
+			if strings.Contains(e.Message, "-library") || strings.Contains(e.Message, "may be Global's") {
+				t.Errorf("an agency's checkout is still told a reference may be Global's: %v", e)
+			}
+		}
+	}
+	if !in(a.warnings, "workflows/flow.yaml", "spec.steps", `step job "global-job"`) {
+		t.Errorf("an agency's checkout: the step is not the plain warning: %v", a.warnings)
+	}
+	if in(a.warnings, "jobs/borrows.yaml", "spec.scope", "") {
 		t.Errorf("an agency's checkout: the job whose scope is the checkout's own is reported for its scope: %v", a.warnings)
-	}
-
-	// ── An agency's, with Global's checkout as the library (which implies -agency).
-	l := run(ValidateOptions{Library: lib})
-	if len(of(l.errs, "jobs/borrows.yaml"))+len(of(l.warnings, "jobs/borrows.yaml"))+len(of(l.warnings, "workflows/flow.yaml")) != 0 {
-		t.Errorf("with the library: what Global's checkout supplies is reported: %v %v", l.errs, l.warnings)
-	}
-	if !in(l.errs, "jobs/dangling.yaml", "spec.script_ref", "nor in Global's repository") {
-		t.Errorf("with the library: a script_ref found in neither is not the error: %v", l.errs)
-	}
-	if !in(l.errs, "jobs/noscope.yaml", "spec.scope", "must name") {
-		t.Errorf("-library does not imply -agency: %v", l.errs)
-	}
-	if _, _, err := ValidateRepoWith(repo, ValidateOptions{Library: filepath.Join(lib, "not-there")}); err == nil || !strings.Contains(err.Error(), "not a directory") {
-		t.Errorf("a library that is not there: %v, want it said", err)
 	}
 }

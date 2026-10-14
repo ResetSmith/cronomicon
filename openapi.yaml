@@ -10839,14 +10839,6 @@ components:
               `<job|workflow>:<source>:<definition name>:<entry name>`. Filed
               under Global. It clears by itself when one definition is left
               with the name, which the entry is then joined to.
-            - `prune_deferred` — a script or a schedule was removed from the
-              installation's own repository while an agency's repository still
-              uses it (v2.4.0). It is kept as it was until none of that
-              repository's definitions names it. Subject:
-              `<script|schedule>:<uid>:<repository id>`. Filed under the agency
-              of the repository that uses it; the detail names that
-              repository's definitions. Written by sync, and cleared by it
-              when the agency's repository no longer uses the row.
             - `project_job_no_checkout_agent` — a job on a project (a script
               that is a directory checked out by the agent), from Git or built
               in the app, where no registered agent that serves the job is

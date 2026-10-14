@@ -121,7 +121,8 @@ func TestGR4_AnInAppJobsTimingStopsFollowingARepositoryItsAgencyNoLongerOwnsAndI
 // A reaction in an agency's repository may watch a definition BUILT IN THE APP
 // only when it is that agency's. Another agency's is refused in the words used
 // for a name nobody holds; and a Git upstream that only another agency's
-// repository has is refused too. Global's repository asks as it always did.
+// repository has is refused too. Global's repository is held to the same rule
+// since §0a.
 func TestGR4_AReactionInAnAgencysRepositoryWatchesItsOwnAgencysDefinitionsOnly(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	grSync(t, a, "Global's repository")
@@ -183,11 +184,27 @@ func TestGR4_AReactionInAnAgencysRepositoryWatchesItsOwnAgencysDefinitionsOnly(t
 		t.Errorf("another agency's Git job and nobody's are refused differently:\n%s\n%s", x, y)
 	}
 
-	// Global's repository may watch any agency's definition built in the app.
-	gitCommitFile(t, repoA, remoteA, "jobs/global-watches.yaml", reacting("global-watches", "cronomicon", "job", "c-app"), "Global reacts to an agency's in-app job")
-	grSync(t, a, "Global's repository with a reaction")
-	if !synced("global", "global-watches") {
-		t.Errorf("Global's repository's job reacting to an agency's in-app job was not synced")
+	// Global's repository watches Global's definitions only (§0a, IN-8; until
+	// then it might watch any agency's): an agency's in-app job is refused in
+	// the same words, and Global's own in-app job (no scope) is watched.
+	if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at) VALUES('app-g', 'g-app', 'cronomicon', 'bash', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"jobs/global-watches.yaml": reacting("global-watches", "cronomicon", "job", "c-app"),
+		"jobs/global-own.yaml":     reacting("global-own", "cronomicon", "job", "g-app"),
+	}, "Global reacts to an agency's in-app job, and to its own")
+	grSync(t, a, "Global's repository with reactions")
+	if synced("global", "global-watches") {
+		t.Errorf("Global's repository's job reacting to an agency's in-app job was synced")
+	}
+	if !synced("global", "global-own") {
+		t.Errorf("Global's repository's job reacting to Global's in-app job was not synced")
+	}
+	y := said("nobodys.yaml", "no-such-job") // the agency's repository's words for nobody's
+	rows = grProblems(t, a, "global")
+	if x := said("global-watches.yaml", "c-app"); x == "" || x != y {
+		t.Errorf("Global's reaction to an agency's in-app job is refused in other words than nobody's:\n%s\n%s", x, y)
 	}
 }
 
@@ -274,54 +291,6 @@ func TestGR4_AnInventoryNamedLikeAnInAppScopeIsItsFilesError(t *testing.T) {
 	}
 	if got := grString(t, a.db, `SELECT source FROM scopes WHERE name = 'built'`); got != "cronomicon" {
 		t.Errorf("the scope built in the app is now source %q", got)
-	}
-}
-
-// The deferred prune, for a WORKFLOW's use of a schedule (the tests of
-// 4f2807e had a job beside every workflow), and Global's sync clearing a
-// notice whose row is no longer waiting.
-func TestGR4_AWorkflowsUseDefersASchedulesPruneToo(t *testing.T) {
-	a, repoA, remoteA := newSyncFixture(t)
-	grCommitFiles(t, repoA, remoteA, map[string]string{
-		"schedules/yearly.yaml": grSchedule("0 3 1 1 *"),
-		"scripts/shared.sh":     "#!/bin/bash\necho from-global\n",
-	}, "Global's schedule and script")
-	grSync(t, a, "Global's repository")
-	b, repoB, remoteB := grSecondRepo(t, a)
-	grCommitFiles(t, repoB, remoteB, map[string]string{
-		"jobs/plain.yaml":     grJob("plain", "echo plain"),
-		"jobs/uses.yaml":      "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: uses\nspec:\n  script_ref: shared.sh\n",
-		"workflows/flow.yaml": "apiVersion: cronomicon.io/v1\nkind: Workflow\nmetadata:\n  name: flow\nspec:\n  scheduleRefs:\n    - yearly\n  steps:\n    - name: s1\n      job: plain\n",
-	}, "a workflow, and no job, on Global's schedule")
-	grSync(t, b, "the agency's repository")
-	sched := grString(t, a.db, `SELECT uid FROM schedules WHERE repo_id='global' AND name='yearly'`)
-	script := grString(t, a.db, `SELECT uid FROM scripts WHERE repo_id='global' AND name='shared.sh'`)
-
-	gitRemoveFile(t, repoA, "schedules/yearly.yaml", "the schedule leaves Global's repository")
-	gitRemoveFile(t, repoA, "scripts/shared.sh", "and the script")
-	grBackdateAll(t, a)
-	grSync(t, a, "Global's repository without them")
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM schedules WHERE uid = ?`, sched); n != 1 {
-		t.Fatalf("the schedule only a workflow of another repository uses was pruned")
-	}
-	open := grDeferred(t, a)
-	if _, ok := open["schedule:"+sched+":repo-b"]; !ok || len(open) != 2 {
-		t.Fatalf("open notices = %v; want the schedule's and the script's, for repo-b", open)
-	}
-	// The agency's repository syncs, still using both: its notices stay.
-	grBackdateAll(t, a)
-	grSync(t, b, "the agency's repository, still using them")
-	if open := grDeferred(t, a); len(open) != 2 {
-		t.Errorf("the agency's sync cleared a notice while its workflow and job still use the rows: %v", open)
-	}
-
-	// Global's repository puts the script back. Nothing is waiting for it any
-	// more, and it is Global's sync that says so: the agency's has not run.
-	gitCommitFile(t, repoA, remoteA, "scripts/shared.sh", "#!/bin/bash\necho from-global\n", "the script returns")
-	grSync(t, a, "Global's repository with the script back")
-	open = grDeferred(t, a)
-	if _, still := open["script:"+script+":repo-b"]; still || len(open) != 1 {
-		t.Errorf("after the script returned to Global's repository, open notices = %v; want the schedule's alone", open)
 	}
 }
 

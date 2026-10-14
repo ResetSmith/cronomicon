@@ -26,7 +26,7 @@ func TestGR4_AJobInAnAgencysRepositoryMustNameItsAgencysScope(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	grCommitFiles(t, repoA, remoteA, map[string]string{
 		"inventory/globals.ini": fmt.Sprintf(grScope, "g1", "10.0.0.1"),
-		// Global's repository is not confined: any scope, or none.
+		// Global's repository: no scope (Global's), and an agency's (refused).
 		"jobs/g-none.yaml":   grJob("g-none", "echo g"),
 		"jobs/g-theirs.yaml": grScopedJob("g-theirs", "theirs"),
 	}, "Global's repository")
@@ -103,14 +103,19 @@ func TestGR4_AJobInAnAgencysRepositoryMustNameItsAgencysScope(t *testing.T) {
 	if _, open, detail := grNotice(t, b, "repo-b"); !open || !strings.Contains(detail, "jobs/") {
 		t.Errorf("the repository's notice: open=%v %q, want it open, naming a refused file", open, detail)
 	}
-	// Global's repository's jobs are as they were.
-	for _, name := range []string{"g-none", "g-theirs", "keep"} {
+	// Global's repository is confined too (§0a, IN-3; until then it might name
+	// any agency's scope): its job with no scope is Global's and is kept, and
+	// its job on an agency's scope was refused, in the same words.
+	for _, name := range []string{"g-none", "keep"} {
 		if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='global' AND name=?`, name) != 1 {
 			t.Errorf("Global's repository's job %s is missing", name)
 		}
 	}
-	if rowsA := grProblems(t, a, "global"); grHas(rowsA, "is not one of this repository's") || grHas(rowsA, "must name one of") {
-		t.Errorf("Global's repository's jobs were confined:\n%s", strings.Join(rowsA, "\n"))
+	if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='global' AND name='g-theirs'`) != 0 {
+		t.Errorf("Global's repository's job on an agency's scope was synced")
+	}
+	if rowsA := grProblems(t, a, "global"); !grHas(rowsA, "error job jobs/g-theirs.yaml:", `the scope "theirs" is not one of this repository's agency's scopes`) || grHas(rowsA, "must name one of") {
+		t.Errorf("Global's repository: want its job on an agency's scope refused, and its job with no scope kept:\n%s", strings.Join(rowsA, "\n"))
 	}
 
 	// The refused files are still there at the next sync, and the kind is still

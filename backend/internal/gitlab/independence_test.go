@@ -1,0 +1,212 @@
+package gitlab
+
+import (
+	"strings"
+	"testing"
+)
+
+// A job in an agency's repository uses its own repository's scripts and
+// schedules, and watches its own repository's definitions, and nothing of
+// Global's (§0a, IN-1, IN-8). A name its repository has no file for does not
+// resolve, as a name that nobody has; and Global's prune of a script or a
+// schedule does not wait for anybody.
+//
+// From Phase R4 (GR-16) until §0a such a name was looked up in Global's
+// repository next, its edits reached the agency's job at Global's sync, and
+// Global's prune of a row another repository used was deferred (GR-17).
+func TestI1_AnAgencysJobTakesNothingFromGlobalsRepository(t *testing.T) {
+	a, repoA, remoteA := newSyncFixture(t)
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"scripts/shared.sh":     "#!/bin/bash\necho from-global\n",
+		"schedules/yearly.yaml": grSchedule("0 3 1 1 *"),
+		"jobs/nightly.yaml":     grJob("nightly", "echo nightly"),
+	}, "Global's repository")
+	grSync(t, a, "Global's repository")
+
+	b, repoB, remoteB := grSecondRepo(t, a)
+	const usesScript = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: uses-script\nspec:\n  script_ref: shared.sh\n  scope: hosts-of-repo-b\n"
+	const usesSchedule = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: uses-schedule\nspec:\n  run_type: bash\n  command: echo hi\n  scope: hosts-of-repo-b\n  scheduleRefs:\n    - yearly\n"
+	const after = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: after\nspec:\n  run_type: bash\n  command: echo after\n  scope: hosts-of-repo-b\n" +
+		"  reactions:\n    - name: when-nightly\n      onKind: job\n      onName: nightly\n      onOutcome: success\n"
+	grCommitFiles(t, repoB, remoteB, map[string]string{
+		"jobs/uses-script.yaml":   usesScript,
+		"jobs/uses-schedule.yaml": usesSchedule,
+		"jobs/after.yaml":         after,
+	}, "an agency's jobs naming Global's script, schedule and job")
+	res := grSync(t, b, "the agency's repository")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE repo_id='repo-b' AND name IN ('uses-script','uses-schedule','after')`); n != 0 {
+		t.Errorf("%d of the agency's jobs were synced on Global's script, schedule or job", n)
+	}
+	for _, want := range []string{
+		`script_ref "shared.sh" does not resolve to any script in scripts/`,
+		`scheduleRef "yearly" does not resolve to any schedules/*.yaml`,
+		`no such job "nightly"`,
+	} {
+		if res.Status != "partial" || !strings.Contains(res.ErrorMessage, want) {
+			t.Errorf("the agency's sync is %q (%s); want partial, saying %s", res.Status, res.ErrorMessage, want)
+		}
+	}
+	if strings.Contains(res.ErrorMessage, "installation's own") {
+		t.Errorf("the agency's sync still speaks of looking in Global's repository: %s", res.ErrorMessage)
+	}
+
+	// The same names in its own repository resolve there.
+	grCommitFiles(t, repoB, remoteB, map[string]string{
+		"scripts/shared.sh":     "#!/bin/bash\necho from-b\n",
+		"schedules/yearly.yaml": grSchedule("0 6 6 6 *"),
+		"jobs/nightly.yaml":     grScopedJob("nightly", "hosts-of-repo-b"),
+	}, "its own script, schedule and job of those names")
+	if r := grSync(t, b, "the agency's repository with its own"); r.Status != "success" {
+		t.Fatalf("the agency's sync with its own: %s (%s)", r.Status, r.ErrorMessage)
+	}
+	if got, want := grString(t, a.db, `SELECT COALESCE(script_uid,'') FROM jobs WHERE repo_id='repo-b' AND name='uses-script'`),
+		grString(t, a.db, `SELECT uid FROM scripts WHERE repo_id='repo-b' AND name='shared.sh'`); got != want || got == "" {
+		t.Errorf("the agency's job's script is %q, want its own repository's %q", got, want)
+	}
+
+	// Global's script and schedule leave its repository: they are pruned at
+	// Global's sync, and no notice is opened for anybody.
+	gitRemoveFile(t, repoA, "scripts/shared.sh", "Global's script leaves")
+	gitRemoveFile(t, repoA, "schedules/yearly.yaml", "and its schedule")
+	grBackdateAll(t, a)
+	grSync(t, a, "Global's repository without them")
+	if n := grCount(t, a.db, `SELECT (SELECT COUNT(*) FROM scripts WHERE repo_id='global' AND name='shared.sh')
+	                          + (SELECT COUNT(*) FROM schedules WHERE repo_id='global' AND name='yearly')`); n != 0 {
+		t.Errorf("Global's script or schedule was kept after its file left (%d rows)", n)
+	}
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = 'prune_deferred'`); n != 0 {
+		t.Errorf("%d deferred-prune notices were opened", n)
+	}
+}
+
+// Global's own repository takes nothing from anywhere: a name it has no file
+// for does not resolve, as before.
+func TestGR4_GlobalsRepositoryBorrowsNothing(t *testing.T) {
+	a, repoA, remoteA := newSyncFixture(t)
+	b, repoB, remoteB := grSecondRepo(t, a)
+	grCommitFiles(t, repoB, remoteB, map[string]string{
+		"scripts/theirs.sh":     "#!/bin/bash\necho theirs\n",
+		"schedules/yearly.yaml": grSchedule("0 5 5 5 *"),
+	}, "an agency's script and schedule")
+	grSync(t, b, "the agency's repository")
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"jobs/wants-script.yaml":   "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: wants-script\nspec:\n  script_ref: theirs.sh\n",
+		"jobs/wants-schedule.yaml": "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: wants-schedule\nspec:\n  run_type: bash\n  command: echo hi\n  scheduleRefs:\n    - yearly\n",
+	}, "Global's jobs naming an agency's script and schedule")
+	res := grSync(t, a, "Global's repository")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE name IN ('wants-script','wants-schedule')`); n != 0 {
+		t.Errorf("Global's jobs were synced on an agency's script or schedule (count %d)", n)
+	}
+	if res.Status != "partial" || strings.Contains(res.ErrorMessage, "installation's own") {
+		t.Errorf("Global's sync: %q (%s)", res.Status, res.ErrorMessage)
+	}
+
+	// Nor from its own past: a script whose file has left Global's repository
+	// is not found again in the tables, where its row still is until the prune.
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"scripts/old.sh":     "#!/bin/bash\necho old\n",
+		"jobs/uses-old.yaml": "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: uses-old\nspec:\n  script_ref: old.sh\n",
+	}, "a script and a job that uses it")
+	gitRemoveFile(t, repoA, "jobs/wants-script.yaml", "remove a job that does not resolve")
+	gitRemoveFile(t, repoA, "jobs/wants-schedule.yaml", "remove the other")
+	if r := grSync(t, a, "Global's repository with the script"); r.Status != "success" {
+		t.Fatalf("Global's sync with the script and its job: %s (%s)", r.Status, r.ErrorMessage)
+	}
+	gitRemoveFile(t, repoA, "scripts/old.sh", "the script's file leaves; the job still names it")
+	res = grSync(t, a, "Global's repository without the script")
+	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, `script_ref "old.sh" does not resolve`) {
+		t.Errorf("Global's sync after its script's file left: %q (%s); want partial, the job's script not resolving", res.Status, res.ErrorMessage)
+	}
+}
+
+// An in-app job that has lost its script is joined to a returning script of
+// that name in ITS agency's repository, then in Global's (Phase R4, GR-16).
+// An agency's repository joins only its own agency's in-app jobs; Global's
+// joins the others, and leaves a job whose own agency's repository has a
+// script of the name to that repository.
+//
+// Until Phase R4 only Global's repository joined anything, and joined every
+// in-app job of the name.
+//
+// §0a leaves this as it is for now: an agency's in-app job on Global's script
+// is question 31 (I1), and until it is answered this pins today's behaviour.
+func TestGR4_AnInAppJobIsRejoinedInItsAgencysRepositoryThenGlobals(t *testing.T) {
+	a, repoA, remoteA := newSyncFixture(t)
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"scripts/task.sh":        "#!/bin/bash\necho task-of-global\n",
+		"scripts/only-global.sh": "#!/bin/bash\necho only-global\n",
+	}, "Global's scripts")
+	b, repoB, remoteB := grSecondRepo(t, a) // its agency ag-b owns the scope hosts-of-repo-b
+	gitCommitFile(t, repoB, remoteB, "scripts/task.sh", "#!/bin/bash\necho task-of-b\n", "the agency's script of the same name")
+	for _, j := range [][3]string{
+		{"j-global", "", "task.sh"},
+		{"j-b", "hosts-of-repo-b", "task.sh"},
+		{"j-b-other", "hosts-of-repo-b", "only-global.sh"},
+	} {
+		var scope any
+		if j[1] != "" {
+			scope = j[1]
+		}
+		if _, err := a.db.Exec(`INSERT INTO jobs(uid, name, source, run_type, synced_at, script_ref, scope) VALUES(?, ?, 'cronomicon', 'bash', 't', ?, ?)`,
+			j[0], "app-"+j[0], j[2], scope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	joined := func(job string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT COALESCE((SELECT s.repo_id || '/' || s.name FROM scripts s WHERE s.uid = j.script_uid), '(none)') FROM jobs j WHERE j.uid = ?`, job)
+	}
+
+	grSync(t, b, "the agency's repository")
+	for job, want := range map[string]string{"j-global": "(none)", "j-b": "repo-b/task.sh", "j-b-other": "(none)"} {
+		if got := joined(job); got != want {
+			t.Errorf("after the agency's sync %s is joined to %s, want %s", job, got, want)
+		}
+	}
+
+	// The agency's job loses its script again (as a prune of it would leave it),
+	// and Global's repository syncs.
+	if _, err := a.db.Exec(`UPDATE jobs SET script_uid = NULL WHERE uid = 'j-b'`); err != nil {
+		t.Fatal(err)
+	}
+	grSync(t, a, "Global's repository")
+	for job, want := range map[string]string{
+		"j-global":  "global/task.sh",
+		"j-b":       "(none)", // its own agency's repository has a task.sh: that one's to join
+		"j-b-other": "global/only-global.sh",
+	} {
+		if got := joined(job); got != want {
+			t.Errorf("after Global's sync %s is joined to %s, want %s", job, got, want)
+		}
+	}
+	// A join is said by the sync that makes it (2.4.0, with the owner's
+	// decision of 2026-10-13): a job built in the app runs its script as
+	// synced, so a job that had none did not run, and from here it runs this
+	// repository's script of the name. Global's sync joined two jobs, one of
+	// them an AGENCY's job to Global's script; it says nothing of the job it
+	// left alone.
+	global := grProblems(t, a, "global")
+	for _, job := range []string{"app-j-global", "app-j-b-other"} {
+		if !grHas(global, "warning", "had no script and is joined", job) {
+			t.Errorf("Global's sync does not say that it joined %s to its script:\n%s", job, strings.Join(global, "\n"))
+		}
+	}
+	said := 0
+	for _, line := range global {
+		if strings.Contains(line, "had no script and is joined") {
+			said++
+		}
+	}
+	if said != 2 {
+		t.Errorf("Global's sync says %d joins, want the two it made and not the job it left to the agency's repository:\n%s", said, strings.Join(global, "\n"))
+	}
+
+	// And a job that has a script is not moved to another.
+	grSync(t, b, "the agency's repository again")
+	if got := joined("j-global"); got != "global/task.sh" {
+		t.Errorf("the agency's sync moved Global's in-app job to %s", got)
+	}
+	if got := joined("j-b"); got != "repo-b/task.sh" {
+		t.Errorf("the agency's job is joined to %s after its repository synced, want its own", got)
+	}
+}

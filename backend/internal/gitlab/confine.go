@@ -13,9 +13,9 @@ import (
 // A repository is authority over its own agency and no other. A job in an
 // agency's repository must name a scope that agency owns; a job with no scope
 // is refused there, because a job with no scope is Global's. Global's
-// repository is not confined: its jobs may name any agency's scope, or none
-// (it is how the administrators of the installation support an agency that
-// keeps no repository of its own).
+// repository is confined the same way (§0a, IN-3: until then its jobs might
+// name any agency's scope): a scope its job names must be Global's, and a job
+// with no scope is Global's already, so it is kept.
 //
 // This is the check that keeps a file out. It is not the control: a scope can
 // be moved to another agency after the sync that accepted a job, and what
@@ -30,16 +30,14 @@ const (
 
 // confineJobs splits the jobs of the sync that is under way into the ones that
 // may be written and the ones that are refused, each refusal as its file's
-// error. Global's repository keeps every job.
+// error.
 //
 // A scope counts as the agency's when it is a scope that agency alone owns
 // now, or when it is one of THIS sync's inventories whose name is free: jobs
 // are written before scopes, and a repository's first sync brings a job and
 // the scope it names in one commit.
 func (s *Service) confineJobs(ctx context.Context, jobs []JobYAML, parsed []inventoryScope) (kept []JobYAML, refused []ValidationError, err error) {
-	if s.repo() == repoid.Global {
-		return jobs, nil, nil
-	}
+	global := s.repo() == repoid.Global
 	arriving := map[string]bool{}
 	for _, sc := range parsed {
 		arriving[sc.Name] = true
@@ -67,6 +65,10 @@ func (s *Service) confineJobs(ctx context.Context, jobs []JobYAML, parsed []inve
 			file = "jobs/" + j.Metadata.Name + ".yaml"
 		}
 		scope := strings.TrimSpace(j.Spec.Scope)
+		if scope == "" && global {
+			kept = append(kept, j)
+			continue
+		}
 		if scope == "" {
 			refused = append(refused, ValidationError{File: file, Field: "spec.scope", Message: refusedNoScope})
 			continue

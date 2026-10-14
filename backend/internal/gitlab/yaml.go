@@ -904,45 +904,20 @@ type ValidateOptions struct {
 	// Agency: the checkout is an AGENCY's repository. A job must name a scope
 	// (GR-14: sync refuses one with none), and should name one of the
 	// checkout's own (a scope its agency owns, built in the app, is accepted by
-	// sync too, and cannot be seen here: a warning). A reference that names
-	// nothing in the checkout may be Global's (GR-16): without Library it is a
-	// warning, not an error (GR-25).
+	// sync too, and cannot be seen here: a warning). A reference resolves in
+	// the checkout or nowhere, for every repository (§0a, IN-8): from R7 until
+	// then one that named nothing here might be Global's, and was a warning
+	// unless `-library` gave a checkout of Global's to look in.
 	Agency bool
-	// Library is a checkout of Global's repository (`-library`). A reference
-	// the checkout does not have is looked for there, as sync looks, and one
-	// found in neither is the error it is at sync. Implies Agency: Global's own
-	// repository has no other to borrow from.
-	Library string
 }
 
 // ValidateRepoWith is ValidateRepo for a checkout that opt describes.
 func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, warnings []ValidationError, err error) {
-	var lib *libraryIndex
-	if opt.Library != "" {
-		opt.Agency = true
-		if lib, err = readLibrary(opt.Library); err != nil {
-			return nil, nil, err
-		}
-	}
-	// unresolved says that a reference names nothing in the checkout, by what
-	// the checkout is: an error in Global's repository (nothing else to look
-	// in) and in an agency's checked with a library (looked in both); a
-	// warning in an agency's checked without one (GR-25), which says how to
-	// check it.
+	// unresolved says that a reference names nothing in the checkout: the
+	// error it is at sync.
 	unresolved := func(file, field, msg string) {
-		switch {
-		case lib != nil:
-			errs = append(errs, ValidationError{File: file, Field: field,
-				Message: msg + ", nor in Global's repository (the library, " + opt.Library + ")"})
-		case opt.Agency:
-			warnings = append(warnings, ValidationError{File: file, Field: field,
-				Message: msg + "; sync looks for it in Global's repository too, which this run cannot see: " +
-					"pass -library <a checkout of Global's repository> to check it there"})
-		default:
-			errs = append(errs, ValidationError{File: file, Field: field, Message: msg})
-		}
+		errs = append(errs, ValidationError{File: file, Field: field, Message: msg})
 	}
-	inLibrary := func(kind, name string) bool { return lib != nil && lib.has(kind, name) }
 
 	// 1. scripts/ — collect declared names (and flag duplicates).
 	scriptNames := map[string]bool{}
@@ -1082,7 +1057,6 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 			if ref.Source == "cronomicon" {
 				continue
 			}
-			// (Found in the library, it is Global's job: resolvePending asks.)
 			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "job", name: ref.Name,
 				step: true, sourceGiven: ref.Source == "git"})
 		}
@@ -1098,24 +1072,19 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 			} else {
 				_, ok = seenJobNames[p.name]
 			}
-			if ok || inLibrary(p.kind, p.name) {
+			if ok {
 				continue
-			}
-			// In an agency's checkout with no library, the step may be Global's.
-			unseen := ""
-			if opt.Agency && lib == nil {
-				unseen = " (it may be Global's, which this run cannot see: pass -library to check it there)"
 			}
 			switch {
 			case !p.step:
 				unresolved(p.file, p.field, fmt.Sprintf("no such %s %q (source git)", p.kind, p.name))
 			case p.sourceGiven:
 				warnings = append(warnings, ValidationError{File: p.file, Field: p.field,
-					Message: fmt.Sprintf("step job %q is not a job of this repository: the step fails when the workflow runs%s", p.name, unseen)})
+					Message: fmt.Sprintf("step job %q is not a job of this repository: the step fails when the workflow runs", p.name)})
 			default:
 				warnings = append(warnings, ValidationError{File: p.file, Field: p.field,
 					Message: fmt.Sprintf("step %s %q is not a %s of this repository: when the workflow runs it is looked for "+
-						"among the %ss built in the app, and the step fails if there is none%s", p.kind, p.name, p.kind, p.kind, unseen)})
+						"among the %ss built in the app, and the step fails if there is none", p.kind, p.name, p.kind, p.kind)})
 			}
 		}
 	}
@@ -1125,7 +1094,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 	resolveScheduleRefs := func(path string, refs []string) {
 		for _, ref := range refs {
 			referencedSchedules[ref] = true
-			if !scheduleNames[ref] && !inLibrary("schedule", ref) {
+			if !scheduleNames[ref] {
 				unresolved(path, "spec.scheduleRefs", fmt.Sprintf("scheduleRef %q does not resolve to any schedules/*.yaml", ref))
 			}
 		}
@@ -1166,7 +1135,7 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 			}
 			if j.Spec.ScriptRef != "" {
 				referenced[j.Spec.ScriptRef] = true
-				if !scriptNames[j.Spec.ScriptRef] && !inLibrary("script", j.Spec.ScriptRef) {
+				if !scriptNames[j.Spec.ScriptRef] {
 					unresolved(path, "spec.script_ref", fmt.Sprintf("script_ref %q does not resolve to any script in scripts/", j.Spec.ScriptRef))
 				}
 			}
@@ -1398,47 +1367,6 @@ func validateInventoryDir(root string, read fileReader) (errs, warnings []Valida
 		}
 	}
 	return errs, warnings, scopes, nil
-}
-
-// libraryIndex is what a checkout of Global's repository supplies to another
-// repository's definitions (GR-16): the names of its scripts, schedules, jobs
-// and workflows. Nothing of it is validated: it is Global's CI's to validate.
-type libraryIndex struct {
-	names map[string]map[string]bool // kind → name → present
-}
-
-func (l *libraryIndex) has(kind, name string) bool { return l.names[kind][name] }
-
-// readLibrary reads the names a checkout of Global's repository supplies, from
-// the directories sync reads them from.
-func readLibrary(dir string) (*libraryIndex, error) {
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("the library %s is not a directory (it should be a checkout of Global's repository)", dir)
-	}
-	l := &libraryIndex{names: map[string]map[string]bool{
-		"script": {}, "schedule": {}, "job": {}, "workflow": {},
-	}}
-	read := containedReader(dir) // as sync reads Global's clone
-	scripts, _ := discoverScriptsWith(filepath.Join(dir, "scripts"), read)
-	for _, sc := range scripts {
-		if sc.Metadata.Name != "" {
-			l.names["script"][sc.Metadata.Name] = true
-		}
-	}
-	for kind, sub := range map[string]string{"schedule": "schedules", "job": "jobs", "workflow": "workflows"} {
-		files, _ := walkManifests(filepath.Join(dir, sub), read)
-		for _, f := range files {
-			var doc struct {
-				Metadata struct {
-					Name string `yaml:"name"`
-				} `yaml:"metadata"`
-			}
-			if yaml.Unmarshal(f.data, &doc) == nil && doc.Metadata.Name != "" {
-				l.names[kind][doc.Metadata.Name] = true
-			}
-		}
-	}
-	return l, nil
 }
 
 // validRunTypes is the allowed set of run-type strings for a Script's

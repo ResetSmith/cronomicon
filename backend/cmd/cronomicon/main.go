@@ -582,8 +582,8 @@ const auditLogName = "audit.log"
 // would send every later line to an unlinked inode.
 const processLogName = "cronomicon.log"
 
-// runValidate implements `cronomicon validate [-agency] [-library <dir>] <path>...`
-// (T11; the flags 2.4.0, GR-14 and GR-25), reusing the runtime
+// runValidate implements `cronomicon validate [-agency] <path>...`
+// (T11; the flag 2.4.0, GR-14), reusing the runtime
 // YAML/pragma parser from the gitlab slice (T10/S10). A path that is a directory
 // is validated as a whole job-definitions checkout: scripts/ is parsed first and
 // each job's script_ref is resolved against it (B-Git), with orphan scripts
@@ -599,18 +599,17 @@ func runValidate(args []string) int {
 // test can assert both the exit code and the line-numbered stderr format against
 // a deliberately-broken repo.
 //
-// The flags apply to a directory: -agency says it is an agency's repository
-// (a job must name a scope, and a reference it does not have may be Global's,
-// a warning); -library names a checkout of Global's repository, where such a
-// reference is looked for, as sync looks (and implies -agency). Without them a
-// directory is Global's repository, checked as it always was.
+// The flag applies to a directory: -agency says it is an agency's repository
+// (a job must name a scope, one of the checkout's). Without it a directory is
+// Global's repository. Either way a reference resolves in the checkout or is
+// an error, as at sync (§0a, IN-8; `-library`, which looked in a checkout of
+// Global's repository too, went with borrowing).
 func validatePaths(args []string, out, errOut io.Writer) int {
-	const usage = "usage: cronomicon validate [-agency] [-library <checkout of Global's repository>] <path>...\n" +
+	const usage = "usage: cronomicon validate [-agency] <path>...\n" +
 		"  <path> is a file, or a repository's checkout (a directory) for the checks across its files"
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	agency := fs.Bool("agency", false, "the directory is an agency's repository (GR-14, GR-16)")
-	library := fs.String("library", "", "a checkout of Global's repository, where references the directory does not have are looked for (implies -agency)")
+	agency := fs.Bool("agency", false, "the directory is an agency's repository (GR-14)")
 	fs.Usage = func() { _, _ = fmt.Fprintln(errOut, usage) }
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -620,7 +619,7 @@ func validatePaths(args []string, out, errOut io.Writer) int {
 		_, _ = fmt.Fprintln(errOut, usage)
 		return 2
 	}
-	opt := gitlab.ValidateOptions{Agency: *agency, Library: *library}
+	opt := gitlab.ValidateOptions{Agency: *agency}
 	exit := 0
 	for _, path := range args {
 		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
