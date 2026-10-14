@@ -39,6 +39,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindScheduleGone, checkScheduleGone},
 		{KindWorkflowSpansAgencies, checkWorkflowSpansAgencies},
 		{KindReactionOtherAgency, checkReactionOtherAgency},
+		{KindGlobalJobOnAgencyScope, checkGlobalJobOnAgencyScope},
 		{KindScheduleEntryNoOwner, checkScheduleEntryNoOwner},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},

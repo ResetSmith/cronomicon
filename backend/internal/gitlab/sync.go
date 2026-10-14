@@ -851,12 +851,30 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// must not freeze a repository's whole job list. And because the prune still
 	// runs, a job that WAS synced and whose file now names another agency's
 	// scope is removed rather than left running as it was.
+	//
+	// Global's repository is the exception to "removed" (§0a, open point 1): a
+	// job of it that was synced, and names an agency's scope (I-7, allowed
+	// until §0a), is KEPT as it was, not pruned. It does not run (run-time
+	// confinement refuses it, with the reason), the notice
+	// global_job_on_agency_scope lists it, and it goes when its file does.
+	var keepAsWas []string
 	if kept, refused, cerr := s.confineJobs(ctx, goodJobs, scopes); cerr != nil {
 		// What could not be asked is not answered "no": nothing is refused,
 		// nothing is pruned, and the sync says why.
 		allErrs = append(allErrs, "confinement: "+cerr.Error())
 		jobsOK = false
 	} else {
+		if s.repo() == repoid.Global {
+			stays := make(map[string]bool, len(kept))
+			for _, j := range kept {
+				stays[j.Metadata.Name] = true
+			}
+			for _, j := range goodJobs {
+				if !stays[j.Metadata.Name] {
+					keepAsWas = append(keepAsWas, j.Metadata.Name)
+				}
+			}
+		}
 		goodJobs = kept
 		for _, ve := range refused {
 			allErrs = append(allErrs, ve.Error())
@@ -1000,6 +1018,20 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	legacyByName := 0
 	if repoID == repoid.Global {
 		legacyByName = 1
+	}
+
+	// Global's jobs on an agency's scope that were synced before: kept as
+	// they were (see keepAsWas), by being counted as seen by this sync. Their
+	// row, its schedule entries, enabled and paused are not touched.
+	if jobsOK && dbErr == nil {
+		for _, name := range keepAsWas {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE jobs SET synced_at = ? WHERE source = 'git' AND repo_id = ? AND name = ?`, nowStr, repoID, name); err != nil {
+				allErrs = append(allErrs, "keep Global's job on an agency's scope: "+err.Error())
+				dbErr = err
+				break
+			}
+		}
 	}
 
 	if jobsOK {

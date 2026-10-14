@@ -7146,6 +7146,13 @@ export interface components {
              *       for one that comes to span later (a scope given to another
              *       agency). Subject: the workflow's uid. Filed under Global. It
              *       clears when the workflow's jobs are all one agency's.
+             *     - `global_job_on_agency_scope` — a job of Global's repository names
+             *       a scope that is not Global's (allowed before v2.4.0). A job of
+             *       Global's repository runs on Global's scopes only: it does not
+             *       run (each run is refused, with the reason), and Global's sync
+             *       keeps it as it was rather than removing it. Subject: the job's
+             *       uid. Filed under Global. It clears when its file names a scope
+             *       of Global's, or none, or leaves the repository.
              *     - `reaction_other_agency` — a reaction is pinned to a definition of
              *       another agency than its own (v2.4.0). A reaction watches its own
              *       agency's definitions only: it does not fire, and each run of the

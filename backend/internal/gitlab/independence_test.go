@@ -1,9 +1,61 @@
 package gitlab
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/notices"
 )
+
+// A job of Global's repository that names an agency's scope (I-7, allowed
+// until §0a) is not removed at Global's next sync: it is KEPT as it was, its
+// row, identity and switches untouched, its file refused with the reason, and
+// a notice lists it (§0a, open point 1: "each stops, and is listed"). It goes
+// when its file leaves Global's repository.
+//
+// As first built in I1 (c9f865c) the refused file's row was pruned, and the
+// job's switches and its link to its runs with it.
+func TestI1_GlobalsJobOnAnAgencysScopeIsKeptAsItWas(t *testing.T) {
+	a, repoA, remoteA := newSyncFixture(t)
+	grSync(t, a, "Global's repository")
+	grSecondRepo(t, a) // its agency owns hosts-of-repo-b
+	// As an upgrade finds it: synced before §0a, switched off by an operator.
+	if _, err := a.db.Exec(`INSERT INTO jobs (uid, name, source, run_type, command, scope, enabled, synced_at, repo_id, source_path)
+	                        VALUES ('uid-g-theirs', 'g-theirs', 'git', 'bash', 'echo g-theirs', 'hosts-of-repo-b', 0, '2020-01-01T00:00:00Z', 'global', 'jobs/g-theirs.yaml')`); err != nil {
+		t.Fatal(err)
+	}
+	grCommitFiles(t, repoA, remoteA, map[string]string{"jobs/g-theirs.yaml": grScopedJob("g-theirs", "hosts-of-repo-b")}, "the file is still there")
+	grBackdateAll(t, a)
+	res := grSync(t, a, "Global's repository after the upgrade")
+	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, `the scope "hosts-of-repo-b" is not one of this repository's agency's scopes`) {
+		t.Errorf("Global's sync: %q (%s); want partial, the file refused", res.Status, res.ErrorMessage)
+	}
+	if got := grString(t, a.db, `SELECT COALESCE((SELECT uid || ' enabled=' || enabled FROM jobs WHERE source='git' AND name='g-theirs'), '(gone)')`); got != "uid-g-theirs enabled=0" {
+		t.Errorf("Global's job on an agency's scope after the sync: %s; want it kept as it was (uid-g-theirs enabled=0)", got)
+	}
+	if err := notices.RunChecks(context.Background(), a.db); err != nil {
+		t.Fatal(err)
+	}
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND subject = 'uid-g-theirs' AND resolved_at IS NULL AND agency_id = 'global'`,
+		notices.KindGlobalJobOnAgencyScope); n != 1 {
+		t.Errorf("open notices for the kept job = %d, want 1", n)
+	}
+
+	// Its file leaves: it goes, and the notice clears.
+	gitRemoveFile(t, repoA, "jobs/g-theirs.yaml", "the file leaves")
+	grBackdateAll(t, a)
+	grSync(t, a, "Global's repository without it")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='g-theirs'`); n != 0 {
+		t.Errorf("the job stayed after its file left")
+	}
+	if err := notices.RunChecks(context.Background(), a.db); err != nil {
+		t.Fatal(err)
+	}
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM notices WHERE kind = ? AND resolved_at IS NULL`, notices.KindGlobalJobOnAgencyScope); n != 0 {
+		t.Errorf("the notice is still open after the job went")
+	}
+}
 
 // A job in an agency's repository uses its own repository's scripts and
 // schedules, and watches its own repository's definitions, and nothing of

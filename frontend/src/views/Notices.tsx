@@ -37,6 +37,7 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   schedule_gone: { title: "A schedule in use was removed from Git", to: "/schedules", toLabel: "Schedules" },
   workflow_spans_agencies: { title: "A workflow runs jobs of more than one agency", to: "/workflows", toLabel: "Workflows" },
   reaction_other_agency: { title: "A reaction watches another agency's definition", to: "/schedules?tab=reactions", toLabel: "Reactions" },
+  global_job_on_agency_scope: { title: "A job of Global's repository names an agency's scope", to: "/jobs", toLabel: "Jobs" },
   schedule_entry_no_owner: { title: "A schedule entry with no owner no longer fires", to: "/schedules", toLabel: "Schedules" },
   may_run_on_agent: { title: "Shell jobs that ran from the server may now run on an agent", to: "/scopes", toLabel: "Scopes" },
   mixed_scope: { title: "Shell jobs that ran in two places may now run in either", to: "/scopes", toLabel: "Scopes" },
