@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"strconv"
@@ -19,6 +21,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/notices"
+	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
@@ -331,6 +334,24 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	// Return the first error as the human message plus the full list under details.
 	if verrs := s.validateComposedWorkflowSteps(r.Context(), in.Name, steps); len(verrs) > 0 {
 		httpx.FailDetails(w, http.StatusUnprocessableEntity, "validation_failed", verrs[0].Message, map[string]any{"errors": verrs})
+		return
+	}
+	// Each sub-workflow step is pinned to the workflow it runs (present defect
+	// 50), before anything below walks the graph, so that what is authorized
+	// and owned is what will run.
+	saver, _ := auth.IdentityFrom(r.Context())
+	pinned, why, perr := s.pinChildWorkflows(r.Context(), in.Steps, saver)
+	if perr != nil {
+		httpx.Fail500(w, s.log, "db_error", perr)
+		return
+	}
+	if why != "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", why)
+		return
+	}
+	in.Steps = pinned
+	if steps, err = workflow.ParseSteps(string(in.Steps)); err != nil {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid steps: "+err.Error())
 		return
 	}
 	// AF-2 — a workflow has no scope of its own; its authority comes from the jobs
@@ -818,6 +839,141 @@ func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner st
 		}
 	}
 	return agencyid.Global, true, nil
+}
+
+// pinChildWorkflows writes into a workflow's steps, as it is saved, the
+// identity of the workflow each sub-workflow step runs (workflowUid; 2.4.0,
+// present defect 50, the owner's yes to question 25). By its name alone a step
+// ran whichever workflow of the name the database returned, another agency's
+// among them, and when its own was binned, the other agency's on that agency's
+// hosts. A pinned step runs its child or fails.
+//
+// A step that already carries an identity keeps it, if it names a workflow of
+// that name that is not in the recycle bin (the authorization below walks what
+// it runs). Otherwise its child is chosen among the workflows of the name the
+// saver may compose: one built in the app of an agency they hold compose on
+// (any, for a global administrator), else a Git one of Global's repository or
+// of such an agency's. One is pinned; several are refused, naming the step, for
+// the saver to give the identity; none leaves the step by name (validation has
+// said the name exists, and the authorization below refuses a child whose jobs
+// the saver may not compose).
+//
+// The steps are rewritten as JSON maps, so every other field of a step, the
+// editor's included, is kept as it was sent.
+func (s *Server) pinChildWorkflows(ctx context.Context, raw json.RawMessage, id auth.Identity) (json.RawMessage, string, error) {
+	var steps []any
+	if len(raw) == 0 || json.Unmarshal(raw, &steps) != nil {
+		return raw, "", nil // parse errors were the validator's to report
+	}
+	var why string
+	var ferr error
+	var walk func([]any)
+	walk = func(ss []any) {
+		for _, x := range ss {
+			m, ok := x.(map[string]any)
+			if !ok || why != "" || ferr != nil {
+				continue
+			}
+			if t, _ := m["type"].(string); t == "workflow" {
+				name, _ := m["workflow"].(string)
+				given, _ := m["workflowUid"].(string)
+				if name = strings.TrimSpace(name); name != "" {
+					step, _ := m["name"].(string)
+					uid, msg, err := s.childToPin(ctx, step, name, strings.TrimSpace(given), id)
+					switch {
+					case err != nil:
+						ferr = err
+					case msg != "":
+						why = msg
+					case uid != "":
+						m["workflowUid"] = uid
+					default:
+						delete(m, "workflowUid")
+					}
+				}
+			}
+			for _, key := range []string{"jobs", "steps"} {
+				if nested, ok := m[key].([]any); ok {
+					walk(nested)
+				}
+			}
+			for _, key := range []string{"pass", "fail"} {
+				if arm, ok := m[key].(map[string]any); ok {
+					if nested, ok := arm["steps"].([]any); ok {
+						walk(nested)
+					}
+				}
+			}
+		}
+	}
+	walk(steps)
+	if ferr != nil || why != "" {
+		return raw, why, ferr
+	}
+	out, err := json.Marshal(steps)
+	return out, "", err
+}
+
+// childToPin is pinChildWorkflows' choice for one step: the identity to pin,
+// or the reason the save is refused, or neither (left by name).
+func (s *Server) childToPin(ctx context.Context, step, name, given string, id auth.Identity) (string, string, error) {
+	if given != "" {
+		var have string
+		var binned bool
+		err := s.db.QueryRowContext(ctx, `SELECT name, deleted_at IS NOT NULL FROM workflows WHERE uid = ?`, given).Scan(&have, &binned)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return "", fmt.Sprintf("step %q: workflowUid %q names no workflow", step, given), nil
+		case err != nil:
+			return "", "", err
+		case have != name:
+			return "", fmt.Sprintf("step %q: workflowUid %q is the workflow %q, not %q", step, given, have, name), nil
+		case binned:
+			return "", fmt.Sprintf("step %q: the workflow %q it names is in the recycle bin", step, name), nil
+		}
+		return given, "", nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT w.uid, w.source, COALESCE(w.owner_agency, ''), COALESCE(w.repo_id, ''), COALESCE(g.agency_id, '')
+		  FROM workflows w LEFT JOIN git_repos g ON g.id = w.repo_id
+		 WHERE w.name = ? AND w.deleted_at IS NULL AND COALESCE(w.uid, '') <> ''
+		 ORDER BY w.rowid`, name)
+	if err != nil {
+		return "", "", err
+	}
+	defer rows.Close()
+	everywhere := id.GlobalAdmin(auth.PermCompose)
+	var inApp, fromGit []string
+	for rows.Next() {
+		var uid, source, owner, repo, repoAgency string
+		if err := rows.Scan(&uid, &source, &owner, &repo, &repoAgency); err != nil {
+			return "", "", err
+		}
+		if source == "cronomicon" {
+			if everywhere || (owner != "" && id.CanAgency(auth.PermCompose, owner)) {
+				inApp = append(inApp, uid)
+			}
+			continue
+		}
+		if repo == "" || repo == repoid.Global || everywhere || (repoAgency != "" && id.CanAgency(auth.PermCompose, repoAgency)) {
+			fromGit = append(fromGit, uid)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", err
+	}
+	for _, pool := range [][]string{inApp, fromGit} {
+		switch len(pool) {
+		case 0:
+			continue
+		case 1:
+			return pool[0], "", nil
+		default:
+			return "", fmt.Sprintf("step %q: more than one workflow you may use is named %q; "+
+				"set the step's workflowUid to the one it should run", step, name), nil
+		}
+	}
+	return "", "", nil
 }
 
 // spanningBefore and refuseNewSpan are GR-7 held AFTER a save (2.4.0; the

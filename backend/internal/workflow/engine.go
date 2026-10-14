@@ -83,6 +83,15 @@ type Step struct {
 	// map (what {fromStep} addresses), and this is what it runs. Collapsing them
 	// would forbid two steps running the same sub-workflow with different inputs.
 	Workflow string `json:"workflow,omitempty"`
+	// WorkflowUID pins a workflow step to ONE workflow by its identity, as
+	// JobUID pins a job step (2.4.0, present defect 50). Two agencies may each
+	// hold a workflow of one name, and by the name a step ran whichever the
+	// database returned, and, when the parent's own child was binned, the
+	// OTHER agency's, on its hosts. A workflow built in the app has it written
+	// at every save (the API stamps it among the workflows the saver may
+	// compose); a pinned child that is binned, disabled or gone fails the step.
+	// A Git workflow's steps carry none: sync strips it, names are the law there.
+	WorkflowUID string `json:"workflowUid,omitempty"`
 
 	// NodeID is the per-NODE child-run trace ID (runs.id PK), minted by
 	// assignNodeIDs before the walk. Keying run identity by node position rather
@@ -1397,8 +1406,8 @@ func (e *Engine) SubWorkflowJobScopesAt(ctx context.Context, steps []Step, wfSou
 		if source == "" {
 			source = "git"
 		}
-		for _, name := range collectWorkflowRefs(steps) {
-			childSource, childSteps, rowid, childHome, ok := e.loadChildWorkflow(ctx, name, source, home)
+		for _, ref := range collectWorkflowRefs(steps) {
+			childSource, childSteps, rowid, childHome, ok := e.loadChildWorkflow(ctx, ref, source, home)
 			if !ok {
 				continue
 			}
@@ -1429,15 +1438,23 @@ func (e *Engine) SubWorkflowJobScopesAt(ctx context.Context, steps []Step, wfSou
 	return out, nil
 }
 
-// CollectWorkflowRefs exposes collectWorkflowRefs to `cronomicon validate`,
-// which checks a Git workflow's sub-workflow steps against its checkout.
-func CollectWorkflowRefs(steps []Step) []string { return collectWorkflowRefs(steps) }
+// WorkflowRef is a sub-workflow step's reference: the name, and the identity
+// when the step pins one (WorkflowUID).
+type WorkflowRef struct {
+	Name string
+	UID  string
+}
 
-// collectWorkflowRefs lists the sub-workflow names a graph references, walking
+// CollectWorkflowRefs exposes collectWorkflowRefs to `cronomicon validate`,
+// which checks a Git workflow's sub-workflow steps against its checkout, and to
+// the API, which pins them at a save.
+func CollectWorkflowRefs(steps []Step) []WorkflowRef { return collectWorkflowRefs(steps) }
+
+// collectWorkflowRefs lists the sub-workflow references a graph makes, walking
 // the same containers collectStepRefs walks.
-func collectWorkflowRefs(steps []Step) []string {
-	var out []string
-	seen := map[string]bool{}
+func collectWorkflowRefs(steps []Step) []WorkflowRef {
+	var out []WorkflowRef
+	seen := map[WorkflowRef]bool{}
 	var walk func([]Step)
 	walk = func(ss []Step) {
 		for _, s := range ss {
@@ -1454,9 +1471,10 @@ func collectWorkflowRefs(steps []Step) []string {
 					walk(s.Fail.Steps)
 				}
 			case stepKindWorkflow:
-				if s.Workflow != "" && !seen[s.Workflow] {
-					seen[s.Workflow] = true
-					out = append(out, s.Workflow)
+				ref := WorkflowRef{Name: s.Workflow, UID: s.WorkflowUID}
+				if s.Workflow != "" && !seen[ref] {
+					seen[ref] = true
+					out = append(out, ref)
 				}
 			}
 		}

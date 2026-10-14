@@ -209,17 +209,22 @@ func TestAGitWorkflowsSubWorkflowIsItsRepositorysThenGlobals(t *testing.T) {
 		{"from Global's", "flow", "global", rowG, "global"},
 		{"a name only Global's has, from repo-b", "shared", "repo-b", rowGonly, "global"},
 		{"a name only another agency's has, from repo-b", "theirs", "repo-b", 0, ""},
-		{"with no home: the oldest, as before", "flow", "", rowC, "repo-c"},
+		// With no home, Global's repository's (2.4.0, present defect 50): the
+		// oldest of the name was another agency's.
+		{"with no home: Global's", "flow", "", rowG, "global"},
 		// Built in the app: the workflow's own agency's, and no other's.
 		{"the app's workflow of its own agency, from repo-b", "month-end", "repo-b", appRow("app-b"), ""},
 		{"the app's workflow of another agency, from repo-b", "c-only", "repo-b", 0, ""},
-		{"the app's workflow of any agency, from Global's: the oldest, as before", "month-end", "global", appRow("app-c"), ""},
+		// Two agencies' workflows built in the app hold the name: by the name
+		// alone, from Global's, neither runs (2.4.0, present defect 50; it was
+		// the oldest, whichever agency's that was). A step that pins one runs it.
+		{"the app's workflow of two agencies, from Global's: neither", "month-end", "global", 0, ""},
 		// Its own repository's workflow is switched off: the step fails; Global's
 		// of the name does not run in its place.
 		{"its own, switched off, with Global's on", "paused", "repo-b", 0, ""},
 		{"from Global's, Global's own", "paused", "global", appRow("on-g"), "global"},
 	} {
-		_, _, row, home, ok := f.e.loadChildWorkflow(ctx, c.name, "git", c.home)
+		_, _, row, home, ok := f.e.loadChildWorkflow(ctx, WorkflowRef{Name: c.name}, "git", c.home)
 		if row != c.wantRow || home != c.wantHome || ok != (c.wantRow != 0) {
 			t.Errorf("%s: the sub-workflow %s is row %d of %q (found %v); want row %d of %q", c.what, c.name, row, home, ok, c.wantRow, c.wantHome)
 		}

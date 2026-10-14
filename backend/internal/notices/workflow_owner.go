@@ -79,10 +79,35 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		    SELECT uid, rowid, 0 FROM workflows WHERE source = 'cronomicon' AND deleted_at IS NULL
 		  UNION
 		    SELECT r.root,
-		           (SELECT c.rowid FROM workflows c
-		             WHERE c.source IN ('git', 'cronomicon') AND c.name = json_extract(n.value, '$.workflow')
-		               AND c.enabled = 1 AND c.deleted_at IS NULL
-		             ORDER BY (c.source = p.source) DESC, c.rowid LIMIT 1),
+		           -- The child as the engine finds it (loadChildWorkflow, 2.4.0):
+		           -- by the step's workflowUid when it pins one; a parent built in
+		           -- the app that pins none, the one workflow built in the app of
+		           -- the name, else Global's repository's; a Git parent, its own
+		           -- source's first. One that is binned or disabled is no child,
+		           -- and is not replaced by another of its name.
+		           CASE
+		             WHEN COALESCE(json_extract(n.value, '$.workflowUid'), '') <> '' THEN
+		               (SELECT CASE WHEN c.enabled = 1 AND c.deleted_at IS NULL THEN c.rowid END
+		                  FROM workflows c WHERE c.uid = json_extract(n.value, '$.workflowUid'))
+		             WHEN p.source = 'cronomicon' THEN
+		               CASE
+		                 WHEN (SELECT COUNT(*) FROM workflows c
+		                        WHERE c.source = 'cronomicon' AND c.name = json_extract(n.value, '$.workflow')) > 0 THEN
+		                   (SELECT CASE WHEN COUNT(*) = 1 AND MAX(c.enabled = 1 AND c.deleted_at IS NULL) THEN MIN(c.rowid) END
+		                      FROM workflows c
+		                     WHERE c.source = 'cronomicon' AND c.name = json_extract(n.value, '$.workflow'))
+		                 ELSE
+		                   (SELECT CASE WHEN c.enabled = 1 AND c.deleted_at IS NULL THEN c.rowid END
+		                      FROM workflows c
+		                     WHERE c.source = 'git' AND c.name = json_extract(n.value, '$.workflow')
+		                       AND COALESCE(c.repo_id, 'global') = 'global')
+		               END
+		             ELSE
+		               (SELECT c.rowid FROM workflows c
+		                 WHERE c.source IN ('git', 'cronomicon') AND c.name = json_extract(n.value, '$.workflow')
+		                   AND c.enabled = 1 AND c.deleted_at IS NULL
+		                 ORDER BY (c.source = p.source) DESC, c.rowid LIMIT 1)
+		           END,
 		           r.depth + 1
 		      FROM reach r
 		      JOIN workflows p ON p.rowid = r.wf

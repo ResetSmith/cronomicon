@@ -65,12 +65,18 @@ func TestGR0_ASavesAnswerIsAnotherAgencysDefinitionOfTheName(t *testing.T) {
 	}
 }
 
-// Present defect 50: a workflow's sub-workflow step resolves among the
-// workflows that are not in the recycle bin (workflow.loadChildWorkflow), so
-// when one agency's child is binned, its parent runs ANOTHER agency's workflow
-// of the same name: on that agency's hosts. Binning is not a save, so the
-// refusal of a save that makes a workflow span agencies (0b6827a) is not
-// asked. For jobs, FX-A1 stops this substitution.
+// Present defect 50, FIXED (the owner's yes to question 25, 2026-10-14): a
+// workflow's sub-workflow step resolved by name among the workflows that were
+// not in the recycle bin (workflow.loadChildWorkflow), so when one agency's
+// child was binned, its parent ran ANOTHER agency's workflow of the same name,
+// on that agency's hosts. Binning is not a save, so 0b6827a's refusal was not
+// asked.
+//
+// Now each sub-workflow step of a workflow built in the app is pinned, at its
+// save, to the workflow it runs (workflowUid, chosen among those the saver may
+// compose), and a pinned child that is binned fails the step. A step that pins
+// nothing, saved before, runs a child built in the app only when one holds the
+// name.
 func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 	h, pool := gateServer(t)
 	mustExec(t, pool)(r7reviewScript)
@@ -81,14 +87,33 @@ func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 		{gFinAdmin, "/api/v1/workflows", `{"name":"nightly","steps":[{"type":"job","name":"fin-d"}]}`},
 		{gTaxAdmin, "/api/v1/workflows", `{"name":"nightly","steps":[{"type":"job","name":"tax-a"}]}`},
 		{gFinAdmin, "/api/v1/workflows", `{"name":"parent","steps":[{"type":"job","name":"fin-a"},{"type":"workflow","name":"go","workflow":"nightly"}]}`},
+		{gTaxAdmin, "/api/v1/workflows", `{"name":"tax-parent","steps":[{"type":"workflow","name":"go","workflow":"nightly"}]}`},
 	} {
 		if rec := gateReq(t, h, http.MethodPost, c.path, c.who, c.body); rec.Code/100 != 2 {
 			t.Fatalf("seed %s: %d %s", c.body, rec.Code, rec.Body)
 		}
 	}
-	childScopes := func() []string {
+	uidOf := func(q string) string {
 		t.Helper()
-		steps, err := workflow.ParseSteps(`[{"type":"job","name":"fin-a"},{"type":"workflow","name":"go","workflow":"nightly"}]`)
+		var u string
+		if err := pool.QueryRow(q).Scan(&u); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	finNightly := uidOf(`SELECT uid FROM workflows WHERE name = 'nightly' AND owner_agency = 'ag:FIN'`)
+	taxNightly := uidOf(`SELECT uid FROM workflows WHERE name = 'nightly' AND owner_agency = 'ag:TAX'`)
+	stepsOf := func(name string) string { return uidOf(`SELECT steps FROM workflows WHERE name = '` + name + `'`) }
+	// Each save pinned its saver's own child.
+	if !strings.Contains(stepsOf("parent"), `"workflowUid":"`+finNightly+`"`) {
+		t.Errorf("FIN's parent is not pinned to FIN's nightly: %s", stepsOf("parent"))
+	}
+	if !strings.Contains(stepsOf("tax-parent"), `"workflowUid":"`+taxNightly+`"`) {
+		t.Errorf("TAX's parent is not pinned to TAX's nightly: %s", stepsOf("tax-parent"))
+	}
+	childScopes := func(raw string) []string {
+		t.Helper()
+		steps, err := workflow.ParseSteps(raw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,16 +123,60 @@ func TestGR0_BinningAChildMakesItsParentRunAnotherAgencysChild(t *testing.T) {
 		}
 		return scopes
 	}
-	if got := childScopes(); !slices.Equal(got, []string{"fin-hosts"}) {
+	if got := childScopes(stepsOf("parent")); !slices.Equal(got, []string{"fin-hosts"}) {
 		t.Fatalf("before: FIN's parent's child runs %v, want FIN's", got)
 	}
-	finNightly := rowID(t, pool, `SELECT rowid FROM workflows WHERE name = 'nightly' AND owner_agency = 'ag:FIN'`)
-	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/workflows/"+finNightly, gFinAdmin, ""); rec.Code/100 != 2 {
+	// A step that pins nothing (saved before 2.4.0) runs neither of two, and
+	// not a Git workflow of the name in their place either.
+	mustExec(t, pool)(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, repo_id)
+	        VALUES ('g-nightly', 'nightly', 'git', '[{"type":"job","name":"fin-a","jobSource":"cronomicon"}]', 1, 't', 'global')`)
+	if got := childScopes(`[{"type":"workflow","name":"go","workflow":"nightly"}]`); len(got) != 0 {
+		t.Errorf("an unpinned step with two workflows of the name runs %v, want neither", got)
+	}
+	rowOf := rowID(t, pool, `SELECT rowid FROM workflows WHERE uid = '`+finNightly+`'`)
+	if rec := gateReq(t, h, http.MethodDelete, "/api/v1/workflows/"+rowOf, gFinAdmin, ""); rec.Code/100 != 2 {
 		t.Fatalf("FIN bins its own nightly: %d %s", rec.Code, rec.Body)
 	}
-	// AS IT IS: FIN's parent now runs TAX's nightly, on TAX's hosts.
-	if got := childScopes(); !slices.Equal(got, []string{"tax-hosts"}) {
-		t.Errorf("after FIN bins its nightly, FIN's parent's child runs %v; it ran TAX's (defect 50 fixed? invert this test)", got)
+	// FIN's parent's child is binned: the step fails; TAX's does not run.
+	if got := childScopes(stepsOf("parent")); len(got) != 0 {
+		t.Errorf("after FIN bins its nightly, FIN's parent's child runs %v; want none (the step fails)", got)
+	}
+	// A global administrator, who may compose both, is asked which.
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot, `{"name":"root-parent","steps":[{"type":"workflow","name":"go","workflow":"nightly"}]}`)
+	if rec.Code/100 == 2 {
+		// (FIN's is in the bin now: only TAX's is a candidate.)
+		if !strings.Contains(stepsOf("root-parent"), `"workflowUid":"`+taxNightly+`"`) {
+			t.Errorf("the global administrator's parent is not pinned to the one candidate: %s", stepsOf("root-parent"))
+		}
+	} else {
+		t.Errorf("a global administrator's parent with one candidate = %d %s", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPost, "/api/v1/workflows", gFinAdmin, `{"name":"fin-nightly2","steps":[{"type":"job","name":"fin-d"}]}`); rec.Code/100 != 2 {
+		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
+	}
+	mustExec(t, pool)(`UPDATE workflows SET name = 'nightly' WHERE name = 'fin-nightly2'`)
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot, `{"name":"root-parent2","steps":[{"type":"workflow","name":"go","workflow":"nightly"}]}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "workflowUid") {
+		t.Errorf("a global administrator's parent naming two workflows it may compose = %d %s, want 422 asking for workflowUid", rec.Code, rec.Body)
+	}
+	// Given, it is kept.
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
+		`{"name":"root-parent3","steps":[{"type":"workflow","name":"go","workflow":"nightly","workflowUid":"`+taxNightly+`"}]}`)
+	if rec.Code/100 != 2 || !strings.Contains(stepsOf("root-parent3"), `"workflowUid":"`+taxNightly+`"`) {
+		t.Errorf("a parent that gives its child's identity = %d %s", rec.Code, rec.Body)
+	}
+	// One that names nothing, another name's workflow, or one in the bin, is
+	// refused.
+	for uid, says := range map[string]string{
+		"no-such-uid": "names no workflow",
+		uidOf(`SELECT uid FROM workflows WHERE name = 'tax-parent'`): "is the workflow",
+		finNightly: "recycle bin",
+	} {
+		rec = gateReq(t, h, http.MethodPost, "/api/v1/workflows", gRoot,
+			`{"name":"root-parent4","steps":[{"type":"workflow","name":"go","workflow":"nightly","workflowUid":"`+uid+`"}]}`)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), says) {
+			t.Errorf("a parent whose workflowUid %s is not its step's workflow = %d %s, want 422 saying %q", uid, rec.Code, rec.Body, says)
+		}
 	}
 }
 

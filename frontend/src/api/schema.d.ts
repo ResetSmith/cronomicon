@@ -5822,6 +5822,22 @@ export interface components {
              *     The child executes as a REAL workflow run linked to this step, with its own History entry and its own cancellability. Only the step's `inputs` cross the boundary — the parent's env does not flow implicitly. Nesting is capped at 3 deep; cycles are rejected when authoring in-app and refused at run time.
              */
             workflow?: string;
+            /**
+             * @description v2.4.0 — pins a `type: workflow` step to ONE workflow by its
+             *     identity, as `jobUid` pins a job step. Two agencies may each hold a
+             *     workflow of one name. Every save of a workflow built in the app
+             *     writes it: a step that gives one keeps it (422 if it names no
+             *     workflow, a workflow of another name, or one in the recycle bin);
+             *     otherwise the child is chosen among the workflows of the name the
+             *     saver may compose, built in the app first, then from Git, and 422
+             *     when several are, naming the step, for the saver to give this. A
+             *     pinned child that is binned, disabled or gone fails the step; it is
+             *     never replaced by another workflow of its name. A step that pins
+             *     nothing (saved before v2.4.0) runs a child built in the app only
+             *     when one workflow built in the app holds the name, else Global's
+             *     repository's. A Git workflow's steps carry none: sync removes it.
+             */
+            workflowUid?: string;
         };
         Workflow: {
             readonly id?: number;

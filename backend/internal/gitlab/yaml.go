@@ -1086,8 +1086,8 @@ func ValidateRepoWith(dir string, opt ValidateOptions) (errs []ValidationError, 
 			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "job", name: ref.Name,
 				step: true, sourceGiven: ref.Source == "git"})
 		}
-		for _, name := range workflow.CollectWorkflowRefs(steps) {
-			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "workflow", name: name, step: true})
+		for _, ref := range workflow.CollectWorkflowRefs(steps) {
+			pending = append(pending, pendingRef{file: file, field: "spec.steps", kind: "workflow", name: ref.Name, step: true})
 		}
 	}
 	resolvePending := func() {
@@ -1851,6 +1851,7 @@ func stripStepJobUIDs(steps []any) {
 			continue
 		}
 		delete(m, "jobUid")
+		delete(m, "workflowUid") // the same, for a sub-workflow step (2.4.0)
 		for _, key := range []string{"jobs", "steps"} {
 			if nested, ok := m[key].([]any); ok {
 				stripStepJobUIDs(nested)
