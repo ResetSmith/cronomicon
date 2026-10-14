@@ -30,7 +30,40 @@ import (
 const KindWorkflowSpansAgencies = "workflow_spans_agencies"
 
 func checkWorkflowSpansAgencies(ctx context.Context, database *sql.DB) error {
-	rows, err := database.QueryContext(ctx, `
+	spanning, err := SpanningWorkflows(ctx, database)
+	if err != nil {
+		return err
+	}
+	var found []Finding
+	for _, w := range spanning {
+		found = append(found, Finding{
+			AgencyID: agencyid.Global,
+			Subject:  w.UID,
+			Detail: fmt.Sprintf("The workflow %s runs jobs of more than one agency (%s), so it belongs to Global. It runs as "+
+				"before. From 2.4.0 only a global administrator may save it; until then anybody who held compose in each "+
+				"of those agencies could. To give it to one agency, make every job it runs one of that agency's, or split "+
+				"it into a workflow for each. This notice clears when its jobs are all one agency's.",
+				w.Name, w.Agencies),
+		})
+	}
+	return Reconcile(ctx, database, KindWorkflowSpansAgencies, found)
+}
+
+// SpanningWorkflow is a workflow built in the app whose jobs are several
+// agencies' (GR-7): its uid, its name, and the agencies' names.
+type SpanningWorkflow struct {
+	UID, Name, Agencies string
+}
+
+// SpanningWorkflows lists the workflows built in the app that run jobs of more
+// than one agency, as they are on q: the database, or a transaction with a
+// save not yet committed in it, which is how a save asks whether it would
+// make a workflow span (the API's refuseNewSpan). One reading for the notice
+// and for that refusal.
+func SpanningWorkflows(ctx context.Context, q interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}) ([]SpanningWorkflow, error) {
+	rows, err := q.QueryContext(ctx, `
 		WITH RECURSIVE
 		reach(root, wf, depth) AS (
 		    SELECT uid, rowid, 0 FROM workflows WHERE source = 'cronomicon' AND deleted_at IS NULL
@@ -83,29 +116,16 @@ func checkWorkflowSpansAgencies(ctx context.Context, database *sql.DB) error {
 		   AND (SELECT COUNT(DISTINCT s.agency) FROM step s WHERE s.root = w.uid AND s.agency IS NOT NULL) > 1
 		 ORDER BY w.name`, agencyid.Global)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var found []Finding
+	defer rows.Close()
+	var out []SpanningWorkflow
 	for rows.Next() {
-		var uid, name, agencies string
-		if err := rows.Scan(&uid, &name, &agencies); err != nil {
-			rows.Close()
-			return err
+		var w SpanningWorkflow
+		if err := rows.Scan(&w.UID, &w.Name, &w.Agencies); err != nil {
+			return nil, err
 		}
-		found = append(found, Finding{
-			AgencyID: agencyid.Global,
-			Subject:  uid,
-			Detail: fmt.Sprintf("The workflow %s runs jobs of more than one agency (%s), so it belongs to Global. It runs as "+
-				"before. From 2.4.0 only a global administrator may save it; until then anybody who held compose in each "+
-				"of those agencies could. To give it to one agency, make every job it runs one of that agency's, or split "+
-				"it into a workflow for each. This notice clears when its jobs are all one agency's.",
-				name, agencies),
-		})
+		out = append(out, w)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	return Reconcile(ctx, database, KindWorkflowSpansAgencies, found)
+	return out, rows.Err()
 }

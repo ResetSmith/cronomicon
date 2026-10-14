@@ -153,6 +153,15 @@ export interface paths {
         /**
          * Edit an cronomicon-source job (A11)
          * @description Edits an in-app job. Git-source jobs are read-only here (409). Requires Compose.
+         *
+         *     **A save may not make another workflow span agencies (v2.4.0, GR-7).**
+         *     A workflow built in the app whose jobs are several agencies' belongs to
+         *     Global, and only an administrator whose compose grant covers every
+         *     agency may save one. The same holds for a save that would make a
+         *     workflow ALREADY saved span: a job it runs saved into another agency's
+         *     scope, or a workflow it runs as a step saved onto another agency's
+         *     jobs. 403 for anybody else, and nothing is written; the message names
+         *     the workflow.
          */
         put: operations["updateJob"];
         post?: never;
@@ -927,6 +936,15 @@ export interface paths {
         /**
          * Edit an cronomicon-source workflow (A11)
          * @description Edits an in-app workflow's step graph + schedules. Git-source workflows are read-only here (409). Requires Compose.
+         *
+         *     **A save may not make another workflow span agencies (v2.4.0, GR-7).**
+         *     A workflow built in the app whose jobs are several agencies' belongs to
+         *     Global, and only an administrator whose compose grant covers every
+         *     agency may save one. The same holds for a save that would make a
+         *     workflow ALREADY saved span: a job it runs saved into another agency's
+         *     scope, or a workflow it runs as a step saved onto another agency's
+         *     jobs. 403 for anybody else, and nothing is written; the message names
+         *     the workflow.
          */
         put: operations["updateWorkflow"];
         post?: never;
@@ -7082,7 +7100,9 @@ export interface components {
              *       of more than one agency, so it belongs to Global, and from v2.4.0
              *       only a global administrator may save it. It runs as before.
              *       Raised for the workflows the upgrade found so, and for one that
-             *       comes to span later (a scope given to another agency). Subject:
+             *       comes to span later by a global administrator's hand (a scope
+             *       given to another agency, or a save that anybody else is refused).
+             *       Subject:
              *       the workflow's uid. Filed under Global. It clears when the
              *       workflow's jobs are all one agency's.
              *     - `schedule_entry_no_owner` — a schedule entry records no owner (it

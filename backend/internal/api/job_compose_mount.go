@@ -800,6 +800,10 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		return
 	}
 	defer tx.Rollback()
+	spanned, ok := s.spanningBefore(w, r, tx, actorID)
+	if !ok {
+		return
+	}
 
 	// Upsert the cronomicon job row (source='cronomicon'); denormalized executable fields
 	// come from the script so the scheduler/execspec/serializers read jobs.* unchanged.
@@ -903,6 +907,12 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
+	}
+	// GR-7 after the save: a job that goes to another agency's scope, or one
+	// that takes a name a workflow's step was waiting for, may not make that
+	// workflow span agencies.
+	if !s.refuseNewSpan(w, r, tx, actorID, spanned, "") {
+		return
 	}
 	if err := tx.Commit(); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)

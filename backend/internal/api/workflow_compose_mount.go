@@ -18,6 +18,7 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
+	"github.com/ResetSmith/cronomicon/internal/notices"
 	"github.com/ResetSmith/cronomicon/internal/workflow"
 )
 
@@ -399,6 +400,10 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 		return
 	}
 	defer tx.Rollback()
+	spanned, ok := s.spanningBefore(w, r, tx, actorID)
+	if !ok {
+		return
+	}
 
 	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO workflows(name, source, description, steps, schedule, enabled,
@@ -461,6 +466,11 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	}
 	if err := snapshotRevision(r.Context(), tx, revKindWorkflow, "cronomicon", in.Name, uid, actor, revAction, in); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	// GR-7 after the save: this workflow's own jobs were asked above; a
+	// workflow that runs THIS one as a step is asked here.
+	if !s.refuseNewSpan(w, r, tx, actorID, spanned, uid) {
 		return
 	}
 
@@ -806,6 +816,93 @@ func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner st
 		}
 	}
 	return agencyid.Global, true, nil
+}
+
+// spanningBefore and refuseNewSpan are GR-7 held AFTER a save (2.4.0; the
+// owner's decision on R4's question 9, built when question 21 was answered).
+//
+// A workflow whose jobs are several agencies' is Global's, and saving one is
+// a global administrator's (writeComposedWorkflow). That asks about the
+// workflow being saved. The same graph was reached two other ways by somebody
+// who is not one: by saving a CHILD workflow, or a JOB, that a workflow
+// already saved runs, so that the parent comes to span. The parent was
+// reported (`workflow_spans_agencies`) and nothing was refused.
+//
+// So a save by anybody but a global administrator reads which workflows span
+// before it writes (spanningBefore) and again before it commits
+// (refuseNewSpan), in its own transaction, and is refused and rolled back when
+// a workflow spans that did not. The reading is the notice's
+// (notices.SpanningWorkflows): sub-workflows followed to the depth the engine
+// follows them, so the walk is bounded as the engine's is. A global
+// administrator's save is not asked, and the notice says what it made.
+//
+// The other way a workflow came to span, a scope given to another agency, is
+// a global administrator's alone since bee2b35.
+func (s *Server) spanningBefore(w http.ResponseWriter, r *http.Request, tx *sql.Tx, id auth.Identity) (map[string]bool, bool) {
+	if id.GlobalAdmin(auth.PermCompose) {
+		return nil, true
+	}
+	spanning, err := notices.SpanningWorkflows(r.Context(), tx)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return nil, false
+	}
+	before := make(map[string]bool, len(spanning))
+	for _, wf := range spanning {
+		before[wf.UID] = true
+	}
+	return before, true
+}
+
+// refuseNewSpan reports whether the save in tx may be committed: false, with
+// the refusal written, when it makes a workflow span agencies that did not
+// (see spanningBefore). self is the uid of a workflow the save itself writes,
+// which has been asked on its own account; "" for a job's save.
+//
+// The refusal names the workflow only to somebody who holds compose on the
+// agency it belongs to, who may read it. That is everybody who can get here
+// (the parent's jobs were one agency's, and the job or the child being saved
+// was among them, so the saver holds compose there); the words for anybody
+// else say neither which workflow nor that there is one.
+func (s *Server) refuseNewSpan(w http.ResponseWriter, r *http.Request, tx *sql.Tx, id auth.Identity, before map[string]bool, self string) bool {
+	if id.GlobalAdmin(auth.PermCompose) {
+		return true
+	}
+	spanning, err := notices.SpanningWorkflows(r.Context(), tx)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	var named []string
+	newly := 0
+	for _, wf := range spanning {
+		if before[wf.UID] || wf.UID == self {
+			continue
+		}
+		newly++
+		var owner sql.NullString
+		if err := tx.QueryRowContext(r.Context(), `SELECT owner_agency FROM workflows WHERE uid = ?`, wf.UID).Scan(&owner); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return false
+		}
+		if owner.String != "" && id.CanAgency(auth.PermCompose, owner.String) {
+			named = append(named, wf.Name)
+		}
+	}
+	if newly == 0 {
+		return true
+	}
+	msg := "insufficient permissions: this change takes an administrator whose compose grant covers every agency"
+	if len(named) == newly {
+		msg = "this change would make the workflow " + strings.Join(named, ", ") + " run jobs of more than one agency. " +
+			"Such a workflow belongs to Global: only an administrator whose compose grant covers every agency may make the change"
+	}
+	// The save is undone BEFORE the refusal is written: the refusal's audit row
+	// goes through another connection, which would wait on this transaction's
+	// write lock until it gave up, and be lost.
+	_ = tx.Rollback()
+	s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes, msg)
+	return false
 }
 
 // collectStepScopes resolves each step job's scope through the same A11
