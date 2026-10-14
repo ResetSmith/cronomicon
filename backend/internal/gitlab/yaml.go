@@ -888,11 +888,11 @@ func ContentHash(body []byte) string {
 // time, not run time). Orphan scripts (referenced by zero jobs) are returned
 // separately as non-fatal warnings. A missing scripts/ or jobs/ dir is not an
 // error (a repo may have only one).
+//
+// It reads the checkout as Git sync reads it (2.4.0): jobs/, schedules/ and
+// workflows/ with their sub-folders, and inventory/ at its top level only
+// (validateInventoryDir).
 func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationError, err error) {
-	isYAML := func(name string) bool {
-		return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
-	}
-
 	// 1. scripts/ — collect declared names (and flag duplicates).
 	scriptNames := map[string]bool{}
 	scripts, sErrs := discoverScripts(filepath.Join(dir, "scripts"))
@@ -947,22 +947,23 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 		}
 	}
 
+	// walk reads one of the three definition directories as sync reads it
+	// (walkManifests): every YAML file, in sub-folders too. Until 2.4.0 this
+	// read the top level only, so a definition in a sub-folder was synced and
+	// never validated.
+	walk := func(sub string) ([]manifestFile, error) {
+		files, werrs := walkManifests(filepath.Join(dir, sub), os.ReadFile)
+		for _, we := range werrs {
+			errs = append(errs, ValidationError{File: filepath.Join(dir, sub), Message: we.Error()})
+		}
+		return files, nil
+	}
+
 	// 1b. schedules/ — collect declared first-class schedule names (A10a).
 	scheduleNames := map[string]bool{}
-	schedEntries, schErr := os.ReadDir(filepath.Join(dir, "schedules"))
-	if schErr != nil && !os.IsNotExist(schErr) {
-		return nil, nil, fmt.Errorf("read schedules dir: %w", schErr)
-	}
-	for _, e := range schedEntries {
-		if e.IsDir() || !isYAML(e.Name()) {
-			continue
-		}
-		path := filepath.Join(dir, "schedules", e.Name())
-		data, rErr := os.ReadFile(path)
-		if rErr != nil {
-			errs = append(errs, ValidationError{File: path, Message: rErr.Error()})
-			continue
-		}
+	schedFiles, _ := walk("schedules")
+	for _, f := range schedFiles {
+		path, data := f.path, f.data
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
 		var sd ScheduleYAML
@@ -1006,20 +1007,9 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 	// and is a data-loss hazard now that only this validator stands in the way.
 	seenJobNames := map[string]string{}
 	referenced := map[string]bool{}
-	jobEntries, jErr := os.ReadDir(filepath.Join(dir, "jobs"))
-	if jErr != nil && !os.IsNotExist(jErr) {
-		return nil, nil, fmt.Errorf("read jobs dir: %w", jErr)
-	}
-	for _, e := range jobEntries {
-		if e.IsDir() || !isYAML(e.Name()) {
-			continue
-		}
-		path := filepath.Join(dir, "jobs", e.Name())
-		data, rErr := os.ReadFile(path)
-		if rErr != nil {
-			errs = append(errs, ValidationError{File: path, Message: rErr.Error()})
-			continue
-		}
+	jobFiles, _ := walk("jobs")
+	for _, f := range jobFiles {
+		path, data := f.path, f.data
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
 		warnings = append(warnings, retiredJobKeyWarnings(path, data)...)
@@ -1067,20 +1057,9 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 
 	seenWorkflowNames := map[string]string{}
 	// 2b. workflows/ — validate each + resolve scheduleRefs (A10a).
-	wfEntries, wErr := os.ReadDir(filepath.Join(dir, "workflows"))
-	if wErr != nil && !os.IsNotExist(wErr) {
-		return nil, nil, fmt.Errorf("read workflows dir: %w", wErr)
-	}
-	for _, e := range wfEntries {
-		if e.IsDir() || !isYAML(e.Name()) {
-			continue
-		}
-		path := filepath.Join(dir, "workflows", e.Name())
-		data, rErr := os.ReadFile(path)
-		if rErr != nil {
-			errs = append(errs, ValidationError{File: path, Message: rErr.Error()})
-			continue
-		}
+	wfFiles, _ := walk("workflows")
+	for _, f := range wfFiles {
+		path, data := f.path, f.data
 		ve, _ := validateYAMLBytes(path, data)
 		errs = append(errs, ve...)
 		var wf WorkflowYAML
@@ -1108,6 +1087,18 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 		}
 	}
 
+	// 2c. inventory/ — each scope's file, checked as sync checks it
+	// (parseInventories): a file that carries a secret is refused, and the
+	// pragma and the sidecar beside it are resolved together. The TOP LEVEL
+	// only, as sync reads it: a file in a sub-folder of inventory/ is never a
+	// scope, and is said to be one that sync does not read.
+	invErrs, invWarnings, invErr := validateInventoryDir(filepath.Join(dir, "inventory"))
+	if invErr != nil {
+		return nil, nil, invErr
+	}
+	errs = append(errs, invErrs...)
+	warnings = append(warnings, invWarnings...)
+
 	// 3. Orphan scripts — referenced by no job. Non-fatal (a script may be added
 	// before the jobs that use it, or kept as a building block).
 	for name := range scriptNames {
@@ -1129,6 +1120,93 @@ func ValidateRepo(dir string) (errs []ValidationError, warnings []ValidationErro
 // ──────────────────────────────────────────────────────────────────────────────
 // Inventory pragma parsing (S10)
 // ──────────────────────────────────────────────────────────────────────────────
+
+// validateInventoryDir checks a checkout's inventory/ directory as Git sync
+// reads it (Service.parseInventories): each top-level .ini file is a scope; one
+// that carries a secret is refused (inventory.ValidateSecrets), and its pragma
+// and its sidecar (<name>.cronomicon.yaml) are resolved together
+// (resolveInventoryMeta). A missing directory is not an error.
+//
+// Sync reads the top level only, so a file in a sub-folder is not a scope. That
+// is said, as a warning, for each .ini or sidecar found there: it was put there
+// to be one.
+func validateInventoryDir(dir string) (errs, warnings []ValidationError, err error) {
+	entries, rerr := os.ReadDir(dir)
+	if rerr != nil {
+		if os.IsNotExist(rerr) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("read inventory dir: %w", rerr)
+	}
+	sidecars := map[string]*sidecarYAML{}
+	sidecarPaths := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			_ = filepath.WalkDir(filepath.Join(dir, e.Name()), func(p string, d os.DirEntry, werr error) error {
+				if werr != nil || d.IsDir() {
+					return nil
+				}
+				if n := d.Name(); strings.HasSuffix(n, ".ini") || strings.HasSuffix(n, ".cronomicon.yaml") {
+					warnings = append(warnings, ValidationError{File: p,
+						Message: "is in a sub-folder of inventory/, which Git sync does not read: it is not a scope. " +
+							"Move it to inventory/ itself"})
+				}
+				return nil
+			})
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".cronomicon.yaml") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, derr := os.ReadFile(path)
+		if derr != nil {
+			errs = append(errs, ValidationError{File: path, Message: derr.Error()})
+			continue
+		}
+		var sc sidecarYAML
+		if yerr := yaml.Unmarshal(data, &sc); yerr != nil {
+			errs = append(errs, ValidationError{File: path, Message: "not YAML: " + yerr.Error()})
+			continue
+		}
+		base := strings.TrimSuffix(e.Name(), ".cronomicon.yaml")
+		sidecars[base] = &sc
+		sidecarPaths[base] = path
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ini") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, derr := os.ReadFile(path)
+		if derr != nil {
+			errs = append(errs, ValidationError{File: path, Message: derr.Error()})
+			continue
+		}
+		content := string(data)
+		if secErrs := inventory.ValidateSecrets(content, path); len(secErrs) > 0 {
+			for _, se := range secErrs {
+				errs = append(errs, ValidationError{File: se.File, Line: se.Line, Message: se.Message})
+			}
+			continue // refused whole, as sync refuses it: nothing else of it is read
+		}
+		base := strings.TrimSuffix(e.Name(), ".ini")
+		meta := resolveInventoryMeta(content, sidecars[base], sidecarPaths[base])
+		for _, me := range meta.Errors {
+			if me.File == "" {
+				me.File = path
+			}
+			errs = append(errs, me)
+		}
+		for _, w := range meta.Warnings {
+			if w.File == "" {
+				w.File = path
+			}
+			warnings = append(warnings, w)
+		}
+	}
+	return errs, warnings, nil
+}
 
 // validRunTypes is the allowed set of run-type strings for a Script's
 // spec.runType (mirrors VALID_RUN_TYPES in prototype). It lives in this section
