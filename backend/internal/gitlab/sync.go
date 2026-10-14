@@ -670,7 +670,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// validation is skipped rather than failing the whole repo's sync. That
 	// matches the window/mode precedent above — a bad spec must not wedge a sync —
 	// and the fire-time gate is fail-open for the same reason.
-	knownCals, globalCals, calErr := calendar.LoadFlags(ctx, s.db)
+	knownCals, globalCals, calErr := calendar.LoadFlagsFor(ctx, s.db, s.agency()) // its agency's calendars only (§0a)
 	if calErr != nil {
 		s.logError("sync: load calendars for binding validation — bindings not validated", "err", calErr)
 	}

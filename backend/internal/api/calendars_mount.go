@@ -48,15 +48,47 @@ func (s *Server) mountCalendars(mux *http.ServeMux) {
 	requireSession := s.auth.RequireSession
 	mux.Handle("GET /api/v1/calendars", requireSession(http.HandlerFunc(s.listCalendars)))
 	mux.Handle("GET /api/v1/calendars/{name}", requireSession(http.HandlerFunc(s.getCalendar)))
-	mux.Handle("POST /api/v1/calendars", s.requireComposeAdmin(http.HandlerFunc(s.createCalendar)))
-	mux.Handle("PUT /api/v1/calendars/{name}", s.requireComposeAdmin(http.HandlerFunc(s.updateCalendar)))
-	mux.Handle("DELETE /api/v1/calendars/{name}", s.requireComposeAdmin(http.HandlerFunc(s.deleteCalendar)))
-	mux.Handle("PUT /api/v1/calendars/{name}/days", s.requireComposeAdmin(http.HandlerFunc(s.replaceCalendarDays)))
+	// A calendar is its agency's (§0a, 2.4.0; SO-1): writing one takes compose
+	// on its owner, checked in each handler (requireCalendarOwner). Until then
+	// every calendar was Global's, a compose administrator over every agency's
+	// alone to write, and a global one froze every agency.
+	compose := func(h http.HandlerFunc) http.Handler {
+		return s.requirePerm(auth.PermCompose, func(p rolePermissions) bool { return p.Compose })(h)
+	}
+	owned := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			var owner sql.NullString
+			_ = s.db.QueryRowContext(r.Context(), `SELECT owner_agency FROM calendars WHERE name = ?`, r.PathValue("name")).Scan(&owner)
+			if owner.Valid && !s.requireCalendarOwner(w, r, owner.String) {
+				return
+			}
+			h(w, r)
+		}
+	}
+	mux.Handle("POST /api/v1/calendars", compose(s.createCalendar))
+	mux.Handle("PUT /api/v1/calendars/{name}", compose(owned(s.updateCalendar)))
+	mux.Handle("DELETE /api/v1/calendars/{name}", compose(owned(s.deleteCalendar)))
+	mux.Handle("PUT /api/v1/calendars/{name}/days", compose(owned(s.replaceCalendarDays)))
+}
+
+// requireCalendarOwner answers 403 unless the caller holds compose on the
+// agency a calendar is (or is to be) owned by.
+func (s *Server) requireCalendarOwner(w http.ResponseWriter, r *http.Request, owner string) bool {
+	id, _ := auth.IdentityFrom(r.Context())
+	if id.CanAgency(auth.PermCompose, owner) {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermCompose, auth.AllScopes,
+		"a calendar belongs to one agency, and writing it takes compose on that agency")
+	return false
 }
 
 // calendarInput is the create/update request body (the CalendarInput schema).
 type calendarInput struct {
-	Name        string `json:"name"`
+	Name string `json:"name"`
+	// OwnerAgency is the agency a new calendar belongs to (§0a, 2.4.0):
+	// Global's when empty. Read on create only.
+	OwnerAgency string `json:"ownerAgency,omitempty"`
 	Description string `json:"description"`
 	// Global unions this calendar's days into every entry's skip set (§2.8).
 	// Skip-polarity only — see validateGlobalUsable.
@@ -76,8 +108,10 @@ type calendarDayInput struct {
 
 // calendarRow is the JSON shape of the Calendar schema.
 type calendarRow struct {
-	Name             string `json:"name"`
-	Source           string `json:"source"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	// OwnerAgency is the agency the calendar belongs to (§0a, 2.4.0).
+	OwnerAgency      string `json:"ownerAgency"`
 	Description      string `json:"description,omitempty"`
 	Global           bool   `json:"global"`
 	RecordSuppressed bool   `json:"recordSuppressed"`
@@ -176,11 +210,26 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid calendar name (want "+composeNameRe.String()+")")
 		return
 	}
+	in.OwnerAgency = ownerOrGlobal(in.OwnerAgency)
+	var known int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, in.OwnerAgency).Scan(&known); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if known == 0 {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "ownerAgency names no agency")
+		return
+	}
+	if !s.requireCalendarOwner(w, r, in.OwnerAgency) {
+		return
+	}
 	days, verr := normalizeCalendarDays(in.Days)
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
 	}
+	// A name is held once across the installation until names are per agency
+	// (I2, the owner's answer to question 30).
 	var exists int
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM calendars WHERE name=?`, in.Name).Scan(&exists)
 	if exists > 0 {
@@ -210,10 +259,10 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(r.Context(), `
 		INSERT INTO calendars(source, name, description, global, record_suppressed,
-		                      created_by, created_at, last_modified_by, last_modified_at)
-		VALUES('cronomicon', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                      created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		VALUES('cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.Name, nullStrIf(in.Description), boolInt(in.Global), boolInt(in.RecordSuppressed),
-		id.Email, now, id.Email, now); err != nil {
+		id.Email, now, id.Email, now, in.OwnerAgency); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
@@ -379,7 +428,7 @@ func (s *Server) deleteCalendar(w http.ResponseWriter, r *http.Request) {
 // this pool with an iterator still open is the documented deadlock.
 func (s *Server) loadCalendarRows(ctx context.Context, only string) ([]calendarRow, error) {
 	q := `SELECT source, name, COALESCE(description,''), global, record_suppressed,
-	             COALESCE(created_by,''), COALESCE(created_at,'')
+	             COALESCE(created_by,''), COALESCE(created_at,''), COALESCE(owner_agency,'global')
 	        FROM calendars`
 	var args []any
 	if only != "" {
@@ -396,7 +445,7 @@ func (s *Server) loadCalendarRows(ctx context.Context, only string) ([]calendarR
 	for rows.Next() {
 		var c calendarRow
 		var global, record int
-		if err := rows.Scan(&c.Source, &c.Name, &c.Description, &global, &record, &c.CreatedBy, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.Source, &c.Name, &c.Description, &global, &record, &c.CreatedBy, &c.CreatedAt, &c.OwnerAgency); err != nil {
 			rows.Close()
 			return nil, err
 		}

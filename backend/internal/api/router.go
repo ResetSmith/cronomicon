@@ -345,6 +345,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	s.mountScheduleDefs(mux)         // A10a: /schedule-defs, /schedule-defs/{name} (first-class Schedules catalog)
 	s.mountScheduleCompose(mux)      // schedule-builder.md: POST/PUT/DELETE /schedule-defs (in-app cronomicon-source Schedule authoring; Compose RBAC)
 	s.mountCalendars(mux)            // CAL-4: /calendars/* (working calendars — holiday skip / run-day sets bound to schedule entries)
+	s.mountFreeze(mux)               // §0a: the installation-wide freeze (/settings/freeze)
 	s.mountReactions(mux)            // RX-12: /reactions/* (a definition runs when another definition finishes)
 	s.mountFileSightings(mux)        // FX-E1: GET /jobs/{jobId}/file-sightings (the arrival ledger's read surface)
 	s.mountJobCompose(mux)           // A11: POST/PUT/DELETE /jobs (in-app cronomicon-source Job composition; Compose RBAC)

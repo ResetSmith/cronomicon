@@ -74,9 +74,12 @@ func TestGC_SharedAuthoringNeedsComposeAndConfigureOnEveryAgency(t *testing.T) {
 		deny bool
 		why  string
 	}{
-		{gFinAdmin, true, "the built-in admin role on ONE agency passed RequireRole(\"admin\")"},
-		{gAllComposer, true, "compose on every agency, without configureApp, is not an installation administrator"},
-		{gMixed, true, "compose and configureApp must come from the SAME unrestricted grant"},
+		// Since §0a (2.4.0) a calendar is its agency's, and this one is
+		// Global's: creating it takes compose on Global. Until then it took an
+		// installation administrator (compose and configureApp on every agency).
+		{gFinAdmin, true, "the built-in admin role on ONE agency holds no compose on Global"},
+		{gAllComposer, false, "compose on every agency includes Global"},
+		{gMixed, true, "an all-scopes viewer who administers FIN holds no compose on Global"},
 		{gAllFull, false, "a custom role holding both on every agency is; the gate names no role"},
 		{gRoot, false, "the built-in admin on every agency"},
 	} {

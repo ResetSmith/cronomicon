@@ -66,14 +66,17 @@ func (s *Scheduler) calendarVerdict(ctx context.Context, source, ownerKind, owne
 	// not waste — the global tier (§2.8) unions a change-freeze calendar's days
 	// into EVERY entry's skip set, so an entry with no bindings of its own is
 	// still suppressible. There is no empty-bindings fast path to take.
-	sets, err := calendar.Load(ctx, s.db, append(append([]string{}, skip...), only...))
+	//
+	// Since §0a (2.4.0): the installation-wide freeze first, then the entry's
+	// own calendars and its agency's global ones (until then every global
+	// calendar, whoever's).
+	v, err := freezeTier(ctx, s.db, definitionAgency(ctx, s.db, ownerUID, ownerKind), skip, only, day)
 	if err != nil {
 		s.log.Error("scheduler: load calendars — firing without calendar suppression",
 			"owner", ownerName, "kind", ownerKind, "schedule", scheduleName, "err", err)
 		return gate
 	}
-
-	gate.Verdict = calendar.Evaluate(sets, skip, only, day)
+	gate.Verdict = v
 	return gate
 }
 

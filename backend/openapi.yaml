@@ -5778,6 +5778,50 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
 
   # ── Settings (DB-backed config per §2.2) ───────────────────────────────────
+  /settings/freeze:
+    get:
+      tags: [Settings]
+      operationId: getInstallationFreeze
+      summary: Whether the installation is frozen, and why
+      description: |
+        The installation-wide freeze (v2.4.0): while it is on, no scheduled fire
+        of any agency happens (fires, trigger gates and reactions, wherever a
+        global calendar of Global's did until v2.4.0), and each is recorded as a
+        skipped fire with the reason. Readable by anyone signed in.
+      responses:
+        '200':
+          description: The freeze.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallationFreeze' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [Settings]
+      operationId: setInstallationFreeze
+      summary: Freeze or thaw the installation
+      description: |
+        A global administrator's (configureApp on every agency). Turning it on
+        takes a reason (422 without one), at most 500 characters. Audited.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [on]
+              properties:
+                on: { type: boolean }
+                reason: { type: string }
+      responses:
+        '200':
+          description: The freeze as written.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InstallationFreeze' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Validation' }
   /settings/general:
     get:
       tags: [Settings]
@@ -9686,16 +9730,27 @@ components:
       description: |
         A named set of wall-clock dates. Bound to schedule entries in two
         polarities; see ScheduleInput.skipCalendars / onlyCalendars.
+
+        A calendar belongs to one agency (v2.4.0). Writing it takes compose on
+        that agency (403 otherwise); until v2.4.0 every calendar was Global's
+        and only an installation administrator wrote them. An entry names its
+        own agency's calendars at a write (another agency's reads as unknown);
+        one that named another agency's before keeps the binding, live, and the
+        notice `calendar_other_agency` lists it. The name is unique across the
+        installation until names are per agency.
       properties:
         name: { type: string }
+        ownerAgency: { type: string, description: "The agency id the calendar belongs to (v2.4.0)." }
         source: { type: string, description: "Always 'cronomicon' — calendars are operator-authored, never Git-authored." }
         description: { type: string }
         global:
           type: boolean
           description: |
-            Union this calendar's days into EVERY entry's skip set, whether or not
-            the entry names it — the change-freeze case, one flag instead of N
-            schedule edits. SKIP POLARITY ONLY: a global calendar may not be bound
+            Union this calendar's days into the skip set of every entry of its
+            OWN agency, whether or not the entry names it — the change-freeze
+            case, one flag instead of N schedule edits (until v2.4.0 every
+            entry of every agency; a freeze of the whole installation is
+            /settings/freeze since). SKIP POLARITY ONLY: a global calendar may not be bound
             as a run-day (only) calendar, and a calendar already bound that way
             cannot be made global.
         recordSuppressed:
@@ -9751,11 +9806,20 @@ components:
         scheduleName: { type: string }
         polarity: { type: string, enum: [skip, only] }
 
+    InstallationFreeze:
+      type: object
+      required: [on, reason]
+      properties:
+        on: { type: boolean }
+        reason: { type: string }
+        setBy: { type: string }
+        setAt: { type: string, format: date-time }
     CalendarInput:
       type: object
       description: Request body for creating or updating a calendar.
       properties:
         name: { type: string, description: "Calendar name (slug). Required on create; immutable on edit." }
+        ownerAgency: { type: string, description: "The agency id a new calendar belongs to (create only; Global when absent). An unknown id is 422 unknown_agency." }
         description: { type: string }
         global: { type: boolean }
         recordSuppressed: { type: boolean }
@@ -10856,6 +10920,18 @@ components:
               `<job uid>:<secret|var|key>:<name>`. Filed under the job's agency.
               It clears when the agency has a row of the name, or the binding
               goes.
+            - `calendar_other_agency` — a schedule entry, or a schedule, of an
+              agency names a calendar of another agency (allowed before v2.4.0).
+              It still applies, and follows that calendar's edits, but cannot be
+              saved again as it is. Subject:
+              `<definition uid or schedule:uid>:<entry>:<calendar>`. Filed under
+              the binding's agency. It clears when the binding names its own
+              agency's calendar.
+            - `global_calendar_scope` — a calendar of Global's is global. Until
+              v2.4.0 it froze every agency's fires; now it freezes Global's only
+              (the whole installation is /settings/freeze). Raised while there
+              is an agency besides Global. Subject: the calendar's name. Filed
+              under Global. It clears when the calendar is not global.
             - `global_schedule_bound` — a job or workflow of an agency is bound
               to a schedule of Global's (allowed before v2.4.0). A schedule's
               edits reach its own agency's definitions only: this one keeps the

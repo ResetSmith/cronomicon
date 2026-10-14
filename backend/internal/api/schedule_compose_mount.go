@@ -194,7 +194,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", serr.Error())
 		return
 	}
-	skipCals, onlyCals, cerr := s.validateCalendarBinding(r.Context(), in.SkipCalendars, in.OnlyCalendars)
+	skipCals, onlyCals, cerr := s.validateCalendarBinding(r.Context(), s.scheduleOwnerFor(r.Context(), in, isCreate), in.SkipCalendars, in.OnlyCalendars)
 	if cerr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", cerr)
 		return
@@ -851,6 +851,15 @@ func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name s
 	}
 	sd.UsedByCount = len(sd.UsedBy)
 	httpx.JSON(w, status, sd)
+}
+
+// scheduleOwnerFor is the agency a schedule being written is (or will be)
+// owned by: the create's ownerAgency, or the existing row's owner.
+func (s *Server) scheduleOwnerFor(ctx context.Context, in scheduleInput, isCreate bool) string {
+	if isCreate {
+		return ownerOrGlobal(in.OwnerAgency)
+	}
+	return ownerOrGlobal(s.inAppScheduleOwner(ctx, in.Name))
 }
 
 // ownerOrGlobal is an owner as given, Global's when none is.

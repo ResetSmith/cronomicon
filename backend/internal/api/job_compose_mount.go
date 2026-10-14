@@ -972,7 +972,7 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 		if serr := spec.Validate(); serr != nil {
 			return nil, "schedule " + name + ": " + serr.Error()
 		}
-		skipCals, onlyCals, cerr := s.validateCalendarBinding(ctx, e.SkipCalendars, e.OnlyCalendars)
+		skipCals, onlyCals, cerr := s.validateCalendarBinding(ctx, agency, e.SkipCalendars, e.OnlyCalendars)
 		if cerr != "" {
 			return nil, "schedule " + name + ": " + cerr
 		}
@@ -1038,7 +1038,7 @@ func (s *Server) resolveComposeSchedules(ctx context.Context, in jobComposeInput
 		// deliberately leaves the name dangling), and expanding that stale binding
 		// onto a new job would mint an entry that can never fire through a path
 		// that never saw the refusal.
-		refSkipCals, refOnlyCals, cerr := s.validateCalendarBinding(ctx,
+		refSkipCals, refOnlyCals, cerr := s.validateCalendarBinding(ctx, agency,
 			calendar.ParseNames(refSkip.String), calendar.ParseNames(refOnly.String))
 		if cerr != "" {
 			return nil, "scheduleRef " + ref + ": " + cerr

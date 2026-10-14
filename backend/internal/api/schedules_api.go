@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -324,6 +325,22 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("upcoming: load calendars — projection not annotated", "err", calErr)
 		calSets = calendar.Set{}
 	}
+	ownerAgencyOf := map[string]string{}
+	agencyOfOwner := func(uid, kind string) string {
+		if uid == "" {
+			return agencyid.Global
+		}
+		if a, ok := ownerAgencyOf[uid]; ok {
+			return a
+		}
+		a := agencyid.Global
+		var got sql.NullString
+		if err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.DefinitionSQL, uid, kind).Scan(&got); err == nil && got.Valid {
+			a = got.String
+		}
+		ownerAgencyOf[uid] = a
+		return a
+	}
 
 	type proj struct {
 		kind, owner, name, cron string
@@ -349,10 +366,13 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		// an expired one contributes nothing at all — matching real fires.
 		skipCals := calendar.ParseNames(sr.skipCals.String)
 		onlyCals := calendar.ParseNames(sr.onlyCals.String)
+		// The global tier is the entry's own agency's (§0a, 2.4.0), as fire()
+		// asks it: one lookup per owner, cached for the request.
+		ownerAgency := agencyOfOwner(sr.ownerUID.String, sr.kind)
 		for _, t := range cronutil.NextNSpec(sr.spec(), now, end, perEntryCap, appLoc) {
 			// Evaluated per instant, in the app zone, exactly as fire() will —
 			// a holiday suppresses one day's instant, not the whole entry.
-			v := calendar.Evaluate(calSets, skipCals, onlyCals, calendar.DayOf(t, appLoc))
+			v := calendar.EvaluateFor(calSets, ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
 			projections = append(projections, proj{sr.kind, sr.owner, sr.name, sr.cron, sr.source,
 				sr.ownerUID.String, splitAgencies(sr.ownerAgencies), t, v})
 		}

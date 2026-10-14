@@ -508,7 +508,7 @@ func (s *Scheduler) reactionVerdict(ctx context.Context, ev srcEvent, r reaction
 		// definition not reacting is not arguable.
 		return "suppressed_paused", "the reacting definition is paused"
 	}
-	if v, day, ok := s.globalCalendarVerdict(ctx); ok && v.Suppressed {
+	if v, day, ok := s.globalCalendarVerdict(ctx, definitionAgency(ctx, s.db, r.ownerUID, r.ownerKind)); ok && v.Suppressed {
 		// RX-20 — GLOBAL tier only. A fleet-wide freeze must stop a cascade: a
 		// chain that runs THROUGH a freeze day is worse than a schedule that
 		// does, because nobody authored it to happen today. Entry-level bindings
@@ -806,15 +806,18 @@ func (s *Scheduler) definitionEnabled(ctx context.Context, source, kind, name, u
 // Failure is OPEN, matching calendarVerdict: a DB error yields "not suppressed"
 // plus a log line, because converting a transient SQLite hiccup into a silent
 // fleet-wide halt of all cascades is the worse failure.
-func (s *Scheduler) globalCalendarVerdict(ctx context.Context) (calendar.Verdict, string, bool) {
+//
+// Since §0a (2.4.0): the installation-wide freeze first, then the global
+// calendars of the reacting definition's own agency.
+func (s *Scheduler) globalCalendarVerdict(ctx context.Context, agency string) (calendar.Verdict, string, bool) {
 	loc := s.location()
 	day := calendar.DayOf(time.Now(), loc)
-	sets, err := calendar.Load(ctx, s.db, nil)
+	v, err := freezeTier(ctx, s.db, agency, nil, nil, day)
 	if err != nil {
 		s.log.Error("reactor: load calendars — reacting without calendar suppression", "err", err)
 		return calendar.Verdict{}, day, false
 	}
-	return calendar.Evaluate(sets, nil, nil, day), day, true
+	return v, day, true
 }
 
 // lastFiredAt returns when this reaction last actually fired (RX-21's anchor).

@@ -44,6 +44,7 @@ func RunChecks(ctx context.Context, database *sql.DB) error {
 		{KindLocalRunnerServed, checkLocalRunnerServed},
 		{KindGlobalScriptJob, checkGlobalScriptJob},
 		{KindGlobalScheduleBound, checkGlobalScheduleBound},
+		{KindCalendarOtherAgency, checkCalendarAgencies},
 		{KindScheduleEntryNoOwner, checkScheduleEntryNoOwner},
 		{"run_placement", checkRunPlacement},
 		{KindShellJobRequires, checkShellJobRequires},

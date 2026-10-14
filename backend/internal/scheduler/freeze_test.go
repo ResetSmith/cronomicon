@@ -1,0 +1,49 @@
+package scheduler
+
+import (
+	"context"
+	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/calendar"
+)
+
+// A global calendar freezes its own agency's fires only (§0a, 2.4.0); the
+// installation-wide freeze stops every agency's, with its reason. Until §0a a
+// global calendar of anybody's froze every fire, and there was no setting.
+func TestI1_AGlobalCalendarFreezesItsAgencyAndTheFreezeEveryone(t *testing.T) {
+	pool := mustPool(t)
+	ctx := context.Background()
+	exec := func(q string, a ...any) {
+		t.Helper()
+		if _, err := pool.Exec(q, a...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	exec(`INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't'), ('ag-tax', 'Tax', 't')`)
+	const day = "2026-12-25"
+	for _, c := range [][2]string{{"g-freeze", "global"}, {"fin-freeze", "ag-fin"}} {
+		exec(`INSERT INTO calendars (source, name, global, record_suppressed, created_by, created_at, owner_agency) VALUES ('cronomicon', ?, 1, 0, 't', 't', ?)`, c[0], c[1])
+		exec(`INSERT INTO calendar_days (calendar_source, calendar_name, day, label) VALUES ('cronomicon', ?, ?, 'holiday')`, c[0], day)
+	}
+	verdict := func(agency string) calendar.Verdict {
+		t.Helper()
+		v, err := freezeTier(ctx, pool, agency, nil, nil, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for agency, want := range map[string]string{"global": "g-freeze", "ag-fin": "fin-freeze", "ag-tax": ""} {
+		v := verdict(agency)
+		if v.Calendar != want || v.Suppressed != (want != "") {
+			t.Errorf("a fire of %s on the day: suppressed=%v by %q, want %q", agency, v.Suppressed, v.Calendar, want)
+		}
+	}
+	exec(`INSERT INTO settings (key, value) VALUES (?, '{"on":true,"reason":"year-end"}')`, calendar.FreezeKey)
+	for _, agency := range []string{"global", "ag-fin", "ag-tax"} {
+		v := verdict(agency)
+		if !v.Suppressed || v.Calendar != calendar.FreezeCalendar || calendar.Reason(v) != "Skipped: the installation is frozen (year-end)" {
+			t.Errorf("a fire of %s while frozen: %+v (%q)", agency, v, calendar.Reason(v))
+		}
+	}
+}

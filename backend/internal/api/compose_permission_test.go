@@ -298,12 +298,10 @@ func TestComposeGrantCannotAuthorAllScopedJobs(t *testing.T) {
 func TestSharedAuthoringSurfacesStayAdminOnly(t *testing.T) {
 	h, _ := composeRBACServer(t)
 
-	// (Schedules built in the app left this list with §0a, question 32: each
-	// has an owner, writing it takes compose on that owner, and its edits reach
-	// that agency's definitions only. TestI1_AScheduleIsItsOwnersToWrite.)
+	// (Schedules built in the app and calendars left this list with §0a,
+	// question 32 and SO-1: each has an owner, and writing it takes compose on
+	// that owner. TestI1_AScheduleIsItsOwnersToWrite, TestI1_ACalendarIsItsAgencys.)
 	for _, tc := range []struct{ what, method, path, body string }{
-		{"calendar create", http.MethodPost, "/api/v1/calendars", `{"name":"holidays"}`},
-		{"calendar delete", http.MethodDelete, "/api/v1/calendars/holidays", ""},
 		{"reactions replace", http.MethodPut, "/api/v1/reactions/job/fin-job", `{"reactions":[]}`},
 		{"recycle bin list", http.MethodGet, "/api/v1/recycle-bin", ""},
 	} {

@@ -3512,6 +3512,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the installation is frozen, and why
+         * @description The installation-wide freeze (v2.4.0): while it is on, no scheduled fire
+         *     of any agency happens (fires, trigger gates and reactions, wherever a
+         *     global calendar of Global's did until v2.4.0), and each is recorded as a
+         *     skipped fire with the reason. Readable by anyone signed in.
+         */
+        get: operations["getInstallationFreeze"];
+        /**
+         * Freeze or thaw the installation
+         * @description A global administrator's (configureApp on every agency). Turning it on
+         *     takes a reason (422 without one), at most 500 characters. Audited.
+         */
+        put: operations["setInstallationFreeze"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/general": {
         parameters: {
             query?: never;
@@ -6168,16 +6196,28 @@ export interface components {
         /**
          * @description A named set of wall-clock dates. Bound to schedule entries in two
          *     polarities; see ScheduleInput.skipCalendars / onlyCalendars.
+         *
+         *     A calendar belongs to one agency (v2.4.0). Writing it takes compose on
+         *     that agency (403 otherwise); until v2.4.0 every calendar was Global's
+         *     and only an installation administrator wrote them. An entry names its
+         *     own agency's calendars at a write (another agency's reads as unknown);
+         *     one that named another agency's before keeps the binding, live, and the
+         *     notice `calendar_other_agency` lists it. The name is unique across the
+         *     installation until names are per agency.
          */
         Calendar: {
             name?: string;
+            /** @description The agency id the calendar belongs to (v2.4.0). */
+            ownerAgency?: string;
             /** @description Always 'cronomicon' — calendars are operator-authored, never Git-authored. */
             source?: string;
             description?: string;
             /**
-             * @description Union this calendar's days into EVERY entry's skip set, whether or not
-             *     the entry names it — the change-freeze case, one flag instead of N
-             *     schedule edits. SKIP POLARITY ONLY: a global calendar may not be bound
+             * @description Union this calendar's days into the skip set of every entry of its
+             *     OWN agency, whether or not the entry names it — the change-freeze
+             *     case, one flag instead of N schedule edits (until v2.4.0 every
+             *     entry of every agency; a freeze of the whole installation is
+             *     /settings/freeze since). SKIP POLARITY ONLY: a global calendar may not be bound
              *     as a run-day (only) calendar, and a calendar already bound that way
              *     cannot be made global.
              */
@@ -6225,10 +6265,19 @@ export interface components {
             /** @enum {string} */
             polarity?: "skip" | "only";
         };
+        InstallationFreeze: {
+            on: boolean;
+            reason: string;
+            setBy?: string;
+            /** Format: date-time */
+            setAt?: string;
+        };
         /** @description Request body for creating or updating a calendar. */
         CalendarInput: {
             /** @description Calendar name (slug). Required on create; immutable on edit. */
             name?: string;
+            /** @description The agency id a new calendar belongs to (create only; Global when absent). An unknown id is 422 unknown_agency. */
+            ownerAgency?: string;
             description?: string;
             global?: boolean;
             recordSuppressed?: boolean;
@@ -7174,6 +7223,18 @@ export interface components {
              *       `<job uid>:<secret|var|key>:<name>`. Filed under the job's agency.
              *       It clears when the agency has a row of the name, or the binding
              *       goes.
+             *     - `calendar_other_agency` — a schedule entry, or a schedule, of an
+             *       agency names a calendar of another agency (allowed before v2.4.0).
+             *       It still applies, and follows that calendar's edits, but cannot be
+             *       saved again as it is. Subject:
+             *       `<definition uid or schedule:uid>:<entry>:<calendar>`. Filed under
+             *       the binding's agency. It clears when the binding names its own
+             *       agency's calendar.
+             *     - `global_calendar_scope` — a calendar of Global's is global. Until
+             *       v2.4.0 it froze every agency's fires; now it freezes Global's only
+             *       (the whole installation is /settings/freeze). Raised while there
+             *       is an agency besides Global. Subject: the calendar's name. Filed
+             *       under Global. It clears when the calendar is not global.
              *     - `global_schedule_bound` — a job or workflow of an agency is bound
              *       to a schedule of Global's (allowed before v2.4.0). A schedule's
              *       edits reach its own agency's definitions only: this one keeps the
@@ -15614,6 +15675,60 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    getInstallationFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The freeze. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationFreeze"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    setInstallationFreeze: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    on: boolean;
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The freeze as written. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationFreeze"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["Validation"];
         };
     };
     getGeneralSettings: {
