@@ -692,7 +692,7 @@ export function ScopesTab({
                         {canEdit && s.id != null && (
                           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
                             {/* 2.4.0 (R8) — another agency gets a scope by a clone; the scope stays. */}
-                            <Btn onClick={() => setCloning(s)}>Clone to an agency…</Btn>
+                            {s.canEdit !== false && <Btn onClick={() => setCloning(s)}>Clone to an agency…</Btn>}
                             {isLocal && s.canDelete !== false && (
                               <Btn dangerQuiet onClick={() => setDeleting(s)}>
                                 Delete Scope

@@ -51,7 +51,9 @@ export function RepositoriesSection({ isGlobal }: { isGlobal: boolean }) {
   // before 2.4.0 (agency_no_repository says which). A global administrator,
   // every agency; anyone else, those they administer.
   const mine = isGlobal ? agencies : agenciesFor(access ?? null, "configureApp");
-  const connected = new Set((repos ?? []).filter((r) => (r.repoUrl ?? "") !== "").map((r) => r.agencyId));
+  // An agency with a row (Global's has one even unconfigured) is edited on
+  // that row's card; only one with none gets a Connect card (from R8's review).
+  const connected = new Set((repos ?? []).map((r) => r.agencyId));
   const unconnected = mine.filter((a) => !connected.has(a.id));
 
   return (
@@ -76,6 +78,8 @@ function RepoCard({ repo, onSaved, unconnected }: { repo: GitRepo; onSaved: () =
     botEmail: repo.botEmail ?? "",
     webhookEnabled: repo.webhookEnabled ?? true,
     webhookEvents: repo.webhookEvents ?? { push: true, mr: true, tag: true },
+    // A write replaces every field: one left out would be reset (from R8's review).
+    ...(repo.tokenExpiryNotifyDays != null ? { tokenExpiryNotifyDays: repo.tokenExpiryNotifyDays } : {}),
   }));
   const [newPat, setNewPat] = useState("");
   const [saving, setSaving] = useState(false);

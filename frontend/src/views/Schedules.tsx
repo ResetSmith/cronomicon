@@ -183,11 +183,11 @@ function CatalogTab() {
   // the git and cronomicon sources). Reset on refresh — the refetch is authoritative.
   const inlineTags = useInlineTags<Schedule>(
     refresh,
-    (s) => `${s.source}:${s.name ?? ""}`,
+    (s) => `${s.source}:${s.ownerAgency ?? ""}:${s.name ?? ""}`,
     (s) => s.tags,
     (s, next) =>
       api.PUT("/schedule-tags/{name}", {
-        params: { path: { name: s.name ?? "" }, query: { source: s.source }, header: csrfHeader },
+        params: { path: { name: s.name ?? "" }, query: { source: s.source, ...(s.ownerAgency ? { agencyId: s.ownerAgency } : {}) }, header: csrfHeader },
         body: { tags: next },
       }),
   );
@@ -333,7 +333,8 @@ function CatalogTab() {
   // same-named schedules expand together.
   const renderScheduleRow = (s: Schedule, displayName: string) => {
     const name = s.name ?? "";
-    const key = `${s.source}:${name}`;
+    // 2.4.0 — two agencies may each have a schedule of the name.
+    const key = `${s.source}:${s.ownerAgency ?? ""}:${name}`;
     const isExp = expanded === key;
     // Override-aware tag set (keyed source:name) so an optimistic edit shows at once.
     const tags = inlineTags.tagsFor(s);

@@ -20,7 +20,7 @@ const REPOS = [
 ];
 const { GET, POST } = vi.hoisted(() => ({
   GET: vi.fn(async (path: string) =>
-    path === "/git-repos"
+    path === "/git-repo-names"
       ? { data: { items: REPOS } }
       : // The empty envelope carries `items: []` alongside `totalItems: 0`.
         { data: { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 25 } },

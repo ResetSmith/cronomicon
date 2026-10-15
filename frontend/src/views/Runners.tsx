@@ -5,7 +5,7 @@ import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../api/
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../components/table";
 import { RefreshScope } from "../components/RefreshScope";
-import { repoLabel, useRepos } from "../components/RepoPicker";
+import { repoLabel, useRepoConnections } from "../components/RepoPicker";
 import { REPAIR_HINT, RepairDialog, useRepairAllowed, type RepairBody } from "../components/RepairDialog";
 import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
@@ -2704,7 +2704,7 @@ function RunnerSettingsDrawer({
   // connection has it. A URL already listed that is no connected repository's
   // stays shown and removable.
   const [repos, setRepos] = useState<string[]>(ms.checkoutRepos ?? []);
-  const { repos: connected } = useRepos();
+  const { repos: connected } = useRepoConnections();
   const ownerId = runner.ownerAgency?.id ?? GLOBAL_AGENCY;
   const offered = connected.filter((r) => r.agencyId === ownerId && r.repoUrl);
   const toggleRepo = (url: string) => setRepos((cur) => (cur.includes(url) ? cur.filter((u) => u !== url) : [...cur, url]));

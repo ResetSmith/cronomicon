@@ -58,6 +58,7 @@ afterEach(cleanup);
 const finRepo = {
   id: "repo-fin", agencyId: "ag-fin", agencyName: "Finance", repoUrl: "https://gitlab.example.org/fin/defs.git", writeBranch: "main",
   supplies: { jobs: 2, workflows: 1, scripts: 3, schedules: 0, scopes: 1 },
+  tokenExpiryNotifyDays: 30,
 };
 
 describe("Settings → Repositories", () => {
@@ -86,6 +87,8 @@ describe("Settings → Repositories", () => {
     // The webhook is sent: a write replaces every field, and one left out is off.
     expect(puts[0].path).toBe("/agencies/{agencyId}/git-repo");
     expect((puts[0].body as { webhookEnabled?: boolean }).webhookEnabled).toBe(true);
+    // And the token-expiry warning it has: left out, the server would reset it (R8 review).
+    expect((puts[0].body as { tokenExpiryNotifyDays?: number }).tokenExpiryNotifyDays).toBe(30);
   });
 
   it("offers an agency with no repository its Connect, and a global administrator the allowed hosts", async () => {

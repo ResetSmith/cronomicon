@@ -4189,6 +4189,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/git-repo-names": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The repositories whose history the caller may read (v2.4.0)
+         * @description Which repository and whose: no connection. The rule is the one `?repo=`
+         *     is read by on GET /git/history, GET /schedule-pushes and the script
+         *     reads (GR-26): Global's for every session; an agency's for its people,
+         *     whatever their role, and for those whose grant reaches every agency.
+         *     The screens that work on one repository at a time choose from it
+         *     (R8): GET /git-repos answers `configureApp` only.
+         */
+        get: operations["listGitRepoNames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agencies/{agencyId}/git-repo": {
         parameters: {
             query?: never;
@@ -17139,6 +17164,34 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listGitRepoNames: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The repositories. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** @description The repository's id; `global` for Global's. */
+                            id: string;
+                            agencyId: string;
+                            agencyName: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     getAgencyGitRepo: {

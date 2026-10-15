@@ -203,7 +203,7 @@ export function CalendarsTab() {
                 const expiry = calendarExpiry(cal, expiryWarningDays);
                 const usedBy = cal.usedBy ?? [];
                 return (
-                  <tr key={cal.name} style={{ borderBottom: `1px solid ${c.border}` }}>
+                  <tr key={`${cal.ownerAgency ?? ""}:${cal.name}`} style={{ borderBottom: `1px solid ${c.border}` }}>
                     <td style={td}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontFamily: c.mono, fontWeight: 600, color: c.text }}>{cal.name}</span>

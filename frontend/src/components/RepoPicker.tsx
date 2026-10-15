@@ -9,8 +9,10 @@ import { c } from "../theme";
  * included), for the screens that work on one at a time (R8): History → Git
  * sync, Schedule pushes, Scripts, Publish.
  *
- * GET /git-repos answers with the repositories the caller may read: a global
- * administrator every one, anyone else their agencies' and Global's.
+ * useRepos reads GET /git-repo-names: the repositories whose history the
+ * caller may read (Global's for everyone, an agency's for its people), ids and
+ * names only. useRepoConnections reads GET /git-repos, the connections the
+ * caller may configure (configureApp), with their URLs.
  */
 export interface RepoRow {
   id: string;
@@ -23,12 +25,17 @@ export interface RepoRow {
 /** The label a repository goes by on the screens: its agency's name. */
 export const repoLabel = (r: RepoRow) => (r.agencyName || r.agencyId) + (r.agencyId === "global" ? "" : "'s");
 
+const byGlobalThenName = (a: RepoRow, b: RepoRow) =>
+  a.agencyId === "global" ? -1 : b.agencyId === "global" ? 1 : (a.agencyName ?? "").localeCompare(b.agencyName ?? "");
+
 export function useRepos(): { repos: RepoRow[]; loading: boolean } {
+  const q = useGet<{ items?: RepoRow[] }>(() => api.GET("/git-repo-names") as never, []);
+  return { repos: [...(q.data?.items ?? [])].sort(byGlobalThenName), loading: q.loading };
+}
+
+export function useRepoConnections(): { repos: RepoRow[]; loading: boolean } {
   const q = useGet<{ items?: RepoRow[] }>(() => api.GET("/git-repos") as never, []);
-  const repos = [...(q.data?.items ?? [])].sort((a, b) =>
-    a.agencyId === "global" ? -1 : b.agencyId === "global" ? 1 : (a.agencyName ?? "").localeCompare(b.agencyName ?? ""),
-  );
-  return { repos, loading: q.loading };
+  return { repos: [...(q.data?.items ?? [])].sort(byGlobalThenName), loading: q.loading };
 }
 
 /**

@@ -22,7 +22,7 @@ vi.mock("../../api/client", async (importOriginal) => {
     api: {
       GET: vi.fn(async (path: string, init?: { params?: { query?: { repo?: string } } }) => {
         if (path === "/jobs") return { data: [] };
-        if (path === "/git-repos")
+        if (path === "/git-repo-names")
           return {
             data: {
               items: [

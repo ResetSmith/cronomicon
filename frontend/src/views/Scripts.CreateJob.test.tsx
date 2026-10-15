@@ -43,7 +43,7 @@ vi.mock("../api/client", async (importOriginal) => {
           return { data: scripts ?? SCRIPTS };
         }
         if (path === "/scripts/{name}") return { data: SCRIPTS.items[0] };
-        if (path === "/git-repos") return { data: { items: [{ id: "global", agencyId: "global", agencyName: "Global" }] } };
+        if (path === "/git-repo-names") return { data: { items: [{ id: "global", agencyId: "global", agencyName: "Global" }] } };
         if (path === "/script-content/{name}") return { data: { content: "echo hi", encoding: "utf-8" } };
         if (path === "/job-reference-bindings/{jobId}" || path === "/script-reference-bindings/{name}") {
           return { data: { bindings: [] } };
