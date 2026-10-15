@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { api, fetchCapabilities } from "../../api/client";
+import { agenciesFor, useMyAccess } from "../../api/access";
+import { repoLabel, useRepos } from "../../components/RepoPicker";
 import { useGet, rows } from "../../hooks";
 import { c } from "../../theme";
 import { Link } from "react-router-dom";
@@ -149,8 +151,27 @@ export function PublishBuilder() {
   const [phase, setPhase] = useState<"idle" | "confirm" | "publishing">("idle");
   const [result, setResult] = useState<PublishResult | null>(null);
 
+  // ── which repository (2.4.0, GR-24; R8) ──
+  // A publish names its repository (`repoId`): Global's takes a global
+  // publisher's only, an agency's its own publishers'. The picker offers what
+  // the caller may publish to; the base commit is that repository's.
+  const { repos } = useRepos();
+  const access = useMyAccess();
+  const [globalPublisher, setGlobalPublisher] = useState(false);
+  useEffect(() => {
+    void fetchCapabilities().then((caps) => setGlobalPublisher(!!caps.publishScheduleGlobal));
+  }, []);
+  const mine = new Set(agenciesFor(access ?? null, "publishSchedule").map((a) => a.id));
+  const publishable = repos.filter((r) => globalPublisher || (r.agencyId !== "global" && mine.has(r.agencyId)));
+  const [repoRaw, setRepoRaw] = useState("");
+  const repo = publishable.find((r) => r.id === repoRaw) ?? publishable[0];
+  const repoId = repo?.id;
+
   const [syncDep, setSyncDep] = useState(0);
-  const syncQ = useGet<unknown>(() => api.GET("/git/history"), [syncDep]);
+  const syncQ = useGet<unknown>(
+    () => (repoId ? api.GET("/git/history", { params: { query: { repo: repoId } } }) : Promise.resolve({ data: [] } as never)),
+    [syncDep, repoId],
+  );
   const latestSync = rows<SyncEvent>(syncQ.data).find((e) => e.commit);
   const [shaOverride, setShaOverride] = useState<{ sha: string; source: string } | null>(null);
   const baseSha = shaOverride?.sha ?? latestSync?.commit ?? null;
@@ -216,7 +237,7 @@ export function PublishBuilder() {
   const entriesValid = manual || (cleanEntries.length > 0 && entryErrors.every((e) => e === null));
   const hasEnv = cleanEntries.some((e) => e.env.length > 0);
   const sourceOK = isNew ? command.trim() !== "" : jobSource(detail ?? {}) !== null;
-  const canPublish = phase !== "publishing" && !!baseSha && !!jobName && entriesValid && sourceOK;
+  const canPublish = phase !== "publishing" && !!repoId && !!baseSha && !!jobName && entriesValid && sourceOK;
 
   // ── canonical YAML (apiVersion/kind/metadata/spec) with the full Gap B set ──
   const buildYaml = (): string => {
@@ -299,6 +320,7 @@ export function PublishBuilder() {
         content: yaml,
         ...(commitMessage.trim() ? { commitMessage: commitMessage.trim() } : {}),
         new: isNew,
+        repoId,
       },
     });
     setPhase("idle");
@@ -320,7 +342,10 @@ export function PublishBuilder() {
       setResult({ kind: "validation", message: e.message ?? "YAML schema validation failed", errors: e.errors ?? [] });
     } else {
       const e = (error ?? {}) as { message?: string; code?: string };
-      setResult({ kind: "error", status: response.status, message: e.message ?? e.code ?? `Request failed (${response.status})` });
+      // 409 branch_protected (2.4.0): nothing was published, and a retry will
+      // not help until the repository's connection changes.
+      const lead = e.code === "branch_protected" ? "The repository refused the push: its branch is protected. " : "";
+      setResult({ kind: "error", status: response.status, message: lead + (e.message ?? e.code ?? `Request failed (${response.status})`) });
     }
   };
   const reloadBaseSha = (currentSha: string) => {
@@ -342,6 +367,31 @@ export function PublishBuilder() {
           {/* ── Editor ── */}
           <div style={{ ...panel(), flex: "0 1 420px", minWidth: 320 }}>
             <h2 style={h2()}>Schedule Builder</h2>
+
+            <label style={label()}>Repository</label>
+            {publishable.length === 0 ? (
+              <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+                You may publish to no repository: an agency's repository takes publishes from its publishers, Global's from a global publisher.
+              </div>
+            ) : (
+              <select
+                aria-label="Repository"
+                value={repoId}
+                onChange={(e) => {
+                  setRepoRaw(e.target.value);
+                  setShaOverride(null);
+                  setResult(null);
+                }}
+                style={{ ...input() }}
+                disabled={publishable.length === 1}
+              >
+                {publishable.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {repoLabel(r)} repository
+                  </option>
+                ))}
+              </select>
+            )}
 
             <label style={label()}>Job</label>
             <select value={selected} onChange={(e) => setSelected(e.target.value)} style={{ ...input() }}>

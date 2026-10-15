@@ -694,7 +694,9 @@ export function EmptyCell() {
 // cronomicon keeps the tinted chip. The interesting value is the minority one,
 // and the ink is now spent on it. Where source is a constant (Scripts is
 // all-git) the column correctly degrades to plain muted text.
-export function SourceBadge({ source }: { source?: string }) {
+// `owner` (2.4.0, R8): the owning agency's name, shown on a Git row
+// ("git · Finance") — every agency has a repository, and the row's is its owner's.
+export function SourceBadge({ source, owner }: { source?: string; owner?: string }) {
   const isGit = source !== "cronomicon";
   return (
     <span
@@ -711,6 +713,7 @@ export function SourceBadge({ source }: { source?: string }) {
       }}
     >
       {source ?? "git"}
+      {isGit && owner ? ` · ${owner}` : ""}
     </span>
   );
 }
