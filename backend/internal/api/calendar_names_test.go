@@ -52,10 +52,18 @@ func TestI2_TwoAgenciesEachHaveTheirOwnCalendarOfOneName(t *testing.T) {
 		t.Errorf("FIN's holidays after TAX's edit = %d %s, want its own day kept", c, b)
 	}
 
-	// A job names its own agency's calendar of the name.
+	// A job names its own agency's calendar of the name, and not a calendar
+	// only another agency has.
 	body := `{"name":"fin-cal-job","scope":"fin-hosts","scriptRef":"backup-db","schedules":[{"name":"nightly","cron":"0 2 * * *","skipCalendars":["holidays"]}]}`
 	if c, b := code(gFinAdmin, http.MethodPost, "/api/v1/jobs", body); c/100 != 2 {
 		t.Errorf("FIN's job naming holidays = %d %s, want 2xx", c, b)
+	}
+	if c, b := code(gTaxAdmin, http.MethodPost, "/api/v1/calendars", `{"name":"tax-only","ownerAgency":"ag:TAX","days":[{"day":"2026-08-01"}]}`); c != http.StatusCreated {
+		t.Fatalf("TAX creating tax-only = %d %s", c, b)
+	}
+	body = `{"name":"fin-cal-job-2","scope":"fin-hosts","scriptRef":"backup-db","schedules":[{"name":"nightly","cron":"0 2 * * *","skipCalendars":["tax-only"]}]}`
+	if c, b := code(gFinAdmin, http.MethodPost, "/api/v1/jobs", body); c != http.StatusUnprocessableEntity {
+		t.Errorf("FIN's job naming a calendar only TAX has = %d %s, want 422", c, b)
 	}
 
 	// Deleting TAX's leaves FIN's, and the name is unambiguous again.

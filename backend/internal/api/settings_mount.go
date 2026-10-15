@@ -716,7 +716,11 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 	if sc != nil && sc.Scope != nil {
 		scopeStr = *sc.Scope
 	}
-	owner, _ := s.rowOwnerAgency(r.Context(), "secrets", sid) // whose scope it is (I2)
+	owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid) // whose scope it is (I2)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return nil, false
+	}
 	if sc == nil || !auth.ScopeReadableIn(actor, owner, scopeStr) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 		return nil, false
@@ -838,7 +842,11 @@ func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec 
 	if !ok {
 		return nil, false
 	}
-	owner, _ := s.rowOwnerAgency(r.Context(), "secrets", sid)
+	owner, oerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return nil, false
+	}
 	if !auth.ScopeWritableIn(actor, owner, scopeStrOf(sc.Scope)) {
 		s.denyScope(w, r, scopeStrOf(sc.Scope), "cannot modify a secret in a scope outside your access")
 		return nil, false
@@ -863,7 +871,11 @@ func (s *Server) loadEnvVarWritable(w http.ResponseWriter, r *http.Request, evID
 	if ev != nil && ev.Scope != nil {
 		scopeStr = *ev.Scope
 	}
-	owner, _ := s.rowOwnerAgency(r.Context(), "env_vars", evID) // whose scope it is (I2)
+	owner, oerr := s.rowOwnerAgency(r.Context(), "env_vars", evID) // whose scope it is (I2)
+	if oerr != nil {
+		httpx.Fail500(w, s.log, "db_error", oerr)
+		return nil, false
+	}
 	if ev == nil || !auth.ScopeReadableIn(actor, owner, scopeStr) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "env var not found")
 		return nil, false
@@ -1159,6 +1171,10 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 			// An unplaced scope is exactly the row this gate exists to prevent, so
 			// take it back rather than leave it for a global administrator to find.
 			_, _ = settings.DeleteScope(r.Context(), s.db, sc.ID, id.Email)
+			if errors.Is(err, settings.ErrScopeNameTaken) {
+				httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists")
+				return
+			}
 			httpx.Fail500(w, s.log, "create_failed", err)
 			return
 		}

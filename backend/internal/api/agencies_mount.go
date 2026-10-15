@@ -339,6 +339,8 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "a referenced agency does not exist")
 		case errors.Is(err, settings.ErrUnknownMember):
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_member", "a referenced "+string(kind)+" does not exist")
+		case errors.Is(err, settings.ErrScopeNameTaken):
+			httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists in that agency")
 		case errors.Is(err, settings.ErrOwnerRemoval):
 			// RA-15 — the message carries the entity id from the error because the
 			// matrix posts many rows at once and "one of these is owned" is not enough
@@ -675,6 +677,10 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, settings.ErrUnknownAgency) {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the referenced agency does not exist")
+			return
+		}
+		if errors.Is(err, settings.ErrScopeNameTaken) {
+			httpx.Fail(w, http.StatusConflict, "conflict", "scope name already exists in that agency")
 			return
 		}
 		if failAgencyRule(w, err) {

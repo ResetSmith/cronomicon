@@ -260,7 +260,10 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 		if !found {
 			continue // unknown job: the existence validator already reported it
 		}
-		stepAgency, _ := s.stepJobAgency(r, ref) // whose scope it is (I2)
+		// Whose scope it is (I2). Not known (the job went between the two
+		// reads, or the read failed) is not authored: an empty agency would
+		// be judged by the name alone.
+		stepAgency, known := s.stepJobAgency(r, ref)
 		// AllScopes for the All pool, mirroring requireComposeScope — Can(perm, "")
 		// is the permissive Q-F7 reading and would report every departmental
 		// composer as authorized for an unscoped job.
@@ -268,7 +271,7 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 		if strings.TrimSpace(scope.String) == "" {
 			ok = id.Can(auth.PermCompose, auth.AllScopes)
 		} else {
-			ok = id.CanIn(auth.PermCompose, stepAgency, scope.String)
+			ok = known && id.CanIn(auth.PermCompose, stepAgency, scope.String)
 		}
 		if !ok {
 			out = append(out, ref.Name)
@@ -299,7 +302,13 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 		}
 		// One check per distinct scope, not per job: a ten-step graph in one scope
 		// should not write ten identical denial audit rows.
-		stepAgency, _ := s.stepJobAgency(r, ref)
+		stepAgency, known := s.stepJobAgency(r, ref)
+		if !known {
+			// The job went between the two reads, or the read failed: not an
+			// empty agency, which the grant check would judge by the name alone.
+			httpx.Fail500(w, s.log, "db_error", fmt.Errorf("the agency of the job %s could not be read", ref.Name))
+			return false
+		}
 		if seenScope[stepAgency+"\x00"+scope.String] {
 			continue
 		}

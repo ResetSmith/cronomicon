@@ -72,6 +72,34 @@ func grantCoversIn(id Identity, agency, scope string) bool {
 	return len(grants) == 0 && slices.Contains(id.AllowedScopes, scope)
 }
 
+// ReadableScopes is what a list filters rows by, as grantCoversIn would judge
+// each row: the (agency, scope) pairs the identity's grants of an agency cover,
+// and the scope names it reads in any agency (a grant that names no agency; an
+// identity that carries scopes and no grants). unrestricted says it reads every
+// row. A row with no scope is Global's and readable by anyone, as before.
+func ReadableScopes(id Identity) (pairs [][2]string, byName []string, unrestricted bool) {
+	if id.Unrestricted() {
+		return nil, nil, true
+	}
+	grants := id.RoleGrants()
+	for _, g := range grants {
+		switch {
+		case g.Unrestricted():
+			return nil, nil, true
+		case g.Agency == "":
+			byName = append(byName, g.Scopes...)
+		default:
+			for _, sc := range g.Scopes {
+				pairs = append(pairs, [2]string{g.Agency, sc})
+			}
+		}
+	}
+	if len(grants) == 0 {
+		byName = append(byName, id.AllowedScopes...)
+	}
+	return pairs, byName, false
+}
+
 // ReaderIn is ScopeReadableIn as a CanRead callback for one agency, for the
 // packages that take a scope-name predicate (secrets, runref) and ask it of
 // rows that are all that agency's.

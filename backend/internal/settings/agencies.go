@@ -634,6 +634,9 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 		return nil, fmt.Errorf("set scope agency: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := presetScopeOwner(ctx, tx, scopeID, fmt.Sprint(val)); err != nil {
+		return nil, err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM scope_agencies WHERE scope_id=?`, scopeID); err != nil {
 		return nil, fmt.Errorf("set scope agency: %w", err)
 	}

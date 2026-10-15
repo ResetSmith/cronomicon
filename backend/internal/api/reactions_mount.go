@@ -83,6 +83,7 @@ type reactionOut struct {
 	// OwnerUID says which definition of the name the row is, for the agency
 	// the upstream is looked for in (I2); not shown.
 	OwnerUID                string `json:"-"`
+	OnUID                   string `json:"-"`
 	Name                    string `json:"name"`
 	OnKind                  string `json:"onKind"`
 	OnName                  string `json:"onName"`
@@ -817,10 +818,16 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 		// of the run), so there is nothing narrower than session access to check.
 		return true, nil
 	}
+	// The definition the ref names, by its uid when the ref carries one (I2: a
+	// name may be held in each agency); by the name for a row that records none.
 	var scope sql.NullString
 	var owner string
-	err := s.db.QueryRowContext(r.Context(),
-		`SELECT scope, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`') FROM jobs WHERE source = ? AND name = ?`, ref.Source, ref.Name).Scan(&scope, &owner)
+	q := `SELECT scope, COALESCE(` + agencyid.JobSQL("jobs") + `, '` + agencyid.Global + `') FROM jobs WHERE source = ? AND name = ?`
+	args := []any{ref.Source, ref.Name}
+	if ref.UID != "" {
+		q, args = `SELECT scope, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`') FROM jobs WHERE uid = ?`, []any{ref.UID}
+	}
+	err := s.db.QueryRowContext(r.Context(), q, args...).Scan(&scope, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -860,7 +867,7 @@ func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]re
 // loadReactionsWhere is loadReactions over the rows a condition picks (none:
 // every row), with the same filter on what the caller may read.
 func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([]reactionOut, error) {
-	q := `SELECT owner_source, owner_kind, owner_name, COALESCE(owner_uid, ''), name, on_source, on_kind, on_name,
+	q := `SELECT owner_source, owner_kind, owner_name, COALESCE(owner_uid, ''), COALESCE(on_uid, ''), name, on_source, on_kind, on_name,
 	             on_outcome, delay_seconds, min_interval_seconds,
 	             include_workflow_children, enabled, position
 	        FROM reactions`
@@ -875,7 +882,7 @@ func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([
 	for rows.Next() {
 		var x reactionOut
 		var includeChildren, enabled int
-		if err := rows.Scan(&x.OwnerSource, &x.OwnerKind, &x.OwnerName, &x.OwnerUID, &x.Name,
+		if err := rows.Scan(&x.OwnerSource, &x.OwnerKind, &x.OwnerName, &x.OwnerUID, &x.OnUID, &x.Name,
 			&x.OnSource, &x.OnKind, &x.OnName, &x.OnOutcome,
 			&x.DelaySeconds, &x.MinIntervalSeconds, &includeChildren, &enabled, &x.Position); err != nil {
 			continue
@@ -899,7 +906,7 @@ func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([
 	readable := out[:0]
 	for _, x := range out {
 		ownerOK, err := s.definitionReadableByScope(r, id, hasID, reactionRef{
-			Source: x.OwnerSource, Kind: x.OwnerKind, Name: x.OwnerName})
+			Source: x.OwnerSource, Kind: x.OwnerKind, Name: x.OwnerName, UID: x.OwnerUID})
 		if err != nil {
 			return nil, err
 		}
@@ -907,7 +914,7 @@ func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([
 			continue
 		}
 		upstreamOK, err := s.definitionReadableByScope(r, id, hasID, reactionRef{
-			Source: x.OnSource, Kind: x.OnKind, Name: x.OnName})
+			Source: x.OnSource, Kind: x.OnKind, Name: x.OnName, UID: x.OnUID})
 		if err != nil {
 			return nil, err
 		}

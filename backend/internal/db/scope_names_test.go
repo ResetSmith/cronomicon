@@ -72,11 +72,21 @@ func TestScopeNamesArePerAgencyAndTheRebuildKeepsEverything(t *testing.T) {
 	if err := exec(`INSERT INTO scopes (id, name, source, created_at, owner_agency) VALUES ('s-web-2', 'web', 'cronomicon', 't', 'ag-fin')`); err == nil {
 		t.Error("a second `web` in Finance was accepted")
 	}
-	// A move into an agency that has the name is refused too, by the key.
+	// A move into an agency that has the name: the owner triggers tolerate a
+	// membership rewrite (1440: a step that would collide is ignored, and
+	// the writers set the owner first, where the collision is refused), so a
+	// raw rewrite onto Finance leaves the owner as it was, never Finance's.
 	if err := exec(`DELETE FROM scope_agencies WHERE scope_id = 's-web-tax'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-web-tax', 'ag-fin')`); err == nil {
-		t.Error("moving Tax's `web` into Finance, which has one, was accepted")
+	if err := exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-web-tax', 'ag-fin')`); err != nil {
+		t.Fatalf("the membership rewrite itself: %v", err)
+	}
+	var owner string
+	if err := pool.QueryRow(`SELECT owner_agency FROM scopes WHERE id = 's-web-tax'`).Scan(&owner); err != nil || owner == "ag-fin" {
+		t.Errorf("Tax's `web` moved onto Finance, which has one, became %q (%v); want not Finance's", owner, err)
+	}
+	if err := exec(`UPDATE scopes SET owner_agency = 'ag-fin' WHERE id = 's-web-tax'`); err == nil {
+		t.Error("setting the owner onto Finance, which has one, was accepted")
 	}
 }

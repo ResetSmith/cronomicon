@@ -650,8 +650,12 @@ func DeleteScope(ctx context.Context, database *sql.DB, id, actor string) (bool,
 	// Check job references (jobs table owned by B3/B5). FX-A4: a binned job is not
 	// a live reference — it cannot run, and blocking the scope delete on one made
 	// the operator empty the recycle bin to proceed.
+	// The scope's own agency's jobs (I2): another agency's jobs on its scope of
+	// the name are nothing to this one.
 	var refCount int
-	_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE scope=? AND deleted_at IS NULL`, existing.Scope).Scan(&refCount)
+	_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE scope=? AND deleted_at IS NULL
+	      AND COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`') = (SELECT owner_agency FROM scopes WHERE id = ?)`,
+		existing.Scope, id).Scan(&refCount)
 	if refCount > 0 {
 		return false, fmt.Errorf("scope is still referenced by %d job(s)", refCount)
 	}

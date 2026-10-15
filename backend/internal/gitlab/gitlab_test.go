@@ -324,14 +324,14 @@ CREATE TABLE IF NOT EXISTS scope_agencies (
 -- Mirrors 1410's triggers: a scope's owner is its one agency, Global's for several.
 CREATE TRIGGER IF NOT EXISTS scope_owner_on_join AFTER INSERT ON scope_agencies
 BEGIN
-    UPDATE scopes SET owner_agency = COALESCE(
+    UPDATE OR IGNORE scopes SET owner_agency = COALESCE(
         (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END FROM scope_agencies sa WHERE sa.scope_id = NEW.scope_id),
         'global')
      WHERE id = NEW.scope_id;
 END;
 CREATE TRIGGER IF NOT EXISTS scope_owner_on_leave AFTER DELETE ON scope_agencies
 BEGIN
-    UPDATE scopes SET owner_agency = COALESCE(
+    UPDATE OR IGNORE scopes SET owner_agency = COALESCE(
         (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END FROM scope_agencies sa WHERE sa.scope_id = OLD.scope_id),
         'global')
      WHERE id = OLD.scope_id;

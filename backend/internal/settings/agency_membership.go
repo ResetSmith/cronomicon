@@ -191,6 +191,11 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 		if err := moveOwner(ctx, tx, t, a.ID, targets[i]); err != nil {
 			return err
 		}
+		if kind == MemberScope {
+			if err := presetScopeOwner(ctx, tx, a.ID, targets[i]); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t.join+` WHERE `+t.col+`=?`, a.ID); err != nil {
 			return err
 		}
@@ -207,6 +212,24 @@ func SetAgencyMembership(ctx context.Context, database *sql.DB, kind MemberKind,
 	// it sits beside. The detail names the entities touched, never a value.
 	audit(ctx, database, actor, "Agencies", "membership-updated",
 		t.label+" agencies", membershipAuditDetail(assignments))
+	return nil
+}
+
+// presetScopeOwner makes agencyID the owner of a scope whose membership is
+// about to be rewritten to that one agency (I2, migration 1440). The rewrite
+// deletes the membership and inserts the new row, and the owner triggers
+// follow each step with UPDATE OR IGNORE; the step between the two would make
+// the scope Global's, which a name Global holds refuses, and the ignored step
+// must never be the last. Setting the owner first makes the last step a
+// no-op, and a name the target agency already has is refused here, as
+// ErrScopeNameTaken, rather than as a constraint failure half-way through.
+func presetScopeOwner(ctx context.Context, tx *sql.Tx, scopeID, agencyID string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE scopes SET owner_agency = ? WHERE id = ?`, agencyID, scopeID); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return fmt.Errorf("%w in that agency", ErrScopeNameTaken)
+		}
+		return fmt.Errorf("set the scope's owner: %w", err)
+	}
 	return nil
 }
 

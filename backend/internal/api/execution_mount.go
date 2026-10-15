@@ -272,8 +272,11 @@ type jobRow struct {
 // identity) yields "" so the caller adds nothing. It mirrors the inline scope
 // filter in listRuns; the SU-2 read-path fix uses it to give listJobs and
 // listWorkflowRuns the same gating. `col` is a fixed identifier chosen by the
-// caller (never user input), so it is safe to interpolate.
-func (s *Server) scopeWhereFragment(r *http.Request, col string) (string, []any) {
+// caller (never user input), so it is safe to interpolate. `ownerExpr` is the
+// SQL for the row's agency (I2: a scope's name is unique within an agency
+// only, so a grant of Tax's `web` reads Tax's rows on `web` and not
+// Finance's): a job's owner, a run's scope owner from its snapshot.
+func (s *Server) scopeWhereFragment(r *http.Request, col, ownerExpr string) (string, []any) {
 	id, hasID := auth.IdentityFrom(r.Context())
 	if hasID && id.Unrestricted() {
 		return "", nil
@@ -281,18 +284,33 @@ func (s *Server) scopeWhereFragment(r *http.Request, col string) (string, []any)
 	// Fail closed like listRuns: an unrestricted actor short-circuits above; anyone
 	// else (restricted, or — unreachable behind RequireSession — no identity) is
 	// filtered, with an empty grant collapsing to GLOBAL-only.
-	allowed := id.AllowedScopes
-	if len(allowed) == 0 {
-		return " AND " + col + " IS NULL", nil
+	pairs, byName, _ := auth.ReadableScopes(id)
+	frag := " AND (" + col + " IS NULL"
+	var args []any
+	if len(byName) > 0 {
+		frag += " OR " + col + " IN (" + strings.TrimSuffix(strings.Repeat("?,", len(byName)), ",") + ")"
+		for _, sc := range byName {
+			args = append(args, sc)
+		}
 	}
-	placeholders := strings.Repeat("?,", len(allowed))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(allowed))
-	for i, sc := range allowed {
-		args[i] = sc
+	if len(pairs) > 0 {
+		frag += " OR (" + ownerExpr + ", " + col + ") IN (VALUES " + strings.TrimSuffix(strings.Repeat("(?,?),", len(pairs)), ",") + ")"
+		for _, p := range pairs {
+			args = append(args, p[0], p[1])
+		}
+		// A row whose agency cannot be told (the definition it records is
+		// gone: ownerExpr is NULL) is judged by the name, as every row was.
+		frag += " OR (" + ownerExpr + " IS NULL AND " + col + " IN (" + strings.TrimSuffix(strings.Repeat("?,", len(pairs)), ",") + "))"
+		for _, p := range pairs {
+			args = append(args, p[1])
+		}
 	}
-	return " AND (" + col + " IS NULL OR " + col + " IN (" + placeholders + "))", args
+	return frag + ")", args
 }
+
+// runScopeOwnerSQL is the agency a row of `runs` (or `workflow_runs`) ran
+// for, from its snapshot, for scopeWhereFragment.
+var runScopeOwnerSQL = agencyid.RunScopeOwnerSQL("agencies_json")
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -396,7 +414,7 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	// SU-2: restrict the listing to the actor's readable scopes. This INTERSECTS
 	// with any explicit ?scope= above (it does not replace it), so a restricted
 	// actor requesting an out-of-scope ?scope= simply gets no rows.
-	if frag, fargs := s.scopeWhereFragment(r, "j.scope"); frag != "" {
+	if frag, fargs := s.scopeWhereFragment(r, "j.scope", "COALESCE("+agencyid.JobSQL("j")+", '"+agencyid.Global+"')"); frag != "" {
 		inner += frag
 		args = append(args, fargs...)
 	}
@@ -3308,7 +3326,12 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	// already gates). workflow_runs.scope exists (migration 030) but current engine
 	// inserts leave it NULL, so today this only gates rows that DO carry a scope;
 	// NULL (global) rows stay visible to everyone.
-	if frag, fargs := s.scopeWhereFragment(r, "scope"); frag != "" {
+	// The run's workflow's agency: by the uid the run records, else by its
+	// source and name (a run from before 1010 records none); NULL, judged by
+	// the name, when the workflow is gone.
+	if frag, fargs := s.scopeWhereFragment(r, "scope",
+		"COALESCE((SELECT "+agencyid.WorkflowSQL+" FROM workflows w WHERE w.uid = workflow_runs.workflow_uid),"+
+			" (SELECT "+agencyid.WorkflowSQL+" FROM workflows w WHERE w.source = COALESCE(workflow_runs.workflow_source, 'git') AND w.name = workflow_runs.workflow_name ORDER BY w.rowid LIMIT 1))"); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}
@@ -4004,10 +4027,6 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	// the WHERE clause below.
 	id, hasID := auth.IdentityFrom(r.Context())
 	unrestricted := hasID && id.Unrestricted()
-	var allowedScopes []string
-	if hasID {
-		allowedScopes = id.AllowedScopes
-	}
 
 	base := `FROM runs WHERE 1=1`
 	var args []any
@@ -4102,17 +4121,11 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		args = append(args, to)
 	}
 	if !unrestricted {
-		if len(allowedScopes) > 0 {
-			placeholders := strings.Repeat("?,", len(allowedScopes))
-			placeholders = placeholders[:len(placeholders)-1]
-			base += " AND (scope IS NULL OR scope IN (" + placeholders + "))"
-			for _, sc := range allowedScopes {
-				args = append(args, sc)
-			}
-		} else {
-			// Empty grant ⇒ GLOBAL only (the A5 fix: empty no longer means "all").
-			base += " AND scope IS NULL"
-		}
+		// Empty grant ⇒ GLOBAL only (the A5 fix: empty no longer means "all"); a
+		// grant of an agency's scope reads that agency's runs on it (I2).
+		frag, fargs := s.scopeWhereFragment(r, "scope", runScopeOwnerSQL)
+		base += frag
+		args = append(args, fargs...)
 	}
 
 	// TS-20: ?sort=&order= against an allowlist (never interpolated). Status

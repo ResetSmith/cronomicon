@@ -416,10 +416,15 @@ func lookupScoped(ctx context.Context, database *sql.DB, table, key, runScope st
 		`SELECT t.id, COALESCE(t.scope,''), `+ownerNameSQL("t")+` FROM `+table+` t
 		 LEFT JOIN agencies ag ON ag.id = t.owner_agency
 		 WHERE t.key = ?
-		   AND (COALESCE(t.scope,'') = '' OR COALESCE(t.scope,'') = ?)
+		   -- a scoped row is its scope's (I2, a scope's name is unique within
+		   -- an agency only): owned by the run's scope owner, or by one of the
+		   -- run's agencies (a scope several share, from before 2.3, is
+		   -- Global's, and its rows are its members')
+		   AND (COALESCE(t.scope,'') = ''
+		        OR (COALESCE(t.scope,'') = ? AND (t.owner_agency = `+agencyid.RunScopeOwnerSQL("?")+` OR `+ownerInRunSQL("t")+`)))
 		   AND `+usableByRunSQL(memberTable, memberCol, "t.id")+`
 		 ORDER BY (COALESCE(t.scope,'') = ?) DESC, t.id`,
-		key, runScope, agencyJSON, runScope)
+		key, runScope, agencyJSON, agencyJSON, agencyJSON, agencyJSON, runScope)
 	if qerr != nil {
 		return "", "", false, fmt.Errorf("lookup %s %q: %w", table, key, qerr)
 	}
