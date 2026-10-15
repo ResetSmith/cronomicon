@@ -33,7 +33,17 @@ type ConnectionTest struct {
 	Error       string   `json:"error,omitempty"`
 	CanPush     bool     `json:"canPush"`
 	PushError   string   `json:"pushError,omitempty"`
+	// PushNote says what canPush does not: whether the token may push to the
+	// connection's BRANCH is known at the first publish. GitLab protects a
+	// project's default branch by default, and only Maintainers may push to
+	// it. Set whenever the push handshake was offered.
+	PushNote string `json:"pushNote,omitempty"`
 }
+
+// protectedBranchNote is ConnectionTest.PushNote.
+const protectedBranchNote = "The token may push to this repository. Whether it may push to the branch named here is known " +
+	"only at the first publish: on GitLab a project's default branch is protected and only Maintainers may push to it, " +
+	"so give the token Maintainer access, or allow Developers to push to this branch."
 
 // testConnectionBound is how long a test may take: it is a person waiting at a
 // form, not a transfer.
@@ -82,6 +92,7 @@ func TestConnection(ctx context.Context, cfg *config.Config, url, token, branch 
 		}
 	} else {
 		res.CanPush = true
+		res.PushNote = protectedBranchNote
 	}
 	return res
 }

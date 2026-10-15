@@ -12567,6 +12567,33 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             /**
+             * @description `branch_protected` (v2.4.0): the remote refused the push because the
+             *     branch the connection writes to is protected and its token may not
+             *     push to it. On GitLab a project's default branch is protected and
+             *     only Maintainers may push to it: give the token Maintainer access,
+             *     allow Developers to push to the branch, or point the connection's
+             *     write branch at one the token may push to. The connection test's
+             *     push check cannot see this (`pushNote` says so). Nothing was
+             *     published; retrying does not help until the connection changes.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        code: "branch_protected";
+                        /** @description What to change. */
+                        message: string;
+                        /** @description The branch the push was refused on. */
+                        branch: string;
+                        /** @description The remote's own words. */
+                        remote?: string;
+                    };
+                };
+            };
+            /**
              * @description base_sha mismatch — the edit is not based on the branch's head, or
              *     the branch has commits that have not been synced (a sync is then
              *     started; retry with `currentSha` once it has run).
@@ -12582,8 +12609,8 @@ export interface operations {
             422: components["responses"]["Validation"];
             /**
              * @description GitLab unreachable, or the fetch or the push failed or was refused
-             *     by the remote — retry later (§11.4 degradation matrix). Nothing of
-             *     the publish is left on the server.
+             *     by the remote for another reason — retry later (§11.4 degradation
+             *     matrix). Nothing of the publish is left on the server.
              */
             503: {
                 headers: {
@@ -17183,6 +17210,8 @@ export interface operations {
                         canPush: boolean;
                         /** @description The remote's words when it refused the push handshake. */
                         pushError?: string;
+                        /** @description With canPush: what it does not cover. Whether the token may push to the BRANCH named is known only at the first publish; on GitLab a project's default branch is protected and only Maintainers may push to it (v2.4.0). A publish refused for it answers 409 `branch_protected`. */
+                        pushNote?: string;
                     };
                 };
             };

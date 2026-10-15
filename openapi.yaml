@@ -2833,12 +2833,32 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PreconditionFailed' }
+        '409':
+          description: |
+            `branch_protected` (v2.4.0): the remote refused the push because the
+            branch the connection writes to is protected and its token may not
+            push to it. On GitLab a project's default branch is protected and
+            only Maintainers may push to it: give the token Maintainer access,
+            allow Developers to push to the branch, or point the connection's
+            write branch at one the token may push to. The connection test's
+            push check cannot see this (`pushNote` says so). Nothing was
+            published; retrying does not help until the connection changes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message, branch]
+                properties:
+                  code: { type: string, enum: [branch_protected] }
+                  message: { type: string, description: What to change. }
+                  branch: { type: string, description: The branch the push was refused on. }
+                  remote: { type: string, description: The remote's own words. }
         '422': { $ref: '#/components/responses/Validation' }
         '503':
           description: |
             GitLab unreachable, or the fetch or the push failed or was refused
-            by the remote — retry later (§11.4 degradation matrix). Nothing of
-            the publish is left on the server.
+            by the remote for another reason — retry later (§11.4 degradation
+            matrix). Nothing of the publish is left on the server.
           headers:
             Retry-After:
               schema: { type: integer }
@@ -6941,6 +6961,7 @@ paths:
                   error: { type: string, description: The remote's own words when it did not answer. }
                   canPush: { type: boolean, description: "The remote offered to receive a push with this token: the handshake `git push` makes before it sends anything; nothing is sent (v2.4.0, IN-2). A protected branch's rule is not part of it and shows at the first push." }
                   pushError: { type: string, description: The remote's words when it refused the push handshake. }
+                  pushNote: { type: string, description: "With canPush: what it does not cover. Whether the token may push to the BRANCH named is known only at the first publish; on GitLab a project's default branch is protected and only Maintainers may push to it (v2.4.0). A publish refused for it answers 409 `branch_protected`." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Validation' }

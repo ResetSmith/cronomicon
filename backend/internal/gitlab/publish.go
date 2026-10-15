@@ -289,7 +289,9 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 	if s.beforePush != nil {
 		s.beforePush()
 	}
-	perr := s.transfer(ctx, func(tctx context.Context) error { return repo.PushContext(tctx, pushOpts) })
+	var remoteSaid strings.Builder
+	perr := s.transfer(ctx, func(tctx context.Context) error { return pushHearingRemote(tctx, repo, pushOpts, &remoteSaid) })
+	perr = protectedBranchRefusal(perr, remoteSaid.String(), branch)
 	if errors.Is(perr, gogit.NoErrAlreadyUpToDate) {
 		// After a commit, this is not a success: the remote took nothing.
 		perr = errors.New("the remote had nothing to receive, so the commit was not delivered")
@@ -309,6 +311,55 @@ func (s *Service) Publish(ctx context.Context, req PublishRequest, baseSHA, acto
 		CommitSHA: commit.String(),
 		Branch:    branch,
 	}, nil
+}
+
+// ProtectedBranchError is a publish's push refused because the branch it
+// writes to is protected and the connection's token may not push to it
+// (2.4.0; the connection test's push handshake cannot see that: it shows at
+// the first push). GitLab protects a project's default branch by default, and
+// only Maintainers may push to it.
+type ProtectedBranchError struct {
+	Branch string
+	Remote string // the remote's own words
+}
+
+func (e *ProtectedBranchError) Error() string {
+	return "the repository refused the push to its branch " + e.Branch + ": the branch is protected, and the connection's token may not push to it" +
+		" (the remote said: " + e.Remote + ")"
+}
+
+// pushHearingRemote pushes, keeping what the remote says while it receives
+// (the "remote:" lines GitLab, GitHub and Gitea send) in said: the reason a
+// push is refused is there, and not in the error.
+func pushHearingRemote(ctx context.Context, repo *gogit.Repository, opts *gogit.PushOptions, said *strings.Builder) error {
+	o := *opts
+	o.Progress = said
+	return repo.PushContext(ctx, &o)
+}
+
+// protectedBranchRefusal is err as a *ProtectedBranchError when the remote's
+// words (or the error's) say the branch is protected; err otherwise.
+func protectedBranchRefusal(err error, remoteSaid, branch string) error {
+	if err == nil || errors.Is(err, gogit.NoErrAlreadyUpToDate) {
+		return err
+	}
+	for _, text := range []string{remoteSaid, err.Error()} {
+		if strings.Contains(strings.ToLower(text), "protected branch") {
+			return &ProtectedBranchError{Branch: branch, Remote: lastRemoteLine(text, "protected branch")}
+		}
+	}
+	return err
+}
+
+// lastRemoteLine is the line of text that says needle, trimmed.
+func lastRemoteLine(text, needle string) string {
+	lines := strings.FieldsFunc(text, func(r rune) bool { return r == '\n' || r == '\r' })
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(strings.ToLower(lines[i]), needle) {
+			return strings.TrimSpace(lines[i])
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 // The author of a publish commit when the repository's connection names none:

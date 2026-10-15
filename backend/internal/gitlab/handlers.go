@@ -3,6 +3,7 @@ package gitlab
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"os"
@@ -368,6 +369,22 @@ func (h *Handlers) PublishSchedule(actor string, authorize PublishAuthorizer, w 
 				"errors":  errs,
 			})
 			_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", ve.Message)
+			return
+		}
+		// The branch is protected and the token may not push to it (409): a
+		// connection to change, not a remote to wait for. Said with what to do.
+		var pb *ProtectedBranchError
+		if errors.As(err, &pb) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"code": "branch_protected",
+				"message": "The repository refused the push to its branch " + pb.Branch + ": the branch is protected, and the " +
+					"connection's token may not push to it. On GitLab a project's default branch is protected and only " +
+					"Maintainers may push to it: give the token Maintainer access, allow Developers to push to " + pb.Branch +
+					", or point the connection's write branch at a branch the token may push to. Nothing was published.",
+				"branch": pb.Branch,
+				"remote": pb.Remote,
+			})
+			_ = svc.RecordPush(r.Context(), actor, req.FilePath, baseSHA, "", "failed", pb.Error())
 			return
 		}
 		// GitLab unreachable or other push failure (503).
