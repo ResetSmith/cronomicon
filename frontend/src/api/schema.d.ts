@@ -7246,6 +7246,14 @@ export interface components {
              *       Subject: `<agency id>:<hostname>`. Filed under the agency. It
              *       clears when the agency has a record for the host, by hand or
              *       imported for the scope, or no scope of its lists the host.
+             *     - `agency_no_repository` — an agency has no repository connected
+             *       (v2.4.0). Every agency has one, Global included: an agency is
+             *       created with it and cannot disconnect it, so this is an agency
+             *       from before, or Global's repository with no URL in its
+             *       connection and none in CRONOMICON_GITLAB_BASE_URL. Nothing is
+             *       refused; the agency cannot receive an assignment. Subject: the
+             *       agency's id. Filed under the agency. It clears when the
+             *       repository is connected.
              *     - `global_calendar_scope` — a calendar of Global's is global. Until
              *       v2.4.0 it froze every agency's fires; now it freezes Global's only
              *       (the whole installation is /settings/freeze). Raised while there

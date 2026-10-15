@@ -138,6 +138,12 @@ func TestSeedPopulatesEveryView(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range open {
+		// Except that its agencies have no repository connected (2.4.0
+		// Phase I3): the demo has no Git server to connect, and the notice
+		// says so truly. Whether a demo should seed one is the owner's to say.
+		if n.Kind == notices.KindAgencyNoRepository {
+			continue
+		}
 		t.Errorf("the seed raises a %s notice: %s", n.Kind, n.Detail)
 	}
 

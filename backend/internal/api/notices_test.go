@@ -35,6 +35,11 @@ func listNotices(t *testing.T, h http.Handler, who string) map[string]noticeRow 
 	}
 	out := map[string]noticeRow{}
 	for _, r := range rows {
+		// Every agency of these fixtures has no repository connected (I3):
+		// that notice is the notices package's to test, not these.
+		if r.Kind == notices.KindAgencyNoRepository {
+			continue
+		}
 		out[r.Kind+"/"+r.Subject] = r
 	}
 	return out
