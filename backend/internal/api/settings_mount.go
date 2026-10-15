@@ -74,7 +74,7 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 			return
 		}
-		list, err := sec.List(r.Context(), id.Grant().CanRead)
+		list, err := sec.List(r.Context(), func(agency, scope string) bool { return auth.ScopeReadableIn(id, agency, scope) })
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -119,10 +119,6 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// D3: a scope-restricted manager may not create a secret outside their grants,
 		// NOR in the global scope (a global secret injects into every scope). 403 (not
 		// 404) — the actor supplied the scope, so there is no existence to leak.
-		if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
-			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create a secret in a scope outside your access")
-			return
-		}
 		// RF-Q2(a): a restricted creator names at least one held agency, so the new
 		// secret is born owned — an unmembered secret is RB-Q14 unrestricted-only,
 		// which would lock the creator out of the row they just made. RA-9: when they
@@ -130,6 +126,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// rather than refused, so the safe outcome is the default.
 		agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermManageEnvVars, inp.AgencyIDs, "secret")
 		if !ok {
+			return
+		}
+		// The scope is the new row's owner's scope of that name (I2), so the owner
+		// is settled first.
+		if !auth.ScopeWritableIn(id, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
+			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create a secret in a scope outside your access")
 			return
 		}
 		// LR-80: a Vault path is named inside the owner agency's prefixes (a
@@ -237,7 +239,12 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		// The target scope must be writable too (blocks moving it out of reach OR
 		// widening a scoped secret to global). A restricted PUT that omits scope would
 		// globalize the row — ScopeWritable("") rejects that for a restricted actor.
-		if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
+		rowOwner, rerr := s.rowOwnerAgency(r.Context(), "secrets", sid)
+		if rerr != nil {
+			httpx.Fail500(w, s.log, "db_error", rerr)
+			return
+		}
+		if !auth.ScopeWritableIn(id, rowOwner, scopeStrOf(inp.Scope)) {
 			s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot move a secret into a scope outside your access")
 			return
 		}
@@ -709,7 +716,8 @@ func (s *Server) loadSecretInScope(w http.ResponseWriter, r *http.Request, sec *
 	if sc != nil && sc.Scope != nil {
 		scopeStr = *sc.Scope
 	}
-	if sc == nil || !auth.ScopeReadable(actor, scopeStr) {
+	owner, _ := s.rowOwnerAgency(r.Context(), "secrets", sid) // whose scope it is (I2)
+	if sc == nil || !auth.ScopeReadableIn(actor, owner, scopeStr) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "secret not found")
 		return nil, false
 	}
@@ -830,7 +838,8 @@ func (s *Server) loadSecretWritable(w http.ResponseWriter, r *http.Request, sec 
 	if !ok {
 		return nil, false
 	}
-	if !auth.ScopeWritable(actor, scopeStrOf(sc.Scope)) {
+	owner, _ := s.rowOwnerAgency(r.Context(), "secrets", sid)
+	if !auth.ScopeWritableIn(actor, owner, scopeStrOf(sc.Scope)) {
 		s.denyScope(w, r, scopeStrOf(sc.Scope), "cannot modify a secret in a scope outside your access")
 		return nil, false
 	}
@@ -854,11 +863,12 @@ func (s *Server) loadEnvVarWritable(w http.ResponseWriter, r *http.Request, evID
 	if ev != nil && ev.Scope != nil {
 		scopeStr = *ev.Scope
 	}
-	if ev == nil || !auth.ScopeReadable(actor, scopeStr) {
+	owner, _ := s.rowOwnerAgency(r.Context(), "env_vars", evID) // whose scope it is (I2)
+	if ev == nil || !auth.ScopeReadableIn(actor, owner, scopeStr) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "env var not found")
 		return nil, false
 	}
-	if !auth.ScopeWritable(actor, scopeStr) {
+	if !auth.ScopeWritableIn(actor, owner, scopeStr) {
 		s.denyScope(w, r, scopeStr, "cannot modify an env var in a scope outside your access")
 		return nil, false
 	}
@@ -895,8 +905,9 @@ func (s *Server) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 	// ManageEnvVars; management-scope enforcement on variable writes is a follow-up.
 	tagFilter := tagutil.ParseQuery(r.URL.Query())
 	filtered := make([]settings.EnvVar, 0, len(list))
+	agencyIDs := s.agencyIDsByName(r.Context()) // a row names its owner (I2: whose scope it is)
 	for _, ev := range list {
-		if auth.ScopeReadable(id, scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) {
+		if auth.ScopeReadableIn(id, agencyIDs[ev.OwnerAgency], scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) {
 			filtered = append(filtered, ev)
 		}
 	}
@@ -927,15 +938,16 @@ func (s *Server) handleCreateEnvVar(w http.ResponseWriter, r *http.Request) {
 	// M4: a restricted manager may not create a variable outside their grants, NOR in
 	// the global scope (a global var injects into every scope — same rationale as
 	// secrets). 403 (not 404): the actor supplied the scope, so there is nothing to leak.
-	if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
-		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create an env var in a scope outside your access")
-		return
-	}
 	// RF-Q2(a): same creation rule as secrets — the new variable is born owned by
 	// at least one of the restricted creator's agencies (RB-Q14 otherwise makes it
 	// unrestricted-only the moment it exists), inherited per RA-9 when unambiguous.
 	agencyIDs, ok := s.requireCreationAgencies(w, r, id, auth.PermManageEnvVars, inp.AgencyIDs, "variable")
 	if !ok {
+		return
+	}
+	// The scope is the new row's owner's scope of that name (I2).
+	if !auth.ScopeWritableIn(id, ownerAgencyFor(agencyIDs), scopeStrOf(inp.Scope)) {
+		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot create an env var in a scope outside your access")
 		return
 	}
 	ev, err := settings.CreateEnvVar(r.Context(), s.db, settings.EnvVarInput{
@@ -1004,7 +1016,12 @@ func (s *Server) handleUpdateEnvVar(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEntityAgency(w, r, id, auth.PermManageEnvVars, "env_var_agencies", "env_var_id", evID, "variable") {
 		return
 	}
-	if !auth.ScopeWritable(id, scopeStrOf(inp.Scope)) {
+	rowOwner, rerr := s.rowOwnerAgency(r.Context(), "env_vars", evID)
+	if rerr != nil {
+		httpx.Fail500(w, s.log, "db_error", rerr)
+		return
+	}
+	if !auth.ScopeWritableIn(id, rowOwner, scopeStrOf(inp.Scope)) {
 		s.denyScope(w, r, scopeStrOf(inp.Scope), "cannot move an env var into a scope outside your access")
 		return
 	}

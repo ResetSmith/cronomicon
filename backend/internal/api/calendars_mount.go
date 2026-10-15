@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -586,12 +587,8 @@ func allCalendarBindings(ctx context.Context, database *sql.DB) (map[string][]ca
 		       -- R2F-3: the owner's identity + derived agencies, in the same
 		       -- select rather than a per-binding lookup.
 		       COALESCE(ds.owner_uid,''),
-		       (SELECT GROUP_CONCAT(a.name, '\x1f')
-		          FROM jobs j
-		          JOIN scopes sc         ON sc.name = j.scope
-		          JOIN scope_agencies sa ON sa.scope_id = sc.id
-		          JOIN agencies a        ON a.id = sa.agency_id
-		         WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name)
+		       -- the owner's agency (a job's since 1400; until I2 its scope's)
+		       (SELECT a.name FROM agencies a WHERE a.id = `+agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")+`)
 		  FROM definition_schedules ds
 		 WHERE (skip_calendars IS NOT NULL OR only_calendars IS NOT NULL)
 		 ORDER BY owner_source, owner_kind, owner_name, name`)

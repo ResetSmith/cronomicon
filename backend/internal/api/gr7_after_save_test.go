@@ -85,23 +85,25 @@ func TestASaveMayNotMakeAnotherWorkflowSpanAgencies(t *testing.T) {
 	// A save of the child that leaves the parent one agency's is theirs.
 	must("the child saved onto another of FIN's jobs", http.MethodPut, "/api/v1/workflows/"+id("workflows", "child"), both, `{"name":"child","steps":[`+stepB+`]}`)
 
-	// ── The job. `direct` runs fin-a and fin-b; fin-b going to TAX's scope
-	// makes it span (and the parent, through the child).
-	said = refused("an administrator of both agencies saving a job into TAX's scope", http.MethodPut, "/api/v1/jobs/"+id("jobs", "fin-b"), both, job("fin-b", "tax-hosts"))
-	if !strings.Contains(said, "direct") || !strings.Contains(said, "parent") {
-		t.Errorf("the refusal does not name the two workflows it would make span: %s", said)
+	// ── The job. `direct` runs fin-a and fin-b. Since I2 a job cannot be saved
+	// into another agency's scope at all: it is its owner's (1400), and finds
+	// its scope in its own agency, so TAX's scope is a name FIN has no scope
+	// of (422 scope_not_in_agency, for everyone, nothing written). Until I2 an
+	// administrator of both agencies could, and the span it made was what was
+	// refused here (409 crosses_agencies, naming the workflows).
+	notTheirs := func(what, who, jobName string) {
+		t.Helper()
+		before := state()
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/jobs/"+id("jobs", jobName), who, job(jobName, "tax-hosts"))
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"scope_not_in_agency"`) {
+			t.Errorf("%s = %d, want 422 scope_not_in_agency (%s)", what, rec.Code, rec.Body)
+		}
+		if after := state(); after != before {
+			t.Errorf("%s was refused and still wrote:\n before %s\n after  %s", what, before, after)
+		}
 	}
-	// A job that no workflow runs goes where its two administrators send it.
-	must("a job no workflow runs, saved into TAX's scope", http.MethodPut, "/api/v1/jobs/"+id("jobs", "fin-c"), both, job("fin-c", "tax-hosts"))
-
-	// ── The words name a workflow only to somebody who holds compose on the
-	// agency it belongs to. (Nobody else gets here; this makes it so by hand.)
-	exec(`UPDATE workflows SET owner_agency = 'global' WHERE name = 'direct'`)
-	said = refused("the same save, with one of the workflows not theirs to read", http.MethodPut, "/api/v1/jobs/"+id("jobs", "fin-b"), both, job("fin-b", "tax-hosts"))
-	if strings.Contains(said, "direct") || strings.Contains(said, "parent") || strings.Contains(said, "workflow") {
-		t.Errorf("the refusal says which workflow, or that there is one, to somebody who may not read every one of them: %s", said)
-	}
-	exec(`UPDATE workflows SET owner_agency = 'ag:FIN' WHERE name = 'direct'`)
+	notTheirs("an administrator of both agencies saving a job into TAX's scope", both, "fin-b")
+	notTheirs("a job no workflow runs, saved into TAX's scope", both, "fin-c")
 
 	// ── A workflow that spans ALREADY (as an upgrade leaves one: nobody can
 	// save one since §0a) is not laid at the door of a later save.
@@ -112,5 +114,5 @@ func TestASaveMayNotMakeAnotherWorkflowSpanAgencies(t *testing.T) {
 
 	// ── A global administrator is refused either change too (§0a; until then
 	// theirs to make).
-	refused("a global administrator saving the job into TAX's scope", http.MethodPut, "/api/v1/jobs/"+id("jobs", "fin-b"), gRoot, job("fin-b", "tax-hosts"))
+	notTheirs("a global administrator saving the job into TAX's scope", gRoot, "fin-b")
 }

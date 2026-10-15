@@ -186,9 +186,11 @@ func TestRowLevelFilterDoesNotAudit(t *testing.T) {
 	h, pool := secretRBACServer(t, map[string]string{"viewer": "prod"})
 	seedEnvVar := func(id, key string, scope any) {
 		t.Helper()
+		// Owned by the agency whose scope it is in (I2).
 		if _, err := pool.Exec(`INSERT INTO env_vars (id, key, scope, value, created_by, created_at,
-			last_modified_by, last_modified_at)
-			VALUES (?, ?, ?, 'v', 'seed', '2026-01-01T00:00:00Z', 'seed', '2026-01-01T00:00:00Z')`, id, key, scope); err != nil {
+			last_modified_by, last_modified_at, owner_agency)
+			VALUES (?, ?, ?, 'v', 'seed', '2026-01-01T00:00:00Z', 'seed', '2026-01-01T00:00:00Z',
+			        COALESCE((SELECT owner_agency FROM scopes WHERE name = ?), 'global'))`, id, key, scope, scope); err != nil {
 			t.Fatalf("seed env var %s: %v", key, err)
 		}
 	}

@@ -816,12 +816,12 @@ func (s *Service) HandleProvideHostKeys(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail(w, http.StatusNotFound, "not_found", "runner not found")
 		return
 	}
-	var scopeName string
+	var scopeName, scopeOwner string
 	if req.ScopeID != "" {
 		// The scope's name is written to the ledger and the change log, so it
 		// is only taken from a caller who could read it anyway.
-		err := s.db.QueryRowContext(r.Context(), `SELECT name FROM scopes WHERE id = ?`, req.ScopeID).Scan(&scopeName)
-		if id, ok := auth.IdentityFrom(r.Context()); err != nil || !ok || !auth.ScopeReadable(id, scopeName) {
+		err := s.db.QueryRowContext(r.Context(), `SELECT name, owner_agency FROM scopes WHERE id = ?`, req.ScopeID).Scan(&scopeName, &scopeOwner)
+		if id, ok := auth.IdentityFrom(r.Context()); err != nil || !ok || !auth.ScopeReadableIn(id, scopeOwner, scopeName) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 			return
 		}
@@ -1612,7 +1612,7 @@ func (s *Service) HandleScopeHostKeyCoverage(w http.ResponseWriter, r *http.Requ
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
 	}
-	if id, ok := auth.IdentityFrom(ctx); !ok || !auth.ScopeReadable(id, cov.Scope) {
+	if id, ok := auth.IdentityFrom(ctx); !ok || !auth.ScopeReadableIn(id, scopeOwner, cov.Scope) {
 		// The same answer as a scope that does not exist: host names are the
 		// scope's contents.
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")

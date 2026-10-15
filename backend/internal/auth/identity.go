@@ -203,7 +203,9 @@ func (i Identity) CanIn(perm, agency, scope string) bool {
 		if scope == AllScopes {
 			continue
 		}
-		if g.Agency == agency && g.Covers(scope) {
+		// A grant that names no agency, or a row that names no owner, covers by
+		// name alone (scopes.go, grantCoversIn says why).
+		if (agency == "" || g.Agency == "" || g.Agency == agency) && g.Covers(scope) {
 			return true
 		}
 	}

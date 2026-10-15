@@ -186,8 +186,11 @@ func TestComposeIsBoundToTheActorsAgencies(t *testing.T) {
 		finID := composeJobID(t, pool, "fin-job")
 		rec := composeReq(t, h, http.MethodPut, "/api/v1/jobs/"+finID, "fin-composers",
 			`{"name":"fin-job","scriptRef":"backup-db","scope":"tax-prod"}`)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("FIN composer pushing its job into tax-prod = %d, want 403", rec.Code)
+		// Since I2 a job is its agency's and finds its scope there: TAX's scope is
+		// a name FIN has no scope of, refused as a rule for everyone (422
+		// scope_not_in_agency) before any grant is asked (until then 403).
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "scope_not_in_agency") {
+			t.Errorf("FIN composer pushing its job into tax-prod = %d %s, want 422 scope_not_in_agency", rec.Code, rec.Body)
 		}
 	})
 

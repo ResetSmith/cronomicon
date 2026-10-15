@@ -82,6 +82,9 @@ func secretRBACServer(t *testing.T, restrict map[string]string) (http.Handler, *
 			t.Fatalf("seed secret %s: %v", s.key, err)
 		}
 	}
+	// A scoped secret is the agency's whose scope it is in (I2: a scope's name
+	// is unique within an agency, and a row in `prod` is in its owner's `prod`).
+	exec(`UPDATE secrets SET owner_agency = COALESCE((SELECT owner_agency FROM scopes WHERE name = secrets.scope), 'global') WHERE scope IS NOT NULL`)
 	authSvc := auth.NewService(context.Background(), cfg, pool, log)
 	h := api.New(api.Options{Config: cfg, Logger: log, Auth: authSvc, DB: pool}).Handler()
 	return h, pool

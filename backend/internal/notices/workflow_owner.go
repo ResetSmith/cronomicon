@@ -141,9 +141,7 @@ func SpanningWorkflows(ctx context.Context, q interface {
 		    SELECT s.root,
 		           CASE
 		             WHEN COALESCE(j.scope, '') = '' THEN ?1
-		             ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                              FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                             WHERE sc.name = j.scope), ?1)
+		             ELSE COALESCE(`+agencyid.JobSQL("j")+`, ?1) -- its owner (1400)
 		           END
 		      FROM stepjob s JOIN jobs j ON j.rowid = s.jrow
 		),

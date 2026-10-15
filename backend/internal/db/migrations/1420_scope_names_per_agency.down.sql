@@ -85,8 +85,8 @@ END;
 CREATE INDEX idx_scopes_owner_name ON scopes (owner_agency, name);
 CREATE TRIGGER jobs_born_owned AFTER INSERT ON jobs WHEN NEW.owner_agency IS NULL
 BEGIN
-    UPDATE jobs SET owner_agency = CASE WHEN NEW.source = 'git'
-        THEN COALESCE((SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(NEW.repo_id, 'global')), 'global')
+    UPDATE jobs SET owner_agency = CASE WHEN NEW.source = 'git' AND NEW.repo_id IS NOT NULL
+        THEN COALESCE((SELECT g.agency_id FROM git_repos g WHERE g.id = NEW.repo_id), 'global')
         ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
                          FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
                         WHERE sc.name = NEW.scope), 'global') END

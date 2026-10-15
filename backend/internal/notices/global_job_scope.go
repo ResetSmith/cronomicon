@@ -28,9 +28,9 @@ func checkGlobalJobOnAgencyScope(ctx context.Context, database *sql.DB) error {
 		  FROM jobs j
 		 WHERE j.source = 'git' AND COALESCE(j.repo_id, 'global') = 'global'
 		   AND COALESCE(j.scope, '') <> '' AND COALESCE(j.uid, '') <> ''
-		   AND NOT EXISTS (SELECT 1 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                    WHERE sc.name = j.scope AND sa.agency_id = 'global'
-		                      AND (SELECT COUNT(*) FROM scope_agencies x WHERE x.scope_id = sc.id) = 1)
+		   -- Global has no scope of that name (I2: the job's scope is Global's of
+		   -- the name, and another agency's is not its).
+		   AND NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = j.scope AND sc.owner_agency = 'global')
 		 ORDER BY j.name`)
 	if err != nil {
 		return err

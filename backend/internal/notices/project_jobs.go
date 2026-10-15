@@ -60,9 +60,7 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 		SELECT j.uid, j.name, j.source, COALESCE(j.scope, ''),
 		       COALESCE(j.project_root, '') != '',
 		       COALESCE((SELECT s.name FROM scripts s WHERE s.uid = j.script_uid), ''),
-		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                  WHERE sc.name = j.scope), ?)
+		       COALESCE(`+agencyid.JobSQL("j")+`, ?)
 		  FROM jobs j
 		 WHERE j.deleted_at IS NULL
 		   AND COALESCE(j.uid, '') != ''
@@ -76,12 +74,12 @@ func checkProjectJobs(ctx context.Context, database *sql.DB) error {
 		          AND EXISTS (
 		              SELECT 1 FROM runner_agencies ra
 		               WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency
-		                 AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = COALESCE(j.scope, '')) AND ra.agency_id = ?)
+		                 AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = COALESCE(j.scope, '') AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`')) AND ra.agency_id = ?)
 		                      OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                            JOIN scopes sc ON sc.id = sa.scope_id
-		                                           WHERE sc.name = j.scope)))
+		                                           WHERE sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`'))))
 		          AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		                            WHERE sc.name = j.scope)
+		                            WHERE sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`'))
 		               OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
 		                           WHERE sc.name = j.scope AND sr.runner_id = rn.id)))
 		 ORDER BY j.name, j.uid`, agencyid.Global, agencyid.Global)

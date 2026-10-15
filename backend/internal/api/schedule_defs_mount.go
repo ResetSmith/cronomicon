@@ -191,12 +191,8 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 	sd.UsedBy = []scheduleUsedBy{}
 	drows, err := s.db.QueryContext(r.Context(),
 		`SELECT owner_kind, owner_name, ds.owner_uid,
-		        (SELECT GROUP_CONCAT(a.name, '\x1f')
-		           FROM jobs j
-		           JOIN scopes sc         ON sc.name = j.scope
-		           JOIN scope_agencies sa ON sa.scope_id = sc.id
-		           JOIN agencies a        ON a.id = sa.agency_id
-		          WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name)
+		        -- the owner's agency (a job's since 1400; until I2 its scope's)
+		        (SELECT a.name FROM agencies a WHERE a.id = `+agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")+`)
 		   FROM definition_schedules ds
 		  WHERE schedule_uid = ?
 		    AND NOT EXISTS (SELECT 1 FROM jobs j2 WHERE ds.owner_kind='job'

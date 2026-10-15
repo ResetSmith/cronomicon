@@ -42,6 +42,9 @@ type ShadowFinding struct {
 	Name      string `json:"name"`      // the bare row name both rows share
 	Reference string `json:"reference"` // the derived CRONOMICON_<SECTION>_<name>
 	Scope     string `json:"scope"`     // the SHADOWING row's scope (never "")
+	// OwnerAgency is the shadowing row's owner (an agency id): the agency its
+	// scope is in (I2: a scope's name is unique within an agency only).
+	OwnerAgency string `json:"ownerAgency"`
 	// Agencies is the shadowing row's membership; empty means no restriction, which
 	// is the case this exists to surface.
 	Agencies []string `json:"agencies"`
@@ -134,6 +137,7 @@ func ShadowFindings(ctx context.Context, database *sql.DB) ([]ShadowFinding, err
 			f := ShadowFinding{
 				Kind: spec.kind, Name: r.key, Reference: derivedReference(spec.kind, r.key),
 				Scope:          r.scope,
+				OwnerAgency:    r.ownerID,
 				Agencies:       orEmpty(spec.agencyMap[r.id]),
 				GlobalAgencies: orEmpty(spec.agencyMap[g.id]),
 			}

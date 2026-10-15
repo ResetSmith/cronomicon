@@ -802,8 +802,9 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 		return true, nil
 	}
 	var scope sql.NullString
+	var owner string
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT scope FROM jobs WHERE source = ? AND name = ?`, ref.Source, ref.Name).Scan(&scope)
+		`SELECT scope, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`') FROM jobs WHERE source = ? AND name = ?`, ref.Source, ref.Name).Scan(&scope, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -815,7 +816,7 @@ func (s *Server) definitionReadableByScope(r *http.Request, id auth.Identity, ha
 		// list's own read filter (scope IS NULL rows are global).
 		return true, nil
 	}
-	return auth.ScopeReadable(id, scope.String), nil
+	return auth.ScopeReadableIn(id, owner, scope.String), nil
 }
 
 // loadReactions reads reactions (all, or one definition's) and marks dangling

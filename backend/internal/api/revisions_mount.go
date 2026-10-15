@@ -312,7 +312,7 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 		// tags would silently revert tagging work done since. Splice the LIVE
 		// values over the snapshot's instead.
 		in.Tags = s.liveTags(r.Context(), "jobs", name)
-		s.writeComposedJob(w, r, in, id.Email, false, liveUID)
+		s.writeComposedJob(w, r, in, id.Email, false, liveUID, s.jobAgencyFor(r.Context(), liveUID, "cronomicon", name))
 	case revKindWorkflow:
 		var in workflowComposeInput
 		if err := json.Unmarshal([]byte(snap), &in); err != nil {

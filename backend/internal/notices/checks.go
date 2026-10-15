@@ -271,7 +271,7 @@ func checkTargetHostOutsideScope(ctx context.Context, database *sql.DB) error {
 		SELECT COALESCE(NULLIF(j.uid, ''), j.source || ':' || j.name), j.name, j.source, j.scope, j.target_host,
 		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
 		                   FROM scope_agencies sa WHERE sa.scope_id = sc.id), ?)
-		  FROM jobs j JOIN scopes sc ON sc.name = j.scope
+		  FROM jobs j JOIN scopes sc ON sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`') -- the job's own scope of the name (I2)
 		 WHERE j.deleted_at IS NULL
 		   AND COALESCE(j.target_host, '') <> ''
 		   -- a scope that lists no hosts has no membership to be outside of

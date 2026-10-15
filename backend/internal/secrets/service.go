@@ -128,13 +128,17 @@ type UpdateInput = CreateInput
 // per that predicate. This stops any session from enumerating out-of-scope secret
 // keys, scopes, and vault refs. A nil canRead is treated as fully unrestricted (a
 // defensive default; every real caller passes a predicate).
-func (s *Service) List(ctx context.Context, canRead func(scope string) bool) ([]Secret, error) {
+//
+// canRead is asked of the row's owner AGENCY (its id) and its scope: a scope's
+// name is unique within an agency only (I2), and a row in scope `web` of
+// Finance's is in Finance's `web`.
+func (s *Service) List(ctx context.Context, canRead func(agency, scope string) bool) ([]Secret, error) {
 	if canRead == nil {
-		canRead = func(string) bool { return true }
+		canRead = func(string, string) bool { return true }
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT s.id, s.key, s.source, s.scope, s.description, s.vault_ref, s.created_by, s.created_at,
-		        s.last_modified_by, s.last_modified_at, s.tags, COALESCE(ag.name,'')
+		        s.last_modified_by, s.last_modified_at, s.tags, COALESCE(ag.name,''), s.owner_agency
 		 FROM secrets s LEFT JOIN agencies ag ON ag.id = s.owner_agency
 		 ORDER BY s.created_at`)
 	if err != nil {
@@ -146,12 +150,13 @@ func (s *Service) List(ctx context.Context, canRead func(scope string) bool) ([]
 		var sc Secret
 		var vaultRef sql.NullString
 		var scope, desc, tags sql.NullString
+		var ownerID string
 		if err := rows.Scan(&sc.ID, &sc.Key, &sc.Source, &scope, &desc, &vaultRef,
-			&sc.CreatedBy, &sc.CreatedAt, &sc.LastModifiedBy, &sc.LastModifiedAt, &tags, &sc.OwnerAgency); err != nil {
+			&sc.CreatedBy, &sc.CreatedAt, &sc.LastModifiedBy, &sc.LastModifiedAt, &tags, &sc.OwnerAgency, &ownerID); err != nil {
 			return nil, err
 		}
 		// Scope filter — the decision (incl. global-always-readable) is the caller's.
-		if !canRead(scope.String) {
+		if !canRead(ownerID, scope.String) {
 			continue
 		}
 		if scope.Valid {

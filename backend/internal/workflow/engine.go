@@ -1341,6 +1341,35 @@ func (e *Engine) JobScopes(ctx context.Context, steps []Step, wfSource string) (
 	return e.JobScopesAt(ctx, steps, wfSource, "")
 }
 
+// AgencyScope is a job's scope and whose it is: what a grant is asked of (I2).
+type AgencyScope struct{ Agency, Scope string }
+
+// JobAgencyScopesAt is JobScopesAt with each scope's agency: the jobs' owners
+// (agencyid.JobSQL), which is where each scope's name is looked for and whose
+// grant covers it. Distinct pairs, own jobs first, then the sub-workflows'.
+func (e *Engine) JobAgencyScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]AgencyScope, error) {
+	seen := map[AgencyScope]bool{}
+	var out []AgencyScope
+	add := func(jd jobDef) {
+		p := AgencyScope{Agency: jd.agency, Scope: jd.scope}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	defs, err := e.lookupJobDefs(ctx, steps, wfSource, home)
+	if err != nil {
+		return nil, err
+	}
+	for _, jd := range defs {
+		add(jd)
+	}
+	if err := e.walkSubWorkflowJobs(ctx, steps, wfSource, home, add); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // JobScopesAt is JobScopes for a workflow whose home is known (see Home): the
 // scopes of the jobs the engine will run for THAT workflow.
 func (e *Engine) JobScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]string, error) {
@@ -1436,6 +1465,22 @@ func (e *Engine) SubWorkflowJobAgencies(ctx context.Context, steps []Step, wfSou
 		if !seen[jd.agency] {
 			seen[jd.agency] = true
 			out = append(out, jd.agency)
+		}
+	})
+	return out, err
+}
+
+// SubWorkflowJobAgencyScopesAt is SubWorkflowJobScopesAt with each scope's
+// agency (the job's owner, agencyid.JobSQL), for a caller that asks a grant of
+// it (I2).
+func (e *Engine) SubWorkflowJobAgencyScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]AgencyScope, error) {
+	seen := map[AgencyScope]bool{}
+	var out []AgencyScope
+	err := e.walkSubWorkflowJobs(ctx, steps, wfSource, home, func(jd jobDef) {
+		p := AgencyScope{Agency: jd.agency, Scope: jd.scope}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
 		}
 	})
 	return out, err

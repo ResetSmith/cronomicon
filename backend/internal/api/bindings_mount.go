@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/envref"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
@@ -94,10 +95,21 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", "request body is not valid JSON")
 		return
 	}
+	// Whose run the preview is for (I2): the agency named, else the agency of
+	// the one scope of that name.
+	agency := strings.TrimSpace(body.AgencyID)
+	if agency == "" {
+		a, aerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
+		if aerr != nil {
+			httpx.Fail500(w, s.log, "db_error", aerr)
+			return
+		}
+		agency = a
+	}
 	// The scope being previewed must itself be readable: a restricted actor may not
 	// ask "what would resolve in prod?" about a scope they cannot see, or the
 	// per-row filter below would be answering a question they may not pose.
-	if !auth.ScopeReadable(actor, body.Scope) {
+	if !auth.ScopeReadableIn(actor, agency, body.Scope) {
 		s.denyScope(w, r, body.Scope, "scope access denied")
 		return
 	}
@@ -110,16 +122,7 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 	for _, b := range body.References {
 		in = append(in, runref.Binding{Kind: runref.Kind(b.Kind), Name: b.Name, As: strings.TrimSpace(b.As)})
 	}
-	agency := strings.TrimSpace(body.AgencyID)
-	if agency == "" {
-		a, aerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
-		if aerr != nil {
-			httpx.Fail500(w, s.log, "db_error", aerr)
-			return
-		}
-		agency = a
-	}
-	results, err := runref.ValidateAll(r.Context(), s.db, in, agency, body.Scope, actor.Grant().CanRead)
+	results, err := runref.ValidateAll(r.Context(), s.db, in, agency, body.Scope, auth.ReaderIn(actor, agency))
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -213,7 +216,7 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 	// One flat query joined to jobs for the owner's scope — never a nested iterator
 	// (pool deadlock, see db.maxOpenConns).
 	rows, err := s.db.QueryContext(r.Context(), `
-		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,'')
+		SELECT rb.ref_kind, rb.ref_name, rb.owner_kind, COALESCE(j.scope,''), COALESCE(`+agencyid.JobSQL("j")+`, '')
 		FROM reference_bindings rb
 		LEFT JOIN jobs j
 		  ON rb.owner_kind = 'job' AND j.source = rb.owner_source AND j.name = rb.owner_name`)
@@ -230,12 +233,12 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	agg := map[string]*usage{}
 	for rows.Next() {
-		var refKind, refName, ownerKind, jobScope string
-		if err := rows.Scan(&refKind, &refName, &ownerKind, &jobScope); err != nil {
+		var refKind, refName, ownerKind, jobScope, jobOwner string
+		if err := rows.Scan(&refKind, &refName, &ownerKind, &jobScope, &jobOwner); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
-		if ownerKind == "job" && !auth.ScopeReadable(actor, jobScope) {
+		if ownerKind == "job" && !auth.ScopeReadableIn(actor, jobOwner, jobScope) {
 			continue
 		}
 		k := refKind + "\x00" + refName
@@ -277,9 +280,9 @@ func (s *Server) getReferenceUsage(w http.ResponseWriter, r *http.Request) {
 // a valid 200.
 func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 	traceID := r.PathValue("traceId")
-	var scope string
+	var scope, runOwner string // runOwner: the agency the run's scope is looked for in (I2)
 	err := s.db.QueryRowContext(r.Context(),
-		`SELECT COALESCE(scope,'') FROM runs WHERE id = ?`, traceID).Scan(&scope)
+		`SELECT COALESCE(scope,''), `+agencyid.RunScopeOwnerSQL("agencies_json")+` FROM runs WHERE id = ?`, traceID).Scan(&scope, &runOwner)
 	if errors.Is(err, sql.ErrNoRows) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "run not found")
 		return
@@ -290,7 +293,7 @@ func (s *Server) getRunReferences(w http.ResponseWriter, r *http.Request) {
 	}
 	// Scope guard, mirroring getRun (FR-H2): a restricted operator must not see the
 	// references of an out-of-scope run.
-	if id, ok := auth.IdentityFrom(r.Context()); ok && !auth.ScopeReadable(id, scope) {
+	if id, ok := auth.IdentityFrom(r.Context()); ok && !auth.ScopeReadableIn(id, runOwner, scope) {
 		s.denyScope(w, r, scope, "scope access denied")
 		return
 	}
@@ -373,7 +376,7 @@ func (s *Server) getJobBindings(w http.ResponseWriter, r *http.Request) {
 	// getRunReferences' guard (403 on out-of-scope). (Job DETAIL is now scope-gated
 	// too — getJob returns 404 out-of-scope, SU-2.)
 	if id, ok := auth.IdentityFrom(r.Context()); ok && jr.Scope != nil &&
-		!auth.ScopeReadable(id, *jr.Scope) {
+		!auth.ScopeReadableIn(id, jr.OwnerAgency, *jr.Scope) {
 		s.denyScope(w, r, *jr.Scope, "scope access denied")
 		return
 	}
@@ -407,11 +410,11 @@ func (s *Server) putJobBindings(w http.ResponseWriter, r *http.Request) {
 	if jr.Scope != nil {
 		jobScope = *jr.Scope
 	}
-	if !auth.ScopeReadable(actor, jobScope) {
+	if !auth.ScopeReadableIn(actor, jr.OwnerAgency, jobScope) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "job not found")
 		return
 	}
-	if !auth.ScopeWritable(actor, jobScope) {
+	if !auth.ScopeWritableIn(actor, jr.OwnerAgency, jobScope) {
 		s.denyScope(w, r, jobScope, "cannot modify bindings on a job outside your access")
 		return
 	}
@@ -422,7 +425,7 @@ func (s *Server) putJobBindings(w http.ResponseWriter, r *http.Request) {
 	// its next run executed without its declared secrets. Ask the question the
 	// grants can answer: does a grant that carries manageEnvVars cover THIS
 	// job's scope (or every scope, for a job that has none)?
-	holds := actor.Can(auth.PermManageEnvVars, jobScope)
+	holds := actor.CanIn(auth.PermManageEnvVars, jr.OwnerAgency, jobScope)
 	if jobScope == "" {
 		holds = actor.CanUnbound(auth.PermManageEnvVars)
 	}
@@ -564,15 +567,16 @@ func (s *Server) knownReferenceNames(r *http.Request) map[string]runref.Kind {
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var name string
+			var name, owner string
 			var scope sql.NullString
-			if rows.Scan(&name, &scope) == nil && name != "" && auth.ScopeReadable(id, scope.String) {
+			if rows.Scan(&name, &scope, &owner) == nil && name != "" && auth.ScopeReadableIn(id, owner, scope.String) {
 				known[name] = kind
 			}
 		}
 	}
-	loadScoped(`SELECT key, scope FROM secrets`, runref.KindSecret)
-	loadScoped(`SELECT key, scope FROM env_vars`, runref.KindVar)
+	// A row's scope is its owner's scope of that name (I2).
+	loadScoped(`SELECT key, scope, owner_agency FROM secrets`, runref.KindSecret)
+	loadScoped(`SELECT key, scope, owner_agency FROM env_vars`, runref.KindVar)
 	// Keys: no scope column (§8) — labels are not scope-filtered.
 	rows, err := s.db.QueryContext(r.Context(), `SELECT label FROM ssh_credentials`)
 	if err == nil {

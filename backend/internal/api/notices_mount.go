@@ -81,11 +81,13 @@ var pinNoticeReasons = map[string]string{
 // pinVisible is the dismiss gate of a retired pin, used for reading it here
 // too: configureApp on the pin's scope, and a global administrator for a job
 // with no scope.
-func pinVisible(id auth.Identity, scope string) bool {
+//
+// agency is the job's: the one its scope is looked for in (I2).
+func pinVisible(id auth.Identity, agency, scope string) bool {
 	if scope == "" {
 		return id.GlobalAdmin(auth.PermConfigureApp)
 	}
-	return auth.ScopeReadable(id, scope) && id.Can(auth.PermConfigureApp, scope)
+	return auth.ScopeReadableIn(id, agency, scope) && id.CanIn(auth.PermConfigureApp, agency, scope)
 }
 
 func (s *Server) handleListNotices(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +134,7 @@ func (s *Server) handleListNotices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, p := range pins {
-			if !pinVisible(id, p.Scope) {
+			if !pinVisible(id, s.pinAgency(r.Context(), p.JobUID, p.JobSource, p.JobName, p.Scope), p.Scope) {
 				continue
 			}
 			agency := scopeAgency[p.Scope]
@@ -225,9 +227,10 @@ func (s *Server) handleDismissNotices(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			var scope string
+			var scope, jobUID, jobSource, jobName string
 			err = s.db.QueryRowContext(r.Context(),
-				`SELECT COALESCE(scope, '') FROM retired_runner_pins WHERE id = ?`, n).Scan(&scope)
+				`SELECT COALESCE(scope, ''), COALESCE(job_uid, ''), job_source, job_name FROM retired_runner_pins WHERE id = ?`, n).
+				Scan(&scope, &jobUID, &jobSource, &jobName)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					continue
@@ -235,7 +238,7 @@ func (s *Server) handleDismissNotices(w http.ResponseWriter, r *http.Request) {
 				httpx.Fail500(w, s.log, "db_error", err)
 				return
 			}
-			if !pinVisible(id, scope) {
+			if !pinVisible(id, s.pinAgency(r.Context(), jobUID, jobSource, jobName, scope), scope) {
 				where := scope
 				if where == "" {
 					where = auth.AllScopes

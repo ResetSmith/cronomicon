@@ -307,9 +307,7 @@ func scopeServing(ctx context.Context, database *sql.DB, scopeID string) (*servi
 func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT COALESCE(NULLIF(j.uid, ''), j.source || ':' || j.name), j.name, j.source, COALESCE(j.scope, ''), j.requires_json,
-		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                  WHERE sc.name = j.scope), ?)
+		       COALESCE(`+agencyid.JobSQL("j")+`, ?) -- its owner (1400)
 		  FROM jobs j
 		 WHERE j.deleted_at IS NULL
 		   AND j.run_type IN `+shellTypesSQL+`
@@ -323,7 +321,7 @@ func checkShellJobRequires(ctx context.Context, database *sql.DB) error {
 		                 AND ((COALESCE(j.scope, '') = '' AND ra.agency_id = ?)
 		                      OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                            JOIN scopes sc ON sc.id = sa.scope_id
-		                                           WHERE sc.name = j.scope)))
+		                                           WHERE sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`'))))
 		          AND NOT EXISTS (
 		              SELECT 1 FROM json_each(CASE WHEN json_valid(j.requires_json) THEN j.requires_json ELSE '[]' END) need
 		               WHERE need.value NOT IN (SELECT have.value FROM json_each(COALESCE(rn.capabilities, '[]')) have)))
@@ -376,7 +374,7 @@ func checkNoRunnerForShellJobs(ctx context.Context, database *sql.DB) error {
 			SELECT j.name AS job,
 			       CASE WHEN COALESCE(j.scope, '') = '' THEN ? ELSE sa.agency_id END AS agency
 			  FROM jobs j
-			  LEFT JOIN scopes sc ON sc.name = j.scope
+			  LEFT JOIN scopes sc ON sc.name = j.scope AND sc.owner_agency = COALESCE(`+agencyid.JobSQL("j")+`, '`+agencyid.Global+`')
 			  LEFT JOIN scope_agencies sa ON sa.scope_id = sc.id
 			 WHERE j.deleted_at IS NULL AND j.run_type IN `+shellTypesSQL+`
 		)
@@ -579,9 +577,7 @@ func checkLeftoverExecutorKey(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		WITH carrying AS (
 			SELECT j.name AS job, j.executor AS executor,
-			       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-			                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-			                  WHERE sc.name = j.scope), ?) AS agency
+			       COALESCE(`+agencyid.JobSQL("j")+`, ?) AS agency -- its owner (1400)
 			  FROM jobs j
 			 WHERE j.source = 'git' AND j.deleted_at IS NULL AND COALESCE(j.executor, '') <> ''
 		)

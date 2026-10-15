@@ -260,6 +260,7 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 		if !found {
 			continue // unknown job: the existence validator already reported it
 		}
+		stepAgency, _ := s.stepJobAgency(r, ref) // whose scope it is (I2)
 		// AllScopes for the All pool, mirroring requireComposeScope — Can(perm, "")
 		// is the permissive Q-F7 reading and would report every departmental
 		// composer as authorized for an unscoped job.
@@ -267,7 +268,7 @@ func unauthoredStepJobs(r *http.Request, s *Server, id auth.Identity, steps []wo
 		if strings.TrimSpace(scope.String) == "" {
 			ok = id.Can(auth.PermCompose, auth.AllScopes)
 		} else {
-			ok = id.Can(auth.PermCompose, scope.String)
+			ok = id.CanIn(auth.PermCompose, stepAgency, scope.String)
 		}
 		if !ok {
 			out = append(out, ref.Name)
@@ -298,11 +299,12 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 		}
 		// One check per distinct scope, not per job: a ten-step graph in one scope
 		// should not write ten identical denial audit rows.
-		if seenScope[scope.String] {
+		stepAgency, _ := s.stepJobAgency(r, ref)
+		if seenScope[stepAgency+"\x00"+scope.String] {
 			continue
 		}
-		seenScope[scope.String] = true
-		if !s.requireComposeScope(w, r, id, scope.String) {
+		seenScope[stepAgency+"\x00"+scope.String] = true
+		if !s.requireComposeScope(w, r, id, stepAgency, scope.String) {
 			return false
 		}
 	}
@@ -310,17 +312,17 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 	// jobs it will run. Composing a workflow that reaches another agency's jobs
 	// through a child is authoring over those jobs, and takes the same
 	// per-scope compose check. Composed workflows are cronomicon-source.
-	nested, err := workflow.New(s.db, s.log).SubWorkflowJobScopes(r.Context(), steps, "cronomicon")
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencyScopesAt(r.Context(), steps, "cronomicon", "")
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return false
 	}
-	for _, scope := range nested {
-		if seenScope[scope] {
+	for _, pair := range nested {
+		if seenScope[pair.Agency+"\x00"+pair.Scope] {
 			continue
 		}
-		seenScope[scope] = true
-		if !s.requireComposeScope(w, r, id, scope) {
+		seenScope[pair.Agency+"\x00"+pair.Scope] = true
+		if !s.requireComposeScope(w, r, id, pair.Agency, pair.Scope) {
 			return false
 		}
 	}

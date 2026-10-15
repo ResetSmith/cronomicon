@@ -121,8 +121,8 @@ END;
 -- (Global's when there is none or several, as for a scope several share).
 CREATE TRIGGER jobs_born_owned AFTER INSERT ON jobs WHEN NEW.owner_agency IS NULL
 BEGIN
-    UPDATE jobs SET owner_agency = CASE WHEN NEW.source = 'git'
-        THEN COALESCE((SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(NEW.repo_id, 'global')), 'global')
+    UPDATE jobs SET owner_agency = CASE WHEN NEW.source = 'git' AND NEW.repo_id IS NOT NULL
+        THEN COALESCE((SELECT g.agency_id FROM git_repos g WHERE g.id = NEW.repo_id), 'global')
         ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sc.owner_agency) END
                          FROM scopes sc WHERE sc.name = NEW.scope), 'global') END
      WHERE rowid = NEW.rowid;

@@ -153,7 +153,10 @@ func isComposeAdmin(id auth.Identity) bool {
 // same rule RB-26 applies to running an unscoped job). Every other scope asks
 // Can(compose, scope), which is per-grant: a FIN composer passes for a FIN scope
 // and fails for a Tax one, rather than passing because they hold compose somewhere.
-func (s *Server) requireComposeScope(w http.ResponseWriter, r *http.Request, id auth.Identity, scope string) bool {
+//
+// agency is whose the scope is (I2: a scope's name is unique within an agency
+// only, and a grant of an agency covers that agency's scopes).
+func (s *Server) requireComposeScope(w http.ResponseWriter, r *http.Request, id auth.Identity, agency, scope string) bool {
 	if strings.TrimSpace(scope) == "" {
 		// 🔴 AllScopes, NOT "". Can(perm, "") deliberately preserves the Q-F7 rule
 		// that an empty scope is permitted for EVERYONE (identity.go says so), so
@@ -163,9 +166,9 @@ func (s *Server) requireComposeScope(w http.ResponseWriter, r *http.Request, id 
 		// is the strict reading: it demands a grant that reaches everywhere, which
 		// is identical to CanUnbound and is what "may you author in All" means.
 		// requireCan also renders this target as "*" in the audit row and message.
-		return s.requireCan(w, r, id, auth.PermCompose, auth.AllScopes)
+		return s.requireCan(w, r, id, auth.PermCompose, agency, auth.AllScopes)
 	}
-	return s.requireCan(w, r, id, auth.PermCompose, scope)
+	return s.requireCan(w, r, id, auth.PermCompose, agency, scope)
 }
 
 var composeNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
@@ -210,7 +213,12 @@ type jobComposeInput struct {
 	// never decided, which is the accident this band exists to stop. Anything
 	// that omits the key gets a 422 naming the All option rather than silently
 	// creating an agencyless job. Read through scopeOf() below, never directly.
-	Scope        *string                `json:"scope"`
+	Scope *string `json:"scope"`
+	// OwnerAgency is whose the job is (1400), read at create only: the agency
+	// its scope is looked for in (I2). Optional: absent, the one agency among
+	// those holding a scope of that name in which the actor may compose
+	// (composeOwnerFor). An edit keeps the job's owner.
+	OwnerAgency  string                 `json:"ownerAgency,omitempty"`
 	TargetHost   string                 `json:"targetHost"`
 	Env          map[string]string      `json:"env,omitempty"` // job-level env (JC10); merged beneath schedule + per-run override env at run time
 	ScheduleRefs []string               `json:"scheduleRefs"`
@@ -297,7 +305,11 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scope is required (use \"\" for All)")
 		return
 	}
-	conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, s.scopeAgency(r.Context(), in.scopeOf()), "")
+	owner, ok := s.composeOwnerFor(w, r, id, in)
+	if !ok {
+		return
+	}
+	conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, owner, "")
 	if cerr != nil {
 		httpx.Fail500(w, s.log, "db_error", cerr)
 		return
@@ -314,7 +326,57 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusConflict, "conflict", msg)
 		return
 	}
-	s.writeComposedJob(w, r, in, id.Email, true, db.NewID())
+	s.writeComposedJob(w, r, in, id.Email, true, db.NewID(), owner)
+}
+
+// composeOwnerFor is whose a job being created is (1400; I2): the agency the
+// request names (ownerAgency), else, for a job on a scope, the one agency among
+// those holding a scope of that name in which the actor may compose; Global's
+// for a job with no scope. When two of the actor's agencies hold the name the
+// agency must be named (422 ambiguous_scope). false after a refusal is written.
+func (s *Server) composeOwnerFor(w http.ResponseWriter, r *http.Request, id auth.Identity, in jobComposeInput) (string, bool) {
+	if a := strings.TrimSpace(in.OwnerAgency); a != "" {
+		var n int
+		if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, a).Scan(&n); err != nil || n == 0 {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_agency", "the referenced agency does not exist")
+			return "", false
+		}
+		return a, true
+	}
+	scope := in.scopeOf()
+	if strings.TrimSpace(scope) == "" {
+		return agencyid.Global, true
+	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT owner_agency FROM scopes WHERE name = ? ORDER BY owner_agency`, scope)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return "", false
+	}
+	defer rows.Close()
+	var holders, mine []string
+	for rows.Next() {
+		var a string
+		if rows.Scan(&a) == nil {
+			holders = append(holders, a)
+			if id.CanIn(auth.PermCompose, a, scope) {
+				mine = append(mine, a)
+			}
+		}
+	}
+	switch {
+	case len(mine) == 1:
+		return mine[0], true
+	case len(mine) > 1:
+		httpx.Fail(w, http.StatusUnprocessableEntity, "ambiguous_scope",
+			"more than one agency you compose in has a scope of this name; say whose with ownerAgency")
+		return "", false
+	case len(holders) == 1:
+		// Not the actor's to compose in: requireComposeScope says so.
+		return holders[0], true
+	}
+	// No scope of the name, or several of other agencies': Global's, which
+	// requireComposeScope refuses for a restricted composer.
+	return agencyid.Global, true
 }
 
 func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +399,7 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 	// arriving at; both must pass. Only the incoming check would let a FIN
 	// composer take over an All or Tax job by rewriting its scope to FIN, and only
 	// the existing check would let them push a FIN job out into All.
-	if !s.requireComposeScope(w, r, id, deref(existing.Scope)) {
+	if !s.requireComposeScope(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
 		return
 	}
 	var in jobComposeInput
@@ -349,7 +411,7 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 	// R2-5 — a scope EDIT can move the job into an agency where its name is
 	// taken; checked against every sibling but itself.
 	if in.Scope != nil {
-		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, s.scopeAgency(r.Context(), in.scopeOf()), existing.UID)
+		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, existing.OwnerAgency, existing.UID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -359,7 +421,7 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.writeComposedJob(w, r, in, id.Email, false, existing.UID)
+	s.writeComposedJob(w, r, in, id.Email, false, existing.UID, existing.OwnerAgency)
 }
 
 func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +437,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// AF-2 — deleting is authoring: same per-scope authority as editing.
-	if !s.requireComposeScope(w, r, id, deref(existing.Scope)) {
+	if !s.requireComposeScope(w, r, id, existing.OwnerAgency, deref(existing.Scope)) {
 		return
 	}
 	// RX-24 — refuse while reactions WATCH this job, unless forced. Its own code,
@@ -447,7 +509,9 @@ func (in jobComposeInput) scopeOf() string {
 
 // writeComposedJob validates the binding, denormalizes the referenced script, and
 // upserts the cronomicon job + its definition_schedules in one transaction.
-func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in jobComposeInput, actor string, isCreate bool, uid string) {
+// owner is whose the job is (1400): the agency its scope, script and schedules
+// are looked for in (I2).
+func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in jobComposeInput, actor string, isCreate bool, uid, owner string) {
 	if d := strings.TrimSpace(in.MustFinishBy); d != "" && !cronutil.ValidDeadline(d) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed",
 			"mustFinishBy must be a wall-clock time as HH:MM (24-hour), in the application timezone")
@@ -486,7 +550,28 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	// the scope the job is leaving, because passing only this one would let a
 	// departmental composer capture an out-of-reach job by rewriting its scope.
 	actorID, _ := auth.IdentityFrom(r.Context())
-	if !s.requireComposeScope(w, r, actorID, in.scopeOf()) {
+	// The scope is the job's agency's (I2: a scope's name is unique within an
+	// agency, and a job finds its scope in its own). A name that is another
+	// agency's scope and not this one's is refused, for everyone: a job does
+	// not change agencies by being rescoped (§0a, IN-7; until I2 an
+	// administrator of two agencies could save a job from one into the other's
+	// scope). A name no agency has a scope of is as it was: free text, the
+	// catalog's business later. Asked before the grant, so that the answer is
+	// the same for everyone and names no agency.
+	if sc := strings.TrimSpace(in.scopeOf()); sc != "" {
+		var own, any int
+		if err := s.db.QueryRowContext(r.Context(),
+			`SELECT COUNT(*) FILTER (WHERE owner_agency = ?2), COUNT(*) FROM scopes WHERE name = ?1`, sc, owner).Scan(&own, &any); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if own == 0 && any > 0 {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "scope_not_in_agency",
+				"this job's agency has no scope of that name; a job runs on its own agency's scopes")
+			return
+		}
+	}
+	if !s.requireComposeScope(w, r, actorID, owner, in.scopeOf()) {
 		return
 	}
 	// Resolve + denormalize the referenced Git Script (Decision 7).
@@ -494,7 +579,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	// A name is unique per repository (1290). Which repository an in-app job's
 	// name means: the repository of the job's agency, and no other (§0a, IN-8;
 	// from GR-16 until then, Global's next). The job's agency is its scope's.
-	home := s.scopeRepo(r.Context(), in.scopeOf())
+	home := s.agencyRepo(r.Context(), owner)
 	var sc composeScript
 	var command, script, scriptPath, executor, projectRoot sql.NullString
 	err := s.db.QueryRowContext(r.Context(),
@@ -533,7 +618,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	// control is execspec.ResolveTargets, which fails such a host for every
 	// producer; refusing it here is the same rule where the author can read it.
 	if in.TargetHost != "" && in.Scope != nil && *in.Scope != "" {
-		member, known, herr := execspec.HostInScope(r.Context(), s.db, s.scopeAgency(r.Context(), *in.Scope), *in.Scope, in.TargetHost)
+		member, known, herr := execspec.HostInScope(r.Context(), s.db, owner, *in.Scope, in.TargetHost)
 		if herr != nil {
 			httpx.Fail500(w, s.log, "db_error", herr)
 			return
@@ -606,7 +691,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		if in.Scope != nil {
 			jobScope = *in.Scope
 		}
-		jobAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, s.scopeAgency(r.Context(), jobScope), jobScope)
+		jobAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, owner, jobScope)
 		if aerr != nil {
 			httpx.Fail500(w, s.log, "db_error", aerr)
 			return
@@ -683,7 +768,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		//
 		// The run's agency snapshot is scope-derived, so the job's own scope gives
 		// the same candidate set a run of this job would see.
-		scopeAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, s.scopeAgency(r.Context(), in.scopeOf()), in.scopeOf())
+		scopeAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, owner, in.scopeOf())
 		if aerr != nil {
 			httpx.Fail500(w, s.log, "db_error", aerr)
 			return
@@ -738,9 +823,6 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 
 	// Resolve schedule entries: inline + referenced first-class schedules (A10a).
-	// The job's agency, written to the row (1400): its scope's, as it was worked
-	// out before there was a column for it.
-	owner := s.scopeAgency(r.Context(), in.scopeOf())
 	entries, verr := s.resolveComposeSchedules(r.Context(), in, owner)
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/repoid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
@@ -471,25 +472,44 @@ func (e *Engine) CancelTree(ctx context.Context, wfTraceID string) bool {
 // the sub-workflow runs UNDER a workflow run — everything CancelTree would stop
 // beyond the addressed run's own children (GC-10). An unbound run yields "".
 func (e *Engine) DescendantRunScopes(ctx context.Context, wfTraceID string) ([]string, error) {
+	pairs, err := e.DescendantRunAgencyScopes(ctx, wfTraceID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range pairs {
+		if !seen[p.Scope] {
+			seen[p.Scope] = true
+			out = append(out, p.Scope)
+		}
+	}
+	return out, nil
+}
+
+// DescendantRunAgencyScopes is DescendantRunScopes with each run's scope
+// owner, the agency its scope is looked for in (I2), from the run's snapshot.
+func (e *Engine) DescendantRunAgencyScopes(ctx context.Context, wfTraceID string) ([]AgencyScope, error) {
 	rows, err := e.db.QueryContext(ctx, `
 		WITH RECURSIVE tree(id) AS (
 			SELECT id FROM workflow_runs WHERE parent_workflow_run_id = ?
 			UNION
 			SELECT w.id FROM workflow_runs w JOIN tree t ON w.parent_workflow_run_id = t.id
 		)
-		SELECT DISTINCT COALESCE(r.scope,'') FROM runs r JOIN tree t ON r.workflow_run_id = t.id`,
+		SELECT DISTINCT COALESCE(r.scope,''), `+agencyid.RunScopeOwnerSQL("r.agencies_json")+`
+		  FROM runs r JOIN tree t ON r.workflow_run_id = t.id`,
 		wfTraceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []AgencyScope
 	for rows.Next() {
-		var sc string
-		if err := rows.Scan(&sc); err != nil {
+		var p AgencyScope
+		if err := rows.Scan(&p.Scope, &p.Agency); err != nil {
 			return nil, err
 		}
-		out = append(out, sc)
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

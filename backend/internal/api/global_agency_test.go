@@ -285,8 +285,11 @@ func TestGlobalAgency_JobRowFlagsAnswerEachRoutesOwnQuestion(t *testing.T) {
 	      ('fin-job','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z'),
 	      ('fin-job-tax-run','cronomicon','bash','fin-hosts',1,'2026-01-01T00:00:00Z')`)
 	run := func(job string, scope any) {
-		exec(`INSERT INTO runs (id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at)
-		      VALUES (?, ?, 'cronomicon', 'bash', ?, 'running', 'u', 'manual', 'runner', '2026-01-02T00:00:00Z')`, "run-"+job, job, scope)
+		// The run is its scope's agency's, as a producer snapshots it (I2).
+		exec(`INSERT INTO runs (id, job_name, job_source, run_type, scope, status, triggered_by, trigger_kind, executor, created_at, agencies_json)
+		      VALUES (?, ?, 'cronomicon', 'bash', ?, 'running', 'u', 'manual', 'runner', '2026-01-02T00:00:00Z',
+		              COALESCE((SELECT json_array(a.name) FROM scopes sc JOIN agencies a ON a.id = sc.owner_agency WHERE sc.name = ?), '["Global"]'))`,
+			"run-"+job, job, scope, scope)
 	}
 	run("platform-unbound-run", nil)     // Global's own run of a Global job
 	run("platform-fin-run", "fin-hosts") // FIN ran the Global job against its scope

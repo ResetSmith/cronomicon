@@ -113,7 +113,7 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 		var scopeName, scopeOwner string
 		err := s.db.QueryRowContext(r.Context(), `SELECT name, owner_agency FROM scopes WHERE id = ?`, req.ScopeID).Scan(&scopeName, &scopeOwner)
 		id, ok := auth.IdentityFrom(r.Context())
-		if err != nil || !ok || !auth.ScopeReadable(id, scopeName) {
+		if err != nil || !ok || !auth.ScopeReadableIn(id, scopeOwner, scopeName) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 			return
 		}

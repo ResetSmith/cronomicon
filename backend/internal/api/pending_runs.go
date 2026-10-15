@@ -77,9 +77,12 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	// Whose scope it is (I2): the owner definition's agency, found as the
+	// promotion finds the definition (by uid, or by source and name).
+	ownerAgency := s.definitionAgencyFor(r.Context(), kind, ownerUID.String, source, name)
 	// SU-2: a restricted actor may only touch pending runs whose owner scope
 	// they can read — the same rule the upcoming listing applies.
-	if !auth.ScopeReadable(id, scope.String) {
+	if !auth.ScopeReadableIn(id, ownerAgency, scope.String) {
 		s.denyScope(w, r, scope.String, "your scope grants do not cover this pending run's scope")
 		return
 	}
@@ -90,7 +93,7 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 	// trigger, so it takes a run verb on what the run would touch: the job's
 	// scope, or for a workflow every scope its jobs (and its sub-workflows'
 	// jobs) are in. An unscoped target is a global operator's.
-	targets := []string{scope.String}
+	targets := []workflow.AgencyScope{{Agency: ownerAgency, Scope: scope.String}}
 	if kind == "workflow" {
 		wfScopes, found, err := s.pendingWorkflowScopes(r.Context(), ownerUID.String, source, name)
 		if err != nil {
@@ -98,12 +101,13 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !found {
-			wfScopes = []string{""} // unresolvable: fail closed to the unbound rule
+			wfScopes = []workflow.AgencyScope{{Scope: ""}} // unresolvable: fail closed to the unbound rule
 		}
 		targets = wfScopes
 	}
-	for _, sc := range targets {
-		if pendingCancelPermitted(id, sc) {
+	for _, t := range targets {
+		sc := t.Scope
+		if pendingCancelPermitted(id, t.Agency, sc) {
 			continue
 		}
 		where := sc
@@ -145,16 +149,18 @@ func (s *Server) cancelPendingRun(w http.ResponseWriter, r *http.Request) {
 // cancelling it is undoing a trigger (triggerJobs) as much as suppressing a run
 // (killJobs). An empty scope is the unbound case, unrestricted-only as on every
 // other execution route.
-func pendingCancelPermitted(id auth.Identity, scope string) bool {
+//
+// agency is whose the scope is (I2).
+func pendingCancelPermitted(id auth.Identity, agency, scope string) bool {
 	if scope == "" {
 		return id.CanUnbound(auth.PermTriggerJobs) || id.CanUnbound(auth.PermKillJobs)
 	}
-	return id.Can(auth.PermTriggerJobs, scope) || id.Can(auth.PermKillJobs, scope)
+	return id.CanIn(auth.PermTriggerJobs, agency, scope) || id.CanIn(auth.PermKillJobs, agency, scope)
 }
 
 // pendingWorkflowScopes resolves the scopes a pending workflow run would touch.
 // The identity is the uid when the row carries one, else (source, name).
-func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name string) ([]string, bool, error) {
+func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name string) ([]workflow.AgencyScope, bool, error) {
 	var raw, wfSource string
 	var workflowID int64
 	var err error
@@ -187,7 +193,7 @@ func (s *Server) pendingWorkflowScopes(ctx context.Context, uid, source, name st
 		return nil, false, nil
 	}
 	eng := workflow.New(s.db, s.log)
-	scopes, err := eng.JobScopesAt(ctx, steps, wfSource, eng.Home(ctx, workflowID))
+	scopes, err := eng.JobAgencyScopesAt(ctx, steps, wfSource, eng.Home(ctx, workflowID))
 	if err != nil {
 		return nil, false, err
 	}

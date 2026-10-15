@@ -389,9 +389,32 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]settings.ShadowFinding, 0, len(all))
 	for _, f := range all {
-		if auth.ScopeReadable(id, f.Scope) {
+		if auth.ScopeReadableIn(id, f.OwnerAgency, f.Scope) {
 			out = append(out, f)
 		}
+	}
+	// An ambiguity names its owners (agencies, by name): it is shown to a
+	// reader of the scope in any of them (I2: the scope is each owner's own).
+	agencyIDs := map[string]string{}
+	if rows, err := s.db.QueryContext(r.Context(), `SELECT id, name FROM agencies`); err == nil {
+		for rows.Next() {
+			var aid, name string
+			if rows.Scan(&aid, &name) == nil {
+				agencyIDs[name] = aid
+			}
+		}
+		rows.Close()
+	}
+	ambiguityReadable := func(f settings.AmbiguityFinding) bool {
+		if f.Kind == "key" || f.Scope == "" || id.Unrestricted() {
+			return true
+		}
+		for _, owner := range f.Owners {
+			if auth.ScopeReadableIn(id, agencyIDs[owner], f.Scope) {
+				return true
+			}
+		}
+		return false
 	}
 	// RA-18 — the multi-owner ambiguities ride the same response, so the Env Vars
 	// view can warn about a name that will fail closed for a cross-department run
@@ -404,7 +427,7 @@ func (s *Server) handleEnvVarShadows(w http.ResponseWriter, r *http.Request) {
 	}
 	ambOut := make([]settings.AmbiguityFinding, 0, len(amb))
 	for _, f := range amb {
-		if f.Kind == "key" || auth.ScopeReadable(id, f.Scope) {
+		if ambiguityReadable(f) {
 			ambOut = append(ambOut, f)
 		}
 	}

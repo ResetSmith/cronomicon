@@ -14,14 +14,16 @@ const WorkflowSQL = `(CASE WHEN w.source = 'git'
 	THEN (SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(w.repo_id, 'global'))
 	ELSE w.owner_agency END)`
 
-// JobSQL is the agency of the row `alias` of `jobs`: a Git job's repository's
-// (Global's for a row with none), and the owner of one built in the app
-// (migration 1400; until then it was worked out from its scope's name, which
-// cannot say which scope once names are per agency, I2). NULL for a Git job
-// whose repository is gone.
+// JobSQL is the agency of the row `alias` of `jobs`: a Git job's repository's,
+// and the owner of one built in the app (migration 1400; until then it was
+// worked out from its scope's name, which cannot say which scope once names
+// are per agency, I2). A Git job that records no repository (none in an
+// installation since 1310, which stamped Global's; a test's) is its owner's
+// too, as it is confined by nothing (runref.RepoScopeMismatch). NULL for a Git
+// job whose repository is gone.
 func JobSQL(alias string) string {
-	return `(CASE WHEN ` + alias + `.source = 'git'
-	THEN (SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(` + alias + `.repo_id, 'global'))
+	return `(CASE WHEN ` + alias + `.source = 'git' AND ` + alias + `.repo_id IS NOT NULL
+	THEN (SELECT g.agency_id FROM git_repos g WHERE g.id = ` + alias + `.repo_id)
 	ELSE ` + alias + `.owner_agency END)`
 }
 

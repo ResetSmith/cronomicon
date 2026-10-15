@@ -458,8 +458,10 @@ type scheduleRow struct {
 	// is resolved for JOB owners only (a workflow has no scope of its own; its
 	// agencies are the union over its jobs, which needs step parsing and is
 	// resolved by the handlers that care).
-	ownerUID           sql.NullString
-	ownerAgencies      sql.NullString
+	ownerUID      sql.NullString
+	ownerAgencies sql.NullString
+	// ownerAgency is the owner's agency id: whose scope ownerScope is (I2).
+	ownerAgency        string
 	startAt, endAt     sql.NullString // activation window (AW-7)
 	interval           sql.NullString // anchored-interval mode (Phase 2)
 	skipCals, onlyCals sql.NullString // working-calendar bindings (CAL-10)
@@ -507,12 +509,10 @@ func (s *Server) drainScheduleRows(ctx context.Context) ([]scheduleRow, error) {
 		       -- schedule handlers' query budget (schedules_batch_test) is
 		       -- unchanged, exactly as owner_scope above.
 		       ds.owner_uid,
-		       (SELECT GROUP_CONCAT(a.name, '\x1f')
-		          FROM jobs j
-		          JOIN scopes sc         ON sc.name = j.scope
-		          JOIN scope_agencies sa ON sa.scope_id = sc.id
-		          JOIN agencies a        ON a.id = sa.agency_id
-		         WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name) AS owner_agencies
+		       -- The owner's agency (a job's since 1400, a workflow's since 1360):
+		       -- until I2 derived from a job's scope's name.
+		       (SELECT a.name FROM agencies a WHERE a.id = `+scheduleOwnerAgencySQL+`) AS owner_agencies,
+		       COALESCE(`+scheduleOwnerAgencySQL+`, '`+agencyid.Global+`') AS owner_agency
 		FROM definition_schedules ds
 		-- FX-A4: a binned owner's entries survive the soft delete (that is what
 		-- makes a restore cheap) but the scheduler's reload skips them, so listing
@@ -530,13 +530,23 @@ func (s *Server) drainScheduleRows(ctx context.Context) ([]scheduleRow, error) {
 		var sr scheduleRow
 		if err := rows.Scan(&sr.source, &sr.kind, &sr.owner, &sr.name, &sr.cron, &sr.env, &sr.ownerScope,
 			&sr.startAt, &sr.endAt, &sr.interval, &sr.skipCals, &sr.onlyCals,
-			&sr.ownerUID, &sr.ownerAgencies); err != nil {
+			&sr.ownerUID, &sr.ownerAgencies, &sr.ownerAgency); err != nil {
 			continue
 		}
 		out = append(out, sr)
 	}
 	return out, rows.Err()
 }
+
+// scheduleOwnerAgencySQL is the agency of a definition_schedules row's owner
+// (alias ds): by the owner's uid (agencyid.DefinitionOf), or, for an entry that
+// records none (from before 1020), by the owner's source and name, as the
+// scheduler joins it. NULL for an owner that is not there.
+var scheduleOwnerAgencySQL = `COALESCE(` + agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind") + `,
+	(SELECT ` + agencyid.JobSQL("j") + ` FROM jobs j
+	  WHERE ds.owner_kind = 'job' AND j.source = ds.owner_source AND j.name = ds.owner_name ORDER BY j.rowid LIMIT 1),
+	(SELECT ` + agencyid.WorkflowSQL + ` FROM workflows w
+	  WHERE ds.owner_kind = 'workflow' AND w.source = ds.owner_source AND w.name = ds.owner_name ORDER BY w.rowid LIMIT 1))`
 
 // scheduleOwnerReadable reports whether the actor may see a drained schedule row,
 // given its resolved owner scope (SU-2). Unrestricted actors, workflow-owned
@@ -552,7 +562,7 @@ func scheduleOwnerReadable(id auth.Identity, hasID bool, sr scheduleRow) bool {
 	if sr.ownerScope.Valid {
 		scope = sr.ownerScope.String
 	}
-	return auth.ScopeReadable(id, scope)
+	return auth.ScopeReadableIn(id, sr.ownerAgency, scope)
 }
 
 // defKey identifies a job/workflow definition for the batched schedule-state
@@ -697,23 +707,38 @@ func rfc3339Ptr(t time.Time) *string {
 func (s *Server) pendingRunItems(ctx context.Context, id auth.Identity, hasID bool, now, end time.Time) (upcoming, missed []map[string]any) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, kind, name, source, scope, run_at, scheduled_by, status, COALESCE(miss_reason,''),
-		       COALESCE(gate_kind,''), COALESCE(concurrency_key,''), COALESCE(origin_kind,'')
+		       COALESCE(gate_kind,''), COALESCE(concurrency_key,''), COALESCE(origin_kind,''),
+		       COALESCE(owner_uid, '')
 		FROM pending_runs ORDER BY run_at ASC`)
 	if err != nil {
 		return nil, nil
 	}
 	defer rows.Close()
+	type pendingRow struct {
+		rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, ownerUID string
+		scope                                                                                                  sql.NullString
+	}
+	var pendingRows []pendingRow
 	for rows.Next() {
-		var rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind string
+		var rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, ownerUID string
 		var scope sql.NullString
 		if err := rows.Scan(&rowID, &kind, &name, &source, &scope, &runAt, &schedBy, &status, &missReason,
-			&gateKind, &concKey, &originKind); err != nil {
+			&gateKind, &concKey, &originKind, &ownerUID); err != nil {
 			continue
 		}
+		// Whose scope it is (I2): the owner definition's agency, as the
+		// promotion finds the definition. Rows are drained before it is asked.
+		pendingRows = append(pendingRows, pendingRow{rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, ownerUID, scope})
+	}
+	rows.Close()
+	for _, pr := range pendingRows {
+		rowID, kind, name, source, runAt, schedBy, status, missReason, gateKind, concKey, originKind, scope :=
+			pr.rowID, pr.kind, pr.name, pr.source, pr.runAt, pr.schedBy, pr.status, pr.missReason, pr.gateKind, pr.concKey, pr.originKind, pr.scope
+		ownerAgency := s.definitionAgencyFor(ctx, kind, pr.ownerUID, source, name)
 		// Same fail-closed rule as scheduleOwnerReadable: only an unrestricted
-		// actor sees everything; anyone else is gated by ScopeReadable (which
-		// still admits NULL/global scopes).
-		if !(hasID && id.Unrestricted()) && !auth.ScopeReadable(id, scope.String) {
+		// actor sees everything; anyone else is gated by ScopeReadableIn (which
+		// still admits NULL/global scopes), asked of the owner's agency (I2).
+		if !(hasID && id.Unrestricted()) && !auth.ScopeReadableIn(id, ownerAgency, scope.String) {
 			continue
 		}
 		item := map[string]any{

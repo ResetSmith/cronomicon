@@ -244,8 +244,9 @@ func TestVaultPrefixes_OnlyTheOwnerNamesASharedRowsPath(t *testing.T) {
 		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &sec)
-	// Shared with FIN, in a scope FIN can also write: the pre-2.3.0 shape.
-	exec(`UPDATE secrets SET scope = 'fin-hosts' WHERE id = ?`, sec.ID)
+	// Shared with FIN, as a global row FIN can read: the pre-2.3.0 shape (until I2
+	// it sat in a scope of FIN's; a row of TAX's in FIN's scope cannot be, I2).
+	exec(`UPDATE secrets SET scope = NULL WHERE id = ?`, sec.ID)
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES (?, 'ag:FIN')`, sec.ID)
 
 	for _, c := range []struct{ name, method, path, body string }{

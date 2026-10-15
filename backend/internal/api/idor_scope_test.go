@@ -101,8 +101,10 @@ func TestIDORScopeGates(t *testing.T) {
 	const runStageID = "run-stage-1"
 	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, scope, created_at)
 	      VALUES (?, 'job-prod', 'bash', 'success', 't', 'manual', 'ssh', 'Production', '2026-01-01T00:00:00Z')`, runProdID)
+	stampRunAgencies(exec)
 	exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, scope, created_at)
 	      VALUES (?, 'job-stage', 'bash', 'success', 't', 'manual', 'ssh', 'Staging', '2026-01-01T00:00:00Z')`, runStageID)
+	stampRunAgencies(exec)
 
 	// Create dummy log files
 	err = os.WriteFile(filepath.Join(logDir, runProdID+".log"), []byte("prod output"), 0644)
@@ -194,6 +196,7 @@ func TestIDORScopeGates(t *testing.T) {
 		      VALUES (?, 3, 'wf-child-prod', 'success', 't', 'manual', '2026-01-01T00:00:00Z', '')`, wfChildProdID)
 		exec(`INSERT INTO runs (id, job_name, run_type, status, triggered_by, trigger_kind, executor, scope, workflow_run_id, created_at)
 		      VALUES ('c-run-prod', 'job-prod', 'bash', 'success', 't', 'workflow', 'ssh', 'Production', ?, '2026-01-01T00:00:00Z')`, wfChildProdID)
+		stampRunAgencies(exec)
 
 		// Viewer requesting Stage workflow run with a Prod child -> 403 Forbidden
 		rec = dispatch(http.MethodGet, "/api/v1/workflow-runs/"+wfChildProdID, "run-viewers")
