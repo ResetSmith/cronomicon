@@ -2233,14 +2233,16 @@ export interface paths {
          *     work, on a runner that serves Global, and no department's runner claims
          *     them. 422 (code=unknown_agency) if the id is not in the catalog.
          *
-         *     **Moving a scope to another agency takes a global administrator**
-         *     (v2.4.0): 403 for anyone else, an administrator of both agencies
-         *     included, who may clone the scope to the other one
-         *     (`POST /scopes/{scopeId}/clone`). In v2.3.x it took `configureApp` on
-         *     both sides. Naming the agency the scope is in already moves nothing and
-         *     takes `configureApp` on that agency. A scope that predates v2.3.0 and
-         *     is in several agencies is settled on one of them by whoever holds
-         *     `configureApp` on all of them. CSRF required.
+         *     **Moving a scope is a global administrator's repair** (v2.4.0, IN-7):
+         *     403 for anyone else, an administrator of both agencies included, who
+         *     may clone the scope to the other one (`POST /scopes/{scopeId}/clone`);
+         *     409 `repair_required` for a global administrator who does not send
+         *     `repair: true`, 422 without a `reason`; the reason is written to the
+         *     audit log. In v2.3.x a move took `configureApp` on both sides. Naming
+         *     the agency the scope is in already moves nothing and takes
+         *     `configureApp` on that agency. A scope that predates v2.3.0 and is in
+         *     several agencies is settled on one of them by a repair too. CSRF
+         *     required.
          *
          *     A scope whose inventory is in an AGENCY's repository belongs to that
          *     agency and cannot be moved (v2.4.0): 409 `scope_agency_fixed`. It leaves
@@ -3872,8 +3874,10 @@ export interface paths {
          * @description A record imported for a scope is changed by that scope's agency; one
          *     written by hand by its owner agency's administrators (v2.3.0; Global's by
          *     a global administrator). Naming another `ownerAgency` on a hand-written
-         *     record gives it to that agency and needs `configureApp` there too; on an
-         *     imported record it is ignored. The SSH key named by `authCredentialId`
+         *     record gives it to that agency: a global administrator's repair since
+         *     v2.4.0 (IN-7), with `repair: true` and a `reason` (403 for anyone else,
+         *     409 `repair_required` without it; until then an administrator of both
+         *     agencies could); on an imported record it is ignored. The SSH key named by `authCredentialId`
          *     must be one the record's own agency may use — a key of that agency or one
          *     that is Global's — or the write is refused 422 `unknown_credential`, with
          *     the same answer for another agency's key and for an id that matches
@@ -9208,6 +9212,10 @@ export interface components {
             /** @description First-class SSH key credential id; resolved before authKeyEnvVar. */
             authCredentialId?: string | null;
             user?: string;
+            /** @description Required (true) on an update that names another ownerAgency for a record written by hand: a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. Not read on create. */
+            repair?: boolean;
+            /** @description The repair's reason */
+            reason?: string;
             /** @description The id of the agency the record belongs to (v2.3.0, LR-69). On a record written by hand it is settable: at create, and later to give the record to another agency. On a record imported for a scope it is READ-ONLY and reports that scope's agency. For a scope that predates v2.3.0 and is still in several agencies it reports `global`, though each of those agencies' administrators may edit the record, as they may the scope. A scope resolves a hand-written record only when the record is its own agency's or Global's, and a record routes only through a bastion of its own agency or Global's. */
             ownerAgency?: string;
         };
@@ -9243,6 +9251,10 @@ export interface components {
             /** @description First-class SSH key credential id; resolved before authKeyEnvVar. */
             authCredentialId?: string | null;
             zone?: string;
+            /** @description Required (true) on an update that names another ownerAgency: a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. Not read on create. */
+            repair?: boolean;
+            /** @description The repair's reason */
+            reason?: string;
             /** @description The id of the agency the bastion belongs to (v2.3.0, LR-69): the one named at create (the caller's only agency, or Global for a global administrator, when none is), changed later by naming another, with `configureApp` on both. Its administrators write it. A host routes through it only when the host record is the same agency's (any agency's, for a Global bastion), and the key it names must be its owner's or Global's. */
             ownerAgency?: string;
         };
@@ -13632,6 +13644,10 @@ export interface operations {
                 "application/json": {
                     /** @description Agency id to bind */
                     agencyId?: string | null;
+                    /** @description Required (true) when the request changes the scope's agency: a global administrator's repair (v2.4.0, IN-7). */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
                 };
             };
         };
@@ -14654,6 +14670,10 @@ export interface operations {
                 "application/json": {
                     /** @description The agency the runner is handed to; the one it serves. */
                     agencyId: string;
+                    /** @description Required (true): handing a runner on is a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
                 };
             };
         };
@@ -17306,6 +17326,10 @@ export interface operations {
                 "application/json": {
                     /** @description The desired complete member list for this agency. */
                     members: components["schemas"]["AgencyMemberRef"][];
+                    /** @description Required (true) when the list differs from the agency's: any addition or removal changes an object's agency, a global administrator's repair (v2.4.0, IN-7); 409 `repair_required` otherwise. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
                 };
             };
         };
@@ -17358,7 +17382,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RunnerAgencies"][];
+                "application/json": components["schemas"]["RunnerAgencies"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["RunnerAgencies"][];
+                };
             };
         };
         responses: {
@@ -17409,7 +17438,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {
@@ -17460,7 +17494,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {
@@ -17511,7 +17550,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {
@@ -17562,7 +17606,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgencyMembership"][];
+                "application/json": components["schemas"]["AgencyMembership"][] | {
+                    /** @enum {boolean} */
+                    repair: true;
+                    reason: string;
+                    assignments: components["schemas"]["AgencyMembership"][];
+                };
             };
         };
         responses: {

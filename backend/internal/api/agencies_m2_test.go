@@ -63,10 +63,10 @@ func TestRunnerAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Narrow r1→{a1,a2}; re-post r2→{a1} unchanged ───────────────────────────────
-	resp = do(http.MethodPut, "/api/v1/runner-agencies", []map[string]any{
+	resp = do(http.MethodPut, "/api/v1/runner-agencies", repairOf([]map[string]any{
 		{"runnerId": "r1", "agencyIds": []string{"a1", "a2"}},
 		{"runnerId": "r2", "agencyIds": []string{"a1"}},
-	}, true)
+	}), true)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT narrow = %d, want 200", resp.StatusCode)
 	}
@@ -77,7 +77,7 @@ func TestRunnerAgenciesAPI(t *testing.T) {
 		{{"runnerId": "r1", "agencyIds": []string{"a1", "a2", "a3"}}},
 		{{"runnerId": "r2", "agencyIds": []string{"a1", "a2"}}},
 	} {
-		resp = do(http.MethodPut, "/api/v1/runner-agencies", body, true)
+		resp = do(http.MethodPut, "/api/v1/runner-agencies", repairOf(body), true)
 		if code := decodeCode(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || code != "serve_list_fixed" {
 			t.Fatalf("widening a serve list = %d/%q, want 422/serve_list_fixed", resp.StatusCode, code)
 		}
@@ -105,14 +105,14 @@ func TestRunnerAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Unknown agency / runner → 422 ─────────────────────────────────────────────
-	resp = do(http.MethodPut, "/api/v1/runner-agencies",
-		[]map[string]any{{"runnerId": "r1", "agencyIds": []string{"nope"}}}, true)
+	resp = do(http.MethodPut, "/api/v1/runner-agencies", repairOf(
+		[]map[string]any{{"runnerId": "r1", "agencyIds": []string{"nope"}}}), true)
 	code := decodeCode(t, resp)
 	if code != "unknown_agency" {
 		t.Fatalf("unknown agency code = %q, want unknown_agency", code)
 	}
-	resp = do(http.MethodPut, "/api/v1/runner-agencies",
-		[]map[string]any{{"runnerId": "ghost", "agencyIds": []string{"a1"}}}, true)
+	resp = do(http.MethodPut, "/api/v1/runner-agencies", repairOf(
+		[]map[string]any{{"runnerId": "ghost", "agencyIds": []string{"a1"}}}), true)
 	code = decodeCode(t, resp)
 	if code != "unknown_runner" {
 		t.Fatalf("unknown runner code = %q, want unknown_runner", code)

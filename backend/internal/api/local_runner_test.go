@@ -187,7 +187,7 @@ func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndAgenciesBindToIt(t *t
 	set := func(who string, agencies ...string) (int, string) {
 		t.Helper()
 		body, _ := json.Marshal([]map[string]any{{"runnerId": id, "agencyIds": agencies}})
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, string(body))
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, asRepair(string(body)))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	bind := func(who, scope string) (int, string) {
@@ -237,7 +237,7 @@ func TestLocalRunner_ItsServeListIsAGlobalAdministratorsAndAgenciesBindToIt(t *t
 		t.Errorf("FIN binding its scope to the local runner = %d %s, want 422 runner_not_eligible", code, ec)
 	}
 	// Its owner never changes.
-	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/owner", gRoot, `{"agencyId":"ag:FIN"}`)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+id+"/owner", gRoot, asRepair(`{"agencyId":"ag:FIN"}`))
 	if rec.Code != 422 || errCode(rec.Body.Bytes()) != "owner_change_refused" {
 		t.Errorf("handing the local runner to an agency = %d %s, want 422 owner_change_refused", rec.Code, errCode(rec.Body.Bytes()))
 	}

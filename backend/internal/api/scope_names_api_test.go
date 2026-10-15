@@ -44,7 +44,7 @@ func TestI2_AnAgencyCreatesAScopeOfANameGlobalHolds(t *testing.T) {
 	if err := pool.QueryRow(`SELECT id FROM scopes WHERE name = 'web' AND owner_agency = 'ag:TAX'`).Scan(&taxWeb); err != nil {
 		t.Fatal(err)
 	}
-	if c, b := code(gRoot, http.MethodPut, "/api/v1/scopes/"+taxWeb+"/agency", `{"agencyId":"ag:FIN"}`); c != http.StatusConflict || !strings.Contains(b, "already exists") {
+	if c, b := code(gRoot, http.MethodPut, "/api/v1/scopes/"+taxWeb+"/agency", asRepair(`{"agencyId":"ag:FIN"}`)); c != http.StatusConflict || !strings.Contains(b, "already exists") {
 		t.Errorf("moving TAX's web onto FIN's = %d %s, want 409 scope name already exists", c, b)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM scopes s JOIN scope_agencies sa ON sa.scope_id = s.id WHERE s.id = ? AND s.owner_agency = 'ag:TAX' AND sa.agency_id = 'ag:TAX'`, taxWeb); n != 1 {

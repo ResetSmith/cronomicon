@@ -116,7 +116,7 @@ func TestAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Bind scope to the real agency → 200, surfaced on the scope ────────────────
-	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", map[string]any{"agencyId": created.ID}, true)
+	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", repairOf(map[string]any{"agencyId": created.ID}), true)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("bind = %d, want 200", resp.StatusCode)
 	}
@@ -147,7 +147,7 @@ func TestAgenciesAPI(t *testing.T) {
 	}
 
 	// ── Clear the binding → 200, agency null ──────────────────────────────────────
-	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", map[string]any{"agencyId": nil}, true)
+	resp = do(http.MethodPut, "/api/v1/scopes/s1/agency", repairOf(map[string]any{"agencyId": nil}), true)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("clear = %d, want 200", resp.StatusCode)
 	}

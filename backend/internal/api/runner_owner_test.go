@@ -301,6 +301,11 @@ func TestG3_EveryRunnerRouteIsTheOwners(t *testing.T) {
 		{gRoot, "ag:FIN", "r-legacy"},
 	} {
 		for i, r := range routes {
+			// The hand-off is a repair since I4 (IN-7; question 43): a
+			// global administrator's, not the owner's.
+			if r.path == "/api/v1/runners/{id}/owner" && tc.who != gRoot {
+				continue
+			}
 			if code := call(tc.who, tc.runner, tc.agency, i); code == 403 || code == 401 {
 				t.Errorf("%s on their own %s — %s %s = %d, want past the gate", tc.who, tc.runner, r.method, r.path, code)
 			}
@@ -356,7 +361,7 @@ func TestG3_NobodyWidensAServeList(t *testing.T) {
 	put := func(who, runner string, agencies ...string) (int, string) {
 		t.Helper()
 		body, _ := json.Marshal([]map[string]any{{"runnerId": runner, "agencyIds": agencies}})
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, string(body))
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", who, asRepair(string(body)))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	for _, tc := range []struct {
@@ -400,7 +405,7 @@ func TestG3_NobodyWidensAServeList(t *testing.T) {
 			ms = append(ms, map[string]string{"kind": r[0], "id": r[1]})
 		}
 		body, _ := json.Marshal(map[string]any{"members": ms})
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/"+agency+"/members", who, string(body))
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/"+agency+"/members", who, asRepair(string(body)))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	taxNow := [][2]string{{"scope", "sc:tax"}, {"runner", "r-tax"}, {"runner", "r-legacy"}}
@@ -410,9 +415,14 @@ func TestG3_NobodyWidensAServeList(t *testing.T) {
 	if code, _ := members(gTaxAdmin, "ag:TAX", append(slices.Clone(taxNow), [2]string{"runner", "r-fin"})...); code != 403 {
 		t.Errorf("TAX adding FIN's agent to its own members = %d, want 403", code)
 	}
-	// TAX dropping its own agent would leave it serving nobody.
-	if code, ec := members(gTaxAdmin, "ag:TAX", [2]string{"scope", "sc:tax"}, [2]string{"runner", "r-legacy"}); code != 422 || ec != "owner_removal" {
-		t.Errorf("TAX dropping its own agent from its members = %d %s, want 422 owner_removal", code, ec)
+	// TAX dropping its own agent changes the agent's placement: a global
+	// administrator's repair since I4 (IN-7). (It was 422 owner_removal: it
+	// would leave the agent serving nobody, which a repair is refused for too.)
+	if code, ec := members(gTaxAdmin, "ag:TAX", [2]string{"scope", "sc:tax"}, [2]string{"runner", "r-legacy"}); code != 403 {
+		t.Errorf("TAX dropping its own agent from its members = %d %s, want 403", code, ec)
+	}
+	if code, ec := members(gRoot, "ag:TAX", [2]string{"scope", "sc:tax"}, [2]string{"runner", "r-legacy"}); code != 422 || ec != "owner_removal" {
+		t.Errorf("a global administrator's repair dropping TAX's own agent = %d %s, want 422 owner_removal", code, ec)
 	}
 	// TAX taking the legacy placement off its list is a write on a runner TAX
 	// does not own.
@@ -467,7 +477,7 @@ func TestG3_ALegacyPlacementIsNoticedAndHandedOver(t *testing.T) {
 
 	owner := func(who, runner, agency string) (int, string) {
 		t.Helper()
-		rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+runner+"/owner", who, `{"agencyId":"`+agency+`"}`)
+		rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/"+runner+"/owner", who, asRepair(`{"agencyId":"`+agency+`"}`))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	// Refused while it still serves two, whoever asks; and every other change.
@@ -492,7 +502,7 @@ func TestG3_ALegacyPlacementIsNoticedAndHandedOver(t *testing.T) {
 	// Narrow it to FIN. It is still a legacy placement (Global's, serving FIN),
 	// and the notice now says what settles it.
 	body, _ := json.Marshal([]map[string]any{{"runnerId": "r-legacy", "agencyIds": []string{"ag:FIN"}}})
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, string(body)); rec.Code != 200 {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/runner-agencies", gRoot, asRepair(string(body))); rec.Code != 200 {
 		t.Fatalf("narrowing = %d (%s)", rec.Code, rec.Body)
 	}
 	check()

@@ -51,7 +51,7 @@ func TestAgencyMembershipRoundTripAPI(t *testing.T) {
 	}
 
 	body := `[{"id":"` + secretID + `","agencyIds":["ag-dss"]}]`
-	rec := reqAs(t, h, http.MethodPut, "/api/v1/secret-agencies", "sec-admins", body)
+	rec := reqAs(t, h, http.MethodPut, "/api/v1/secret-agencies", "sec-admins", asRepair(body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -73,7 +73,7 @@ func TestAgencyMembershipRoundTripAPI(t *testing.T) {
 	}
 
 	bad := `[{"id":"nope","agencyIds":["ag-dss"]}]`
-	if rec := reqAs(t, h, http.MethodPut, "/api/v1/secret-agencies", "sec-admins", bad); rec.Code != http.StatusUnprocessableEntity {
+	if rec := reqAs(t, h, http.MethodPut, "/api/v1/secret-agencies", "sec-admins", asRepair(bad)); rec.Code != http.StatusUnprocessableEntity {
 		t.Errorf("PUT with an unknown secret = %d, want 422", rec.Code)
 	}
 }
@@ -134,7 +134,7 @@ func TestPhase3AppliesTheAgencyPredicate(t *testing.T) {
 	// Put the secret in DSS while the prod scope belongs to no agency: the sets no
 	// longer intersect, so under AG-Q1(b) it stops resolving.
 	body := `[{"id":"` + secretID + `","agencyIds":["ag-dss"]}]`
-	if rec := reqAs(t, h, http.MethodPut, "/api/v1/secret-agencies", "sec-admins", body); rec.Code != http.StatusOK {
+	if rec := reqAs(t, h, http.MethodPut, "/api/v1/secret-agencies", "sec-admins", asRepair(body)); rec.Code != http.StatusOK {
 		t.Fatalf("assign membership = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if validate() {
@@ -143,7 +143,7 @@ func TestPhase3AppliesTheAgencyPredicate(t *testing.T) {
 
 	// Putting the SCOPE in the same agency restores it: intersection, not exclusion.
 	if rec := reqAs(t, h, http.MethodPut, "/api/v1/scope-agencies", "sec-admins",
-		`[{"id":"sc-prod","agencyIds":["ag-dss"]}]`); rec.Code != http.StatusOK {
+		asRepair(`[{"id":"sc-prod","agencyIds":["ag-dss"]}]`)); rec.Code != http.StatusOK {
 		t.Fatalf("assign scope membership = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if !validate() {

@@ -195,24 +195,28 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 // them is those agencies' to settle, as it was: both are held to the
 // two-sided rule alone. So is a CLONE of a scope (requireBothSides), which
 // leaves the scope where it is.
+//
+// Since 2.4.0 Phase I4 (IN-7) EVERY kind is so, and a move is any change of
+// the agency set — to another agency, or a narrowing of a set two agencies
+// share from before 2.3.0: it is a global administrator's repair, with
+// `repair: true` and a reason (requireRepair). A write that names the set as
+// it is changes nothing and is held to the two-sided rule alone. It returns
+// whether the write is a repair, for the caller's audit row.
 func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Identity,
-	kind settings.MemberKind, entityID string, targets []string) bool {
+	kind settings.MemberKind, entityID string, targets []string, rep repairInput) (repaired, ok bool) {
 
 	current, ok := s.requireBothSides(w, r, id, kind, entityID, targets)
 	if !ok {
-		return false
+		return false, false
 	}
-	if kind != settings.MemberScope || !namesAnother(current, targets) {
-		return true
+	if sameAgencySet(current, targets) {
+		return false, true
 	}
-	perm, _, _, _ := membershipAuthzFor(kind)
-	if !id.GlobalAdmin(perm) {
-		s.denyEntityAgency(w, r, id, perm, auth.AllScopes,
-			"a scope is moved to another agency by a global administrator only; "+
-				"an administrator of both agencies may clone it to the other one")
-		return false
+	_, _, _, label := membershipAuthzFor(kind)
+	if !s.requireRepair(w, r, id, rep, "this "+label) {
+		return false, false
 	}
-	return true
+	return true, true
 }
 
 // namesAnother reports whether targets names an agency that is not in current.
@@ -306,9 +310,11 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
+	// A bare array (the matrix as it is), or, for a repair (I4; question 44),
+	// {repair, reason, assignments}.
 	var body []settings.AgencyMembership
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+	var rep repairInput
+	if !decodeRepairable(w, r, &body, &rep) {
 		return
 	}
 	// 🔴 RF-1b (the RBAC-fixes plan): re-homing IS an authorization act, and
@@ -321,9 +327,14 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	// secrets — re-home, then reveal — which is exactly the cross-department
 	// credential read RB-32 exists to prevent. So the caller must hold the
 	// permission on BOTH sides of the move (requireMove).
+	var repaired []settings.AgencyMembership
 	for _, m := range body {
-		if !s.requireMove(w, r, id, kind, m.ID, m.AgencyIDs) {
+		isRepair, ok := s.requireMove(w, r, id, kind, m.ID, m.AgencyIDs, rep)
+		if !ok {
 			return
+		}
+		if isRepair {
+			repaired = append(repaired, m)
 		}
 		// LR-80: a Vault-backed secret or key that moves to an agency must lie
 		// inside THAT agency's Vault paths, or the move would be the way to get
@@ -352,6 +363,9 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 			httpx.Fail500(w, s.log, "update_failed", err)
 		}
 		return
+	}
+	for _, m := range repaired {
+		s.auditRepair(r.Context(), id.Email, string(kind)+" "+m.ID, m.AgencyIDs, rep)
 	}
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself
@@ -455,8 +469,29 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body []settings.RunnerAgencies
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+	var rep repairInput
+	if !decodeRepairable(w, r, &body, &rep) {
+		return
+	}
+	// A runner's placement that changes (MA-11 lets through only the
+	// narrowing of a legacy placement) is a repair (I4; IN-7). One that names
+	// the list as it is changes nothing.
+	current, err := settings.ListRunnerAgencies(r.Context(), s.db)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	serves := make(map[string][]string, len(current))
+	for _, c := range current {
+		serves[c.RunnerID] = c.AgencyIDs
+	}
+	var repaired []settings.RunnerAgencies
+	for _, m := range body {
+		if was, known := serves[m.RunnerID]; known && !sameAgencySet(was, m.AgencyIDs) {
+			repaired = append(repaired, m)
+		}
+	}
+	if len(repaired) > 0 && !s.requireRepair(w, r, id, rep, "a runner's placement") {
 		return
 	}
 	// The serve list is the runner's, so writing it takes the runner's OWNER
@@ -488,6 +523,9 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 			httpx.Fail500(w, s.log, "update_failed", err)
 		}
 		return
+	}
+	for _, m := range repaired {
+		s.auditRepair(r.Context(), id.Email, "runner "+m.RunnerID+" placement", m.AgencyIDs, rep)
 	}
 	list, err := settings.ListRunnerAgencies(r.Context(), s.db)
 	if err != nil {
@@ -752,6 +790,7 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 	sid := r.PathValue("scopeId")
 	var inp struct {
 		AgencyID *string `json:"agencyId"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -766,7 +805,12 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 	if inp.AgencyID != nil && strings.TrimSpace(*inp.AgencyID) != "" {
 		target = strings.TrimSpace(*inp.AgencyID)
 	}
-	if !s.requireMove(w, r, id, settings.MemberScope, sid, []string{target}) {
+	// An agency that is not there is that, before it is a repair.
+	if target != agencyid.Global && !s.requireKnownAgency(w, r, target) {
+		return
+	}
+	isRepair, ok := s.requireMove(w, r, id, settings.MemberScope, sid, []string{target}, inp.repairInput)
+	if !ok {
 		return
 	}
 	sc, err := settings.SetScopeAgency(r.Context(), s.db, sid, inp.AgencyID, id.Email)
@@ -788,6 +832,9 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 	if sc == nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
+	}
+	if isRepair {
+		s.auditRepair(r.Context(), id.Email, "scope "+sid, []string{target}, inp.repairInput)
 	}
 	httpx.JSON(w, http.StatusOK, sc)
 }
@@ -821,6 +868,7 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	agencyID := r.PathValue("agencyId")
 	var body struct {
 		Members []settings.AgencyMemberRef `json:"members"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
@@ -843,6 +891,13 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
+	// Any change of what this agency holds changes some object's agency: an
+	// addition moves it here (one agency each since 2.3.0), a removal takes
+	// it away. A repair (I4; IN-7), whatever the kind.
+	repairing := len(delta.Added)+len(delta.Removed) > 0
+	if repairing && !s.requireRepair(w, r, id, body.repairInput, "what agency "+agencyID+" holds") {
+		return
+	}
 	// A scope is authorized like every other kind since 2.3.0 (LR-7): an add is
 	// a move INTO this agency, and needs authority on where the entity is today
 	// and on this agency.
@@ -856,7 +911,7 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 			}
 			continue
 		}
-		if !s.requireMove(w, r, id, settings.MemberKind(m.Kind), m.ID, []string{agencyID}) {
+		if _, ok := s.requireMove(w, r, id, settings.MemberKind(m.Kind), m.ID, []string{agencyID}, body.repairInput); !ok {
 			return
 		}
 		if !s.requireVaultRowFits(w, r, id, settings.MemberKind(m.Kind), m.ID, agencyID) {
@@ -898,6 +953,14 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 
 	// A scope moving in or out of this agency changes what grants reach; the
 	// setter told the grant snapshot (LR-78). No session is signed out.
+	if repairing {
+		for _, m := range delta.Added {
+			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID+" added to agency "+agencyID, []string{agencyID}, body.repairInput)
+		}
+		for _, m := range delta.Removed {
+			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID+" removed from agency "+agencyID, nil, body.repairInput)
+		}
+	}
 
 	d, err := settings.BuildAgencyDetail(r.Context(), s.db, agencyID)
 	if err != nil || d == nil {

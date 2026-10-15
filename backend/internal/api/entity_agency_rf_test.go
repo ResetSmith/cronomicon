@@ -201,7 +201,7 @@ func TestRehomingIsAuthorized(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rec := reqAs(t, h2, http.MethodPut, "/api/v1/secret-agencies", "sec-admins",
-		`[{"id":"`+s2+`","agencyIds":["ag-any"]}]`); rec.Code != http.StatusOK {
+		asRepair(`[{"id":"`+s2+`","agencyIds":["ag-any"]}]`)); rec.Code != http.StatusOK {
 		t.Errorf("unrestricted admin setting membership = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 }

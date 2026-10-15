@@ -1541,7 +1541,7 @@ func (s *Server) handleCreateSshHost(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
-	inp, err := decodeSshHostInput(r)
+	inp, _, err := decodeSshHostInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
@@ -1572,12 +1572,13 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hid := r.PathValue("hostId")
-	inp, err := decodeSshHostInput(r)
+	inp, rep, err := decodeSshHostInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	if !s.requireHostWriteAllowed(w, r, id, hid, inp) {
+	repaired, ok := s.requireHostWriteAllowed(w, r, id, hid, inp, rep)
+	if !ok {
 		return
 	}
 	h, err := settings.UpdateSshHost(r.Context(), s.db, hid, *inp, id.Email)
@@ -1589,6 +1590,9 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "host not found")
 		return
 	}
+	if repaired {
+		s.auditRepair(r.Context(), id.Email, "host record "+hid, []string{inp.OwnerAgency}, rep)
+	}
 	httpx.JSON(w, http.StatusOK, h)
 }
 
@@ -1596,9 +1600,11 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 // requireHostOwner has established that the caller administers the record as it
 // stands. Two things remain (LR-69, LR-72):
 //
-//   - Giving a hand-written record to ANOTHER agency needs the permission there
-//     too, like every move. An imported record's owner is its scope's and cannot
-//     be set here.
+//   - Giving a hand-written record to ANOTHER agency is a repair (2.4.0 Phase
+//     I4; IN-7; question 42): a global administrator's, with a reason; until
+//     then an administrator of both agencies could. It reports whether the
+//     write is one, for the handler's audit row. An imported record's owner is
+//     its scope's and cannot be set here.
 //   - The SSH key the record names must be one its owner may use: the owner's
 //     own, or Global's. Credential ids are listed to every session, so without
 //     this an administrator could point their host at another agency's key.
@@ -1609,7 +1615,7 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 // The key a host names by NAME, in its scope's inventory, cannot be judged here
 // — a name resolves at connect time — so the control that closes the hole is the
 // same check made when the key is loaded (sshexec.keyGuard).
-func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request, id auth.Identity, hostID string, inp *settings.SshHostInput) bool {
+func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request, id auth.Identity, hostID string, inp *settings.SshHostInput, rep repairInput) (repaired, ok bool) {
 	// Read only what the decision needs: the record's scope, owner and key.
 	var cur struct {
 		ScopeID, AuthCredentialID *string
@@ -1619,11 +1625,11 @@ func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request,
 		`SELECT scope_id, owner_agency, auth_credential_id FROM ssh_hosts WHERE id = ?`, hostID).
 		Scan(&cur.ScopeID, &cur.OwnerAgency, &cur.AuthCredentialID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return true // the handler's 404
+		return false, true // the handler's 404
 	}
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
-		return false
+		return false, false
 	}
 	if cur.ScopeID != nil && *cur.ScopeID == "" {
 		cur.ScopeID = nil
@@ -1633,18 +1639,16 @@ func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request,
 		inp.OwnerAgency = "" // the scope decides
 	} else if inp.OwnerAgency != "" && inp.OwnerAgency != cur.OwnerAgency {
 		if !s.requireKnownAgency(w, r, inp.OwnerAgency) {
-			return false
+			return false, false
 		}
-		if !id.CanAgency(auth.PermConfigureApp, inp.OwnerAgency) {
-			s.denyEntityAgency(w, r, id, auth.PermConfigureApp, inp.OwnerAgency,
-				"you do not have configureApp on agency "+inp.OwnerAgency+", so you cannot give this host record to it")
-			return false
+		if !s.requireRepair(w, r, id, rep, "this host record") {
+			return false, false
 		}
 		owner, ownerChanged = inp.OwnerAgency, true
 	}
 	keyChanged := derefStr(inp.AuthCredentialID) != derefStr(cur.AuthCredentialID)
 	if !keyChanged && !ownerChanged {
-		return true
+		return false, true
 	}
 	// An imported record of a scope in several agencies (the state from before
 	// 2.3.0) may use a key of any of them, as its runs may.
@@ -1652,10 +1656,10 @@ func (s *Server) requireHostWriteAllowed(w http.ResponseWriter, r *http.Request,
 	if cur.ScopeID != nil {
 		if owners, err = s.scopeAgencyIDs(r.Context(), *cur.ScopeID); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
-			return false
+			return false, false
 		}
 	}
-	return s.requireKeyUsableBy(w, r, inp.AuthCredentialID, owners, "host record")
+	return ownerChanged, s.requireKeyUsableBy(w, r, inp.AuthCredentialID, owners, "host record")
 }
 
 func derefStr(p *string) string {
@@ -1767,7 +1771,9 @@ func (s *Server) handleDeleteSshHost(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func decodeSshHostInput(r *http.Request) (*settings.SshHostInput, error) {
+// decodeSshHostInput also returns the repair fields (I4): an update that
+// gives the record another owner is a repair.
+func decodeSshHostInput(r *http.Request) (*settings.SshHostInput, repairInput, error) {
 	var body struct {
 		Hostname         string  `json:"hostname"`
 		Address          *string `json:"address"`
@@ -1778,16 +1784,17 @@ func decodeSshHostInput(r *http.Request) (*settings.SshHostInput, error) {
 		AuthCredentialID *string `json:"authCredentialId"`
 		User             *string `json:"user"`
 		OwnerAgency      string  `json:"ownerAgency"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return nil, err
+		return nil, repairInput{}, err
 	}
 	return &settings.SshHostInput{
 		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
 		Hostname:    body.Hostname, Address: body.Address, Port: body.Port,
 		OS: body.OS, Via: body.Via, AuthKeyEnvVar: body.AuthKeyEnvVar,
 		AuthCredentialID: body.AuthCredentialID, User: body.User,
-	}, nil
+	}, body.repairInput, nil
 }
 
 // handleTestSshHost runs a synchronous SSH connection test against a host,
@@ -1868,7 +1875,7 @@ func (s *Server) handleCreateBastion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 		return
 	}
-	inp, err := decodeBastionInput(r)
+	inp, _, err := decodeBastionInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
@@ -1896,14 +1903,14 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bid := r.PathValue("bastionId")
-	inp, err := decodeBastionInput(r)
+	inp, rep, err := decodeBastionInput(r)
 	if err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
 	// requireBastionOwner let the caller in on the bastion as it stands. Giving
-	// it to another agency needs the permission there too, and its key must be
-	// one its (new) owner may use — checked when either changes (LR-72).
+	// it to another agency is a repair (I4; IN-7; question 42), and its key must
+	// be one its (new) owner may use — checked when either changes (LR-72).
 	var cur struct {
 		OwnerAgency      string
 		AuthCredentialID *string
@@ -1914,18 +1921,17 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", gerr)
 		return
 	}
+	repaired := false
 	if gerr == nil {
 		owner, ownerChanged := cur.OwnerAgency, false
 		if inp.OwnerAgency != "" && inp.OwnerAgency != cur.OwnerAgency {
 			if !s.requireKnownAgency(w, r, inp.OwnerAgency) {
 				return
 			}
-			if !id.CanAgency(auth.PermConfigureApp, inp.OwnerAgency) {
-				s.denyEntityAgency(w, r, id, auth.PermConfigureApp, inp.OwnerAgency,
-					"you do not have configureApp on agency "+inp.OwnerAgency+", so you cannot give this bastion to it")
+			if !s.requireRepair(w, r, id, rep, "this bastion") {
 				return
 			}
-			owner, ownerChanged = inp.OwnerAgency, true
+			owner, ownerChanged, repaired = inp.OwnerAgency, true, true
 		}
 		if ownerChanged || derefStr(inp.AuthCredentialID) != derefStr(cur.AuthCredentialID) {
 			if !s.requireKeyUsableBy(w, r, inp.AuthCredentialID, []string{owner}, "bastion") {
@@ -1941,6 +1947,9 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 	if b == nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "bastion not found")
 		return
+	}
+	if repaired {
+		s.auditRepair(r.Context(), id.Email, "bastion "+bid, []string{inp.OwnerAgency}, rep)
 	}
 	httpx.JSON(w, http.StatusOK, b)
 }
@@ -1965,7 +1974,9 @@ func (s *Server) handleDeleteBastion(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func decodeBastionInput(r *http.Request) (*settings.SshBastionInput, error) {
+// decodeBastionInput also returns the repair fields (I4): an update that
+// gives the bastion another owner is a repair.
+func decodeBastionInput(r *http.Request) (*settings.SshBastionInput, repairInput, error) {
 	var body struct {
 		Name             string  `json:"name"`
 		Address          string  `json:"address"`
@@ -1975,16 +1986,17 @@ func decodeBastionInput(r *http.Request) (*settings.SshBastionInput, error) {
 		AuthCredentialID *string `json:"authCredentialId"`
 		Zone             *string `json:"zone"`
 		OwnerAgency      string  `json:"ownerAgency"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		return nil, err
+		return nil, repairInput{}, err
 	}
 	return &settings.SshBastionInput{
 		OwnerAgency: strings.TrimSpace(body.OwnerAgency),
 		Name:        body.Name, Address: body.Address, Port: body.Port,
 		Username: body.Username, AuthKeyEnvVar: body.AuthKeyEnvVar,
 		AuthCredentialID: body.AuthCredentialID, Zone: body.Zone,
-	}, nil
+	}, body.repairInput, nil
 }
 
 // decodeCredentialInput parses an SSH key credential create/update body. material

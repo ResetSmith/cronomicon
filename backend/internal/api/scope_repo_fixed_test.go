@@ -23,7 +23,7 @@ func TestAScopeOfAnAgencysRepositoryCannotBeMoved(t *testing.T) {
 		{"/api/v1/scope-agencies", `[{"id":"sc:repo","agencyIds":["ag:TAX"]}]`},
 		{"/api/v1/agencies/ag:TAX/members", `{"members":[{"kind":"scope","id":"sc:tax"},{"kind":"scope","id":"sc:repo"}]}`},
 	} {
-		rec := gateReq(t, h, http.MethodPut, c.path, gRoot, c.body)
+		rec := gateReq(t, h, http.MethodPut, c.path, gRoot, asRepair(c.body)) // even as a repair (GR-18)
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "scope_agency_fixed") {
 			t.Errorf("PUT %s %s = %d, want 409 scope_agency_fixed (%s)", c.path, c.body, rec.Code, rec.Body)
 		}

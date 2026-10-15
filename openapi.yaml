@@ -3877,14 +3877,16 @@ paths:
         work, on a runner that serves Global, and no department's runner claims
         them. 422 (code=unknown_agency) if the id is not in the catalog.
 
-        **Moving a scope to another agency takes a global administrator**
-        (v2.4.0): 403 for anyone else, an administrator of both agencies
-        included, who may clone the scope to the other one
-        (`POST /scopes/{scopeId}/clone`). In v2.3.x it took `configureApp` on
-        both sides. Naming the agency the scope is in already moves nothing and
-        takes `configureApp` on that agency. A scope that predates v2.3.0 and
-        is in several agencies is settled on one of them by whoever holds
-        `configureApp` on all of them. CSRF required.
+        **Moving a scope is a global administrator's repair** (v2.4.0, IN-7):
+        403 for anyone else, an administrator of both agencies included, who
+        may clone the scope to the other one (`POST /scopes/{scopeId}/clone`);
+        409 `repair_required` for a global administrator who does not send
+        `repair: true`, 422 without a `reason`; the reason is written to the
+        audit log. In v2.3.x a move took `configureApp` on both sides. Naming
+        the agency the scope is in already moves nothing and takes
+        `configureApp` on that agency. A scope that predates v2.3.0 and is in
+        several agencies is settled on one of them by a repair too. CSRF
+        required.
 
         A scope whose inventory is in an AGENCY's repository belongs to that
         agency and cannot be moved (v2.4.0): 409 `scope_agency_fixed`. It leaves
@@ -3899,6 +3901,8 @@ paths:
               type: object
               properties:
                 agencyId: { type: [string, 'null'], description: Agency id to bind, or null to return the scope to Global. }
+                repair: { type: boolean, description: "Required (true) when the request changes the scope's agency: a global administrator's repair (v2.4.0, IN-7)." }
+                reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. Required with `repair`. }
       responses:
         '200':
           description: Updated scope.
@@ -4843,6 +4847,8 @@ paths:
               required: [agencyId]
               properties:
                 agencyId: { type: string, description: The agency the runner is handed to; the one it serves. }
+                repair: { type: boolean, description: "Required (true): handing a runner on is a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it." }
+                reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. }
       responses:
         '204': { description: The agency owns the runner. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -6354,8 +6360,10 @@ paths:
         A record imported for a scope is changed by that scope's agency; one
         written by hand by its owner agency's administrators (v2.3.0; Global's by
         a global administrator). Naming another `ownerAgency` on a hand-written
-        record gives it to that agency and needs `configureApp` there too; on an
-        imported record it is ignored. The SSH key named by `authCredentialId`
+        record gives it to that agency: a global administrator's repair since
+        v2.4.0 (IN-7), with `repair: true` and a `reason` (403 for anyone else,
+        409 `repair_required` without it; until then an administrator of both
+        agencies could); on an imported record it is ignored. The SSH key named by `authCredentialId`
         must be one the record's own agency may use — a key of that agency or one
         that is Global's — or the write is refused 422 `unknown_credential`, with
         the same answer for another agency's key and for an id that matches
@@ -7126,6 +7134,8 @@ paths:
                   type: array
                   description: The desired complete member list for this agency.
                   items: { $ref: '#/components/schemas/AgencyMemberRef' }
+                repair: { type: boolean, description: "Required (true) when the list differs from the agency's: any addition or removal changes an object's agency, a global administrator's repair (v2.4.0, IN-7); 409 `repair_required` otherwise." }
+                reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. Required with `repair`. }
       responses:
         '200':
           description: The agency's resulting contents and dispatch health.
@@ -7183,8 +7193,19 @@ paths:
         content:
           application/json:
             schema:
-              type: array
-              items: { $ref: '#/components/schemas/RunnerAgencies' }
+              oneOf:
+                - type: array
+                  description: The rows as posted. A row that changes a serve list is refused 409 `repair_required`.
+                  items: { $ref: '#/components/schemas/RunnerAgencies' }
+                - type: object
+                  description: "A repair (v2.4.0, IN-7): a global administrator's, with a reason written to the audit log."
+                  required: [repair, reason, assignments]
+                  properties:
+                    repair: { type: boolean, enum: [true] }
+                    reason: { type: string, maxLength: 500 }
+                    assignments:
+                      type: array
+                      items: { $ref: '#/components/schemas/RunnerAgencies' }
       responses:
         '200':
           description: Updated matrix.
@@ -7249,8 +7270,19 @@ paths:
         content:
           application/json:
             schema:
-              type: array
-              items: { $ref: '#/components/schemas/AgencyMembership' }
+              oneOf:
+                - type: array
+                  description: The rows as posted. A row that changes an agency set is refused 409 `repair_required`.
+                  items: { $ref: '#/components/schemas/AgencyMembership' }
+                - type: object
+                  description: "A repair (v2.4.0, IN-7): a global administrator's, with a reason written to the audit log."
+                  required: [repair, reason, assignments]
+                  properties:
+                    repair: { type: boolean, enum: [true] }
+                    reason: { type: string, maxLength: 500 }
+                    assignments:
+                      type: array
+                      items: { $ref: '#/components/schemas/AgencyMembership' }
       responses:
         '200':
           description: Updated matrix.
@@ -7311,8 +7343,19 @@ paths:
         content:
           application/json:
             schema:
-              type: array
-              items: { $ref: '#/components/schemas/AgencyMembership' }
+              oneOf:
+                - type: array
+                  description: The rows as posted. A row that changes an agency set is refused 409 `repair_required`.
+                  items: { $ref: '#/components/schemas/AgencyMembership' }
+                - type: object
+                  description: "A repair (v2.4.0, IN-7): a global administrator's, with a reason written to the audit log."
+                  required: [repair, reason, assignments]
+                  properties:
+                    repair: { type: boolean, enum: [true] }
+                    reason: { type: string, maxLength: 500 }
+                    assignments:
+                      type: array
+                      items: { $ref: '#/components/schemas/AgencyMembership' }
       responses:
         '200':
           description: Updated matrix.
@@ -7373,8 +7416,19 @@ paths:
         content:
           application/json:
             schema:
-              type: array
-              items: { $ref: '#/components/schemas/AgencyMembership' }
+              oneOf:
+                - type: array
+                  description: The rows as posted. A row that changes an agency set is refused 409 `repair_required`.
+                  items: { $ref: '#/components/schemas/AgencyMembership' }
+                - type: object
+                  description: "A repair (v2.4.0, IN-7): a global administrator's, with a reason written to the audit log."
+                  required: [repair, reason, assignments]
+                  properties:
+                    repair: { type: boolean, enum: [true] }
+                    reason: { type: string, maxLength: 500 }
+                    assignments:
+                      type: array
+                      items: { $ref: '#/components/schemas/AgencyMembership' }
       responses:
         '200':
           description: Updated matrix.
@@ -7435,8 +7489,19 @@ paths:
         content:
           application/json:
             schema:
-              type: array
-              items: { $ref: '#/components/schemas/AgencyMembership' }
+              oneOf:
+                - type: array
+                  description: The rows as posted. A row that changes an agency set is refused 409 `repair_required`.
+                  items: { $ref: '#/components/schemas/AgencyMembership' }
+                - type: object
+                  description: "A repair (v2.4.0, IN-7): a global administrator's, with a reason written to the audit log."
+                  required: [repair, reason, assignments]
+                  properties:
+                    repair: { type: boolean, enum: [true] }
+                    reason: { type: string, maxLength: 500 }
+                    assignments:
+                      type: array
+                      items: { $ref: '#/components/schemas/AgencyMembership' }
       responses:
         '200':
           description: Updated matrix.
@@ -13461,6 +13526,8 @@ components:
           type: [string, 'null']
           description: First-class SSH key credential id; resolved before authKeyEnvVar.
         user: { type: string }
+        repair: { type: boolean, description: "Required (true) on an update that names another ownerAgency for a record written by hand: a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. Not read on create." }
+        reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. }
         ownerAgency:
           type: string
           description: >-
@@ -13517,6 +13584,8 @@ components:
           type: [string, 'null']
           description: First-class SSH key credential id; resolved before authKeyEnvVar.
         zone: { type: string }
+        repair: { type: boolean, description: "Required (true) on an update that names another ownerAgency: a global administrator's repair (v2.4.0, IN-7); 403 for anyone else, 409 `repair_required` without it. Not read on create." }
+        reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. }
         ownerAgency:
           type: string
           description: >-

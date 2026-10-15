@@ -82,15 +82,30 @@ func TestOneAgency_ASecretMovesWithItsOwner(t *testing.T) {
 			t.Errorf("%s moving FIN's secret to %s = %d, want 403", c.who, c.to, code)
 		}
 	}
-	if code, ec := move(both, sec, "ag:FIN\",\"ag:TAX"); code != http.StatusUnprocessableEntity || ec != "one_agency" {
+	repair := func(who, id, agency string) (int, string) {
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", who, asRepair(`[{"id":"`+id+`","agencyIds":["`+agency+`"]}]`))
+		return rec.Code, errCode(rec.Body.Bytes())
+	}
+	if code, ec := repair(gRoot, sec, "ag:FIN\",\"ag:TAX"); code != http.StatusUnprocessableEntity || ec != "one_agency" {
 		t.Errorf("putting a secret in two agencies = %d %s, want 422 one_agency", code, ec)
 	}
 	if got := state(sec); got != "ag:FIN/ag:FIN" {
 		t.Fatalf("a refused move changed the secret: %s", got)
 	}
 
-	if code, ec := move(both, sec, "ag:TAX"); code != http.StatusOK {
-		t.Fatalf("an administrator of both agencies moving the secret = %d %s, want 200", code, ec)
+	// An administrator of both agencies does not move it (I4; IN-7; until
+	// then they could), asking for a repair or not; a global administrator's
+	// repair does.
+	for _, f := range []func(string, string, string) (int, string){move, repair} {
+		if code, ec := f(both, sec, "ag:TAX"); code != http.StatusForbidden {
+			t.Errorf("an administrator of both agencies moving the secret = %d %s, want 403", code, ec)
+		}
+	}
+	if got := state(sec); got != "ag:FIN/ag:FIN" {
+		t.Fatalf("a refused move changed the secret: %s", got)
+	}
+	if code, ec := repair(gRoot, sec, "ag:TAX"); code != http.StatusOK {
+		t.Fatalf("a global administrator's repair of the secret = %d %s, want 200", code, ec)
 	}
 	if got := state(sec); got != "ag:TAX/ag:TAX" {
 		t.Errorf("after the move the secret is %s, want owned by and in TAX alone", got)
@@ -100,7 +115,7 @@ func TestOneAgency_ASecretMovesWithItsOwner(t *testing.T) {
 		t.Errorf("FIN's administrator deleted a secret that was moved to TAX (%d)", rec.Code)
 	}
 	// A global administrator makes it Global's, and takes it back out.
-	if code, _ := move(gRoot, sec, "global"); code != http.StatusOK {
+	if code, _ := repair(gRoot, sec, "global"); code != http.StatusOK {
 		t.Errorf("a global administrator making the secret Global's = %d, want 200", code)
 	}
 	if got := state(sec); got != "global/global" {
@@ -112,7 +127,7 @@ func TestOneAgency_ASecretMovesWithItsOwner(t *testing.T) {
 	exec := mustExec(t, pool)
 	exec(`INSERT INTO secrets (id, key, scope, source, created_at, owner_agency) VALUES ('tax-dup', 'API_TOKEN', 'fin-hosts', 'stored', '2026-01-01T00:00:00Z', 'ag:TAX')`)
 	exec(`INSERT INTO secret_agencies (secret_id, agency_id) VALUES ('tax-dup', 'ag:TAX')`)
-	if code, ec := move(both, finDup, "ag:TAX"); code != http.StatusConflict || ec != "owner_conflict" {
+	if code, ec := repair(gRoot, finDup, "ag:TAX"); code != http.StatusConflict || ec != "owner_conflict" {
 		t.Errorf("moving a secret onto a name TAX already owns in that scope = %d %s, want 409 owner_conflict", code, ec)
 	}
 	if got := state(finDup); got != "ag:FIN/ag:FIN" {
@@ -204,20 +219,29 @@ func TestOneAgency_ASharedRowIsSettledByAllItsAgenciesNotTakenByOne(t *testing.T
 		t.Fatal("TAX's secret changed owner under FIN's administrator")
 	}
 
-	// It may give up its own share: the row is left with the other agency.
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gFinAdmin,
-		`{"members":[{"kind":"scope","id":"sc:fin"},{"kind":"scope","id":"sc:both"},{"kind":"secret","id":"s-tax-owned"}]}`); rec.Code != http.StatusOK {
-		t.Fatalf("FIN giving up its share of the Global-owned secret = %d, want 200 (%s)", rec.Code, rec.Body)
+	// Giving up its share changes the row's agencies: since I4 (IN-7) a
+	// global administrator's repair, not FIN's (until then it was FIN's to
+	// do). The row is left with the other agency.
+	giveUp := `{"members":[{"kind":"scope","id":"sc:fin"},{"kind":"scope","id":"sc:both"},{"kind":"secret","id":"s-tax-owned"}]}`
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gFinAdmin, asRepair(giveUp)); rec.Code != http.StatusForbidden {
+		t.Fatalf("FIN giving up its share of the Global-owned secret = %d, want 403 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/agencies/ag:FIN/members", gRoot, asRepair(giveUp)); rec.Code != http.StatusOK {
+		t.Fatalf("a global administrator's repair taking FIN's share of the Global-owned secret = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT COUNT(*) FROM secrets s WHERE s.id='s-shared' AND s.owner_agency='ag:TAX'
 	                          AND (SELECT group_concat(agency_id) FROM secret_agencies WHERE secret_id = s.id) = 'ag:TAX'`); n != 1 {
 		t.Error("the secret FIN gave up is not TAX's, owner and member")
 	}
-	// Someone who administers both settles the rest, and so does a global administrator.
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:both/agency", both, `{"agencyId":"ag:FIN"}`); rec.Code != http.StatusOK {
-		t.Errorf("an administrator of both agencies settling the scope = %d, want 200 (%s)", rec.Code, rec.Body)
+	// The rest is settled by a global administrator's repair (I4; until then
+	// someone who administered both could settle it).
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:both/agency", both, asRepair(`{"agencyId":"ag:FIN"}`)); rec.Code != http.StatusForbidden {
+		t.Errorf("an administrator of both agencies settling the scope = %d, want 403 (%s)", rec.Code, rec.Body)
 	}
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", gRoot, `[{"id":"s-tax-owned","agencyIds":["ag:FIN"]}]`); rec.Code != http.StatusOK {
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/scopes/sc:both/agency", gRoot, asRepair(`{"agencyId":"ag:FIN"}`)); rec.Code != http.StatusOK {
+		t.Errorf("a global administrator settling the scope = %d, want 200 (%s)", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", gRoot, asRepair(`[{"id":"s-tax-owned","agencyIds":["ag:FIN"]}]`)); rec.Code != http.StatusOK {
 		t.Errorf("a global administrator settling the secret = %d, want 200 (%s)", rec.Code, rec.Body)
 	}
 	if n := count(t, pool, `SELECT (SELECT COUNT(*) FROM scope_agencies WHERE scope_id='sc:both') + (SELECT COUNT(*) FROM secret_agencies WHERE secret_id='s-tax-owned')`); n != 2 {

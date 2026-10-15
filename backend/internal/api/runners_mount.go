@@ -803,12 +803,19 @@ func (s *Server) handleSetRunnerOwner(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		AgencyID string `json:"agencyId"`
+		repairInput
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AgencyID == "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_error", "agencyId is required")
 		return
 	}
 	if !s.requireKnownAgency(w, r, body.AgencyID) {
+		return
+	}
+	// Handing a Global agent to the agency it serves repairs a placement from
+	// before 2.3.0 (I4; IN-7; question 43): a global administrator's, with a
+	// reason.
+	if !s.requireRepair(w, r, id, body.repairInput, "this runner") {
 		return
 	}
 	if !id.CanAgency(auth.PermConfigureApp, body.AgencyID) {
@@ -819,6 +826,7 @@ func (s *Server) handleSetRunnerOwner(w http.ResponseWriter, r *http.Request) {
 	err := settings.SetRunnerOwner(r.Context(), s.db, r.PathValue("id"), body.AgencyID, id.Email)
 	switch {
 	case err == nil:
+		s.auditRepair(r.Context(), id.Email, "runner "+r.PathValue("id")+" owner", []string{body.AgencyID}, body.repairInput)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, settings.ErrUnknownRunner):
 		httpx.Fail(w, http.StatusNotFound, "not_found", "runner not found")

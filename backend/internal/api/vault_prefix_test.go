@@ -142,10 +142,11 @@ func TestVaultPrefixes_AnAgencyNamesPathsInsideItsOwnAndNoOthers(t *testing.T) {
 		t.Error("the allowed edit was not stored, or the refused one was")
 	}
 
-	// A move: the secret must lie inside the TARGET agency's paths.
-	both := gFinAdmin + "," + gTaxAdmin
+	// A move: the secret must lie inside the TARGET agency's paths. Since I4
+	// (IN-7) a move is a global administrator's repair, held to that too.
+	both := gRoot
 	move := func(who, agency string) (int, string) {
-		rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", who, `[{"id":"`+finSecret+`","agencyIds":["`+agency+`"]}]`)
+		rec := gateReq(t, h, http.MethodPut, "/api/v1/secret-agencies", who, asRepair(`[{"id":"`+finSecret+`","agencyIds":["`+agency+`"]}]`))
 		return rec.Code, errCode(rec.Body.Bytes())
 	}
 	if code, ec := move(both, "ag:TAX"); code != http.StatusUnprocessableEntity || ec != "vault_path_not_allowed" {
