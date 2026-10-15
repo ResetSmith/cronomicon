@@ -5,6 +5,7 @@ import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../api/
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../components/table";
 import { RefreshScope } from "../components/RefreshScope";
+import { REPAIR_HINT, RepairDialog, useRepairAllowed, type RepairBody } from "../components/RepairDialog";
 import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
 import { TraceId } from "./history/shared";
@@ -531,44 +532,55 @@ const agencyChip = (): React.CSSProperties => ({
 // served several agencies before 2.3.0. It keeps working; an agency can be
 // taken off it and none can be added (PUT /runner-agencies refuses the rest),
 // and once it serves a single agency it can be handed to that agency, which
-// ends it. Both are its owner's to do: a global administrator's.
+// ends it. Since 2.4.0 both change the runner's agency: a global
+// administrator's repair, with a reason (I4, IN-7; questions 43 and 48).
 function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => void }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [repairErr, setRepairErr] = useState("");
+  const repairAllowed = useRepairAllowed();
   const [confirmHand, setConfirmHand] = useState(false);
   const [confirmNarrow, setConfirmNarrow] = useState<{ id: string; name: string } | null>(null);
   const owner = runner.ownerAgency;
   const serves = runner.agencies ?? [];
   const legacy = !!runner.legacyPlacement;
   const local = isLocal(runner);
-  const why = notOwnerWhy(runner);
+  const why = notOwnerWhy(runner) || (repairAllowed ? "" : `Changing what a runner serves is a repair. ${REPAIR_HINT}`);
   // Hand-over: Global's, serving exactly one agency that is not Global.
   const handTo = legacy && owner?.id === GLOBAL_AGENCY && serves.length === 1 && serves[0].id !== GLOBAL_AGENCY ? serves[0] : null;
 
-  const narrow = async (removeId: string) => {
+  const narrow = async (removeId: string, rep: RepairBody) => {
     setBusy(true);
     setErr(null);
+    setRepairErr("");
     const { error } = await api.PUT("/runner-agencies", {
       params: { header: csrfHeader },
-      body: [{ runnerId: String(runner.id), agencyIds: serves.filter((a) => a.id !== removeId).map((a) => a.id) }],
+      body: { ...rep, assignments: [{ runnerId: String(runner.id), agencyIds: serves.filter((a) => a.id !== removeId).map((a) => a.id) }] } as never,
     });
     setBusy(false);
+    if (error) {
+      setRepairErr(errMsg(error));
+      return;
+    }
     setConfirmNarrow(null);
-    if (error) setErr(errMsg(error));
-    else onSaved();
+    onSaved();
   };
-  const hand = async () => {
+  const hand = async (rep: RepairBody) => {
     if (!handTo) return;
     setBusy(true);
     setErr(null);
+    setRepairErr("");
     const { error } = await api.POST("/runners/{runnerId}/owner", {
       params: { path: { runnerId: String(runner.id) }, header: csrfHeader },
-      body: { agencyId: handTo.id },
+      body: { agencyId: handTo.id, ...rep },
     });
     setBusy(false);
+    if (error) {
+      setRepairErr(errMsg(error));
+      return;
+    }
     setConfirmHand(false);
-    if (error) setErr(errMsg(error));
-    else onSaved();
+    onSaved();
   };
 
   return (
@@ -584,7 +596,10 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
               {a.name}
               {legacy && serves.length > 1 && (
                 <button
-                  onClick={() => setConfirmNarrow(a)}
+                  onClick={() => {
+                    setRepairErr("");
+                    setConfirmNarrow(a);
+                  }}
                   disabled={busy || !!why}
                   aria-label={`Stop serving ${a.name}`}
                   title={why || `Take ${a.name} off this runner. It cannot be added back: an agent serves the agency that owns it.`}
@@ -608,7 +623,7 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       </div>
       {local ? (
         <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 6 }}>
-          The local runner is this server. A global administrator chooses the agencies it serves under{" "}
+          The local runner is this server, and serves Global only. A global administrator turns it on or off under{" "}
           <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>.
         </div>
       ) : (
@@ -621,7 +636,15 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       )}
       {handTo && (
         <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <Btn small onClick={() => setConfirmHand(true)} disabled={busy || !!why} title={why || undefined}>
+          <Btn
+            small
+            onClick={() => {
+              setRepairErr("");
+              setConfirmHand(true);
+            }}
+            disabled={busy || !!why}
+            title={why || undefined}
+          >
             Hand to {handTo.name}
           </Btn>
           <span style={{ fontSize: c.fontXs, color: c.textSec }}>
@@ -631,7 +654,7 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
       )}
       {err && <div style={{ fontSize: c.fontXs, color: c.danger, marginTop: 6 }}>{err}</div>}
       {confirmNarrow && (
-        <ConfirmDialog
+        <RepairDialog
           title={`Stop ${runner.name} serving ${confirmNarrow.name}?`}
           message={
             <>
@@ -642,17 +665,18 @@ function OwnerAndServes({ runner, onSaved }: { runner: Runner; onSaved: () => vo
           }
           confirmLabel={`Stop serving ${confirmNarrow.name}`}
           busy={busy}
+          error={repairErr}
           onCancel={() => setConfirmNarrow(null)}
-          onConfirm={() => narrow(confirmNarrow.id)}
+          onConfirm={(rep) => narrow(confirmNarrow.id, rep)}
         />
       )}
       {confirmHand && handTo && (
-        <ConfirmDialog
+        <RepairDialog
           title={`Hand ${runner.name} to ${handTo.name}?`}
           message={`${handTo.name}'s administrators will manage this runner from now on, and global administrators will keep their access. This cannot be undone here: to move a runner back, deregister it and enrol it again.`}
           confirmLabel={`Hand to ${handTo.name}`}
-          danger={false}
           busy={busy}
+          error={repairErr}
           onCancel={() => setConfirmHand(false)}
           onConfirm={hand}
         />

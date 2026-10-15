@@ -138,13 +138,18 @@ describe("Runners — owner and serves (MA-26)", () => {
     fireEvent.click(sec.getByRole("button", { name: "Stop serving Tax" }));
     expect(PUT).not.toHaveBeenCalled();
     expect(await screen.findByText(/This cannot be undone:/)).toBeTruthy();
+    // A repair since 2.4.0 (I4; questions 43 and 48): it asks for a reason.
     const confirm = screen.getAllByRole("button", { name: "Stop serving Tax" });
+    expect((confirm[confirm.length - 1] as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Tax has its own agent" } });
     fireEvent.click(confirm[confirm.length - 1]);
     await waitFor(() => expect(PUT).toHaveBeenCalled());
-    // What is posted is the list it has, with that agency taken away.
+    // What is posted is the list it has, with that agency taken away, and the repair.
     expect(PUT).toHaveBeenCalledWith(
       "/runner-agencies",
-      expect.objectContaining({ body: [{ runnerId: "r-legacy", agencyIds: ["ag-fin"] }] }),
+      expect.objectContaining({
+        body: { repair: true, reason: "Tax has its own agent", assignments: [{ runnerId: "r-legacy", agencyIds: ["ag-fin"] }] },
+      }),
     );
   });
 
@@ -160,11 +165,15 @@ describe("Runners — owner and serves (MA-26)", () => {
     // Two buttons carry the words now: the one in the row, and the dialog's.
     const buttons = screen.getAllByRole("button", { name: "Hand to Finance" });
     expect(buttons).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "serves only Finance" } });
     fireEvent.click(buttons[buttons.length - 1]);
     await waitFor(() =>
       expect(POST).toHaveBeenCalledWith(
         "/runners/{runnerId}/owner",
-        expect.objectContaining({ params: expect.objectContaining({ path: { runnerId: "r-narrow" } }), body: { agencyId: "ag-fin" } }),
+        expect.objectContaining({
+          params: expect.objectContaining({ path: { runnerId: "r-narrow" } }),
+          body: { agencyId: "ag-fin", repair: true, reason: "serves only Finance" },
+        }),
       ),
     );
   });
@@ -378,7 +387,7 @@ describe("Runners — the local runner's row (LR-38)", () => {
     renderRunners();
     await expand("Local runner");
     const sec = await agencySection();
-    expect(sec.getByText(/A global administrator chooses the agencies it serves under/)).toBeTruthy();
+    expect(sec.getByText(/serves Global only. A global administrator turns it on or off under/)).toBeTruthy();
     expect(sec.queryByRole("button", { name: /Stop serving/ })).toBeNull();
     expect(sec.queryByText("Legacy placement")).toBeNull();
     for (const name of ["Resync", "Drain", "⚙ Edit"]) expect(screen.queryByRole("button", { name }), name).toBeNull();

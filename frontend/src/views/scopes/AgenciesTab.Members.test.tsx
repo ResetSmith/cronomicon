@@ -109,6 +109,10 @@ describe("per-agency member editor (RB-22)", () => {
     expect(within(add).queryByText("FIN_KEY")).toBeNull();
     expect(within(add).getByText("API_KEY")).toBeTruthy();
     fireEvent.change(add, { target: { value: "s2" } });
+    // Taking one of Global's is a repair (2.4.0 I4; question 48): it waits for a reason.
+    expect(puts.length).toBe(0);
+    fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "it was always Tax's" } });
+    fireEvent.click(screen.getByRole("button", { name: "Give it to this agency" }));
 
     await waitFor(() => expect(puts.length).toBe(1));
     // ONE agency named in the path; the body is that agency's complete member list.
@@ -121,6 +125,7 @@ describe("per-agency member editor (RB-22)", () => {
       { kind: "secret", id: "s1" },
       { kind: "secret", id: "s2" },
     ]);
+    expect(puts[0].body).toMatchObject({ repair: true, reason: "it was always Tax's" });
   });
 
   // A row in ONE agency cannot be removed from it: it would be left in none,
@@ -142,6 +147,8 @@ describe("per-agency member editor (RB-22)", () => {
       await openAgency();
       expect(screen.queryByLabelText(/Remove DB_PASS from this agency/i)).toBeNull();
       fireEvent.click(screen.getByLabelText(/Remove OLD_SHARED from this agency/i));
+      fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "Finance's alone" } });
+      fireEvent.click(screen.getByRole("button", { name: "Remove" }));
 
       await waitFor(() => expect(puts.length).toBe(1));
       const sent = (puts[0].body as { members: { kind: string; id: string }[] }).members;
@@ -270,18 +277,16 @@ describe("agency catalog — global-administrator controls (GC)", () => {
     }
   });
 
-  // ADDING here takes one of Global's rows out of Global, and Global is a
-  // global administrator's on either side of a move: for anyone else the server
-  // always refuses the add. So it is disabled with the reason, per kind — a
-  // scope or key by the configureApp flag, a secret or variable by the
-  // manageEnvVars one.
+  // ADDING here takes one of Global's rows out of Global: a repair since 2.4.0
+  // (I4, IN-7; question 48), a configureApp global administrator's whatever
+  // the kind. For anyone else it is disabled with the reason.
   it("disables every add for an administrator of one agency, with the reason", async () => {
     withScopes();
     await openAgency(true, false, false);
     for (const label of [/Add a scope to this agency/i, /Add a secret to this agency/i]) {
       const add = screen.getByLabelText(label) as HTMLSelectElement;
       expect(add.disabled).toBe(true);
-      expect(add.title).toMatch(/takes it out of Global — only a global administrator/);
+      expect(add.title).toMatch(/Adding one of Global's here changes its agency\. Its agency does not change: another agency gets one by a copy/);
     }
     // Nothing on a single-agency row to press, either.
     expect(screen.queryByLabelText(/Remove prod-web from this agency/i)).toBeNull();
@@ -289,12 +294,12 @@ describe("agency catalog — global-administrator controls (GC)", () => {
     expect(puts.length).toBe(0);
   });
 
-  it("judges each kind by its own permission's global flag", async () => {
+  it("takes the configureApp global flag for every kind: a manageEnvVars one is not enough", async () => {
     withScopes();
     // A global administrator for manageEnvVars who is not one for configureApp.
     await openAgency(true, false, true);
     expect((screen.getByLabelText(/Add a scope to this agency/i) as HTMLSelectElement).disabled).toBe(true);
-    expect((screen.getByLabelText(/Add a secret to this agency/i) as HTMLSelectElement).disabled).toBe(false);
+    expect((screen.getByLabelText(/Add a secret to this agency/i) as HTMLSelectElement).disabled).toBe(true);
   });
 
   it("leaves all of it enabled for a global administrator", async () => {
@@ -310,6 +315,8 @@ describe("agency catalog — global-administrator controls (GC)", () => {
     expect(addScope.title).toBe("");
 
     fireEvent.change(addScope, { target: { value: "sc1" } });
+    fireEvent.change(await screen.findByLabelText("Reason"), { target: { value: "made in Global by mistake" } });
+    fireEvent.click(screen.getByRole("button", { name: "Give it to this agency" }));
     await waitFor(() => expect(puts.length).toBe(1));
     const sent = (puts[0].body as { members: { kind: string; id: string }[] }).members;
     expect(sent).toContainEqual({ kind: "scope", id: "sc1" });

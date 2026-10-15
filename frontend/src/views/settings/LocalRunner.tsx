@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { components } from "../../api/schema";
-import { useGet, rows } from "../../hooks";
+import { useGet } from "../../hooks";
 import { c } from "../../theme";
 import { AlertBanner, ConfirmDialog, InlineLoading } from "../../components/ui";
 import { globalOnly } from "../../api/globalAdmin";
@@ -18,9 +18,10 @@ type LocalRunner = components["schemas"]["LocalRunner"];
 // open connections to job targets, so both directions are confirmed, and each
 // says what changes for runs that are queued or running.
 //
-// It is also the one runner with a serve list (MA-14): the agencies whose runs
-// it claims are chosen here, by a global administrator. An agent serves the
-// agency that owns it and has nothing to choose.
+// It serves Global and nothing else since 2.4.0 (§0a, IN-3; migration 1380):
+// the server refuses any other serve list (422 local_runner_global_only), so
+// the card shows it and offers nothing to change (R8). Until then it was the
+// one runner whose serve list was chosen here (MA-14).
 //
 // `canWrite` — a global administrator for configureApp. The section is only
 // listed for one; the flag is honoured anyway, control by control.
@@ -28,16 +29,10 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
   const why = globalOnly(canWrite);
   const [bump, setBump] = useState(0);
   const q = useGet<LocalRunner>(() => api.GET("/local-runner"), [bump]);
-  const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
-  const catalog = rows<{ id: string; name: string }>(catalogQ.data);
   const [confirm, setConfirm] = useState<"on" | "off" | null>(null);
-  const [dropping, setDropping] = useState<{ id: string; name: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [conc, setConc] = useState<string | null>(null);
-  // Busy until the list is read back, not just until the write answers: the
-  // serve list is saved whole, built from what is on screen, so a second add
-  // made from the list as it stood before the first would silently drop it.
   const busy = saving || q.loading;
 
   if (q.loading && !q.data) return <InlineLoading what="the local runner" />;
@@ -46,7 +41,6 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
   }
   const lr = q.data;
   const serves = lr.serves ?? [];
-  const addable = catalog.filter((a) => !serves.some((s) => s.id === a.id));
 
   const put = async (body: { enabled?: boolean; maxConcurrent?: number }) => {
     setSaving(true);
@@ -60,19 +54,6 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
     // (500 apply_failed), and the card must not go on showing the old state.
     setBump((n) => n + 1);
   };
-  const setServes = async (ids: string[]) => {
-    setSaving(true);
-    setErr(null);
-    const { error } = await api.PUT("/runner-agencies", {
-      params: { header: csrfHeader },
-      body: [{ runnerId: lr.runnerId, agencyIds: ids }],
-    });
-    setSaving(false);
-    setDropping(null);
-    if (error) setErr(errMsg(error));
-    setBump((n) => n + 1);
-  };
-
   const concValue = conc ?? String(lr.maxConcurrent);
   const concNum = Number(concValue);
   const concOk = Number.isInteger(concNum) && concNum >= 1 && concNum <= 64;
@@ -138,48 +119,10 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
         </SettingRow>
         <SettingRow
           label="Serves"
-          hint="The agencies whose runs it claims. Global's are the jobs with no scope and Global's own scopes. Narrow a scope to particular runners by binding it, on the Scopes page."
+          hint="Global: the jobs with no scope and Global's own scopes. An agency's runs are claimed by an agent enrolled for that agency. Narrow a scope to particular runners by binding it, on the Scopes page."
           last
         >
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {serves.map((a) => (
-              <span
-                key={a.id}
-                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px", borderRadius: c.radiusChip, fontSize: c.fontXs, fontWeight: 600, background: `${c.primary}1f`, color: c.primary, border: `1px solid ${c.primary}30` }}
-              >
-                {a.name}
-                <button
-                  type="button"
-                  onClick={() => setDropping({ id: a.id ?? "", name: a.name ?? "" })}
-                  disabled={busy || !!why || serves.length <= 1}
-                  aria-label={`Stop serving ${a.name}`}
-                  title={why || (serves.length <= 1 ? "A runner always serves at least one agency. Add another first, or turn the local runner off." : `Stop serving ${a.name}`)}
-                  style={{ background: "none", border: "none", padding: 0, margin: 0, color: c.primary, cursor: busy || why || serves.length <= 1 ? "not-allowed" : "pointer", fontSize: c.fontSm, lineHeight: 1 }}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-            {addable.length > 0 && (
-              <select
-                aria-label="Serve another agency"
-                value=""
-                disabled={busy || !!why}
-                title={why || undefined}
-                onChange={(e) => {
-                  if (e.target.value) void setServes([...serves.map((a) => a.id ?? ""), e.target.value]);
-                }}
-                style={{ ...inputStyle(), width: "auto", fontSize: c.fontSm, padding: "3px 6px", cursor: why ? "not-allowed" : "pointer" }}
-              >
-                <option value="">+ Serve an agency…</option>
-                {addable.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
+          <span style={{ fontWeight: 600, color: c.text }}>{serves.map((a) => a.name).join(", ") || "Global"}</span>
         </SettingRow>
       </Card>
 
@@ -214,22 +157,6 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
           confirmLabel="Turn off"
           onCancel={() => setConfirm(null)}
           onConfirm={() => put({ enabled: false })}
-        />
-      )}
-      {dropping && (
-        <ConfirmDialog
-          title={`Stop the local runner serving ${dropping.name}?`}
-          busy={busy}
-          message={
-            <>
-              It will claim none of {dropping.name}'s runs from now on. Runs it is already running finish. A scope of {dropping.name}{" "}
-              that is bound to it stays bound, and waits until the local runner serves {dropping.name} again or the scope is bound
-              to another runner. You can add {dropping.name} back here at any time.
-            </>
-          }
-          confirmLabel={`Stop serving ${dropping.name}`}
-          onCancel={() => setDropping(null)}
-          onConfirm={() => setServes(serves.filter((a) => a.id !== dropping.id).map((a) => a.id ?? ""))}
         />
       )}
     </div>

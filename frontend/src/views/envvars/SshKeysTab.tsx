@@ -422,7 +422,7 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
                                   id={v.id}
                                   name={v.label}
                                   ownerName={v.ownerAgency}
-                                  permission="configureApp"
+                                  canRepair={v.canRepair}
                                   onMoved={(text) => {
                                     setNotice({ kind: "info", text });
                                     refetch();

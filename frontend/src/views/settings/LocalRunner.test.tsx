@@ -7,7 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 //
 // Turning it on makes this server hold SSH keys and run jobs, so both
 // directions are confirmed, each saying what changes; the host can forbid it;
-// and it is the one runner whose serve list is edited — any non-empty set.
+// and it serves Global only (2.4.0, IN-3).
 
 let LR: Record<string, unknown> = {};
 const puts: { path: string; body: unknown }[] = [];
@@ -113,61 +113,22 @@ describe("Local runner card", () => {
     await waitFor(() => expect(puts).toEqual([{ path: "/local-runner", body: { maxConcurrent: 8 } }]));
   });
 
-  it("edits its serve list: any agency can be added, Global beside others, and the last cannot be removed", async () => {
+  // 2.4.0 (§0a, IN-3; migration 1380): it serves Global and nothing else, and
+  // the server refuses any other list. The card says so and offers no editor.
+  it("serves Global, with nothing to change", async () => {
     show();
-    const add = (await screen.findByRole("combobox", { name: "Serve another agency" })) as HTMLSelectElement;
-    await waitFor(() => expect(Array.from(add.options).map((o) => o.textContent)).toEqual(["+ Serve an agency…", "Finance", "Tax"]));
-    // The only agency it serves cannot be taken away: a runner always serves one.
-    expect(button("Stop serving Global").disabled).toBe(true);
-    expect(button("Stop serving Global").title).toMatch(/always serves at least one agency/);
-
-    fireEvent.change(add, { target: { value: "ag-fin" } });
-    await waitFor(() => expect(puts).toHaveLength(1));
-    // The whole list, Global kept beside the agency.
-    expect(puts[0]).toEqual({ path: "/runner-agencies", body: [{ runnerId: "r-local", agencyIds: ["global", "ag-fin"] }] });
-  });
-
-  it("confirms before it stops serving an agency, and says what happens to that agency's bound scopes", async () => {
-    LR = { ...LR, serves: [GLOBAL, FIN] };
-    show();
-    fireEvent.click(await screen.findByRole("button", { name: "Stop serving Finance" }));
+    expect(await screen.findByText(/An agency's runs are claimed by an agent enrolled for that agency/)).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Serve another agency" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Stop serving/ })).toBeNull();
     expect(puts).toHaveLength(0);
-    expect(await screen.findByText(/A scope of Finance\s+that is bound to it stays bound, and waits/)).toBeTruthy();
-    const confirm = screen.getAllByRole("button", { name: "Stop serving Finance" });
-    fireEvent.click(confirm[confirm.length - 1]);
-    await waitFor(() => expect(puts).toEqual([{ path: "/runner-agencies", body: [{ runnerId: "r-local", agencyIds: ["global"] }] }]));
   });
 
   it("disables every control, with the reason, for someone who is not a global administrator", async () => {
-    LR = { ...LR, serves: [GLOBAL, FIN] };
     show(false);
     const why = "Only a global administrator (a role on every agency) can change this.";
     expect((await screen.findByRole("button", { name: "Turn on…" }) as HTMLButtonElement).title).toBe(why);
     expect(button("Turn on…").disabled).toBe(true);
     expect((screen.getByLabelText("Runs at once") as HTMLInputElement).disabled).toBe(true);
-    expect(button("Stop serving Finance").disabled).toBe(true);
-    expect((screen.getByRole("combobox", { name: "Serve another agency" }) as HTMLSelectElement).disabled).toBe(true);
-  });
-
-  // The list is saved whole, from what is on screen. Until it has been read
-  // back, a second change would be built on the list as it stood before the
-  // first and would drop it.
-  it("takes no second change to the serve list until the first has been read back", async () => {
-    getDelay = 40;
-    show();
-    const add = (await screen.findByRole("combobox", { name: "Serve another agency" })) as HTMLSelectElement;
-    await waitFor(() => expect(add.options.length).toBe(3));
-    serveOnSave = true;
-    fireEvent.change(add, { target: { value: "ag-fin" } });
-    await waitFor(() => expect(puts).toHaveLength(1));
-    // Written, not yet re-read: the control waits.
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "Serve another agency" }) as HTMLSelectElement).disabled).toBe(true));
-    await screen.findByRole("button", { name: "Stop serving Finance" });
-    const again = screen.getByRole("combobox", { name: "Serve another agency" }) as HTMLSelectElement;
-    await waitFor(() => expect(again.disabled).toBe(false));
-    fireEvent.change(again, { target: { value: "ag-tax" } });
-    await waitFor(() => expect(puts).toHaveLength(2));
-    expect(puts[1].body).toEqual([{ runnerId: "r-local", agencyIds: ["global", "ag-fin", "ag-tax"] }]);
   });
 
   // 500 apply_failed means the setting WAS saved; the card must show that.

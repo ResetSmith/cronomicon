@@ -16,6 +16,7 @@ import { withFreshIds } from "./workflows/canvasEdit";
 import type { WfStep } from "./workflows/shared";
 import { ambiguousNames, disambiguate, type NamedRef } from "../utils/disambiguate";
 import { Btn, InfoBody, InfoToggle } from "../components/ui";
+import { RepairDialog, isRepairRequired, type RepairBody } from "../components/RepairDialog";
 import { CalendarPicker } from "./scheduling/CalendarPicker";
 import { ReactionsEditor, reactionsError, saveReactionsFor, useLoadedReactions } from "./scheduling/ReactionsEditor";
 import { deleteBlockedNote, reactionsWatchingRefusal } from "./scheduling/reactions";
@@ -293,6 +294,13 @@ export function WorkflowEditor() {
   const [enabled, setEnabled] = useState(true);
 
   const [busy, setBusy] = useState(false);
+  // A save that changes the workflow's agency (its jobs are another agency's
+  // than the ones it ran) is a global administrator's repair (2.4.0 I4, IN-7;
+  // questions 46 and 48). The server answers 409 repair_required; the save
+  // waits here for the reason and is sent again with it.
+  const [repairFor, setRepairFor] = useState<{ body: unknown; done: () => Promise<void> } | null>(null);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairErr, setRepairErr] = useState("");
   const [validating, setValidating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
@@ -451,6 +459,29 @@ export function WorkflowEditor() {
     if (ok) setOkMsg("Looks good — no validation errors.");
   }
 
+  function askRepair(body: unknown, done: () => Promise<void>) {
+    setRepairErr("");
+    setRepairFor({ body, done });
+  }
+
+  async function sendRepair(rep: RepairBody) {
+    if (!repairFor || !editId) return;
+    setRepairBusy(true);
+    setRepairErr("");
+    const { response, error } = await api.PUT("/workflows/{workflowId}", {
+      params: { path: { workflowId: Number(editId) }, header: csrfHeader },
+      body: { ...(repairFor.body as object), ...rep } as never,
+    });
+    setRepairBusy(false);
+    if (error || !response.ok) {
+      setRepairErr(errMessage(error) || `Save failed (${response.status}).`);
+      return;
+    }
+    const { done } = repairFor;
+    setRepairFor(null);
+    await done();
+  }
+
   async function submit() {
     setErr(null);
     setOkMsg(null);
@@ -469,6 +500,13 @@ export function WorkflowEditor() {
       : await api.POST("/workflows", { body: body as never });
     setBusy(false);
     if (error || !response.ok) {
+      if (isEdit && isRepairRequired(error)) {
+        askRepair(body, async () => {
+          await persistReactions();
+          setOkMsg(`Workflow "${name.trim()}" updated (cronomicon-source).`);
+        });
+        return;
+      }
       setErr(errMessage(error) || `${isEdit ? "Save" : "Create"} failed (${response.status}).`);
       return;
     }
@@ -559,6 +597,14 @@ export function WorkflowEditor() {
       : await api.POST("/workflows", { body: body as never });
     setBusy(false);
     if (error || !response.ok) {
+      if (isEdit && isRepairRequired(error)) {
+        askRepair(body, async () => {
+          await persistReactions();
+          setOkMsg(`Workflow "${name.trim()}" updated (cronomicon-source).`);
+          setCanvasDirty(false);
+        });
+        return;
+      }
       setErr(errMessage(error) || `${isEdit ? "Save" : "Create"} failed (${response.status}).`);
       return;
     }
@@ -575,6 +621,23 @@ export function WorkflowEditor() {
       setForceCanvas(false);
     }
   }
+
+  const repairDialog = repairFor && (
+    <RepairDialog
+      title={`Save ${name.trim()} for another agency?`}
+      message={
+        <>
+          Its jobs are now another agency's than the ones it ran, so saving it changes the workflow's agency: its runs, schedules and
+          history become that agency's.
+        </>
+      }
+      confirmLabel="Save"
+      busy={repairBusy}
+      error={repairErr}
+      onCancel={() => setRepairFor(null)}
+      onConfirm={sendRepair}
+    />
+  );
 
   if (canCompose === false) {
     return (
@@ -655,6 +718,7 @@ export function WorkflowEditor() {
           </div>
         )}
         {err && <div style={{ color: c.danger }}>{err}</div>}
+        {repairDialog}
         {okMsg && <div style={{ color: c.success }}>{okMsg}</div>}
         {delErr && <div style={{ color: c.danger, fontSize: c.fontSm }}>{delErr}</div>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -848,6 +912,7 @@ export function WorkflowEditor() {
       )}
 
       {err && <div style={{ color: c.danger, fontSize: c.fontSm }}>{err}</div>}
+      {repairDialog}
       {okMsg && <div style={{ color: c.primary, fontSize: c.fontSm }}>{okMsg}</div>}
 
       <div style={{ display: "flex", gap: 10 }}>

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { api, csrfHeader } from "../api/client";
+import { api, csrfHeader, errMsg } from "../api/client";
 import { c } from "../theme";
 import { Btn, Modal } from "../components/ui";
+import { RepairDialog, isRepairRequired, type RepairBody } from "../components/RepairDialog";
 import { fmtInAppZone } from "../utils/datetime";
 
 // Revision history for one cronomicon-source definition (RH-F).
@@ -71,6 +72,11 @@ export function RevisionHistory({
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // A restore that would change a workflow's agency is a global
+  // administrator's repair (2.4.0 I4, IN-7; questions 46 and 48): the server
+  // answers 409 repair_required, and the restore is sent again with a reason.
+  const [repairNo, setRepairNo] = useState<number | null>(null);
+  const [repairErr, setRepairErr] = useState("");
 
   async function load() {
     const { data, error: e } = await api.GET("/definitions/{kind}/{name}/revisions", {
@@ -91,18 +97,26 @@ export function RevisionHistory({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, name]);
 
-  async function restore(no: number) {
-    if (!confirm(`Roll ${name} back to revision ${no}?\n\nThis is itself recorded as a new revision.`)) return;
+  async function restore(no: number, rep?: RepairBody) {
+    if (!rep && !confirm(`Roll ${name} back to revision ${no}?\n\nThis is itself recorded as a new revision.`)) return;
     setBusy(true);
     setError(null);
+    setRepairErr("");
     const { error: e } = await api.POST("/definitions/{kind}/{name}/revisions/{no}/restore", {
       params: { path: { kind, name, no }, header: csrfHeader },
+      ...(rep ? { body: rep as never } : {}),
     });
     setBusy(false);
     if (e) {
-      setError(typeof e === "string" ? e : "restore failed");
+      if (!rep && isRepairRequired(e)) {
+        setRepairNo(no);
+        return;
+      }
+      if (rep) setRepairErr(errMsg(e));
+      else setError(typeof e === "string" ? e : `Restore failed: ${errMsg(e)}`);
       return;
     }
+    setRepairNo(null);
     await load();
     onRestored?.();
   }
@@ -113,6 +127,22 @@ export function RevisionHistory({
 
   return (
     <Modal title={`History — ${name}`} onClose={onClose} wide>
+      {repairNo != null && (
+        <RepairDialog
+          title={`Restore revision ${repairNo} for another agency?`}
+          message={
+            <>
+              The jobs of revision {repairNo} are another agency's than the ones {name} runs now, so restoring it changes the
+              workflow's agency: its runs, schedules and history become that agency's.
+            </>
+          }
+          confirmLabel="Restore"
+          busy={busy}
+          error={repairErr}
+          onCancel={() => setRepairNo(null)}
+          onConfirm={(rep) => restore(repairNo, rep)}
+        />
+      )}
       {error && <div style={{ color: c.danger, fontSize: c.fontSm, paddingBottom: 8 }}>{error}</div>}
       {items == null ? (
         <div style={{ color: c.textSec, fontSize: c.fontSm }}>Loading…</div>

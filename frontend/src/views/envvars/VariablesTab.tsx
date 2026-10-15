@@ -52,6 +52,9 @@ interface EnvVarRow {
   description?: string;
   tags?: string[];
   ownerAgency?: string; // RA-15 — the owning agency's NAME; "Global" when shared (2.3.0).
+  canEdit?: boolean; // R8 — what the caller may do with this row, from the server
+  canDelete?: boolean;
+  canRepair?: boolean;
   createdBy?: string;
   lastModifiedAt?: string;
 }
@@ -358,7 +361,7 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
                                   id={v.id}
                                   name={v.key}
                                   ownerName={v.ownerAgency}
-                                  permission="manageEnvVars"
+                                  canRepair={v.canRepair}
                                   onMoved={(text) => {
                                     setNotice({ kind: "info", text });
                                     refetch();
