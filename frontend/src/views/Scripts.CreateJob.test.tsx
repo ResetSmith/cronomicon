@@ -43,6 +43,7 @@ vi.mock("../api/client", async (importOriginal) => {
           return { data: scripts ?? SCRIPTS };
         }
         if (path === "/scripts/{name}") return { data: SCRIPTS.items[0] };
+        if (path === "/git-repos") return { data: { items: [{ id: "global", agencyId: "global", agencyName: "Global" }] } };
         if (path === "/script-content/{name}") return { data: { content: "echo hi", encoding: "utf-8" } };
         if (path === "/job-reference-bindings/{jobId}" || path === "/script-reference-bindings/{name}") {
           return { data: { bindings: [] } };
@@ -116,8 +117,11 @@ describe("Scripts — detail-pane Create Job", () => {
 // (configureApp on every agency). The button sits on a catalog everyone reads and
 // used to be live for all of them, 403ing on click. It stays — disabled, with
 // the reason (FX-7) — in the toolbar and in the empty catalog's call to action.
+// 2.4.0 (R8): the pull names a repository, and an agency's administrators
+// pull their own (GR-9); here the only repository is Global's, a global
+// administrator's.
 describe("Scripts — Git Pull needs a global administrator (GC)", () => {
-  const WHY = "Only a global administrator (a role on every agency) can start a sync from GitLab.";
+  const WHY = "Only an agency's administrators (or a global administrator) can pull its repository, and you administer none.";
   const renderScripts = () =>
     within(
       render(
@@ -130,7 +134,7 @@ describe("Scripts — Git Pull needs a global administrator (GC)", () => {
   it("disables the toolbar pull with the reason for anyone who is not one", async () => {
     syncOn = false;
     const q = renderScripts();
-    const pull = q.getByRole("button", { name: /Git Pull/ }) as HTMLButtonElement;
+    const pull = q.getByRole("button", { name: /^↻/ }) as HTMLButtonElement;
     await waitFor(() => expect(pull.title).toBe(WHY));
     expect(pull.disabled).toBe(true);
 
@@ -153,9 +157,10 @@ describe("Scripts — Git Pull needs a global administrator (GC)", () => {
     scripts = { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 200 };
     const q = renderScripts();
     const empty = (await waitFor(() => q.getByRole("button", { name: "Pull from GitLab" }))) as HTMLButtonElement;
-    const toolbar = q.getByRole("button", { name: /Git Pull/ }) as HTMLButtonElement;
-    await waitFor(() => expect(toolbar.disabled).toBe(false));
-    expect(toolbar.title).toMatch(/Pulls the whole definitions repo/);
+    const toolbar = () => q.getByRole("button", { name: /^↻/ }) as HTMLButtonElement;
+    await waitFor(() => expect(toolbar().disabled).toBe(false));
+    expect(toolbar().textContent).toBe("↻ Pull Global");
+    expect(toolbar().title).toMatch(/Pulls Global repository from GitLab/);
     expect(empty.disabled).toBe(false);
     expect(empty.title).toBe("");
   });

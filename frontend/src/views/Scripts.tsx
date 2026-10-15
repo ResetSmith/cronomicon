@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../api/globalAdmin";
+import { RepoSelect, repoLabel, useRepoAdmin, useRepos } from "../components/RepoPicker";
 import { useGet, rows, useClientPager, useColumnWidths, useInlineTags, useTableSort } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns, type TableColumn } from "../components/table";
 import { c } from "../theme";
@@ -89,18 +89,19 @@ export function Scripts() {
   // JobComposer — same gate as the Jobs page's "+ Create" (D6/I-1: never offer
   // a create affordance that dead-ends on the composer's capability notice).
   const [canCompose, setCanCompose] = useState(false);
-  // GC (v2.2.2) — the Git pull re-reads the whole definitions repo, every
-  // agency's files included, so POST /git/sync takes a global administrator for
-  // configureApp. The button is on a catalog everyone reads, so it stays and is
-  // disabled with the reason rather than 403ing on click.
-  const [canSync, setCanSync] = useState(false);
   useEffect(() => {
-    fetchCapabilities().then((caps) => {
-      setCanCompose(caps.compose);
-      setCanSync(!!caps.configureAppGlobal);
-    });
+    fetchCapabilities().then((caps) => setCanCompose(caps.compose));
   }, []);
-  const syncWhy = globalOnly(canSync, GLOBAL_ADMIN_SYNC_ONLY);
+  // 2.4.0 (I3; R8) — every agency has a repository, and the pull names one
+  // (`POST /git/sync?repo=`): an agency's administrators pull their own, a
+  // global administrator any (GR-9). The repositories offered are the ones
+  // the caller may pull; with none, the button stays, disabled with why.
+  const { repos } = useRepos();
+  const administers = useRepoAdmin();
+  const pullable = repos.filter((r) => administers(r.agencyId));
+  const [pullRaw, setPullRaw] = useState("");
+  const pullRepo = pullable.find((r) => r.id === pullRaw) ?? pullable[0];
+  const syncWhy = pullRepo ? "" : "Only an agency's administrators (or a global administrator) can pull its repository, and you administer none.";
 
   // Optimistic per-script tag edits (keyed by name) so a detail-pane edit shows
   // in the table column immediately without a full catalog refetch. Cleared on a
@@ -142,12 +143,13 @@ export function Scripts() {
   async function gitPull() {
     setPulling(true);
     setNotice(null);
-    const { error: err } = await api.POST("/git/sync", { params: { header: csrfHeader } });
+    if (!pullRepo) return;
+    const { error: err } = await api.POST("/git/sync", { params: { header: csrfHeader, query: { repo: pullRepo.id } } });
     setPulling(false);
     if (err) {
       setNotice({ kind: "error", text: (err as { message?: string })?.message ?? "git pull failed" });
     } else {
-      setNotice({ kind: "info", text: "Pull started — list will refresh." });
+      setNotice({ kind: "info", text: `Pull of ${repoLabel(pullRepo)} repository started — list will refresh.` });
       setBump((b) => b + 1);
     }
   }
@@ -351,14 +353,15 @@ export function Scripts() {
         </label>
         <TagFilterSelect items={allItems} selected={tagFilter} onChange={(v) => { setTagFilter(v); pager.setPage(0); }} getTags={(s) => s.tags} matchMode={tagMatch} onMatchModeChange={(m) => { setTagMatch(m); pager.setPage(0); }} />
         <ColumnsMenu cols={cols} cw={cw} />
+        <RepoSelect repos={pullable} value={pullRepo?.id ?? ""} onChange={setPullRaw} label="Pull" />
         <Btn
           primary
           onClick={gitPull}
           disabled={pulling || !!syncWhy}
-          title={syncWhy || "Pulls the whole definitions repo from GitLab (jobs, scripts, schedules, workflows)."}
+          title={syncWhy || `Pulls ${pullRepo ? repoLabel(pullRepo) : "the"} repository from GitLab (jobs, scripts, schedules, workflows).`}
           style={{ padding: "8px 14px", fontSize: c.fontSm }}
         >
-          {pulling ? "Pulling…" : "↻ Git Pull"}
+          {pulling ? "Pulling…" : pullable.length > 1 || !pullRepo ? "↻ Git Pull" : `↻ Pull ${repoLabel(pullRepo)}`}
         </Btn>
       </div>
       {notice && (
@@ -450,9 +453,11 @@ export function Scripts() {
 // onTagsSaved propagates an edit back up for the optimistic table update.
 function ScriptDetail({ listRow, tags, onSaveTags, tagErr, canCompose }: { listRow: Script; tags: string[]; onSaveTags: (tags: string[]) => void; tagErr?: string; canCompose?: boolean }) {
   const name = listRow.name ?? "";
+  // 2.4.0 — a name is a script in each repository that has one: the row's own.
+  const repo = listRow.repoId ?? undefined;
   const { data } = useGet<Script>(
-    () => api.GET("/scripts/{name}", { params: { path: { name } } }),
-    [name],
+    () => api.GET("/scripts/{name}", { params: { path: { name }, query: repo ? { repo } : {} } }),
+    [name, repo],
   );
   const s = data ?? listRow;
   // Tag edits go through the parent's shared useInlineTags hook (CC.18): optimistic
@@ -598,6 +603,7 @@ function ScriptBody({ script }: { script: Script }) {
   return (
     <ScriptFileBody
       name={script.name ?? ""}
+      repo={script.repoId ?? undefined}
       label={label}
       path={kind === "file" ? (script.scriptPath ?? undefined) : undefined}
     />
@@ -610,10 +616,10 @@ function ScriptBody({ script }: { script: Script }) {
 // component so the fetch hook runs only when a body is shown, keeping hook calls
 // unconditional within each component. `path` is shown only for file-backed
 // scripts.
-function ScriptFileBody({ name, label, path }: { name: string; label: string; path?: string }) {
+function ScriptFileBody({ name, repo, label, path }: { name: string; repo?: string; label: string; path?: string }) {
   const { data, error, loading } = useGet<ScriptContent>(
-    () => api.GET("/script-content/{name}", { params: { path: { name } } }),
-    [name],
+    () => api.GET("/script-content/{name}", { params: { path: { name }, query: repo ? { repo } : {} } }),
+    [name, repo],
   );
   return (
     <div>

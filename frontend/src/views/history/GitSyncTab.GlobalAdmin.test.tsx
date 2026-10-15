@@ -3,20 +3,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-// GC (v2.2.2, gate closing) — "Sync now" on History → Git Sync posts to
-// /git/sync, which re-reads the whole definitions repo (every agency's files) and
-// is therefore a global administrator's: configureApp on every agency.
+// History → Git Sync, one repository at a time (2.4.0 I3; R8).
 //
-// The log is readable by anyone who can open History, and until 2.2.2 the button
-// was live for all of them — a viewer clicked it and read "Sync failed:
-// forbidden". It stays for everyone and is disabled with the reason (FX-7),
-// both in the toolbar and in the empty log's call to action.
+// Every agency has a repository. The log is read per repository (`?repo=`,
+// Global's when none is named), and "Sync now" syncs the one chosen: Global's
+// is a global administrator's, an agency's is its administrators' too (GR-9).
+// The button stays for everyone and is disabled with the reason for a caller
+// the server would refuse (FX-7), in the toolbar and in the empty log's call
+// to action.
 
 let global = false;
+let ACCESS: unknown = null;
+const REPOS = [
+  { id: "global", agencyId: "global", agencyName: "Global" },
+  { id: "repo-fin", agencyId: "ag-fin", agencyName: "Finance" },
+];
 const { GET, POST } = vi.hoisted(() => ({
-  // The empty envelope carries `items: []` alongside `totalItems: 0` — the two
-  // must agree or the pager and the empty state disagree.
-  GET: vi.fn(async () => ({ data: { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 25 } })),
+  GET: vi.fn(async (path: string) =>
+    path === "/git-repos"
+      ? { data: { items: REPOS } }
+      : // The empty envelope carries `items: []` alongside `totalItems: 0`.
+        { data: { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 25 } },
+  ),
   POST: vi.fn(async () => ({ data: {} })),
 }));
 
@@ -28,20 +36,25 @@ vi.mock("../../api/client", async (importOriginal) => {
     fetchCapabilities: vi.fn(async () => ({
       vault: false, apprise: false, compose: false, composeUnbound: false, manageRoles: false,
       // The flat flag is deliberately TRUE in both cases: an administrator of
-      // one agency holds configureApp and is still refused.
+      // one agency holds configureApp and is still refused Global's.
       configureApp: true, manageEnvVars: false, publishSchedule: false, triggerJobs: false,
       killJobs: false, unrestricted: false,
       configureAppGlobal: global,
     })),
   };
 });
+vi.mock("../../api/access", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../api/access")>();
+  return { ...actual, useMyAccess: () => ACCESS };
+});
 
 import { GitSyncTab } from "./GitSyncTab";
 
-const WHY = "Only a global administrator (a role on every agency) can start a sync from GitLab.";
+const WHY = "Only a global administrator (a role on every agency) can sync Global's repository.";
 
 beforeEach(() => {
   global = false;
+  ACCESS = { grants: [{ role: "admin", allScopes: false, agencyId: "ag-fin", agencyName: "Finance", scopes: [], permissions: ["configureApp"], groups: [], origin: "group" }] };
   GET.mockClear();
   POST.mockClear();
   localStorage.clear();
@@ -55,15 +68,18 @@ const open = async () => {
     </MemoryRouter>,
   );
   await waitFor(() => expect(screen.getByText("No Git sync events yet")).toBeTruthy());
+  await waitFor(() => expect(screen.getByLabelText("Repository")).toBeTruthy());
   // Let the capabilities read land before judging what is disabled.
   await new Promise((r) => setTimeout(r, 20));
-  return screen.getAllByRole("button", { name: /Sync now/ }) as HTMLButtonElement[];
+  return () => screen.getAllByRole("button", { name: /Sync now/ }) as HTMLButtonElement[];
 };
+const historyCalls = () =>
+  (GET.mock.calls as unknown as [string, { params?: { query?: { repo?: string } } }][]).filter(([p]) => p === "/git/history");
 
-describe("Git Sync — Sync now needs a global administrator (GC)", () => {
-  it("disables both Sync now buttons with the reason for an administrator of one agency", async () => {
-    const buttons = await open();
-    // The toolbar's and the empty state's.
+describe("Git Sync — per repository (R8)", () => {
+  it("reads Global's log first, and disables Global's sync for an agency's administrator, with the reason", async () => {
+    const buttons = (await open())();
+    expect(historyCalls().at(-1)![1].params!.query!.repo).toBe("global");
     expect(buttons.length).toBe(2);
     for (const b of buttons) {
       expect(b.disabled).toBe(true);
@@ -73,9 +89,19 @@ describe("Git Sync — Sync now needs a global administrator (GC)", () => {
     expect(POST).not.toHaveBeenCalled();
   });
 
+  it("lets an agency's administrator read and sync their own repository", async () => {
+    const buttons = await open();
+    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "repo-fin" } });
+    await waitFor(() => expect(historyCalls().at(-1)![1].params!.query!.repo).toBe("repo-fin"));
+    await waitFor(() => expect(buttons()[0].disabled).toBe(false));
+    fireEvent.click(buttons()[0]);
+    await waitFor(() => expect(POST).toHaveBeenCalledTimes(1));
+    expect(POST.mock.calls[0] as unknown).toEqual(["/git/sync", expect.objectContaining({ params: expect.objectContaining({ query: { repo: "repo-fin" } }) })]);
+  });
+
   it("enables both for a global administrator, and the click reaches POST /git/sync", async () => {
     global = true;
-    const buttons = await open();
+    const buttons = (await open())();
     expect(buttons.length).toBe(2);
     for (const b of buttons) {
       expect(b.disabled).toBe(false);
