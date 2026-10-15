@@ -6863,6 +6863,38 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /git-repo-names:
+    get:
+      tags: [Agencies]
+      operationId: listGitRepoNames
+      summary: The repositories whose history the caller may read (v2.4.0)
+      description: |
+        Which repository and whose: no connection. The rule is the one `?repo=`
+        is read by on GET /git/history, GET /schedule-pushes and the script
+        reads (GR-26): Global's for every session; an agency's for its people,
+        whatever their role, and for those whose grant reaches every agency.
+        The screens that work on one repository at a time choose from it
+        (R8): GET /git-repos answers `configureApp` only.
+      responses:
+        '200':
+          description: The repositories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, agencyId, agencyName]
+                      properties:
+                        id: { type: string, description: "The repository's id; `global` for Global's." }
+                        agencyId: { type: string }
+                        agencyName: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /agencies/{agencyId}/git-repo:
     parameters:
       - name: agencyId

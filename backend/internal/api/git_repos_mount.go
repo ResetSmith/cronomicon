@@ -26,6 +26,7 @@ import (
 func (s *Server) mountGitRepos(mux *http.ServeMux) {
 	configure := s.requirePerm("configureApp", permConfigureApp)
 	mux.Handle("GET /api/v1/git-repos", configure(http.HandlerFunc(s.handleListGitRepos)))
+	mux.Handle("GET /api/v1/git-repo-names", s.auth.RequireSession(http.HandlerFunc(s.handleListGitRepoNames)))
 	mux.Handle("GET /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handleGetAgencyGitRepo)))
 	mux.Handle("PUT /api/v1/agencies/{agencyId}/git-repo", configure(http.HandlerFunc(s.handlePutAgencyGitRepo)))
 	mux.Handle("GET /api/v1/git-repos/{repoId}/problems", s.auth.RequireSession(http.HandlerFunc(s.handleListRepoProblems)))
@@ -71,6 +72,41 @@ func (s *Server) handleListGitRepos(w http.ResponseWriter, r *http.Request) {
 	for _, repo := range all {
 		if id.CanAgency(auth.PermConfigureApp, repo.AgencyID) {
 			items = append(items, repo)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// repoName is a repository as the screens that READ one name it: which it is
+// and whose. Nothing of its connection.
+type repoName struct {
+	ID         string `json:"id"`
+	AgencyID   string `json:"agencyId"`
+	AgencyName string `json:"agencyName"`
+}
+
+// handleListGitRepoNames lists the repositories whose history the caller may
+// read — the rule readableRepo applies to `?repo=` (GR-26): Global's for
+// every session, an agency's for its people and for a grant on every agency.
+// It is what History → Git sync, Schedule pushes, Scripts and Publish choose
+// from (2.4.0 R8, from its review): GET /git-repos answers configureApp only,
+// so an approver or a viewer had no repository to choose. Ids and agency
+// names only; the connection stays behind GR-9's gate.
+func (s *Server) handleListGitRepoNames(w http.ResponseWriter, r *http.Request) {
+	id, ok := auth.IdentityFrom(r.Context())
+	if !ok {
+		httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return
+	}
+	all, err := settings.ListRepos(r.Context(), s.db, s.cfg)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	items := make([]repoName, 0, len(all))
+	for _, repo := range all {
+		if id.ReadsAgency(repo.AgencyID) {
+			items = append(items, repoName{ID: repo.ID, AgencyID: repo.AgencyID, AgencyName: repo.AgencyName})
 		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
