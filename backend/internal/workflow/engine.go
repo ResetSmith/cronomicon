@@ -614,7 +614,9 @@ func (e *Engine) runJob(
 	// be refused by every runner in its actual agency. TG-2 was the same class of
 	// miss for target_host — the column was simply absent from the list below, so
 	// every workflow step fanned out across its job's whole scope.
-	stepAgencies, aerr := execspec.ScopeAgencies(ctx, e.db, effectiveScope)
+	// The scope is looked for in the step's job's agency (I2: a scope's name is
+	// unique within an agency only).
+	stepAgencies, aerr := execspec.ScopeAgencies(ctx, e.db, jd.agency, effectiveScope)
 	if aerr != nil {
 		// As for an unreadable binding or executor: the step fails, recorded, and
 		// no child run is written with a guessed agency set.
@@ -1159,7 +1161,10 @@ type jobDef struct {
 	// uid is the resolved job's permanent identity (R2-3). It is what the child
 	// run's concurrency key is built from, so a workflow step gates against the
 	// same job a cron fire does — the RX-25 agreement, now keyed on identity.
-	uid             string
+	uid string
+	// agency is whose the job is (agencyid.JobSQL; an in-app job's owner since
+	// 1400), the agency its scope is looked for in (I2).
+	agency          string
 	concurrencyKey  string
 	retries         int  // WB-R1 job-level default (step value overrides)
 	backoffSeconds  int  // WB-R1 job-level default
@@ -1411,6 +1416,35 @@ func (e *Engine) SubWorkflowJobScopes(ctx context.Context, steps []Step, wfSourc
 func (e *Engine) SubWorkflowJobScopesAt(ctx context.Context, steps []Step, wfSource, home string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
+	err := e.walkSubWorkflowJobs(ctx, steps, wfSource, home, func(jd jobDef) {
+		if !seen[jd.scope] {
+			seen[jd.scope] = true
+			out = append(out, jd.scope)
+		}
+	})
+	return out, err
+}
+
+// SubWorkflowJobAgencies is SubWorkflowJobScopes for the jobs' AGENCIES
+// (agencyid.JobSQL: an in-app job's owner since 1400): whose the jobs the
+// graph reaches through its sub-workflows are. A scope's name says nothing of
+// whose it is once names are per agency (I2).
+func (e *Engine) SubWorkflowJobAgencies(ctx context.Context, steps []Step, wfSource string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	err := e.walkSubWorkflowJobs(ctx, steps, wfSource, "", func(jd jobDef) {
+		if !seen[jd.agency] {
+			seen[jd.agency] = true
+			out = append(out, jd.agency)
+		}
+	})
+	return out, err
+}
+
+// walkSubWorkflowJobs visits the job definitions of every workflow reachable
+// through the sub-workflow steps of a graph, as SubWorkflowJobScopes
+// describes.
+func (e *Engine) walkSubWorkflowJobs(ctx context.Context, steps []Step, wfSource, home string, visit func(jobDef)) error {
 	walkedAt := map[int64]int{} // workflow rowid → shallowest depth walked from
 	var walk func(steps []Step, source, home string, depth int) error
 	walk = func(steps []Step, source, home string, depth int) error {
@@ -1429,15 +1463,12 @@ func (e *Engine) SubWorkflowJobScopesAt(ctx context.Context, steps []Step, wfSou
 				continue
 			}
 			walkedAt[rowid] = depth
-			scopes, err := e.ownJobScopes(ctx, childSteps, childSource, childHome)
+			defs, err := e.lookupJobDefs(ctx, childSteps, childSource, childHome)
 			if err != nil {
 				return err
 			}
-			for _, sc := range scopes {
-				if !seen[sc] {
-					seen[sc] = true
-					out = append(out, sc)
-				}
+			for _, jd := range defs {
+				visit(jd)
 			}
 			if err := walk(childSteps, childSource, childHome, depth+1); err != nil {
 				return err
@@ -1446,10 +1477,7 @@ func (e *Engine) SubWorkflowJobScopesAt(ctx context.Context, steps []Step, wfSou
 		return nil
 	}
 	// The children of the addressed workflow run at depth 1.
-	if err := walk(steps, wfSource, home, 1); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return walk(steps, wfSource, home, 1)
 }
 
 // WorkflowRef is a sub-workflow step's reference: the name, and the identity
@@ -1510,14 +1538,14 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource, home 
 		var continueOnErr bool
 		var ck sql.NullString
 		var disabled, binned int
-		var uid string
+		var uid, agency string
 		err := e.db.QueryRowContext(ctx,
 			`SELECT run_type, COALESCE(scope,''), COALESCE(target_host,''), COALESCE(timeout_seconds,0), concurrency_key,
 			        COALESCE(retries,0), COALESCE(backoff_seconds,0), COALESCE(continue_on_error,0),
 			        COALESCE(ssh_user,''), COALESCE(ssh_credential,''),
-			        enabled = 0, deleted_at IS NOT NULL, COALESCE(uid,''), source
+			        enabled = 0, deleted_at IS NOT NULL, COALESCE(uid,''), source, COALESCE(`+agencyid.JobSQL("jobs")+`, '`+agencyid.Global+`')
 			 FROM jobs WHERE `+where,
-			args...).Scan(&rt, &sc, &th, &to, &ck, &retries, &backoff, &continueOnErr, &su, &scr, &disabled, &binned, &uid, &rowSrc)
+			args...).Scan(&rt, &sc, &th, &to, &ck, &retries, &backoff, &continueOnErr, &su, &scr, &disabled, &binned, &uid, &rowSrc, &agency)
 		if err != nil {
 			return "", jobDef{}, false
 		}
@@ -1527,7 +1555,7 @@ func (e *Engine) resolveJobDef(ctx context.Context, ref StepRef, wfSource, home 
 		if !execspec.IdentityCapableRunType(rt) {
 			su, scr = "", ""
 		}
-		jd := jobDef{runType: rt, scope: sc, targetHost: th, sshUser: su, sshCred: scr, timeout: to, uid: uid, concurrencyKey: ck.String, retries: retries, backoffSeconds: backoff, continueOnError: continueOnErr}
+		jd := jobDef{runType: rt, scope: sc, targetHost: th, sshUser: su, sshCred: scr, timeout: to, uid: uid, agency: agency, concurrencyKey: ck.String, retries: retries, backoffSeconds: backoff, continueOnError: continueOnErr}
 		// FX-A1 — the row EXISTS, so A11 precedence has already chosen this source;
 		// whether it may RUN is a separate question, answered here.
 		//

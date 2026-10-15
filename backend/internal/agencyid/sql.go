@@ -25,6 +25,24 @@ func JobSQL(alias string) string {
 	ELSE ` + alias + `.owner_agency END)`
 }
 
+// ScopeIn is "the row `alias` of `scopes` is the scope named nameExpr in the
+// agency agencyExpr (an id)". A scope's name is unique within its agency (I2,
+// IN-5), not across the installation: every lookup of a scope by name says
+// whose. A scope's agency is its owner_agency (1410): its one agency, or
+// Global's for a scope several share.
+func ScopeIn(alias, nameExpr, agencyExpr string) string {
+	return `(` + alias + `.name = ` + nameExpr + ` AND ` + alias + `.owner_agency = ` + agencyExpr + `)`
+}
+
+// ScopeOfRun is "the row `alias` of `scopes` is the scope named nameExpr in one
+// of the agencies of the run runIDExpr" (run_agencies, by agency name). A
+// run's scope is its job's scope in its job's agency, and the run carries that
+// agency.
+func ScopeOfRun(alias, nameExpr, runIDExpr string) string {
+	return `(` + alias + `.name = ` + nameExpr + ` AND ` + alias + `.owner_agency IN (
+		SELECT ag.id FROM run_agencies rag JOIN agencies ag ON ag.name = rag.agency WHERE rag.run_id = ` + runIDExpr + `))`
+}
+
 // DefinitionSQL is the agency of a definition by its uid (?1) and kind (?2):
 // a job's (JobSQL), a workflow's (WorkflowSQL). NULL for no such row.
 var DefinitionSQL = DefinitionOf("?1", "?2")

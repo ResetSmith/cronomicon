@@ -110,8 +110,12 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 	// has no scope of its own). Same generic-refusal rule as jobs.
 	steps, perr := workflow.ParseSteps(string(in.Steps))
 	if perr == nil {
-		scopes := s.collectStepScopes(r, steps)
-		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, scopes, "")
+		owner, _, oerr := s.workflowOwner(r, steps)
+		if oerr != nil {
+			httpx.Fail500(w, s.log, "db_error", oerr)
+			return
+		}
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, owner, "")
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -158,8 +162,12 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 	// name: that agency then had two, which creating either would have refused,
 	// and whatever finds a workflow by its name could not tell them apart.
 	if steps, perr := workflow.ParseSteps(string(in.Steps)); perr == nil {
-		scopes := s.collectStepScopes(r, steps)
-		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, scopes, existing.UID)
+		owner, _, oerr := s.workflowOwner(r, steps)
+		if oerr != nil {
+			httpx.Fail500(w, s.log, "db_error", oerr)
+			return
+		}
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", in.Name, owner, existing.UID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -788,42 +796,25 @@ func (s *Server) stepJobScope(r *http.Request, ref workflow.StepRef) (sql.NullSt
 // belong to, and Global when there is none to say or more than one. spans is
 // the second case, which is a global administrator's to save.
 //
-// A job with no scope is Global's, as its runs are. So is one whose scope is
-// not in the catalog. A scope that several agencies share (a row from before
-// 2.3.0) counts as each of them.
+// Whose each job is is its owner (agencyid.JobSQL; an in-app job's since
+// 1400): until I2 it was worked out from the job's scope's name, which cannot
+// say whose once a scope's name is unique within an agency only. A job whose
+// owner cannot be read is Global's, as its runs are.
 func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner string, spans bool, err error) {
-	scopes := s.collectStepScopes(r, steps)
-	nested, err := workflow.New(s.db, s.log).SubWorkflowJobScopes(r.Context(), steps, "cronomicon")
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencies(r.Context(), steps, "cronomicon")
 	if err != nil {
 		return "", false, err
 	}
 	agencies := map[string]bool{}
-	for _, scope := range append(scopes, nested...) {
-		if strings.TrimSpace(scope) == "" {
-			agencies[agencyid.Global] = true
+	for _, a := range nested {
+		agencies[a] = true
+	}
+	for _, ref := range workflow.CollectStepRefs(steps) {
+		if ref.Name == "" {
 			continue
 		}
-		rows, qerr := s.db.QueryContext(r.Context(), `
-			SELECT sa.agency_id FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?`, scope)
-		if qerr != nil {
-			return "", false, qerr
-		}
-		n := 0
-		for rows.Next() {
-			var id string
-			if serr := rows.Scan(&id); serr != nil {
-				rows.Close()
-				return "", false, serr
-			}
-			agencies[id] = true
-			n++
-		}
-		rows.Close()
-		if rerr := rows.Err(); rerr != nil {
-			return "", false, rerr
-		}
-		if n == 0 {
-			agencies[agencyid.Global] = true
+		if a, ok := s.stepJobAgency(r, ref); ok {
+			agencies[a] = true
 		}
 	}
 	switch len(agencies) {
@@ -1068,6 +1059,30 @@ func (s *Server) refuseNewSpan(w http.ResponseWriter, r *http.Request, tx *sql.T
 	_ = tx.Rollback()
 	httpx.Fail(w, http.StatusConflict, CodeWorkflowSpansAgencies, msg)
 	return false
+}
+
+// stepJobAgency is stepJobScope for the step job's agency (agencyid.JobSQL).
+func (s *Server) stepJobAgency(r *http.Request, ref workflow.StepRef) (string, bool) {
+	read := func(where string, args ...any) (string, bool) {
+		var a sql.NullString
+		err := s.db.QueryRowContext(r.Context(), `SELECT `+agencyid.JobSQL("j")+` FROM jobs j WHERE `+where+` AND j.deleted_at IS NULL`, args...).Scan(&a)
+		if err != nil {
+			return "", false
+		}
+		if !a.Valid {
+			return agencyid.Global, true
+		}
+		return a.String, true
+	}
+	if ref.UID != "" {
+		return read(`j.uid = ?`, ref.UID)
+	}
+	for _, src := range workflow.StepSourceOrder(ref.Source, "cronomicon") {
+		if a, ok := read(`j.name = ? AND j.source = ?`, ref.Name, src); ok {
+			return a, true
+		}
+	}
+	return "", false
 }
 
 // collectStepScopes resolves each step job's scope through the same A11

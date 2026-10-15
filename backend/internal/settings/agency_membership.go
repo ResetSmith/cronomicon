@@ -558,6 +558,12 @@ func BuildAgencyDetail(ctx context.Context, database *sql.DB, agencyID string) (
 // on a pre-830 schema (where the column does not exist yet). `table` is a
 // compile-time constant from memberTableFor, never input.
 func entityOwner(ctx context.Context, database *sql.DB, table, id string) string {
+	if table == "scopes" {
+		// A scope's owner_agency (1410) is its membership, kept equal to it by
+		// triggers, not an owner of its own: taking an agency out of a scope is
+		// the membership change itself, which LR-26 governs.
+		return ""
+	}
 	var owner string
 	if err := database.QueryRowContext(ctx,
 		`SELECT COALESCE(owner_agency,'') FROM `+table+` WHERE id = ?`, id).Scan(&owner); err != nil {

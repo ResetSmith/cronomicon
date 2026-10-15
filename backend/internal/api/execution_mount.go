@@ -1173,7 +1173,19 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// dispatch resolver will (runref.lookupScoped takes the run's agencies), and
 	// checking a different row than the one that gets injected is a check in name
 	// only. Reused verbatim for the run snapshot below — one query, two consumers.
-	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, scope)
+	// The scope is looked for in the job's agency (I2). A job with no scope of its
+	// own, run against one named in the request, is that scope's agency's run, as
+	// it was (the one scope of the name).
+	runAgency := s.jobAgencyByRowID(r.Context(), jobID)
+	if body.Scope != "" && (jr.Scope == nil || *jr.Scope == "") {
+		a, oerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
+		if oerr != nil {
+			httpx.Fail500(w, s.log, "db_error", oerr)
+			return
+		}
+		runAgency = a
+	}
+	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, runAgency, scope)
 	if aerr != nil {
 		httpx.Fail500(w, s.log, "db_error", aerr)
 		return

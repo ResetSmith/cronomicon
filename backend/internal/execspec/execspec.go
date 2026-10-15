@@ -538,17 +538,26 @@ func scopeAgencyIDs(ctx context.Context, db *sql.DB, scopeID string) ([]string, 
 // that EXISTS and has no agency is not "global": every scope is born with a
 // Global row and can only trade it for another, so that state is corruption, and
 // it is returned as ErrScopeHasNoAgency for the producer to refuse on.
-func ScopeAgencies(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
+//
+// agency is the id of the agency whose run this is (the job's owner, a
+// workflow's agency): a scope's name is unique within its agency only (I2,
+// IN-5), and the scope is looked for there. A scope of that name the agency
+// does not hold is "a scope the catalog does not hold", as before: another
+// agency's scope of the name is nothing to this run.
+func ScopeAgencies(ctx context.Context, db *sql.DB, agency, scope string) ([]string, error) {
 	out := []string{}
 	if scope == "" {
 		return []string{agencyid.GlobalName}, nil
+	}
+	if agency == "" {
+		agency = agencyid.Global
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT a.name FROM scope_agencies sa
 		JOIN scopes   s ON s.id = sa.scope_id
 		JOIN agencies a ON a.id = sa.agency_id
-		WHERE s.name = ?
-		ORDER BY a.name`, scope)
+		WHERE `+agencyid.ScopeIn("s", "?1", "?2")+`
+		ORDER BY a.name`, scope, agency)
 	if err != nil {
 		// The error is the caller's to act on. This used to answer "no agencies"
 		// — written for a pre-670 schema that cannot exist at run time, since
@@ -573,13 +582,31 @@ func ScopeAgencies(ctx context.Context, db *sql.DB, scope string) ([]string, err
 		return out, nil
 	}
 	var known bool
-	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM scopes WHERE name = ?)`, scope).Scan(&known); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM scopes s WHERE `+agencyid.ScopeIn("s", "?1", "?2")+`)`, scope, agency).Scan(&known); err != nil {
 		return nil, err
 	}
 	if known {
 		return nil, fmt.Errorf("%w: %q", ErrScopeHasNoAgency, scope)
 	}
 	return []string{agencyid.GlobalName}, nil
+}
+
+// ScopeOwnerByName is the agency of the one scope of this name, for a caller
+// that names a scope and no agency (an API request from before names were per
+// agency, I2): the scope's owner when exactly one scope has the name, and
+// Global's when none does or several do. A caller that knows whose run it is
+// asks ScopeAgencies with that agency instead.
+func ScopeOwnerByName(ctx context.Context, db *sql.DB, scope string) (string, error) {
+	var owner sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT CASE WHEN COUNT(*) = 1 THEN MIN(owner_agency) END FROM scopes WHERE name = ?`, scope).Scan(&owner)
+	if err != nil {
+		return "", err
+	}
+	if !owner.Valid {
+		return agencyid.Global, nil
+	}
+	return owner.String, nil
 }
 
 // ErrScopeHasNoAgency reports a scope row with no membership at all. The

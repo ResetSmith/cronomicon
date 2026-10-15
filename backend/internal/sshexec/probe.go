@@ -402,8 +402,9 @@ func credMsg(err error) string {
 func hostKeyGuard(ctx context.Context, db *sql.DB, hostID string) (keyGuard, error) {
 	var scope sql.NullString
 	var owner string
+	var scopeOwner sql.NullString
 	err := db.QueryRowContext(ctx, `
-		SELECT s.name, h.owner_agency FROM ssh_hosts h LEFT JOIN scopes s ON s.id = h.scope_id WHERE h.id = ?`, hostID).Scan(&scope, &owner)
+		SELECT s.name, s.owner_agency, h.owner_agency FROM ssh_hosts h LEFT JOIN scopes s ON s.id = h.scope_id WHERE h.id = ?`, hostID).Scan(&scope, &scopeOwner, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return keyGuard{checked: true}, nil // no such host: nothing but Global's keys
 	}
@@ -413,7 +414,7 @@ func hostKeyGuard(ctx context.Context, db *sql.DB, hostID string) (keyGuard, err
 	if scope.String == "" {
 		return ownerKeyGuard(ctx, db, []string{owner})
 	}
-	agencies, err := execspec.ScopeAgencies(ctx, db, scope.String)
+	agencies, err := execspec.ScopeAgencies(ctx, db, scopeOwner.String, scope.String)
 	if err != nil {
 		return keyGuard{}, err // an unreadable membership must not read as "no agency"
 	}

@@ -23,10 +23,10 @@ func TestI1_AHostOnlyGlobalDescribedIsReported(t *testing.T) {
 	mustExec(t, pool, `INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin'), ('sc-fin2', 'ag-fin'), ('sc-g', 'global')`)
 	for _, sh := range [][2]string{
 		{"sc-fin", "db01"}, {"sc-fin2", "db01"}, // one host, two of Finance's scopes: one notice
-		{"sc-fin", "web01"},                     // Finance wrote its own
-		{"sc-fin", "imp01"},                     // imported for the scope
-		{"sc-fin", "nobody01"},                  // Global has no record of it
-		{"sc-g", "db01"},                        // a Global scope's: Global's record is its own
+		{"sc-fin", "web01"},    // Finance wrote its own
+		{"sc-fin", "imp01"},    // imported for the scope
+		{"sc-fin", "nobody01"}, // Global has no record of it
+		{"sc-g", "db01"},       // a Global scope's: Global's record is its own
 	} {
 		mustExec(t, pool, `INSERT INTO scope_hosts (scope_id, host) VALUES (?, ?)`, sh[0], sh[1])
 	}

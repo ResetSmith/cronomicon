@@ -49,7 +49,7 @@ func TestScopeAgency(t *testing.T) {
 		{"", []string{"Global"}},            // unscoped
 	}
 	for _, c := range cases {
-		got, err := ScopeAgencies(ctx, pool, c.scope)
+		got, err := ScopeAgencies(ctx, pool, "global", c.scope)
 		if err != nil {
 			t.Fatalf("ScopeAgencies(%q): %v", c.scope, err)
 		}
@@ -70,6 +70,26 @@ func TestScopeAgency(t *testing.T) {
 			t.Errorf("MarshalAgencies is not deterministic for %v: %q vs %q", got, first, second)
 		}
 	}
+
+	// A scope is looked for in the agency whose run it is (I2). prod is in two
+	// agencies, which makes it Global's (1410); a run of alpha's that names it
+	// does not find it, as for any scope its agency does not hold.
+	exec(`INSERT INTO scopes(id, name, source, created_at) VALUES('s3','alpha-only','cronomicon','t')`)
+	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES('s3','a1')`)
+	for _, c := range []struct {
+		agency, scope string
+		want          string
+	}{
+		{"a1", "alpha-only", "alpha"},
+		{"a2", "alpha-only", "Global"},
+		{"global", "alpha-only", "Global"},
+		{"a1", "prod", "Global"},
+	} {
+		got, err := ScopeAgencies(ctx, pool, c.agency, c.scope)
+		if err != nil || len(got) != 1 || got[0] != c.want {
+			t.Errorf("ScopeAgencies(%q, %q) = %v, %v; want [%s]", c.agency, c.scope, got, err, c.want)
+		}
+	}
 }
 
 // An unreadable membership is not an empty one. ScopeAgencies used to answer
@@ -85,11 +105,11 @@ func TestScopeAgenciesReturnsAReadFailure(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	ctx := context.Background()
-	if got, err := ScopeAgencies(ctx, pool, ""); err != nil || len(got) != 1 || got[0] != "Global" {
+	if got, err := ScopeAgencies(ctx, pool, "", ""); err != nil || len(got) != 1 || got[0] != "Global" {
 		t.Fatalf("the empty scope = %v, %v; want [Global] and no error", got, err)
 	}
 	_ = pool.Close()
-	got, err := ScopeAgencies(ctx, pool, "prod")
+	got, err := ScopeAgencies(ctx, pool, "", "prod")
 	if err == nil {
 		t.Fatalf("a failed read answered %v with no error — it would be taken for \"no agency\"", got)
 	}
@@ -120,7 +140,7 @@ func TestAScopeWithNoAgencyIsAnErrorNotGlobal(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
-	got, err := ScopeAgencies(context.Background(), pool, "orphan")
+	got, err := ScopeAgencies(context.Background(), pool, "global", "orphan")
 	if !errors.Is(err, ErrScopeHasNoAgency) {
 		t.Fatalf("ScopeAgencies(orphan) = %v, %v; want ErrScopeHasNoAgency", got, err)
 	}

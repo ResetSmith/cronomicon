@@ -79,7 +79,11 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Scope      string `json:"scope"`
+		Scope string `json:"scope"`
+		// AgencyID is whose run the preview is for: a scope's name is unique
+		// within an agency only (I2). Absent, it is the agency of the one scope
+		// of that name (execspec.ScopeOwnerByName).
+		AgencyID   string `json:"agencyId"`
 		References []struct {
 			Kind string `json:"kind"`
 			Name string `json:"name"`
@@ -106,7 +110,16 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 	for _, b := range body.References {
 		in = append(in, runref.Binding{Kind: runref.Kind(b.Kind), Name: b.Name, As: strings.TrimSpace(b.As)})
 	}
-	results, err := runref.ValidateAll(r.Context(), s.db, in, body.Scope, actor.Grant().CanRead)
+	agency := strings.TrimSpace(body.AgencyID)
+	if agency == "" {
+		a, aerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
+		if aerr != nil {
+			httpx.Fail500(w, s.log, "db_error", aerr)
+			return
+		}
+		agency = a
+	}
+	results, err := runref.ValidateAll(r.Context(), s.db, in, agency, body.Scope, actor.Grant().CanRead)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -122,7 +135,7 @@ func (s *Server) validateReferences(w http.ResponseWriter, r *http.Request) {
 	//
 	// Downgraded rather than dropped: the operator still sees the row and is told
 	// why it will be refused, which is what makes the dialog actionable.
-	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, body.Scope)
+	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, agency, body.Scope)
 	if aerr != nil {
 		httpx.Fail500(w, s.log, "db_error", aerr)
 		return

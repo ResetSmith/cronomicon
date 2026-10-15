@@ -377,6 +377,20 @@ func freezeTier(ctx context.Context, database *sql.DB, agency string, skip, only
 	return calendar.EvaluateFor(sets, agency, skip, only, day), nil
 }
 
+// jobAgencyFor is the agency of the job a fire runs, found as the fire finds
+// it: by uid, or by source and name for a row with none. The agency its scope
+// is looked for in (I2). Global's when it cannot be told.
+func jobAgencyFor(ctx context.Context, database *sql.DB, uid, source, name string) string {
+	var agency sql.NullString
+	err := database.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j
+		WHERE CASE WHEN ?1 != '' THEN j.uid = ?1 ELSE j.name = ?2 AND j.source = ?3 END
+		ORDER BY j.rowid LIMIT 1`, uid, name, source).Scan(&agency)
+	if err != nil || !agency.Valid {
+		return agencyid.Global
+	}
+	return agency.String
+}
+
 // definitionAgency is the agency of a definition by uid and kind; Global's when
 // it cannot be told (no uid, a row that is gone), as such a run is.
 func definitionAgency(ctx context.Context, database *sql.DB, uid, kind string) string {

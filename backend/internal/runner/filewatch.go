@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
 	"github.com/ResetSmith/cronomicon/internal/db"
@@ -91,7 +92,7 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 	}
 	var out []runnerproto.WatchSpec
 	for _, c := range cands {
-		if !watchAgencyPermits(ctx, database, c.scope, runnerAgencies) {
+		if !watchAgencyPermits(ctx, database, jobAgencyOf(ctx, database, c.uid), c.scope, runnerAgencies) {
 			continue
 		}
 		// SB-1 — a scope bound to named runners is watched only by them. The drop
@@ -117,13 +118,27 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 	return out
 }
 
+// jobAgencyOf is the agency of the job with this uid (agencyid.JobSQL), the
+// agency its scope is looked for in (I2: a scope's name is unique within an
+// agency only). Global's for no uid or no such job, as such a run is.
+func jobAgencyOf(ctx context.Context, database *sql.DB, uid string) string {
+	if uid == "" {
+		return agencyid.Global
+	}
+	var a sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT `+agencyid.DefinitionSQL, uid, "job").Scan(&a); err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
+
 // watchAgencyPermits mirrors claimRun's agency rule: a job's directories are
 // watchable only by a runner that serves one of the job's scope's agencies. An
 // unscoped job is Global's (migration 1220) and is watched only by a runner that
 // serves Global — what "a runner with no agencies at all" meant before Global
 // was a row. Relaxing it would let one department observe another's directories.
-func watchAgencyPermits(ctx context.Context, database *sql.DB, scope string, runnerAgencies []string) bool {
-	jobAgencies, err := execspec.ScopeAgencies(ctx, database, strings.TrimSpace(scope))
+func watchAgencyPermits(ctx context.Context, database *sql.DB, agency, scope string, runnerAgencies []string) bool {
+	jobAgencies, err := execspec.ScopeAgencies(ctx, database, agency, strings.TrimSpace(scope))
 	if err != nil {
 		return false
 	}
@@ -345,7 +360,7 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 		"CRONOMICON_WATCH_SIZE": fmt.Sprintf("%d", sg.SizeBytes),
 	})
 
-	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, scope)
+	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, jobAgencyOf(ctx, s.db, jobUID.String), scope)
 	if aerr != nil {
 		return false, fmt.Errorf("read the agencies of scope %q: %w", scope, aerr)
 	}

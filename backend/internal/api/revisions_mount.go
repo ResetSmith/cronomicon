@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/db"
 	"github.com/ResetSmith/cronomicon/internal/entitycode"
@@ -450,16 +451,12 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	// a silent cross-agency pick, so multiplicity refuses with the generic
 	// wording (naming the sibling's agency would be an existence oracle).
 	var binnedUIDs []string
-	var binnedScopes []string
+	// Whose each binned row is: its owner (a job's since 1400, a workflow's since
+	// 1360, a schedule's since 1300), which is what its name collides within.
+	var binnedOwners []string
 	rows, err := tx.QueryContext(r.Context(),
-		`SELECT uid, COALESCE(scope,'') FROM `+table+`
+		`SELECT uid, COALESCE(owner_agency, '`+agencyid.Global+`') FROM `+table+`
 		  WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`, name)
-	if err != nil {
-		// schedules/workflows carry no scope column; fall back to uid-only.
-		rows, err = tx.QueryContext(r.Context(),
-			`SELECT uid, '' FROM `+table+`
-			  WHERE source='cronomicon' AND name = ? AND deleted_at IS NOT NULL`, name)
-	}
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -467,7 +464,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var u, sc string
 		if err := rows.Scan(&u, &sc); err == nil {
-			binnedUIDs, binnedScopes = append(binnedUIDs, u), append(binnedScopes, sc)
+			binnedUIDs, binnedOwners = append(binnedUIDs, u), append(binnedOwners, sc)
 		}
 	}
 	rows.Close()
@@ -483,7 +480,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 	// The name may have been legitimately reused in an overlapping pool while
 	// this one sat in the bin — a restore is a create for uniqueness purposes.
 	if kind == revKindJob {
-		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", name, binnedScopes[0], restoredUID)
+		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", name, binnedOwners[0], restoredUID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -494,7 +491,7 @@ func (s *Server) restoreFromRecycleBin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if kind == revKindWorkflow {
-		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", name, nil, restoredUID)
+		conflict, cerr := execspec.WorkflowNamePoolConflict(r.Context(), s.db, "cronomicon", name, binnedOwners[0], restoredUID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return

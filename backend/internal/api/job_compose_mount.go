@@ -297,7 +297,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scope is required (use \"\" for All)")
 		return
 	}
-	conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, in.scopeOf(), "")
+	conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, s.scopeAgency(r.Context(), in.scopeOf()), "")
 	if cerr != nil {
 		httpx.Fail500(w, s.log, "db_error", cerr)
 		return
@@ -349,7 +349,7 @@ func (s *Server) updateJob(w http.ResponseWriter, r *http.Request) {
 	// R2-5 — a scope EDIT can move the job into an agency where its name is
 	// taken; checked against every sibling but itself.
 	if in.Scope != nil {
-		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, in.scopeOf(), existing.UID)
+		conflict, cerr := execspec.NamePoolConflict(r.Context(), s.db, "jobs", "cronomicon", in.Name, s.scopeAgency(r.Context(), in.scopeOf()), existing.UID)
 		if cerr != nil {
 			httpx.Fail500(w, s.log, "db_error", cerr)
 			return
@@ -606,7 +606,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		if in.Scope != nil {
 			jobScope = *in.Scope
 		}
-		jobAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, jobScope)
+		jobAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, s.scopeAgency(r.Context(), jobScope), jobScope)
 		if aerr != nil {
 			httpx.Fail500(w, s.log, "db_error", aerr)
 			return
@@ -683,7 +683,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		//
 		// The run's agency snapshot is scope-derived, so the job's own scope gives
 		// the same candidate set a run of this job would see.
-		scopeAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, in.scopeOf())
+		scopeAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, s.scopeAgency(r.Context(), in.scopeOf()), in.scopeOf())
 		if aerr != nil {
 			httpx.Fail500(w, s.log, "db_error", aerr)
 			return
@@ -1162,6 +1162,17 @@ func (s *Server) agencyRepo(ctx context.Context, agencyID string) string {
 // Global's, as their runs are.
 func (s *Server) scopeRepo(ctx context.Context, scope string) string {
 	return s.agencyRepo(ctx, s.scopeAgency(ctx, scope))
+}
+
+// jobAgencyByRowID is the agency of the job with this rowid (agencyid.JobSQL),
+// the agency its scope is looked for in (I2: a scope's name is unique within
+// an agency only). Global's for no such job, as such a run is.
+func (s *Server) jobAgencyByRowID(ctx context.Context, rowid string) string {
+	var a sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j WHERE j.rowid = ?`, rowid).Scan(&a); err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
 }
 
 // scopeAgency is the agency a job on a scope is: the scope's, when one agency

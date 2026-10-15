@@ -2,14 +2,27 @@ package runref
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
+
+// scopeOwner is the agency a run in the scope named would be for: the scope's
+// owner (I2: a scope's name is looked for within an agency).
+func scopeOwner(t *testing.T, pool *sql.DB, scope string) string {
+	t.Helper()
+	a, err := execspec.ScopeOwnerByName(context.Background(), pool, scope)
+	if err != nil {
+		t.Fatalf("scope owner of %q: %v", scope, err)
+	}
+	return a
+}
 
 // unrestricted / scoped / zero-grant readers, mirroring auth.ScopeGrant.CanRead
 // without importing auth (runref must stay a leaf — see CanReadScope).
@@ -139,7 +152,7 @@ func TestValidateTruthTable(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			v, err := Validate(ctx, pool, tc.kind, tc.ref, tc.scope, tc.canRead)
+			v, err := Validate(ctx, pool, tc.kind, tc.ref, scopeOwner(t, pool, tc.scope), tc.scope, tc.canRead)
 			if err != nil {
 				t.Fatalf("Validate: %v", err)
 			}
@@ -198,7 +211,7 @@ func TestValidateAgreesWithDispatch(t *testing.T) {
 	for _, scope := range []string{"", "dev", "prod"} {
 		for _, name := range []string{"GLOBAL_PW", "PROD_PW", "ABSENT"} {
 			b := Binding{Kind: KindSecret, Name: name}
-			v, err := Validate(ctx, pool, b.Kind, b.Name, scope, allScopes())
+			v, err := Validate(ctx, pool, b.Kind, b.Name, scopeOwner(t, pool, scope), scope, allScopes())
 			if err != nil {
 				t.Fatalf("Validate(%s,%s): %v", scope, name, err)
 			}
@@ -221,7 +234,7 @@ func TestValidateAllPreservesOrder(t *testing.T) {
 		{Kind: KindSecret, Name: "A"},
 		{Kind: KindKey, Name: "C"},
 	}
-	out, err := ValidateAll(ctx, pool, in, "", allScopes())
+	out, err := ValidateAll(ctx, pool, in, "", "", allScopes())
 	if err != nil {
 		t.Fatalf("ValidateAll: %v", err)
 	}
