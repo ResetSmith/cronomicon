@@ -4187,6 +4187,13 @@ export interface paths {
          *     a global administrator). Otherwise 422 `repo_url_not_allowed`, and
          *     nothing is stored. Global's repository is exempt.
          *
+         *     **The token must be able to push (v2.4.0, IN-2).** A first connection,
+         *     and an edit that names another URL, token or branch, is tested first
+         *     (as `POST …/git-repo/test` tests): 422 `connection_failed` when the
+         *     remote does not answer, 422 `token_cannot_push` when the token may only
+         *     read, and nothing is stored. An edit that changes neither (the bot's
+         *     name, the webhook, the expiry warning) is not tested again.
+         *
          *     Omit `pat` to keep the stored token; the masked value a read returns is
          *     taken the same way when it is sent back. `writeBranch`, `botName`,
          *     `botEmail` and `tokenExpiryNotifyDays` take their defaults when left
@@ -17191,6 +17198,10 @@ export interface operations {
                         branches: string[];
                         /** @description The remote's own words when it did not answer. */
                         error?: string;
+                        /** @description The remote offered to receive a push with this token: the handshake `git push` makes before it sends anything; nothing is sent (v2.4.0, IN-2). A protected branch's rule is not part of it and shows at the first push. */
+                        canPush: boolean;
+                        /** @description The remote's words when it refused the push handshake. */
+                        pushError?: string;
                     };
                 };
             };

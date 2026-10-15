@@ -151,6 +151,20 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 	if n := rows(); n != 0 {
 		t.Fatalf("a refused connection stored %d rows", n)
 	}
+	// A token that may only read, and a remote that does not answer: refused,
+	// each with its reason, and nothing is stored (§0a, IN-2; Phase I3).
+	for _, c := range []struct{ url, code string }{
+		{"http://127.0.0.1:1/fin/read-only.git", "token_cannot_push"},
+		{"http://127.0.0.1:1/fin/unreachable.git", "connection_failed"},
+	} {
+		code, _, body := put(gFinAdmin, "ag:FIN", `{"repoUrl":"`+c.url+`","pat":"glpat-fin-secret-1234","writeBranch":"main"}`)
+		if code != http.StatusUnprocessableEntity || !strings.Contains(body, c.code) {
+			t.Errorf("connecting %s = %d %s, want 422 %s", c.url, code, body, c.code)
+		}
+	}
+	if n := rows(); n != 0 {
+		t.Fatalf("a connection that cannot push stored %d rows", n)
+	}
 
 	// FIN's administrator connects FIN's.
 	code, made, body := put(gFinAdmin, "ag:FIN", conn)
@@ -228,6 +242,18 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 	}
 	if _, got := get(gFinAdmin, "ag:FIN"); got.RepoUrl != "http://127.0.0.1:1/fin/moved.git" {
 		t.Errorf("after a refused edit the URL is %q", got.RepoUrl)
+	}
+	// An edit onto a token that may only read is refused too (IN-2) ...
+	if code, _, body := put(gFinAdmin, "ag:FIN", `{"repoUrl":"http://127.0.0.1:1/fin/read-only.git","pat":"`+made.Pat+`"}`); code != http.StatusUnprocessableEntity || !strings.Contains(body, "token_cannot_push") {
+		t.Errorf("an edit onto a read-only token = %d %s, want 422 token_cannot_push", code, body)
+	}
+	// ... and one that names the same URL, token and branch is not tested
+	// again: a remote that is down does not hold back the bot's name.
+	if _, err := pool.Exec(`UPDATE git_repos SET url = 'http://127.0.0.1:1/fin/unreachable.git' WHERE id = ?`, made.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, body := put(gFinAdmin, "ag:FIN", `{"repoUrl":"http://127.0.0.1:1/fin/unreachable.git","pat":"`+made.Pat+`","writeBranch":"release","botName":"Finance Bot 2"}`); code != http.StatusOK {
+		t.Errorf("an edit of the bot's name while the remote is down = %d %s, want 200", code, body)
 	}
 
 	// A global administrator may connect any agency's, and writes Global's

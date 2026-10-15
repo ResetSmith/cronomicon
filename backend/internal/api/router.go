@@ -58,6 +58,9 @@ type Server struct {
 	// repository's connection has been written so that the write takes effect
 	// without a restart of the server.
 	git *gitlab.Registry
+	// repoTest is Options.RepoTest: a connection's test, and the check a save
+	// of a connection must pass (IN-2).
+	repoTest func(ctx context.Context, cfg *config.Config, url, token, branch string) gitlab.ConnectionTest
 	// scheduleReload, when set, is handed to every gitlab Service as its
 	// onSyncComplete hook so a git sync triggers an immediate scheduler reload.
 	// Set from Options (main.go wires it to scheduler.ReloadIfChanged).
@@ -150,6 +153,10 @@ type Options struct {
 	// LogArchiveChanged is called after the archive store is rebuilt from a
 	// settings save, so the sweep re-reads its schedule (SL-2). Optional.
 	LogArchiveChanged func()
+	// RepoTest tests a repository's connection: it lists the remote's refs and
+	// asks whether the token may push (2.4.0 Phase I3). gitlab.TestConnection
+	// when nil; a test replaces it rather than reach a remote.
+	RepoTest func(ctx context.Context, cfg *config.Config, url, token, branch string) gitlab.ConnectionTest
 }
 
 // LogArchiveSyncer is what the api needs from the archive sweep. Defined here
@@ -184,6 +191,10 @@ func New(o Options) *Server {
 		logDirChanged:          o.LogDirChanged,
 		logArchiveSync:         o.LogArchiveSync,
 		logArchiveChanged:      o.LogArchiveChanged,
+		repoTest:               o.RepoTest,
+	}
+	if s.repoTest == nil {
+		s.repoTest = gitlab.TestConnection
 	}
 	// RB-7: point the role registry at THIS server's database. The registry is a
 	// process-wide cache (requirePerm is mount-time middleware with no context and

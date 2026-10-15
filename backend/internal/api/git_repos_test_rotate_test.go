@@ -51,7 +51,7 @@ func TestAnAgencysAdministratorTestsAndRotatesTheirRepositorysConnection(t *test
 		t.Errorf("testing with no URL and nothing connected = %d %s, want 422", code, body)
 	}
 	// An allowed host, where nothing answers: the test is made, and says so.
-	code, body := post(gFinAdmin, test, `{"repoUrl":"http://127.0.0.1:1/fin.git","pat":"glpat-test-token-9999","writeBranch":"main"}`)
+	code, body := post(gFinAdmin, test, `{"repoUrl":"http://127.0.0.1:1/unreachable.git","pat":"glpat-test-token-9999","writeBranch":"main"}`)
 	var res struct {
 		OK          bool
 		BranchFound bool
@@ -77,9 +77,10 @@ func TestAnAgencysAdministratorTestsAndRotatesTheirRepositorysConnection(t *test
 	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &made) != nil || made.ID == "" {
 		t.Fatalf("connect: %d %s", rec.Code, rec.Body)
 	}
-	// A test with nothing in it is of the stored connection.
-	if code, body := post(gFinAdmin, test, ``); code != http.StatusOK || !strings.Contains(body, `"ok":false`) {
-		t.Errorf("testing the stored connection = %d %s, want 200 (the test made, nothing answering)", code, body)
+	// A test with nothing in it is of the stored connection (which, here,
+	// answers and may push).
+	if code, body := post(gFinAdmin, test, ``); code != http.StatusOK || !strings.Contains(body, `"ok":true`) || !strings.Contains(body, `"canPush":true`) {
+		t.Errorf("testing the stored connection = %d %s, want 200 with ok and canPush", code, body)
 	}
 	// And a test of another URL, from the form, is still held to the list.
 	if code, _ := post(gFinAdmin, test, `{"repoUrl":"https://evil.example.net/fin.git"}`); code != http.StatusUnprocessableEntity {

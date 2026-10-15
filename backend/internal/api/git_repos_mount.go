@@ -118,6 +118,28 @@ func (s *Server) handlePutAgencyGitRepo(w http.ResponseWriter, r *http.Request) 
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	// The connection is tested before it is written (IN-2).
+	repoID, rerr := settings.RepoOfAgency(r.Context(), s.db, agencyID)
+	connected := rerr == nil
+	switch {
+	case rerr != nil && !errors.Is(rerr, settings.ErrRepoNotFound):
+		httpx.Fail500(w, s.log, "db_error", rerr)
+		return
+	case !connected:
+		var known int
+		if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, agencyID).Scan(&known); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if known == 0 {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "no such agency")
+			return
+		}
+		repoID = "repo-untested" // not Global's: held to the allowed hosts
+	}
+	if !s.requirePushableConnection(w, r, repoID, connected, inp) {
+		return
+	}
 	repo, created, err := settings.PutAgencyRepo(r.Context(), s.db, s.cfg, agencyID, inp, id.Email)
 	switch {
 	case errors.Is(err, settings.ErrNoSuchAgency):
@@ -328,8 +350,49 @@ func (s *Server) handleTestAgencyGitRepo(w http.ResponseWriter, r *http.Request)
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	res := gitlab.TestConnection(r.Context(), s.cfg, target.URL, target.Token, target.Branch)
+	res := s.repoTest(r.Context(), s.cfg, target.URL, target.Token, target.Branch)
 	httpx.JSON(w, http.StatusOK, res)
+}
+
+// requirePushableConnection tests the connection a save would write, when it
+// is new or names another URL, token or branch, and answers 422 unless the
+// remote answered and its token may push (§0a, IN-2; Phase I3): an
+// assignment and a publish both push, and a connection that cannot is found
+// out at the first of them, by whoever made it. A save that changes neither
+// (the bot's name, the webhook, the expiry warning) is not asked again, so a
+// remote that is down for a while does not hold those back.
+func (s *Server) requirePushableConnection(w http.ResponseWriter, r *http.Request, repoID string, connected bool, inp settings.GitlabConfig) bool {
+	target, err := settings.ResolveRepoTest(r.Context(), s.db, s.cfg, repoID, connected, inp)
+	switch {
+	case errors.Is(err, settings.ErrRepoURLNotAllowed):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "repo_url_not_allowed", err.Error())
+		return false
+	case errors.Is(err, settings.ErrValidation):
+		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		return false
+	case err != nil:
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if connected {
+		stored, serr := settings.ResolveRepoTest(r.Context(), s.db, s.cfg, repoID, true, settings.GitlabConfig{})
+		if serr == nil && stored.URL == target.URL && stored.Token == target.Token && stored.Branch == target.Branch {
+			return true
+		}
+	}
+	res := s.repoTest(r.Context(), s.cfg, target.URL, target.Token, target.Branch)
+	if !res.OK {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "connection_failed",
+			"the repository did not answer with this connection: "+res.Error)
+		return false
+	}
+	if !res.CanPush {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "token_cannot_push",
+			"the token can read the repository but may not push to it ("+res.PushError+"); "+
+				"an agency's repository is written to by publishes and assignments, so its token must be able to push")
+		return false
+	}
+	return true
 }
 
 // readableRepoSQL is GR-26 as a condition over a column that holds a row's
