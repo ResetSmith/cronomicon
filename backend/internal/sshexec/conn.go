@@ -438,16 +438,17 @@ func dialContext(ctx context.Context, addr string, cfg *ssh.ClientConfig) (*ssh.
 }
 
 // bastionAddr resolves a host record's `via` to the bastion the engine hops
-// through (execspec.BastionByRef: the record's own agency's bastion, or
-// Global's — LR-70).
+// through (execspec.BastionByRef: the record's own agency's bastion — LR-70;
+// Global's only for Global's records since §0a, question 33).
 func (s *Service) bastionAddr(ctx context.Context, ref string, owners []string) (*target, error) {
 	return execspec.BastionByRef(ctx, s.db, ref, owners)
 }
 
 // ownerKeyGuard is the keyGuard for a key that a RECORD names for itself — a
 // bastion's, or a hand-written host record's under "Test connection": the key
-// must belong to one of the record's owning agencies, or to Global (LR-72). No
-// owner at all (a record that could not be resolved) leaves only Global's keys.
+// must belong to one of the record's owning agencies (LR-72; since §0a, IN-6,
+// Global's key only to Global's record, as runref.KeyIDUsable asks). No owner
+// at all (a record that could not be resolved) leaves only Global's keys.
 func ownerKeyGuard(ctx context.Context, db *sql.DB, ownerIDs []string) (keyGuard, error) {
 	g := keyGuard{checked: true}
 	for _, id := range ownerIDs {

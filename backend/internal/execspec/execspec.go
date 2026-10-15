@@ -438,12 +438,12 @@ func OverrideHosts(overrideJSON string) []string {
 // The TOFU host-key capture must write back to the SAME row id this resolves (see
 // sshexec hostKeyCallback) or the stored key and the dialed row drift.
 func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Target, error) {
-	// LR-70: a scope sees the records imported for it, the records its own
-	// agency wrote by hand, and Global's — never another agency's, which it
-	// could shadow or borrow until 2.3.0 by a matching hostname. A run with no
-	// scope (or an unknown one) sees Global's alone. The order among them is the
-	// one it always was, with Global first among the hand-written: a global
-	// administrator's record still wins everywhere, deliberately.
+	// LR-70: a scope sees the records imported for it and the records its own
+	// agency wrote by hand — never another agency's, which it could shadow or
+	// borrow until 2.3.0 by a matching hostname. Global's hand-written records
+	// are seen by Global's runs only (§0a, IN-6; question 33): until then they
+	// were seen by every scope's, and won. A run with no scope (or an unknown
+	// one) is Global's, and sees Global's alone.
 	row := db.QueryRowContext(ctx, `
 		SELECT h.id, h.hostname, h.address, h.port, h.username, h.via, h.auth_key_env_var, h.auth_credential_id,
 		       h.scope_id, h.owner_agency
@@ -451,7 +451,7 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		WHERE h.hostname = ?
 		  AND `+HostRecordForScopeSQL+`
 		ORDER BY `+HostRecordOrderSQL+`
-		LIMIT 1`, hostname, scope, scope)
+		LIMIT 1`, hostname, scope, scope, scope)
 	var id, name, owner string
 	var address, user, via, authKeyEnvVar, authCredentialID, scopeID sql.NullString
 	var port sql.NullInt64
@@ -484,15 +484,19 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 }
 
 // HostRecordForScopeSQL is THE rule for which ssh_hosts rows (alias h) a scope
-// may resolve (LR-70), as a predicate with two parameters, the scope's name
-// twice: the records imported for it, the hand-written records of its own
-// agency, and Global's. HostRecordOrderSQL is the order among several. They are
-// exported because the host-key review asks the same question for the same host
+// may resolve (LR-70), as a predicate with three parameters, the scope's name
+// three times: the records imported for it, the hand-written records of its
+// own agency, and Global's when the scope is Global's (no other agency holds
+// it: none, one that is not there, or Global's own; §0a, question 33).
+// HostRecordOrderSQL is the order among several. They are exported because
+// the host-key review asks the same question for the same host
 // (runner.serverPin) and had a copy of the predicate from before records had
 // owners: it went on reading every agency's records after this one stopped.
 const (
 	HostRecordForScopeSQL = `(h.scope_id IN (SELECT id FROM scopes WHERE name = ?)
-		       OR (h.scope_id IS NULL AND (h.owner_agency = '` + agencyid.Global + `'
+		       OR (h.scope_id IS NULL AND ((h.owner_agency = '` + agencyid.Global + `'
+		               AND NOT EXISTS (SELECT 1 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+		                                WHERE sc.name = ? AND sa.agency_id <> '` + agencyid.Global + `'))
 		           OR h.owner_agency IN (SELECT sa.agency_id FROM scope_agencies sa
 		                                   JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?))))`
 	HostRecordOrderSQL = `(h.source='cronomicon') DESC, (h.scope_id IS NULL) DESC, (h.owner_agency = '` + agencyid.Global + `') DESC,

@@ -39,6 +39,7 @@ const KINDS: Record<string, { title: string; to?: string; toLabel?: string }> = 
   reaction_other_agency: { title: "A reaction watches another agency's definition", to: "/schedules?tab=reactions", toLabel: "Reactions" },
   global_job_on_agency_scope: { title: "A job of Global's repository names an agency's scope", to: "/jobs", toLabel: "Jobs" },
   global_credential_bound: { title: "A job binds a secret, variable or key only Global has", to: "/env-vars", toLabel: "Env Vars" },
+  global_host_record: { title: "A host only Global has a record for", to: "/settings?tab=targets", toLabel: "SSH Targets" },
   local_runner_served: { title: "The local runner no longer serves this agency", to: "/runners", toLabel: "Runners" },
   global_script_job: { title: "A job is built on a script of Global's repository", to: "/jobs", toLabel: "Jobs" },
   global_schedule_bound: { title: "A job or workflow is bound to a schedule of Global's", to: "/schedules", toLabel: "Schedules" },

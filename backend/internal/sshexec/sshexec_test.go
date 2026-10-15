@@ -277,6 +277,13 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 			t.Fatalf("seed: %v\n%s", err, q)
 		}
 	}
+	// The scope is A's now, so its runs reach A's record for the host, not
+	// Global's (§0a, question 33).
+	if _, err := pool.Exec(`
+		INSERT INTO ssh_hosts(id, source, hostname, address, port, username, auth_key_env_var, created_at, owner_agency)
+		VALUES('h-a', 'cronomicon', 'testhost', ?, ?, 'tester', 'SSH_KEY', ?, 'ag-a')`, host, atoiPort(port), now); err != nil {
+		t.Fatal(err)
+	}
 	claimed, err = claimAsLocal(t, svc, pool)
 	if err != nil || claimed == nil {
 		t.Fatalf("claim the file job's run: run=%v err=%v", claimed, err)

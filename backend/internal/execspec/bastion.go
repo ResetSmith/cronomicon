@@ -19,17 +19,21 @@ import (
 // authenticated with the BASTION's key rather than the target's (PP-H4).
 //
 // LR-70: a host routes only through a bastion that the host record's own agency
-// owns, or Global's. `owners` is the record's (Target.Owners); a bastion of any
-// other agency does not exist as far as this lookup is concerned, so a record
-// cannot be pointed through another agency's jump host by naming it. Of two
-// bastions that answer to one reference, the agency's own is taken before
-// Global's.
+// owns. `owners` is the record's (Target.Owners); a bastion of any other agency
+// does not exist as far as this lookup is concerned, so a record cannot be
+// pointed through another agency's jump host by naming it. Global's is Global's
+// records' only (§0a, IN-6; question 33): until then every record could route
+// through it, after the agency's own. A record with no owner to name is
+// Global's, as a run with none is.
 //
 // It lives here, not with the engine that dials, because two things must agree
 // with the engine about WHICH machine a `via` names: the scan that captures the
 // bastion's host key for the local runner, and the coverage that says whether
 // the local runner trusts it. An agent resolves `via` itself, as an address.
 func BastionByRef(ctx context.Context, q rowQueryer, ref string, owners []string) (*Target, error) {
+	if len(owners) == 0 {
+		owners = []string{agencyid.Global}
+	}
 	ownersJSON, err := json.Marshal(append([]string{}, owners...))
 	if err != nil {
 		return nil, err
@@ -37,8 +41,8 @@ func BastionByRef(ctx context.Context, q rowQueryer, ref string, owners []string
 	row := q.QueryRowContext(ctx, `
 		SELECT id, hostname, address, port, username, auth_key_env_var, auth_credential_id, owner_agency FROM bastions
 		WHERE (id = ? OR name = ? OR hostname = ?)
-		  AND (owner_agency = ? OR owner_agency IN (SELECT value FROM json_each(?)))
-		ORDER BY (owner_agency = ?) ASC, id LIMIT 1`, ref, ref, ref, agencyid.Global, string(ownersJSON), agencyid.Global)
+		  AND owner_agency IN (SELECT value FROM json_each(?))
+		ORDER BY id LIMIT 1`, ref, ref, ref, string(ownersJSON))
 	var id, hostname, owner string
 	var address, username, authKey, authCredID sql.NullString
 	var port sql.NullInt64
@@ -69,4 +73,4 @@ func BastionByRef(ctx context.Context, q rowQueryer, ref string, owners []string
 
 // ErrNoBastion is BastionByRef finding no bastion the host record's agency may
 // route through.
-var ErrNoBastion = errors.New("bastion not found among this host's agency's bastions or Global's")
+var ErrNoBastion = errors.New("bastion not found among this host's agency's bastions")

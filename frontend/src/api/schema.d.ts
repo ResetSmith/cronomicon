@@ -7223,6 +7223,14 @@ export interface components {
              *       `<job uid>:<secret|var|key>:<name>`. Filed under the job's agency.
              *       It clears when the agency has a row of the name, or the binding
              *       goes.
+             *     - `global_host_record` — a host that an agency's scope lists has a
+             *       host record only Global wrote, and none of the agency's own
+             *       (v2.4.0). A record Global writes by hand is used by Global's runs
+             *       only (until then it answered to every scope, and won): the
+             *       agency's runs on that host find no record, and fail on that host.
+             *       Subject: `<agency id>:<hostname>`. Filed under the agency. It
+             *       clears when the agency has a record for the host, by hand or
+             *       imported for the scope, or no scope of its lists the host.
              *     - `calendar_other_agency` — a schedule entry, or a schedule, of an
              *       agency names a calendar of another agency (allowed before v2.4.0).
              *       It still applies, and follows that calendar's edits, but cannot be
