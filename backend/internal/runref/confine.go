@@ -206,8 +206,11 @@ func StepOutsideWorkflowRepository(ctx context.Context, database *sql.DB, traceI
 // False for a run that is pinned to no repository, and for a repository that
 // is no longer connected: the manifest has its own answer for that one
 // (no_checkout_repo), and there is then nowhere to send the agent. A pin to
-// Global's repository is asked too since §0a (question 31): Global's checkout
-// runs on Global's scopes only.
+// Global's repository is asked too since §0a (question 31), as
+// RepoScopeMismatch asks of a job on Global's script: refused on a scope
+// another agency holds, and not on no scope or one that is not there, which
+// are Global's (the review of I1: refused on those, the pin said no where the
+// job's own check said yes).
 func PinOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope string) (bool, error) {
 	if repoID == "" {
 		return false, nil
@@ -218,6 +221,20 @@ func PinOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope s
 	}
 	if there == 0 {
 		return false, nil
+	}
+	if repoID == repoid.Global {
+		if scope == "" {
+			return false, nil
+		}
+		var agencies, own int
+		err := database.QueryRowContext(ctx, `
+			SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1),
+			       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+			         WHERE sc.name = ?1 AND sa.agency_id = ?2)`, scope, agencyid.Global).Scan(&agencies, &own)
+		if err != nil {
+			return false, err
+		}
+		return agencies > 0 && (agencies != 1 || own != 1), nil
 	}
 	return ScopeOutsideRepository(ctx, database, repoID, scope)
 }

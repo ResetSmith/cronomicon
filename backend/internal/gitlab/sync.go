@@ -670,9 +670,31 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// validation is skipped rather than failing the whole repo's sync. That
 	// matches the window/mode precedent above — a bad spec must not wedge a sync —
 	// and the fire-time gate is fail-open for the same reason.
-	knownCals, globalCals, calErr := calendar.LoadFlagsFor(ctx, s.db, s.agency()) // its agency's calendars only (§0a)
+	//
+	// A calendar of another agency (§0a, 2.4.0): every calendar was Global's
+	// until then, and an agency's file naming one keeps it, live, by the
+	// owner's choice of 2026-10-14, until names are per agency (I2) and the
+	// agency has a copy. So it is validated as before and WARNED about, not
+	// refused: refusing it would drop the file at every sync and switch the
+	// repository's prune off (found by the review of I1). The app refuses it
+	// at a save; a file is saved again by every sync.
+	knownCals, globalCals, calErr := calendar.LoadFlags(ctx, s.db)
+	var ownCals map[string]bool
+	if calErr == nil {
+		ownCals, _, calErr = calendar.LoadFlagsFor(ctx, s.db, s.agency())
+	}
 	if calErr != nil {
 		s.logError("sync: load calendars for binding validation — bindings not validated", "err", calErr)
+	}
+	warnOtherAgencys := func(file string, names ...[]string) {
+		for _, list := range names {
+			for _, c := range list {
+				if knownCals[c] && !ownCals[c] {
+					s.logWarn("git sync: names another agency's calendar, which applies until this agency has its own copy "+
+						"of it (an entry names its own agency's calendars)", "file", file, "calendar", c)
+				}
+			}
+		}
 	}
 	dangleCalendars := func(file string, entries []ScheduleEntry) bool {
 		if calErr != nil {
@@ -686,7 +708,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 				allErrs = append(allErrs, ve.Error())
 				res.Errors = append(res.Errors, ve)
 				bad = true
+				continue
 			}
+			warnOtherAgencys(file, e.SkipCalendars, e.OnlyCalendars)
 		}
 		return bad
 	}
@@ -706,7 +730,9 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 				res.Errors = append(res.Errors, ve)
 				delete(resolvedScheds, name)
 				schedsOK = false
+				continue
 			}
+			warnOtherAgencys(rs.sourcePath, rs.skipCals, rs.onlyCals)
 		}
 	}
 
@@ -1022,11 +1048,17 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 
 	// Global's jobs on an agency's scope that were synced before: kept as
 	// they were (see keepAsWas), by being counted as seen by this sync. Their
-	// row, its schedule entries, enabled and paused are not touched.
+	// row, its schedule entries, enabled and paused are not touched. Only a
+	// row whose stored scope is ANOTHER agency's (what an upgrade finds): a
+	// job of Global's scope whose file is edited onto an agency's, or onto a
+	// scope that is not there, is removed, as an agency's repository's is
+	// (found by the review of I1: it was kept running its old body).
 	if jobsOK && dbErr == nil {
 		for _, name := range keepAsWas {
 			if _, err := tx.ExecContext(ctx,
-				`UPDATE jobs SET synced_at = ? WHERE source = 'git' AND repo_id = ? AND name = ?`, nowStr, repoID, name); err != nil {
+				`UPDATE jobs SET synced_at = ? WHERE source = 'git' AND repo_id = ? AND name = ?
+				    AND EXISTS (SELECT 1 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+				                 WHERE sc.name = jobs.scope AND sa.agency_id <> ?)`, nowStr, repoID, name, agencyid.Global); err != nil {
 				allErrs = append(allErrs, "keep Global's job on an agency's scope: "+err.Error())
 				dbErr = err
 				break
@@ -2909,17 +2941,12 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			s.logWarn("git sync: ssh_user/ssh_credential cannot be applied to this run type (terraform authenticates through its providers, not SSH); the field is stored but ignored for this job's runs",
 				"job", j.Metadata.Name, "source_path", j.SourcePath, "run_type", runType)
 		}
-		// Asked within the repository's agency (2.4.0): what a job of an agency's
-		// repository can use is its agency's and Global's, and a warning that
-		// said otherwise would tell one agency which names another holds.
-		// Global's repository's jobs may name any agency's scope, so for those
-		// the question is the old one.
-		ownerArm := ""
-		ownerArgs := []any{}
-		if s.repo() != repoid.Global {
-			ownerArm = ` AND owner_agency IN (?, ?)`
-			ownerArgs = []any{s.agency(), agencyid.Global}
-		}
+		// Asked within the repository's agency: what a job can use is its own
+		// agency's (§0a, IN-6; until then an agency's job could use Global's
+		// too, and Global's repository's jobs anyone's). A warning that said
+		// otherwise would tell one agency which names another holds.
+		ownerArm := ` AND owner_agency = ?`
+		ownerArgs := []any{s.agency()}
 		if sshCred != "" {
 			var one int
 			if err := tx.QueryRowContext(ctx, `SELECT 1 FROM ssh_credentials WHERE label = ?`+ownerArm+` LIMIT 1`,

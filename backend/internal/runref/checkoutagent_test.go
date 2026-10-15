@@ -34,6 +34,10 @@ func TestCheckoutNeedsAgent(t *testing.T) {
 		for _, a := range agencies {
 			f.exec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES (?, ?)`, id, a)
 		}
+		// Its owner is the agency it is placed in, as the write path makes it.
+		if len(agencies) > 0 {
+			f.exec(`UPDATE runners SET owner_agency = ? WHERE id = ?`, agencies[0], id)
+		}
 	}
 	ask := func(what, uid, source, name, scope string, want bool) {
 		t.Helper()
@@ -58,6 +62,11 @@ func TestCheckoutNeedsAgent(t *testing.T) {
 	runner("a-plain", "agent", `["ansible","bash"]`, "ag-a")
 	runner("the-server", "server", `["bash","checkout"]`, "ag-a", "global")
 	runner("b-checkout", "agent", `["ansible","checkout"]`, "ag-b")
+	// A legacy placement (MA-9): listed for ag-a, owned by Global. It takes none
+	// of ag-a's work (§0a, question 29), so it is no agent to wait for (the
+	// review of I1: this check counted it).
+	runner("legacy-checkout", "agent", `["ansible","checkout"]`)
+	f.exec(`INSERT INTO runner_agencies (runner_id, agency_id) VALUES ('legacy-checkout', 'ag-a')`)
 	ask("an agent that does not allow checkout", "j-proj", "git", "proj", "a-hosts", true)
 	ask("no scope, with only the server's runner for Global", "j-proj", "git", "proj", "", true)
 	ask("another agency's agent allows it, its own scope", "j-proj", "git", "proj", "b-hosts", false)

@@ -686,7 +686,7 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 			    SELECT 1 FROM json_each(?) je
 			    WHERE je.value NOT IN `+caps+`)
 			  AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
-			               WHERE ra.runner_id = rn.id AND a.name IN (SELECT value FROM json_each(?)))
+			               WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))
 			  -- SB-1 binding parity (mig. 1180): an unrestricted scope passes, a
 			  -- restricted one needs THIS runner named. Correlated here where
 			  -- claimRun's is not, because this probe walks runners for one run

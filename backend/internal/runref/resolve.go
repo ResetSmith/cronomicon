@@ -559,6 +559,15 @@ func ownerNameSQL(alias string) string {
 	             ELSE COALESCE(ag.name, '` + danglingOwner + `') END`
 }
 
+// ownerInRunSQL is "the row's OWNER is one of the run's agencies" (one bound
+// parameter, the run's agency names as JSON): pickOwned's rule for a caller
+// that asks of one row by id or label. A row Global owns whose membership
+// shares it into an agency is Global's, and usable by Global's runs only
+// (§0a, IN-6; found by the review of I1: these two checks said yes).
+func ownerInRunSQL(alias string) string {
+	return `COALESCE((SELECT name FROM agencies WHERE id = ` + alias + `.owner_agency), '') IN (SELECT value FROM json_each(?))`
+}
+
 // danglingOwner cannot be an agency's name: names are trimmed on write and this
 // begins with a space.
 const danglingOwner = " (no such agency)"
@@ -676,8 +685,9 @@ func KeyIDUsable(ctx context.Context, database *sql.DB, credentialID string, run
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.id = ?
-		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id"),
-		credentialID, marshalNames(runAgencies)).Scan(&n)
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
+		  AND `+ownerInRunSQL("c"),
+		credentialID, marshalNames(runAgencies), marshalNames(runAgencies)).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", credentialID, err)
 	}
@@ -689,8 +699,9 @@ func keyInAgencies(ctx context.Context, database *sql.DB, label string, runAgenc
 	err := database.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM ssh_credentials c
 		WHERE c.label = ?
-		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id"),
-		label, marshalNames(runAgencies)).Scan(&hit)
+		  AND `+usableByRunSQL("ssh_credential_agencies", "credential_id", "c.id")+`
+		  AND `+ownerInRunSQL("c"),
+		label, marshalNames(runAgencies), marshalNames(runAgencies)).Scan(&hit)
 	if err != nil {
 		return false, fmt.Errorf("resolve key agencies %q: %w", label, err)
 	}

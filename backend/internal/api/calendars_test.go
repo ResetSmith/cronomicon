@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ResetSmith/cronomicon/internal/calendar"
 )
 
 // CAL-22 / CAL-30 / CAL-31 — the Phase 1B authoring and audit surfaces.
@@ -558,6 +560,67 @@ func TestUpcomingAnnotatesSuppressedInstants(t *testing.T) {
 	}
 	if annotated == 0 {
 		t.Error("no instant was annotated as suppressed — the projection and the engine would disagree")
+	}
+}
+
+// The installation freeze (§0a, open point 2) stops every fire, so the
+// projection annotates every instant with it, ahead of any calendar the entry
+// names. The review of I1 found the projection did not read it, and promised
+// fires the freeze would stop.
+func TestUpcomingAnnotatesTheInstallationFreeze(t *testing.T) {
+	api, pool := newCalAPI(t)
+	ctx := context.Background()
+	if code, _ := api.do(http.MethodPost, "/api/v1/calendars", map[string]any{
+		"name": "holidays",
+		"days": []map[string]string{{"day": today(), "label": "Test Holiday"}, {"day": tomorrow(), "label": "Test Holiday"}},
+	}); code != http.StatusCreated {
+		t.Fatal("seed calendar failed")
+	}
+	for _, q := range []string{
+		`INSERT INTO jobs(name, run_type, command, content_hash, enabled, synced_at)
+		 VALUES('patch','bash','echo hi','sha256:x',1,'2026-01-01T00:00:00Z')`,
+		`INSERT INTO definition_schedules(owner_source, owner_kind, owner_name, name, cron, position, skip_calendars)
+		 VALUES('git','job','patch','held','0 * * * * *',0,'["holidays"]'),
+		       ('git','job','patch','plain','30 * * * * *',1,NULL)`,
+	} {
+		if _, err := pool.ExecContext(ctx, q); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	type items struct {
+		Items []struct {
+			ScheduleName    string `json:"scheduleName"`
+			Suppressed      bool   `json:"suppressed"`
+			SuppressedBy    string `json:"suppressedBy"`
+			SuppressedLabel string `json:"suppressedLabel"`
+		} `json:"items"`
+	}
+	// Off: the plain schedule's fires are promised.
+	var before items
+	getJSON(t, api.client, api.ts+"/api/v1/schedules/upcoming", &before)
+	plain := 0
+	for _, it := range before.Items {
+		if it.ScheduleName == "plain" && !it.Suppressed {
+			plain++
+		}
+	}
+	if plain == 0 {
+		t.Fatalf("precondition: with no freeze the plain schedule has unsuppressed fires: %+v", before.Items)
+	}
+
+	if _, err := pool.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, '{"on":true,"reason":"year-end"}')`, calendar.FreezeKey); err != nil {
+		t.Fatalf("set the freeze: %v", err)
+	}
+	var during items
+	getJSON(t, api.client, api.ts+"/api/v1/schedules/upcoming", &during)
+	if len(during.Items) == 0 {
+		t.Fatal("upcoming returned no items while frozen — they are annotated, not dropped")
+	}
+	for _, it := range during.Items {
+		if !it.Suppressed || it.SuppressedBy != calendar.FreezeCalendar || it.SuppressedLabel != "year-end" {
+			t.Fatalf("an instant of %s while frozen: suppressed=%v by %q (%q), want the freeze and its reason",
+				it.ScheduleName, it.Suppressed, it.SuppressedBy, it.SuppressedLabel)
+		}
 	}
 }
 

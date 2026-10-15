@@ -477,3 +477,58 @@ func TestAnOwnerThatNamesNoAgencyIsNobodysNotGlobals(t *testing.T) {
 		}
 	}
 }
+
+// TestAKeySharedByMembershipIsItsOwnersOnly — the two checks that ask of one key
+// by id or label (a host record's key, a job's `key` binding at validation) say
+// what dispatch says: a key is usable by a run of its OWNER's. Membership that
+// shares Global's key, or TeamA's, into another agency does not make it that
+// agency's (§0a, IN-6). Before the review of I1 both checks said yes, so a run
+// was let through validation to fail at dispatch, and a host record's key was
+// used by a run that dispatch would have refused it to.
+func TestAKeySharedByMembershipIsItsOwnersOnly(t *testing.T) {
+	f := newOwnerFixture(t)
+	ctx := context.Background()
+	const now = "2026-01-01T00:00:00Z"
+	f.exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('k-g', 'global_key', 'stored', ?)`, now)
+	f.exec(`INSERT INTO ssh_credentials (id, label, source, created_at) VALUES ('k-gs', 'global_shared_key', 'stored', ?)`, now)
+	f.exec(`INSERT INTO ssh_credentials (id, label, source, owner_agency, created_at) VALUES ('k-a', 'teama_key', 'stored', 'ag-a', ?)`, now)
+	f.exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id) VALUES ('k-a', 'ag-a')`)
+	// Shared by membership: Global's into TeamA, TeamA's into TeamB. Global's
+	// membership cannot be mixed with an agency's (migration 1220's triggers), so
+	// the Global key shared into TeamA has left Global's membership: it is usable
+	// by no run, and the global_credential_bound notice lists it.
+	f.exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id) VALUES ('k-gs', 'ag-a')`)
+	f.exec(`INSERT INTO ssh_credential_agencies(credential_id, agency_id) VALUES ('k-a', 'ag-b')`)
+
+	for _, c := range []struct {
+		id, label string
+		run       []string
+		want      bool
+	}{
+		{"k-g", "global_key", []string{"Global"}, true},
+		{"k-g", "global_key", nil, true},
+		{"k-g", "global_key", []string{"TeamA"}, false},
+		{"k-gs", "global_shared_key", []string{"TeamA"}, false},
+		{"k-gs", "global_shared_key", []string{"Global"}, false},
+		{"k-a", "teama_key", []string{"TeamA"}, true},
+		{"k-a", "teama_key", []string{"TeamB"}, false},
+		{"k-a", "teama_key", []string{"Global"}, false},
+	} {
+		byID, err := KeyIDUsable(ctx, f.pool, c.id, c.run)
+		if err != nil {
+			t.Fatalf("KeyIDUsable(%s, %v): %v", c.id, c.run, err)
+		}
+		byLabel, err := keyInAgencies(ctx, f.pool, c.label, c.run)
+		if err != nil {
+			t.Fatalf("keyInAgencies(%s, %v): %v", c.label, c.run, err)
+		}
+		_, dispatched, err := LookupEntityID(ctx, f.pool, KindKey, c.label, "", c.run)
+		if err != nil {
+			t.Fatalf("LookupEntityID(%s, %v): %v", c.label, c.run, err)
+		}
+		if byID != c.want || byLabel != c.want || dispatched != c.want {
+			t.Errorf("%s for a run in %v: by id %v, by label %v, dispatch %v; want %v",
+				c.id, c.run, byID, byLabel, dispatched, c.want)
+		}
+	}
+}

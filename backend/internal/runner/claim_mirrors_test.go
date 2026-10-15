@@ -93,7 +93,7 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 		svc.cfg.SecretsInjectionEnabled = armed
 		execspec.SetInjectionGateArmed(armed)
 		for _, rs := range runners {
-			for _, runnerAgency := range []string{"global", "a1"} {
+			for _, runnerAgency := range []string{"global", "a1", "legacy-a1"} {
 				for _, allowInjection := range []bool{false, true} {
 					for _, kind := range kinds {
 						if kind == "server" && !allowInjection {
@@ -106,7 +106,14 @@ func TestClaimRuleMirrorsAgreeWithTheClaim(t *testing.T) {
 						exec(`DELETE FROM runners`)
 						insertRunner(t, svc, "r1", "r1", "online", rs.caps)
 						exec(`UPDATE runners SET kind = ? WHERE id = 'r1'`, kind)
-						if runnerAgency != "global" {
+						switch runnerAgency {
+						case "global":
+						case "legacy-a1":
+							// A legacy placement (MA-9): listed for a1, owned by Global.
+							// It takes none of a1's work (§0a, question 29), and the
+							// mirrors must say so too (found by the review of I1).
+							exec(`INSERT INTO runner_agencies(runner_id, agency_id) VALUES('r1', 'a1')`)
+						default:
 							addRunnerAgency(t, svc, "r1", runnerAgency)
 						}
 						if rs.mask != nil {

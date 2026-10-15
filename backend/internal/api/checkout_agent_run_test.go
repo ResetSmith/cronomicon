@@ -48,8 +48,10 @@ func TestRunOfAProjectJobWithNoCheckoutAgentIsRefused(t *testing.T) {
 	}
 
 	// An agent of that scope's agency that allows checkout is registered.
-	exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at)
-	      VALUES ('fin-checkout', 'fin-checkout', 'agent', 'offline', 'Linux', '["ansible","checkout"]', 0, 5, '1.0', 't', 't')`)
+	// Owned by FIN, as the write path places it: an agent only listed for FIN
+	// and owned by Global takes none of FIN's work (§0a, question 29).
+	exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at, owner_agency)
+	      VALUES ('fin-checkout', 'fin-checkout', 'agent', 'offline', 'Linux', '["ansible","checkout"]', 0, 5, '1.0', 't', 't', 'ag:FIN')`)
 	exec(`INSERT OR IGNORE INTO runner_agencies (runner_id, agency_id) VALUES ('fin-checkout', 'ag:FIN')`)
 	if rec := gateReq(t, h, http.MethodPost, path, gRoot, ""); rec.Code/100 != 2 {
 		t.Fatalf("a run of the project job with an agent to wait for = %d, want it accepted (%s)", rec.Code, rec.Body)

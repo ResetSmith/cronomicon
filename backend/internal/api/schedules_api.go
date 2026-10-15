@@ -325,6 +325,15 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("upcoming: load calendars — projection not annotated", "err", calErr)
 		calSets = calendar.Set{}
 	}
+	// The installation freeze (§0a, open point 2) outranks every calendar, as
+	// the scheduler's freezeTier has it: while it is on, every projected fire is
+	// annotated with it (the review of I1: the projection promised them).
+	freezeV, frozen := calendar.Verdict{}, false
+	if f, err := calendar.ReadFreeze(ctx, s.db); err != nil {
+		s.log.Error("upcoming: read the installation freeze — projection not annotated with it", "err", err)
+	} else {
+		freezeV, frozen = calendar.FreezeVerdict(f)
+	}
 	ownerAgencyOf := map[string]string{}
 	agencyOfOwner := func(uid, kind string) string {
 		if uid == "" {
@@ -372,7 +381,10 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		for _, t := range cronutil.NextNSpec(sr.spec(), now, end, perEntryCap, appLoc) {
 			// Evaluated per instant, in the app zone, exactly as fire() will —
 			// a holiday suppresses one day's instant, not the whole entry.
-			v := calendar.EvaluateFor(calSets, ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
+			v := freezeV
+			if !frozen {
+				v = calendar.EvaluateFor(calSets, ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
+			}
 			projections = append(projections, proj{sr.kind, sr.owner, sr.name, sr.cron, sr.source,
 				sr.ownerUID.String, splitAgencies(sr.ownerAgencies), t, v})
 		}

@@ -194,7 +194,8 @@ func TestGR4_AJobsAdvisoryChecksAskWithinItsAgency(t *testing.T) {
 	withScope["inventory/theirs.ini"] = fmt.Sprintf(grScope, "b1", "10.0.0.2")
 	grCommitFiles(t, repoB, remoteB, withScope, "the agency's repository")
 	grSync(t, b, "the agency's repository")
-	for name, want := range map[string]bool{"j-theirs": true, "j-own": false, "j-global": false} {
+	// §0a (IN-6): Global's key is not the agency's to use (until then it was).
+	for name, want := range map[string]bool{"j-theirs": true, "j-own": false, "j-global": true} {
 		if got := warned(b, &logB, name, "names no stored SSH credential"); got != want {
 			t.Errorf("the agency's repository, %s: warned of its SSH credential = %v, want %v", name, got, want)
 		}
@@ -207,9 +208,11 @@ func TestGR4_AJobsAdvisoryChecksAskWithinItsAgency(t *testing.T) {
 
 	grCommitFiles(t, repoA, remoteA, files(""), "Global's repository")
 	grSync(t, a, "Global's repository")
-	for _, name := range []string{"j-theirs", "j-own", "j-global"} {
-		if warned(a, &logA, name, "names no stored SSH credential") || warned(a, &logA, name, "names no stored Secret") {
-			t.Errorf("Global's repository, %s: warned of a name that an agency holds", name)
+	// Global's repository is asked within Global too (§0a, IN-6; until then it
+	// was asked of every agency's names, and warned of none of these).
+	for name, want := range map[string]bool{"j-theirs": true, "j-own": true, "j-global": false} {
+		if got := warned(a, &logA, name, "names no stored SSH credential"); got != want {
+			t.Errorf("Global's repository, %s: warned of its SSH credential = %v, want %v", name, got, want)
 		}
 	}
 }

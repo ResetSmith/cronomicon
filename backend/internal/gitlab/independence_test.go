@@ -42,6 +42,25 @@ func TestI1_GlobalsJobOnAnAgencysScopeIsKeptAsItWas(t *testing.T) {
 		t.Errorf("open notices for the kept job = %d, want 1", n)
 	}
 
+	// A job of Global's own scope whose file is edited onto an agency's scope
+	// is not kept: it goes, as an agency's repository's would (found by the
+	// review of I1: it was kept running its old body).
+	grCommitFiles(t, repoA, remoteA, map[string]string{
+		"inventory/globals.ini": "[web]\n10.0.0.9\n",
+		"jobs/g-own.yaml":       grScopedJob("g-own", "globals"),
+	}, "a job on Global's scope")
+	grBackdateAll(t, a)
+	grSync(t, a, "Global's repository with its own job")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='g-own'`); n != 1 {
+		t.Fatalf("Global's job on Global's scope was not synced")
+	}
+	gitCommitFile(t, repoA, remoteA, "jobs/g-own.yaml", grScopedJob("g-own", "hosts-of-repo-b"), "edited onto an agency's scope")
+	grBackdateAll(t, a)
+	grSync(t, a, "Global's repository, the job edited")
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND name='g-own'`); n != 0 {
+		t.Errorf("Global's job edited onto an agency's scope was kept, running its old body")
+	}
+
 	// Its file leaves: it goes, and the notice clears.
 	gitRemoveFile(t, repoA, "jobs/g-theirs.yaml", "the file leaves")
 	grBackdateAll(t, a)
@@ -166,6 +185,32 @@ func TestI1_GlobalsScheduleEditReachesGlobalsDefinitionsOnly(t *testing.T) {
 	}
 	if got := cronOf("j-b"); got != "0 3 1 1 *" {
 		t.Errorf("the agency's in-app job fires at %q after Global's edit; want the timing it copied", got)
+	}
+}
+
+// An agency's file that names one of Global's calendars is synced, with a
+// warning: the binding stays live until names are per agency (I2), by the
+// owner's choice of 2026-10-14. Refusing it dropped the file at every sync and
+// switched the repository's prune off (found by the review of I1).
+func TestI1_AnAgencysFileNamingGlobalsCalendarIsSyncedWithAWarning(t *testing.T) {
+	a, _, _ := newSyncFixture(t)
+	grSync(t, a, "Global's repository")
+	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, global, record_suppressed, created_by, created_at) VALUES ('cronomicon', 'holidays', 0, 0, 't', 't')`); err != nil {
+		t.Fatal(err)
+	}
+	b, repoB, remoteB := grSecondRepo(t, a)
+	const job = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: on-holidays\nspec:\n  run_type: bash\n  command: echo hi\n  scope: hosts-of-repo-b\n" +
+		"  schedules:\n    - name: nightly\n      cron: \"0 2 * * *\"\n      skipCalendars: [holidays]\n"
+	gitCommitFile(t, repoB, remoteB, "jobs/on-holidays.yaml", job, "a job naming Global's calendar")
+	res := grSync(t, b, "the agency's repository")
+	if res.Status != "success" {
+		t.Errorf("the agency's sync: %s (%s); want success", res.Status, res.ErrorMessage)
+	}
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE repo_id = 'repo-b' AND name = 'on-holidays'`); n != 1 {
+		t.Errorf("the job naming Global's calendar was not synced")
+	}
+	if rows := grProblems(t, b, "repo-b"); !grHas(rows, "warning", "another agency's calendar") {
+		t.Errorf("no warning that the job names another agency's calendar:\n%s", strings.Join(rows, "\n"))
 	}
 }
 

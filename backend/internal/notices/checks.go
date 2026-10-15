@@ -344,9 +344,13 @@ func checkRecordKeyOutsideOwner(ctx context.Context, database *sql.DB) error {
 		rows, err := database.QueryContext(ctx, `
 			SELECT t.id, t.`+k.nameCol+`, t.owner_agency, COALESCE((SELECT name FROM agencies WHERE id = t.owner_agency), t.owner_agency), c.label
 			  FROM `+k.table+` t JOIN ssh_credentials c ON c.id = t.auth_credential_id
-			 WHERE `+k.where+`NOT EXISTS (
+			 WHERE `+k.where+`(NOT EXISTS (
 			         SELECT 1 FROM ssh_credential_agencies m
 			          WHERE m.credential_id = c.id AND m.agency_id = t.owner_agency)
+			        -- Another agency's key shared into this one by membership is
+			        -- still that agency's, and runref.KeyIDUsable refuses it (§0a,
+			        -- IN-6; the review of I1).
+			        OR c.owner_agency <> t.owner_agency)
 			 ORDER BY t.id`)
 		if err != nil {
 			return err

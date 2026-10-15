@@ -108,3 +108,42 @@ func TestRepoScopeMismatch(t *testing.T) {
 		t.Errorf("the job built in the app, after its script was removed: refused = %v (%v), want false", got, err)
 	}
 }
+
+// A checkout run's pin gives the answer the job's own check gives for a job
+// built in the app on that repository's script. For Global's repository that
+// is question 31's: refused on a scope another agency holds, and not on no
+// scope or a scope that is not there. Before the review of I1 the pin refused
+// those two, so a run RepoScopeMismatch let through was stopped at dispatch.
+func TestPinOutsideRepositoryAgreesWithTheJobsCheck(t *testing.T) {
+	f := newOwnerFixture(t) // agencies ag-a and ag-b
+	ctx := context.Background()
+	f.exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main')`)
+	f.exec(`INSERT INTO scopes (id, name, source, created_at) VALUES ('s-a', 'a-hosts', 'cronomicon', 't'), ('s-b', 'b-hosts', 'cronomicon', 't'),
+	        ('s-g', 'g-hosts', 'cronomicon', 't'), ('s-ab', 'shared-hosts', 'cronomicon', 't')`)
+	f.exec(`DELETE FROM scope_agencies`)
+	f.exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('s-a', 'ag-a'), ('s-b', 'ag-b'), ('s-g', 'global'), ('s-ab', 'ag-a'), ('s-ab', 'ag-b')`)
+	f.exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
+	        ('sc-a', 'repo-a', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't'),
+	        ('sc-g', 'global', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't')`)
+	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_ref, script_uid) VALUES
+	        ('j-app-a', 'built-on-a',      'cronomicon', 'bash', 't', 'run.sh', 'sc-a'),
+	        ('j-app-g', 'built-on-global', 'cronomicon', 'bash', 't', 'run.sh', 'sc-g')`)
+
+	for _, c := range []struct {
+		repo, job, name string
+	}{{"repo-a", "j-app-a", "built-on-a"}, {"global", "j-app-g", "built-on-global"}} {
+		for _, scope := range []string{"a-hosts", "b-hosts", "g-hosts", "shared-hosts", "", "no-such-scope"} {
+			job, err := RepoScopeMismatch(ctx, f.pool, c.job, "cronomicon", c.name, scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pin, err := PinOutsideRepository(ctx, f.pool, c.repo, scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pin != job {
+				t.Errorf("%s's script on scope %q: the job's check refuses = %v, the pin's = %v", c.repo, scope, job, pin)
+			}
+		}
+	}
+}
