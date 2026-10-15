@@ -121,7 +121,7 @@ func TestScopeBindingPermits(t *testing.T) {
 	ctx := context.Background()
 	permits := func(scope, runnerID string) bool {
 		t.Helper()
-		ok, err := ScopeBindingPermits(ctx, f.pool, scope, runnerID)
+		ok, err := ScopeBindingPermits(ctx, f.pool, mustOwner(t, f.pool, scope), scope, runnerID)
 		if err != nil {
 			t.Fatalf("ScopeBindingPermits: %v", err)
 		}

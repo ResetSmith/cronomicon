@@ -265,8 +265,8 @@ func TestAnAgencysAdministratorDisconnectsTheirAgencysRepository(t *testing.T) {
 	exec(`INSERT INTO runners (id, name, kind, status, os, capabilities, load, max_concurrent, version, registered_at, created_at)
 	      VALUES ('agent-fin', 'agent-fin', 'agent', 'offline', 'Linux', '["bash"]', 0, 5, '1.0', 't', 't')`)
 	exec(`INSERT INTO scope_runners (scope_id, runner_id, runner_name, bound_at) VALUES ('sc:fin-git', 'agent-fin', 'agent-fin', 't')`)
-	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, executor, triggered_by, trigger_kind, created_at)
-	      VALUES ('r-wait', 'fin-git-job', 'bash', 'fin-git-hosts', 'queued', 'runner', 'u', 'manual', 't')`)
+	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, executor, triggered_by, trigger_kind, created_at, agencies_json)
+	      VALUES ('r-wait', 'fin-git-job', 'bash', 'fin-git-hosts', 'queued', 'runner', 'u', 'manual', 't', '["FIN"]')`) // FIN's run (I2: a run's scope is its agency's)
 	del := func(who, agency string) (int, string) {
 		t.Helper()
 		rec := gateReq(t, h, http.MethodDelete, "/api/v1/agencies/"+agency+"/git-repo", who, "")

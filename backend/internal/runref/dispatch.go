@@ -91,7 +91,15 @@ func RefuseDispatch(ctx context.Context, database *sql.DB, traceID string) (*Dis
 	} else if outside {
 		return &DispatchRefusal{Code: CodeRepoScopeMismatch, Reason: ReasonWorkflowScopeMismatch}, nil
 	}
-	if outside, err := PinOutsideRepository(ctx, database, checkoutRepo.String, scope.String); err != nil {
+	pinAgencies, err := RunAgencies(ctx, database, traceID)
+	if err != nil {
+		return nil, err
+	}
+	pinOwner, err := execspec.RunScopeOwner(ctx, database, pinAgencies)
+	if err != nil {
+		return nil, err
+	}
+	if outside, err := PinOutsideRepository(ctx, database, checkoutRepo.String, pinOwner, scope.String); err != nil {
 		return nil, err
 	} else if outside {
 		return &DispatchRefusal{Code: CodeRepoScopeMismatch, Reason: ReasonRepoScopeMismatch}, nil

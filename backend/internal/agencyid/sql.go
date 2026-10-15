@@ -34,13 +34,14 @@ func ScopeIn(alias, nameExpr, agencyExpr string) string {
 	return `(` + alias + `.name = ` + nameExpr + ` AND ` + alias + `.owner_agency = ` + agencyExpr + `)`
 }
 
-// ScopeOfRun is "the row `alias` of `scopes` is the scope named nameExpr in one
-// of the agencies of the run runIDExpr" (run_agencies, by agency name). A
-// run's scope is its job's scope in its job's agency, and the run carries that
-// agency.
-func ScopeOfRun(alias, nameExpr, runIDExpr string) string {
-	return `(` + alias + `.name = ` + nameExpr + ` AND ` + alias + `.owner_agency IN (
-		SELECT ag.id FROM run_agencies rag JOIN agencies ag ON ag.name = rag.agency WHERE rag.run_id = ` + runIDExpr + `))`
+// RunScopeOwnerSQL is the agency a run's scope is looked for in, from the run's
+// agency snapshot (agenciesJSONExpr, a JSON list of agency names): its one
+// agency, Global's for a run of several (a run on a scope several share, which
+// is Global's, 1410) or none. execspec.RunScopeOwner is the same rule in Go.
+func RunScopeOwnerSQL(agenciesJSONExpr string) string {
+	return `COALESCE((SELECT CASE WHEN json_array_length(COALESCE(` + agenciesJSONExpr + `, '[]')) = 1
+	                    THEN (SELECT ag.id FROM agencies ag WHERE ag.name = json_extract(` + agenciesJSONExpr + `, '$[0]')) END),
+	         '` + Global + `')`
 }
 
 // DefinitionSQL is the agency of a definition by its uid (?1) and kind (?2):

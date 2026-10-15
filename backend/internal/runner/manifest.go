@@ -223,11 +223,23 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 	var targets []runnerproto.ManifestTarget
 	// RP-8 — the ansible identity carriage (set below, shipped on the response).
 	var manifestSSHUser, manifestSSHKeyRef string
+	// The agency the run's scope is looked for in (I2: a scope's name is unique
+	// within an agency only), from the run's snapshot.
+	manifestAgencies, aerr := runref.RunAgencies(r.Context(), s.db, traceID)
+	if aerr != nil {
+		httpx.Fail500(w, s.log, "db_error", aerr)
+		return
+	}
+	scopeOwner, aerr := execspec.RunScopeOwner(r.Context(), s.db, manifestAgencies)
+	if aerr != nil {
+		httpx.Fail500(w, s.log, "db_error", aerr)
+		return
+	}
 	if inventoryMode == "cronomicon" {
 		// F2 host subset + M3 group expansion (override_json.hosts/groups): enforced
 		// here for cronomicon-inventory runners since the server resolves their targets.
 		// Local-inventory runners resolve hosts agent-side and honor --limit instead.
-		resolved, _, err := execspec.ResolveRun(r.Context(), s.db, scope.String, targetHost.String,
+		resolved, _, err := execspec.ResolveRun(r.Context(), s.db, scopeOwner, scope.String, targetHost.String,
 			execspec.OverrideHosts(overrideJSON.String), execspec.OverrideGroups(overrideJSON.String))
 		if err != nil {
 			s.log.Error("manifest resolve targets", "trace_id", traceID, "error", err)
@@ -297,7 +309,7 @@ func (s *Service) HandleGetManifest(w http.ResponseWriter, r *http.Request) {
 		// Sequential query (not nested inside an open rows cursor) — safe under the
 		// SQLite pool rule.
 		qerr := s.db.QueryRowContext(r.Context(),
-			`SELECT raw_inventory, inventory_format FROM scopes WHERE name = ?`, scope.String).
+			`SELECT raw_inventory, inventory_format FROM scopes WHERE name = ? AND owner_agency = ?`, scope.String, scopeOwner).
 			Scan(&raw, &format)
 		hasInventory := qerr == nil && raw.Valid && raw.String != ""
 		if !hasInventory {

@@ -322,10 +322,12 @@ func TestScopeRenameKeepsGrantsAndFlagsBrokenRefs(t *testing.T) {
 		t.Fatalf("insert grant: %v", err)
 	}
 
-	// Insert an env_var that references the old scope name (to generate a broken ref).
+	// Insert an env_var that references the old scope name (to generate a broken
+	// ref): the scope's agency's own (I2: a scope's name is unique within an
+	// agency, and another agency's variable on the name is its own scope's).
 	if _, err := pool.ExecContext(ctx,
-		`INSERT INTO env_vars(id, key, value, scope, created_by, created_at, last_modified_by, last_modified_at)
-		 VALUES ('ev1', 'MY_KEY', 'val', 'old-name', 'alice@example.com', '2026-01-01T00:00:00Z', 'alice@example.com', '2026-01-01T00:00:00Z')`,
+		`INSERT INTO env_vars(id, key, value, scope, created_by, created_at, last_modified_by, last_modified_at, owner_agency)
+		 VALUES ('ev1', 'MY_KEY', 'val', 'old-name', 'alice@example.com', '2026-01-01T00:00:00Z', 'alice@example.com', '2026-01-01T00:00:00Z', 'a1')`,
 	); err != nil {
 		t.Fatalf("insert env_var: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/secrets"
 	"github.com/ResetSmith/cronomicon/internal/settings"
@@ -22,6 +23,20 @@ func scopeOwner(t *testing.T, pool *sql.DB, scope string) string {
 		t.Fatalf("scope owner of %q: %v", scope, err)
 	}
 	return a
+}
+
+// ownerOfJob is whose the job with this uid is (agencyid.JobSQL): the agency
+// its run's scope is looked for in (I2).
+func ownerOfJob(t *testing.T, pool *sql.DB, uid string) string {
+	t.Helper()
+	var a sql.NullString
+	if err := pool.QueryRow(`SELECT `+agencyid.JobSQL("j")+` FROM jobs j WHERE j.uid = ?`, uid).Scan(&a); err != nil {
+		t.Fatalf("owner of job %q: %v", uid, err)
+	}
+	if !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
 }
 
 // unrestricted / scoped / zero-grant readers, mirroring auth.ScopeGrant.CanRead

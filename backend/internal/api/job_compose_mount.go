@@ -533,7 +533,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	// control is execspec.ResolveTargets, which fails such a host for every
 	// producer; refusing it here is the same rule where the author can read it.
 	if in.TargetHost != "" && in.Scope != nil && *in.Scope != "" {
-		member, known, herr := execspec.HostInScope(r.Context(), s.db, *in.Scope, in.TargetHost)
+		member, known, herr := execspec.HostInScope(r.Context(), s.db, s.scopeAgency(r.Context(), *in.Scope), *in.Scope, in.TargetHost)
 		if herr != nil {
 			httpx.Fail500(w, s.log, "db_error", herr)
 			return

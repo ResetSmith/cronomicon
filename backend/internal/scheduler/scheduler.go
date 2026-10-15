@@ -752,7 +752,7 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	// runner cannot, so the fire is recorded as skipped (same shape as the
 	// unbound refusal above, same argument — nobody is watching a cron fire, and
 	// a row that waits for a runner that does not exist holds the fleet cap).
-	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, scope)
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, jobAgencyFor(ctx, s.db, jobUID, source, jobName), scope)
 	if kerr != nil {
 		s.log.Error("scheduler: check key bindings", "job", jobName, "err", kerr)
 		return

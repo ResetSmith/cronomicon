@@ -37,7 +37,8 @@ func TestManifestRefusesARunPinnedToARepositoryItsScopeLeft(t *testing.T) {
 		t.Helper()
 		trace, err := scheduler.EnqueueRunWithID(context.Background(), svc.db, scheduler.EnqueueParams{
 			JobName: "app-job", JobSource: "cronomicon", JobUID: "j-app", RunType: "bash", Scope: "fin-hosts",
-			TriggerKind: "manual", TriggeredBy: "t",
+			AgenciesJSON: `["Finance"]`, // Finance's run, as a producer snapshots it (I2: a run's scope is its agency's)
+			TriggerKind:  "manual", TriggeredBy: "t",
 		})
 		if err != nil {
 			t.Fatalf("enqueue: %v", err)

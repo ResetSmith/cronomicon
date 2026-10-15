@@ -92,7 +92,8 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 	}
 	var out []runnerproto.WatchSpec
 	for _, c := range cands {
-		if !watchAgencyPermits(ctx, database, jobAgencyOf(ctx, database, c.uid), c.scope, runnerAgencies) {
+		jobAgency := jobAgencyOf(ctx, database, c.uid)
+		if !watchAgencyPermits(ctx, database, jobAgency, c.scope, runnerAgencies) {
 			continue
 		}
 		// SB-1 — a scope bound to named runners is watched only by them. The drop
@@ -101,7 +102,7 @@ func watchesForRunner(ctx context.Context, database *sql.DB, runnerID string, ca
 		// the same path exists on another segment, fires the job for the wrong
 		// file. An error reads as "not permitted": this list is also what a
 		// sighting is checked against, so it must fail closed.
-		if ok, err := execspec.ScopeBindingPermits(ctx, database, c.scope, runnerID); err != nil || !ok {
+		if ok, err := execspec.ScopeBindingPermits(ctx, database, jobAgency, c.scope, runnerID); err != nil || !ok {
 			continue
 		}
 		ws, err := watchspec.Parse(c.raw)
@@ -408,7 +409,7 @@ func (s *Service) recordAndFireSighting(ctx context.Context, runnerID string, sg
 	// local runner cannot deliver it, and nobody is watching a file land. Every
 	// run is written for the runner executor (LR-42).
 	executor := execspec.ExecutorRunner
-	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, scope)
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType, jobAgencyOf(ctx, s.db, jobUID.String), scope)
 	if kerr != nil {
 		s.refuseSighting(ctx, sightingID, "could not check key bindings: "+kerr.Error())
 		return false, nil

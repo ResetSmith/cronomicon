@@ -240,24 +240,24 @@ func TestGR3_TwoRepositoriesWithTheSameNames(t *testing.T) {
 	}
 }
 
-// A scope's name is unique across the installation, and a repository cannot
-// take over a scope that another repository supplies: its file is skipped, and
-// the scope stays as its own repository's inventory made it.
+// A scope's name is unique within its agency (§0a, IN-5; Phase I2): two
+// repositories of two agencies each have a scope `web`, each its own, with its
+// own hosts, and neither sync touches or prunes the other's.
 //
-// Until Phase R3 (TestGR0_TwoScopesOfOneNameAreOneScope pinned it) the second
-// repository's inventory replaced the first's hosts, under the agency and the
-// runner bindings the first one's scope had.
-//
-// The file that was not synced is told so (Phase R4, GR-19): an error against
-// it, in the one wording that says the name is taken and not whose it is. Until
-// then it was a line in the server's log.
-func TestGR3_AScopeNameHeldByAnotherRepositoryIsNotTakenOver(t *testing.T) {
+// Until I2 the name was unique across the installation: the second
+// repository's file was skipped with "the scope name is already in use"
+// (GR-19), and before Phase R3 it replaced the first's hosts.
+func TestGR3_TwoAgenciesEachHaveTheirOwnScopeOfOneName(t *testing.T) {
 	a, repoA, remoteA := newSyncFixture(t)
 	gitCommitFile(t, repoA, remoteA, "inventory/web.ini", fmt.Sprintf(grScope, "web1", "10.0.0.1"), "a's scope")
 	grSync(t, a, "first repository")
-	hosts := `SELECT COUNT(*) FROM scope_hosts WHERE host=? AND scope_id=(SELECT id FROM scopes WHERE name='web')`
-	if n := grCount(t, a.db, hosts, "web1"); n != 1 {
-		t.Fatalf("the first repository's host was not imported (count %d)", n)
+	hostsOf := func(repo string) string {
+		t.Helper()
+		return grString(t, a.db, `SELECT COALESCE(GROUP_CONCAT(host, ','), '') FROM (SELECT h.host FROM scope_hosts h
+			JOIN scopes sc ON sc.id = h.scope_id WHERE sc.name = 'web' AND COALESCE(sc.repo_id, 'global') = ? ORDER BY h.host)`, repo)
+	}
+	if got := hostsOf("global"); got != "web1" {
+		t.Fatalf("the first repository's scope holds %q, want web1", got)
 	}
 	scopeID := grString(t, a.db, `SELECT id FROM scopes WHERE name='web'`)
 
@@ -268,56 +268,37 @@ func TestGR3_AScopeNameHeldByAnotherRepositoryIsNotTakenOver(t *testing.T) {
 	}, "b's scopes")
 	grBackdateAll(t, a)
 	res := grSync(t, b, "second repository")
-	rows := grProblems(t, b, "repo-b")
-	if res.Status != "partial" || !grHas(rows, "error scope inventory/web.ini:", `the scope name "web" is already in use`) {
-		t.Errorf("the sync is %q; want partial, with an error against the inventory that was not synced:\n%s", res.Status, strings.Join(rows, "\n"))
+	if rows := grProblems(t, b, "repo-b"); res.Status != "success" || grHas(rows, "inventory/web.ini") {
+		t.Errorf("the sync is %q; want success, its own web written:\n%s", res.Status, strings.Join(rows, "\n"))
 	}
-	if grHas(rows, "inventory/other.ini") {
-		t.Errorf("the inventory whose name is free has a problem row:\n%s", strings.Join(rows, "\n"))
+	if res.ScopesSynced != 2 {
+		t.Errorf("the sync counted %d scopes synced, want both", res.ScopesSynced)
 	}
-	// It does not say whose the name is, nor how it is held.
-	for _, r := range rows {
-		for _, leak := range []string{"global", "Global", "repository", "built in the app", "cronomicon-authored"} {
-			if strings.Contains(r, "inventory/web.ini") && strings.Contains(r, leak) {
-				t.Errorf("the refusal says more than that the name is taken (%q): %s", leak, r)
-			}
+	check := func(when string) {
+		t.Helper()
+		if got := grString(t, a.db, `SELECT GROUP_CONCAT(r, ',') FROM (SELECT COALESCE(repo_id, 'global') || ':' || owner_agency AS r FROM scopes WHERE name = 'web' ORDER BY r)`); got != "global:global,repo-b:ag-b" {
+			t.Errorf("%s: the scopes web are %q, want one of each repository and agency", when, got)
+		}
+		if got := grString(t, a.db, `SELECT id FROM scopes WHERE name = 'web' AND owner_agency = 'global'`); got != scopeID {
+			t.Errorf("%s: the first repository's scope is row %q, want %q untouched", when, got, scopeID)
+		}
+		if got := hostsOf("global"); got != "web1" {
+			t.Errorf("%s: the first repository's scope holds %q, want web1", when, got)
+		}
+		if got := hostsOf("repo-b"); got != "web2" {
+			t.Errorf("%s: the second repository's scope holds %q, want web2", when, got)
+		}
+		if got := grString(t, a.db, `SELECT repo_id FROM scopes WHERE name='other'`); got != "repo-b" {
+			t.Errorf("%s: the second repository's other scope has repo_id %q, want repo-b", when, got)
 		}
 	}
-	if _, open, detail := grNotice(t, b, "repo-b"); !open || !strings.Contains(detail, "inventory/web.ini") {
-		t.Errorf("the second repository's notice: open=%v %q, want it open and naming the file", open, detail)
-	}
-	if res.ScopesSynced != 1 {
-		t.Errorf("the sync counted %d scopes synced, want the one it wrote", res.ScopesSynced)
-	}
-
-	if got := grString(t, a.db, `SELECT id || '/' || repo_id FROM scopes WHERE name='web'`); got != scopeID+"/global" {
-		t.Fatalf("the scope web is now %q, want the first repository's row %q untouched", got, scopeID+"/global")
-	}
-	if n := grCount(t, a.db, hosts, "web1"); n != 1 {
-		t.Errorf("the first repository's host is gone from its scope (count %d)", n)
-	}
-	if n := grCount(t, a.db, hosts, "web2"); n != 0 {
-		t.Errorf("the second repository's host is in the first repository's scope (count %d)", n)
-	}
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM ssh_hosts WHERE source='git' AND hostname='web1'`); n != 1 {
-		t.Errorf("the first repository's host record: count %d, want 1", n)
-	}
-	// Its other scope, whose name is free, arrives as its own.
-	if got := grString(t, a.db, `SELECT repo_id FROM scopes WHERE name='other'`); got != "repo-b" {
-		t.Errorf("the second repository's own scope has repo_id %q, want repo-b", got)
-	}
-	// And it stays so: the first repository's next sync does not prune it, nor
-	// the second's the first's.
+	check("after both synced")
+	// And it stays so: neither repository's next sync prunes the other's.
 	grBackdateAll(t, a)
 	grSync(t, a, "first repository again")
 	grBackdateAll(t, a)
 	grSync(t, b, "second repository again")
-	if n := grCount(t, a.db, `SELECT COUNT(*) FROM scopes WHERE name IN ('web','other')`); n != 2 {
-		t.Errorf("scopes after both synced again = %d, want web and other", n)
-	}
-	if n := grCount(t, a.db, hosts, "web1"); n != 1 {
-		t.Errorf("the first repository's host after both synced again: count %d", n)
-	}
+	check("after both synced again")
 }
 
 // A scope that leaves Git while it is bound to runners and has runs waiting is

@@ -38,9 +38,9 @@ func TestRepoScopeMismatch(t *testing.T) {
 	f.exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
 	        ('s-a', 'repo-a', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't'),
 	        ('s-g', 'global', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't')`)
-	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_ref, script_uid) VALUES
-	        ('j-app-a', 'built-on-a',      'cronomicon', 'bash', 't', 'run.sh', 's-a'),
-	        ('j-app-g', 'built-on-global', 'cronomicon', 'bash', 't', 'run.sh', 's-g')`)
+	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_ref, script_uid, owner_agency) VALUES
+	        ('j-app-a', 'built-on-a',      'cronomicon', 'bash', 't', 'run.sh', 's-a', 'ag-a'),
+	        ('j-app-g', 'built-on-global', 'cronomicon', 'bash', 't', 'run.sh', 's-g', 'ag-b')`) // an agency's job on Global's script (question 31); its owner since 1400
 
 	ctx := context.Background()
 	for _, c := range []struct {
@@ -125,9 +125,9 @@ func TestPinOutsideRepositoryAgreesWithTheJobsCheck(t *testing.T) {
 	f.exec(`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at) VALUES
 	        ('sc-a', 'repo-a', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't'),
 	        ('sc-g', 'global', 'run.sh', 'bash', 'scripts/run.sh', 'h', 't')`)
-	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_ref, script_uid) VALUES
-	        ('j-app-a', 'built-on-a',      'cronomicon', 'bash', 't', 'run.sh', 'sc-a'),
-	        ('j-app-g', 'built-on-global', 'cronomicon', 'bash', 't', 'run.sh', 'sc-g')`)
+	f.exec(`INSERT INTO jobs (uid, name, source, run_type, synced_at, script_ref, script_uid, owner_agency) VALUES
+	        ('j-app-a', 'built-on-a',      'cronomicon', 'bash', 't', 'run.sh', 'sc-a', 'ag-a'),
+	        ('j-app-g', 'built-on-global', 'cronomicon', 'bash', 't', 'run.sh', 'sc-g', 'ag-b')`)
 
 	for _, c := range []struct {
 		repo, job, name string
@@ -137,7 +137,7 @@ func TestPinOutsideRepositoryAgreesWithTheJobsCheck(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pin, err := PinOutsideRepository(ctx, f.pool, c.repo, scope)
+			pin, err := PinOutsideRepository(ctx, f.pool, c.repo, ownerOfJob(t, f.pool, c.job), scope)
 			if err != nil {
 				t.Fatal(err)
 			}

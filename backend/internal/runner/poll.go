@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
@@ -680,15 +681,15 @@ func Claim(ctx context.Context, database *sql.DB, log *slog.Logger, req ClaimReq
 			  -- NOT IN (scopes bound to somebody else)" — rebuilds three list
 			  -- subqueries and two bloom filters on every poll and cost +40%,
 			  -- with nothing bound at all. These two probes are keyed seeks
-			  -- (scopes.name is UNIQUE, scope_runners' PK leads with scope_id)
+			  -- (scopes is UNIQUE on (owner_agency, name) since 1420, scope_runners' PK leads with scope_id)
 			  -- that run only for candidate rows, and cost ~10%.
 			  AND (runs.scope IS NULL
 			       OR NOT EXISTS (SELECT 1 FROM scope_runners sr
 			                        JOIN scopes sc ON sc.id = sr.scope_id
-			                       WHERE sc.name = runs.scope)
+			                       WHERE sc.name = runs.scope AND sc.owner_agency = `+agencyid.RunScopeOwnerSQL("runs.agencies_json")+`)
 			       OR EXISTS (SELECT 1 FROM scope_runners sr
 			                    JOIN scopes sc ON sc.id = sr.scope_id
-			                   WHERE sc.name = runs.scope AND sr.runner_id = ?))
+			                   WHERE sc.name = runs.scope AND sc.owner_agency = `+agencyid.RunScopeOwnerSQL("runs.agencies_json")+` AND sr.runner_id = ?))
 			  -- secret-injection gate: a run whose job/script declares reference
 			  -- bindings — or that carries a per-run ssh_credential (CA-3b, an
 			  -- implicit key binding whose material ships in the manifest) — is

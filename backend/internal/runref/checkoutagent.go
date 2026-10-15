@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 )
 
@@ -70,14 +71,14 @@ func CheckoutNeedsAgent(ctx context.Context, database *sql.DB, jobUID, jobSource
 			   AND EXISTS (
 			       SELECT 1 FROM runner_agencies ra
 			        WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency -- its owner's work only (§0a, question 29)
-			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1) AND ra.agency_id = 'global')
+			          AND ((NOT EXISTS (SELECT 1 FROM scopes sc WHERE sc.name = ?1 AND sc.owner_agency = ?2) AND ra.agency_id = 'global')
 			               OR ra.agency_id IN (SELECT sa.agency_id FROM scope_agencies sa
 			                                     JOIN scopes sc ON sc.id = sa.scope_id
-			                                    WHERE sc.name = ?1)))
+			                                    WHERE sc.name = ?1 AND sc.owner_agency = ?2)))
 			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                     WHERE sc.name = ?1)
+			                     WHERE sc.name = ?1 AND sc.owner_agency = ?2)
 			        OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                    WHERE sc.name = ?1 AND sr.runner_id = rn.id)))`, scope).Scan(&agent)
+			                    WHERE sc.name = ?1 AND sc.owner_agency = ?2 AND sr.runner_id = rn.id)))`, scope, jobOwner(ctx, database, jobUID, jobSource, jobName)).Scan(&agent)
 	if err != nil {
 		return false, err
 	}
@@ -93,6 +94,32 @@ const ReasonCheckoutNeedsAgent = "Skipped: this job is a project, which only an 
 // CodeCheckoutNeedsAgent is the API error code (422) the manual and token
 // triggers answer with for the same refusal.
 const CodeCheckoutNeedsAgent = "checkout_requires_agent"
+
+// jobOwner is whose a job is (agencyid.JobSQL), found by uid, or by source and
+// name for a caller with none: the agency its scope is looked for in (I2: a
+// scope's name is unique within an agency only). Global's when it cannot be
+// told, as such a run is.
+func jobOwner(ctx context.Context, database *sql.DB, uid, source, name string) string {
+	if source == "" {
+		source = "git"
+	}
+	var a sql.NullString
+	err := database.QueryRowContext(ctx, `SELECT `+agencyid.JobSQL("j")+` FROM jobs j
+		WHERE CASE WHEN ?1 <> '' THEN j.uid = ?1 ELSE j.name = ?2 AND j.source = ?3 END
+		ORDER BY j.rowid LIMIT 1`, uid, name, source).Scan(&a)
+	if err != nil || !a.Valid {
+		return agencyid.Global
+	}
+	return a.String
+}
+
+// scopeAgencyOr is an agency id, Global's for none.
+func scopeAgencyOr(agency string) string {
+	if agency == "" {
+		return agencyid.Global
+	}
+	return agency
+}
 
 // CheckoutRefusal is the message for that answer: what is missing and what to
 // do about it.

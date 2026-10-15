@@ -1042,6 +1042,18 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	if scope == "" && jr.Scope != nil {
 		scope = *jr.Scope
 	}
+	// The scope is looked for in the job's agency (I2). A job with no scope of its
+	// own, run against one named in the request, is that scope's agency's run, as
+	// it was (the one scope of the name).
+	runAgency := s.jobAgencyByRowID(r.Context(), jobID)
+	if body.Scope != "" && (jr.Scope == nil || *jr.Scope == "") {
+		a, oerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
+		if oerr != nil {
+			httpx.Fail500(w, s.log, "db_error", oerr)
+			return
+		}
+		runAgency = a
+	}
 	targetHost := body.TargetHost
 	if targetHost == "" && jr.Host != nil {
 		targetHost = *jr.Host
@@ -1117,7 +1129,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// validating it here would reject configurations that are already live; and an
 	// unrestricted actor already reaches every host, so there is nothing to enforce.
 	if scope != "" && (jr.Scope == nil || *jr.Scope == "") && targetHost != "" && !id.CanUnbound(auth.PermTriggerJobs) {
-		members, err := execspec.ScopeHosts(r.Context(), s.db, scope)
+		members, err := execspec.ScopeHosts(r.Context(), s.db, runAgency, scope)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -1147,7 +1159,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// names a host subset or groups does not use the single host: the subset
 	// supersedes it below, and is checked there.
 	if targetHost != "" && len(body.TargetHosts) == 0 && len(body.TargetGroups) == 0 {
-		in, known, err := execspec.HostInScope(r.Context(), s.db, scope, targetHost)
+		in, known, err := execspec.HostInScope(r.Context(), s.db, runAgency, scope, targetHost)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -1173,18 +1185,6 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 	// dispatch resolver will (runref.lookupScoped takes the run's agencies), and
 	// checking a different row than the one that gets injected is a check in name
 	// only. Reused verbatim for the run snapshot below — one query, two consumers.
-	// The scope is looked for in the job's agency (I2). A job with no scope of its
-	// own, run against one named in the request, is that scope's agency's run, as
-	// it was (the one scope of the name).
-	runAgency := s.jobAgencyByRowID(r.Context(), jobID)
-	if body.Scope != "" && (jr.Scope == nil || *jr.Scope == "") {
-		a, oerr := execspec.ScopeOwnerByName(r.Context(), s.db, body.Scope)
-		if oerr != nil {
-			httpx.Fail500(w, s.log, "db_error", oerr)
-			return
-		}
-		runAgency = a
-	}
 	runAgencies, aerr := execspec.ScopeAgencies(r.Context(), s.db, runAgency, scope)
 	if aerr != nil {
 		httpx.Fail500(w, s.log, "db_error", aerr)
@@ -1378,7 +1378,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			httpx.Fail(w, http.StatusUnprocessableEntity, "scope_membership", "targetHosts requires a scope to validate membership against")
 			return
 		}
-		members, err := execspec.ScopeHosts(r.Context(), s.db, scope)
+		members, err := execspec.ScopeHosts(r.Context(), s.db, runAgency, scope)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -1417,13 +1417,13 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			return
 		}
 		var projStatus sql.NullString
-		_ = s.db.QueryRowContext(r.Context(), `SELECT projection_status FROM scopes WHERE name=?`, scope).Scan(&projStatus)
+		_ = s.db.QueryRowContext(r.Context(), `SELECT projection_status FROM scopes WHERE name = ? AND owner_agency = ?`, scope, runAgency).Scan(&projStatus)
 		if projStatus.Valid && projStatus.String != "" && projStatus.String != "ok" {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "group_membership",
 				"group targeting unavailable: the inventory projection for scope "+scope+" could not be fully parsed")
 			return
 		}
-		groups, err := execspec.ScopeGroups(r.Context(), s.db, scope)
+		groups, err := execspec.ScopeGroups(r.Context(), s.db, runAgency, scope)
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -1465,7 +1465,7 @@ func (s *Server) runJobWithKind(w http.ResponseWriter, r *http.Request, triggerK
 			scriptRef = *jr.ScriptRef
 		}
 		keys, kerr := runref.KeyBindingsNeedAgent(r.Context(), s.db,
-			runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef, jr.ScriptUID), runRefs, jr.Type, scope)
+			runref.RunOwners(jr.Source, jr.Name, jr.UID, scriptRef, jr.ScriptUID), runRefs, jr.Type, runAgency, scope)
 		if kerr != nil {
 			httpx.Fail500(w, s.log, "db_error", kerr)
 			return

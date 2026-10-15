@@ -133,17 +133,20 @@ func TestManifestNamesTheRepositoryTheRunWasPinnedTo(t *testing.T) {
 		t.Helper()
 		id := db.NewTraceID()
 		var scope any
-		// On the agency's scope for a pin to the agency's repository; a pin to
-		// Global's is a Global run, on no scope (since §0a a project of Global's
-		// runs on Global's scopes only; until then on any agency's).
+		agencies := `["Global"]`
+		// On the agency's scope for a pin to the agency's repository, and that
+		// agency's run (I2: a run's scope is its agency's); a pin to Global's is a
+		// Global run, on no scope (since §0a a project of Global's runs on Global's
+		// scopes only; until then on any agency's).
 		if repo != nil && repo != "global" {
 			scope = "a-hosts"
+			agencies = `["A"]`
 		}
 		if _, err := svc.db.Exec(`
 			INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, status, runner_id, executor,
-			                 checkout_repo, checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at)
+			                 checkout_repo, checkout_sha, checkout_entry, triggered_by, trigger_kind, started_at, created_at, agencies_json)
 			VALUES (?, 'proj', 'cronomicon', 'uid-proj', 'terraform', ?, 'running', ?, 'runner', ?, ?, 'scripts/proj/site.yml',
-			        'test', 'manual', ?, ?)`, id, scope, runnerID, repo, sha, now(), now()); err != nil {
+			        'test', 'manual', ?, ?, ?)`, id, scope, runnerID, repo, sha, now(), now(), agencies); err != nil {
 			t.Fatalf("insert run: %v", err)
 		}
 		return id

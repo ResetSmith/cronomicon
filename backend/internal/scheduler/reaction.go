@@ -727,7 +727,7 @@ func (s *Scheduler) buildReactionJobParams(ctx context.Context, source, jobName,
 	// LR-47 — same posture for a key-bound shell job with no agent to deliver
 	// the key: the delivery row carries the refusal, no run row is invented.
 	executor := execspec.ExecutorRunner
-	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType.String, scope.String)
+	keys, kerr := runref.KeyBindingsNeedAgent(ctx, s.db, owners, nil, runType.String, jobAgencyFor(ctx, s.db, jobUID.String, source, jobName), scope.String)
 	if kerr != nil {
 		return nil, fmt.Errorf("check key bindings for %q: %w", jobName, kerr)
 	}

@@ -100,8 +100,8 @@ func TestDisconnectingARepositoryRemovesWhatItSuppliedAndNothingElse(t *testing.
 
 	// Work is queued on its bound scope: refused, naming the scope, and
 	// nothing is removed.
-	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, executor, triggered_by, trigger_kind, created_at)
-	        VALUES ('r-wait', 'b-job', 'bash', 'b-git-hosts', 'queued', 'runner', 'u', 'manual', 't')`)
+	exec(`INSERT INTO runs (id, job_name, run_type, scope, status, executor, triggered_by, trigger_kind, created_at, agencies_json)
+	        VALUES ('r-wait', 'b-job', 'bash', 'b-git-hosts', 'queued', 'runner', 'u', 'manual', 't', json_array((SELECT name FROM agencies WHERE id = 'ag-b')))`) // B's run (I2: a run's scope is its agency's)
 	_, err := reg.Disconnect(ctx, "repo-b", "root")
 	var busy *ErrScopesBusy
 	if !errors.As(err, &busy) || len(busy.Scopes) != 1 || busy.Scopes[0] != "b-git-hosts" || !strings.Contains(err.Error(), "b-git-hosts") {

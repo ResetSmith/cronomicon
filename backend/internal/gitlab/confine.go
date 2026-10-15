@@ -33,7 +33,8 @@ const (
 // error.
 //
 // A scope counts as the agency's when it is a scope that agency alone owns
-// now, or when it is one of THIS sync's inventories whose name is free: jobs
+// now, or when it is one of THIS sync's inventories whose name is free in the
+// agency (a scope's name is unique within an agency only, I2): jobs
 // are written before scopes, and a repository's first sync brings a job and
 // the scope it names in one commit.
 func (s *Service) confineJobs(ctx context.Context, jobs []JobYAML, parsed []inventoryScope) (kept []JobYAML, refused []ValidationError, err error) {
@@ -49,10 +50,10 @@ func (s *Service) confineJobs(ctx context.Context, jobs []JobYAML, parsed []inve
 		}
 		var exists, agencies, mine int
 		if err := s.db.QueryRowContext(ctx, `
-			SELECT (SELECT COUNT(*) FROM scopes WHERE name = ?1),
-			       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1),
+			SELECT (SELECT COUNT(*) FROM scopes WHERE name = ?1 AND owner_agency = ?2),
+			       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1 AND sc.owner_agency = ?2),
 			       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-			         WHERE sc.name = ?1 AND sa.agency_id = ?2)`, scope, s.agency()).Scan(&exists, &agencies, &mine); err != nil {
+			         WHERE sc.name = ?1 AND sc.owner_agency = ?2 AND sa.agency_id = ?2)`, scope, s.agency()).Scan(&exists, &agencies, &mine); err != nil {
 			return false, err
 		}
 		v := (exists == 1 && agencies == 1 && mine == 1) || (exists == 0 && arriving[scope])

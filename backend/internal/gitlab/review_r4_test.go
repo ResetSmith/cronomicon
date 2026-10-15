@@ -244,9 +244,11 @@ func TestGR4_AScopeIsNotBornGlobalsForWantOfItsAgency(t *testing.T) {
 	}
 }
 
-// Confinement, where the review's mutations survived: a scope name the
-// repository carries an inventory for does not count as its own when the name
-// is ALREADY another's; and a scope two agencies share is not "its agency's".
+// Confinement, where the review's mutations survived: a scope two agencies
+// share is not "its agency's". And since names are per agency (I2), a scope
+// name another agency holds is no obstacle: the repository's own inventory of
+// that name is its agency's own scope, and its jobs on it are synced (until
+// then the file was refused, the name taken, and so were the jobs).
 func TestGR4_ConfinementCountsOnlyAScopeThatIsItsAgencysAlone(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
 	grSync(t, a, "Global's repository")
@@ -260,21 +262,25 @@ func TestGR4_ConfinementCountsOnlyAScopeThatIsItsAgencysAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	grCommitFiles(t, repoB, remoteB, map[string]string{
-		// Its own inventory file of a name that is another agency's scope: the
-		// file is refused (the name is taken), so the scope is not its own.
+		// Its own inventory file of a name that is another agency's scope: its
+		// agency's own scope of that name (I2).
 		"inventory/cs.ini":     fmt.Sprintf(grScope, "b1", "10.0.0.2"),
 		"jobs/on-taken.yaml":   grScopedJob("on-taken", "cs"),
 		"jobs/on-shared.yaml":  grScopedJob("on-shared", "shared-hosts"),
 		"jobs/on-its-own.yaml": grScopedJob("on-its-own", "hosts-of-repo-b"),
 	}, "jobs on a taken name and on a shared scope")
 	grSync(t, b, "the agency's repository")
-	for name, want := range map[string]bool{"on-taken": false, "on-shared": false, "on-its-own": true} {
+	for name, want := range map[string]bool{"on-taken": true, "on-shared": false, "on-its-own": true} {
 		if got := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='repo-b' AND name=?`, name) == 1; got != want {
 			t.Errorf("the job %s was synced = %v, want %v", name, got, want)
 		}
 	}
-	if got := grString(t, a.db, `SELECT repo_id FROM scopes WHERE name = 'cs'`); got != "repo-c" {
-		t.Errorf("the scope cs is now %q's", got)
+	// Two scopes cs, each its own repository's and agency's: C's is untouched.
+	if got := grString(t, a.db, `SELECT GROUP_CONCAT(repo_id || ':' || owner_agency, ',') FROM (SELECT repo_id, owner_agency FROM scopes WHERE name = 'cs' ORDER BY repo_id)`); got != "repo-b:ag-b,repo-c:ag-c" {
+		t.Errorf("the scopes cs are %q, want repo-b:ag-b,repo-c:ag-c", got)
+	}
+	if got := grString(t, a.db, `SELECT GROUP_CONCAT(h.host) FROM scope_hosts h JOIN scopes sc ON sc.id = h.scope_id WHERE sc.name = 'cs' AND sc.repo_id = 'repo-c'`); got != "c1" {
+		t.Errorf("C's scope cs holds %q, want its own host c1", got)
 	}
 }
 

@@ -645,7 +645,21 @@ func (s *Service) execute(ctx context.Context, r claimedRun) {
 	// the explicit host subset; the SSH executor uses only the expanded targets
 	// (it discards the --limit, which is the ansible runner's mechanism). Groups
 	// arrive pre-expanded as ordinary Targets — no fan-out change.
-	targets, _, err := execspec.ResolveRun(runCtx, s.db, r.scope, r.targetHost,
+	// The scope is looked for in the run's agency (I2: a scope's name is unique
+	// within an agency only).
+	scopeAgencies, aerr := runref.RunAgencies(runCtx, s.db, r.traceID)
+	if aerr != nil {
+		sink.line("", "cronomicon: could not read this run's agencies: "+aerr.Error())
+		s.finalize(ctx, r, "failure", nil)
+		return
+	}
+	scopeOwner, aerr := execspec.RunScopeOwner(runCtx, s.db, scopeAgencies)
+	if aerr != nil {
+		sink.line("", "cronomicon: could not read this run's agencies: "+aerr.Error())
+		s.finalize(ctx, r, "failure", nil)
+		return
+	}
+	targets, _, err := execspec.ResolveRun(runCtx, s.db, scopeOwner, r.scope, r.targetHost,
 		execspec.OverrideHosts(r.overrideJSON), execspec.OverrideGroups(r.overrideJSON))
 	if err != nil {
 		sink.line("", "cronomicon: target resolution failed: "+err.Error())

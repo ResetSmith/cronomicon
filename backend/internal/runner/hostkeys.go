@@ -1607,7 +1607,8 @@ func (s *Service) HandleScopeHostKeyCoverage(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	scopeID := r.PathValue("scopeId")
 	var cov scopeCoverage
-	if err := s.db.QueryRowContext(ctx, `SELECT name FROM scopes WHERE id = ?`, scopeID).Scan(&cov.Scope); err != nil {
+	var scopeOwner string // the agency its name is unique in (I2)
+	if err := s.db.QueryRowContext(ctx, `SELECT name, owner_agency FROM scopes WHERE id = ?`, scopeID).Scan(&cov.Scope, &scopeOwner); err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
 		return
 	}
@@ -1621,7 +1622,7 @@ func (s *Service) HandleScopeHostKeyCoverage(w http.ResponseWriter, r *http.Requ
 		s.log.Error("scope host-key coverage", "scope", cov.Scope, "error", err)
 		httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")
 	}
-	hosts, err := hostkeys.PlanScope(ctx, s.db, cov.Scope)
+	hosts, err := hostkeys.PlanScope(ctx, s.db, scopeOwner, cov.Scope)
 	if err != nil {
 		fail(err)
 		return
@@ -1643,7 +1644,7 @@ func (s *Service) HandleScopeHostKeyCoverage(w http.ResponseWriter, r *http.Requ
 		// runner reaches the bastion: an agent by the name it resolves, the
 		// local runner through the bastion's record. Same hosts, same order;
 		// each runner is judged on its own plan.
-		plan, err := hostkeys.PlanScopeForRunner(ctx, s.db, cov.Scope, b.RunnerID)
+		plan, err := hostkeys.PlanScopeForRunner(ctx, s.db, scopeOwner, cov.Scope, b.RunnerID)
 		if err != nil || len(plan) != len(hosts) {
 			if err == nil {
 				err = errors.New("the scope's hosts changed while its coverage was being read")

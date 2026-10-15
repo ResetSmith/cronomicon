@@ -110,8 +110,8 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 	skipped := []skippedScanHost{}
 	summary := "host-key scan requested (" + strings.Join(hosts, ", ") + ")"
 	if req.ScopeID != "" {
-		var scopeName string
-		err := s.db.QueryRowContext(r.Context(), `SELECT name FROM scopes WHERE id = ?`, req.ScopeID).Scan(&scopeName)
+		var scopeName, scopeOwner string
+		err := s.db.QueryRowContext(r.Context(), `SELECT name, owner_agency FROM scopes WHERE id = ?`, req.ScopeID).Scan(&scopeName, &scopeOwner)
 		id, ok := auth.IdentityFrom(r.Context())
 		if err != nil || !ok || !auth.ScopeReadable(id, scopeName) {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "scope not found")
@@ -130,7 +130,7 @@ func (s *Service) HandleKeyscan(w http.ResponseWriter, r *http.Request) {
 		}
 		// The plan is the scanning runner's own: the server reaches a bastion
 		// through its record, an agent by the name it resolves itself.
-		plan, err := hostkeys.PlanScopeForRunner(r.Context(), s.db, scopeName, runnerID)
+		plan, err := hostkeys.PlanScopeForRunner(r.Context(), s.db, scopeOwner, scopeName, runnerID)
 		if err != nil {
 			s.log.Error("keyscan: expand scope", "error", err)
 			httpx.Fail(w, http.StatusInternalServerError, "internal", "db error")

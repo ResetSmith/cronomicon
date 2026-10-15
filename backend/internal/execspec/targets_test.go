@@ -46,7 +46,7 @@ func TestResolveTargetsSubset(t *testing.T) {
 	}
 
 	// Full fan-out (no subset).
-	all, err := execspec.ResolveTargets(ctx, pool, "Prod", "", nil)
+	all, err := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", nil)
 	if err != nil {
 		t.Fatalf("fan-out: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestResolveTargetsSubset(t *testing.T) {
 	}
 
 	// Subset of two members → exactly those two, no ResolveErr.
-	sub, err := execspec.ResolveTargets(ctx, pool, "Prod", "", []string{"web1", "web3"})
+	sub, err := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", []string{"web1", "web3"})
 	if err != nil {
 		t.Fatalf("subset: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestResolveTargetsSubset(t *testing.T) {
 
 	// A non-member in the subset surfaces as a per-host ResolveErr — not a silent
 	// skip, and the run does NOT widen to the full scope.
-	mixed, err := execspec.ResolveTargets(ctx, pool, "Prod", "", []string{"web1", "rogue"})
+	mixed, err := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "", []string{"web1", "rogue"})
 	if err != nil {
 		t.Fatalf("mixed subset: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestResolveTargetsSubset(t *testing.T) {
 	}
 
 	// targetHost (single) still wins over scope/subset.
-	single, err := execspec.ResolveTargets(ctx, pool, "Prod", "web2", []string{"web1"})
+	single, err := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, "Prod"), "Prod", "web2", []string{"web1"})
 	if err != nil {
 		t.Fatalf("single: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestResolveTargetsSubset(t *testing.T) {
 	}
 
 	// ScopeHosts returns the membership set; OverrideHosts parses the envelope.
-	if members, err := execspec.ScopeHosts(ctx, pool, "Prod"); err != nil || len(members) != 3 {
+	if members, err := execspec.ScopeHosts(ctx, pool, ownerOf(t, pool, "Prod"), "Prod"); err != nil || len(members) != 3 {
 		t.Errorf("ScopeHosts = %v (err %v), want 3", members, err)
 	}
 	if got := execspec.OverrideHosts(`{"hosts":["web1","web2"]}`); len(got) != 2 {

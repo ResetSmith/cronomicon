@@ -186,6 +186,30 @@ func (i Identity) Can(perm, scope string) bool {
 	return false
 }
 
+// CanIn is Can for a scope of a named agency: the same grant carries the
+// permission and covers the scope, and a grant of an agency covers that
+// agency's scopes only. A scope's name is unique within an agency only (I2,
+// IN-5), so Can's "this name" cannot tell Finance's `web` from Tax's; every
+// caller that knows whose the object is asks this. An unrestricted grant
+// covers every agency, as for Can.
+func (i Identity) CanIn(perm, agency, scope string) bool {
+	for _, g := range i.RoleGrants() {
+		if !PermsForRoles([]string{g.Role}).Has(perm) {
+			continue
+		}
+		if g.Unrestricted() {
+			return true
+		}
+		if scope == AllScopes {
+			continue
+		}
+		if g.Agency == agency && g.Covers(scope) {
+			return true
+		}
+	}
+	return false
+}
+
 // CanAnywhere reports whether ANY of the actor's grants carries perm, ignoring
 // scope entirely — "may this actor do this somewhere".
 //

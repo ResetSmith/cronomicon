@@ -279,15 +279,16 @@ func (t Target) DialAddr() string {
 // does not hold) is Global's work and resolves against Global's records only,
 // which HostByName does by itself; a scope that lists no hosts at all has no
 // membership to ask about (HostInScope).
-func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, hosts []string) ([]Target, error) {
+// agency is whose the run is: its scope is looked for in that agency (I2).
+func ResolveTargets(ctx context.Context, db *sql.DB, agency, scope, targetHost string, hosts []string) ([]Target, error) {
 	if targetHost != "" {
-		if in, known, err := HostInScope(ctx, db, scope, targetHost); err != nil {
+		if in, known, err := HostInScope(ctx, db, agency, scope, targetHost); err != nil {
 			return nil, err
 		} else if known && !in {
 			return []Target{{Name: targetHost, ResolveErr: "target_host " + targetHost + " is not a member of scope " + scope +
 				" — a job runs only against hosts of its own scope"}}, nil
 		}
-		t, err := HostByName(ctx, db, scope, targetHost)
+		t, err := HostByName(ctx, db, agency, scope, targetHost)
 		if err != nil {
 			return nil, err
 		}
@@ -300,7 +301,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 		return nil, nil
 	}
 
-	names, err := ScopeHosts(ctx, db, scope)
+	names, err := ScopeHosts(ctx, db, agency, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +321,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 				targets = append(targets, Target{Name: h, ResolveErr: "host " + h + " is not a member of scope " + scope})
 				continue
 			}
-			t, err := HostByName(ctx, db, scope, h)
+			t, err := HostByName(ctx, db, agency, scope, h)
 			if err != nil {
 				return nil, err
 			}
@@ -335,7 +336,7 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 
 	var targets []Target
 	for _, name := range names {
-		t, err := HostByName(ctx, db, scope, name)
+		t, err := HostByName(ctx, db, agency, scope, name)
 		if err != nil {
 			return nil, err
 		}
@@ -361,7 +362,10 @@ func ResolveTargets(ctx context.Context, db *sql.DB, scope, targetHost string, h
 //     host of such a scope would stop jobs that have always run. The owner
 //     filter of HostByName still applies to them: they reach their own agency's
 //     records and Global's, and no one else's.
-func HostInScope(ctx context.Context, db *sql.DB, scope, host string) (in, known bool, err error) {
+//
+// agency is the agency the scope is looked for in (I2: a scope's name is
+// unique within an agency only).
+func HostInScope(ctx context.Context, db *sql.DB, agency, scope, host string) (in, known bool, err error) {
 	if scope == "" {
 		return false, false, nil
 	}
@@ -369,7 +373,7 @@ func HostInScope(ctx context.Context, db *sql.DB, scope, host string) (in, known
 	err = db.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = s.id AND sh.host = ?),
 		       (SELECT COUNT(*) FROM scope_hosts sh WHERE sh.scope_id = s.id)
-		  FROM scopes s WHERE s.name = ?`, host, scope).Scan(&in, &hosts)
+		  FROM scopes s WHERE `+agencyid.ScopeIn("s", "?", "?"), host, scope, ownerOrGlobal(agency)).Scan(&in, &hosts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, false, nil
 	}
@@ -384,13 +388,13 @@ func HostInScope(ctx context.Context, db *sql.DB, scope, host string) (in, known
 // intersection, and the trigger-boundary membership check in runJob. Source-
 // agnostic: git scopes are materialized into scope_hosts during sync, cronomicon
 // scopes via settings.
-func ScopeHosts(ctx context.Context, db *sql.DB, scope string) ([]string, error) {
+func ScopeHosts(ctx context.Context, db *sql.DB, agency, scope string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT sh.host
 		FROM scope_hosts sh
 		JOIN scopes s ON s.id = sh.scope_id
-		WHERE s.name = ?
-		ORDER BY sh.host`, scope)
+		WHERE `+agencyid.ScopeIn("s", "?", "?")+`
+		ORDER BY sh.host`, scope, ownerOrGlobal(agency))
 	if err != nil {
 		return nil, fmt.Errorf("read scope hosts: %w", err)
 	}
@@ -437,13 +441,13 @@ func OverrideHosts(overrideJSON string) []string {
 //
 // The TOFU host-key capture must write back to the SAME row id this resolves (see
 // sshexec hostKeyCallback) or the stored key and the dialed row drift.
-func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Target, error) {
+func HostByName(ctx context.Context, db *sql.DB, agency, scope, hostname string) (*Target, error) {
 	// LR-70: a scope sees the records imported for it and the records its own
 	// agency wrote by hand — never another agency's, which it could shadow or
 	// borrow until 2.3.0 by a matching hostname. Global's hand-written records
 	// are seen by Global's runs only (§0a, IN-6; question 33): until then they
 	// were seen by every scope's, and won. A run with no scope (or an unknown
-	// one) is Global's, and sees Global's alone.
+	// one) of Global's sees Global's alone. agency is whose the run is (I2).
 	row := db.QueryRowContext(ctx, `
 		SELECT h.id, h.hostname, h.address, h.port, h.username, h.via, h.auth_key_env_var, h.auth_credential_id,
 		       h.scope_id, h.owner_agency
@@ -451,7 +455,7 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 		WHERE h.hostname = ?
 		  AND `+HostRecordForScopeSQL+`
 		ORDER BY `+HostRecordOrderSQL+`
-		LIMIT 1`, hostname, scope, scope, scope)
+		LIMIT 1`, hostname, scope, ownerOrGlobal(agency), ownerOrGlobal(agency))
 	var id, name, owner string
 	var address, user, via, authKeyEnvVar, authCredentialID, scopeID sql.NullString
 	var port sql.NullInt64
@@ -483,22 +487,19 @@ func HostByName(ctx context.Context, db *sql.DB, scope, hostname string) (*Targe
 	return t, nil
 }
 
-// HostRecordForScopeSQL is THE rule for which ssh_hosts rows (alias h) a scope
-// may resolve (LR-70), as a predicate with three parameters, the scope's name
-// three times: the records imported for it, the hand-written records of its
-// own agency, and Global's when the scope is Global's (no other agency holds
-// it: none, one that is not there, or Global's own; §0a, question 33).
-// HostRecordOrderSQL is the order among several. They are exported because
-// the host-key review asks the same question for the same host
-// (runner.serverPin) and had a copy of the predicate from before records had
-// owners: it went on reading every agency's records after this one stopped.
+// HostRecordForScopeSQL is THE rule for which ssh_hosts rows (alias h) a run
+// may resolve (LR-70), as a predicate with three parameters: the scope's name,
+// then the agency whose run it is, twice. The records imported for that
+// agency's scope of the name, and the records that agency wrote by hand:
+// Global's are Global's runs' (§0a, question 33), and a scope's name is
+// unique within an agency only (I2). HostRecordOrderSQL is the order among
+// several. They are exported because the host-key review asks the same
+// question for the same host (runner.serverPin) and had a copy of the
+// predicate from before records had owners: it went on reading every agency's
+// records after this one stopped.
 const (
-	HostRecordForScopeSQL = `(h.scope_id IN (SELECT id FROM scopes WHERE name = ?)
-		       OR (h.scope_id IS NULL AND ((h.owner_agency = '` + agencyid.Global + `'
-		               AND NOT EXISTS (SELECT 1 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                                WHERE sc.name = ? AND sa.agency_id <> '` + agencyid.Global + `'))
-		           OR h.owner_agency IN (SELECT sa.agency_id FROM scope_agencies sa
-		                                   JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?))))`
+	HostRecordForScopeSQL = `(h.scope_id IN (SELECT sc.id FROM scopes sc WHERE sc.name = ? AND sc.owner_agency = ?)
+		       OR (h.scope_id IS NULL AND h.owner_agency = ?))`
 	HostRecordOrderSQL = `(h.source='cronomicon') DESC, (h.scope_id IS NULL) DESC, (h.owner_agency = '` + agencyid.Global + `') DESC,
 		         h.last_modified_at DESC, h.id DESC`
 )
@@ -589,6 +590,31 @@ func ScopeAgencies(ctx context.Context, db *sql.DB, agency, scope string) ([]str
 		return nil, fmt.Errorf("%w: %q", ErrScopeHasNoAgency, scope)
 	}
 	return []string{agencyid.GlobalName}, nil
+}
+
+// ownerOrGlobal is an agency id, Global's for none: a caller that does not
+// know whose a run is asks as Global's, as such a run is.
+func ownerOrGlobal(agency string) string {
+	if agency == "" {
+		return agencyid.Global
+	}
+	return agency
+}
+
+// RunScopeOwner is the agency a run's scope is looked for in, from the run's
+// agency snapshot (names): its one agency, and Global's for a run of several,
+// which is a run on a scope several agencies share, and such a scope is
+// Global's (1410). Global's for an empty snapshot, as such a run is.
+func RunScopeOwner(ctx context.Context, db *sql.DB, runAgencies []string) (string, error) {
+	if len(runAgencies) != 1 {
+		return agencyid.Global, nil
+	}
+	var id string
+	err := db.QueryRowContext(ctx, `SELECT id FROM agencies WHERE name = ?`, runAgencies[0]).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agencyid.Global, nil
+	}
+	return id, err
 }
 
 // ScopeOwnerByName is the agency of the one scope of this name, for a caller
@@ -703,6 +729,13 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 	if ag == "" {
 		ag = "[]"
 	}
+	// The agency the run's scope is looked for in (I2), from its snapshot.
+	var runNames []string
+	_ = json.Unmarshal([]byte(ag), &runNames)
+	scopeOwner, oerr := RunScopeOwner(ctx, db, runNames)
+	if oerr != nil {
+		return false, requires, oerr
+	}
 	reqJSON := requiresJSON.String
 	if reqJSON == "" {
 		reqJSON = "[]"
@@ -723,12 +756,12 @@ func EligibleOnlineRunnerForRun(ctx context.Context, db *sql.DB, runID string) (
 			  -- claimRun's is not, because this probe walks runners for one run
 			  -- rather than runs for one runner — the rule is the same.
 			  AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                    WHERE sc.name = ?)
+			                    WHERE sc.name = ? AND sc.owner_agency = ?)
 			       OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                   WHERE sc.name = ? AND sr.runner_id = rn.id))
+			                   WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))
 			  AND (? = 0 OR rn.allow_secret_injection = 1)
 			  AND `+localRunnerCannotSQL("rn")+`
-		)`, runType.String, reqJSON, ag, scope.String, scope.String, needsInjection, bindsKey).Scan(&ok)
+		)`, runType.String, reqJSON, ag, scope.String, scopeOwner, scope.String, scopeOwner, needsInjection, bindsKey).Scan(&ok)
 	if err != nil {
 		return false, requires, err
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/hostkeys"
 )
@@ -63,12 +64,19 @@ func (e *ErrBoundScopeBusy) Error() string {
 // the bare table name) that is true when the scope is bound to runners AND has
 // work waiting under its name. Exported as SQL because git sync applies the same
 // rule inside its prune DELETE, where it must be part of the statement.
-const BoundScopeBusySQL = `(
+//
+// The work is THIS scope's: under its name and of its agency (I2: a scope's
+// name is unique within an agency only) — a queued run whose scope owner its
+// snapshot says (agencyid.RunScopeOwnerSQL), a pending one whose definition is
+// the agency's.
+var BoundScopeBusySQL = `(
 	EXISTS (SELECT 1 FROM scope_runners sr WHERE sr.scope_id = scopes.id)
 	AND (EXISTS (SELECT 1 FROM runs r
-	              WHERE r.scope = scopes.name AND r.status = 'queued' AND r.executor = 'runner')
+	              WHERE r.scope = scopes.name AND r.status = 'queued' AND r.executor = 'runner'
+	                AND ` + agencyid.RunScopeOwnerSQL("r.agencies_json") + ` = scopes.owner_agency)
 	     OR EXISTS (SELECT 1 FROM pending_runs p
-	                 WHERE p.scope = scopes.name AND p.status = 'pending')))`
+	                 WHERE p.scope = scopes.name AND p.status = 'pending'
+	                   AND COALESCE(` + agencyid.DefinitionOf("p.owner_uid", "p.kind") + `, '` + agencyid.Global + `') = scopes.owner_agency)))`
 
 // boundScopeBusy returns a non-nil *ErrBoundScopeBusy when the scope may not be
 // renamed or deleted right now, nil when it may.
@@ -346,7 +354,11 @@ func ListRetiredPins(ctx context.Context, database *sql.DB) ([]RetiredPin, error
 		  FROM retired_runner_pins p
 		 WHERE p.dismissed_at IS NULL
 		   AND NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		                    WHERE sc.name = p.scope)
+		                    WHERE sc.name = p.scope
+		                      AND sc.owner_agency = COALESCE((SELECT `+agencyid.JobSQL("j")+` FROM jobs j
+		                             WHERE CASE WHEN COALESCE(p.job_uid, '') <> '' THEN j.uid = p.job_uid
+		                                        ELSE j.name = p.job_name AND j.source = p.job_source END
+		                             ORDER BY j.rowid LIMIT 1), '`+agencyid.Global+`'))
 		 ORDER BY p.scope, p.job_name, p.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list retired runner pins: %w", err)
@@ -586,7 +598,8 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 	}
 	// Moving a scope onto a runner moves the source of host-key trust with it:
 	// the server's pins stop mattering and the runner's known_hosts starts to.
-	scopeHosts, err := hostkeys.PlanScope(ctx, database, sc.Scope)
+	scopeOwner := scopeOwnerOf(ctx, database, scopeID)
+	scopeHosts, err := hostkeys.PlanScope(ctx, database, scopeOwner, sc.Scope)
 	if err != nil {
 		return nil, fmt.Errorf("preview scope runners: %w", err)
 	}
@@ -612,7 +625,7 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 		plan := scopeHosts
 		if pr.Local {
 			// The server reaches a bastion through its record, not by name.
-			if plan, terr = hostkeys.PlanScopeFor(ctx, database, sc.Scope, true); terr != nil {
+			if plan, terr = hostkeys.PlanScopeFor(ctx, database, scopeOwner, sc.Scope, true); terr != nil {
 				return nil, fmt.Errorf("preview scope runners: %w", terr)
 			}
 		}
@@ -661,6 +674,16 @@ func PreviewScopeRunners(ctx context.Context, database *sql.DB, scopeID string, 
 		out.Runners = append(out.Runners, pr)
 	}
 	return out, nil
+}
+
+// scopeOwnerOf is the agency a scope (by id) belongs to (owner_agency, 1410):
+// the agency its name is unique in (I2). Global's for a scope that is gone.
+func scopeOwnerOf(ctx context.Context, database *sql.DB, scopeID string) string {
+	var owner string
+	if err := database.QueryRowContext(ctx, `SELECT owner_agency FROM scopes WHERE id = ?`, scopeID).Scan(&owner); err != nil {
+		return agencyid.Global
+	}
+	return owner
 }
 
 // runnersServingScopeAgency lists the registered runners that pass the claim's

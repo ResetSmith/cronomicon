@@ -26,8 +26,12 @@ func TestArrivalForAProjectJobWithNoCheckoutAgentIsRefused(t *testing.T) {
 	exec(`DELETE FROM scope_agencies WHERE scope_id = 'sc-fin'`)
 	exec(`INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin')`)
 	exec(`UPDATE git_repos SET last_sha = '1111111111111111111111111111111111111111' WHERE id = 'global'`)
+	// Finance's job, from Finance's repository: a job finds its scope in its own
+	// agency (I2), and a job of Global's repository on Finance's scope is
+	// stopped since §0a (I1).
+	exec(`INSERT INTO git_repos (id, agency_id, url, branch, last_sha) VALUES ('repo-fin', 'ag-fin', 'u', 'main', '1111111111111111111111111111111111111111')`)
 	seedWatchJob(t, svc, "git", "ingest", "fin-hosts", `[{"path":"/srv/incoming/*.csv"}]`)
-	exec(`UPDATE jobs SET run_type = 'ansible', script_path = 'scripts/proj/site.yml', project_root = 'scripts/proj' WHERE name = 'ingest'`)
+	exec(`UPDATE jobs SET run_type = 'ansible', script_path = 'scripts/proj/site.yml', project_root = 'scripts/proj', repo_id = 'repo-fin' WHERE name = 'ingest'`)
 	arrival := func(path string) sightingIn {
 		return sightingIn{JobSource: "git", JobName: "ingest", Path: path, SizeBytes: 42, MTime: "2026-08-11T00:00:00Z"}
 	}

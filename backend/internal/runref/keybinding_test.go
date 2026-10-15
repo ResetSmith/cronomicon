@@ -104,7 +104,7 @@ func TestKeyBindingsNeedAgent(t *testing.T) {
 			for o, bs := range tc.bind {
 				bind(t, f, o, bs...)
 			}
-			got, err := KeyBindingsNeedAgent(ctx, f.pool, []Owner{job, script}, tc.perRun, tc.runType, tc.scope)
+			got, err := KeyBindingsNeedAgent(ctx, f.pool, []Owner{job, script}, tc.perRun, tc.runType, scopeOwner(t, f.pool, tc.scope), tc.scope)
 			if err != nil {
 				t.Fatal(err)
 			}

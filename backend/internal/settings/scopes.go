@@ -105,6 +105,9 @@ type LocalScopeInput struct {
 	Description  *string
 	Hosts        []string
 	RawInventory *string
+	// OwnerAgency is the agency a new scope is created in (I2: its name is
+	// unique there). Global's when empty. Read by CreateScope only.
+	OwnerAgency string
 }
 
 // BrokenReference describes a dangling scope reference after a rename.
@@ -438,9 +441,9 @@ func CreateScope(ctx context.Context, database *sql.DB, inp LocalScopeInput, act
 	defer tx.Rollback() //nolint:errcheck
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO scopes (id, name, source, description, created_by, created_at, last_modified_by, last_modified_at, raw_inventory, inventory_format, projection_status, projection_json)
-		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, inp.Scope, inp.Description, actor, now, actor, now, rawInv, invFmt, projStatus, projJSON)
+		`INSERT INTO scopes (id, name, source, description, created_by, created_at, last_modified_by, last_modified_at, raw_inventory, inventory_format, projection_status, projection_json, owner_agency)
+		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, inp.Scope, inp.Description, actor, now, actor, now, rawInv, invFmt, projStatus, projJSON, ownerOrGlobalAgency(inp.OwnerAgency))
 	if err != nil {
 		return nil, fmt.Errorf("create scope: %w", err)
 	}
@@ -599,21 +602,28 @@ func UpdateScope(ctx context.Context, database *sql.DB, id string, inp LocalScop
 	// than by remembering to write the UPDATE.
 	var broken []BrokenReference
 	if oldName != newName {
+		// The scope's agency: a scope's name is unique within an agency only (I2),
+		// so what names the old name in ANOTHER agency is that agency's scope's, and
+		// is neither moved nor reported.
+		var scopeOwner string
+		if err := tx.QueryRowContext(ctx, `SELECT owner_agency FROM scopes WHERE id = ?`, id).Scan(&scopeOwner); err != nil {
+			return nil, nil, fmt.Errorf("read the scope's agency: %w", err)
+		}
 		// A job carries its scope by NAME. The jobs built in the app go with the
 		// scope to its new name (present defect 51, the owner's yes to question
 		// 26): left on the old one, they belonged to whatever scope took that
 		// name next, another agency's included, listed to it and run on its
 		// hosts. A job from Git keeps what its file says, and is reported below.
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE jobs SET scope = ? WHERE source = 'cronomicon' AND scope = ?`, newName, oldName); err != nil {
+			`UPDATE jobs SET scope = ? WHERE source = 'cronomicon' AND scope = ? AND owner_agency = ?`, newName, oldName, scopeOwner); err != nil {
 			return nil, nil, fmt.Errorf("move the scope's jobs to its new name: %w", err)
 		}
 		// Lint: find broken references in env_vars, secrets and Git jobs (scope
 		// column). Use the tx (not the pool) to avoid a deadlock on the
 		// single-connection pool.
-		broken = append(broken, brokenEnvVarRefsTx(ctx, tx, oldName)...)
-		broken = append(broken, brokenSecretRefsTx(ctx, tx, oldName)...)
-		broken = append(broken, brokenGitJobRefs(ctx, tx, oldName)...)
+		broken = append(broken, brokenEnvVarRefsTx(ctx, tx, oldName, scopeOwner)...)
+		broken = append(broken, brokenSecretRefsTx(ctx, tx, oldName, scopeOwner)...)
+		broken = append(broken, brokenGitJobRefs(ctx, tx, oldName, scopeOwner)...)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -745,8 +755,8 @@ type dbQuerier interface {
 }
 
 // brokenEnvVarRefs finds env_vars that still reference oldScope.
-func brokenEnvVarRefs(ctx context.Context, q dbQuerier, oldScope string) []BrokenReference {
-	rows, _ := q.QueryContext(ctx, `SELECT key FROM env_vars WHERE scope=?`, oldScope)
+func brokenEnvVarRefs(ctx context.Context, q dbQuerier, oldScope, owner string) []BrokenReference {
+	rows, _ := q.QueryContext(ctx, `SELECT key FROM env_vars WHERE scope = ? AND owner_agency = ?`, oldScope, owner)
 	if rows == nil {
 		return nil
 	}
@@ -761,8 +771,8 @@ func brokenEnvVarRefs(ctx context.Context, q dbQuerier, oldScope string) []Broke
 }
 
 // brokenSecretRefs finds secrets that still reference oldScope.
-func brokenSecretRefs(ctx context.Context, q dbQuerier, oldScope string) []BrokenReference {
-	rows, _ := q.QueryContext(ctx, `SELECT key FROM secrets WHERE scope=?`, oldScope)
+func brokenSecretRefs(ctx context.Context, q dbQuerier, oldScope, owner string) []BrokenReference {
+	rows, _ := q.QueryContext(ctx, `SELECT key FROM secrets WHERE scope = ? AND owner_agency = ?`, oldScope, owner)
 	if rows == nil {
 		return nil
 	}
@@ -778,8 +788,8 @@ func brokenSecretRefs(ctx context.Context, q dbQuerier, oldScope string) []Broke
 
 // brokenGitJobRefs finds the jobs from Git that still name oldScope: a rename
 // cannot change a file, so each is the repository's to change.
-func brokenGitJobRefs(ctx context.Context, q dbQuerier, oldScope string) []BrokenReference {
-	rows, _ := q.QueryContext(ctx, `SELECT name FROM jobs WHERE source = 'git' AND scope = ? ORDER BY name`, oldScope)
+func brokenGitJobRefs(ctx context.Context, q dbQuerier, oldScope, owner string) []BrokenReference {
+	rows, _ := q.QueryContext(ctx, `SELECT name FROM jobs WHERE source = 'git' AND scope = ? AND owner_agency = ? ORDER BY name`, oldScope, owner)
 	if rows == nil {
 		return nil
 	}
@@ -793,37 +803,24 @@ func brokenGitJobRefs(ctx context.Context, q dbQuerier, oldScope string) []Broke
 	return out
 }
 
-// ErrScopeNameClaimed refuses a scope that would take a name jobs of another
-// agency still name (present defect 51; the owner's yes to question 26). A job
-// carries its scope by name, so a scope of that name takes those jobs: listed
-// to its agency and run on its hosts. Mapped 409 `scope_name_in_use`.
-var ErrScopeNameClaimed = errors.New("jobs of another agency name a scope of this name, and a scope of it would take them; " +
-	"choose another name, or have a global administrator create it")
-
-// ScopeNameClaimed reports whether a scope of agency `agency` taking the name
-// `name` would take jobs that are not that agency's: a job from an agency's
-// repository is that agency's, one from Global's repository Global's; one built
-// in the app has its agency by its scope alone, and with no scope of that name
-// whose it is cannot be told, so it is counted as another's.
-func ScopeNameClaimed(ctx context.Context, q interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}, name, agency string) (bool, error) {
-	var n int
-	if err := q.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM jobs j LEFT JOIN git_repos g ON g.id = j.repo_id
-		 WHERE j.scope = ?1 AND j.deleted_at IS NULL
-		   AND (j.source <> 'git' OR COALESCE(g.agency_id, ?3) <> ?2)`, name, agency, agencyid.Global).Scan(&n); err != nil {
-		return false, err
+// ownerOrGlobalAgency is an agency id, Global's for none.
+//
+// (ScopeNameClaimed and its 409 `scope_name_in_use`, present defect 51 and the
+// owner's yes to question 26, went with I2: a job finds its scope in its own
+// agency, so another agency's scope of the name takes no job of this one's.)
+func ownerOrGlobalAgency(agency string) string {
+	if agency == "" {
+		return agencyid.Global
 	}
-	return n > 0, nil
+	return agency
 }
 
 // brokenEnvVarRefsTx is like brokenEnvVarRefs but uses a transaction.
-func brokenEnvVarRefsTx(ctx context.Context, tx *sql.Tx, oldScope string) []BrokenReference {
-	return brokenEnvVarRefs(ctx, tx, oldScope)
+func brokenEnvVarRefsTx(ctx context.Context, tx *sql.Tx, oldScope, owner string) []BrokenReference {
+	return brokenEnvVarRefs(ctx, tx, oldScope, owner)
 }
 
 // brokenSecretRefsTx is like brokenSecretRefs but uses a transaction.
-func brokenSecretRefsTx(ctx context.Context, tx *sql.Tx, oldScope string) []BrokenReference {
-	return brokenSecretRefs(ctx, tx, oldScope)
+func brokenSecretRefsTx(ctx context.Context, tx *sql.Tx, oldScope, owner string) []BrokenReference {
+	return brokenSecretRefs(ctx, tx, oldScope, owner)
 }

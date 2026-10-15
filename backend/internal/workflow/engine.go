@@ -711,7 +711,7 @@ func (e *Engine) runJob(
 	// cannot deliver it, and a step left queued for a runner that does not exist
 	// would hold the workflow for its whole timeout (or for ever with none).
 	if stepStatus == "queued" {
-		keys, kerr := runref.KeyBindingsNeedAgent(ctx, e.db, stepOwners, nil, jd.runType, effectiveScope)
+		keys, kerr := runref.KeyBindingsNeedAgent(ctx, e.db, stepOwners, nil, jd.runType, jd.agency, effectiveScope)
 		if kerr != nil {
 			e.log.Error("workflow: check key bindings", "job", step.Name, "err", kerr)
 			return "danger", false

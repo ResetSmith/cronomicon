@@ -93,20 +93,20 @@ func CloneScope(ctx context.Context, database *sql.DB, srcID, name, targetAgency
 	id := db.NewID()
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO scopes (id, name, source, description, created_by, created_at, last_modified_by, last_modified_at,
-		                     raw_inventory, inventory_format, projection_status, projection_json, tags)
-		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'ok'), ?, COALESCE(?, '[]'))`,
-		id, name, description, actor, now, actor, now, rawInv, invFmt, projStatus, projJSON, tags); err != nil {
+		                     raw_inventory, inventory_format, projection_status, projection_json, tags, owner_agency)
+		 VALUES (?, ?, 'cronomicon', ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'ok'), ?, COALESCE(?, '[]'), ?)`,
+		id, name, description, actor, now, actor, now, rawInv, invFmt, projStatus, projJSON, tags, targetAgency); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, counts, ErrScopeNameTaken
 		}
 		return nil, counts, fmt.Errorf("clone scope: %w", err)
 	}
-	// The clone is the target agency's, and no other's. (A scope is born in
-	// Global, by the trigger that gives every scope an agency.)
-	if _, err := tx.ExecContext(ctx, `DELETE FROM scope_agencies WHERE scope_id = ?`, id); err != nil {
-		return nil, counts, fmt.Errorf("clone scope: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, id, targetAgency); err != nil {
+	// The clone is the target agency's, and no other's: it is born there, by
+	// the trigger that gives every scope its owner's membership (1420; until
+	// then it was born in Global and moved). Taking it out of Global and back in
+	// would, for a moment, make it Global's, and a name Global holds would
+	// refuse it.
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO scope_agencies (scope_id, agency_id) VALUES (?, ?)`, id, targetAgency); err != nil {
 		return nil, counts, fmt.Errorf("clone scope: place it in its agency: %w", err)
 	}
 

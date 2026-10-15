@@ -300,7 +300,7 @@ INSERT OR IGNORE INTO git_repos (id, agency_id) VALUES ('global', 'global');
 -- scripts_test.go creates the table with.
 CREATE TABLE IF NOT EXISTS scopes (
     id TEXT PRIMARY KEY,
-    name TEXT UNIQUE,
+    name TEXT,
     source TEXT,
     source_path TEXT,
     git_meta_json TEXT,
@@ -310,13 +310,30 @@ CREATE TABLE IF NOT EXISTS scopes (
     created_at TEXT,
     raw_inventory TEXT,
     inventory_format TEXT,
-    repo_id TEXT
+    repo_id TEXT,
+    owner_agency TEXT NOT NULL DEFAULT 'global', -- migration 1410
+    UNIQUE (owner_agency, name)                  -- migration 1420
 );
 CREATE TABLE IF NOT EXISTS scope_agencies (
     scope_id  TEXT NOT NULL,
     agency_id TEXT NOT NULL,
     PRIMARY KEY (scope_id, agency_id)
 );
+-- Mirrors 1410's triggers: a scope's owner is its one agency, Global's for several.
+CREATE TRIGGER IF NOT EXISTS scope_owner_on_join AFTER INSERT ON scope_agencies
+BEGIN
+    UPDATE scopes SET owner_agency = COALESCE(
+        (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END FROM scope_agencies sa WHERE sa.scope_id = NEW.scope_id),
+        'global')
+     WHERE id = NEW.scope_id;
+END;
+CREATE TRIGGER IF NOT EXISTS scope_owner_on_leave AFTER DELETE ON scope_agencies
+BEGIN
+    UPDATE scopes SET owner_agency = COALESCE(
+        (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END FROM scope_agencies sa WHERE sa.scope_id = OLD.scope_id),
+        'global')
+     WHERE id = OLD.scope_id;
+END;
 
 CREATE TABLE IF NOT EXISTS git_sync_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

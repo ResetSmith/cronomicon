@@ -61,6 +61,14 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 		return "", err
 	}
 	ag := agenciesJSON.String
+	// The agency the run's scope is looked for in (I2: a scope's name is unique
+	// within an agency only), from the run's snapshot.
+	var runNames []string
+	_ = json.Unmarshal([]byte(ag), &runNames)
+	scopeOwner, oerr := RunScopeOwner(ctx, database, runNames)
+	if oerr != nil {
+		return "", oerr
+	}
 	if ag == "" || ag == "null" {
 		ag = "[]"
 	}
@@ -89,11 +97,11 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 			   AND NOT EXISTS (SELECT 1 FROM json_each(?) je WHERE je.value NOT IN `+lcaps+`)
 			   AND EXISTS (SELECT 1 FROM runner_agencies ra JOIN agencies a ON a.id = ra.agency_id
 			                WHERE ra.runner_id = rn.id AND ra.agency_id = rn.owner_agency AND a.name IN (SELECT value FROM json_each(?)))
-			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ?)
+			   AND (NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ? AND sc.owner_agency = ?)
 			        OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-			                    WHERE sc.name = ? AND sr.runner_id = rn.id))
+			                    WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))
 			   AND ? = 0)`,
-		runType.String, reqJSON, ag, scope.String, scope.String, bindsKey).Scan(&localOff); err != nil {
+		runType.String, reqJSON, ag, scope.String, scopeOwner, scope.String, scopeOwner, bindsKey).Scan(&localOff); err != nil {
 		return "", err
 	}
 	if localOff {
@@ -164,16 +172,16 @@ func UnclaimableReason(ctx context.Context, database *sql.DB, runID string) (str
 	// EXISTS arm. The arguments are kept in a slice so every later clause extends one
 	// list instead of re-spelling it.
 	bindClause := agencyClause + ` AND (
-		NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ?)
+		NOT EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id WHERE sc.name = ? AND sc.owner_agency = ?)
 		OR EXISTS (SELECT 1 FROM scope_runners sr JOIN scopes sc ON sc.id = sr.scope_id
-		            WHERE sc.name = ? AND sr.runner_id = rn.id))`
-	bindArgs := []any{runType.String, ag, scope.String, scope.String}
+		            WHERE sc.name = ? AND sc.owner_agency = ? AND sr.runner_id = rn.id))`
+	bindArgs := []any{runType.String, ag, scope.String, scopeOwner, scope.String, scopeOwner}
 	n, err = count(bindClause, bindArgs...)
 	if err != nil {
 		return "", err
 	}
 	if n == 0 {
-		bound, berr := BoundRunnersByScopeName(ctx, database, scope.String)
+		bound, berr := BoundRunnersByScopeName(ctx, database, scopeOwner, scope.String)
 		if berr != nil {
 			return "", berr
 		}

@@ -735,7 +735,7 @@ func TestScopeCoverage(t *testing.T) {
 	}
 	missing := func() int {
 		t.Helper()
-		n, total, err := hostkeys.Missing(context.Background(), f.svc.db, "dmz", f.id)
+		n, total, err := hostkeys.Missing(context.Background(), f.svc.db, scopeOwnerForTest(t, f.svc.db, "dmz"), "dmz", f.id)
 		if err != nil || total != 3 {
 			t.Fatalf("Missing: %d of %d (%v)", n, total, err)
 		}
@@ -812,7 +812,7 @@ func TestScopeCoverage(t *testing.T) {
 			}
 		}
 	}
-	if missing, total, err := hostkeys.Missing(context.Background(), f.svc.db, "dmz", f.id); err != nil || missing != 1 || total != 3 {
+	if missing, total, err := hostkeys.Missing(context.Background(), f.svc.db, scopeOwnerForTest(t, f.svc.db, "dmz"), "dmz", f.id); err != nil || missing != 1 || total != 3 {
 		t.Fatalf("Missing = %d of %d (%v); want 1 of 3", missing, total, err)
 	}
 }

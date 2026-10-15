@@ -124,12 +124,13 @@ func TestAScopeIsClonedToAnAgency(t *testing.T) {
 		t.Errorf("the clone has %d hosts after one was added to the original, want its 2", n)
 	}
 
-	// The name is its own: one a scope has is refused, and one is required.
+	// The name is its own in the target agency (I2): one TAX has is refused,
+	// one FIN has (the original's) is TAX's to take, and one is required.
 	if code, _ := clone(both, "sc:fin", toTax); code != http.StatusConflict {
 		t.Errorf("a second clone under the same name = %d, want 409", code)
 	}
-	if code, _ := clone(both, "sc:fin", `{"agencyId":"ag:TAX","name":"fin-hosts"}`); code != http.StatusConflict {
-		t.Errorf("a clone under the original's name = %d, want 409", code)
+	if code, body := clone(both, "sc:fin", `{"agencyId":"ag:TAX","name":"fin-hosts"}`); code != http.StatusCreated {
+		t.Errorf("a clone under the original's name, into another agency = %d %s, want 201 (names are per agency)", code, body)
 	}
 	if code, _ := clone(both, "sc:fin", `{"agencyId":"ag:TAX","name":"  "}`); code != http.StatusUnprocessableEntity {
 		t.Errorf("a clone with no name = %d, want 422", code)

@@ -39,8 +39,14 @@ func TestCheckoutNeedsAgent(t *testing.T) {
 			f.exec(`UPDATE runners SET owner_agency = ? WHERE id = ?`, agencies[0], id)
 		}
 	}
+	f.exec(`INSERT INTO git_repos (id, agency_id, url, branch) VALUES ('repo-a', 'ag-a', 'u', 'main'), ('repo-b', 'ag-b', 'u', 'main')`)
 	ask := func(what, uid, source, name, scope string, want bool) {
 		t.Helper()
+		// The jobs are the asked scope's agency's: a job finds its scope in its own
+		// agency (I2), so a job of the scope's agency is what each case means.
+		owner := scopeOwner(t, f.pool, scope)
+		f.exec(`UPDATE jobs SET owner_agency = ? WHERE source <> 'git'`, owner)
+		f.exec(`UPDATE jobs SET repo_id = (SELECT id FROM git_repos WHERE agency_id = ? ORDER BY id LIMIT 1) WHERE source = 'git'`, owner)
 		got, err := CheckoutNeedsAgent(ctx, f.pool, uid, source, name, scope)
 		if err != nil || got != want {
 			t.Errorf("%s: refused = %v (%v), want %v", what, got, err, want)

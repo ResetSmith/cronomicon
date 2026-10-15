@@ -1113,11 +1113,12 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 	if len(agencyIDs) == 1 {
 		target = agencyIDs[0]
 	}
-	if !s.refuseClaimedScopeName(w, r, id, inp.Scope, target) {
-		return
-	}
+	// Created in its agency (I2: a scope's name is unique there), so a name
+	// another agency uses is no obstacle and one this agency uses is refused by
+	// the key (409 conflict, below).
 	sc, err := settings.CreateScope(r.Context(), s.db, settings.LocalScopeInput{
 		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
+		OwnerAgency: target,
 	}, id.Email)
 	if err != nil {
 		if validationErr, ok := errors.AsType[settings.InventoryValidationError](err); ok {
@@ -1259,28 +1260,6 @@ func (s *Server) handleImportScopeHosts(w http.ResponseWriter, r *http.Request) 
 	httpx.JSON(w, http.StatusOK, res)
 }
 
-// refuseClaimedScopeName reports whether a scope of `agency` may take the name
-// `name`: false, with 409 `scope_name_in_use` written, when jobs that are not
-// that agency's still name it (settings.ScopeNameClaimed; present defect 51,
-// the owner's yes to question 26). A scope of that name would take them, listed
-// to its agency and run on its hosts. A global administrator is not asked: it is
-// theirs to give a scope, and its jobs, to an agency (bee2b35).
-func (s *Server) refuseClaimedScopeName(w http.ResponseWriter, r *http.Request, id auth.Identity, name, agency string) bool {
-	if id.GlobalAdmin(auth.PermConfigureApp) {
-		return true
-	}
-	claimed, err := settings.ScopeNameClaimed(r.Context(), s.db, name, agency)
-	if err != nil {
-		httpx.Fail500(w, s.log, "db_error", err)
-		return false
-	}
-	if claimed {
-		httpx.Fail(w, http.StatusConflict, "scope_name_in_use", settings.ErrScopeNameClaimed.Error())
-		return false
-	}
-	return true
-}
-
 func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 	id, ok := auth.IdentityFrom(r.Context())
 	if !ok {
@@ -1302,16 +1281,10 @@ func (s *Server) handleUpdateScope(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
-	// A rename takes a name, as a create does (present defect 51).
-	if oldScopeName != "" && inp.Scope != oldScopeName {
-		var agency string
-		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT CASE WHEN COUNT(*) = 1 THEN MIN(agency_id) ELSE ? END FROM scope_agencies WHERE scope_id = ?`,
-			agencyid.Global, sid).Scan(&agency)
-		if !s.refuseClaimedScopeName(w, r, id, inp.Scope, agency) {
-			return
-		}
-	}
+	// A rename takes a name in the scope's own agency only (I2): another
+	// agency's jobs that name it find their own agency's scope, so there is
+	// nothing of theirs to take (until then 409 scope_name_in_use, present
+	// defect 51). A name the agency already uses is refused by the key.
 	sc, broken, err := settings.UpdateScope(r.Context(), s.db, sid, settings.LocalScopeInput{
 		Scope: inp.Scope, Description: inp.Description, Hosts: inp.Hosts, RawInventory: inp.RawInventory,
 	}, id.Email)

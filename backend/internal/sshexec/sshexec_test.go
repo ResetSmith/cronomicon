@@ -268,8 +268,10 @@ func TestSSHExecutorEndToEnd(t *testing.T) {
 		`INSERT INTO git_repos (id, agency_id, url, branch, last_sha) VALUES ('repo-a', 'ag-a', 'u', 'main', '` + agencySynced + `')`,
 		`INSERT INTO scripts (uid, repo_id, name, run_type, script_path, content_hash, synced_at)
 		   VALUES ('s-a', 'repo-a', 'only-here.sh', 'bash', 'scripts/only-here.sh', 'h', 't')`,
-		`INSERT INTO jobs (uid, name, source, run_type, script_uid, script_path, concurrency_policy, synced_at)
-		   VALUES ('uid-file', 'filejob', 'cronomicon', 'bash', 's-a', 'scripts/only-here.sh', 'Allow', 't')`,
+		// A's job on A's scope, as the composer writes it (its owner since 1400;
+		// a job finds its scope in its own agency, I2).
+		`INSERT INTO jobs (uid, name, source, run_type, script_uid, script_path, concurrency_policy, synced_at, scope, owner_agency)
+		   VALUES ('uid-file', 'filejob', 'cronomicon', 'bash', 's-a', 'scripts/only-here.sh', 'Allow', 't', 'testscope', 'ag-a')`,
 		`INSERT INTO runs(id, job_name, job_source, job_uid, run_type, scope, target_host, status, triggered_by, trigger_kind, executor, created_at)
 		   VALUES('run-file','filejob','cronomicon','uid-file','bash','testscope','testhost','queued','tester','manual','runner','` + now + `')`,
 	} {

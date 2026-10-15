@@ -67,7 +67,7 @@ func TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly(t *testing.T) {
 
 	resolve := func(scope, host string) string {
 		t.Helper()
-		tgt, err := execspec.HostByName(ctx, pool, scope, host)
+		tgt, err := execspec.HostByName(ctx, pool, ownerOf(t, pool, scope), scope, host)
 		if err != nil {
 			t.Fatalf("HostByName(%q, %q): %v", scope, host, err)
 		}
@@ -109,14 +109,14 @@ func TestAScopeResolvesItsOwnAgencysHostRecordsAndGlobalsOnly(t *testing.T) {
 	}
 
 	// The record says whose bastions it may route through.
-	tgt, _ := execspec.HostByName(ctx, pool, "fin-prod", "web01")
+	tgt, _ := execspec.HostByName(ctx, pool, ownerOf(t, pool, "fin-prod"), "fin-prod", "web01")
 	if tgt == nil || len(tgt.Owners) != 1 || tgt.Owners[0] != "ag-fin" {
 		t.Errorf("Finance's hand-written record answers to %v, want [ag-fin]", tgt)
 	}
 	// An imported record answers to its scope's agency, whatever its column says.
 	exec(`INSERT INTO ssh_hosts (id, source, scope_id, hostname, address, port, created_at, last_modified_at)
 	      VALUES ('h-imp8', 'cronomicon', 's-tax', 'imported01', '10.0.0.8', 22, 't', 't')`)
-	tgt, _ = execspec.HostByName(ctx, pool, "tax-prod", "imported01")
+	tgt, _ = execspec.HostByName(ctx, pool, ownerOf(t, pool, "tax-prod"), "tax-prod", "imported01")
 	if tgt == nil || len(tgt.Owners) != 1 || tgt.Owners[0] != "ag-tax" {
 		t.Errorf("a record imported for Tax's scope answers to %v, want [ag-tax]", tgt)
 	}
@@ -170,7 +170,7 @@ func TestAFixedTargetHostMustBeAMemberOfTheScope(t *testing.T) {
 
 	one := func(scope, host string) execspec.Target {
 		t.Helper()
-		ts, err := execspec.ResolveTargets(ctx, pool, scope, host, nil)
+		ts, err := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, scope), scope, host, nil)
 		if err != nil || len(ts) != 1 {
 			t.Fatalf("ResolveTargets(%q, %q) = %v, %v; want one target", scope, host, ts, err)
 		}
@@ -184,7 +184,7 @@ func TestAFixedTargetHostMustBeAMemberOfTheScope(t *testing.T) {
 		t.Errorf("a host outside the scope resolved, or failed without saying why: %+v", got)
 	}
 	// It fails as a per-host error, never by widening to the scope.
-	if ts, _ := execspec.ResolveTargets(ctx, pool, "fin-prod", "elsewhere", nil); len(ts) != 1 {
+	if ts, _ := execspec.ResolveTargets(ctx, pool, ownerOf(t, pool, "fin-prod"), "fin-prod", "elsewhere", nil); len(ts) != 1 {
 		t.Errorf("a refused target became %d targets", len(ts))
 	}
 	// A job with no scope, and one whose scope the catalog does not hold, have
@@ -219,7 +219,7 @@ func TestAFixedTargetHostMustBeAMemberOfTheScope(t *testing.T) {
 		{"", "db01", false, false}, {"no-such-scope", "db01", false, false},
 		{"runner-side", "db01", false, false},
 	} {
-		in, known, err := execspec.HostInScope(ctx, pool, c.scope, c.host)
+		in, known, err := execspec.HostInScope(ctx, pool, ownerOf(t, pool, c.scope), c.scope, c.host)
 		if err != nil || in != c.in || known != c.known {
 			t.Errorf("HostInScope(%q, %q) = %v, %v, %v; want %v, %v", c.scope, c.host, in, known, err, c.in, c.known)
 		}

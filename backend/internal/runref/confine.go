@@ -66,10 +66,14 @@ func RepoScopeMismatch(ctx context.Context, database *sql.DB, jobUID, jobSource,
 			byNameApp = 1
 		}
 	}
-	const counts = `
-		SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?2),
+	// The scope is the job's agency's of that name (I2: a scope's name is unique
+	// within an agency only), and is asked whether it is the repository's
+	// agency's alone.
+	jobScope := `sc.name = ?2 AND sc.owner_agency = COALESCE(` + agencyid.JobSQL("j") + `, '` + agencyid.Global + `')`
+	counts := `
+		SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE ` + jobScope + `),
 		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		         WHERE sc.name = ?2 AND sa.agency_id = g.agency_id)`
+		         WHERE ` + jobScope + ` AND sa.agency_id = g.agency_id)`
 	// The third column says the row is Global's repository's: for it, a run
 	// with no scope is its own. The fourth, that it is a job built in the app
 	// on Global's script: for it a run is refused only on a scope that another
@@ -134,9 +138,9 @@ func ScopeOutsideAgency(ctx context.Context, database *sql.DB, agencyID, scope s
 	}
 	var agencies, own int
 	err := database.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1),
+		SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1 AND sc.owner_agency = ?2),
 		       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		         WHERE sc.name = ?1 AND sa.agency_id = ?2)`, scope, agencyID).Scan(&agencies, &own)
+		         WHERE sc.name = ?1 AND sc.owner_agency = ?2 AND sa.agency_id = ?2)`, scope, agencyID).Scan(&agencies, &own)
 	if err != nil {
 		return false, err
 	}
@@ -211,7 +215,12 @@ func StepOutsideWorkflowRepository(ctx context.Context, database *sql.DB, traceI
 // another agency holds, and not on no scope or one that is not there, which
 // are Global's (the review of I1: refused on those, the pin said no where the
 // job's own check said yes).
-func PinOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope string) (bool, error) {
+//
+// runAgency is the agency the run's scope is looked for in (its scope's owner,
+// execspec.RunScopeOwner; I2): a scope's name is unique within an agency
+// only, so the scope asked of is the run's, and a run of another agency than
+// the repository's is outside it whatever its scope is called.
+func PinOutsideRepository(ctx context.Context, database *sql.DB, repoID, runAgency, scope string) (bool, error) {
 	if repoID == "" {
 		return false, nil
 	}
@@ -228,13 +237,20 @@ func PinOutsideRepository(ctx context.Context, database *sql.DB, repoID, scope s
 		}
 		var agencies, own int
 		err := database.QueryRowContext(ctx, `
-			SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1),
+			SELECT (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = ?1 AND sc.owner_agency = ?3),
 			       (SELECT COUNT(*) FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-			         WHERE sc.name = ?1 AND sa.agency_id = ?2)`, scope, agencyid.Global).Scan(&agencies, &own)
+			         WHERE sc.name = ?1 AND sc.owner_agency = ?3 AND sa.agency_id = ?2)`, scope, agencyid.Global, runAgency).Scan(&agencies, &own)
 		if err != nil {
 			return false, err
 		}
 		return agencies > 0 && (agencies != 1 || own != 1), nil
+	}
+	var repoAgency string
+	if err := database.QueryRowContext(ctx, `SELECT agency_id FROM git_repos WHERE id = ?`, repoID).Scan(&repoAgency); err != nil {
+		return false, err
+	}
+	if runAgency != repoAgency {
+		return true, nil
 	}
 	return ScopeOutsideRepository(ctx, database, repoID, scope)
 }

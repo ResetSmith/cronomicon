@@ -388,7 +388,7 @@ func TestSync_GitOpsPruning(t *testing.T) {
 	_, err := pool.Exec(`
 		CREATE TABLE IF NOT EXISTS scopes (
 			id TEXT PRIMARY KEY,
-			name TEXT UNIQUE,
+			name TEXT,
 			source TEXT,
 			source_path TEXT,
 			git_meta_json TEXT,
@@ -398,7 +398,9 @@ func TestSync_GitOpsPruning(t *testing.T) {
 			created_at TEXT,
 			raw_inventory TEXT,
 			inventory_format TEXT,
-			repo_id TEXT
+			repo_id TEXT,
+			owner_agency TEXT NOT NULL DEFAULT 'global',
+			UNIQUE (owner_agency, name)
 		);
 		CREATE TABLE IF NOT EXISTS scope_hosts (
 			scope_id TEXT,

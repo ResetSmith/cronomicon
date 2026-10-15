@@ -66,6 +66,11 @@ func TestRefuseDispatch(t *testing.T) {
 	run("r-stranded-step", "of-a", "git", "j-a", "b-hosts", none, "wr-a")
 	run("r-stranded-unpinned", "of-a", "git", "j-a", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
 	run("r-pin-outside-unpinned", "built-free", "cronomicon", "j-free", "b-hosts", [3]any{"repo-a", nil, "scripts/p/site.yml"}, nil)
+	// A pinned run is its agency's: the run's scope is looked for in its agency
+	// (I2), and a run of another agency than the repository's is outside it.
+	for runID, agency := range map[string]string{"r-pin-inside": "TeamA", "r-pin-outside": "TeamB", "r-pin-global": "TeamB", "r-pin-outside-unpinned": "TeamB"} {
+		f.exec(`UPDATE runs SET agencies_json = ? WHERE id = ?`, `["`+agency+`"]`, runID)
+	}
 
 	for _, c := range []struct {
 		what, run  string

@@ -2925,7 +2925,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 			if err := tx.QueryRowContext(ctx, `
 				SELECT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id AND sh.host = ?)
 				    OR NOT EXISTS (SELECT 1 FROM scope_hosts sh WHERE sh.scope_id = sc.id)
-				  FROM scopes sc WHERE sc.name = ?`, th, j.Spec.Scope).Scan(&member); err == nil && !member {
+				  FROM scopes sc WHERE sc.name = ? AND sc.owner_agency = ?`, th, j.Spec.Scope, s.agency()).Scan(&member); err == nil && !member {
 				s.logWarn("git sync: job target_host is not a host of its scope; its runs will fail for that host until the host is added to the scope or the job names one of the scope's hosts",
 					"job", j.Metadata.Name, "source_path", j.SourcePath, "scope", j.Spec.Scope, "target_host", th)
 			}
@@ -3019,7 +3019,7 @@ func (s *Service) upsertJobs(ctx context.Context, tx *sql.Tx, jobs []JobYAML, re
 		leftoverPin := strings.TrimSpace(j.Spec.RunnerTag)
 		leftoverPinUnconfined := false
 		if leftoverPin != "" {
-			bound, berr := execspec.ScopeIsBound(ctx, tx, j.Spec.Scope)
+			bound, berr := execspec.ScopeIsBound(ctx, tx, s.agency(), j.Spec.Scope)
 			switch {
 			case berr != nil:
 				// Unreadable: say only what is certain. No notice is written on a
@@ -3512,9 +3512,22 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// flip its source to 'git' and overwrite its authored raw/projection/hosts —
 		// a silent hijack. Skip the colliding git scope loudly; the operator renames
 		// one. (Names are unique, so an cronomicon row owning the name blocks the git one.)
+		// This repository's own scope of the name, whichever agency holds it: one
+		// of Global's repository's can have been given to an agency by an
+		// operator (LR-31), and it is still this file's to write. Found by its
+		// repository rather than by (agency, name), which since names are per
+		// agency (I2) would not find it, and the sync would start a second one.
+		var ownID string
+		_ = tx.QueryRowContext(ctx, `SELECT id FROM scopes WHERE source = 'git' AND COALESCE(repo_id, ?) = ? AND name = ?`,
+			repoid.Global, s.repo(), sc.Name).Scan(&ownID)
 		var existingSource string
 		var existingRepo sql.NullString
-		_ = tx.QueryRowContext(ctx, `SELECT source, repo_id FROM scopes WHERE name=?`, sc.Name).Scan(&existingSource, &existingRepo)
+		// Otherwise within this repository's agency: a scope's name is unique
+		// within an agency only (I2), and another agency's scope of the name is
+		// nothing to this one (until then it took the name, GR-19).
+		if ownID == "" {
+			_ = tx.QueryRowContext(ctx, `SELECT source, repo_id FROM scopes WHERE name = ? AND owner_agency = ?`, sc.Name, s.agency()).Scan(&existingSource, &existingRepo)
+		}
 		if existingSource == "cronomicon" {
 			nameTaken(sc)
 			continue
@@ -3577,22 +3590,23 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// UPSERT that keeps the row. Do NOT turn it into a delete-and-insert or an
 		// INSERT OR REPLACE — a new id cascades the binding away and the scope reopens
 		// to its whole agency. TestSyncPreservesScopeRunners pins that.
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at, repo_id)
-			VALUES(?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(name) DO UPDATE SET
-				source=excluded.source,
-				-- The repository travels with the source (GR-3, 1310). The row
-				-- this updates is one of this repository's own (the two checks
-				-- above skip a name held by a scope built in the app or by
-				-- another repository), so this only ever fills a row that has
-				-- none yet.
-				repo_id=excluded.repo_id,
-				source_path=excluded.source_path,
-				git_meta_json=excluded.git_meta_json,
-				synced_at=excluded.synced_at,
-				description=excluded.description`,
-			id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now, s.repo())
+		//
+		// Since I2 it is an UPDATE of the row found above, by its id, or an
+		// INSERT into this repository's agency: the row keeps its id either way.
+		var err error
+		scopeID := ownID
+		if ownID != "" {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE scopes SET source = 'git', repo_id = ?, source_path = ?, git_meta_json = ?, synced_at = ?, description = ?
+				 WHERE id = ?`,
+				s.repo(), sc.SourcePath, string(metaJSON), now, sc.Description, ownID)
+		} else {
+			scopeID = id
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO scopes(id, name, source, source_path, git_meta_json, synced_at, description, created_by, created_at, repo_id, owner_agency)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+				id, sc.Name, "git", sc.SourcePath, string(metaJSON), now, sc.Description, "gitlab", now, s.repo(), s.agency())
+		}
 		if err != nil {
 			// Not written: said to its file, and not counted among the scopes
 			// synced. (The one cause in a working installation is a repository
@@ -3608,11 +3622,6 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// EX.5 — persist inventory host membership into scope_hosts so the
 		// in-app SSH executor (which has no clone) can resolve a git scope's
 		// targets. Replace the set each sync.
-		var scopeID string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM scopes WHERE name = ?`, sc.Name).Scan(&scopeID); err != nil {
-			s.logWarn("scope id lookup skipped", "name", sc.Name, "error", err)
-			continue
-		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM scope_hosts WHERE scope_id = ?`, scopeID); err != nil {
 			s.logWarn("scope_hosts clear skipped", "name", sc.Name, "error", err)
 			continue
