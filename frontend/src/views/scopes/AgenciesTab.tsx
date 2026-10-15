@@ -33,6 +33,10 @@ interface AgencyRow {
   onlineRunnerCount?: number; // M4 coverage — 0 means jobs bound here will wait
   createdBy?: string;
   lastModifiedAt?: string;
+  // R8 — what the caller may do with this row, from the server.
+  canEdit?: boolean;
+  canDelete?: boolean;
+  canRepair?: boolean;
 }
 
 // Sortable columns (Phase 2, the sorting-update plan §3.2), driven by
@@ -72,6 +76,8 @@ export function AgenciesTab({
   envGlobal?: boolean;
 }) {
   const globalWhy = globalOnly(globalAdmin);
+  const rowWhy = (a: AgencyRow, flag: boolean | undefined): string =>
+    globalWhy || (flag === false ? (a.id === GLOBAL_AGENCY ? "Global is built in: it is neither renamed nor deleted." : "You cannot change this agency.") : "");
   const [dep, setDep] = useState(0);
   const { data, error, loading } = useGet<unknown>(() => api.GET("/agencies"), [dep]);
   const items = rows<AgencyRow>(data);
@@ -233,8 +239,12 @@ export function AgenciesTab({
                     <td style={{ ...tdStyle(), borderBottom: "none" }} onClick={(e) => e.stopPropagation()}>
                       {canEdit && (
                         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                          <Btn onClick={() => setEditing(a)} disabled={!!globalWhy} title={globalWhy || undefined}>Edit</Btn>
-                          <Btn danger onClick={() => setDeleting(a)} disabled={!!globalWhy} title={globalWhy || undefined}>
+                          {/* R8 — the row says what the caller may do with it;
+                              Global is neither renamed nor deleted. */}
+                          <Btn onClick={() => setEditing(a)} disabled={!!rowWhy(a, a.canEdit)} title={rowWhy(a, a.canEdit) || undefined}>
+                            Edit
+                          </Btn>
+                          <Btn danger onClick={() => setDeleting(a)} disabled={!!rowWhy(a, a.canDelete)} title={rowWhy(a, a.canDelete) || undefined}>
                             Delete
                           </Btn>
                         </div>

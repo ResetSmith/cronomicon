@@ -42,7 +42,7 @@ import {
   useShadowWarnings,
   valueBoxStyle,
 } from "./ui";
-import { AgencyCell, useEntityAgencies } from "./ui";
+import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
 
 type SecretSource = "stored" | "vault";
 
@@ -288,12 +288,17 @@ export function SecretsTab({ scopeNames, canEdit }: { scopeNames: string[]; canE
                   Deleting it names no path. */}
               <Btn
                 onClick={() => setEditing(v)}
-                disabled={v.source === "vault" && !!rowVaultWhy(v)}
-                title={v.source === "vault" && rowVaultWhy(v) ? rowVaultWhy(v) : undefined}
+                disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || (v.source === "vault" && !!rowVaultWhy(v))}
+                title={rowFlagWhy(v.canEdit, v.ownerAgency, "secret") || (v.source === "vault" && rowVaultWhy(v) ? rowVaultWhy(v) : undefined)}
               >
                 Edit
               </Btn>
-              <Btn dangerQuiet onClick={() => setDeleting(v)}>
+              <Btn
+                dangerQuiet
+                onClick={() => setDeleting(v)}
+                disabled={!!rowFlagWhy(v.canDelete, v.ownerAgency, "secret")}
+                title={rowFlagWhy(v.canDelete, v.ownerAgency, "secret") || undefined}
+              >
                 Delete
               </Btn>
             </div>

@@ -39,7 +39,7 @@ import {
   useShadowWarnings,
   valueBoxStyle,
 } from "./ui";
-import { AgencyCell, useEntityAgencies } from "./ui";
+import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
 
 interface EnvVarRow {
   // UUIDv7 (K-3) — this said `number` on the strength of an openapi.yaml
@@ -222,8 +222,19 @@ export function VariablesTab({ scopeNames, canEdit }: { scopeNames: string[]; ca
         <span onClick={(e) => e.stopPropagation()}>
           {canEdit && (
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <Btn onClick={() => setEditing(v)}>Edit</Btn>
-              <Btn dangerQuiet onClick={() => setDeleting(v)}>
+              <Btn
+                onClick={() => setEditing(v)}
+                disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "variable")}
+                title={rowFlagWhy(v.canEdit, v.ownerAgency, "variable") || undefined}
+              >
+                Edit
+              </Btn>
+              <Btn
+                dangerQuiet
+                onClick={() => setDeleting(v)}
+                disabled={!!rowFlagWhy(v.canDelete, v.ownerAgency, "variable")}
+                title={rowFlagWhy(v.canDelete, v.ownerAgency, "variable") || undefined}
+              >
                 Delete
               </Btn>
             </div>

@@ -276,6 +276,18 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
       ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
       : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
   };
+  // R8 — a row says what this caller may do with it (canEdit, canDelete),
+  // answered by the same rule as its route, a scope's gate included for a host
+  // imported for a scope. The derivation above is for a server that does not
+  // send them.
+  const flagWhy = (flag: boolean | undefined, derived: string, owner: string | undefined | null, name: string | undefined | null, what: string): string => {
+    if (flag === true) return "";
+    if (flag === undefined) return derived;
+    if (derived) return derived;
+    return owner === GLOBAL_AGENCY || !owner
+      ? `This ${what} is Global's — only a global administrator (a role on every agency) can change it.`
+      : `This ${what} belongs to ${ownerName(owner, name)} — only that agency's administrators can change it.`;
+  };
   const defaultOwner = canWrite ? GLOBAL_AGENCY : owners.length === 1 ? owners[0].id : "";
   const [bump, setBump] = useState(0);
   const hostsQ = useGet<unknown>(() => api.GET("/ssh/hosts"), [bump]);
@@ -583,7 +595,10 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
         const isGit = h.source === "git";
         // A hand-written record (no scope) is its owner's. One imported for a
         // scope follows the scope's gate, which the server judges: left live.
-        const why = h.scopeId ? "" : ownedWhy(h.ownerAgency, h.ownerAgencyName, "host record");
+        const derived = h.scopeId ? "" : ownedWhy(h.ownerAgency, h.ownerAgencyName, "host record");
+        const scopedNo = "This host record follows its scope — only the administrators of the scope's agency can change it.";
+        const why = h.scopeId && h.canEdit === false ? scopedNo : flagWhy(h.canEdit, derived, h.ownerAgency, h.ownerAgencyName, "host record");
+        const delWhy = h.scopeId && h.canDelete === false ? scopedNo : flagWhy(h.canDelete, derived, h.ownerAgency, h.ownerAgencyName, "host record");
         return (
           <div style={{ display: "flex", gap: 4 }}>
             {editing ? (
@@ -613,7 +628,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                     >
                       Edit
                     </Btn>
-                    <Btn danger onClick={() => removeHost(h)} disabled={busy || !!why} title={why || undefined}>
+                    <Btn danger onClick={() => removeHost(h)} disabled={busy || !!delWhy} title={delWhy || undefined}>
                       Remove
                     </Btn>
                   </>
@@ -708,7 +723,9 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
       tdStyle: { whiteSpace: "nowrap" },
       cell: (b) => {
         const editing = editBastionId === (b.id ?? "");
-        const why = ownedWhy(b.ownerAgency, b.ownerAgencyName, "bastion");
+        const derived = ownedWhy(b.ownerAgency, b.ownerAgencyName, "bastion");
+        const why = flagWhy(b.canEdit, derived, b.ownerAgency, b.ownerAgencyName, "bastion");
+        const delWhy = flagWhy(b.canDelete, derived, b.ownerAgency, b.ownerAgencyName, "bastion");
         return (
           <div style={{ display: "flex", gap: 4 }}>
             {editing ? (
@@ -734,7 +751,7 @@ export function SshTargetsSection({ canWrite }: { canWrite: boolean }) {
                 >
                   Edit
                 </Btn>
-                <Btn danger onClick={() => removeBastion(b)} disabled={busy || !!why} title={why || undefined}>
+                <Btn danger onClick={() => removeBastion(b)} disabled={busy || !!delWhy} title={delWhy || undefined}>
                   Remove
                 </Btn>
               </>

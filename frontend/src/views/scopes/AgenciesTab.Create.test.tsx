@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 // An agency is created with its repository (2.4.0 I3, IN-2; R8): the form
 // asks for the repository's URL, a token and its branch, and sends them as
@@ -14,7 +14,13 @@ vi.mock("../../api/client", async (importOriginal) => {
     ...actual,
     api: {
       GET: vi.fn(async (path: string) => {
-        if (path === "/agencies") return { data: [{ id: "global", name: "Global", builtin: true }] };
+        if (path === "/agencies")
+          return {
+            data: [
+              { id: "global", name: "Global", builtin: true, canEdit: false, canDelete: false, canRepair: true },
+              { id: "ag-fin", name: "Finance", canEdit: true, canDelete: true, canRepair: true },
+            ],
+          };
         return { data: [] };
       }),
       POST: vi.fn(async (path: string, opts?: { body?: unknown }) => {
@@ -33,6 +39,21 @@ beforeEach(() => {
   posts.length = 0;
 });
 afterEach(cleanup);
+
+describe("Agencies — the row's own flags (R8)", () => {
+  it("offers a global administrator Edit and Delete on an agency, and neither on Global", async () => {
+    render(<AgenciesTab canEdit globalAdmin />);
+    await waitFor(() => expect(screen.getByText("Finance")).toBeTruthy());
+    const rowOf = (name: string) =>
+      within(screen.getAllByText(name).map((el) => el.closest("tr")).find((tr) => tr && within(tr).queryByRole("button", { name: "Edit" })) as HTMLElement);
+    for (const label of ["Edit", "Delete"]) {
+      const g = rowOf("Global").getByRole("button", { name: label }) as HTMLButtonElement;
+      expect(g.disabled, label).toBe(true);
+      expect(g.title, label).toBe("Global is built in: it is neither renamed nor deleted.");
+      expect((rowOf("Finance").getByRole("button", { name: label }) as HTMLButtonElement).disabled, label).toBe(false);
+    }
+  });
+});
 
 describe("Agencies → Add Agency", () => {
   it("creates an agency with its repository, and not without one", async () => {

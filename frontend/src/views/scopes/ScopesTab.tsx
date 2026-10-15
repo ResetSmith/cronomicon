@@ -687,7 +687,7 @@ export function ScopesTab({
                             this view is canEdit-gated, and without it a viewer saw a
                             Delete button that could only ever 403. Quiet danger here;
                             the solid fill is reserved for the confirm (VC.6). */}
-                        {isLocal && canEdit && (
+                        {isLocal && canEdit && s.canDelete !== false && (
                           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
                             <Btn dangerQuiet onClick={() => setDeleting(s)}>
                               Delete Scope

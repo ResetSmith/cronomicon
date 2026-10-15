@@ -31,7 +31,7 @@ import {
   useReferenceUsage,
   valueBoxStyle,
 } from "./ui";
-import { AgencyCell, useEntityAgencies } from "./ui";
+import { AgencyCell, rowFlagWhy, useEntityAgencies } from "./ui";
 
 type Credential = components["schemas"]["SshCredential"];
 type CredentialInput = components["schemas"]["SshCredentialInput"];
@@ -249,8 +249,19 @@ export function SshKeysTab({ canEdit }: { canEdit: boolean }) {
         <span onClick={(e) => e.stopPropagation()}>
           {canEdit && (
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <Btn onClick={() => setEditing(v)}>Edit</Btn>
-              <Btn dangerQuiet onClick={() => setDeleting(v)}>
+              <Btn
+                onClick={() => setEditing(v)}
+                disabled={!!rowFlagWhy(v.canEdit, v.ownerAgency, "SSH key")}
+                title={rowFlagWhy(v.canEdit, v.ownerAgency, "SSH key") || undefined}
+              >
+                Edit
+              </Btn>
+              <Btn
+                dangerQuiet
+                onClick={() => setDeleting(v)}
+                disabled={!!rowFlagWhy(v.canDelete, v.ownerAgency, "SSH key")}
+                title={rowFlagWhy(v.canDelete, v.ownerAgency, "SSH key") || undefined}
+              >
                 Delete
               </Btn>
             </div>
