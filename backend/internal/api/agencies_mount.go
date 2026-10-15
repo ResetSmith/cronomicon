@@ -11,6 +11,7 @@ import (
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
+	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 	"github.com/ResetSmith/cronomicon/internal/settings"
 )
@@ -508,6 +509,21 @@ func (s *Server) handleListAgencies(w http.ResponseWriter, r *http.Request) {
 type agencyInputBody struct {
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
+	// Repository is the agency's repository connection, required on create
+	// (§0a, IN-2; Phase I3): an agency is created together with it. Not read
+	// by an update; PUT /agencies/{agencyId}/git-repo changes a connection.
+	Repository *settings.GitlabConfig `json:"repository,omitempty"`
+}
+
+// errSyncUnavailable is a delete's answer while the repositories' sync
+// services are not running: its repository cannot be taken with it.
+var errSyncUnavailable = errors.New("the repositories' sync services are not running; try again in a moment")
+
+// agencyCreated is a create's answer: the agency, and the repository it was
+// created with.
+type agencyCreated struct {
+	*settings.Agency
+	Repository *settings.Repo `json:"repository"`
 }
 
 func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
@@ -525,6 +541,31 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "agency name is required")
 		return
 	}
+	// The name's own rules first: they need no remote.
+	if agencyid.IsGlobalName(strings.TrimSpace(inp.Name)) {
+		failAgencyRule(w, settings.ErrAgencyNameReserved)
+		return
+	}
+	var taken int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE name = ?`, strings.TrimSpace(inp.Name)).Scan(&taken); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	if taken > 0 {
+		httpx.Fail(w, http.StatusConflict, "conflict", "an agency with this name already exists")
+		return
+	}
+	// An agency is created together with its repository (§0a, IN-2; Phase
+	// I3): the connection is tested — it answers, and its token may push —
+	// before anything is written, and written with the agency.
+	if inp.Repository == nil || strings.TrimSpace(inp.Repository.RepoUrl) == "" {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "repository_required",
+			"an agency is created together with its repository: give `repository` with at least its repoUrl and a token that can push")
+		return
+	}
+	if !s.requirePushableConnection(w, r, "repo-untested", false, *inp.Repository) {
+		return
+	}
 	a, err := settings.CreateAgency(r.Context(), s.db, settings.AgencyInput{Name: inp.Name, Description: inp.Description}, id.Email)
 	if err != nil {
 		if failAgencyRule(w, err) {
@@ -537,7 +578,31 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "create_failed", err)
 		return
 	}
-	httpx.JSON(w, http.StatusCreated, a)
+	repo, _, err := settings.PutAgencyRepo(r.Context(), s.db, s.cfg, a.ID, *inp.Repository, id.Email)
+	if err != nil {
+		// An agency without its repository is what this route exists not to
+		// make: take the agency back (it holds nothing yet).
+		if _, derr := settings.DeleteAgency(r.Context(), s.db, a.ID, id.Email); derr != nil {
+			s.log.Error("an agency whose repository could not be written could not be taken back",
+				"agency_id", a.ID, "error", derr)
+		}
+		switch {
+		case errors.Is(err, settings.ErrRepoURLNotAllowed):
+			httpx.Fail(w, http.StatusUnprocessableEntity, "repo_url_not_allowed", err.Error())
+		case errors.Is(err, settings.ErrValidation):
+			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", err.Error())
+		default:
+			httpx.Fail500(w, s.log, "create_failed", err)
+		}
+		return
+	}
+	if s.git != nil {
+		if err := s.git.Restart(r.Context(), repo.ID); err != nil {
+			s.log.Error("the agency and its repository were created, but its sync service could not be started",
+				"repo_id", repo.ID, "actor", id.Email, "error", err)
+		}
+	}
+	httpx.JSON(w, http.StatusCreated, agencyCreated{Agency: a, Repository: repo})
 }
 
 func (s *Server) handleUpdateAgency(w http.ResponseWriter, r *http.Request) {
@@ -613,9 +678,29 @@ func (s *Server) handleDeleteAgency(w http.ResponseWriter, r *http.Request) {
 			"agency is referenced by "+strconv.Itoa(tokenRefs)+" active service account(s); revoke those first")
 		return
 	}
-	found, err := settings.DeleteAgency(r.Context(), s.db, aid, id.Email)
+	// An empty agency is deleted with its repository (§0a, IN-13; Phase I3;
+	// question 37): the connection, and what the repository supplied, which
+	// is all still in Git, go by the disconnect GR-28 built — the route for it
+	// went with I3, since a repository is changed, not disconnected (IN-2).
+	takeRepo := func(repoID string) error {
+		if s.git == nil {
+			return errSyncUnavailable
+		}
+		_, err := s.git.Disconnect(r.Context(), repoID, id.Email)
+		return err
+	}
+	found, err := settings.DeleteAgencyWith(r.Context(), s.db, aid, id.Email, takeRepo)
 	if err != nil {
 		if failAgencyRule(w, err) {
+			return
+		}
+		var busy *gitlab.ErrScopesBusy
+		if errors.As(err, &busy) {
+			httpx.Fail(w, http.StatusConflict, "scopes_busy", busy.Error())
+			return
+		}
+		if errors.Is(err, errSyncUnavailable) {
+			httpx.Fail(w, http.StatusServiceUnavailable, "unavailable", err.Error())
 			return
 		}
 		if errors.Is(err, settings.ErrAgencyInUse) {

@@ -2098,6 +2098,14 @@ export interface paths {
          * @description Operator-governed (ConfigureApp); agencies are never self-declared by a runner.
          *     The name `Global` is reserved in every letter case for the built-in agency
          *     (422 `name_reserved`, v2.3.0). CSRF required.
+         *
+         *     **An agency is created together with its repository (v2.4.0, IN-2).**
+         *     `repository` is required (422 `repository_required`); its connection is
+         *     held to `gitAllowedHosts` (422 `repo_url_not_allowed`) and tested before
+         *     anything is written, as `PUT /agencies/{agencyId}/git-repo` tests it
+         *     (422 `connection_failed`, 422 `token_cannot_push`). The answer is the
+         *     agency with the repository it was created with, whose sync starts at
+         *     once. A repository is changed afterwards, never disconnected.
          */
         post: operations["createAgency"];
         delete?: never;
@@ -2138,9 +2146,18 @@ export interface paths {
         post?: never;
         /**
          * Delete an agency
-         * @description Blocked with 409 (code=agency_in_use) while any scope, runner or active
-         *     service account references it. Historical run agency snapshots never block
-         *     deletion. The built-in agency Global cannot be deleted (422 `builtin_agency`).
+         * @description An agency is deleted only when it is EMPTY, and its repository with it
+         *     (v2.4.0, IN-13). What its repository supplied — its Git jobs,
+         *     workflows, scripts, schedules, scopes and calendars — goes with the
+         *     connection (it is all still in Git). Blocked with 409 `agency_in_use`,
+         *     naming each, while anything else is the agency's: a job, workflow or
+         *     schedule built in the app (the recycle bin's too), a calendar built in
+         *     the app, a scope made in the app, a runner, a secret, variable or key,
+         *     a host record or bastion, an access grant, an active service account.
+         *     409 `scopes_busy` while a scope of its repository is bound to runners
+         *     and has runs queued or parked, and nothing is removed. Historical run
+         *     agency snapshots never block deletion. The built-in agency Global
+         *     cannot be deleted (422 `builtin_agency`).
          */
         delete: operations["deleteAgency"];
         options?: never;
@@ -4203,28 +4220,7 @@ export interface paths {
          */
         put: operations["putAgencyGitRepo"];
         post?: never;
-        /**
-         * Disconnect an agency's repository (v2.4.0)
-         * @description Removes the repository and EVERY row it supplied (GR-28): its Git jobs
-         *     and workflows with their schedule entries and pauses, its scripts, its
-         *     Git schedules, its scopes with their hosts and imported host records,
-         *     its sync problems, its connection and the server's clone of it. The
-         *     answer says how many of each; the same counts are `supplies` in the
-         *     repository's read, for a confirm to show before this is called.
-         *
-         *     What stays: a job built in the app on one of its scripts is joined to
-         *     nothing and does not run (the notice `job_script_gone` names it); a
-         *     definition built in the app on one of its schedules keeps the timing it
-         *     has; the history of its syncs and publishes.
-         *
-         *     Needs `configureApp` on the agency (GR-9). Refused 409 `global_repo`
-         *     for Global's repository (clear its URL to stop syncing it), and 409
-         *     `scopes_busy` while one of the repository's scopes is bound to runners
-         *     and has runs queued or parked: the message names them, and nothing is
-         *     removed. 404 `not_connected` when the agency has none. An agency cannot
-         *     be deleted while it has a repository.
-         */
-        delete: operations["deleteAgencyGitRepo"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -7788,6 +7784,8 @@ export interface components {
         AgencyInput: {
             name: string;
             description?: string | null;
+            /** @description The agency's repository connection. Required on create (v2.4.0, IN-2); not read by an update. */
+            repository?: components["schemas"]["GitlabConfig"];
         };
         EnvSecret: {
             /**
@@ -8869,8 +8867,8 @@ export interface components {
             /** @description success */
             lastStatus?: string;
             /**
-             * @description The rows this repository's sync has written, which a disconnect
-             *     removes (GR-28).
+             * @description The rows this repository's sync has written, which go with the
+             *     connection when its agency is deleted (v2.4.0, IN-13).
              */
             supplies: {
                 jobs: number;
@@ -13433,13 +13431,15 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Created. */
+            /** @description Created, with its repository. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Agency"];
+                    "application/json": components["schemas"]["Agency"] & {
+                        repository: components["schemas"]["GitRepo"];
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -17115,53 +17115,6 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["Validation"];
-        };
-    };
-    deleteAgencyGitRepo: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
-                "X-CSRF-Token": components["parameters"]["csrf"];
-            };
-            path: {
-                /** @description The agency's id; `global` for Global's repository. */
-                agencyId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Disconnected. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        repoId: string;
-                        removed: {
-                            jobs: number;
-                            workflows: number;
-                            scripts: number;
-                            schedules: number;
-                            scopes: number;
-                        };
-                    };
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            /** @description Global's repository (`global_repo`), or a scope with work queued (`scopes_busy`). */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
         };
     };
     testAgencyGitRepo: {

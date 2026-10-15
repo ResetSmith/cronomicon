@@ -20,7 +20,7 @@ func TestGlobalAgency_IsPermanentAndItsNameIsReserved(t *testing.T) {
 	}{
 		{"rename Global", http.MethodPut, "/api/v1/agencies/global", `{"name":"Everyone"}`, "builtin_agency"},
 		{"delete Global", http.MethodDelete, "/api/v1/agencies/global", ``, "builtin_agency"},
-		{"create another Global", http.MethodPost, "/api/v1/agencies", `{"name":"gLOBAL"}`, "name_reserved"},
+		{"create another Global", http.MethodPost, "/api/v1/agencies", `{"name":"gLOBAL","repository":{"repoUrl":"https://git.example.com/g.git"}}`, "name_reserved"},
 		{"rename an agency to Global", http.MethodPut, "/api/v1/agencies/ag:FIN", `{"name":"global"}`, "name_reserved"},
 	} {
 		rec := gateReq(t, h, c.method, c.path, gRoot, c.body)

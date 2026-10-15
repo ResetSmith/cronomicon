@@ -409,10 +409,18 @@ type AgencyInUseError struct {
 	// given another owner on its own form.
 	Hosts    int
 	Bastions int
-	// Repository is 1 when the agency has a repository connected (GR-28). Its
-	// definitions, scripts, schedules and scopes are the agency's, and they go
-	// when the repository is disconnected, by the route that says how many.
+	// Repository is 1 when the agency has a repository connected and the
+	// delete was not given a way to take it (DeleteAgencyWith with a nil
+	// hook). Since 2.4.0 Phase I3 the route deletes an empty agency WITH its
+	// repository (IN-13, the owner's answer to question 37), and what the
+	// repository supplied goes with it: it is all still in Git.
 	Repository int
+	// Definitions and Calendars are what the agency built in the app: jobs,
+	// workflows and schedules (in the recycle bin too), and calendars (I3).
+	// Until then they were not counted, and a delete left them owned by an
+	// agency that no longer existed.
+	Definitions int
+	Calendars   int
 }
 
 func (e *AgencyInUseError) Error() string {
@@ -443,7 +451,10 @@ func (e *AgencyInUseError) Blockers() []string {
 		}
 		out = append(out, strconv.Itoa(n)+" "+noun+" ("+fix+")")
 	}
-	add(e.Repository, "connected repository", "connected repositories", "disconnect the agency's repository first")
+	add(e.Repository, "connected repository", "connected repositories", "delete the agency through its route, which takes the repository with it")
+	add(e.Definitions, "job, workflow or schedule built in the app", "jobs, workflows and schedules built in the app",
+		"delete them, and purge them from the recycle bin; an agency's own definitions are not handed to another")
+	add(e.Calendars, "calendar built in the app", "calendars built in the app", "delete them")
 	add(e.Runners, "runner", "runners", "re-enroll the runner in another agency")
 	// Scopes first among the membership kinds: an agency exists to own scopes, so
 	// that is the likeliest blocker and the one with the plainest remedy.
@@ -469,7 +480,26 @@ func (e *AgencyInUseError) Blockers() []string {
 // ErrAgencyInUse, mapped 409) when the agency is still referenced — by a scope (M1),
 // a runner (M2), a membership row (T2.8), or an OWNED entity (RA-15/RA-19).
 // Historical runs.agency name snapshots never block deletion (immutable facts).
+// A connected repository blocks it too; DeleteAgencyWith takes it.
 func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool, error) {
+	return DeleteAgencyWith(ctx, database, id, actor, nil)
+}
+
+// DeleteAgencyWith is DeleteAgency for an agency that may have its repository
+// connected (§0a, IN-13; Phase I3; the owner's answer to question 37): an
+// agency is deleted when it is EMPTY, and its repository connection with it.
+// What the repository supplied (its Git jobs, workflows, scripts, schedules,
+// scopes and calendars) does not make it non-empty: it goes with the
+// connection, and it is all still in Git. Everything else does, and is named.
+//
+// takeRepo, given, is called with the repository's id once everything else
+// has been counted and found empty, and removes it with what it supplied (the
+// gitlab Registry's Disconnect: settings cannot import gitlab). Its error is
+// returned as it is, and nothing more is done. With a nil takeRepo a connected
+// repository blocks the delete, as before. The take and the delete are two
+// writes: what joins the agency between them is refused by the trigger, and
+// the agency is left without its repository, which its notice then says.
+func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, takeRepo func(repoID string) error) (bool, error) {
 	// LR-78: this changes what an access grant reaches (or what it is shown as),
 	// so the grant snapshot is told on the way out — after the write, on every
 	// return path, a failed half-write included.
@@ -507,6 +537,20 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 	members, err := AgencyMemberCounts(ctx, database, id)
 	if err != nil {
 		return false, fmt.Errorf("delete agency: count members: %w", err)
+	}
+	// The scopes its own repository supplied go with the repository (I3).
+	var repoID string
+	if err := database.QueryRowContext(ctx, `SELECT COALESCE((SELECT id FROM git_repos WHERE agency_id = ?), '')`, id).Scan(&repoID); err != nil {
+		return false, fmt.Errorf("delete agency: read its repository: %w", err)
+	}
+	if repoID != "" && takeRepo != nil {
+		var repoScopes int
+		if err := database.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM scope_agencies sa JOIN scopes s ON s.id = sa.scope_id
+			  WHERE sa.agency_id = ? AND s.source = 'git' AND s.repo_id = ?`, id, repoID).Scan(&repoScopes); err != nil {
+			return false, fmt.Errorf("delete agency: count its repository's scopes: %w", err)
+		}
+		members[MemberScope] -= repoScopes
 	}
 	memberRefs := 0
 	for _, n := range members {
@@ -551,12 +595,29 @@ func DeleteAgency(ctx context.Context, database *sql.DB, id, actor string) (bool
 		`SELECT COUNT(*) FROM bastions WHERE owner_agency = ?`, id).Scan(&inUse.Bastions); err != nil {
 		return false, fmt.Errorf("delete agency: count bastions: %w", err)
 	}
-	if err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM git_repos WHERE agency_id = ?`, id).Scan(&inUse.Repository); err != nil {
-		return false, fmt.Errorf("delete agency: count repositories: %w", err)
+	if repoID != "" && takeRepo == nil {
+		inUse.Repository = 1
 	}
-	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 || inUse.Repository > 0 {
+	// What it built in the app (I3): binned rows too, which a restore would
+	// bring back owned by nobody.
+	if err := database.QueryRowContext(ctx, `SELECT
+	      (SELECT COUNT(*) FROM jobs      WHERE source = 'cronomicon' AND owner_agency = ?1)
+	    + (SELECT COUNT(*) FROM workflows WHERE source = 'cronomicon' AND owner_agency = ?1)
+	    + (SELECT COUNT(*) FROM schedules WHERE source = 'cronomicon' AND owner_agency = ?1)`, id).Scan(&inUse.Definitions); err != nil {
+		return false, fmt.Errorf("delete agency: count its definitions: %w", err)
+	}
+	if err := database.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM calendars WHERE source = 'cronomicon' AND owner_agency = ?`, id).Scan(&inUse.Calendars); err != nil {
+		return false, fmt.Errorf("delete agency: count its calendars: %w", err)
+	}
+	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 || inUse.Repository > 0 ||
+		inUse.Definitions > 0 || inUse.Calendars > 0 {
 		return false, inUse
+	}
+	if repoID != "" {
+		if err := takeRepo(repoID); err != nil {
+			return false, err
+		}
 	}
 	res, err := database.ExecContext(ctx, `DELETE FROM agencies WHERE id=?`, id)
 	if err != nil {

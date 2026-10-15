@@ -73,6 +73,7 @@ func newTestServerWithLogDir(t *testing.T, logDir string) (*httptest.Server, *sq
 		DB:          pool,
 		ReadyChecks: []api.ReadyCheck{{Name: "database", Check: db.ReadyCheck(pool)}},
 		WebFS:       web.DistFS(),
+		RepoTest:    fakeRepoTest,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

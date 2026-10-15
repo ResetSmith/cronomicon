@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// An agency with a repository cannot be deleted (GR-28): the repository's
-// definitions, scripts, schedules and scopes are the agency's, and they go
-// when the repository is disconnected, by the route that says how many.
+// DeleteAgency, given no way to take a repository, refuses an agency that has
+// one (since I3 the route passes one: DeleteAgencyWith, and the repository
+// goes with the agency, with what it supplied).
 func TestAnAgencyWithARepositoryCannotBeDeleted(t *testing.T) {
 	pool := membershipDB(t)
 	ctx := context.Background()
@@ -24,7 +24,7 @@ func TestAnAgencyWithARepositoryCannotBeDeleted(t *testing.T) {
 	if !errors.As(err, &inUse) || inUse.Repository != 1 {
 		t.Fatalf("deleting an agency that has a repository answered %v, want it refused for the repository", err)
 	}
-	if !strings.Contains(err.Error(), "1 connected repository (disconnect the agency's repository first)") {
+	if !strings.Contains(err.Error(), "1 connected repository (delete the agency through its route, which takes the repository with it)") {
 		t.Errorf("the refusal does not say what to do: %v", err)
 	}
 	var n int

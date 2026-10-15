@@ -147,6 +147,11 @@ func (r *Registry) removeRepo(ctx context.Context, repoID string) (removed setti
 		{"imported ssh hosts", `DELETE FROM ssh_hosts WHERE source = 'git'
 		     AND scope_id IN (SELECT id FROM scopes WHERE source = 'git' AND repo_id = ?1)`},
 		{"scopes", `DELETE FROM scopes WHERE source = 'git' AND repo_id = ?1`},
+		// A calendar records its agency, not its repository; an agency's Git
+		// calendars are its repository's (2.4.0 Phase I3: left behind until
+		// then, owned by an agency whose repository had gone).
+		{"calendars", `DELETE FROM calendars WHERE source = 'git'
+		     AND owner_agency = (SELECT agency_id FROM git_repos WHERE id = ?1)`},
 		{"sync problems", `DELETE FROM git_sync_problems WHERE repo_id = ?1`},
 		{"the connection", `DELETE FROM git_repos WHERE id = ?1`},
 	} {
