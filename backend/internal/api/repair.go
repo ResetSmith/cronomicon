@@ -68,11 +68,19 @@ func (s *Server) requireRepair(w http.ResponseWriter, r *http.Request, id auth.I
 }
 
 // auditRepair writes a repair's row to the audit log: who, what was changed,
-// to which agencies, and the reason given.
-func (s *Server) auditRepair(ctx context.Context, actor, target string, agencies []string, rep repairInput) {
-	_ = workflow.InsertChangeLog(ctx, s.db, actor, "Agencies", "Repaired", target,
-		"agency set to ["+strings.Join(agencies, ", ")+"]; reason: "+strings.TrimSpace(rep.Reason))
+// how (change: "agency set to [ag:TAX]", "removed from agency ag:FIN"), and
+// the reason given. A row that cannot be written is logged: the write it
+// records has been made.
+func (s *Server) auditRepair(ctx context.Context, actor, target, change string, rep repairInput) {
+	if err := workflow.InsertChangeLog(ctx, s.db, actor, "Agencies", "Repaired", target,
+		change+"; reason: "+strings.TrimSpace(rep.Reason)); err != nil && s.log != nil {
+		s.log.Error("a repair was made and its audit row could not be written",
+			"actor", actor, "target", target, "change", change, "reason", strings.TrimSpace(rep.Reason), "error", err)
+	}
 }
+
+// agencySet renders an agency list for a repair's audit row.
+func agencySet(agencies []string) string { return "agency set to [" + strings.Join(agencies, ", ") + "]" }
 
 // decodeRepairable reads the body of a route whose body is an array: the bare
 // array (a write that is not a repair), or {repair, reason, assignments}. It
@@ -87,13 +95,21 @@ func decodeRepairable[T any](w http.ResponseWriter, r *http.Request, list *[]T, 
 	if len(trimmed) > 0 && trimmed[0] == '{' {
 		var wrapped struct {
 			repairInput
-			Assignments []T `json:"assignments"`
+			Assignments *[]T `json:"assignments"`
 		}
 		if err := json.Unmarshal(trimmed, &wrapped); err != nil {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 			return false
 		}
-		*list, *rep = wrapped.Assignments, wrapped.repairInput
+		// An object without its assignments is not a wrapper: it is a row
+		// sent where a list of rows was meant, and changes nothing (from the
+		// review of I4: it was answered 200).
+		if wrapped.Assignments == nil {
+			httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json",
+				"the body is a list of rows, or {repair, reason, assignments: [rows]}")
+			return false
+		}
+		*list, *rep = *wrapped.Assignments, wrapped.repairInput
 		return true
 	}
 	if err := json.Unmarshal(trimmed, list); err != nil {

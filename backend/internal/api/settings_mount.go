@@ -1591,7 +1591,7 @@ func (s *Server) handleUpdateSshHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repaired {
-		s.auditRepair(r.Context(), id.Email, "host record "+hid, []string{inp.OwnerAgency}, rep)
+		s.auditRepair(r.Context(), id.Email, "host record "+hid, "owner set to "+inp.OwnerAgency, rep)
 	}
 	httpx.JSON(w, http.StatusOK, h)
 }
@@ -1949,7 +1949,7 @@ func (s *Server) handleUpdateBastion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if repaired {
-		s.auditRepair(r.Context(), id.Email, "bastion "+bid, []string{inp.OwnerAgency}, rep)
+		s.auditRepair(r.Context(), id.Email, "bastion "+bid, "owner set to "+inp.OwnerAgency, rep)
 	}
 	httpx.JSON(w, http.StatusOK, b)
 }

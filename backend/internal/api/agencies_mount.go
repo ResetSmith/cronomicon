@@ -205,11 +205,30 @@ func membershipAuthzFor(kind settings.MemberKind) (perm, joinTable, joinCol, lab
 func (s *Server) requireMove(w http.ResponseWriter, r *http.Request, id auth.Identity,
 	kind settings.MemberKind, entityID string, targets []string, rep repairInput) (repaired, ok bool) {
 
+	// An entity that is not there is the setter's to answer (422, or the
+	// handler's 404), before anything about repair (from the review of I4).
+	exists, owner, err := settings.MemberOwner(r.Context(), s.db, kind, entityID)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false, false
+	}
+	if !exists {
+		if !id.GlobalAdmin(auth.PermConfigureApp) {
+			_, ok := s.requireBothSides(w, r, id, kind, entityID, targets)
+			return false, ok
+		}
+		return false, true
+	}
 	current, ok := s.requireBothSides(w, r, id, kind, entityID, targets)
 	if !ok {
 		return false, false
 	}
-	if sameAgencySet(current, targets) {
+	// Unchanged: the same agencies, and — for a row with an owner — the same
+	// owner. The setter makes the one agency named the owner (moveOwner), so a
+	// row Global owns that one agency uses (left by 1220) was claimed by
+	// posting its membership as it stood, with no repair (from the review of
+	// I4; possible before it under the two-sided rule).
+	if sameAgencySet(current, targets) && (owner == "" || len(targets) != 1 || owner == targets[0]) {
 		return false, true
 	}
 	_, _, _, label := membershipAuthzFor(kind)
@@ -328,12 +347,14 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 	// credential read RB-32 exists to prevent. So the caller must hold the
 	// permission on BOTH sides of the move (requireMove).
 	var repaired []settings.AgencyMembership
+	audited := map[string]bool{} // one row per entity, however often it is posted
 	for _, m := range body {
 		isRepair, ok := s.requireMove(w, r, id, kind, m.ID, m.AgencyIDs, rep)
 		if !ok {
 			return
 		}
-		if isRepair {
+		if isRepair && !audited[m.ID] {
+			audited[m.ID] = true
 			repaired = append(repaired, m)
 		}
 		// LR-80: a Vault-backed secret or key that moves to an agency must lie
@@ -365,7 +386,7 @@ func (s *Server) handleSetAgencyMembership(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for _, m := range repaired {
-		s.auditRepair(r.Context(), id.Email, string(kind)+" "+m.ID, m.AgencyIDs, rep)
+		s.auditRepair(r.Context(), id.Email, string(kind)+" "+m.ID, agencySet(m.AgencyIDs), rep)
 	}
 	// Scope membership decides what an agency grant reaches. Since LR-78 that is
 	// resolved per request from the grant snapshot, which the setter itself
@@ -486,8 +507,24 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		serves[c.RunnerID] = c.AgencyIDs
 	}
 	var repaired []settings.RunnerAgencies
+	seen := map[string]bool{}
 	for _, m := range body {
-		if was, known := serves[m.RunnerID]; known && !sameAgencySet(was, m.AgencyIDs) {
+		was, listed := serves[m.RunnerID]
+		if !listed {
+			// A runner that is there and serves nobody (damage) is placed by a
+			// repair as well (from the review of I4); one that is not there is
+			// the setter's 422.
+			var n int
+			if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM runners WHERE id = ?`, m.RunnerID).Scan(&n); err != nil {
+				httpx.Fail500(w, s.log, "db_error", err)
+				return
+			}
+			if n == 0 {
+				continue
+			}
+		}
+		if !sameAgencySet(was, m.AgencyIDs) && !seen[m.RunnerID] {
+			seen[m.RunnerID] = true
 			repaired = append(repaired, m)
 		}
 	}
@@ -525,7 +562,7 @@ func (s *Server) handleSetRunnerAgencies(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	for _, m := range repaired {
-		s.auditRepair(r.Context(), id.Email, "runner "+m.RunnerID+" placement", m.AgencyIDs, rep)
+		s.auditRepair(r.Context(), id.Email, "runner "+m.RunnerID+" placement", agencySet(m.AgencyIDs), rep)
 	}
 	list, err := settings.ListRunnerAgencies(r.Context(), s.db)
 	if err != nil {
@@ -834,7 +871,7 @@ func (s *Server) handleSetScopeAgency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isRepair {
-		s.auditRepair(r.Context(), id.Email, "scope "+sid, []string{target}, inp.repairInput)
+		s.auditRepair(r.Context(), id.Email, "scope "+sid, agencySet([]string{target}), inp.repairInput)
 	}
 	httpx.JSON(w, http.StatusOK, sc)
 }
@@ -895,6 +932,33 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	// addition moves it here (one agency each since 2.3.0), a removal takes
 	// it away. A repair (I4; IN-7), whatever the kind.
 	repairing := len(delta.Added)+len(delta.Removed) > 0
+	if repairing {
+		// What is not there is said first, before anything about repair (from
+		// the review of I4): an agency that is not there, a member that is not.
+		var known int
+		if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, agencyID).Scan(&known); err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if known == 0 {
+			httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+			return
+		}
+		for _, m := range delta.Added {
+			if m.Kind == "runner" {
+				continue // a runner addition is refused by its writer, whoever asks (MA-11)
+			}
+			exists, _, err := settings.MemberOwner(r.Context(), s.db, settings.MemberKind(m.Kind), m.ID)
+			if err != nil {
+				httpx.Fail500(w, s.log, "db_error", err)
+				return
+			}
+			if !exists {
+				httpx.Fail(w, http.StatusUnprocessableEntity, "unknown_member", "a referenced "+m.Kind+" does not exist: "+m.ID)
+				return
+			}
+		}
+	}
 	if repairing && !s.requireRepair(w, r, id, body.repairInput, "what agency "+agencyID+" holds") {
 		return
 	}
@@ -955,10 +1019,10 @@ func (s *Server) handleSetAgencyMembers(w http.ResponseWriter, r *http.Request) 
 	// setter told the grant snapshot (LR-78). No session is signed out.
 	if repairing {
 		for _, m := range delta.Added {
-			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID+" added to agency "+agencyID, []string{agencyID}, body.repairInput)
+			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "added to agency "+agencyID, body.repairInput)
 		}
 		for _, m := range delta.Removed {
-			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID+" removed from agency "+agencyID, nil, body.repairInput)
+			s.auditRepair(r.Context(), id.Email, m.Kind+" "+m.ID, "removed from agency "+agencyID, body.repairInput)
 		}
 	}
 

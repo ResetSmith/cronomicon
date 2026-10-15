@@ -233,6 +233,27 @@ func presetScopeOwner(ctx context.Context, tx *sql.Tx, scopeID, agencyID string)
 	return nil
 }
 
+// MemberOwner reads an entity of a membership kind: whether it exists, and
+// its owner_agency ("" for a kind whose catalog has none to compare: a
+// scope's is its membership). For the move gate (2.4.0 Phase I4): a write
+// that leaves the membership as it is still changes the row's agency when it
+// changes its owner, which the setter does (moveOwner).
+func MemberOwner(ctx context.Context, database *sql.DB, kind MemberKind, id string) (exists bool, owner string, err error) {
+	t, ok := memberTableFor(kind)
+	if !ok {
+		return false, "", fmt.Errorf("unknown member kind %q", kind)
+	}
+	col := "''"
+	if _, _, owned := ownedCatalog(t.catalog); owned {
+		col = "owner_agency"
+	}
+	err = database.QueryRowContext(ctx, `SELECT `+col+` FROM `+t.catalog+` WHERE id = ?`, id).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, "", nil
+	}
+	return err == nil, owner, err
+}
+
 // dedupeIDs drops repeats and blanks, keeping first-seen order.
 func dedupeIDs(ids []string) []string {
 	out := make([]string, 0, len(ids))

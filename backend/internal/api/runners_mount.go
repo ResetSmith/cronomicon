@@ -826,7 +826,7 @@ func (s *Server) handleSetRunnerOwner(w http.ResponseWriter, r *http.Request) {
 	err := settings.SetRunnerOwner(r.Context(), s.db, r.PathValue("id"), body.AgencyID, id.Email)
 	switch {
 	case err == nil:
-		s.auditRepair(r.Context(), id.Email, "runner "+r.PathValue("id")+" owner", []string{body.AgencyID}, body.repairInput)
+		s.auditRepair(r.Context(), id.Email, "runner "+r.PathValue("id"), "owner set to "+body.AgencyID, body.repairInput)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, settings.ErrUnknownRunner):
 		httpx.Fail(w, http.StatusNotFound, "not_found", "runner not found")
