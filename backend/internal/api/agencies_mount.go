@@ -581,8 +581,19 @@ func (s *Server) handleCreateAgency(w http.ResponseWriter, r *http.Request) {
 	repo, _, err := settings.PutAgencyRepo(r.Context(), s.db, s.cfg, a.ID, *inp.Repository, id.Email)
 	if err != nil {
 		// An agency without its repository is what this route exists not to
-		// make: take the agency back (it holds nothing yet).
-		if _, derr := settings.DeleteAgency(r.Context(), s.db, a.ID, id.Email); derr != nil {
+		// make: take the agency back (it holds nothing yet), with a repository
+		// row the write may have left before it failed (from the review of
+		// I3: a refusal for that row left both).
+		takeBack := func(repoID string) error {
+			if s.git != nil {
+				if _, err := s.git.Disconnect(r.Context(), repoID, id.Email); err == nil {
+					return nil
+				}
+			}
+			_, err := s.db.ExecContext(r.Context(), `DELETE FROM git_repos WHERE id = ?`, repoID)
+			return err
+		}
+		if _, derr := settings.DeleteAgencyWith(r.Context(), s.db, a.ID, id.Email, takeBack); derr != nil {
 			s.log.Error("an agency whose repository could not be written could not be taken back",
 				"agency_id", a.ID, "error", derr)
 		}

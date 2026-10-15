@@ -452,7 +452,8 @@ func (e *AgencyInUseError) Blockers() []string {
 		out = append(out, strconv.Itoa(n)+" "+noun+" ("+fix+")")
 	}
 	add(e.Repository, "connected repository", "connected repositories", "delete the agency through its route, which takes the repository with it")
-	add(e.Definitions, "job, workflow or schedule built in the app", "jobs, workflows and schedules built in the app",
+	add(e.Definitions, "job, workflow or schedule built in the app (or not of its repository)",
+		"jobs, workflows and schedules built in the app (or not of its repository)",
 		"delete them, and purge them from the recycle bin; an agency's own definitions are not handed to another")
 	add(e.Calendars, "calendar built in the app", "calendars built in the app", "delete them")
 	add(e.Runners, "runner", "runners", "re-enroll the runner in another agency")
@@ -599,16 +600,12 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 		inUse.Repository = 1
 	}
 	// What it built in the app (I3): binned rows too, which a restore would
-	// bring back owned by nobody.
-	if err := database.QueryRowContext(ctx, `SELECT
-	      (SELECT COUNT(*) FROM jobs      WHERE source = 'cronomicon' AND owner_agency = ?1)
-	    + (SELECT COUNT(*) FROM workflows WHERE source = 'cronomicon' AND owner_agency = ?1)
-	    + (SELECT COUNT(*) FROM schedules WHERE source = 'cronomicon' AND owner_agency = ?1)`, id).Scan(&inUse.Definitions); err != nil {
-		return false, fmt.Errorf("delete agency: count its definitions: %w", err)
-	}
-	if err := database.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM calendars WHERE source = 'cronomicon' AND owner_agency = ?`, id).Scan(&inUse.Calendars); err != nil {
-		return false, fmt.Errorf("delete agency: count its calendars: %w", err)
+	// bring back owned by nobody. And a Git row its repository does not hold
+	// (one that records no repository: none since 1310 outside the demo seed),
+	// which the take would leave and the trigger refuses — every row the
+	// trigger asks about that the take does not remove (from the review of I3).
+	if err := countAgencyDefinitions(ctx, database, id, repoID, takeRepo != nil, inUse); err != nil {
+		return false, err
 	}
 	if runnerRefs > 0 || memberRefs > 0 || ownerRefs > 0 || inUse.records() > 0 || inUse.Repository > 0 ||
 		inUse.Definitions > 0 || inUse.Calendars > 0 {
@@ -637,6 +634,10 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM ssh_credentials WHERE owner_agency = ?`, id).Scan(&inUse.Keys)
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM ssh_hosts WHERE owner_agency = ?`, id).Scan(&inUse.Hosts)
 			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM bastions WHERE owner_agency = ?`, id).Scan(&inUse.Bastions)
+			// And what 1450 added (from the review of I3: a refusal after the
+			// repository was taken answered with no blocker named).
+			_ = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repos WHERE agency_id = ?`, id).Scan(&inUse.Repository)
+			_ = countAgencyDefinitions(ctx, database, id, "", false, inUse)
 			return false, inUse
 		}
 		return false, fmt.Errorf("delete agency: %w", err)
@@ -646,6 +647,34 @@ func DeleteAgencyWith(ctx context.Context, database *sql.DB, id, actor string, t
 		audit(ctx, database, actor, "Agencies", "deleted", existing.Name, "")
 	}
 	return n > 0, nil
+}
+
+// countAgencyDefinitions fills inUse's Definitions and Calendars: the jobs,
+// workflows, schedules and calendars the agency owns, except — when its
+// repository is to be taken (taking) — the Git rows of that repository,
+// which go with it (a Git calendar records its agency only, and the take
+// removes the agency's).
+func countAgencyDefinitions(ctx context.Context, database *sql.DB, id, repoID string, taking bool, inUse *AgencyInUseError) error {
+	notTaken := `1`
+	if taking {
+		// COALESCE: a Git row with no repository must count, and
+		// `repo_id = ?` is NULL for it, which NOT leaves NULL.
+		notTaken = `NOT (source = 'git' AND COALESCE(repo_id, '') = ?2)`
+	}
+	if err := database.QueryRowContext(ctx, `SELECT
+	      (SELECT COUNT(*) FROM jobs      WHERE owner_agency = ?1 AND `+notTaken+`)
+	    + (SELECT COUNT(*) FROM workflows WHERE owner_agency = ?1 AND `+notTaken+`)
+	    + (SELECT COUNT(*) FROM schedules WHERE owner_agency = ?1 AND `+notTaken+`)`, id, repoID).Scan(&inUse.Definitions); err != nil {
+		return fmt.Errorf("delete agency: count its definitions: %w", err)
+	}
+	calendars := `SELECT COUNT(*) FROM calendars WHERE owner_agency = ?1`
+	if taking {
+		calendars += ` AND source <> 'git'`
+	}
+	if err := database.QueryRowContext(ctx, calendars, id).Scan(&inUse.Calendars); err != nil {
+		return fmt.Errorf("delete agency: count its calendars: %w", err)
+	}
+	return nil
 }
 
 // SetScopeAgency binds (or, with a nil/empty id, clears) a scope's agency. It is

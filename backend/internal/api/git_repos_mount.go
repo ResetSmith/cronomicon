@@ -316,6 +316,20 @@ func (s *Server) handleTestAgencyGitRepo(w http.ResponseWriter, r *http.Request)
 // (the bot's name, the webhook, the expiry warning) is not asked again, so a
 // remote that is down for a while does not hold those back.
 func (s *Server) requirePushableConnection(w http.ResponseWriter, r *http.Request, repoID string, connected bool, inp settings.GitlabConfig) bool {
+	// Global's: the URL the save stores is the one in the request (an empty
+	// one clears it), and CRONOMICON_GITLAB_BASE_URL stands in for none. With
+	// neither, nothing is connected and nothing is tested: a Global without a
+	// repository is told so by a notice, and refused nothing (question 39).
+	if repoID == repoid.Global {
+		url := strings.TrimSpace(inp.RepoUrl)
+		if url == "" && s.cfg != nil {
+			url = strings.TrimSpace(s.cfg.GitLabBaseURL)
+		}
+		if url == "" {
+			return true
+		}
+		inp.RepoUrl = url
+	}
 	target, err := settings.ResolveRepoTest(r.Context(), s.db, s.cfg, repoID, connected, inp)
 	switch {
 	case errors.Is(err, settings.ErrRepoURLNotAllowed):

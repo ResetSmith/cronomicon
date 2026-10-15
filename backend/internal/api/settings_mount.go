@@ -2389,6 +2389,12 @@ func (s *Server) handleUpdateGitlabSettings(w http.ResponseWriter, r *http.Reque
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	// Tested before it is written, as PUT /agencies/global/git-repo is (IN-2;
+	// from the review of I3: this route, the one the Integrations screen
+	// uses for Global, was not).
+	if !s.requirePushableConnection(w, r, repoid.Global, true, inp) {
+		return
+	}
 	cfg, err := settings.UpdateGitlabConfig(r.Context(), s.db, s.cfg, repoid.Global, inp, id.Email)
 	if err != nil {
 		httpx.Fail500(w, s.log, "update_failed", err)

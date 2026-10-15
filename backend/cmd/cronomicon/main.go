@@ -205,6 +205,7 @@ func run() error {
 	// the inbox is opened. A failure here is a stale inbox, not a failed boot.
 	notices.SetRecordKeyNameCheck(sshexec.BastionKeyNameFindings)
 	notices.SetLocalRunnerHostKeysCheck(hostkeys.LocalRunnerMissingKeys)
+	notices.SetGlobalRepoFromEnvironment(strings.TrimSpace(cfg.GitLabBaseURL) != "")
 	if err := notices.RunChecks(context.Background(), pool); err != nil {
 		logger.Warn("notices: boot checks failed", "err", err)
 	}

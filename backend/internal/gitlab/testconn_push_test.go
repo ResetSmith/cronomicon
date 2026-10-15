@@ -46,9 +46,12 @@ func smartHTTPRemote(t *testing.T, writable bool) string {
 func TestI3_TheConnectionTestAsksWhetherTheTokenCanPush(t *testing.T) {
 	// The guarded transport refuses loopback, and is installed once per
 	// process: a plain client for this test's remote, the guarded one after.
+	// The guard is installed first, as it would be, so that its one install
+	// is spent on the guard and not on this test's client; it is put back
+	// after.
+	(&Service{}).installGuardedGitTransport()
 	prevHTTP := githttpclient.Protocols["http"]
 	githttpclient.InstallProtocol("http", gogithttp.NewClient(http.DefaultClient))
-	guardedGitTransportOnce.Do(func() {}) // nothing re-installs the guard over it meanwhile
 	t.Cleanup(func() { githttpclient.InstallProtocol("http", prevHTTP) })
 
 	readOnly := TestConnection(context.Background(), nil, smartHTTPRemote(t, false), "tok", "main")

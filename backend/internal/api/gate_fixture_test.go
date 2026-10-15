@@ -137,10 +137,14 @@ func gateServerWith(t *testing.T, adjust func(*config.Config)) (http.Handler, *s
 }
 
 // fakeRepoTest stands in for a remote (2.4.0 Phase I3): every connection
-// answers and may push, except a URL that says it is read-only (may not push)
-// or unreachable (does not answer). The real check is the gitlab package's,
-// tested there against git http-backend.
-func fakeRepoTest(_ context.Context, _ *config.Config, url, _, branch string) gitlab.ConnectionTest {
+// answers and may push, except a URL that says it is read-only, or a token
+// that does (may not push), or a URL that says it is unreachable (does not
+// answer). The real check is the gitlab package's, tested there against git
+// http-backend.
+func fakeRepoTest(_ context.Context, _ *config.Config, url, token, branch string) gitlab.ConnectionTest {
+	if strings.Contains(token, "read-only") {
+		url += "/read-only"
+	}
 	res := gitlab.ConnectionTest{Branch: branch, Branches: []string{branch}}
 	if strings.Contains(url, "unreachable") {
 		res.Error = "dial tcp: connection refused"
