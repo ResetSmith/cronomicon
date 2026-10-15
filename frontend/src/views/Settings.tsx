@@ -12,7 +12,8 @@ import { UsersAccessSection } from "./settings/UsersAccess";
 import { AuditComplianceSection } from "./settings/AuditCompliance";
 import { ServiceAccountsSection } from "./settings/ServiceAccounts";
 import { RecycleBinSection } from "./settings/RecycleBin";
-import { GitlabSection, VaultSection, LogStorageSection, ObservabilitySection } from "./settings/Integrations";
+import { VaultSection, LogStorageSection, ObservabilitySection } from "./settings/Integrations";
+import { RepositoriesSection } from "./settings/Repositories";
 import { LocalRunnerSection } from "./settings/LocalRunner";
 import { TimezoneAlert } from "./settings/TimezoneAlert";
 
@@ -40,7 +41,6 @@ import { TimezoneAlert } from "./settings/TimezoneAlert";
 const SECTIONS = [
   { group: "Installation", key: "general", label: "General", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "notifications", label: "Notifications", requires: "configureAppGlobal", global: "configureAppGlobal" },
-  { group: "Installation", key: "gitlab", label: "GitLab Connection", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "vault", label: "Vault", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "observability", label: "Observability", requires: "configureAppGlobal", global: "configureAppGlobal" },
   { group: "Installation", key: "logstorage", label: "Log Storage", requires: "configureAppGlobal", global: "configureAppGlobal" },
@@ -52,6 +52,10 @@ const SECTIONS = [
   // ET-C: minting one IS granting a role, so it sits behind manageRoles rather
   // than configureApp — the same permission that edits access grants.
   { group: "Agency", key: "serviceaccounts", label: "Service Accounts", requires: "manageRoles", global: "manageRolesGlobal" },
+  // 2.4.0 R8 (question 47): every agency's repository, Global's included; an
+  // agency's administrator sees their own. It replaces the Installation
+  // group's GitLab Connection (Global's alone, through a deprecated route).
+  { group: "Agency", key: "repositories", label: "Repositories", requires: "configureApp", global: "configureAppGlobal" },
   { group: "Agency", key: "targets", label: "SSH Targets", requires: "configureApp", global: "configureAppGlobal" },
   // RH: cross-kind. Still a global administrator's to use (`composeAdmin`); it
   // says so in place of its list for anyone else.
@@ -159,7 +163,7 @@ export function Settings() {
         <div>
           {section === "general" && <GeneralSection canWrite={isGlobal} />}
           {section === "notifications" && <NotificationsSection canWrite={isGlobal} />}
-          {section === "gitlab" && <GitlabSection canWrite={isGlobal} />}
+          {section === "repositories" && <RepositoriesSection isGlobal={isGlobal} />}
           {section === "vault" && <VaultSection canWrite={isGlobal} />}
           {section === "observability" && <ObservabilitySection canWrite={isGlobal} />}
           {section === "targets" && <SshTargetsSection canWrite={isGlobal} />}

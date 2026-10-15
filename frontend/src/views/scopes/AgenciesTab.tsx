@@ -279,8 +279,10 @@ export function AgenciesTab({
           title="Delete Agency"
           message={
             <>
-              Delete agency <code style={{ fontFamily: c.mono }}>{deleting.name}</code>? A scope still bound
-              to it will block deletion.
+              Delete agency <code style={{ fontFamily: c.mono }}>{deleting.name}</code>, with its repository? An agency
+              is deleted only when it is empty: what its repository supplied goes with it (it is all still in Git), and
+              anything else it holds — definitions or calendars built in the app, scopes, secrets, keys, runners, host
+              records, grants — keeps it, and is named.
             </>
           }
           confirmLabel="Delete"
@@ -305,6 +307,11 @@ function AgencyFormModal({
   const isEdit = initial != null;
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  // An agency is created with its repository (2.4.0, IN-2): tested — it
+  // answers, and its token may push — before anything is written.
+  const [repoUrl, setRepoUrl] = useState("");
+  const [pat, setPat] = useState("");
+  const [branch, setBranch] = useState("main");
   const [formError, setFormError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -313,12 +320,22 @@ function AgencyFormModal({
       setFormError("Name is required");
       return;
     }
+    if (!isEdit && (!repoUrl.trim() || !pat)) {
+      setFormError("An agency is created with its repository: give its URL and a token that can push.");
+      return;
+    }
     setBusy(true);
     const body = { name: name.trim(), description: description || null };
     const res =
       isEdit && initial.id != null
         ? await api.PUT("/agencies/{agencyId}", { params: { path: { agencyId: initial.id }, header: csrfHeader }, body })
-        : await api.POST("/agencies", { params: { header: csrfHeader }, body });
+        : await api.POST("/agencies", {
+            params: { header: csrfHeader },
+            body: {
+              ...body,
+              repository: { repoUrl: repoUrl.trim(), pat, writeBranch: branch.trim() || "main", webhookEnabled: true, webhookEvents: { push: true, mr: true, tag: true } },
+            },
+          });
     setBusy(false);
     if (res.error) setFormError(errMsg(res.error));
     else onSaved(`Agency ${isEdit ? "updated" : "created"}: ${name.trim()}`);
@@ -364,6 +381,27 @@ function AgencyFormModal({
             style={inputStyle()}
           />
         </div>
+        {!isEdit && (
+          <>
+            <div style={{ fontSize: c.fontSm, color: c.textSec }}>
+              Its repository: where its definitions live, and where its publishes are committed. The host must be on the
+              allowed hosts (Settings → Repositories), and the token must be able to push — on GitLab, Maintainer access,
+              since the default branch is protected.
+            </div>
+            <div>
+              <label style={labelStyle()}>Repository URL *</label>
+              <input aria-label="Repository URL" value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} placeholder="https://gitlab.example.org/ops/definitions.git" style={inputStyle()} />
+            </div>
+            <div>
+              <label style={labelStyle()}>Token *</label>
+              <input aria-label="Token" type="password" value={pat} onChange={(e) => setPat(e.target.value)} style={inputStyle()} />
+            </div>
+            <div>
+              <label style={labelStyle()}>Working Branch</label>
+              <input aria-label="Working Branch" value={branch} onChange={(e) => setBranch(e.target.value)} style={inputStyle()} />
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );

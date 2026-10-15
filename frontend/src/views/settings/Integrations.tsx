@@ -7,7 +7,6 @@ import { Btn, Card, ReadOnlyFields, SaveBtn, SettingRow, Status, Toggle, csrfHea
 import { Rule } from "../../components/ui";
 import { fmtInAppZone } from "../../utils/datetime";
 
-type GitlabConfig = components["schemas"]["GitlabConfig"];
 type VaultConfig = components["schemas"]["VaultConfig"];
 type LogStorageConfig = components["schemas"]["LogStorageConfig"];
 type ObservabilityConfig = components["schemas"]["ObservabilityConfig"];
@@ -42,117 +41,6 @@ function GlobalOnlyCard({ title }: { title: string }) {
         {GLOBAL_ADMIN_VIEW_ONLY} The connection is shared by every agency, and its settings are not shown to an
         administrator of one.
       </div>
-    </Card>
-  );
-}
-
-// ── GitLab Connection ────────────────────────────────────────────────────────
-export function GitlabSection({ canWrite }: { canWrite: boolean }) {
-  return canWrite ? <GitlabForm /> : <GlobalOnlyCard title="GitLab Connection" />;
-}
-
-function GitlabForm() {
-  const s = useSettingForm<GitlabConfig>(() => api.GET("/settings/gitlab"), (body) =>
-    api.PUT("/settings/gitlab", { params: { header: csrfHeader }, body }),
-  );
-  // PAT is masked on read; only send when the operator types a new one.
-  const [newPat, setNewPat] = useState("");
-  const [rotating, setRotating] = useState(false);
-  const [rotateMsg, setRotateMsg] = useState<string | null>(null);
-  const { form, patch } = s;
-
-  // LB7: the receiver URL operators paste into GitLab. Fixed route, derived from
-  // wherever the UI is being served, so it's correct behind any proxy/host.
-  const webhookUrl = `${window.location.origin}/api/v1/webhooks/gitlab`;
-  const [copied, setCopied] = useState(false);
-  async function copyWebhookUrl() {
-    try {
-      await navigator.clipboard.writeText(webhookUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API unavailable (e.g. insecure context); the field stays selectable.
-    }
-  }
-
-  async function rotate() {
-    setRotating(true);
-    setRotateMsg(null);
-    const { error: err } = await api.POST("/settings/gitlab/webhook-secret/rotate", { params: { header: csrfHeader } });
-    setRotating(false);
-    setRotateMsg(err ? `Rotate failed: ${errMsg(err)}` : "Webhook secret rotated.");
-    if (!err) s.refetch();
-  }
-
-  return (
-    <Card title="GitLab Connection" action={<SaveBtn onClick={() => s.save({ ...form!, ...(newPat ? { pat: newPat } : {}) })} saving={s.saving} saved={s.saved} disabled={!form} />}>
-      <Status loading={s.loading} error={s.error} saveErr={s.saveErr} />
-      {form && (
-        <div style={{ fontSize: c.fontSm }}>
-          <SettingRow label="Repository URL">
-            <input value={form.repoUrl ?? ""} onChange={(e) => patch({ repoUrl: e.target.value })} style={wide()} />
-          </SettingRow>
-          <SettingRow label="Bot PAT" hint="Stored masked. Leave blank to keep the current token.">
-            <input type="password" value={newPat} onChange={(e) => setNewPat(e.target.value)} placeholder="•••• (set)" style={wide()} />
-          </SettingRow>
-          <SettingRow label="Bot Name">
-            <input value={form.botName ?? ""} onChange={(e) => patch({ botName: e.target.value })} style={wide()} />
-          </SettingRow>
-          <SettingRow label="Bot Email">
-            <input value={form.botEmail ?? ""} onChange={(e) => patch({ botEmail: e.target.value })} style={wide()} />
-          </SettingRow>
-          {/* G-3 (VF-12) — it was "Write Branch", which named half of what it does:
-              writeBranch (gitlab/sync.go:618) resolves the branch for sync-READ
-              as well as publish-write, so an operator reading the old label had
-              no reason to think changing it would re-point where definitions are
-              read from. VU-16 corrected the hint; the label is the other half.
-              The wire field stays `writeBranch` — that is the API, not the UI. */}
-          <SettingRow label="Working Branch" hint="The branch Cronomicon syncs definitions from, and writes schedule changes back to.">
-            <input value={form.writeBranch ?? ""} onChange={(e) => patch({ writeBranch: e.target.value })} style={{ ...inputStyle(), width: 160 }} />
-          </SettingRow>
-          {/* F2-1 — "Token Expiry Notice" stood here, promising a warning this
-              many days before the PAT expires. It was stored
-              (tokenExpiryNotifyDays) and there is no warning code anywhere: no
-              banner, no notification, no scheduled check. The field and its
-              schema stay so nothing stored is lost; re-add the control with the
-              feature that honours it. */}
-          <SettingRow label="Webhook URL" hint="Set this as the URL in GitLab → Settings → Webhooks">
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input readOnly value={webhookUrl} onFocus={(e) => e.target.select()} style={wide()} />
-              <Btn onClick={copyWebhookUrl}>{copied ? "✓ Copied" : "Copy"}</Btn>
-            </div>
-          </SettingRow>
-          <SettingRow label="Webhook Enabled" hint="Pick up repository changes as soon as they are pushed to GitLab.">
-            <Toggle on={form.webhookEnabled ?? false} onChange={() => patch({ webhookEnabled: !form.webhookEnabled })} />
-          </SettingRow>
-          <SettingRow label="Webhook Events">
-            <div style={{ display: "flex", gap: 14, fontSize: c.fontSm, color: c.textSec }}>
-              {(["push", "mr", "tag"] as const).map((ev) => (
-                <label key={ev} style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={form.webhookEvents?.[ev] ?? false}
-                    onChange={() => patch({ webhookEvents: { ...form.webhookEvents, [ev]: !form.webhookEvents?.[ev] } })}
-                  />
-                  {ev}
-                </label>
-              ))}
-            </div>
-          </SettingRow>
-          <SettingRow label="Webhook Secret" hint="Shared secret GitLab signs deliveries with" last>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {form.webhookSecretEnvPinned ? (
-                <span style={{ fontSize: c.fontSm, color: c.textSec }}>
-                  Pinned by <code style={{ fontFamily: c.mono }}>CRONOMICON_GITLAB_WEBHOOK_SECRET</code> — unset it to rotate via the API.
-                </span>
-              ) : (
-                rotateMsg && <span style={{ fontSize: c.fontSm, color: rotateMsg.startsWith("Rotate failed") ? c.danger : c.success }}>{rotateMsg}</span>
-              )}
-              <Btn onClick={rotate} disabled={rotating || !!form.webhookSecretEnvPinned}>{rotating ? "Rotating…" : "Rotate secret"}</Btn>
-            </div>
-          </SettingRow>
-        </div>
-      )}
     </Card>
   );
 }
