@@ -671,30 +671,14 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 	// matches the window/mode precedent above — a bad spec must not wedge a sync —
 	// and the fire-time gate is fail-open for the same reason.
 	//
-	// A calendar of another agency (§0a, 2.4.0): every calendar was Global's
-	// until then, and an agency's file naming one keeps it, live, by the
-	// owner's choice of 2026-10-14, until names are per agency (I2) and the
-	// agency has a copy. So it is validated as before and WARNED about, not
-	// refused: refusing it would drop the file at every sync and switch the
-	// repository's prune off (found by the review of I1). The app refuses it
-	// at a save; a file is saved again by every sync.
-	knownCals, globalCals, calErr := calendar.LoadFlags(ctx, s.db)
-	var ownCals map[string]bool
-	if calErr == nil {
-		ownCals, _, calErr = calendar.LoadFlagsFor(ctx, s.db, s.agency())
-	}
+	// Among this repository's agency's calendars (§0a, 2.4.0): an entry names
+	// its own agency's, and a name is unique within an agency only (I2; the
+	// migration gave each agency a copy of what its files named of another's,
+	// so a file that named Global's holidays names its own now). Another
+	// agency's calendar reads as one that is not there.
+	knownCals, globalCals, calErr := calendar.LoadFlagsFor(ctx, s.db, s.agency())
 	if calErr != nil {
 		s.logError("sync: load calendars for binding validation — bindings not validated", "err", calErr)
-	}
-	warnOtherAgencys := func(file string, names ...[]string) {
-		for _, list := range names {
-			for _, c := range list {
-				if knownCals[c] && !ownCals[c] {
-					s.logWarn("git sync: names another agency's calendar, which applies until this agency has its own copy "+
-						"of it (an entry names its own agency's calendars)", "file", file, "calendar", c)
-				}
-			}
-		}
 	}
 	dangleCalendars := func(file string, entries []ScheduleEntry) bool {
 		if calErr != nil {
@@ -708,9 +692,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 				allErrs = append(allErrs, ve.Error())
 				res.Errors = append(res.Errors, ve)
 				bad = true
-				continue
 			}
-			warnOtherAgencys(file, e.SkipCalendars, e.OnlyCalendars)
 		}
 		return bad
 	}
@@ -730,9 +712,7 @@ func (s *Service) syncNow(ctx context.Context, triggeredBy string) SyncResult {
 				res.Errors = append(res.Errors, ve)
 				delete(resolvedScheds, name)
 				schedsOK = false
-				continue
 			}
-			warnOtherAgencys(rs.sourcePath, rs.skipCals, rs.onlyCals)
 		}
 	}
 

@@ -318,12 +318,23 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.skipCals.String)...)
 		allCalNames = append(allCalNames, calendar.ParseNames(sr.onlyCals.String)...)
 	}
-	calSets, calErr := calendar.Load(ctx, s.db, allCalNames)
-	if calErr != nil {
-		// Degrade to an unannotated projection rather than failing the endpoint:
-		// the Upcoming tab going blank is worse than it briefly over-promising.
-		s.log.Error("upcoming: load calendars — projection not annotated", "err", calErr)
-		calSets = calendar.Set{}
+	// One Load per agency that owns an entry (I2: a calendar is its agency's
+	// and its name unique there), not per entry: a handful of agencies, each
+	// read once and kept for the request.
+	calSetsByAgency := map[string]calendar.Set{}
+	calSetsFor := func(agency string) calendar.Set {
+		if sets, ok := calSetsByAgency[agency]; ok {
+			return sets
+		}
+		sets, calErr := calendar.Load(ctx, s.db, agency, allCalNames)
+		if calErr != nil {
+			// Degrade to an unannotated projection rather than failing the endpoint:
+			// the Upcoming tab going blank is worse than it briefly over-promising.
+			s.log.Error("upcoming: load calendars — projection not annotated", "agency", agency, "err", calErr)
+			sets = calendar.Set{}
+		}
+		calSetsByAgency[agency] = sets
+		return sets
 	}
 	// The installation freeze (§0a, open point 2) outranks every calendar, as
 	// the scheduler's freezeTier has it: while it is on, every projected fire is
@@ -383,7 +394,7 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 			// a holiday suppresses one day's instant, not the whole entry.
 			v := freezeV
 			if !frozen {
-				v = calendar.EvaluateFor(calSets, ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
+				v = calendar.EvaluateFor(calSetsFor(ownerAgency), ownerAgency, skipCals, onlyCals, calendar.DayOf(t, appLoc))
 			}
 			projections = append(projections, proj{sr.kind, sr.owner, sr.name, sr.cron, sr.source,
 				sr.ownerUID.String, splitAgencies(sr.ownerAgencies), t, v})

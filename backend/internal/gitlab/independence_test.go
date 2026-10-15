@@ -188,29 +188,40 @@ func TestI1_GlobalsScheduleEditReachesGlobalsDefinitionsOnly(t *testing.T) {
 	}
 }
 
-// An agency's file that names one of Global's calendars is synced, with a
-// warning: the binding stays live until names are per agency (I2), by the
-// owner's choice of 2026-10-14. Refusing it dropped the file at every sync and
-// switched the repository's prune off (found by the review of I1).
-func TestI1_AnAgencysFileNamingGlobalsCalendarIsSyncedWithAWarning(t *testing.T) {
+// An agency's file names its own agency's calendars (§0a; I2: a calendar's
+// name is unique within an agency, and the upgrade gave each agency a copy of
+// what its files named of Global's). A name only Global has is unknown to the
+// agency, and the file is refused as it is for any unknown calendar; the same
+// name among the agency's own is found. (Between I1 and I2 Global's was
+// synced with a warning, the binding live until the copies.)
+func TestI2_AnAgencysFileNamesItsOwnCalendars(t *testing.T) {
 	a, _, _ := newSyncFixture(t)
 	grSync(t, a, "Global's repository")
-	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, global, record_suppressed, created_by, created_at) VALUES ('cronomicon', 'holidays', 0, 0, 't', 't')`); err != nil {
+	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, global, record_suppressed, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 0, 0, 't', 't', 'global')`); err != nil {
 		t.Fatal(err)
 	}
 	b, repoB, remoteB := grSecondRepo(t, a)
 	const job = "apiVersion: cronomicon.io/v1\nkind: Job\nmetadata:\n  name: on-holidays\nspec:\n  run_type: bash\n  command: echo hi\n  scope: hosts-of-repo-b\n" +
 		"  schedules:\n    - name: nightly\n      cron: \"0 2 * * *\"\n      skipCalendars: [holidays]\n"
-	gitCommitFile(t, repoB, remoteB, "jobs/on-holidays.yaml", job, "a job naming Global's calendar")
+	gitCommitFile(t, repoB, remoteB, "jobs/on-holidays.yaml", job, "a job naming a calendar only Global has")
 	res := grSync(t, b, "the agency's repository")
+	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, "unknown calendar") {
+		t.Errorf("the agency's sync: %s (%s); want partial, the calendar unknown to the agency", res.Status, res.ErrorMessage)
+	}
+	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE repo_id = 'repo-b' AND name = 'on-holidays'`); n != 0 {
+		t.Errorf("the job naming a calendar only Global has was synced")
+	}
+	// The agency's own calendar of the name: found.
+	if _, err := a.db.Exec(`INSERT INTO calendars (source, name, global, record_suppressed, created_by, created_at, owner_agency) VALUES ('cronomicon', 'holidays', 0, 0, 't', 't', 'ag-b')`); err != nil {
+		t.Fatal(err)
+	}
+	grBackdateAll(t, a)
+	res = grSync(t, b, "the agency's repository, with its own calendar")
 	if res.Status != "success" {
-		t.Errorf("the agency's sync: %s (%s); want success", res.Status, res.ErrorMessage)
+		t.Errorf("the agency's sync with its own holidays: %s (%s); want success", res.Status, res.ErrorMessage)
 	}
 	if n := grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE repo_id = 'repo-b' AND name = 'on-holidays'`); n != 1 {
-		t.Errorf("the job naming Global's calendar was not synced")
-	}
-	if rows := grProblems(t, b, "repo-b"); !grHas(rows, "warning", "another agency's calendar") {
-		t.Errorf("no warning that the job names another agency's calendar:\n%s", strings.Join(rows, "\n"))
+		t.Errorf("the job naming the agency's own calendar was not synced")
 	}
 }
 

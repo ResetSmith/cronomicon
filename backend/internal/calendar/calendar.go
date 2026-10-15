@@ -246,8 +246,15 @@ func Reason(v Verdict) string {
 // this read. Callers with many entries (the /schedules/upcoming projection)
 // must call Load ONCE for every name across every entry rather than per entry,
 // preserving the CC.9 fixed-query-count discipline.
-func Load(ctx context.Context, database *sql.DB, names []string) (Set, error) {
+//
+// agency is whose calendars: an entry names its own agency's (§0a), and a
+// calendar's name is unique within its agency only (I2), so the set is one
+// agency's, keyed by name. Global's for an empty agency.
+func Load(ctx context.Context, database *sql.DB, agency string, names []string) (Set, error) {
 	out := Set{}
+	if agency == "" {
+		agency = "global"
+	}
 
 	// Deduplicate and drop blanks so the IN list is minimal and stable.
 	seen := map[string]bool{}
@@ -261,18 +268,19 @@ func Load(ctx context.Context, database *sql.DB, names []string) (Set, error) {
 	}
 
 	// The global clause means this query is never pointless, even with no names.
-	q := `SELECT c.name, c.global, c.record_suppressed, d.day, d.label, COALESCE(c.owner_agency, 'global')
+	q := `SELECT c.name, c.global, c.record_suppressed, d.day, d.label, c.owner_agency
 	        FROM calendars c
 	        LEFT JOIN calendar_days d
-	               ON d.calendar_source = c.source AND d.calendar_name = c.name
-	       WHERE c.global = 1`
-	args := []any{}
+	               ON d.calendar_owner = c.owner_agency AND d.calendar_source = c.source AND d.calendar_name = c.name
+	       WHERE c.owner_agency = ? AND (c.global = 1`
+	args := []any{agency}
 	if len(want) > 0 {
 		q += " OR c.name IN (" + strings.TrimSuffix(strings.Repeat("?,", len(want)), ",") + ")"
 		for _, n := range want {
 			args = append(args, n)
 		}
 	}
+	q += ")"
 
 	rows, err := database.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -308,21 +316,18 @@ func Load(ctx context.Context, database *sql.DB, names []string) (Set, error) {
 	return out, nil
 }
 
-// LoadFlags returns the set of existing calendar names and the subset that are
-// global — everything ValidateBinding needs, in one query. Separate from Load
-// because validation cares about existence and flags, never about days.
-func LoadFlags(ctx context.Context, database *sql.DB) (known, global map[string]bool, err error) {
-	return loadFlags(ctx, database, `SELECT name, global FROM calendars`)
-}
-
-// LoadFlagsFor is LoadFlags among one agency's calendars: what an entry of that
-// agency may bind (§0a, 2.4.0: an entry binds its own agency's calendars only).
-// Another agency's calendar reads as one that is not there.
+// LoadFlagsFor returns the set of one agency's calendar names and the subset
+// that are global — everything ValidateBinding needs, in one query. Separate
+// from Load because validation cares about existence and flags, never about
+// days. One agency's, because an entry binds its own agency's calendars only
+// (§0a, 2.4.0) and a name is unique within an agency only (I2): another
+// agency's calendar reads as one that is not there. (LoadFlags, over every
+// agency's, went with I2: nothing asks of the whole installation now.)
 func LoadFlagsFor(ctx context.Context, database *sql.DB, agency string) (known, global map[string]bool, err error) {
 	if agency == "" {
 		agency = "global"
 	}
-	return loadFlags(ctx, database, `SELECT name, global FROM calendars WHERE COALESCE(owner_agency, 'global') = ?`, agency)
+	return loadFlags(ctx, database, `SELECT name, global FROM calendars WHERE owner_agency = ?`, agency)
 }
 
 func loadFlags(ctx context.Context, database *sql.DB, q string, args ...any) (known, global map[string]bool, err error) {

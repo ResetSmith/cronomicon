@@ -23,7 +23,7 @@ func TestI1_AGlobalCalendarFreezesItsAgencyAndTheFreezeEveryone(t *testing.T) {
 	const day = "2026-12-25"
 	for _, c := range [][2]string{{"g-freeze", "global"}, {"fin-freeze", "ag-fin"}} {
 		exec(`INSERT INTO calendars (source, name, global, record_suppressed, created_by, created_at, owner_agency) VALUES ('cronomicon', ?, 1, 0, 't', 't', ?)`, c[0], c[1])
-		exec(`INSERT INTO calendar_days (calendar_source, calendar_name, day, label) VALUES ('cronomicon', ?, ?, 'holiday')`, c[0], day)
+		exec(`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label) VALUES (?, 'cronomicon', ?, ?, 'holiday')`, c[1], c[0], day)
 	}
 	verdict := func(agency string) calendar.Verdict {
 		t.Helper()

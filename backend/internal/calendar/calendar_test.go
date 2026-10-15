@@ -329,7 +329,7 @@ func seedCalendar(t *testing.T, pool *sql.DB, name string, global, record bool, 
 	}
 	for day, label := range days {
 		if _, err := pool.ExecContext(ctx,
-			`INSERT INTO calendar_days (calendar_source, calendar_name, day, label) VALUES ('cronomicon', ?, ?, ?)`,
+			`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label) VALUES ('global', 'cronomicon', ?, ?, ?)`,
 			name, day, label); err != nil {
 			t.Fatalf("seed day %s/%s: %v", name, day, err)
 		}
@@ -348,7 +348,7 @@ func TestLoadResolvesNamedAndGlobalCalendars(t *testing.T) {
 	seedCalendar(t, pool, "unrelated", false, false, map[string]string{"2026-01-01": "NYD"})
 	seedCalendar(t, pool, "weekdays", false, true, nil) // exists, zero days
 
-	sets, err := Load(ctx, pool, []string{"holidays", "weekdays", "holidays", ""})
+	sets, err := Load(ctx, pool, "global", []string{"holidays", "weekdays", "holidays", ""})
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -389,7 +389,7 @@ func TestLoadWithNoNamesStillLoadsGlobals(t *testing.T) {
 	seedCalendar(t, pool, "freeze", true, false, map[string]string{"2026-08-15": ""})
 	seedCalendar(t, pool, "holidays", false, false, map[string]string{"2026-07-03": ""})
 
-	sets, err := Load(context.Background(), pool, nil)
+	sets, err := Load(context.Background(), pool, "global", nil)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

@@ -370,7 +370,7 @@ func freezeTier(ctx context.Context, database *sql.DB, agency string, skip, only
 	if v, on := calendar.FreezeVerdict(f); on {
 		return v, nil
 	}
-	sets, err := calendar.Load(ctx, database, append(append([]string{}, skip...), only...))
+	sets, err := calendar.Load(ctx, database, agency, append(append([]string{}, skip...), only...))
 	if err != nil {
 		return calendar.Verdict{}, err
 	}

@@ -235,16 +235,18 @@ CREATE TABLE IF NOT EXISTS calendars (
     created_at        TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z',
     last_modified_by  TEXT,
     last_modified_at  TEXT,
-    PRIMARY KEY (source, name)
+    owner_agency      TEXT NOT NULL DEFAULT 'global', -- migration 1390; the key 1430's
+    PRIMARY KEY (owner_agency, source, name)
 );
 
 CREATE TABLE IF NOT EXISTS calendar_days (
+    calendar_owner  TEXT NOT NULL DEFAULT 'global', -- migration 1430
     calendar_source TEXT NOT NULL,
     calendar_name   TEXT NOT NULL,
     day             TEXT NOT NULL,
     label           TEXT,
     rule            TEXT,
-    PRIMARY KEY (calendar_source, calendar_name, day)
+    PRIMARY KEY (calendar_owner, calendar_source, calendar_name, day)
 );
 
 CREATE TABLE IF NOT EXISTS schedules (

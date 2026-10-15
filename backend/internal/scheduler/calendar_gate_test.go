@@ -33,8 +33,8 @@ func seedCal(t *testing.T, pool *sql.DB, name string, global, record bool, days 
 	}
 	for day, label := range days {
 		if _, err := pool.ExecContext(context.Background(),
-			`INSERT INTO calendar_days (calendar_source, calendar_name, day, label)
-			 VALUES ('cronomicon', ?, ?, ?)`, name, day, label); err != nil {
+			`INSERT INTO calendar_days (calendar_owner, calendar_source, calendar_name, day, label)
+			 VALUES ('global', 'cronomicon', ?, ?, ?)`, name, day, label); err != nil {
 			t.Fatalf("seed day %s/%s: %v", name, day, err)
 		}
 	}

@@ -1198,7 +1198,10 @@ export interface paths {
     };
     "/calendars/{name}": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -1229,7 +1232,10 @@ export interface paths {
     };
     "/calendars/{name}/days": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -6200,10 +6206,13 @@ export interface components {
          *     A calendar belongs to one agency (v2.4.0). Writing it takes compose on
          *     that agency (403 otherwise); until v2.4.0 every calendar was Global's
          *     and only an installation administrator wrote them. An entry names its
-         *     own agency's calendars at a write (another agency's reads as unknown);
-         *     one that named another agency's before keeps the binding, live, and the
-         *     notice `calendar_other_agency` lists it. The name is unique across the
-         *     installation until names are per agency.
+         *     own agency's calendars (another agency's reads as unknown). The name is
+         *     unique within its agency: two agencies may each have `holidays`, and
+         *     the routes that take `{name}` take `?agencyId=` to say whose; without
+         *     it, the one agency that has a calendar of the name, and 409
+         *     `ambiguous_calendar` when several do. The upgrade to v2.4.0 gave each
+         *     agency a copy of every global calendar of Global's, and of each
+         *     calendar its entries named of another agency's, under the same name.
          */
         Calendar: {
             name?: string;
@@ -7231,13 +7240,6 @@ export interface components {
              *       Subject: `<agency id>:<hostname>`. Filed under the agency. It
              *       clears when the agency has a record for the host, by hand or
              *       imported for the scope, or no scope of its lists the host.
-             *     - `calendar_other_agency` — a schedule entry, or a schedule, of an
-             *       agency names a calendar of another agency (allowed before v2.4.0).
-             *       It still applies, and follows that calendar's edits, but cannot be
-             *       saved again as it is. Subject:
-             *       `<definition uid or schedule:uid>:<entry>:<calendar>`. Filed under
-             *       the binding's agency. It clears when the binding names its own
-             *       agency's calendar.
              *     - `global_calendar_scope` — a calendar of Global's is global. Until
              *       v2.4.0 it froze every agency's fires; now it freezes Global's only
              *       (the whole installation is /settings/freeze). Raised while there
@@ -11830,7 +11832,10 @@ export interface operations {
     };
     getCalendar: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -11854,7 +11859,10 @@ export interface operations {
     };
     updateCalendar: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
@@ -11885,6 +11893,8 @@ export interface operations {
     deleteCalendar: {
         parameters: {
             query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
                 /** @description Delete even while bound */
                 force?: boolean;
             };
@@ -11911,7 +11921,10 @@ export interface operations {
     };
     replaceCalendarDays: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose calendar of the name (v2.4.0): required when more than one agency has one (409 ambiguous_calendar otherwise). */
+                agencyId?: string;
+            };
             header?: never;
             path: {
                 name: string;
