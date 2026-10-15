@@ -125,7 +125,7 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.writeComposedWorkflow(w, r, in, id.Email, true, db.NewID())
+	s.writeComposedWorkflow(w, r, in, id.Email, true, db.NewID(), repairInput{})
 }
 
 func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +150,13 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 	if !s.requireComposeStepScopes(w, r, id, existing.Steps) {
 		return
 	}
-	var in workflowComposeInput
+	// The input, and beside it a repair's fields (question 46): an edit that
+	// makes the workflow another agency's is a repair. Kept out of the input
+	// itself, which the revision snapshot records whole.
+	var in struct {
+		workflowComposeInput
+		repairInput
+	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid request body")
 		return
@@ -177,7 +183,7 @@ func (s *Server) updateWorkflow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.writeComposedWorkflow(w, r, in, id.Email, false, existing.UID)
+	s.writeComposedWorkflow(w, r, in.workflowComposeInput, id.Email, false, existing.UID, in.repairInput)
 }
 
 func (s *Server) deleteWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -338,7 +344,7 @@ func (s *Server) requireComposeStepScopes(w http.ResponseWriter, r *http.Request
 	return true
 }
 
-func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, in workflowComposeInput, actor string, isCreate bool, uid string) {
+func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, in workflowComposeInput, actor string, isCreate bool, uid string, rep repairInput) {
 	// Validate the step graph parses, and that each referenced job resolves to an
 	// existing job (in either source — the A11 precedence picks the effective one
 	// at run time, defaulting to the workflow's own cronomicon source).
@@ -392,6 +398,39 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	if spans {
 		httpx.Fail(w, http.StatusConflict, CodeWorkflowSpansAgencies, MsgWorkflowSpansAgencies)
 		return
+	}
+	// A save that changes a workflow's agency — an edit, or a revision
+	// restored, whose jobs are another agency's than the ones it ran — moves a
+	// definition between agencies: a global administrator's repair (§0a,
+	// IN-7; the owner's answer to question 46). Until then an editor who could
+	// compose both agencies' jobs made it the other agency's with no word. A
+	// workflow that had no jobs (its agency only the default) takes its first
+	// jobs' agency as it is built.
+	repaired := false
+	if !isCreate {
+		var storedOwner, storedSteps string
+		if err := s.db.QueryRowContext(r.Context(), `SELECT owner_agency, COALESCE(steps, '[]') FROM workflows WHERE uid = ?`, uid).
+			Scan(&storedOwner, &storedSteps); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		if storedOwner != "" && storedOwner != owner {
+			prev, perr := workflow.ParseSteps(storedSteps)
+			if perr != nil {
+				prev = nil
+			}
+			had, herr := s.workflowJobAgencies(r, prev)
+			if herr != nil {
+				httpx.Fail500(w, s.log, "db_error", herr)
+				return
+			}
+			if len(had) > 0 {
+				if !s.requireRepair(w, r, actorID, rep, "this workflow (its jobs are another agency's than the ones it ran)") {
+					return
+				}
+				repaired = true
+			}
+		}
 	}
 	entries, verr := s.resolveComposeSchedules(r.Context(), jobComposeInput{ScheduleRefs: in.ScheduleRefs, Schedules: in.Schedules},
 		ownerOrGlobal(owner))
@@ -523,6 +562,9 @@ func (s *Server) writeComposedWorkflow(w http.ResponseWriter, r *http.Request, i
 	_ = workflow.EmitActivity(r.Context(), s.db, workflow.ActivityParams{
 		Kind: "config", Actor: actor, Category: "Workflows", Action: auditAction, Target: in.Name,
 	})
+	if repaired {
+		s.auditRepair(r.Context(), actor, "workflow "+uid, "owner set to "+owner, rep)
+	}
 	s.forceScheduleReload(r.Context())
 
 	var rowid int64
@@ -812,9 +854,29 @@ func (s *Server) stepJobScope(r *http.Request, ref workflow.StepRef) (sql.NullSt
 // say whose once a scope's name is unique within an agency only. A job whose
 // owner cannot be read is Global's, as its runs are.
 func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner string, spans bool, err error) {
-	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencies(r.Context(), steps, "cronomicon")
+	agencies, err := s.workflowJobAgencies(r, steps)
 	if err != nil {
 		return "", false, err
+	}
+	switch len(agencies) {
+	case 0:
+		return agencyid.Global, false, nil
+	case 1:
+		for id := range agencies {
+			return id, false, nil
+		}
+	}
+	return agencyid.Global, true, nil
+}
+
+// workflowJobAgencies is the set of agencies the jobs a step graph runs
+// belong to, sub-workflows followed: workflowOwner's question, and the one a
+// save that would change a workflow's agency asks of the graph it replaces
+// (empty: the workflow had no jobs, and its agency was only the default).
+func (s *Server) workflowJobAgencies(r *http.Request, steps []workflow.Step) (map[string]bool, error) {
+	nested, err := workflow.New(s.db, s.log).SubWorkflowJobAgencies(r.Context(), steps, "cronomicon")
+	if err != nil {
+		return nil, err
 	}
 	agencies := map[string]bool{}
 	for _, a := range nested {
@@ -828,15 +890,7 @@ func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner st
 			agencies[a] = true
 		}
 	}
-	switch len(agencies) {
-	case 0:
-		return agencyid.Global, false, nil
-	case 1:
-		for id := range agencies {
-			return id, false, nil
-		}
-	}
-	return agencyid.Global, true, nil
+	return agencies, nil
 }
 
 // pinChildWorkflows writes into a workflow's steps, as it is saved, the

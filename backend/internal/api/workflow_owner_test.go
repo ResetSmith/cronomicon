@@ -87,7 +87,12 @@ func TestAWorkflowBelongsToTheAgencyOfItsJobs(t *testing.T) {
 	exec(`INSERT INTO workflows (uid, name, source, steps, enabled, created_at, owner_agency)
 	      VALUES ('wf-span', 'span-flow', 'cronomicon', '[{"type":"job","name":"fin-job"},{"type":"job","name":"tax-job"}]', 1, 't', 'global')`)
 	id := rowID(t, pool, `SELECT rowid FROM workflows WHERE name = 'span-flow'`)
-	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+id, gRoot, fmt.Sprintf(oneAgency, "span-flow")); rec.Code/100 != 2 {
+	// Settling it on one agency changes its agency: a global administrator's
+	// repair (question 46), refused without the flag.
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+id, gRoot, fmt.Sprintf(oneAgency, "span-flow")); rec.Code != http.StatusConflict || errCode(rec.Body.Bytes()) != "repair_required" {
+		t.Errorf("settling the spanning workflow without a repair = %d (%s), want 409 repair_required", rec.Code, rec.Body)
+	}
+	if rec := gateReq(t, h, http.MethodPut, "/api/v1/workflows/"+id, gRoot, asRepair(fmt.Sprintf(oneAgency, "span-flow"))); rec.Code/100 != 2 {
 		t.Fatalf("saving the workflow again with one agency's jobs = %d (%s)", rec.Code, rec.Body)
 	}
 	if got := owner("span-flow"); got != "ag:FIN" {

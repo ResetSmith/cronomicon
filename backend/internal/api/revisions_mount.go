@@ -323,7 +323,15 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 		// No tag splice here: unlike jobComposeInput, workflowComposeInput carries
 		// no Tags field at all — workflow tags are written only through their own
 		// endpoint, so the compose upsert cannot clobber them.
-		s.writeComposedWorkflow(w, r, in, id.Email, false, liveUID)
+		//
+		// A revision whose jobs are another agency's than the workflow runs now
+		// makes it that agency's: a repair (question 46), whose two fields the
+		// restore takes in an optional body.
+		var rep repairInput
+		if r.ContentLength != 0 {
+			_ = json.NewDecoder(r.Body).Decode(&rep)
+		}
+		s.writeComposedWorkflow(w, r, in, id.Email, false, liveUID, rep)
 	case revKindSchedule:
 		var in scheduleInput
 		if err := json.Unmarshal([]byte(snap), &in); err != nil {

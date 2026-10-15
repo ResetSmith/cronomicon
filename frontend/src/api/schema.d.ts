@@ -947,6 +947,15 @@ export interface paths {
          *     agency's jobs. 409 `crosses_agencies`, and nothing is written;
          *     the message names the workflow to a saver who may compose in its
          *     agency.
+         *
+         *     **A save that changes a workflow's agency is a repair (v2.4.0, IN-7).**
+         *     A workflow's agency follows its jobs, so an edit that gives FIN's
+         *     workflow TAX's jobs would make it TAX's: a global administrator's
+         *     repair, with `repair: true` and a `reason` written to the audit log
+         *     (403 for anyone else, an administrator of both agencies included; 409
+         *     `repair_required` without it). A workflow that had no jobs takes the
+         *     agency of the first jobs it is given without one. To have a workflow
+         *     in another agency, create it there (names are per agency).
          */
         put: operations["updateWorkflow"];
         post?: never;
@@ -1858,6 +1867,10 @@ export interface paths {
          *     Operator-owned tags are NOT rolled back: they are edited through their
          *     own endpoint and a restore carrying the snapshot's tags would silently
          *     revert tagging work done since. CSRF required.
+         *
+         *     A workflow's revision whose jobs are another agency's than the
+         *     workflow runs now would change its agency: a repair (v2.4.0, IN-7),
+         *     whose `repair` and `reason` the restore takes in an optional body.
          */
         post: operations["restoreDefinitionRevision"];
         delete?: never;
@@ -11356,7 +11369,12 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkflowComposeInput"];
+                "application/json": components["schemas"]["WorkflowComposeInput"] & {
+                    /** @description Required (true) when the save changes the workflow's agency. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
+                };
             };
         };
         responses: {
@@ -13041,7 +13059,16 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description A workflow's restore that changes its agency: true, by a global administrator. */
+                    repair?: boolean;
+                    /** @description The repair's reason */
+                    reason?: string;
+                };
+            };
+        };
         responses: {
             /** @description Restored; the response is the rewritten definition. */
             200: {

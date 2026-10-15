@@ -1731,12 +1731,27 @@ paths:
         agency's jobs. 409 `crosses_agencies`, and nothing is written;
         the message names the workflow to a saver who may compose in its
         agency.
+
+        **A save that changes a workflow's agency is a repair (v2.4.0, IN-7).**
+        A workflow's agency follows its jobs, so an edit that gives FIN's
+        workflow TAX's jobs would make it TAX's: a global administrator's
+        repair, with `repair: true` and a `reason` written to the audit log
+        (403 for anyone else, an administrator of both agencies included; 409
+        `repair_required` without it). A workflow that had no jobs takes the
+        agency of the first jobs it is given without one. To have a workflow
+        in another agency, create it there (names are per agency).
       parameters: [{ $ref: '#/components/parameters/workflowId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/WorkflowComposeInput' }
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/WorkflowComposeInput' }
+                - type: object
+                  properties:
+                    repair: { type: boolean, description: Required (true) when the save changes the workflow's agency. }
+                    reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. }
       responses:
         '200':
           description: The updated workflow.
@@ -3272,6 +3287,10 @@ paths:
         Operator-owned tags are NOT rolled back: they are edited through their
         own endpoint and a restore carrying the snapshot's tags would silently
         revert tagging work done since. CSRF required.
+
+        A workflow's revision whose jobs are another agency's than the
+        workflow runs now would change its agency: a repair (v2.4.0, IN-7),
+        whose `repair` and `reason` the restore takes in an optional body.
       parameters:
         - { $ref: '#/components/parameters/definitionKind' }
         - { $ref: '#/components/parameters/definitionName' }
@@ -3281,6 +3300,15 @@ paths:
           description: The revision number to restore.
           schema: { type: integer }
         - { $ref: '#/components/parameters/csrf' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repair: { type: boolean, description: "A workflow's restore that changes its agency: true, by a global administrator." }
+                reason: { type: string, maxLength: 500, description: The repair's reason, written to the audit log. }
       responses:
         '200':
           description: Restored; the response is the rewritten definition.

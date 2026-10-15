@@ -78,7 +78,10 @@ func TestASaveMayNotMakeAnotherWorkflowSpanAgencies(t *testing.T) {
 
 	// ── The child. Its own jobs become TAX's alone, which is not a workflow
 	// that spans; the PARENT, which runs FIN's job beside it, would.
-	said := refused("an administrator of both agencies saving the child onto TAX's job", http.MethodPut, "/api/v1/workflows/"+id("workflows", "child"), both, `{"name":"child","steps":[`+stepTax+`]}`)
+	// Making the child TAX's is itself a repair since question 46 (an
+	// administrator of both is refused that first); a global administrator's
+	// repair is still refused for the span it would make.
+	said := refused("a global administrator's repair saving the child onto TAX's job", http.MethodPut, "/api/v1/workflows/"+id("workflows", "child"), gRoot, asRepair(`{"name":"child","steps":[`+stepTax+`]}`))
 	if !strings.Contains(said, "the workflow parent") || !strings.Contains(said, "more than one agency") {
 		t.Errorf("the refusal does not name the workflow it would make span: %s", said)
 	}
