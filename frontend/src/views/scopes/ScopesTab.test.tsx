@@ -488,6 +488,26 @@ describe("ScopesTab — Add Scope names its agency (GC-6, LR-7)", () => {
     expect(sent.agencyIds).toEqual(["ag-tax"]);
   });
 
+  // 2.4.0 (I2) — a scope's name is unique within its agency: Finance may have
+  // an edge-lab when Tax has one, and Tax may not have two.
+  it("refuses a name the chosen agency already has, and not one another agency has", async () => {
+    caps = { configureAppGlobal: false, unrestricted: false };
+    agencies = [{ id: "ag-tax", name: "Tax" }, { id: "ag-fin", name: "Finance" }];
+    const { container } = renderTab([{ ...LOCAL, agencies: [{ id: "ag-tax", name: "Tax" }] }], true, false);
+    fireEvent.click(within(container).getByRole("button", { name: "+ Add Scope" }));
+    const body = within(document.body);
+    await waitFor(() => expect(body.getByPlaceholderText("e.g. Edge-Lab")).toBeTruthy());
+    fireEvent.change(body.getByPlaceholderText("e.g. Edge-Lab"), { target: { value: "edge-lab" } });
+    fireEvent.change(await waitFor(() => picker(body)), { target: { value: "ag-tax" } });
+    fireEvent.click(await waitFor(() => body.getByRole("button", { name: "Create Scope" })));
+    expect(await body.findByText("A scope named 'edge-lab' already exists in this agency.")).toBeTruthy();
+    expect(posts.some((p) => p.path === "/scopes")).toBe(false);
+
+    fireEvent.change(picker(body), { target: { value: "ag-fin" } });
+    fireEvent.click(body.getByRole("button", { name: "Create Scope" }));
+    await waitFor(() => expect(posts.some((p) => p.path === "/scopes")).toBe(true));
+  });
+
   it("keys on the global flag, not on `unrestricted` — a viewer of everything who administers agencies is asked", async () => {
     // The permission-blind trap: `unrestricted` is true for this caller, and the
     // server still requires an agency because no all-agencies grant carries

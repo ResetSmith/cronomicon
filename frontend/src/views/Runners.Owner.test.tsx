@@ -53,6 +53,15 @@ vi.mock("../api/client", async (importOriginal) => {
         if (path === "/scopes") return { data: SCOPES };
         if (path === "/local-runner") return { data: LOCAL_STATE };
         if (path === "/runners/{runnerId}/host-keys") return { data: HOST_KEYS };
+        if (path === "/git-repos")
+          return {
+            data: {
+              items: [
+                { id: "global", agencyId: "global", agencyName: "Global", repoUrl: "https://gitlab.example.org/global/defs.git" },
+                { id: "repo-fin", agencyId: FIN.id, agencyName: FIN.name, repoUrl: "https://gitlab.example.org/fin/defs.git" },
+              ],
+            },
+          };
         return { data: { items: [] } };
       }),
       POST,
@@ -225,6 +234,30 @@ describe("Runners — owner and serves (MA-26)", () => {
   // own interval lives in its configuration on its host; this is the one the
   // server sends it, and the server refuses a value outside 30–90 seconds. The
   // field says so before Save can be pressed.
+  // 2.4.0 (R8) — the checkout allowlist is picked, not typed: an agent compares
+  // URLs as text. Its agency's repository is offered by name and written
+  // exactly as its connection has it; Global's is not offered to an agency's
+  // agent; a URL already listed that is no connected repository's stays,
+  // removable.
+  it("picks the checkout allowlist from the agent's agency's repositories", async () => {
+    PATCH.mockClear();
+    RUNNERS = [{ ...AGENT, managedSettings: { checkoutRepos: ["https://gitlab.example.org/fin/defs"] } }];
+    renderRunners();
+    await expand("fin-agent");
+    fireEvent.click(await screen.findByRole("button", { name: "⚙ Edit" }));
+    const fin = (await screen.findByRole("checkbox", { name: /Finance's repository/ })) as HTMLInputElement;
+    expect(fin.checked).toBe(false);
+    expect(screen.queryByRole("checkbox", { name: /Global repository/ })).toBeNull();
+    // The typed URL (no .git) is no connected repository's: shown, and removable.
+    expect(screen.getByText("no connected repository of this agency")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove https://gitlab.example.org/fin/defs" }));
+    fireEvent.click(fin);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(PATCH).toHaveBeenCalledTimes(1));
+    const [, init] = PATCH.mock.calls[0] as [string, { body: { checkoutRepos?: string[] } }];
+    expect(init.body.checkoutRepos).toEqual(["https://gitlab.example.org/fin/defs.git"]);
+  });
+
   it("sets a runner's poll interval, and holds it within the server's bounds", async () => {
     PATCH.mockClear();
     RUNNERS = [{ ...AGENT, managedSettings: { pollIntervalSeconds: 30 } }];

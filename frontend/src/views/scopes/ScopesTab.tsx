@@ -3,6 +3,7 @@ import { api } from "../../api/client";
 import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
 import { GLOBAL_AGENCY, type AgencyRef } from "../../api/access";
 import { REPAIR_HINT, RepairDialog, type RepairBody } from "../../components/RepairDialog";
+import { CloneScopeDialog } from "./CloneScope";
 import { CreationAgencyPicker, useCreationAgencies } from "../../components/CreationAgencyPicker";
 import { useColumnWidths, useGet, useInlineTags, rows, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
@@ -140,6 +141,7 @@ export function ScopesTab({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<ScopeRow | null>(null);
   const [deleting, setDeleting] = useState<ScopeRow | null>(null);
+  const [cloning, setCloning] = useState<ScopeRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
@@ -687,11 +689,15 @@ export function ScopesTab({
                             this view is canEdit-gated, and without it a viewer saw a
                             Delete button that could only ever 403. Quiet danger here;
                             the solid fill is reserved for the confirm (VC.6). */}
-                        {isLocal && canEdit && s.canDelete !== false && (
-                          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-                            <Btn dangerQuiet onClick={() => setDeleting(s)}>
-                              Delete Scope
-                            </Btn>
+                        {canEdit && s.id != null && (
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                            {/* 2.4.0 (R8) — another agency gets a scope by a clone; the scope stays. */}
+                            <Btn onClick={() => setCloning(s)}>Clone to an agency…</Btn>
+                            {isLocal && s.canDelete !== false && (
+                              <Btn dangerQuiet onClick={() => setDeleting(s)}>
+                                Delete Scope
+                              </Btn>
+                            )}
                           </div>
                         )}
                         </DetailPanel>
@@ -745,6 +751,21 @@ export function ScopesTab({
           busy={busy}
           onConfirm={doDelete}
           onCancel={() => setDeleting(null)}
+        />
+      )}
+
+      {cloning && cloning.id != null && (
+        <CloneScopeDialog
+          scopeId={cloning.id}
+          scopeName={cloning.scope}
+          currentAgency={(cloning.agencies ?? []).length === 1 ? cloning.agencies![0].id : undefined}
+          globalAdmin={globalAdmin}
+          onClose={() => setCloning(null)}
+          onCloned={(text) => {
+            setCloning(null);
+            setNotice({ kind: "info", text });
+            refetch();
+          }}
         />
       )}
 
@@ -1105,9 +1126,18 @@ function ScopeFormModal({
       setFormError("Scope names must be alphanumeric (dashes/underscores allowed).");
       return;
     }
-    const dup = existing.some((s) => s.id !== initial?.id && s.scope.toLowerCase() === scopeName.toLowerCase());
+    // A scope's name is unique within its agency (2.4.0, I2): two agencies may
+    // each have one of a name. The agency is the one chosen (a new scope) or the
+    // scope's own (a rename); when it is not known yet, any match is a clash.
+    const agencyOf = initial ? (initial.agencies ?? [])[0]?.id : agencyPick.selected;
+    const dup = existing.some(
+      (s) =>
+        s.id !== initial?.id &&
+        s.scope.toLowerCase() === scopeName.toLowerCase() &&
+        (!agencyOf || (s.agencies ?? []).some((a) => a.id === agencyOf)),
+    );
     if (dup) {
-      setFormError(`A scope named '${scopeName}' already exists.`);
+      setFormError(`A scope named '${scopeName}' already exists in this agency.`);
       return;
     }
     if (agencyPick.blockedReason) {

@@ -5,6 +5,7 @@ import { GLOBAL_AGENCY, agenciesFor, useMyAccess, type AgencyRef } from "../api/
 import { useGet, rows, paged, useColumnWidths, useTableSort, useToast } from "../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../components/table";
 import { RefreshScope } from "../components/RefreshScope";
+import { repoLabel, useRepos } from "../components/RepoPicker";
 import { REPAIR_HINT, RepairDialog, useRepairAllowed, type RepairBody } from "../components/RepairDialog";
 import { AlertBanner, Badge, Btn, ConfirmDialog, CopyButton, CopyText, EmptyCell, Field, HoverTr, InlineLoading, Modal, RefreshButton, Rule, Section, SkeletonRows, StatTile, TableSurface, TagEditor, Toast, SortableLabel, TypeBadge, statusLabel, usePager } from "../components/ui";
 import { RecentRuns, DurationTrend } from "../components/RecentRuns";
@@ -2695,7 +2696,18 @@ function RunnerSettingsDrawer({
   const [checkout, setCheckout] = useState<"inherit" | "on" | "off">(
     ms.allowCheckout == null ? "inherit" : ms.allowCheckout ? "on" : "off",
   );
-  const [repos, setRepos] = useState((ms.checkoutRepos ?? []).join("\n"));
+  // 2.4.0 (R8; the owner's decision of 2026-10-13) — the repositories an agent
+  // may check out are PICKED, not typed: an agent compares the URL a manifest
+  // names with its allowlist as text, so a URL typed slightly differently is a
+  // run taken and failed. Offered: the repositories of the agent's agency (an
+  // agency's agents check out its own, §0a), written exactly as each
+  // connection has it. A URL already listed that is no connected repository's
+  // stays shown and removable.
+  const [repos, setRepos] = useState<string[]>(ms.checkoutRepos ?? []);
+  const { repos: connected } = useRepos();
+  const ownerId = runner.ownerAgency?.id ?? GLOBAL_AGENCY;
+  const offered = connected.filter((r) => r.agencyId === ownerId && r.repoUrl);
+  const toggleRepo = (url: string) => setRepos((cur) => (cur.includes(url) ? cur.filter((u) => u !== url) : [...cur, url]));
   const [mask, setMask] = useState<RunTypeName[]>(ms.capabilityMask ?? []);
   // 2.3.1 — not a managed setting: nothing here is saved or sent to the agent.
   // The fields only build the command an administrator runs on the machine.
@@ -2714,8 +2726,7 @@ function RunnerSettingsDrawer({
     if (sbCpu.trim()) body.sandboxCpuQuota = sbCpu.trim();
     if (sbTasks.trim()) body.sandboxTasksMax = sbTasks.trim();
     if (checkout !== "inherit") body.allowCheckout = checkout === "on";
-    const repoList = repos.split("\n").map((s) => s.trim()).filter(Boolean);
-    if (repoList.length) body.checkoutRepos = repoList;
+    if (repos.length) body.checkoutRepos = repos;
     if (mask.length) body.capabilityMask = mask;
     return body;
   };
@@ -2888,13 +2899,29 @@ function RunnerSettingsDrawer({
 
       {row(
         "Checkout repos",
-        <textarea
-          style={{ ...inputStyle, width: 360, height: 60, resize: "vertical" }}
-          value={repos}
-          onChange={(e) => setRepos(e.target.value)}
-          placeholder={"one clone URL per line\n(blank ⇒ runner's own allowlist)"}
-        />,
-        <>The allowlist of repo clone URLs this runner may check out — one per line. A repo outside it is refused.</>,
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {offered.map((r) => (
+            <label key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.text }}>
+              <input type="checkbox" checked={repos.includes(r.repoUrl!)} onChange={() => toggleRepo(r.repoUrl!)} />
+              {repoLabel(r)} repository <span style={{ fontFamily: c.mono, fontSize: c.fontXs, color: c.textMuted }}>{r.repoUrl}</span>
+            </label>
+          ))}
+          {repos
+            .filter((u) => !offered.some((r) => r.repoUrl === u))
+            .map((u) => (
+              <span key={u} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: c.fontSm, color: c.textSec }}>
+                <span style={{ fontFamily: c.mono, fontSize: c.fontXs }}>{u}</span>
+                <span style={{ fontSize: c.fontXs, color: c.warning }}>no connected repository of this agency</span>
+                <button type="button" aria-label={`Remove ${u}`} onClick={() => toggleRepo(u)} style={{ background: "none", border: "none", color: c.primary, cursor: "pointer", padding: 0 }}>
+                  ×
+                </button>
+              </span>
+            ))}
+          {offered.length === 0 && repos.length === 0 && (
+            <span style={{ fontSize: c.fontXs, color: c.textMuted }}>Its agency has no connected repository; the runner's own allowlist applies.</span>
+          )}
+        </div>,
+        <>The repositories this runner may check out, as their connections name them. None ticked ⇒ the runner's own allowlist. A repo outside it is refused.</>,
       )}
 
       {row(
