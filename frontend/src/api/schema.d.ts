@@ -2188,8 +2188,9 @@ export interface paths {
          *     the clone is for (a global administrator for Global, on either side).
          *     A clone shows one agency's host list to another, so it takes both. It
          *     does not take what MOVING the scope takes (a global administrator): the
-         *     scope stays where it is. 409 when a scope already has the name (a scope's
-         *     name is unique across the installation). CSRF required.
+         *     scope stays where it is. 409 when the agency the clone is for already has
+         *     a scope of the name (a scope's name is unique within its agency, v2.4.0).
+         *     CSRF required.
          */
         post: operations["cloneScope"];
         delete?: never;
@@ -6050,8 +6051,10 @@ export interface components {
          *     deleting one takes compose on that agency (403 otherwise); until v2.4.0
          *     every one was Global's and only an administrator holding compose and
          *     configureApp on every agency wrote them. A job or workflow binds its own
-         *     agency's schedules only. The name is unique across the installation
-         *     (409 when any agency's schedule holds it) until names are per agency.
+         *     agency's schedules only. The name is unique within the agency (409 when
+         *     the agency's schedule holds it, live or in the recycle bin); another
+         *     agency may have one of the same name, and the routes by name then take
+         *     ?agencyId.
          */
         ScheduleInput: {
             /** @description Schedule name (slug, [a-z0-9][a-z0-9_-]*). Required on create; immutable on edit. */
@@ -9591,8 +9594,10 @@ export interface components {
          *     route, so multi-segment names resolve correctly.
          */
         scriptName: string;
-        /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+        /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
         scheduleDefName: string;
+        /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+        scheduleAgencyId: string;
         /** @description Backend-minted UUIDv7 trace ID (S11). Opaque to clients. */
         traceId: string;
         agencyId: string;
@@ -11000,13 +11005,15 @@ export interface operations {
             query?: {
                 /** @description Schedule origin (default git). */
                 source?: "git" | "cronomicon";
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
             };
             header: {
                 /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
                 "X-CSRF-Token": components["parameters"]["csrf"];
             };
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;
@@ -11105,10 +11112,12 @@ export interface operations {
         parameters: {
             query?: {
                 source?: "git" | "cronomicon";
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
             };
             header?: never;
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;
@@ -11130,10 +11139,13 @@ export interface operations {
     };
     updateScheduleDef: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
+            };
             header?: never;
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;
@@ -11163,12 +11175,14 @@ export interface operations {
     deleteScheduleDef: {
         parameters: {
             query?: {
+                /** @description Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin. */
+                agencyId?: components["parameters"]["scheduleAgencyId"];
                 /** @description Delete even when referenced; detaches the expansions and resyncs the legacy mirror. */
                 force?: boolean;
             };
             header?: never;
             path: {
-                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist. */
+                /** @description First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0). */
                 name: components["parameters"]["scheduleDefName"];
             };
             cookie?: never;

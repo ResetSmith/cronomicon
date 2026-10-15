@@ -20,9 +20,10 @@ func TestScheduleGoneIsAnInAppEntryWhoseScheduleLeft(t *testing.T) {
 	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't')`)
 	mustExec(t, pool, `INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-prod', 'cronomicon', 't')`)
 	mustExec(t, pool, `INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin')`)
-	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash, deleted_at) VALUES
-		('s-live', 'weekly', 'cronomicon', '0 0 3 * * 1', 'h', NULL),
-		('s-binned', 'binned-one', 'cronomicon', '0 0 4 * * *', 'h', '2026-01-01T00:00:00Z')`)
+	// Finance's (I2: a definition is bound to its own agency's schedules only).
+	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash, deleted_at, owner_agency) VALUES
+		('s-live', 'weekly', 'cronomicon', '0 0 3 * * 1', 'h', NULL, 'ag-fin'),
+		('s-binned', 'binned-one', 'cronomicon', '0 0 4 * * *', 'h', '2026-01-01T00:00:00Z', 'ag-fin')`)
 	job := func(uid, name, source, scope string, deleted any) {
 		mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, synced_at, deleted_at) VALUES (?, ?, ?, 'bash', NULLIF(?, ''), 't', ?)`,
 			uid, name, source, scope, deleted)
@@ -93,15 +94,17 @@ func TestScheduleGoneIsAnInAppEntryWhoseScheduleLeft(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("open notices after two were settled = %d (%v), want the two workflows'", len(got), got)
 	}
-	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash) VALUES ('s-new', 'nightly', 'cronomicon', '0 0 5 * * *', 'h')`)
+	// In each workflow's agency (I2).
+	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash, owner_agency) VALUES
+		('s-new', 'nightly', 'cronomicon', '0 0 5 * * *', 'h', 'global'), ('s-new-f', 'nightly', 'cronomicon', '0 0 5 * * *', 'h', 'ag-fin')`)
 	if got = check(); len(got) != 0 {
 		t.Errorf("open notices once a schedule holds the name again = %v; that is the other notice's now", got)
 	}
 }
 
-// "A schedule of that name" is one the definition could be bound to: built in
-// the app, of Global's repository, or of its own agency's. Another agency's
-// repository's schedule of the name is nothing to it. (As first built, both
+// "A schedule of that name" is one the definition could be bound to: its own
+// agency's (I2: one built in the app is one agency's, a Git one its
+// repository's agency's). Another agency's schedule of the name is nothing to it. (As first built, both
 // notices asked for a schedule of the name anywhere: once another agency's
 // repository had one, a job's "its schedule is gone" turned into "a schedule
 // of that name exists; save the job", which saving could not do, and which

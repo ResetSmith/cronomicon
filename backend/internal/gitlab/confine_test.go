@@ -105,7 +105,8 @@ func TestGR4_AJobInAnAgencysRepositoryMustNameItsAgencysScope(t *testing.T) {
 	}
 	// Global's repository is confined too (§0a, IN-3; until then it might name
 	// any agency's scope): its job with no scope is Global's and is kept, and
-	// its job on an agency's scope was refused, in the same words.
+	// its job on an agency's scope was refused, told what became of it (kept
+	// as it was, which for a new file is absent; see keepAsWas).
 	for _, name := range []string{"g-none", "keep"} {
 		if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='global' AND name=?`, name) != 1 {
 			t.Errorf("Global's repository's job %s is missing", name)
@@ -114,7 +115,7 @@ func TestGR4_AJobInAnAgencysRepositoryMustNameItsAgencysScope(t *testing.T) {
 	if grCount(t, a.db, `SELECT COUNT(*) FROM jobs WHERE source='git' AND repo_id='global' AND name='g-theirs'`) != 0 {
 		t.Errorf("Global's repository's job on an agency's scope was synced")
 	}
-	if rowsA := grProblems(t, a, "global"); !grHas(rowsA, "error job jobs/g-theirs.yaml:", `the scope "theirs" is not one of this repository's agency's scopes`) || grHas(rowsA, "must name one of") {
+	if rowsA := grProblems(t, a, "global"); !grHas(rowsA, "error job jobs/g-theirs.yaml:", `the scope "theirs" is an agency's, and Global's jobs run on Global's scopes only`) || !grHas(rowsA, "as it was at the last sync and does not run") || grHas(rowsA, "must name one of") || grHas(rowsA, "was not synced") {
 		t.Errorf("Global's repository: want its job on an agency's scope refused, and its job with no scope kept:\n%s", strings.Join(rowsA, "\n"))
 	}
 

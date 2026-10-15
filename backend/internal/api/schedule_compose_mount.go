@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -138,19 +139,15 @@ func (s *Server) createScheduleDef(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateScheduleDef(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
-	name := r.PathValue("name")
-	switch s.scheduleSourceState(r.Context(), name) {
-	case scheduleAbsent:
-		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
-		return
-	case scheduleGitOnly:
-		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source schedules are editable in-app; git schedules round-trip through the publish flow")
+	ref, ok := s.scheduleRef(w, r, "cronomicon",
+		"only cronomicon-source schedules are editable in-app; git schedules round-trip through the publish flow")
+	if !ok {
 		return
 	}
-	if !s.requireScheduleOwner(w, r, s.inAppScheduleOwner(r.Context(), name)) {
+	if !s.requireScheduleOwner(w, r, ref.owner) {
 		return
 	}
-	if deleted, err := s.definitionIsDeleted(r.Context(), revKindSchedule, name); err != nil {
+	if deleted, err := s.scheduleBinned(r.Context(), ref.uid); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	} else if deleted {
@@ -163,7 +160,8 @@ func (s *Server) updateScheduleDef(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid request body")
 		return
 	}
-	in.Name = name // name is the identity — immutable on edit
+	in.Name = ref.name // name and owner are the identity — immutable on edit
+	in.OwnerAgency = ref.owner
 	s.writeComposedSchedule(w, r, in, id.Email, false)
 }
 
@@ -194,7 +192,10 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", serr.Error())
 		return
 	}
-	skipCals, onlyCals, cerr := s.validateCalendarBinding(r.Context(), s.scheduleOwnerFor(r.Context(), in, isCreate), in.SkipCalendars, in.OnlyCalendars)
+	// Whose it is: the create's ownerAgency, or the owner the route resolved
+	// (an edit, a revision restore). Its calendars are that agency's (I2).
+	owner := ownerOrGlobal(in.OwnerAgency)
+	skipCals, onlyCals, cerr := s.validateCalendarBinding(r.Context(), owner, in.SkipCalendars, in.OnlyCalendars)
 	if cerr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", cerr)
 		return
@@ -206,14 +207,13 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 		// still holds its name — say so, or the operator has no way to know why.
 		var exists int
 		var deleted sql.NullString
-		// Whoever owns it: a schedule built in the app has a name unique across
-		// the installation until names are per agency (I2), so that a route's
-		// name means one schedule.
+		// Within the agency (§0a, IN-5; I2): another agency's schedule of the
+		// name is nothing to this one.
 		_ = s.db.QueryRowContext(r.Context(),
-			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='cronomicon' AND name=?`,
-			in.Name).Scan(&exists, &deleted)
+			`SELECT COUNT(*), MAX(deleted_at) FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`,
+			owner, in.Name).Scan(&exists, &deleted)
 		if exists > 0 {
-			msg := "an cronomicon schedule with this name already exists"
+			msg := "this agency already has an in-app schedule of this name"
 			if deleted.Valid {
 				msg = "a schedule with this name is in the recycle bin — restore or purge it to reuse the name"
 			}
@@ -226,9 +226,9 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	now := time.Now().UTC().Format(time.RFC3339)
 	hash := gitlab.ScheduleContentHash(cron, in.Env, deref(startAt), deref(endAt), interval, skipCals, onlyCals)
 
-	// On an edit, WHICH schedule: its uid, resolved once from the name the route
-	// carries. Everything below that touches the schedule or the definitions
-	// bound to it keys on the uid (migration 1300, GR-8).
+	// On an edit, WHICH schedule: its uid, resolved once from the owner and
+	// name the route carries. Everything below that touches the schedule or
+	// the definitions bound to it keys on the uid (migration 1300, GR-8).
 	//
 	// Owners that reference this schedule (by schedule_uid) — captured before the
 	// tx for the legacy-mirror recompute. The owner set is stable across an edit
@@ -236,7 +236,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	var editUID string
 	var owners []scheduleOwner
 	if !isCreate {
-		editUID = s.inAppScheduleUID(r.Context(), in.Name)
+		editUID = s.inAppScheduleUID(r.Context(), owner, in.Name)
 		if editUID == "" {
 			httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
 			return
@@ -269,7 +269,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 			actor, now, actor, now, db.NewID(),
 			// Its owner, as the create named it (§0a, question 32; until then
 			// every one was Global's). It has no repository.
-			ownerOrGlobal(in.OwnerAgency)); err != nil {
+			owner); err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
 		}
@@ -328,7 +328,7 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	}
 	var schedUID string
 	_ = tx.QueryRowContext(r.Context(),
-		`SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, in.Name).Scan(&schedUID)
+		`SELECT uid FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, owner, in.Name).Scan(&schedUID)
 	if err := snapshotRevision(r.Context(), tx, revKindSchedule, "cronomicon", in.Name, schedUID, actor, action, in); err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
@@ -351,32 +351,23 @@ func (s *Server) writeComposedSchedule(w http.ResponseWriter, r *http.Request, i
 	// A bare create references no definition_schedules, so a reload is a cheap
 	// no-op — but harmless, and keeps the seam consistent with edit/delete (D8).
 	s.forceScheduleReload(r.Context())
-	s.writeScheduleDef(w, r, in.Name, status)
+	s.writeScheduleDef(w, r, owner, in.Name, status)
 }
 
 func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.IdentityFrom(r.Context())
-	name := r.PathValue("name")
-	switch s.scheduleSourceState(r.Context(), name) {
-	case scheduleAbsent:
-		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
-		return
-	case scheduleGitOnly:
-		httpx.Fail(w, http.StatusConflict, "conflict", "only cronomicon-source schedules are deletable in-app")
+	ref, ok := s.scheduleRef(w, r, "cronomicon", "only cronomicon-source schedules are deletable in-app")
+	if !ok {
 		return
 	}
-	if !s.requireScheduleOwner(w, r, s.inAppScheduleOwner(r.Context(), name)) {
+	if !s.requireScheduleOwner(w, r, ref.owner) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "true"
-	// WHICH schedule: its uid, resolved once from the name the route carries.
-	// The referrers, the soft delete, the tombstone and the detach below all key
-	// on it (migration 1300, GR-8).
-	schedUID := s.inAppScheduleUID(r.Context(), name)
-	if schedUID == "" {
-		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
-		return
-	}
+	// WHICH schedule: its uid, resolved once from the owner and name the route
+	// carries. The referrers, the soft delete, the tombstone and the detach
+	// below all key on it (migration 1300, GR-8).
+	name, schedUID := ref.name, ref.uid
 
 	// Capture referrers BEFORE deletion: needed for both the block-by-default 409
 	// and (when forced) the legacy-mirror recompute after the cascade detaches them.
@@ -487,54 +478,92 @@ func (s *Server) deleteScheduleDef(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-type scheduleState int
+// scheduleRefOf is the schedule a {name} route means: its owner, name and uid.
+type scheduleRefOf struct{ owner, name, uid string }
 
-const (
-	scheduleAbsent scheduleState = iota
-	scheduleGitOnly
-	scheduleCronomicon
-)
-
-// scheduleSourceState reports whether a name is an editable cronomicon schedule, a
-// read-only git schedule, or absent — driving the 404 vs 409 vs proceed branch.
-//
-// The schedule routes carry a name only. A schedule built in the app has an
-// owner since §0a (question 32), and its name is unique across the
-// installation until names are per agency (I2), so a name means one of them
-// whoever owns it. A Git one is Global's here, as before.
-func (s *Server) scheduleSourceState(ctx context.Context, name string) scheduleState {
-	var cronomicon, git int
-	_ = s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN source='cronomicon' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN source='git' AND owner_agency=? THEN 1 ELSE 0 END), 0)
-		FROM schedules WHERE name=?`, agencyid.Global, name).Scan(&cronomicon, &git)
-	switch {
-	case cronomicon > 0:
-		return scheduleCronomicon
-	case git > 0:
-		return scheduleGitOnly
-	default:
-		return scheduleAbsent
+// scheduleRef resolves the schedule of a source a {name} route means (§0a,
+// IN-5; I2: a name is unique within an agency only, so the route says whose):
+// the name in the agency ?agencyId= names, or the one agency that has a
+// schedule of the source and name. 409 ambiguous_schedule asks for the agency
+// when more than one has. When none has, 404 — or, for the in-app source with
+// gitOnly given, 409 conflict with that message when a Git schedule holds the
+// name (an in-app write cannot touch one; it round-trips through its
+// repository). Live before binned: a name one agency holds live and another
+// holds in its recycle bin means the live one (the binned one is reachable
+// with ?agencyId= and from the recycle bin); the callers decide what a binned
+// schedule may have done to it.
+func (s *Server) scheduleRef(w http.ResponseWriter, r *http.Request, source, gitOnly string) (scheduleRefOf, bool) {
+	name := r.PathValue("name")
+	agency := strings.TrimSpace(r.URL.Query().Get("agencyId"))
+	q := `SELECT owner_agency, uid, deleted_at IS NULL FROM schedules WHERE source = ? AND name = ?`
+	args := []any{source, name}
+	if agency != "" {
+		q += ` AND owner_agency = ?`
+		args = append(args, agency)
 	}
+	rows, err := s.db.QueryContext(r.Context(), q+` ORDER BY owner_agency`, args...)
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return scheduleRefOf{}, false
+	}
+	defer rows.Close()
+	var found, live []scheduleRefOf
+	for rows.Next() {
+		var owner string
+		var uid sql.NullString
+		var isLive int
+		if rows.Scan(&owner, &uid, &isLive) == nil {
+			ref := scheduleRefOf{owner: owner, name: name, uid: uid.String}
+			found = append(found, ref)
+			if isLive == 1 {
+				live = append(live, ref)
+			}
+		}
+	}
+	if len(live) > 0 {
+		found = live
+	}
+	switch len(found) {
+	case 1:
+		return found[0], true
+	case 0:
+		if gitOnly != "" && source == "cronomicon" {
+			gq, gargs := `SELECT COUNT(*) FROM schedules WHERE source = 'git' AND name = ?`, []any{name}
+			if agency != "" {
+				gq, gargs = gq+` AND owner_agency = ?`, append(gargs, agency)
+			}
+			var git int
+			_ = s.db.QueryRowContext(r.Context(), gq, gargs...).Scan(&git)
+			if git > 0 {
+				httpx.Fail(w, http.StatusConflict, "conflict", gitOnly)
+				return scheduleRefOf{}, false
+			}
+		}
+		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
+		return scheduleRefOf{}, false
+	}
+	httpx.Fail(w, http.StatusConflict, "ambiguous_schedule",
+		"more than one agency has a schedule of this name; say whose with ?agencyId=")
+	return scheduleRefOf{}, false
 }
 
-// inAppScheduleUID resolves an in-app schedule's NAME to its uid, whoever owns
-// it (see scheduleSourceState). "" when there is none. Binned or live: the
-// callers decide what a binned schedule may have done to it.
-func (s *Server) inAppScheduleUID(ctx context.Context, name string) string {
+// inAppScheduleUID resolves an agency's in-app schedule of a name to its uid,
+// "" when there is none. Binned or live, as scheduleRef.
+func (s *Server) inAppScheduleUID(ctx context.Context, owner, name string) string {
 	var uid sql.NullString
 	_ = s.db.QueryRowContext(ctx,
-		`SELECT uid FROM schedules WHERE source='cronomicon' AND name=?`, name).Scan(&uid)
+		`SELECT uid FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, owner, name).Scan(&uid)
 	return uid.String
 }
 
-// inAppScheduleOwner is the agency an in-app schedule of a name belongs to,
-// "" when there is none.
-func (s *Server) inAppScheduleOwner(ctx context.Context, name string) string {
-	var owner sql.NullString
-	_ = s.db.QueryRowContext(ctx,
-		`SELECT owner_agency FROM schedules WHERE source='cronomicon' AND name=?`, name).Scan(&owner)
-	return owner.String
+// scheduleBinned reports whether the schedule of a uid is in the recycle bin.
+func (s *Server) scheduleBinned(ctx context.Context, uid string) (bool, error) {
+	var deletedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT deleted_at FROM schedules WHERE uid = ?`, uid).Scan(&deletedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return deletedAt.Valid, err
 }
 
 type scheduleOwner struct{ source, kind, name string }
@@ -817,10 +846,10 @@ func scheduleEnvJSON(env map[string]string) any {
 
 // writeScheduleDef re-fetches the cronomicon schedule (with its source_ref usedBy
 // reverse index) and writes it as the create/edit response.
-func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name string, status int) {
+func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, owner, name string, status int) {
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source='cronomicon' AND name=?`, name)
+		FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, owner, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
@@ -851,15 +880,6 @@ func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, name s
 	}
 	sd.UsedByCount = len(sd.UsedBy)
 	httpx.JSON(w, status, sd)
-}
-
-// scheduleOwnerFor is the agency a schedule being written is (or will be)
-// owned by: the create's ownerAgency, or the existing row's owner.
-func (s *Server) scheduleOwnerFor(ctx context.Context, in scheduleInput, isCreate bool) string {
-	if isCreate {
-		return ownerOrGlobal(in.OwnerAgency)
-	}
-	return ownerOrGlobal(s.inAppScheduleOwner(ctx, in.Name))
 }
 
 // ownerOrGlobal is an owner as given, Global's when none is.

@@ -172,14 +172,18 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
 	source := r.URL.Query().Get("source")
 	if source != "cronomicon" {
 		source = "git"
 	}
+	// Whose (I2): the agency ?agencyId= names, or the one that has it.
+	ref, ok := s.scheduleRef(w, r, source, "")
+	if !ok {
+		return
+	}
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, agencyid.Global, name)
+		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, ref.owner, ref.name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")
@@ -230,15 +234,19 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	name := r.PathValue("name")
 	source := r.URL.Query().Get("source")
 	if source != "cronomicon" {
 		source = "git"
 	}
+	ref, ok := s.scheduleRef(w, r, source, "")
+	if !ok {
+		return
+	}
+	name := ref.name
 
 	// Decode/normalize/UPDATE + RowsAffected==0 → 404 is the shared skeleton (CC.12);
-	// composite (source,name) key. Audit stays BEFORE the re-fetch below.
-	if _, ok := s.writeTagsUpdate(w, r, "schedules", "source = ? AND owner_agency = ? AND name = ?", "schedule not found", source, agencyid.Global, name); !ok {
+	// composite (source, owner, name) key (I2). Audit stays BEFORE the re-fetch below.
+	if _, ok := s.writeTagsUpdate(w, r, "schedules", "source = ? AND owner_agency = ? AND name = ?", "schedule not found", source, ref.owner, name); !ok {
 		return
 	}
 
@@ -251,7 +259,7 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	// GET /schedule-defs/{name}.
 	row := s.db.QueryRowContext(r.Context(), `
 		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
-		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, agencyid.Global, name)
+		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, ref.owner, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
 		httpx.Fail(w, http.StatusNotFound, "not_found", "schedule not found")

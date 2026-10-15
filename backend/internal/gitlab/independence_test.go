@@ -28,7 +28,7 @@ func TestI1_GlobalsJobOnAnAgencysScopeIsKeptAsItWas(t *testing.T) {
 	grCommitFiles(t, repoA, remoteA, map[string]string{"jobs/g-theirs.yaml": grScopedJob("g-theirs", "hosts-of-repo-b")}, "the file is still there")
 	grBackdateAll(t, a)
 	res := grSync(t, a, "Global's repository after the upgrade")
-	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, `the scope "hosts-of-repo-b" is not one of this repository's agency's scopes`) {
+	if res.Status != "partial" || !strings.Contains(res.ErrorMessage, `the scope "hosts-of-repo-b" is an agency's, and Global's jobs run on Global's scopes only`) || !strings.Contains(res.ErrorMessage, "as it was at the last sync and does not run") {
 		t.Errorf("Global's sync: %q (%s); want partial, the file refused", res.Status, res.ErrorMessage)
 	}
 	if got := grString(t, a.db, `SELECT COALESCE((SELECT uid || ' enabled=' || enabled FROM jobs WHERE source='git' AND name='g-theirs'), '(gone)')`); got != "uid-g-theirs enabled=0" {

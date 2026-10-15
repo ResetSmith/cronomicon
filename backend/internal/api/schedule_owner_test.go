@@ -10,7 +10,7 @@ import (
 
 // A schedule built in the app is its owner's (§0a, IN-8; the owner's answer
 // to question 32). Writing it takes compose on that agency; a name is held
-// once across the installation until names are per agency (I2); the composer
+// once within an agency (I2; see TestI2_TwoAgenciesEachHaveTheirOwnScheduleOfOneName); the composer
 // binds a definition to its own agency's only; and an edit reaches its own
 // agency's definitions only: another agency's definition bound before §0a
 // keeps the timing it copied, and the notice global_schedule_bound says so.
@@ -44,14 +44,19 @@ func TestI1_AScheduleIsItsOwnersToWrite(t *testing.T) {
 			t.Errorf("FIN creating %s schedule = %d, want 403", what, c)
 		}
 	}
-	if c := code(gTaxAdmin, http.MethodPost, "/api/v1/schedule-defs", `{"name":"fin-nightly","cron":"0 2 * * *","ownerAgency":"ag:TAX"}`); c != http.StatusConflict {
-		t.Errorf("TAX taking the name FIN's schedule holds = %d, want 409", c)
+	// The name is FIN's within FIN only (I2): TAX has its own of the name,
+	// and a route by the name alone must then say whose.
+	if c := code(gTaxAdmin, http.MethodPost, "/api/v1/schedule-defs", `{"name":"fin-nightly","cron":"0 2 * * *","ownerAgency":"ag:TAX"}`); c != http.StatusCreated {
+		t.Errorf("TAX creating its own schedule of the name FIN's holds = %d, want 201", c)
 	}
-	if c := code(gTaxAdmin, http.MethodPut, "/api/v1/schedule-defs/fin-nightly", `{"name":"fin-nightly","cron":"0 3 * * *"}`); c != http.StatusForbidden {
+	if c := code(gTaxAdmin, http.MethodPut, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:FIN", `{"name":"fin-nightly","cron":"0 3 * * *"}`); c != http.StatusForbidden {
 		t.Errorf("TAX editing FIN's schedule = %d, want 403", c)
 	}
-	if c := code(gTaxAdmin, http.MethodDelete, "/api/v1/schedule-defs/fin-nightly", ""); c != http.StatusForbidden {
+	if c := code(gTaxAdmin, http.MethodDelete, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:FIN", ""); c != http.StatusForbidden {
 		t.Errorf("TAX deleting FIN's schedule = %d, want 403", c)
+	}
+	if c := code(gTaxAdmin, http.MethodDelete, "/api/v1/schedule-defs/fin-nightly?agencyId=ag:TAX", ""); c != http.StatusNoContent {
+		t.Errorf("TAX deleting its own schedule = %d, want 204", c)
 	}
 	if c := code(gFinAdmin, http.MethodPut, "/api/v1/schedule-defs/fin-nightly", `{"name":"fin-nightly","cron":"0 3 * * *"}`); c/100 != 2 {
 		t.Errorf("FIN editing its own schedule = %d, want 2xx", c)

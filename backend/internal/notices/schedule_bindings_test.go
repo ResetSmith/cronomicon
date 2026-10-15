@@ -23,10 +23,14 @@ func TestScheduleBindingAmbiguousIsAnEntryTiedToNoSchedule(t *testing.T) {
 	mustExec(t, pool, `INSERT INTO agencies (id, name, created_at) VALUES ('ag-fin', 'Finance', 't')`)
 	mustExec(t, pool, `INSERT INTO scopes (id, name, source, created_at) VALUES ('sc-fin', 'fin-prod', 'cronomicon', 't')`)
 	mustExec(t, pool, `INSERT INTO scope_agencies (scope_id, agency_id) VALUES ('sc-fin', 'ag-fin')`)
-	// `nightly` twice (Git's and an in-app one), `solo` once.
-	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash) VALUES
-		('s-git', 'nightly', 'git', '0 0 1 * * *', 'h'), ('s-app', 'nightly', 'cronomicon', '0 0 3 * * *', 'h'),
-		('s-solo', 'solo', 'git', '0 0 4 * * *', 'h')`)
+	// `nightly` twice (Git's and an in-app one), `solo` once — Global's, and
+	// Finance's own (I2: a definition is bound to its own agency's schedules
+	// only, and each agency has its own of a name).
+	mustExec(t, pool, `INSERT INTO schedules (uid, name, source, cron, content_hash, owner_agency) VALUES
+		('s-git', 'nightly', 'git', '0 0 1 * * *', 'h', 'global'), ('s-app', 'nightly', 'cronomicon', '0 0 3 * * *', 'h', 'global'),
+		('s-solo', 'solo', 'git', '0 0 4 * * *', 'h', 'global'),
+		('s-git-f', 'nightly', 'git', '0 0 1 * * *', 'h', 'ag-fin'), ('s-app-f', 'nightly', 'cronomicon', '0 0 3 * * *', 'h', 'ag-fin'),
+		('s-solo-f', 'solo', 'git', '0 0 4 * * *', 'h', 'ag-fin')`)
 	job := func(uid, name, scope string, deleted any) {
 		mustExec(t, pool, `INSERT INTO jobs (uid, name, source, run_type, scope, synced_at, deleted_at) VALUES (?, ?, 'cronomicon', 'bash', NULLIF(?, ''), 't', ?)`,
 			uid, name, scope, deleted)
@@ -101,7 +105,7 @@ func TestScheduleBindingAmbiguousIsAnEntryTiedToNoSchedule(t *testing.T) {
 	}
 
 	// Saving the job ties the entry (the composer stamps the schedule's uid).
-	mustExec(t, pool, `UPDATE definition_schedules SET schedule_uid = 's-app' WHERE owner_uid = 'j-amb'`)
+	mustExec(t, pool, `UPDATE definition_schedules SET schedule_uid = 's-app-f' WHERE owner_uid = 'j-amb'`)
 	got = check()
 	if len(got) != 4 {
 		t.Errorf("open notices after the job was saved = %d (%v), want the other four", len(got), got)

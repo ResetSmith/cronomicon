@@ -1432,6 +1432,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/scheduleDefName' }
         - { name: source, in: query, description: Schedule origin (default git)., schema: { type: string, enum: [git, cronomicon] } }
+        - { $ref: '#/components/parameters/scheduleAgencyId' }
         - { $ref: '#/components/parameters/csrf' }
       requestBody:
         required: true
@@ -1531,6 +1532,7 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/scheduleDefName' }
         - { name: source, in: query, schema: { type: string, enum: [git, cronomicon] } }
+        - { $ref: '#/components/parameters/scheduleAgencyId' }
       responses:
         '200':
           description: The schedule, with its used-by list.
@@ -1548,7 +1550,9 @@ paths:
         workflow that referenced it — so the change actually takes effect, not just in
         the catalog (the scheduleRefs snapshot is updated by source_ref). Git-source
         schedules are read-only here (409). Requires Compose on the schedule's owner; reaches that agency's definitions only (v2.4.0).
-      parameters: [{ $ref: '#/components/parameters/scheduleDefName' }]
+      parameters:
+        - { $ref: '#/components/parameters/scheduleDefName' }
+        - { $ref: '#/components/parameters/scheduleAgencyId' }
       requestBody:
         required: true
         content:
@@ -1576,6 +1580,7 @@ paths:
         read-only here (409). Requires Compose on the schedule's owner (v2.4.0).
       parameters:
         - { $ref: '#/components/parameters/scheduleDefName' }
+        - { $ref: '#/components/parameters/scheduleAgencyId' }
         - { name: force, in: query, description: Delete even when referenced; detaches the expansions and resyncs the legacy mirror., schema: { type: boolean } }
       responses:
         '204': { description: Deleted. }
@@ -3797,8 +3802,9 @@ paths:
         the clone is for (a global administrator for Global, on either side).
         A clone shows one agency's host list to another, so it takes both. It
         does not take what MOVING the scope takes (a global administrator): the
-        scope stays where it is. 409 when a scope already has the name (a scope's
-        name is unique across the installation). CSRF required.
+        scope stays where it is. 409 when the agency the clone is for already has
+        a scope of the name (a scope's name is unique within its agency, v2.4.0).
+        CSRF required.
       parameters: [{ $ref: '#/components/parameters/scopeId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -8186,7 +8192,13 @@ components:
       name: name
       in: path
       required: true
-      description: First-class schedule name (metadata.name); disambiguated by ?source when both origins exist.
+      description: First-class schedule name (metadata.name); disambiguated by ?source when both origins exist, and by ?agencyId when more than one agency has one of the name (v2.4.0).
+      schema: { type: string }
+    scheduleAgencyId:
+      name: agencyId
+      in: query
+      required: false
+      description: "Whose schedule of the name (v2.4.0): required when more than one agency has one of the source (409 ambiguous_schedule otherwise); a live one is meant before one in the recycle bin."
       schema: { type: string }
     traceId:
       name: traceId
@@ -9577,8 +9589,10 @@ components:
         deleting one takes compose on that agency (403 otherwise); until v2.4.0
         every one was Global's and only an administrator holding compose and
         configureApp on every agency wrote them. A job or workflow binds its own
-        agency's schedules only. The name is unique across the installation
-        (409 when any agency's schedule holds it) until names are per agency.
+        agency's schedules only. The name is unique within the agency (409 when
+        the agency's schedule holds it, live or in the recycle bin); another
+        agency may have one of the same name, and the routes by name then take
+        ?agencyId.
       required: [cron]
       properties:
         name: { type: string, description: "Schedule name (slug, [a-z0-9][a-z0-9_-]*). Required on create; immutable on edit." }

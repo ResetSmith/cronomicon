@@ -331,6 +331,9 @@ func (s *Server) restoreRevision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.Name = name
+		// Whose: the live schedule's owner, which the write keys on (I2). A
+		// snapshot taken by an edit records none.
+		_ = s.db.QueryRowContext(r.Context(), `SELECT owner_agency FROM schedules WHERE uid = ?`, liveUID).Scan(&in.OwnerAgency)
 		s.writeComposedSchedule(w, r, in, id.Email, false)
 	}
 }

@@ -23,9 +23,15 @@ import (
 
 // The two things a refused file is told. Neither says whether the scope it
 // named exists: "another agency has a scope of that name" is theirs to know.
+// What became of the job differs by repository: an agency's job is not
+// written (a new one is absent, one synced before is removed); Global's that
+// was synced before is kept as it was, not run (see keepAsWas in the sync).
 const (
-	refusedNoScope    = "a job in an agency's repository must name one of that agency's scopes (spec.scope): with none it would be Global's; this job was not synced"
-	refusedOtherScope = "the scope %q is not one of this repository's agency's scopes: a job in an agency's repository must name a scope its agency owns; this job was not synced"
+	refusedNoScope     = "a job in an agency's repository must name one of that agency's scopes (spec.scope): with none it would be Global's; %s"
+	refusedOtherScope  = "the scope %q is not one of this repository's agency's scopes: a job in an agency's repository must name a scope its agency owns; %s"
+	refusedGlobalScope = "the scope %q is an agency's, and Global's jobs run on Global's scopes only (§0a); %s"
+	becameNotSynced    = "this job was not synced"
+	becameKeptAsWas    = "this job is as it was at the last sync and does not run, until its file names one of Global's scopes"
 )
 
 // confineJobs splits the jobs of the sync that is under way into the ones that
@@ -71,7 +77,7 @@ func (s *Service) confineJobs(ctx context.Context, jobs []JobYAML, parsed []inve
 			continue
 		}
 		if scope == "" {
-			refused = append(refused, ValidationError{File: file, Field: "spec.scope", Message: refusedNoScope})
+			refused = append(refused, ValidationError{File: file, Field: "spec.scope", Message: fmt.Sprintf(refusedNoScope, becameNotSynced)})
 			continue
 		}
 		ok, qerr := isOwn(scope)
@@ -79,7 +85,14 @@ func (s *Service) confineJobs(ctx context.Context, jobs []JobYAML, parsed []inve
 			return nil, nil, fmt.Errorf("read the agency of the scope a job names: %w", qerr)
 		}
 		if !ok {
-			refused = append(refused, ValidationError{File: file, Field: "spec.scope", Message: fmt.Sprintf(refusedOtherScope, scope)})
+			msg := fmt.Sprintf(refusedOtherScope, scope, becameNotSynced)
+			if global {
+				// Kept as it was when synced before (keepAsWas); a new one
+				// is not written, and the same sentence covers both: it is
+				// as it was, which for a new file is absent.
+				msg = fmt.Sprintf(refusedGlobalScope, scope, becameKeptAsWas)
+			}
+			refused = append(refused, ValidationError{File: file, Field: "spec.scope", Message: msg})
 			continue
 		}
 		kept = append(kept, j)

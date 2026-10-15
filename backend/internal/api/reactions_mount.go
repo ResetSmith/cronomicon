@@ -77,9 +77,12 @@ type reactionInput struct {
 
 // reactionOut is one reaction as served.
 type reactionOut struct {
-	OwnerKind               string `json:"ownerKind"`
-	OwnerName               string `json:"ownerName"`
-	OwnerSource             string `json:"ownerSource"`
+	OwnerKind   string `json:"ownerKind"`
+	OwnerName   string `json:"ownerName"`
+	OwnerSource string `json:"ownerSource"`
+	// OwnerUID says which definition of the name the row is, for the agency
+	// the upstream is looked for in (I2); not shown.
+	OwnerUID                string `json:"-"`
 	Name                    string `json:"name"`
 	OnKind                  string `json:"onKind"`
 	OnName                  string `json:"onName"`
@@ -299,7 +302,7 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ownerRef := reactionRef{Source: source, Kind: kind, Name: name}
+	ownerRef := reactionRef{Source: source, Kind: kind, Name: name, UID: owner.uid}
 	if err := s.validateReactions(r, ownerRef, body.Reactions); err != nil {
 		if ve, ok := errors.AsType[*reactionValidationError](err); ok {
 			httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", ve.Error())
@@ -437,7 +440,10 @@ func (s *Server) reactionIntervalCeiling() int {
 }
 
 // reactionRef identifies one side of a reaction edge.
-type reactionRef struct{ Source, Kind, Name string }
+// reactionRef names a definition. UID, when set, says which definition of
+// the name (I2: a name may be held in each agency); it is not part of the
+// String key.
+type reactionRef struct{ Source, Kind, Name, UID string }
 
 func (r reactionRef) String() string { return r.Kind + ":" + r.Source + "/" + r.Name }
 
@@ -494,7 +500,7 @@ func (s *Server) validateReactions(r *http.Request, owner reactionRef, in []reac
 		// own completion is an unconditional infinite loop, and the depth ceiling
 		// should be a backstop for cycles nobody can see rather than the thing
 		// that catches the obvious one.
-		if upstream == owner {
+		if upstream.Source == owner.Source && upstream.Kind == owner.Kind && upstream.Name == owner.Name {
 			return badReaction(x.Name + ": a definition cannot react to itself")
 		}
 
@@ -747,9 +753,19 @@ func (s *Server) upstreamExistsFor(r *http.Request, owner, upstream reactionRef)
 var inAppJobAgencySQL = `COALESCE(` + agencyid.JobSQL("jobs") + `, '` + agencyid.Global + `')`
 
 // reactionOwnerAgency is the agency of a reaction's owner: a Git owner's
-// repository's, a definition built in the app's owner.
+// repository's, a definition built in the app's owner. By the owner's uid
+// when the ref carries one (I2: a name may be held in each agency); by the
+// name otherwise, for a row that records no owner.
 func (s *Server) reactionOwnerAgency(ctx context.Context, owner reactionRef) string {
 	agency := agencyid.Global
+	if owner.UID != "" {
+		var a sql.NullString
+		_ = s.db.QueryRowContext(ctx, `SELECT `+agencyid.DefinitionOf("?2", "?1"), owner.Kind, owner.UID).Scan(&a)
+		if a.Valid && a.String != "" {
+			return a.String
+		}
+		return agency
+	}
 	switch {
 	case owner.Source == "git":
 		table := "jobs"
@@ -844,7 +860,7 @@ func (s *Server) loadReactions(r *http.Request, kind, source, name string) ([]re
 // loadReactionsWhere is loadReactions over the rows a condition picks (none:
 // every row), with the same filter on what the caller may read.
 func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([]reactionOut, error) {
-	q := `SELECT owner_source, owner_kind, owner_name, name, on_source, on_kind, on_name,
+	q := `SELECT owner_source, owner_kind, owner_name, COALESCE(owner_uid, ''), name, on_source, on_kind, on_name,
 	             on_outcome, delay_seconds, min_interval_seconds,
 	             include_workflow_children, enabled, position
 	        FROM reactions`
@@ -859,7 +875,7 @@ func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([
 	for rows.Next() {
 		var x reactionOut
 		var includeChildren, enabled int
-		if err := rows.Scan(&x.OwnerSource, &x.OwnerKind, &x.OwnerName, &x.Name,
+		if err := rows.Scan(&x.OwnerSource, &x.OwnerKind, &x.OwnerName, &x.OwnerUID, &x.Name,
 			&x.OnSource, &x.OnKind, &x.OnName, &x.OnOutcome,
 			&x.DelaySeconds, &x.MinIntervalSeconds, &includeChildren, &enabled, &x.Position); err != nil {
 			continue
@@ -914,7 +930,7 @@ func (s *Server) loadReactionsWhere(r *http.Request, cond string, args []any) ([
 
 	for i := range out {
 		exists, err := s.upstreamExistsFor(r,
-			reactionRef{Source: out[i].OwnerSource, Kind: out[i].OwnerKind, Name: out[i].OwnerName},
+			reactionRef{Source: out[i].OwnerSource, Kind: out[i].OwnerKind, Name: out[i].OwnerName, UID: out[i].OwnerUID},
 			reactionRef{Source: out[i].OnSource, Kind: out[i].OnKind, Name: out[i].OnName})
 		if err != nil {
 			return nil, err
