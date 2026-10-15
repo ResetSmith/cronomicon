@@ -848,7 +848,7 @@ func scheduleEnvJSON(env map[string]string) any {
 // reverse index) and writes it as the create/edit response.
 func (s *Server) writeScheduleDef(w http.ResponseWriter, r *http.Request, owner, name string, status int) {
 	row := s.db.QueryRowContext(r.Context(), `
-		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
+		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0, owner_agency
 		FROM schedules WHERE source='cronomicon' AND owner_agency=? AND name=?`, owner, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {

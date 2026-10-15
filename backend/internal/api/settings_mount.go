@@ -91,7 +91,18 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			}
 			list = kept
 		}
-		httpx.JSON(w, http.StatusOK, list)
+		rows, err := withRowFlags(list, func(sc secrets.Secret) (rowFlags, error) {
+			fl, err := s.flagsByMembership(r.Context(), id, auth.PermManageEnvVars, "secret_agencies", "secret_id", sc.ID)
+			if err != nil {
+				return fl, err
+			}
+			return s.flagsWithScope(r.Context(), id, fl, "secrets", sc.ID, sc.Scope)
+		})
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, rows)
 	})))
 	mux.Handle("POST /api/v1/env-secrets", s.requirePerm("manageEnvVars", permManageEnvVars)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
@@ -462,7 +473,15 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			}
 			list = kept
 		}
-		httpx.JSON(w, http.StatusOK, list)
+		id, _ := auth.IdentityFrom(r.Context())
+		rows, err := withRowFlags(list, func(c sshkeys.Credential) (rowFlags, error) {
+			return s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "ssh_credential_agencies", "credential_id", c.ID)
+		})
+		if err != nil {
+			httpx.Fail500(w, s.log, "db_error", err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, rows)
 	})))
 	mux.Handle("POST /api/v1/ssh/credentials", s.requirePerm("configureApp", permConfigureApp)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.IdentityFrom(r.Context())
@@ -923,7 +942,18 @@ func (s *Server) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, ev)
 		}
 	}
-	httpx.JSON(w, http.StatusOK, filtered)
+	rows, err := withRowFlags(filtered, func(ev settings.EnvVar) (rowFlags, error) {
+		fl, err := s.flagsByMembership(r.Context(), id, auth.PermManageEnvVars, "env_var_agencies", "env_var_id", ev.ID)
+		if err != nil {
+			return fl, err
+		}
+		return s.flagsWithScope(r.Context(), id, fl, "env_vars", ev.ID, ev.Scope)
+	})
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateEnvVar(w http.ResponseWriter, r *http.Request) {
@@ -1103,7 +1133,15 @@ func (s *Server) handleListScopes(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.Scope{}
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(sc settings.Scope) (rowFlags, error) {
+		return s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "scope_agencies", "scope_id", sc.ID)
+	})
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
@@ -1532,7 +1570,13 @@ func (s *Server) handleListSshHosts(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshHost{}
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(h settings.SshHost) (rowFlags, error) { return s.hostRecordFlags(r.Context(), id, h.ID) })
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateSshHost(w http.ResponseWriter, r *http.Request) {
@@ -1866,7 +1910,13 @@ func (s *Server) handleListBastions(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshBastion{}
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(b settings.SshBastion) (rowFlags, error) { return s.bastionFlags(r.Context(), id, b.ID) })
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 func (s *Server) handleCreateBastion(w http.ResponseWriter, r *http.Request) {

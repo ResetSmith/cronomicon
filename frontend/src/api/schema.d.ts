@@ -5740,6 +5740,8 @@ export interface components {
          *     operator-authored (Phase 3+).
          */
         Schedule: {
+            /** @description The id of the agency the schedule is (v2.4.0). A name is unique within an agency only; the routes by name take it as `?agencyId=` when two agencies hold one. */
+            readonly ownerAgency?: string;
             /** @description AF-4a — stable surrogate identity; see Job.uid. */
             readonly uid?: string;
             /**
@@ -6946,7 +6948,7 @@ export interface components {
              */
             repoId?: string;
         };
-        Scope: {
+        Scope: components["schemas"]["RowFlags"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -7583,7 +7585,7 @@ export interface components {
         ReferenceUsageList: {
             usage: components["schemas"]["ReferenceUsage"][];
         };
-        EnvVar: {
+        EnvVar: components["schemas"]["RowFlags"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -7796,7 +7798,7 @@ export interface components {
              */
             readonly token?: string;
         };
-        Agency: {
+        Agency: components["schemas"]["RowFlags"] & {
             readonly id?: string;
             /** @description Operator label; unique. The dispatch key snapshotted onto a run at enqueue (M3). */
             name?: string;
@@ -7812,7 +7814,7 @@ export interface components {
             /** @description The agency's repository connection. Required on create (v2.4.0, IN-2); not read by an update. */
             repository?: components["schemas"]["GitlabConfig"];
         };
-        EnvSecret: {
+        EnvSecret: components["schemas"]["RowFlags"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -8356,6 +8358,15 @@ export interface components {
             agencyId: string;
             /** @description Normalised, sorted. Empty means the agency can name no Vault path. */
             prefixes: string[];
+        };
+        /** @description What the caller may do with this row (v2.4.0 R8), worked out by the same check the row's write route makes, so a screen offers exactly what the server allows. Present on the rows of the scope, secret, variable, SSH key, host record, bastion and agency lists. */
+        RowFlags: {
+            /** @description The row's PUT/PATCH would pass its agency gate. */
+            readonly canEdit: boolean;
+            /** @description Its DELETE would (the same gate as the edit today). */
+            readonly canDelete: boolean;
+            /** @description A change of its agency would pass: a global administrator's repair (IN-7). */
+            readonly canRepair: boolean;
         };
         /**
          * @description One entity's agency (migration 670). `id` is the scope / secret / env-var /
@@ -9182,7 +9193,7 @@ export interface components {
             /** @enum {string} */
             readonly status?: "ok" | "error";
         };
-        SshHost: components["schemas"]["SshHostInput"] & {
+        SshHost: components["schemas"]["RowFlags"] & components["schemas"]["SshHostInput"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -9232,7 +9243,7 @@ export interface components {
             /** @description The id of the agency the record belongs to (v2.3.0, LR-69). On a record written by hand it is settable: at create, and later to give the record to another agency. On a record imported for a scope it is READ-ONLY and reports that scope's agency. For a scope that predates v2.3.0 and is still in several agencies it reports `global`, though each of those agencies' administrators may edit the record, as they may the scope. A scope resolves a hand-written record only when the record is its own agency's or Global's, and a record routes only through a bastion of its own agency or Global's. */
             ownerAgency?: string;
         };
-        SshBastion: components["schemas"]["SshBastionInput"] & {
+        SshBastion: components["schemas"]["RowFlags"] & components["schemas"]["SshBastionInput"] & {
             /**
              * Format: uuid
              * @description UUIDv7.
@@ -9306,7 +9317,7 @@ export interface components {
             /** @description The ONE agency that owns the new SSH key, applied at CREATE only (a list for compatibility; more than one id is 422 `one_agency` since v2.3.0, LR-54). A scope-RESTRICTED creator who omits it INHERITS their own department (RA-9) when they hold the permission on exactly one; holding it on several is 422 `agency_required` naming the candidates, because "their department" then has no single answer and enrolling the row in all of them would widen it past what they meant. This matters because an entity that is Global's is shared infrastructure and is a global administrator's for writes and reveal (RB-Q14), so a restricted creator would otherwise be locked out of the row they just created. Unrestricted creators may omit it, which is the deliberate way to mint shared infrastructure (it is Global's). The row is moved to another agency afterwards via PUT /ssh-credential-agencies. */
             agencyIds?: string[];
         };
-        SshCredential: {
+        SshCredential: components["schemas"]["RowFlags"] & {
             readonly id: string;
             label: string;
             /** @description Derived CRONOMICON_KEY_<label> reference (namespace contract); resolves to a key-file PATH on the executing host. Read-only; the credential keeps its bare label. */

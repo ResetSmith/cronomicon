@@ -40,7 +40,9 @@ func TestI4_AWorkflowChangesAgencyOnlyByARepair(t *testing.T) {
 	path := func(name string) string {
 		return "/api/v1/workflows/" + rowID(t, pool, `SELECT rowid FROM workflows WHERE source = 'cronomicon' AND name = '`+name+`'`)
 	}
-	steps := func(name, job string) string { return `{"name":"` + name + `","steps":[{"type":"job","name":"` + job + `"}]}` }
+	steps := func(name, job string) string {
+		return `{"name":"` + name + `","steps":[{"type":"job","name":"` + job + `"}]}`
+	}
 
 	if c := req(gFinAdmin, http.MethodPost, "/api/v1/workflows", steps("nightly-flow", "fin-a")); c/100 != 2 || owner("nightly-flow") != "ag:FIN" {
 		t.Fatalf("FIN's workflow: %d, %s's", c, owner("nightly-flow"))

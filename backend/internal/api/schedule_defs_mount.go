@@ -60,7 +60,11 @@ type scheduleUsedBy struct {
 // scheduleDefRow is the JSON shape of the Schedule schema in openapi.yaml.
 type scheduleDefRow struct {
 	// UID — the stable surrogate identity (AF-4a); see jobRow.UID.
-	UID            string            `json:"uid,omitempty"`
+	UID string `json:"uid,omitempty"`
+	// OwnerAgency is the id of the agency the schedule is (2.4.0 Phase R8):
+	// a name is unique within an agency only (I2), and the routes by name
+	// take it as ?agencyId= when two agencies hold one.
+	OwnerAgency    string            `json:"ownerAgency"`
 	Name           string            `json:"name"`
 	Source         string            `json:"source"`
 	Description    *string           `json:"description,omitempty"`
@@ -150,7 +154,8 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 		                            AND j2.deleted_at IS NOT NULL)
 		           AND NOT EXISTS (SELECT 1 FROM workflows w2 WHERE ds.owner_kind='workflow'
 		                            AND w2.source=ds.owner_source AND w2.name=ds.owner_name
-		                            AND w2.deleted_at IS NOT NULL)) AS used_by
+		                            AND w2.deleted_at IS NOT NULL)) AS used_by,
+		       sc.owner_agency
 		FROM schedules sc`+where+`
 		ORDER BY sc.source, sc.name LIMIT ? OFFSET ?`, pageArgs...)
 	if err != nil {
@@ -182,7 +187,7 @@ func (s *Server) getScheduleDef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row := s.db.QueryRowContext(r.Context(), `
-		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
+		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0, owner_agency
 		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, ref.owner, ref.name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
@@ -258,7 +263,7 @@ func (s *Server) updateScheduleTags(w http.ResponseWriter, r *http.Request) {
 	// Re-read the updated schedule with its usedBy reverse index — same shape as
 	// GET /schedule-defs/{name}.
 	row := s.db.QueryRowContext(r.Context(), `
-		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0
+		SELECT name, source, description, cron, env, content_hash, source_path, synced_at, created_at, last_modified_at, tags, start_at, end_at, interval, skip_calendars, only_calendars, uid, 0, owner_agency
 		FROM schedules WHERE source = ? AND owner_agency = ? AND name = ?`, source, ref.owner, name)
 	sd, err := scanScheduleDef(row)
 	if err != nil {
@@ -303,7 +308,7 @@ func scanScheduleDef(sc rowScanner) (scheduleDefRow, error) {
 	)
 	if err := sc.Scan(&sd.Name, &sd.Source, &description, &sd.Cron, &envJSON, &sd.ContentHash,
 		&sourcePath, &syncedAt, &createdAt, &lastModifiedAt, &tags, &startAt, &endAt, &interval,
-		&skipCals, &onlyCals, &uid, &sd.UsedByCount); err != nil {
+		&skipCals, &onlyCals, &uid, &sd.UsedByCount, &sd.OwnerAgency); err != nil {
 		return scheduleDefRow{}, err
 	}
 	sd.UID = uid.String

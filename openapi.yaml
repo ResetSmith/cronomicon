@@ -9265,6 +9265,10 @@ components:
         git rows are Git-authored (read-only over the API); cronomicon rows are
         operator-authored (Phase 3+).
       properties:
+        ownerAgency:
+          type: string
+          readOnly: true
+          description: The id of the agency the schedule is (v2.4.0). A name is unique within an agency only; the routes by name take it as `?agencyId=` when two agencies hold one.
         uid:
           type: string
           readOnly: true
@@ -10662,6 +10666,7 @@ components:
     # ── Scopes ───────────────────────────────────────────────────────────────
     Scope:
       allOf:
+        - $ref: '#/components/schemas/RowFlags'
         - type: object
           required: [tags]
           properties:
@@ -11427,6 +11432,7 @@ components:
           items: { $ref: '#/components/schemas/ReferenceUsage' }
     EnvVar:
       allOf:
+        - $ref: '#/components/schemas/RowFlags'
         - type: object
           properties:
             id: { type: string, format: uuid, readOnly: true, description: UUIDv7. }
@@ -11720,6 +11726,7 @@ components:
 
     Agency:
       allOf:
+        - $ref: '#/components/schemas/RowFlags'
         - type: object
           properties:
             id: { type: string, readOnly: true }
@@ -11752,6 +11759,7 @@ components:
 
     EnvSecret:
       allOf:
+        - $ref: '#/components/schemas/RowFlags'
         - type: object
           properties:
             id: { type: string, format: uuid, readOnly: true, description: UUIDv7. }
@@ -12390,6 +12398,18 @@ components:
           items: { type: string }
           description: Normalised, sorted. Empty means the agency can name no Vault path.
 
+    RowFlags:
+      type: object
+      description: >-
+        What the caller may do with this row (v2.4.0 R8), worked out by the same
+        check the row's write route makes, so a screen offers exactly what the
+        server allows. Present on the rows of the scope, secret, variable, SSH
+        key, host record, bastion and agency lists.
+      required: [canEdit, canDelete, canRepair]
+      properties:
+        canEdit: { type: boolean, readOnly: true, description: The row's PUT/PATCH would pass its agency gate. }
+        canDelete: { type: boolean, readOnly: true, description: Its DELETE would (the same gate as the edit today). }
+        canRepair: { type: boolean, readOnly: true, description: "A change of its agency would pass: a global administrator's repair (IN-7)." }
     AgencyMembership:
       type: object
       required: [id, agencyIds]
@@ -13499,6 +13519,7 @@ components:
     # ── SSH ──────────────────────────────────────────────────────────────────
     SshHost:
       allOf:
+        - $ref: '#/components/schemas/RowFlags'
         - $ref: '#/components/schemas/SshHostInput'
         - type: object
           properties:
@@ -13592,6 +13613,7 @@ components:
 
     SshBastion:
       allOf:
+        - $ref: '#/components/schemas/RowFlags'
         - $ref: '#/components/schemas/SshBastionInput'
         - type: object
           properties:
@@ -13722,6 +13744,7 @@ components:
 
     SshCredential:
       allOf:
+        - $ref: '#/components/schemas/RowFlags'
         - type: object
           required: [id, label, source]
           properties:

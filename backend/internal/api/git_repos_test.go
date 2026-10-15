@@ -269,4 +269,3 @@ func TestAnAgencysAdministratorConnectsTheirAgencysRepository(t *testing.T) {
 		t.Errorf("a global administrator connecting an agency that is not there = %d, want 404", code)
 	}
 }
-

@@ -80,7 +80,9 @@ func (s *Server) auditRepair(ctx context.Context, actor, target, change string, 
 }
 
 // agencySet renders an agency list for a repair's audit row.
-func agencySet(agencies []string) string { return "agency set to [" + strings.Join(agencies, ", ") + "]" }
+func agencySet(agencies []string) string {
+	return "agency set to [" + strings.Join(agencies, ", ") + "]"
+}
 
 // decodeRepairable reads the body of a route whose body is an array: the bare
 // array (a write that is not a repair), or {repair, reason, assignments}. It

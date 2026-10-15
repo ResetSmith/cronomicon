@@ -578,7 +578,13 @@ func (s *Server) handleListAgencies(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, list)
+	id, _ := auth.IdentityFrom(r.Context())
+	rows, err := withRowFlags(list, func(a settings.Agency) (rowFlags, error) { return agencyFlags(id, a.ID), nil })
+	if err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, rows)
 }
 
 type agencyInputBody struct {
