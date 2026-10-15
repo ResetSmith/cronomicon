@@ -156,6 +156,13 @@ func TestTheComposerResolvesAScriptAndAScheduleInItsAgencysRepository(t *testing
 		if gotScript, gotSchedule := joined(c.job); gotScript != c.wantScript || gotSchedule != c.wantSchedule {
 			t.Errorf("%s: joined to script %q and schedule %q; want %q and %q", c.what, gotScript, gotSchedule, c.wantScript, c.wantSchedule)
 		}
+		// The composer writes the job's owner (1400, question 34).
+		wantOwner := map[string]string{gFinAdmin: "ag:FIN", gTaxAdmin: "ag:TAX"}[c.who]
+		var owner string
+		_ = pool.QueryRow(`SELECT COALESCE(owner_agency, '<null>') FROM jobs WHERE name = ? AND source = 'cronomicon'`, c.job).Scan(&owner)
+		if owner != wantOwner {
+			t.Errorf("%s: the job is owned by %q, want %q", c.what, owner, wantOwner)
+		}
 	}
 	// Names only ANOTHER agency's repository has do not resolve, nor (§0a,
 	// IN-8; until then they did) names only Global's has.

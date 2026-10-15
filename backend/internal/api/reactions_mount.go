@@ -742,15 +742,12 @@ func (s *Server) upstreamExistsFor(r *http.Request, owner, upstream reactionRef)
 	return err == nil, err
 }
 
-// inAppJobAgencySQL is the agency of the row `jobs`: its scope's, when one
-// agency alone owns it, and Global's otherwise (no scope, or one several
-// share), as its runs are.
-const inAppJobAgencySQL = `COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-	FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id WHERE sc.name = jobs.scope), '` + agencyid.Global + `')`
+// inAppJobAgencySQL is the agency of the row `jobs` (agencyid.JobSQL; an
+// in-app job's owner since 1400).
+var inAppJobAgencySQL = `COALESCE(` + agencyid.JobSQL("jobs") + `, '` + agencyid.Global + `')`
 
 // reactionOwnerAgency is the agency of a reaction's owner: a Git owner's
-// repository's, a workflow built in the app's owner, a job built in the app's
-// scope's (Global's for none).
+// repository's, a definition built in the app's owner.
 func (s *Server) reactionOwnerAgency(ctx context.Context, owner reactionRef) string {
 	agency := agencyid.Global
 	switch {

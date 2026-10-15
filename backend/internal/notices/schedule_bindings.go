@@ -38,6 +38,11 @@ import (
 // workflow's is Global's.
 const KindScheduleBindingAmbiguous = "schedule_binding_ambiguous"
 
+// ownerDefinitionSQL is the agency of the definition a row `ds` of
+// definition_schedules belongs to (agencyid.DefinitionOf: a job's since 1400
+// its owner's, not its scope's).
+var ownerDefinitionSQL = agencyid.DefinitionOf("ds.owner_uid", "ds.owner_kind")
+
 func checkScheduleBindingAmbiguous(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT ds.owner_kind,
@@ -45,18 +50,8 @@ func checkScheduleBindingAmbiguous(ctx context.Context, database *sql.DB) error 
 		       ds.owner_name, ds.owner_source, ds.name, ds.source_ref, ds.cron,
 		       (SELECT COUNT(*) FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL
 		                 AND (s.source = 'cronomicon' OR COALESCE(s.repo_id, 'global') = 'global'
-		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
-		                           (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                              FROM jobs j
-		                              JOIN scopes sc         ON sc.name = j.scope
-		                              JOIN scope_agencies sa ON sa.scope_id = sc.id
-		                             WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
-		                           (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid))))),
-		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                   FROM jobs j
-		                   JOIN scopes sc         ON sc.name = j.scope
-		                   JOIN scope_agencies sa ON sa.scope_id = sc.id
-		                  WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid), ?)
+		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = `+ownerDefinitionSQL+`))),
+		       COALESCE(CASE WHEN ds.owner_kind = 'job' THEN `+ownerDefinitionSQL+` END, ?)
 		  FROM definition_schedules ds
 		 -- tied to no schedule: no uid, or the uid of a schedule that has gone
 		 -- (a Git schedule removed from its repository leaves the in-app
@@ -73,13 +68,7 @@ func checkScheduleBindingAmbiguous(ctx context.Context, database *sql.DB) error 
 		   -- that such a schedule exists.
 		   AND EXISTS (SELECT 1 FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL
 		                 AND (s.source = 'cronomicon' OR COALESCE(s.repo_id, 'global') = 'global'
-		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
-		                           (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                              FROM jobs j
-		                              JOIN scopes sc         ON sc.name = j.scope
-		                              JOIN scope_agencies sa ON sa.scope_id = sc.id
-		                             WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
-		                           (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid)))))
+		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = `+ownerDefinitionSQL+`)))
 		   -- the owner is live: a binned definition fires nothing. An entry with
 		   -- no owner uid (what is left under a name two definitions share) is
 		   -- matched to its owner the way the scheduler matches it, by the name.
@@ -159,12 +148,7 @@ const KindScheduleGone = "schedule_gone"
 func checkScheduleGone(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT ds.owner_kind, ds.owner_uid, ds.owner_name, ds.name, ds.source_ref, ds.cron,
-		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                   FROM jobs j
-		                   JOIN scopes sc         ON sc.name = j.scope
-		                   JOIN scope_agencies sa ON sa.scope_id = sc.id
-		                  WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
-		                (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid), ?)
+		       COALESCE(`+ownerDefinitionSQL+`, ?)
 		  FROM definition_schedules ds
 		 WHERE ds.owner_source = 'cronomicon'
 		   AND COALESCE(ds.owner_uid, '') <> ''
@@ -173,13 +157,7 @@ func checkScheduleGone(ctx context.Context, database *sql.DB) error {
 		   AND NOT EXISTS (SELECT 1 FROM schedules s0 WHERE s0.uid = ds.schedule_uid)
 		   AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.name = ds.source_ref AND s.deleted_at IS NULL
 		                     AND (s.source = 'cronomicon' OR COALESCE(s.repo_id, 'global') = 'global'
-		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
-		                           (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                              FROM jobs j
-		                              JOIN scopes sc         ON sc.name = j.scope
-		                              JOIN scope_agencies sa ON sa.scope_id = sc.id
-		                             WHERE ds.owner_kind = 'job' AND j.uid = ds.owner_uid),
-		                           (SELECT w.owner_agency FROM workflows w WHERE ds.owner_kind = 'workflow' AND w.uid = ds.owner_uid)))))
+		                    OR s.repo_id = (SELECT g.id FROM git_repos g WHERE g.agency_id = `+ownerDefinitionSQL+`)))
 		   AND (   (ds.owner_kind = 'job'      AND EXISTS (SELECT 1 FROM jobs j      WHERE j.uid = ds.owner_uid AND j.deleted_at IS NULL))
 		        OR (ds.owner_kind = 'workflow' AND EXISTS (SELECT 1 FROM workflows w WHERE w.uid = ds.owner_uid AND w.deleted_at IS NULL)))
 		 ORDER BY ds.owner_kind, ds.owner_name, ds.name`, agencyid.Global)

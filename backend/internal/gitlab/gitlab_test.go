@@ -77,8 +77,20 @@ CREATE TABLE IF NOT EXISTS jobs (
     become_password_secret TEXT,
     script_uid         TEXT, -- which script script_ref means (migration 1290)
     repo_id            TEXT, -- the repository a Git job comes from (migration 1310)
+    owner_agency       TEXT, -- whose a job built in the app is (migration 1400)
     PRIMARY KEY (source, name)
 );
+-- Mirrors migration 1400's jobs_born_owned: a row written with no owner is
+-- born with what its agency was worked out to be before the column.
+CREATE TRIGGER IF NOT EXISTS jobs_born_owned AFTER INSERT ON jobs WHEN NEW.owner_agency IS NULL
+BEGIN
+    UPDATE jobs SET owner_agency = CASE WHEN NEW.source = 'git'
+        THEN COALESCE((SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(NEW.repo_id, 'global')), 'global')
+        ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
+                         FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
+                        WHERE sc.name = NEW.scope), 'global') END
+     WHERE rowid = NEW.rowid;
+END;
 
 -- SB: the job upsert clears a "leftover runner_tag" notice once the line is
 -- gone from the YAML, so this minimal schema needs the table it clears. Mirrors
@@ -283,8 +295,8 @@ CREATE TABLE IF NOT EXISTS git_repos (
 );
 INSERT OR IGNORE INTO git_repos (id, agency_id) VALUES ('global', 'global');
 
--- Whose an in-app job is: its scope's one agency (jobsAgencySQL), Global's
--- repository's lookups included since §0a. The columns are the ones
+-- Whose an in-app job is born: its scope's one agency (jobs_born_owned, above),
+-- Global's repository's lookups included since §0a. The columns are the ones
 -- scripts_test.go creates the table with.
 CREATE TABLE IF NOT EXISTS scopes (
     id TEXT PRIMARY KEY,

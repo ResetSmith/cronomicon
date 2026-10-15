@@ -18,13 +18,14 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 )
 
-// An in-app job follows its agency's repository's SCHEDULE only while it IS
-// that agency's. Its scope given to another agency, the repository's
-// committers no longer change the timing of a job that now runs on another
-// agency's hosts: its entry keeps the timing it has.
-//
-// As Phase R4 was first built the refresh asked only "is this in-app job
-// joined to the schedule", and a scope move left the join in place.
+// An in-app job follows its agency's repository's SCHEDULE while it is that
+// agency's. Since 1400 (§0a, question 34) an in-app job has an owner of its
+// own, and its scope given to another agency does not make the job that
+// agency's: it is still its owner's, and goes on following its owner's
+// repository's schedule. (Until then its agency was its scope's, and the
+// scope's move held its timing back, from the review of Phase R4; a move is a
+// global administrator's repair since §0a, IN-7, and the job's runs on the
+// other agency's scope are refused in any case, runref.RepoScopeMismatch.)
 //
 // Its copy of the SCRIPT is another matter, and follows whatever agency its
 // scope is in (the owner's decision of 2026-10-13; present defect 46). From
@@ -104,9 +105,12 @@ func TestGR4_AnInAppJobsTimingStopsFollowingARepositoryItsAgencyNoLongerOwnsAndI
 	if got, want := state("stays"), hash()+" 0 4 4 4 *"; got != want {
 		t.Errorf("the job that is still the agency's is %q after the edit, want it following: %q", got, want)
 	}
-	// The timing is held back; the script's copy is not.
-	if got, want := state("moves"), hash()+" 0 3 1 1 *"; got != want {
-		t.Errorf("the job whose scope is another agency's now is %q after the repository's edit; want its script's new hash and its OLD timing, %q", got, want)
+	// The job is still its owner's: its timing follows, as its script's copy does.
+	if got, want := state("moves"), hash()+" 0 4 4 4 *"; got != want {
+		t.Errorf("the job whose scope is another agency's now is %q after the repository's edit; want it still its owner's, following: %q", got, want)
+	}
+	if got := grString(t, a.db, `SELECT owner_agency FROM jobs WHERE uid = 'j-moves'`); got != "ag-b" {
+		t.Errorf("the job whose scope moved is %q's, want still ag-b's", got)
 	}
 	for _, j := range []string{"stays", "moves"} {
 		if got, want := copyOf(j), scriptsRecord(); got != want {

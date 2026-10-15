@@ -29,9 +29,7 @@ const KindJobScriptGone = "job_script_gone"
 func checkJobScriptGone(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		SELECT j.uid, j.name, COALESCE(j.scope, ''), COALESCE(j.script_ref, ''),
-		       COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                   FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                  WHERE sc.name = j.scope), ?)
+		       COALESCE(NULLIF(j.owner_agency, ''), ?) -- its owner (1400)
 		  FROM jobs j
 		 WHERE j.source <> 'git'
 		   AND j.deleted_at IS NULL

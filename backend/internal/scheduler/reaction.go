@@ -257,10 +257,9 @@ func (s *Scheduler) collectEvents(ctx context.Context, since time.Time) []srcEve
 // reactionHomeSQL is the repository a reaction's names are looked up in
 // (GR-16), as an expression over the row `reactions`: the repository of a Git
 // owner (Global's for a row with none); for an owner built in the app, the
-// repository of its agency (a job's scope's one agency, Global's for a job
-// with no scope or one several share; a workflow's owner). NULL for an agency
-// that has no repository, whose reactions find no Git name (§0a, IN-8: until
-// then Global's stood in for it).
+// repository of its agency (its owner: a job's since 1400, a workflow's since
+// 1360). NULL for an agency that has no repository, whose reactions find no
+// Git name (§0a, IN-8: until then Global's stood in for it).
 const reactionHomeSQL = `(
 	CASE WHEN reactions.owner_source = 'git' THEN
 	          CASE reactions.owner_kind
@@ -269,11 +268,7 @@ const reactionHomeSQL = `(
 	          END
 	     ELSE (SELECT g.id FROM git_repos g WHERE g.agency_id = COALESCE(
 	          CASE reactions.owner_kind
-	            WHEN 'job' THEN (SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-	                               FROM jobs j
-	                               JOIN scopes sc         ON sc.name = j.scope
-	                               JOIN scope_agencies sa ON sa.scope_id = sc.id
-	                              WHERE j.uid = reactions.owner_uid)
+	            WHEN 'job' THEN (SELECT owner_agency FROM jobs      WHERE uid = reactions.owner_uid)
 	            ELSE            (SELECT owner_agency FROM workflows WHERE uid = reactions.owner_uid)
 	          END, 'global'))
 	END)`

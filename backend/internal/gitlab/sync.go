@@ -3990,9 +3990,6 @@ func (s *Service) inAppOfThisAgency(kind string) (string, []any) {
 	return ` AND COALESCE(` + jobsAgencySQL + `, '` + agencyid.Global + `') = ?`, []any{s.agency()}
 }
 
-// jobsAgencySQL is the one agency of an in-app job, as a scalar subquery over
-// the row `jobs`: its scope's agency when the scope has exactly one, and NULL
-// otherwise (no scope, or a scope from before 2.3.0 that several share).
-const jobsAgencySQL = `(SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-                         FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-                        WHERE sc.name = jobs.scope)`
+// jobsAgencySQL is the agency of the row `jobs` (agencyid.JobSQL; an in-app
+// job's owner since 1400).
+var jobsAgencySQL = agencyid.JobSQL("jobs")

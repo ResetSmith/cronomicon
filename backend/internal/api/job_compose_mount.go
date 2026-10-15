@@ -738,7 +738,10 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 	}
 
 	// Resolve schedule entries: inline + referenced first-class schedules (A10a).
-	entries, verr := s.resolveComposeSchedules(r.Context(), in, s.scopeAgency(r.Context(), in.scopeOf()))
+	// The job's agency, written to the row (1400): its scope's, as it was worked
+	// out before there was a column for it.
+	owner := s.scopeAgency(r.Context(), in.scopeOf())
+	entries, verr := s.resolveComposeSchedules(r.Context(), in, owner)
 	if verr != "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", verr)
 		return
@@ -818,9 +821,10 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		                 command, script, script_path, executor, script_ref, content_hash,
 		                 created_by, created_at, last_modified_by, last_modified_at, env_json, prompts_json,
 		                 requires_json, prompt_enforcement, ssh_user, ssh_credential, env_passthrough,
-		                 become_password_secret, uid, script_uid, project_root)
-		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		                 become_password_secret, uid, script_uid, project_root, owner_agency)
+		VALUES(?, 'cronomicon', ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(uid) DO UPDATE SET
+			owner_agency=excluded.owner_agency,
 			run_type=excluded.run_type, description=excluded.description, scope=excluded.scope,
 			target_host=excluded.target_host, schedule=excluded.schedule, tags=excluded.tags,
 			enabled=excluded.enabled, timeout_seconds=excluded.timeout_seconds, retries=excluded.retries,
@@ -851,7 +855,7 @@ func (s *Server) writeComposedJob(w http.ResponseWriter, r *http.Request, in job
 		// fresh uid, an edit collides on the existing one and lands in the DO
 		// UPDATE arm. (source, name) stopped being unique for cronomicon rows, so
 		// it can no longer be what an edit converges on.
-		uid, nullStrIf(sc.uid), nullStrIf(sc.projectRoot))
+		uid, nullStrIf(sc.uid), nullStrIf(sc.projectRoot), owner)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)
 		return

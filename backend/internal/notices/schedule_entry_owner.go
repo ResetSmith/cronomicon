@@ -43,12 +43,7 @@ const KindScheduleEntryNoOwner = "schedule_entry_no_owner"
 func checkScheduleEntryNoOwner(ctx context.Context, database *sql.DB) error {
 	rows, err := database.QueryContext(ctx, `
 		WITH holder(kind, source, name, agency) AS (
-		    SELECT 'job', j.source, j.name,
-		           CASE WHEN COALESCE(j.scope, '') = '' THEN ?1
-		                ELSE COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-		                                 FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-		                                WHERE sc.name = j.scope), ?1)
-		           END
+		    SELECT 'job', j.source, j.name, COALESCE(`+agencyid.JobSQL("j")+`, ?1)
 		      FROM jobs j
 		  UNION ALL
 		    SELECT 'workflow', w.source, w.name, COALESCE(NULLIF(w.owner_agency, ''), ?1)

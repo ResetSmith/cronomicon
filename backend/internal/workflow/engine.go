@@ -1273,12 +1273,9 @@ func (e *Engine) agencyOfHome(ctx context.Context, home string) string {
 	return agency
 }
 
-// jobOfAgencySQL is "this row of `jobs` is the agency ?'s": its scope belongs
-// to that agency alone, or, for Global, it has no scope that one agency owns
-// (a job with no scope is Global's, as its runs are).
-const jobOfAgencySQL = ` AND COALESCE((SELECT CASE WHEN COUNT(*) = 1 THEN MIN(sa.agency_id) END
-	                          FROM scope_agencies sa JOIN scopes sc ON sc.id = sa.scope_id
-	                         WHERE sc.name = jobs.scope), '` + agencyid.Global + `') = ?`
+// jobOfAgencySQL is "this row of `jobs` is the agency ?'s" (agencyid.JobSQL;
+// an in-app job's owner since 1400).
+var jobOfAgencySQL = ` AND ` + agencyid.JobSQL("jobs") + ` = ?`
 
 // lookupJobDefs resolves each step's referenced job def. A step pinning a uid
 // (R2F-2) resolves by identity alone; otherwise the A11 step-source precedence
