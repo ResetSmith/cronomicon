@@ -171,8 +171,11 @@ function CatalogTab() {
     !id || id === GLOBAL_AGENCY ? "Global" : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
   const whyFor = (sched: Schedule): string => {
     const owner = sched.ownerAgency || GLOBAL_AGENCY;
-    // Unknown access (loading, or unreadable) is not second-guessed: the server decides.
-    if (composeAdmin || access == null || composesOn.has(owner)) return "";
+    // 2.4.2 (question 55): the row says what the caller may do; what follows is
+    // for a server that does not say it.
+    const flagged = sched.canEdit;
+    if (flagged === true || (flagged === undefined && (composeAdmin || access == null || composesOn.has(owner)))) return "";
+    if (sched.source !== "cronomicon") return "";
     return owner === GLOBAL_AGENCY
       ? "This schedule is Global's — only a global composer (Compose on every agency) can change it."
       : `This schedule belongs to ${agencyName(owner)} — only that agency's composers can change it.`;

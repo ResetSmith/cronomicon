@@ -165,7 +165,8 @@ export function PublishBuilder() {
     void fetchCapabilities().then((caps) => setGlobalPublisher(!!caps.publishScheduleGlobal));
   }, []);
   const mine = new Set(agenciesFor(access ?? null, "publishSchedule").map((a) => a.id));
-  const publishable = repos.filter((r) => globalPublisher || (r.agencyId !== "global" && mine.has(r.agencyId)));
+  // 2.4.2 (question 55): the row says canPublish; the derivation is for a server that does not.
+  const publishable = repos.filter((r) => r.canPublish ?? (globalPublisher || (r.agencyId !== "global" && mine.has(r.agencyId))));
   const [repoRaw, setRepoRaw] = useState("");
   // An existing Git job is edited in the repository it came from, and nowhere
   // else: the publish route writes wherever it is pointed, so another

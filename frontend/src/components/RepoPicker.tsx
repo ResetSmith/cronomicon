@@ -20,6 +20,9 @@ export interface RepoRow {
   agencyName?: string;
   repoUrl?: string;
   writeBranch?: string;
+  /** 2.4.2 (question 55): what the caller's sync and publish would answer. */
+  canSync?: boolean;
+  canPublish?: boolean;
 }
 
 /** The label a repository goes by on the screens: its agency's name. */
@@ -39,12 +42,14 @@ export function useRepoConnections(): { repos: RepoRow[]; loading: boolean } {
 }
 
 /**
- * useRepoAdmin answers whether the caller administers a repository: a global
- * administrator every one; anyone else, those of the agencies they hold
- * configureApp on (GR-9). Global's is a global administrator's.
+ * useRepoAdmin answers whether the caller administers a repository (may sync
+ * it): what the server says on the repository's row (canSync, 2.4.2, question
+ * 55); for a server that does not say, a global administrator every one and
+ * anyone else those of the agencies they hold configureApp on (GR-9).
  */
 export function useRepoAdmin(): (agencyId: string | undefined) => boolean {
   const access = useMyAccess();
+  const { repos } = useRepos();
   const [global, setGlobal] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +61,11 @@ export function useRepoAdmin(): (agencyId: string | undefined) => boolean {
     };
   }, []);
   const mine = new Set(agenciesFor(access ?? null, "configureApp").map((a) => a.id));
-  return (agencyId) => global || (!!agencyId && agencyId !== "global" && mine.has(agencyId));
+  return (agencyId) => {
+    const flagged = repos.find((r) => r.agencyId === agencyId)?.canSync;
+    if (flagged !== undefined) return flagged;
+    return global || (!!agencyId && agencyId !== "global" && mine.has(agencyId));
+  };
 }
 
 /**

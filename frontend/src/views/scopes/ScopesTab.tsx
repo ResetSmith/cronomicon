@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api } from "../../api/client";
-import { GLOBAL_ADMIN_SYNC_ONLY, globalOnly } from "../../api/globalAdmin";
+import { RepoSelect, repoLabel, useRepoAdmin, useRepos } from "../../components/RepoPicker";
 import { GLOBAL_AGENCY, type AgencyRef } from "../../api/access";
 import { REPAIR_HINT, RepairDialog, type RepairBody } from "../../components/RepairDialog";
 import { CloneScopeDialog } from "./CloneScope";
@@ -184,7 +184,13 @@ export function ScopesTab({
     refetch();
   };
   const cw = useColumnWidths("envvars-scopes");
-  const globalWhy = globalOnly(globalAdmin);
+  // A resync is of one repository (2.4.2, question 55 and 53): the ones the
+  // caller may sync, with a choice when there are several.
+  const { repos } = useRepos();
+  const maySync = useRepoAdmin();
+  const syncable = repos.filter((r) => maySync(r.agencyId));
+  const [resyncRepoRaw, setResyncRepo] = useState("");
+  const resyncRepo = syncable.find((r) => r.id === resyncRepoRaw) ?? syncable[0];
 
   // Operator-owned scope tags (migration 1160) — optimistic edits via the
   // dedicated PUT /scope-tags/{scopeId}; the override map resets on every list
@@ -198,8 +204,9 @@ export function ScopesTab({
   );
 
   const resync = async () => {
+    if (!resyncRepo) return;
     setResyncing(true);
-    const { data, error: e } = await api.POST("/scopes/resync", { params: { header: csrfHeader } });
+    const { data, error: e } = await api.POST("/scopes/resync", { params: { header: csrfHeader, query: { repo: resyncRepo.id } } });
     setResyncing(false);
     if (e) {
       setNotice({ kind: "error", text: `Re-sync failed: ${errMsg(e)}` });
@@ -209,8 +216,8 @@ export function ScopesTab({
     setNotice({
       kind: "info",
       text: r
-        ? `Re-synced ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
-        : "Re-synced inventories from GitLab",
+        ? `Re-synced ${resyncRepo ? repoLabel(resyncRepo) + " repository" : "the repository"}: ${r.scopesSynced ?? 0} scopes — ${r.deltas?.length ?? 0} scope changes — ${r.errors?.length ?? 0} pragma errors`
+        : "Re-synced inventories from the repository",
     });
     refetch();
   };
@@ -417,8 +424,15 @@ export function ScopesTab({
         <ColumnsMenu cols={cols} cw={cw} />
         {canEdit && (
           <>
-            <Btn onClick={resync} disabled={resyncing || !!globalWhy} title={globalWhy ? GLOBAL_ADMIN_SYNC_ONLY : undefined}>
-              {resyncing ? "Re-syncing…" : "↻ Re-sync from GitLab"}
+            {syncable.length > 1 && (
+              <RepoSelect repos={syncable} value={resyncRepo?.id ?? ""} onChange={setResyncRepo} label="Re-sync" />
+            )}
+            <Btn
+              onClick={resync}
+              disabled={resyncing || !resyncRepo}
+              title={resyncRepo ? undefined : "You may not sync any repository: its agency's configureApp is needed"}
+            >
+              {resyncing ? "Re-syncing…" : syncable.length === 1 ? `↻ Re-sync from ${repoLabel(syncable[0])} repository` : "↻ Re-sync from the repository"}
             </Btn>
             <Btn primary onClick={() => setAdding(true)}>
               + Add Scope

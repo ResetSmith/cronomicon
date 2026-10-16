@@ -101,9 +101,10 @@ export function CalendarsTab() {
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
   const agencyName = (id?: string | null) =>
     !id || id === GLOBAL_AGENCY ? "Global" : (rows<{ id: string; name: string }>(catalogQ.data).find((a) => a.id === id)?.name ?? id);
+  // 2.4.2 (question 55): a row says canEdit; this is for a server that does not.
   const mayWrite = (owner?: string | null) => composeAdmin || access == null || composesOn.has(owner || GLOBAL_AGENCY);
   // The calendar open in the editor: its name and owner, or "" for a new one.
-  const [editing, setEditing] = useState<{ name: string; owner?: string } | null>(null);
+  const [editing, setEditing] = useState<{ name: string; owner?: string; canEdit?: boolean } | null>(null);
   const { calendars, expiryWarningDays, loading, error } = useCalendars(refresh);
 
   useEffect(() => {
@@ -121,7 +122,7 @@ export function CalendarsTab() {
         name={editing.name}
         owner={editing.owner}
         ownerName={agencyName(editing.owner)}
-        mayWrite={editing.name === "" ? canCompose : mayWrite(editing.owner)}
+        mayWrite={editing.name === "" ? canCompose : (editing.canEdit ?? mayWrite(editing.owner))}
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
@@ -226,8 +227,8 @@ export function CalendarsTab() {
                         : `${usedBy.length} ${usedBy.length === 1 ? "entry" : "entries"}`}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <Btn small onClick={() => setEditing({ name: cal.name ?? "", owner: cal.ownerAgency ?? undefined })}>
-                        {mayWrite(cal.ownerAgency) ? "Edit" : "View"}
+                      <Btn small onClick={() => setEditing({ name: cal.name ?? "", owner: cal.ownerAgency ?? undefined, canEdit: cal.canEdit })}>
+                        {(cal.canEdit ?? mayWrite(cal.ownerAgency)) ? "Edit" : "View"}
                       </Btn>
                     </td>
                   </tr>

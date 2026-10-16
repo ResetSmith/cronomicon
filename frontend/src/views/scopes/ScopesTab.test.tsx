@@ -19,6 +19,9 @@ let bindingNotices: unknown[] = [];
 // default here is the global administrator every pre-GC test was written as.
 let caps: Record<string, boolean> = {};
 let agencies: { id: string; name: string }[] = [];
+// 2.4.2 (question 53) — the repositories the caller may read, each saying
+// whether it may sync it; the scope resync is of one of them.
+let repoNames: unknown[] = [{ id: "global", agencyId: "global", agencyName: "Global", canSync: true }];
 
 let ACCESS: unknown = null;
 vi.mock("../../api/access", async (importOriginal) => {
@@ -40,7 +43,9 @@ vi.mock("../../api/client", async (importOriginal) => {
           ? { data: agencies }
           : path === "/scope-binding-notices"
             ? { data: bindingNotices }
-            : { data: { editable: false, hasInventory: false } },
+            : path === "/git-repo-names"
+              ? { data: { items: repoNames } }
+              : { data: { editable: false, hasInventory: false } },
       ),
       DELETE: vi.fn(async (path: string, opts: { params?: unknown }) => {
         deletes.push({ path, params: opts.params });
@@ -348,15 +353,21 @@ describe("ScopesTab — runner bindings (SB)", () => {
 // stay and are disabled with the reason; they are not hidden, because the caller
 // holds the permission and the precondition is one they can read about.
 describe("ScopesTab — global-administrator controls (GC)", () => {
-  const WHY = /Only a global administrator \(a role on every agency\) can/;
 
-  it("disables Re-sync for an administrator of one agency, with the reason, and leaves the per-scope writes", async () => {
+  // 2.4.2 (question 53): a resync is of one repository, and an administrator
+  // of one agency resyncs their own (until then it was Global's only, a global
+  // administrator's, and the button was disabled for them).
+  it("offers an administrator of one agency the re-sync of their own repository, and leaves the per-scope writes", async () => {
+    repoNames = [
+      { id: "global", agencyId: "global", agencyName: "Global", canSync: false },
+      { id: "repo-fin", agencyId: "ag-fin", agencyName: "Finance", canSync: true },
+    ];
     const { container } = renderTab([LOCAL, GIT], true, false);
     const q = within(container);
 
-    const resync = q.getByRole("button", { name: /Re-sync from GitLab/ }) as HTMLButtonElement;
-    expect(resync.disabled).toBe(true);
-    expect(resync.title).toMatch(WHY);
+    const resync = (await waitFor(() => q.getByRole("button", { name: /Re-sync from Finance's repository/ }))) as HTMLButtonElement;
+    expect(resync.disabled).toBe(false);
+    repoNames = [{ id: "global", agencyId: "global", agencyName: "Global", canSync: true }];
 
     // The per-scope writes are NOT global: they are judged against the scope's
     // agency by the server, and this view does not guess at that — they stay.
@@ -442,7 +453,7 @@ describe("ScopesTab — global-administrator controls (GC)", () => {
   it("leaves both enabled for a global administrator", async () => {
     const { container } = renderTab([LOCAL, GIT], true, true);
     const q = within(container);
-    const resync = q.getByRole("button", { name: /Re-sync from GitLab/ }) as HTMLButtonElement;
+    const resync = (await waitFor(() => q.getByRole("button", { name: /Re-sync from Global repository/ }))) as HTMLButtonElement;
     expect(resync.disabled).toBe(false);
     expect(resync.title).toBe("");
 
