@@ -80,10 +80,10 @@ afterEach(cleanup);
 
 // `globalAdmin` defaults to canEdit: the pre-GC tests mean "an administrator" as
 // one fact. The GC block below passes the two apart.
-const openAgency = async (canEdit = true, globalAdmin = canEdit, envGlobal = globalAdmin) => {
+const openAgency = async (canEdit = true, globalAdmin = canEdit) => {
   render(
     <MemoryRouter>
-      <AgenciesTab canEdit={canEdit} globalAdmin={globalAdmin} envGlobal={envGlobal} />
+      <AgenciesTab canEdit={canEdit} globalAdmin={globalAdmin} />
     </MemoryRouter>,
   );
   await waitFor(() => expect(screen.getByText("Tax")).toBeTruthy());
@@ -282,7 +282,7 @@ describe("agency catalog — global-administrator controls (GC)", () => {
   // the kind. For anyone else it is disabled with the reason.
   it("disables every add for an administrator of one agency, with the reason", async () => {
     withScopes();
-    await openAgency(true, false, false);
+    await openAgency(true, false);
     for (const label of [/Add a scope to this agency/i, /Add a secret to this agency/i]) {
       const add = screen.getByLabelText(label) as HTMLSelectElement;
       expect(add.disabled).toBe(true);
@@ -297,7 +297,7 @@ describe("agency catalog — global-administrator controls (GC)", () => {
   it("takes the configureApp global flag for every kind: a manageEnvVars one is not enough", async () => {
     withScopes();
     // A global administrator for manageEnvVars who is not one for configureApp.
-    await openAgency(true, false, true);
+    await openAgency(true, false);
     expect((screen.getByLabelText(/Add a scope to this agency/i) as HTMLSelectElement).disabled).toBe(true);
     expect((screen.getByLabelText(/Add a secret to this agency/i) as HTMLSelectElement).disabled).toBe(true);
   });

@@ -72,8 +72,6 @@ export function AgenciesTab({
   canEdit: boolean;
   /** A global administrator for configureApp: the catalog, Vault paths, and a repair of what an agency holds. */
   globalAdmin: boolean;
-  /** Unused since 2.4.0: taking a secret or variable out of Global is a repair, a configureApp global administrator's. */
-  envGlobal?: boolean;
 }) {
   const globalWhy = globalOnly(globalAdmin);
   const rowWhy = (a: AgencyRow, flag: boolean | undefined): string =>

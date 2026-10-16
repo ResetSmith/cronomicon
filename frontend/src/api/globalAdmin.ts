@@ -30,9 +30,6 @@ export const GLOBAL_ADMIN_ONLY = globalAdminOnly();
 /** For a surface whose READ is refused too (the GitLab and Vault connections). */
 export const GLOBAL_ADMIN_VIEW_ONLY = globalAdminOnly("view or change this");
 
-/** POST /git/sync and POST /scopes/resync — they re-read every agency's definitions. */
-export const GLOBAL_ADMIN_SYNC_ONLY = globalAdminOnly("start a sync from GitLab");
-
 /** Reusable schedules, calendars, reactions and the recycle bin (`composeAdmin`). */
 export const COMPOSE_ADMIN_ONLY =
   "Reusable schedules, calendars, reactions and the recycle bin are shared by every agency — only a global administrator (a role on every agency) can change them.";

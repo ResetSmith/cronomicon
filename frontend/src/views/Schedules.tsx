@@ -163,7 +163,6 @@ function CatalogTab() {
   // and every write was a global composer's (GC, 2.2.2).
   const [canCompose, setCanCompose] = useState(false);
   const [composeAdmin, setComposeAdmin] = useState(false);
-  const authorWhy = "";
   const access = useMyAccess();
   const composesOn = new Set(agenciesFor(access ?? null, "compose").map((a) => a.id));
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
@@ -381,14 +380,11 @@ function CatalogTab() {
         <ColumnsMenu cols={cols} cw={cw} />
         {/* A disabled button inside a live <Link> would still navigate, so the
             link is only rendered when the click can succeed. */}
-        {canCompose &&
-          (authorWhy ? (
-            <Btn primary disabled title={authorWhy} style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
-          ) : (
-            <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
-              <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
-            </Link>
-          ))}
+        {canCompose && (
+          <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
+            <Btn primary style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ New schedule</Btn>
+          </Link>
+        )}
       </div>
 
       {loading && <div style={{ padding: 16 }}><SkeletonRows rows={5} /></div>}
@@ -402,13 +398,9 @@ function CatalogTab() {
           <div>No schedules yet. Schedules are synced from the schedules/ directory of the definitions repo, or authored in the Schedule Builder.</div>
           {canCompose && (
             <div style={{ marginTop: 12 }}>
-              {authorWhy ? (
-                <Btn small disabled title={authorWhy}>New schedule</Btn>
-              ) : (
-                <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
-                  <Btn small>New schedule</Btn>
-                </Link>
-              )}
+              <Link to="/schedule-builder" style={{ textDecoration: "none" }}>
+                <Btn small>New schedule</Btn>
+              </Link>
             </div>
           )}
         </div>

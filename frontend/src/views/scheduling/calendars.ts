@@ -45,8 +45,9 @@ export function useCalendars(refresh = 0): CalendarsList {
 // read answered 409 ambiguous_calendar or another agency's days.
 export const calendarDaysKey = (name: string, owner?: string | null) => (owner ? `${owner}/${name}` : name);
 
-/** A calendar to read: its name, or its name and owning agency. */
-export type CalendarRef = string | { name: string; owner?: string | null };
+/** A calendar to read: its name and, when known, its owning agency. (A bare
+ *  name was accepted too until 2.4.2; no caller passed one.) */
+export type CalendarRef = { name: string; owner?: string | null };
 
 export function useCalendarDays(refs: CalendarRef[]): { days: DaysByCalendar; loading: boolean } {
   const [days, setDays] = useState<DaysByCalendar>({});
@@ -56,7 +57,7 @@ export function useCalendarDays(refs: CalendarRef[]): { days: DaysByCalendar; lo
   const want = [
     ...new Set(
       refs
-        .map((r) => (typeof r === "string" ? r : r.name ? calendarDaysKey(r.name, r.owner) : ""))
+        .map((r) => (r.name ? calendarDaysKey(r.name, r.owner) : ""))
         .filter(Boolean),
     ),
   ]

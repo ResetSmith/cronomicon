@@ -95,7 +95,6 @@ export function CalendarsTab() {
   // and every write was a global composer's (GC, 2.2.2).
   const [canCompose, setCanCompose] = useState(false);
   const [composeAdmin, setComposeAdmin] = useState(false);
-  const authorWhy = "";
   const access = useMyAccess();
   const composesOn = new Set(agenciesFor(access ?? null, "compose").map((a) => a.id));
   const catalogQ = useGet<unknown>(() => api.GET("/agencies"), []);
@@ -141,7 +140,7 @@ export function CalendarsTab() {
           <DocLink href={DOC_LINKS.calendars}>How the veto is applied</DocLink>
         </div>
         {canCompose && (
-          <Btn primary onClick={() => setEditing({ name: "" })} disabled={!!authorWhy} title={authorWhy || undefined} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
+          <Btn primary onClick={() => setEditing({ name: "" })} style={{ padding: "8px 14px", fontSize: c.fontSm }}>
             + New calendar
           </Btn>
         )}
@@ -176,10 +175,7 @@ export function CalendarsTab() {
           </div>
           {canCompose && (
             <div style={{ marginTop: 14 }}>
-              <Btn small onClick={() => setEditing({ name: "" })} disabled={!!authorWhy} title={authorWhy || undefined}>New calendar</Btn>
-              {authorWhy && (
-                <div role="note" style={{ marginTop: 8, fontSize: c.fontSm, color: c.textMuted }}>{authorWhy}</div>
-              )}
+              <Btn small onClick={() => setEditing({ name: "" })}>New calendar</Btn>
             </div>
           )}
           {!canCompose && (

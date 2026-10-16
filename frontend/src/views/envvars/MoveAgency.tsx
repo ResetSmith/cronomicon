@@ -47,8 +47,6 @@ export function MoveAgency({
   ownerName?: string | null;
   /** The row's own canRepair (R8); without it, whether the caller is a global administrator. */
   canRepair?: boolean;
-  /** Unused since the move became a repair; kept so callers need not change. */
-  permission?: "manageEnvVars" | "configureApp";
   onMoved: (message: string) => void;
   onError: (message: string) => void;
 }) {
