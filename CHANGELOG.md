@@ -132,7 +132,7 @@ next fire of the same job, once.
 
 - A job written with no owner by hand still takes the agency of the one scope
   of its name (`jobs_born_owned`): taking that out broke 35 tests' fixtures,
-  and under per-agency names it is safe. Put to the owner.
+  and under per-agency names it is safe. Kept, by the owner's decision.
 - A scope repaired out of Global's repository into an agency still follows
   Global's inventory file (question 58): waiting for the owner. (Done in 2.4.3.)
 - The workflow editor does not yet pick a sub-workflow by identity from a list,
