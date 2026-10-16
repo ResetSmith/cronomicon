@@ -6,6 +6,8 @@ import { useTheme } from "../theme-context";
 import { useAuth } from "../auth";
 import { api, fetchCapabilities, fetchVersion, type BuildInfo } from "../api/client";
 import { UserMenu } from "./UserMenu";
+import { AgencySwitcher } from "./AgencySwitcher";
+import { useAgencyOptional } from "../agency";
 import { useSidebarCollapsed } from "../hooks";
 // ONE emblem asset, both themes (LG-Q2). The wordmark used to be baked into the
 // bitmap, which forced two assets — a white-lettered one for the dark rail and a
@@ -60,6 +62,8 @@ export const meta: Record<string, { label: string; subtitle: string; icon: React
   "/env-vars": { label: "Env Vars", subtitle: "Variables and secrets", icon: <IcKey /> },
   "/runners": { label: "Runners", subtitle: "Registered execution runners", icon: <IcServer /> },
   "/settings": { label: "Settings", subtitle: "Configuration and access", icon: <IcGear /> },
+  // Not in the sidebar: reached from the agency switcher (2.4.4).
+  "/overview": { label: "Operations overview", subtitle: "Every agency at a glance; open an item to work in its agency", icon: <IcGrid /> },
   // Not in the sidebar: reached from the top bar's Notices control (LR-85).
   "/notices": { label: "Notices", subtitle: "Conditions that need a person, for the agencies you administer", icon: <IcBell /> },
 };
@@ -83,6 +87,7 @@ export function Shell() {
   const { mode, toggle } = useTheme();
   const { pathname } = useLocation();
   const current = meta[pathname] ?? { label: "Cronomicon", subtitle: "", icon: null };
+  const ag = useAgencyOptional();
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
   const [build, setBuild] = useState<BuildInfo | null>(null);
   useEffect(() => {
@@ -125,6 +130,12 @@ export function Shell() {
         <div style={{ padding: collapsed ? "12px 6px 16px" : "10px 6px 16px" }}>
           <Wordmark collapsed={collapsed} />
         </div>
+        {/* 2.4.4 — the agency the person works in, and where they switch it. */}
+        {ag && (
+          <div style={{ padding: collapsed ? "0 8px 12px" : "0 10px 12px" }}>
+            <AgencySwitcher collapsed={collapsed} />
+          </div>
+        )}
         <nav style={{ display: "flex", flexDirection: "column", gap: 2, padding: collapsed ? "0 8px" : "0 10px" }}>
           {nav.map((n) => (
             <NavItem
@@ -202,11 +213,19 @@ export function Shell() {
                 same size and hierarchy fell entirely to colour. 24px at 600 —
                 Plex Sans, not the display face, which stays on the brand
                 surfaces (theme.ts `display`). */}
-            <div style={{ fontSize: c.fontTitle, fontWeight: 600, letterSpacing: -0.2, color: c.text, lineHeight: 1.15 }}>{current.label}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+              <div style={{ fontSize: c.fontTitle, fontWeight: 600, letterSpacing: -0.2, color: c.text, lineHeight: 1.15 }}>{current.label}</div>
+              {/* Which agency this page shows (2.4.4): every list is one agency's. */}
+              {ag && !ag.onOverview && (
+                <span data-testid="page-agency" style={{ fontSize: c.fontSm, color: c.textSec }}>
+                  in <strong style={{ color: c.text }}>{ag.agencyName}</strong>
+                </span>
+              )}
+            </div>
             {current.subtitle && <div style={{ fontSize: c.fontSm, color: c.textMuted, marginTop: 3 }}>{current.subtitle}</div>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <NoticesButton btnStyle={topBarBtn} pathname={pathname} />
+            <NoticesButton btnStyle={topBarBtn} pathname={pathname} agency={ag?.agency ?? ""} />
             <HelpMenu btnStyle={topBarBtn} />
             {/* EP-Q2 — "Reload page", not "Refresh". Behaviour is unchanged (a
                 hard reload), but the word is not: since EP-3 every expanded
@@ -237,7 +256,9 @@ export function Shell() {
             every view from the mutable `c` tokens WITHOUT remounting — so the active
             tab, search, pagination and expanded rows survive the toggle. */}
         <main style={{ flex: 1, overflow: "auto", padding: 28 }}>
-          <Outlet />
+          {/* Keyed by the agency (2.4.4): a switch remounts the page, so every
+              list it holds is read again for the agency now in use. */}
+          <Outlet key={ag ? (ag.onOverview ? "overview" : ag.agency) : ""} />
         </main>
       </div>
     </div>
@@ -347,7 +368,7 @@ const HELP_LINKS: { group: string; items: { href: string; label: string }[] }[] 
 // every navigation: the checks behind it run at most every thirty seconds on
 // the server, so asking again is cheap, and a notice put right on one page has
 // usually gone by the time the next one opens.
-export function NoticesButton({ btnStyle, pathname }: { btnStyle: CSSProperties; pathname: string }) {
+export function NoticesButton({ btnStyle, pathname, agency = "" }: { btnStyle: CSSProperties; pathname: string; agency?: string }) {
   const [relevant, setRelevant] = useState(false);
   const [count, setCount] = useState<number | null>(null);
   useEffect(() => {
@@ -366,7 +387,7 @@ export function NoticesButton({ btnStyle, pathname }: { btnStyle: CSSProperties;
     return () => {
       cancelled = true;
     };
-  }, [relevant, pathname]);
+  }, [relevant, pathname, agency]);
   if (!relevant) return null;
   const n = count ?? 0;
   return (

@@ -19,6 +19,7 @@ import { Settings } from "./views/Settings";
 import { Runners } from "./views/Runners";
 import { Notices } from "./views/Notices";
 import { TimezoneProvider } from "./timezone-context";
+import { AgencyProvider } from "./agency";
 import { useTheme } from "./theme-context";
 import { c } from "./theme";
 
@@ -45,6 +46,8 @@ export function App() {
 
   return (
     <TimezoneProvider>
+      {/* 2.4.4: one agency at a time; nothing below renders before it is known. */}
+      <AgencyProvider>
       <Routes>
       <Route element={<Shell />}>
         <Route index element={<Dashboard />} />
@@ -72,8 +75,11 @@ export function App() {
         <Route path="runners" element={<Runners />} />
         <Route path="settings" element={<Settings />} />
         <Route path="notices" element={<Notices />} />
+        {/* The Operations overview's page arrives with F3. */}
+        <Route path="overview" element={<div style={{ color: c.textSec }}>The Operations overview is not built yet.</div>} />
       </Route>
       </Routes>
+      </AgencyProvider>
     </TimezoneProvider>
   );
 }

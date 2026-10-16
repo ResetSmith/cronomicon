@@ -1,0 +1,225 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { AGENCY_REFRESH_EVENT, api, csrfHeader, errMsg, setRequestAgency } from "./api/client";
+import { useToast } from "./hooks";
+import { Toast } from "./components/ui";
+import { c } from "./theme";
+
+// The agency switcher (2.4.4; plan-2.4.4 §3, SW-1 to SW-19).
+//
+// A person works in ONE agency at a time: every list shows that agency's rows,
+// and what they create is that agency's. The agency lives in the address
+// (?agency=<id>), so a link carries it; a visit without one starts where
+// GET /me/context says. The API client sends it on every request
+// (X-Cronomicon-Agency, api/client.ts); the server narrows each list by it and
+// still enforces every grant, so this is a view, not a permission.
+//
+// The Operations overview (/overview) is a page, not an agency: on it the
+// switcher reads "Overview", and the lists use the working agency.
+
+export const OVERVIEW = "overview";
+export const AGENCY_PARAM = "agency";
+
+export type AgencyChoice = { id: string; name: string; kind: "overview" | "agency" };
+
+type MeContext = {
+  choices: AgencyChoice[];
+  storedDefault?: string | null;
+  effectiveDefault: string;
+  workingAgency: string;
+  canOverview: boolean;
+};
+
+type AgencyCtx = {
+  /** The agency the lists use (never "overview"). */
+  agency: string;
+  agencyName: string;
+  onOverview: boolean;
+  choices: AgencyChoice[];
+  canOverview: boolean;
+  /** The person's own default, as stored (null when none). */
+  storedDefault: string | null;
+  /** Where a visit with no agency in its address starts. */
+  effectiveDefault: string;
+  nameOf: (id: string) => string;
+  /** Switch to an agency, or to the overview. */
+  switchTo: (id: string, notice?: string) => void;
+  /** Store (or clear, with null) the person's own default. */
+  setDefault: (id: string | null) => Promise<string | null>;
+};
+
+const Ctx = createContext<AgencyCtx | null>(null);
+
+export function useAgency(): AgencyCtx {
+  const v = useContext(Ctx);
+  if (!v) throw new Error("useAgency outside AgencyProvider");
+  return v;
+}
+
+/** useAgencyOptional is useAgency for a component that may render outside the
+ * provider (a test, the login screen): null there. */
+export function useAgencyOptional(): AgencyCtx | null {
+  return useContext(Ctx);
+}
+
+/**
+ * useEnsureAgency switches to the agency an object belongs to when it is not
+ * the one being viewed, and says so (SW-8): a link into another agency's run,
+ * job, workflow or schedule. Nothing happens for an owner the person may not
+ * choose (the page answers as the server does).
+ */
+export function useEnsureAgency(owner: string | null | undefined) {
+  const ctx = useAgencyOptional();
+  useEffect(() => {
+    if (!ctx || !owner) return;
+    if (owner === ctx.agency && !ctx.onOverview) return;
+    if (!ctx.choices.some((ch) => ch.id === owner && ch.kind === "agency")) return;
+    ctx.switchTo(owner, `Switched to ${ctx.nameOf(owner)}`);
+    // Only when the object's owner, or the agency viewed, changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owner, ctx?.agency]);
+}
+
+export function AgencyProvider({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [me, setMe] = useState<MeContext | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [agency, setAgency] = useState<string>("");
+  const [toast, fire] = useToast(4000);
+  const started = useRef(false);
+
+  const load = useCallback(async () => {
+    const { data, error } = await api.GET("/me/context");
+    if (error || !data) {
+      setFailed(errMsg(error));
+      return null;
+    }
+    setMe(data as MeContext);
+    return data as MeContext;
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const again = () => void load();
+    window.addEventListener(AGENCY_REFRESH_EVENT, again);
+    return () => window.removeEventListener(AGENCY_REFRESH_EVENT, again);
+  }, [load]);
+
+  const isChoice = useCallback(
+    (id: string | null) => !!me && !!id && me.choices.some((ch) => ch.id === id && ch.kind === "agency"),
+    [me],
+  );
+  const nameOf = useCallback(
+    (id: string) => (id === OVERVIEW ? "Overview" : me?.choices.find((ch) => ch.id === id)?.name ?? id),
+    [me],
+  );
+
+  // Keep the agency and the address in step: an agency in the address is
+  // taken (a link into another agency switches, and says so); one that is not
+  // among the person's choices gives way to their default with a notice that
+  // does not say why (SW-15); an address with none gets the current one.
+  const urlAgency = new URLSearchParams(location.search).get(AGENCY_PARAM);
+  useEffect(() => {
+    if (!me) return;
+    const params = new URLSearchParams(location.search);
+    let next = agency;
+    if (!started.current) {
+      started.current = true;
+      next = me.workingAgency;
+      if (!urlAgency && me.effectiveDefault === OVERVIEW && location.pathname === "/") {
+        setAgency(next);
+        navigate("/overview", { replace: true });
+        return;
+      }
+    }
+    if (urlAgency && urlAgency !== agency) {
+      if (isChoice(urlAgency)) {
+        if (agency) fire(`Switched to ${nameOf(urlAgency)}`);
+        next = urlAgency;
+      } else {
+        fire(`That agency is not available to you; showing ${nameOf(next)}`);
+      }
+    } else if (!isChoice(next)) {
+      // Grants changed, and the agency in use is no longer the person's.
+      next = me.workingAgency;
+    }
+    if (next !== agency) setAgency(next);
+    if (location.pathname !== "/overview" && params.get(AGENCY_PARAM) !== next) {
+      params.set(AGENCY_PARAM, next);
+      navigate({ pathname: location.pathname, search: "?" + params.toString(), hash: location.hash }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, urlAgency, location.pathname]);
+
+  const switchTo = useCallback(
+    (id: string, notice?: string) => {
+      if (id === OVERVIEW) {
+        navigate("/overview");
+        return;
+      }
+      if (!isChoice(id)) return;
+      setAgency(id);
+      const params = new URLSearchParams(location.pathname === "/overview" ? "" : location.search);
+      params.set(AGENCY_PARAM, id);
+      const path = location.pathname === "/overview" ? "/" : location.pathname;
+      navigate({ pathname: path, search: "?" + params.toString() });
+      if (notice) fire(notice);
+    },
+    [isChoice, location.pathname, location.search, navigate, fire],
+  );
+
+  const setDefault = useCallback(
+    async (id: string | null) => {
+      const { error } = await api.PUT("/me/preferences", {
+        params: { header: csrfHeader },
+        body: { defaultAgencyId: id },
+      });
+      if (error) return errMsg(error);
+      await load();
+      fire(id ? `${nameOf(id)} is now where you start` : "You start where your access says");
+      return null;
+    },
+    [load, fire, nameOf],
+  );
+
+  const onOverview = location.pathname === "/overview";
+  const value = useMemo<AgencyCtx | null>(() => {
+    if (!me || !agency) return null;
+    return {
+      agency,
+      agencyName: nameOf(agency),
+      onOverview,
+      choices: me.choices,
+      canOverview: me.canOverview,
+      storedDefault: me.storedDefault ?? null,
+      effectiveDefault: me.effectiveDefault,
+      nameOf,
+      switchTo,
+      setDefault,
+    };
+  }, [me, agency, onOverview, nameOf, switchTo, setDefault]);
+
+  if (failed && !me) {
+    return (
+      <div style={{ height: "100vh", display: "grid", placeItems: "center", background: c.bg, color: c.danger }}>
+        Your agencies could not be read ({failed}). Reload the page to try again.
+      </div>
+    );
+  }
+  // No list is rendered, so none is fetched, before the agency is known (F1):
+  // a fetch without the header would show every agency's rows for a moment.
+  if (!value) {
+    return <div style={{ height: "100vh", display: "grid", placeItems: "center", background: c.bg, color: c.textSec }}>Loading…</div>;
+  }
+  // Set during render, before any child's effect fetches, so a list never
+  // asks without the agency.
+  setRequestAgency(value.agency);
+  return (
+    <Ctx.Provider value={value}>
+      {children}
+      <Toast message={toast} />
+    </Ctx.Provider>
+  );
+}
