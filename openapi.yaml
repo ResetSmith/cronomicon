@@ -7872,6 +7872,61 @@ paths:
               schema: { $ref: '#/components/schemas/MyAccess' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /me/context:
+    get:
+      tags: [Access]
+      operationId: getMyAgencyContext
+      summary: The agencies the caller may work in, and where they start (v2.4.4)
+      description: >-
+        The agency switcher. choices are what the caller may switch to: the Operations overview
+        first for those whose grant reaches every agency, then Global (everyone's), then the
+        agencies they may read, by name. effectiveDefault is where a visit with no agency in its
+        address starts: the caller's stored default while they may still have it; else Global for
+        a global administrator; else the overview for anyone else whose grant reaches every
+        agency; else the first, by name and ignoring case, of the agencies they hold a grant on;
+        else Global. workingAgency is the agency the lists use, the same as effectiveDefault except
+        on the overview, where it is the rule without the overview.
+      responses:
+        '200':
+          description: The caller's choices and defaults.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAgencyContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/preferences:
+    put:
+      tags: [Access]
+      operationId: putMyPreferences
+      summary: Store the caller's own default agency (v2.4.4)
+      description: >-
+        The caller's own choice of where a visit starts: an agency they may read, `global`, or
+        `overview` for one whose grant reaches every agency; `null` clears it. Anything else is
+        422 `invalid_default_agency`, whether or not the agency exists. A default the caller later
+        loses access to is ignored, not removed. CSRF required. Answers as GET /me/context.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [defaultAgencyId]
+              properties:
+                defaultAgencyId: { type: [string, 'null'] }
+      responses:
+        '200':
+          description: Stored; the caller's choices and defaults.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAgencyContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: Not an agency the caller may start in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /auth/sessions/revoke:
     post:
       tags: [Access]
@@ -14077,6 +14132,24 @@ components:
             the field is declared here rather than left as undocumented drift — the exact class
             this band exists to close.
 
+    MyAgencyContext:
+      type: object
+      description: The agency switcher's choices and defaults for the caller (v2.4.4; GET /me/context).
+      required: [choices, effectiveDefault, workingAgency, canOverview]
+      properties:
+        choices:
+          type: array
+          items:
+            type: object
+            required: [id, name, kind]
+            properties:
+              id: { type: string, description: "An agency's id, `global`, or `overview`." }
+              name: { type: string }
+              kind: { type: string, enum: [overview, agency] }
+        storedDefault: { type: [string, 'null'], description: The caller's own choice, as stored; null when none. }
+        effectiveDefault: { type: string, description: Where a visit with no agency in its address starts. }
+        workingAgency: { type: string, description: The agency the lists use; on the overview, the rule without it. }
+        canOverview: { type: boolean, description: True when the caller's grant reaches every agency. }
     MyAccess:
       type: object
       readOnly: true

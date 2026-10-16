@@ -350,6 +350,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	// just calls them. Slices meet on shared DB tables, not on each other's Go
 	// packages, so they can be built independently and in parallel.
 	s.mountAuth(mux)                 // B2: /me, /auth/*, /access/recent-logins
+	s.mountMeContext(mux)            // 2.4.4 S4: /me/context, /me/preferences (the agency switcher)
 	s.mountGit(mux)                  // B3: /schedules/*, /git/*, /webhooks/gitlab, scopes-from-git
 	s.mountRunners(mux)              // B4: /runners/*, /runs/{traceId}/log (ingest + stream)
 	execEng := s.mountExecution(mux) // B5: /jobs/*, /workflows/*, /runs, /history, /activity, /change-log

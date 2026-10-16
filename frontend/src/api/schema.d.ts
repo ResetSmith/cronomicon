@@ -4917,6 +4917,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The agencies the caller may work in, and where they start (v2.4.4)
+         * @description The agency switcher. choices are what the caller may switch to: the Operations overview first for those whose grant reaches every agency, then Global (everyone's), then the agencies they may read, by name. effectiveDefault is where a visit with no agency in its address starts: the caller's stored default while they may still have it; else Global for a global administrator; else the overview for anyone else whose grant reaches every agency; else the first, by name and ignoring case, of the agencies they hold a grant on; else Global. workingAgency is the agency the lists use, the same as effectiveDefault except on the overview, where it is the rule without the overview.
+         */
+        get: operations["getMyAgencyContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Store the caller's own default agency (v2.4.4)
+         * @description The caller's own choice of where a visit starts: an agency they may read, `global`, or `overview` for one whose grant reaches every agency; `null` clears it. Anything else is 422 `invalid_default_agency`, whether or not the agency exists. A default the caller later loses access to is ignored, not removed. CSRF required. Answers as GET /me/context.
+         */
+        put: operations["putMyPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/sessions/revoke": {
         parameters: {
             query?: never;
@@ -9543,6 +9583,24 @@ export interface components {
              * @description FX-E4 — the sliding activity stamp behind the sessionPolicy idle cap. Absent on a session established before the cap shipped. The raw Identity serializes onto /me, so the field is declared here rather than left as undocumented drift — the exact class this band exists to close.
              */
             readonly seen?: string | null;
+        };
+        /** @description The agency switcher's choices and defaults for the caller (v2.4.4; GET /me/context). */
+        MyAgencyContext: {
+            choices: {
+                /** @description An agency's id, `global`, or `overview`. */
+                id: string;
+                name: string;
+                /** @enum {string} */
+                kind: "overview" | "agency";
+            }[];
+            /** @description The caller's own choice */
+            storedDefault?: string | null;
+            /** @description Where a visit with no agency in its address starts. */
+            effectiveDefault: string;
+            /** @description The agency the lists use; on the overview */
+            workingAgency: string;
+            /** @description True when the caller's grant reaches every agency. */
+            canOverview: boolean;
         };
         /** @description LR-87 — the caller's own groups and what they grant. */
         MyAccess: {
@@ -18081,6 +18139,66 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    getMyAgencyContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's choices and defaults. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAgencyContext"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    putMyPreferences: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    defaultAgencyId: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored; the caller's choices and defaults. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAgencyContext"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Not an agency the caller may start in. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     revokeSessions: {
