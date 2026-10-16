@@ -3507,14 +3507,35 @@ func (s *Service) upsertScopes(ctx context.Context, tx *sql.Tx, scopes []invento
 		// flip its source to 'git' and overwrite its authored raw/projection/hosts —
 		// a silent hijack. Skip the colliding git scope loudly; the operator renames
 		// one. (Names are unique, so an cronomicon row owning the name blocks the git one.)
-		// This repository's own scope of the name, whichever agency holds it: one
-		// of Global's repository's can have been given to an agency by an
-		// operator (LR-31), and it is still this file's to write. Found by its
-		// repository rather than by (agency, name), which since names are per
-		// agency (I2) would not find it, and the sync would start a second one.
+		// This repository's own scope of the name. Found by its repository
+		// rather than by (agency, name). (Until 2.4.3 one of Global's
+		// repository's could have been given to an agency by a repair, LR-31,
+		// and this went on writing it; migration 1470 made those the agencies'
+		// own, released_from below, and a repair refuses it now.)
 		var ownID string
 		_ = tx.QueryRowContext(ctx, `SELECT id FROM scopes WHERE source = 'git' AND COALESCE(repo_id, ?) = ? AND name = ?`,
 			repoid.Global, s.repo(), sc.Name).Scan(&ownID)
+		// A scope of this file's that a repair gave to an agency before 2.4.3
+		// is that agency's own now (migration 1470; question 58): the file is
+		// no longer any scope's, and is not made a second one for this
+		// repository's agency. Said, as a name that is taken is said (whose it
+		// is, is not), until the file is removed or renamed, or the agency
+		// deletes its scope (the mark goes with the row).
+		if ownID == "" {
+			var released int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM scopes WHERE released_from = ? AND name = ?`,
+				s.repo(), sc.Name).Scan(&released); err != nil {
+				return nil, fmt.Errorf("read the scopes released from this repository: %w", err)
+			}
+			if released > 0 {
+				taken = append(taken, ValidationError{
+					File: sc.SourcePath,
+					Message: fmt.Sprintf("the scope %q was given to an agency, and is that agency's own: this inventory was not synced; "+
+						"remove or rename the file", sc.Name),
+				})
+				continue
+			}
+		}
 		var existingSource string
 		var existingRepo sql.NullString
 		// Otherwise within this repository's agency: a scope's name is unique

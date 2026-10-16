@@ -404,9 +404,11 @@ func TestGR4_AScopeFromAnAgencysRepositoryIsThatAgencys(t *testing.T) {
 		t.Fatalf("the scope from Global's repository is in %q, want global alone", got)
 	}
 
-	// An operator assigns Global's repository's scope to an agency. It stays.
-	if _, err := a.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) SELECT id, 'ag-b' FROM scopes WHERE name = 'shared'`); err != nil {
-		t.Fatalf("assign Global's repository's scope: %v", err)
+	// Global's repository's scope is held to Global the same way (2.4.3,
+	// question 58: until then an operator could assign it to an agency, and
+	// this test checked that it stayed there).
+	if _, err := a.db.Exec(`INSERT INTO scope_agencies (scope_id, agency_id) SELECT id, 'ag-b' FROM scopes WHERE name = 'shared'`); err == nil || !strings.Contains(err.Error(), "scope_agency_fixed") {
+		t.Fatalf("assigning Global's repository's scope to ag-b: %v, want the scope_agency_fixed refusal", err)
 	}
 	for i := 0; i < 2; i++ {
 		grBackdateAll(t, a)
@@ -414,8 +416,8 @@ func TestGR4_AScopeFromAnAgencysRepositoryIsThatAgencys(t *testing.T) {
 		grBackdateAll(t, a)
 		grSync(t, b, "the agency's repository again")
 	}
-	if got := agencies("shared"); got != "ag-b" {
-		t.Errorf("after two more syncs the assigned scope is in %q, want the operator's ag-b", got)
+	if got := agencies("shared"); got != "global" {
+		t.Errorf("after two more syncs Global's repository's scope is in %q, want global", got)
 	}
 	if got := agencies("theirs"); got != "ag-b" {
 		t.Errorf("after two more syncs the agency's scope is in %q, want ag-b", got)

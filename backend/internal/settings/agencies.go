@@ -15,7 +15,6 @@ import (
 	"github.com/ResetSmith/cronomicon/internal/auth"
 
 	"github.com/ResetSmith/cronomicon/internal/db"
-	"github.com/ResetSmith/cronomicon/internal/repoid"
 )
 
 // Agency is the wire representation of an agency — a network-isolation zone that
@@ -59,11 +58,12 @@ var (
 	ErrUnknownAgency = errors.New("unknown agency")
 
 	// ErrScopeAgencyFixed is returned by a write that would give a scope from
-	// an agency's repository any agency but that one (2.4.0, GR-18). The
-	// repository states whose the scope is; it leaves that agency when its file
-	// leaves the repository. Mapped 409 `scope_agency_fixed`.
-	ErrScopeAgencyFixed = errors.New("this scope comes from an agency's repository and belongs to that agency: " +
-		"it cannot be moved while its inventory file is in that repository")
+	// a repository any agency but that repository's (2.4.0, GR-18; Global's
+	// repository too since 2.4.3, question 58). The repository states whose
+	// the scope is; it leaves that agency when its file leaves the repository.
+	// Mapped 409 `scope_agency_fixed`.
+	ErrScopeAgencyFixed = errors.New("this scope comes from a repository and belongs to that repository's agency: " +
+		"it cannot be moved while its inventory file is there; to give another agency its hosts, clone it")
 
 	// ErrAgencyRequired is returned by a membership write that would leave an
 	// entity in no agency at all (LR-26). Every scope, runner, secret, variable
@@ -822,17 +822,17 @@ func SetScopeAgency(ctx context.Context, database *sql.DB, scopeID string, agenc
 }
 
 // ScopeAgencyFixedTo is the agency a scope is held to because its inventory
-// is in that agency's repository (2.4.0, GR-18), or "" when the scope may be
-// moved: one built in the app, one from Global's repository, or one that is
-// not there. Migration 1350's trigger refuses the same write; this is where
-// the refusal gets its own error and its own answer.
+// is in that agency's repository (2.4.0, GR-18; Global's repository too since
+// 2.4.3, question 58), or "" when the scope may be moved: one built in the app,
+// or one that is not there. Migration 1470's trigger refuses the same write;
+// this is where the refusal gets its own error and its own answer.
 func ScopeAgencyFixedTo(ctx context.Context, q interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }, scopeID string) (string, error) {
 	var agency string
 	err := q.QueryRowContext(ctx, `
 		SELECT g.agency_id FROM scopes sc JOIN git_repos g ON g.id = sc.repo_id
-		 WHERE sc.id = ? AND sc.source = 'git' AND g.id <> ?`, scopeID, repoid.Global).Scan(&agency)
+		 WHERE sc.id = ? AND sc.source = 'git'`, scopeID).Scan(&agency)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

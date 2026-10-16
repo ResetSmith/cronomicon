@@ -74,8 +74,9 @@ func TestAScopesLinkIsToItsOwnRepository(t *testing.T) {
 
 // A scope whose inventory is in an agency's repository belongs to that agency
 // (2.4.0, GR-18), and each of the three writers of a scope's agency says so
-// with its own error; nothing is written. A scope from Global's repository, or
-// one built in the app, moves as before.
+// with its own error; nothing is written. A scope from Global's repository is
+// held to Global the same way since 2.4.3 (question 58); one built in the app
+// moves as before.
 func TestAScopeOfAnAgencysRepositoryIsNotMoved(t *testing.T) {
 	pool := openTestPool(t)
 	ctx := context.Background()
@@ -102,8 +103,10 @@ func TestAScopeOfAnAgencysRepositoryIsNotMoved(t *testing.T) {
 	if got := agencies("s-b"); got != "ag-b" {
 		t.Fatalf("the scope of the agency's repository is in %q, want ag-b", got)
 	}
+	// Global's repository's scope is held to Global since 2.4.3 (question 58):
+	// until then it could be repaired into an agency.
 	for _, id := range []string{"s-b", "s-g", "s-app", "no-such-scope"} {
-		want := map[string]string{"s-b": "ag-b"}[id]
+		want := map[string]string{"s-b": "ag-b", "s-g": "global"}[id]
 		if got, err := ScopeAgencyFixedTo(ctx, pool, id); err != nil || got != want {
 			t.Errorf("ScopeAgencyFixedTo(%s) = %q, %v; want %q", id, got, err, want)
 		}
@@ -143,10 +146,11 @@ func TestAScopeOfAnAgencysRepositoryIsNotMoved(t *testing.T) {
 	if err := SetAgencyMembership(ctx, pool, MemberScope, []AgencyMembership{{ID: "s-b", AgencyIDs: []string{"ag-b"}}}, "a"); err != nil {
 		t.Errorf("the matrix naming its own agency: %v", err)
 	}
-	// The others move as before.
-	if _, err := SetScopeAgency(ctx, pool, "s-g", &other, "a"); err != nil || agencies("s-g") != "ag-c" {
-		t.Errorf("Global's repository's scope: %v, in %q", err, agencies("s-g"))
+	// Global's repository's is refused too (2.4.3), and stays Global's.
+	if _, err := SetScopeAgency(ctx, pool, "s-g", &other, "a"); !errors.Is(err, ErrScopeAgencyFixed) || agencies("s-g") != "global" {
+		t.Errorf("Global's repository's scope: %v, in %q; want ErrScopeAgencyFixed, Global's", err, agencies("s-g"))
 	}
+	// One built in the app moves as before.
 	if _, err := SetScopeAgency(ctx, pool, "s-app", &other, "a"); err != nil || agencies("s-app") != "ag-c" {
 		t.Errorf("a scope built in the app: %v, in %q", err, agencies("s-app"))
 	}

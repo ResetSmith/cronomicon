@@ -1140,18 +1140,12 @@ func (s *Server) handleListScopes(w http.ResponseWriter, r *http.Request) {
 			return fl, err
 		}
 		// A scope from Git is edited and deleted in its repository: the routes
-		// answer 409 for anything but a scope built in the app. One from an
-		// agency's repository belongs to that agency and is not repaired into
-		// another (GR-18, scope_agency_fixed). The flags say what the routes
-		// answer (2.4.2, question 55).
-		fl.CanEdit, fl.CanDelete = false, false
-		var repo string
-		if err := s.db.QueryRowContext(r.Context(), `SELECT COALESCE(repo_id, ?) FROM scopes WHERE id = ?`, repoid.Global, sc.ID).Scan(&repo); err != nil {
-			return rowFlags{}, err
-		}
-		if repo != repoid.Global {
-			fl.CanRepair = false
-		}
+		// answer 409 for anything but a scope built in the app. It belongs to
+		// its repository's agency and is not repaired into another (GR-18,
+		// scope_agency_fixed; Global's repository's too since 2.4.3, question
+		// 58: another agency gets its hosts by a clone). The flags say what the
+		// routes answer (2.4.2, question 55).
+		fl.CanEdit, fl.CanDelete, fl.CanRepair = false, false, false
 		return fl, nil
 	})
 	if err != nil {

@@ -3946,10 +3946,13 @@ paths:
         several agencies is settled on one of them by a repair too. CSRF
         required.
 
-        A scope whose inventory is in an AGENCY's repository belongs to that
-        agency and cannot be moved (v2.4.0): 409 `scope_agency_fixed`. It leaves
-        the agency when its file leaves the repository. A scope from the
-        installation's own repository is assigned here, as before.
+        A scope whose inventory is in a repository belongs to that repository's
+        agency and cannot be moved: 409 `scope_agency_fixed` (an agency's
+        repository since v2.4.0, Global's too since v2.4.3). It leaves the agency
+        when its file leaves the repository. Another agency gets its hosts by
+        POST /scopes/{scopeId}/clone. Until v2.4.3 a scope from Global's
+        repository was repaired into an agency here; migration 1470 made each
+        such scope that agency's own, built in the app.
       parameters: [{ $ref: '#/components/parameters/scopeId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -7212,8 +7215,8 @@ paths:
         in no agency at all (422 `agency_required`); adding to Global an entity
         that is in a named agency (422 `global_mixed`); and an add that would give
         this agency two rows of one name (409 `owner_conflict`); and adding or
-        removing a scope that an agency's repository supplies (409
-        `scope_agency_fixed`, v2.4.0). A row from before
+        removing a scope that a repository supplies (409
+        `scope_agency_fixed`; an agency's since v2.4.0, Global's since v2.4.3). A row from before
         v2.3.0 that several agencies share may be removed from all but one, and
         the one that is left becomes its owner. A no-op save writes no audit row.
         Returns the resulting AgencyDetail.
@@ -12500,8 +12503,8 @@ components:
         Refused: an empty list (422 `agency_required`), Global beside an agency
         (422 `global_mixed`), more than one agency (422 `one_agency`), and a move
         onto a name the target agency already owns in that scope (409
-        `owner_conflict`). A scope that an agency's repository supplies belongs
-        to that agency and is not moved (409 `scope_agency_fixed`, v2.4.0).
+        `owner_conflict`). A scope that a repository supplies belongs
+        to its agency and is not moved (409 `scope_agency_fixed`; Global's repository's too since v2.4.3).
       properties:
         id: { type: string }
         agencyIds:

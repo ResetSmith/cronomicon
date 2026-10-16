@@ -314,6 +314,7 @@ CREATE TABLE IF NOT EXISTS scopes (
     inventory_format TEXT,
     repo_id TEXT,
     owner_agency TEXT NOT NULL DEFAULT 'global', -- migration 1410
+    released_from TEXT,                          -- migration 1470
     UNIQUE (owner_agency, name)                  -- migration 1420
 );
 CREATE TABLE IF NOT EXISTS scope_agencies (

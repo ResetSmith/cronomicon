@@ -400,6 +400,7 @@ func TestSync_GitOpsPruning(t *testing.T) {
 			inventory_format TEXT,
 			repo_id TEXT,
 			owner_agency TEXT NOT NULL DEFAULT 'global',
+			released_from TEXT, -- 1470
 			UNIQUE (owner_agency, name)
 		);
 		CREATE TABLE IF NOT EXISTS scope_hosts (

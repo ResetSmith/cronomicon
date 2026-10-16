@@ -32,16 +32,13 @@ func TestGR0_AScopeThatLeavesGitAndReturnsIsANewScope(t *testing.T) {
 	grSync(t, svc, "first sync")
 	first := grString(t, svc.db, `SELECT id FROM scopes WHERE name='web'`)
 
-	// An operator gives the scope to an agency and binds it to that agency's runner.
-	exec(`INSERT INTO agencies(id, name, created_at) VALUES('ag-fin','Finance','t')`)
-	exec(`INSERT INTO scope_agencies(scope_id, agency_id) VALUES(?, 'ag-fin')`, first)
+	// An operator binds the scope to a runner. (Until 2.4.3 this test also gave
+	// it to an agency first; a scope of Global's repository is Global's since
+	// then, question 58.)
 	exec(`INSERT INTO scope_runners(scope_id, runner_id, runner_name, bound_by, bound_at) VALUES(?, 'r-fin', 'fin-agent', 'ops', 't')`, first)
 	agencies := func(scopeID string) string {
 		t.Helper()
 		return grString(t, svc.db, `SELECT COALESCE(group_concat(agency_id, ','), '') FROM scope_agencies WHERE scope_id=?`, scopeID)
-	}
-	if got := agencies(first); got != "ag-fin" {
-		t.Fatalf("the assigned scope is in %q, want ag-fin alone", got)
 	}
 
 	// The file leaves Git (a mistaken delete, or the first half of a rename).
@@ -63,7 +60,7 @@ func TestGR0_AScopeThatLeavesGitAndReturnsIsANewScope(t *testing.T) {
 		t.Fatalf("the returned scope kept its id: it is no longer a new scope, and this test is to be re-read")
 	}
 	if got := agencies(second); got != "global" {
-		t.Errorf("the returned scope is in %q: today it is expected to be born Global's, the operator's assignment lost", got)
+		t.Errorf("the returned scope is in %q: it is expected to be born Global's", got)
 	}
 	if n := grCount(t, svc.db, `SELECT COUNT(*) FROM scope_runners WHERE scope_id=?`, second); n != 0 {
 		t.Errorf("the returned scope is bound to %d runners: today the binding is expected to be gone", n)
