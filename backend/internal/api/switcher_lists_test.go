@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 )
 
 // The agency switcher (2.4.4). Every list the switcher narrows, with a row of
@@ -247,5 +249,73 @@ func TestSwitcherListsWithNoAgencyNamedAnswerAsBefore(t *testing.T) {
 				t.Errorf("%s as %s: %s, want %s (FIN, TAX, Global)", l.path, p.name, got, want[i])
 			}
 		}
+	}
+}
+
+// switcherReads is which of FIN, TAX and Global each kind of person may read
+// (auth.Identity.ReadsAgency), in switcherPeople's order: naming an agency
+// they may not read narrows every list to nothing.
+var switcherReads = [6]string{"YYY", "YYY", "Y.Y", ".YY", "YYY", "Y.Y"}
+
+// switcherS2Pending is what S1 answers before a run has an owner of its own
+// (S2): FIN's run with no scope is taken for Global's, from its empty scope
+// snapshot. Keyed by list, agency named and person.
+var switcherS2Pending = map[string]string{
+	"/api/v1/runs?pageSize=200&noscope=1|global|root":          "Y.Y",
+	"/api/v1/runs?pageSize=200&noscope=1|global|all-viewer":    "Y.Y",
+	"/api/v1/runs?pageSize=200&noscope=1|global|fin-admin":     "Y.Y",
+	"/api/v1/runs?pageSize=200&noscope=1|global|tax-admin":     "Y.Y",
+	"/api/v1/runs?pageSize=200&noscope=1|global|fin+tax admin": "Y.Y",
+	"/api/v1/runs?pageSize=200&noscope=1|global|fin-viewer":    "Y.Y",
+	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|root":          "...",
+	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|all-viewer":    "...",
+	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|fin-admin":     "...",
+	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|fin+tax admin": "...",
+	"/api/v1/runs?pageSize=200&noscope=1|ag:FIN|fin-viewer":    "...",
+}
+
+// Naming an agency (2.4.4 S1) narrows each list to that agency's rows of what
+// the person could see before, and never widens it: FIN's view of a list is
+// today's answer with TAX's and Global's rows taken out. An agency the person
+// may not read, or one that does not exist, gives an empty list and 200, the
+// same answer either way.
+func TestSwitcherNamingAnAgencyNarrowsEachListAndNeverWidensIt(t *testing.T) {
+	h, pool := gateServer(t)
+	seedSwitcher(t, pool)
+	agencies := []struct {
+		id  string
+		col int // which of FIN, TAX, Global is its column; -1 for none
+	}{{"ag:FIN", 0}, {"ag:TAX", 1}, {"global", 2}, {"ag:NOPE", -1}}
+	for _, l := range switcherLists {
+		today := switcherToday[l.path]
+		for _, a := range agencies {
+			for i, p := range switcherPeople {
+				want := today[i]
+				if want[0] == 'Y' || want[0] == '.' {
+					keep := []byte("...")
+					if a.col >= 0 && switcherReads[i][a.col] == 'Y' {
+						keep[a.col] = want[a.col]
+					}
+					want = string(keep)
+				}
+				if pending, ok := switcherS2Pending[l.path+"|"+a.id+"|"+p.name]; ok {
+					want = pending
+				}
+				if got := switcherSees(t, h, l, p.groups, agencyctx.Header, a.id); got != want {
+					t.Errorf("%s as %s in %s: %s, want %s (FIN, TAX, Global)", l.path, p.name, a.id, got, want)
+				}
+			}
+		}
+	}
+}
+
+// An agency named in a header does not change what one row answers: reading a
+// single object is not narrowed (SW-8 relies on it), only lists are.
+func TestSwitcherReadingOneObjectIsNotNarrowed(t *testing.T) {
+	h, pool := gateServer(t)
+	seedSwitcher(t, pool)
+	rec := gateReqWithHeader(t, h, http.MethodGet, "/api/v1/runs/r-tax", gTaxAdmin, "", agencyctx.Header, "global")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "s0-tax-job") {
+		t.Fatalf("TAX's run, read with Global named = %d %s, want it", rec.Code, rec.Body)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
@@ -132,6 +133,11 @@ func (s *Server) listScheduleDefs(w http.ResponseWriter, r *http.Request) {
 	// 2.5.0's.) Both statements below read the table as `sc`.
 	if id, ok := auth.IdentityFrom(r.Context()); ok {
 		frag, fargs := readableRepoSQL(id, "sc.repo_id")
+		where += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.ColumnOwnerSQL("sc", "owner_agency")); frag != "" {
 		where += frag
 		args = append(args, fargs...)
 	}

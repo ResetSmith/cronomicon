@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
@@ -309,6 +311,11 @@ func (s *Server) listScripts(w http.ResponseWriter, r *http.Request) {
 	// repository it showed every agency's scripts to every session.
 	if id, ok := auth.IdentityFrom(r.Context()); ok {
 		frag, fargs := readableRepoSQL(id, "s.repo_id")
+		where += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.ScriptOwnerSQL("s")); frag != "" {
 		where += frag
 		args = append(args, fargs...)
 	}

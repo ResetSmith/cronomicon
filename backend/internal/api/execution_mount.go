@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -318,6 +319,10 @@ func (s *Server) scopeWhereFragment(r *http.Request, col, ownerExpr string) (str
 // for, from its snapshot, for scopeWhereFragment.
 var runScopeOwnerSQL = agencyid.RunScopeOwnerSQL("agencies_json")
 
+// runOwnerSQL is whose a row of `runs` is, for the agency context (2.4.4):
+// for now the agency its scope snapshot names, Global's for none.
+var runOwnerSQL = runScopeOwnerSQL
+
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	typeFilter := q.Get("type")
@@ -421,6 +426,11 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	// with any explicit ?scope= above (it does not replace it), so a restricted
 	// actor requesting an out-of-scope ?scope= simply gets no rows.
 	if frag, fargs := s.scopeWhereFragment(r, "j.scope", "COALESCE("+agencyid.JobSQL("j")+", '"+agencyid.Global+"')"); frag != "" {
+		inner += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.JobOwnerSQL("j")); frag != "" {
 		inner += frag
 		args = append(args, fargs...)
 	}
@@ -2600,6 +2610,12 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		query += frag
 		args = append(args, fargs...)
 	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.WorkflowOwnerSQL); frag != "" {
+		cq += frag
+		query += frag
+		args = append(args, fargs...)
+	}
 	if search != "" {
 		cq += " AND w.name LIKE ?"
 		query += " AND w.name LIKE ?"
@@ -3340,6 +3356,11 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	// source and name (a run from before 1010 records none); NULL, judged by
 	// the name, when the workflow is gone.
 	if frag, fargs := s.scopeWhereFragment(r, "scope", agencyid.WorkflowRunSQL("workflow_runs")); frag != "" {
+		base += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.Owner(agencyid.WorkflowRunSQL("workflow_runs"))); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}
@@ -4132,6 +4153,11 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		// Empty grant ⇒ GLOBAL only (the A5 fix: empty no longer means "all"); a
 		// grant of an agency's scope reads that agency's runs on it (I2).
 		frag, fargs := s.scopeWhereFragment(r, "scope", runScopeOwnerSQL)
+		base += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, runOwnerSQL); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}
