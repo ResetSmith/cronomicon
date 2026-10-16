@@ -1181,6 +1181,9 @@ func (s *Server) handleCreateScope(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
 		return
 	}
+	// Trimmed, as sync's names are (2.4.2: " web" and "web" were two scopes,
+	// and a job naming "web" did not find the first).
+	inp.Scope = strings.TrimSpace(inp.Scope)
 	if inp.Scope == "" {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "scope name is required")
 		return

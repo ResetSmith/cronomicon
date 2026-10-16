@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/ResetSmith/cronomicon/internal/vaultpath"
+	"io"
 	"net/http"
 	"strings"
+
+	"github.com/ResetSmith/cronomicon/internal/vaultpath"
 
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
@@ -1174,7 +1176,13 @@ func (s *Server) handleCloneScope(w http.ResponseWriter, r *http.Request) {
 	}
 	// The gate first, on what the path and the body name, before the body is
 	// held to anything else: a caller who may not is told nothing more.
-	_ = json.NewDecoder(r.Body).Decode(&inp)
+	// A body that is not JSON says so (2.4.2: it was read as empty, and a
+	// clone into Global with no name was refused for its name). That tells a
+	// caller nothing about any agency.
+	if err := json.NewDecoder(r.Body).Decode(&inp); err != nil && !errors.Is(err, io.EOF) {
+		httpx.Fail(w, http.StatusUnprocessableEntity, "invalid_json", err.Error())
+		return
+	}
 	target := strings.TrimSpace(inp.AgencyID)
 	if target == "" {
 		target = agencyid.Global

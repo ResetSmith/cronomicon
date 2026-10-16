@@ -120,9 +120,29 @@ func (s *Server) handleListGitRepoNames(w http.ResponseWriter, r *http.Request) 
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// requireAgencyExists answers 404 not_found for an agency that is not there,
+// after the gate (only a global administrator passes it for one): the
+// repository routes said not_connected, "this agency has no repository", of an
+// agency that does not exist, and the test tested the URL anyway (2.4.2).
+func (s *Server) requireAgencyExists(w http.ResponseWriter, r *http.Request, agencyID string) bool {
+	var n int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, agencyID).Scan(&n); err != nil {
+		httpx.Fail500(w, s.log, "db_error", err)
+		return false
+	}
+	if n == 0 {
+		httpx.Fail(w, http.StatusNotFound, "not_found", "agency not found")
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleGetAgencyGitRepo(w http.ResponseWriter, r *http.Request) {
 	agencyID := r.PathValue("agencyId")
 	if _, ok := s.requireRepoAgency(w, r, agencyID); !ok {
+		return
+	}
+	if !s.requireAgencyExists(w, r, agencyID) {
 		return
 	}
 	repoID, err := settings.RepoOfAgency(r.Context(), s.db, agencyID)
@@ -316,6 +336,9 @@ func (s *Server) handleRotateAgencyWebhookSecret(w http.ResponseWriter, r *http.
 func (s *Server) handleTestAgencyGitRepo(w http.ResponseWriter, r *http.Request) {
 	agencyID := r.PathValue("agencyId")
 	if _, ok := s.requireRepoAgency(w, r, agencyID); !ok {
+		return
+	}
+	if !s.requireAgencyExists(w, r, agencyID) {
 		return
 	}
 	var inp settings.GitlabConfig

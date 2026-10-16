@@ -5447,6 +5447,12 @@ export interface components {
          *     An `executor` property was accepted here until v2.3.0. It is not part
          *     of the body any more; one that is sent is ignored, like any unknown
          *     property.
+         *
+         *     A job runs on its own agency's scopes (v2.4.0, I2): 422
+         *     `scope_not_in_agency` when the job's agency has no scope of the name
+         *     another agency has; on a create without `ownerAgency`, 422
+         *     `ambiguous_scope` when more than one agency the caller composes in has a
+         *     scope of the name (name the agency with `ownerAgency`).
          */
         JobComposeInput: {
             /** @description Job name (slug, [a-z0-9][a-z0-9_-]*). Immutable on edit. */
@@ -16762,6 +16768,13 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `repair_required`: a change of the bastion's agency is a global administrator's repair (v2.4.0, IN-7), and the request did not say `repair: true`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             422: components["responses"]["Validation"];
         };
     };

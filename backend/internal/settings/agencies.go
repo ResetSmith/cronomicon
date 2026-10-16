@@ -84,7 +84,7 @@ var (
 	// to exactly one, or to Global; what two agencies both need is a copy in
 	// each, or a Global row. Mapped 422 `one_agency`. (A runner's serve list is
 	// a different rule and has its own writer.)
-	ErrOneAgency = errors.New("a scope, secret, variable or SSH key belongs to exactly one agency — to move it, set its agency; to share it, make it Global's or copy it")
+	ErrOneAgency = errors.New("a scope, secret, variable or SSH key belongs to exactly one agency — another agency gets one by a copy; a change of its agency is a global administrator's repair")
 
 	// ErrOwnerConflict is returned when moving a secret, a variable or an SSH key
 	// to an agency would collide with a row that agency already owns under the
@@ -476,21 +476,22 @@ func (e *AgencyInUseError) Blockers() []string {
 	add(e.OwnedRunners, "runner it owns that serves no agency", "runners it owns that serve no agency", "remove the runner")
 	// Scopes first among the membership kinds: an agency exists to own scopes, so
 	// that is the likeliest blocker and the one with the plainest remedy.
-	add(e.Members[MemberScope], "scope", "scopes", "rebind the scope to another agency")
+	// The remedies are what an agency's administrator can do since §0a (IN-7):
+	// delete, or copy into another agency; a move is a global administrator's
+	// repair (until 2.4.2 the remedies still said to move each row).
+	add(e.Members[MemberScope], "scope", "scopes", "delete it, or clone it to another agency first; a global administrator can repair its agency")
 	for _, k := range []MemberKind{MemberSecret, MemberEnvVar, MemberSSHCredential} {
 		add(e.Members[k], string(k)+" membership", string(k)+" memberships",
-			"move it to another agency or to Global")
+			"remove it from this agency; a global administrator can repair its agency")
 	}
-	// Ownership. Since 2.3.0 an owned row can be MOVED (set its agency to another
-	// agency, or to Global: LR-54), so that is the remedy named first. Deleting
-	// is still what an operator in a hurry reaches for, and for a stored secret
-	// or a key it destroys the only copy, so the warning stays.
-	const ownFix = "set its agency to another agency or to Global to move it"
-	add(e.Secrets, "owned secret", "owned secrets", ownFix+"; do NOT delete it to get past this, deleting a stored secret destroys its value")
-	add(e.EnvVars, "owned variable", "owned variables", ownFix)
-	add(e.Keys, "owned SSH credential", "owned SSH credentials", ownFix+"; deleting it destroys the key material")
-	add(e.Hosts, "host record", "host records", "give the record to another agency, or delete it")
-	add(e.Bastions, "bastion", "bastions", "give the bastion to another agency, or delete it")
+	// Ownership. Deleting is what an operator in a hurry reaches for, and for a
+	// stored secret or a key it destroys the only copy, so the warning stays.
+	const repairFix = "a global administrator can repair its agency to the one that should have it"
+	add(e.Secrets, "owned secret", "owned secrets", repairFix+"; do NOT delete it to get past this, deleting a stored secret destroys its value")
+	add(e.EnvVars, "owned variable", "owned variables", "create it again in the agency that needs it and delete it here, or "+repairFix)
+	add(e.Keys, "owned SSH credential", "owned SSH credentials", repairFix+"; do NOT delete it to get past this, deleting it destroys the key material")
+	add(e.Hosts, "host record", "host records", "delete it; a global administrator can repair its agency")
+	add(e.Bastions, "bastion", "bastions", "delete it; a global administrator can repair its agency")
 	return out
 }
 
