@@ -353,7 +353,7 @@ function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZon
           ))}
       </div>
 
-      <Readout group={active} stampInZone={stampInZone} timeInZone={timeInZone} runHref={runHref} onOpenRun={onOpenRun} hasMarks={groups.length > 0} />
+      <Readout group={active} stampInZone={stampInZone} timeInZone={timeInZone} runHref={runHref} onOpenRun={onOpenRun} hasMarks={groups.length > 0} fixed={pinnedReadout} />
     </>
   );
 }
@@ -543,6 +543,11 @@ function Notehead({
   );
 }
 
+// 2.4.4 — the fixed readout's height: its stamp line, the column heads and
+// READOUT_ROWS rows (about 21px each), inside the slot's 10px padding.
+const READOUT_ROWS = 10;
+const READOUT_FIXED_H = 20 + 26 + 24 + READOUT_ROWS * 21 + 4;
+
 // D-4: a FIXED readout slot, not a floating tooltip. The slot never moves, so
 // the eye does not chase it across the plot, and it has room to enumerate a
 // coincident group's members — which a tooltip pinned to a 10px notehead does not.
@@ -553,6 +558,7 @@ function Readout({
   runHref,
   onOpenRun,
   hasMarks,
+  fixed,
 }: {
   group: MarkGroup | null;
   stampInZone: (at: number) => string;
@@ -560,6 +566,13 @@ function Readout({
   runHref?: (traceId: string) => string;
   onOpenRun?: (traceId: string) => void;
   hasMarks: boolean;
+  /**
+   * 2.4.4 — a FIXED height, room for READOUT_ROWS jobs, the rest scrolling
+   * under a header that stays: moving across the plot from a one-run mark to
+   * a nineteen-run chord no longer resizes the slot (the owner found it
+   * distracting). The Operations overview's Score.
+   */
+  fixed?: boolean;
 }) {
   // VU2-2 — the slot takes its panel treatment only when it is CARRYING
   // something. At rest it holds one line of instruction, and a bordered card
@@ -575,7 +588,11 @@ function Readout({
   return (
     <div
       aria-live="polite"
+      data-testid="score-readout"
       style={{
+        ...(fixed
+          ? { height: READOUT_FIXED_H, boxSizing: "border-box" as const, display: "flex", flexDirection: "column" as const }
+          : {}),
         minHeight: 58,
         marginTop: 10,
         padding: "10px 14px",
@@ -592,7 +609,7 @@ function Readout({
           {hasMarks ? "Hover the timeline, or tab into it and use the arrow keys." : "No runs or scheduled runs in this window."}
         </span>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, ...(fixed ? { flex: 1, minHeight: 0 } : {}) }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontFamily: c.mono, color: c.text }}>{stampInZone(group.at)}</span>
             <span style={{ color: c.textMuted, fontSize: c.fontXs }}>
@@ -625,13 +642,15 @@ function Readout({
               padding: "0 14px 4px 0",
               borderBottom: `1px solid ${c.borderLight}`,
               whiteSpace: "nowrap",
+              // Fixed: the head stays while the rows scroll under it.
+              ...(fixed ? { position: "sticky" as const, top: 0, background: c.panel, zIndex: 1 } : {}),
             };
             const cell: CSSProperties = { padding: "4px 14px 0 0", verticalAlign: "baseline", whiteSpace: "nowrap" };
             const quiet: CSSProperties = { ...cell, fontSize: c.fontXs, color: c.textMuted };
             const cap: CSSProperties = { maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" };
             // 2.4.4 — a Score that spans agencies says whose each job is.
             const agencies = group.members.some((m) => !!m.agency);
-            return (
+            const table = (
               <table style={{ borderCollapse: "collapse", tableLayout: "auto", width: "100%" }}>
                 <thead>
                   <tr>
@@ -691,6 +710,13 @@ function Readout({
                   ))}
                 </tbody>
               </table>
+            );
+            return fixed ? (
+              <div data-testid="score-readout-rows" style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                {table}
+              </div>
+            ) : (
+              table
             );
           })()}
         </div>

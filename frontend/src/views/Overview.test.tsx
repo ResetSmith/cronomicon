@@ -141,6 +141,10 @@ describe("the Operations overview (2.4.4 F3)", () => {
     const table = agencyHead.closest("table") as HTMLElement;
     expect(within(table).getByText("backup")).toBeTruthy();
     expect(within(table).getByText("agency-alpha")).toBeTruthy();
+    // A fixed size, room for ten jobs; the rest scroll (it no longer resizes as the pointer moves).
+    const slot = screen.getByTestId("score-readout");
+    expect(slot.style.height).toMatch(/^\d+px$/);
+    expect(screen.getByTestId("score-readout-rows").style.overflowY).toBe("auto");
     // Its feeds ask for every agency the viewer reads, not the one in use.
     for (const p of ["/runs", "/schedules/upcoming", "/runners"]) {
       const a = asked.find((x) => x.path === p);
