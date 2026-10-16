@@ -267,7 +267,7 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 			return
 		}
 		s.touchCSRF(w, r) // ensure the SPA always has a CSRF token to submit
-		next.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), id)))
+		next.ServeHTTP(w, r.WithContext(actingAgencyContext(withIdentity(r.Context(), id), r, id)))
 	})
 }
 

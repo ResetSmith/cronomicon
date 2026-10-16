@@ -21,6 +21,9 @@ type AuditRow struct {
 	Details  string `json:"details,omitempty"`
 	Status   string `json:"status,omitempty"`
 	TraceID  string `json:"traceId,omitempty"`
+	// ActingAgency is the agency a global administrator was working in when
+	// they made a configuration change (2.4.4); empty otherwise.
+	ActingAgency string `json:"actingAgency,omitempty"`
 }
 
 // ExportAudit streams the requested audit events to w as CSV or JSON. Rows are
@@ -61,11 +64,11 @@ func ExportAudit(ctx context.Context, database *sql.DB, w io.Writer, from, to st
 
 	if format == "csv" {
 		cw := csv.NewWriter(w)
-		if err := cw.Write([]string{"source", "at", "actor", "category", "action", "target", "details", "status", "traceId"}); err != nil {
+		if err := cw.Write([]string{"source", "at", "actor", "category", "action", "target", "details", "status", "traceId", "actingAgency"}); err != nil {
 			return err
 		}
 		emit := func(r AuditRow) error {
-			return cw.Write([]string{r.Source, r.At, r.Actor, r.Category, r.Action, r.Target, r.Details, r.Status, r.TraceID})
+			return cw.Write([]string{r.Source, r.At, r.Actor, r.Category, r.Action, r.Target, r.Details, r.Status, r.TraceID, r.ActingAgency})
 		}
 		for _, src := range sources {
 			if !src.include {
@@ -141,13 +144,14 @@ func streamTable(ctx context.Context, database *sql.DB, table, dateCol, cols str
 }
 
 func streamChangeLog(ctx context.Context, database *sql.DB, from, to string, emit func(AuditRow) error) error {
-	return streamTable(ctx, database, "change_log", "at", "at, actor, category, action, target, details",
+	return streamTable(ctx, database, "change_log", "at", "at, actor, category, action, target, details, acting_agency",
 		func(rows *sql.Rows) (AuditRow, error) {
 			var r AuditRow
-			var target, details, category sql.NullString
-			if err := rows.Scan(&r.At, &r.Actor, &category, &r.Action, &target, &details); err != nil {
+			var target, details, category, acting sql.NullString
+			if err := rows.Scan(&r.At, &r.Actor, &category, &r.Action, &target, &details, &acting); err != nil {
 				return r, err
 			}
+			r.ActingAgency = acting.String
 			r.Source = "change_log"
 			r.Category = category.String
 			r.Target = target.String

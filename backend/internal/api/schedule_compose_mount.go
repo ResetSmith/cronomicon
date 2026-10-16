@@ -117,8 +117,14 @@ func (s *Server) createScheduleDef(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid schedule name (want "+composeNameRe.String()+")")
 		return
 	}
-	// Whose it is: the agency named, Global's when none is (§0a, question 32).
+	// Whose it is: the agency named, Global's when none is (§0a, question 32);
+	// in an agency context, that agency's (2.4.4 S3).
 	in.OwnerAgency = strings.TrimSpace(in.OwnerAgency)
+	if a, ok := s.ownerInContext(w, r, in.OwnerAgency, "schedule"); !ok {
+		return
+	} else {
+		in.OwnerAgency = a
+	}
 	if in.OwnerAgency == "" {
 		in.OwnerAgency = agencyid.Global
 	}

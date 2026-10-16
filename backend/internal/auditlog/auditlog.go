@@ -84,6 +84,24 @@ type ActivityParams struct {
 	ScheduleFile string
 }
 
+// actingKey carries the agency a global administrator works in (2.4.4).
+type actingKey struct{}
+
+// WithActingAgency marks ctx as a global administrator's request made while
+// working in agencyID (the agency switcher, 2.4.4 S3; the 2.5.0 plan's IN-9):
+// each change_log row written under it records both, "actor, acting in
+// agencyID". auth marks it when it attaches the identity; this package stays a
+// leaf.
+func WithActingAgency(ctx context.Context, agencyID string) context.Context {
+	return context.WithValue(ctx, actingKey{}, agencyID)
+}
+
+// ActingAgency is the agency WithActingAgency marked ctx with, or "".
+func ActingAgency(ctx context.Context) string {
+	a, _ := ctx.Value(actingKey{}).(string)
+	return a
+}
+
 // WriteChangeLog inserts one change_log row (S6). Optional columns (target,
 // details) are stored verbatim — empty string, never NULL (CC-D2).
 func WriteChangeLog(ctx context.Context, db Execer, actor, category, action, target, details string) error {
@@ -106,10 +124,20 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, actor, category, actio
 	// several sites (env-var names, hosts, the denied scope).
 	target = TrimForAudit(mask(target))
 	details = TrimForAudit(mask(details))
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO change_log (at, actor, category, action, target, details, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		now, actor, category, action, target, details, now)
+	acting := ActingAgency(ctx)
+	var err error
+	if acting == "" {
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO change_log (at, actor, category, action, target, details, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			now, actor, category, action, target, details, now)
+	} else {
+		// Only then: a change_log written by a test's own schema has no column.
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO change_log (at, actor, category, action, target, details, created_at, acting_agency)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			now, actor, category, action, target, details, now, acting)
+	}
 	if err != nil {
 		return fmt.Errorf("write change_log: %w", err)
 	}
@@ -117,7 +145,7 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, actor, category, actio
 	// file is an export of it (see Sink).
 	emit(Event{
 		At: now, Source: "change_log",
-		Actor: actor, Category: category, Action: action,
+		Actor: actor, ActingAgency: acting, Category: category, Action: action,
 		Target: target, Details: details,
 	})
 	return nil

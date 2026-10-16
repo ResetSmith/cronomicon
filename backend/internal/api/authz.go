@@ -683,6 +683,22 @@ var membershipCatalog = map[string]string{
 func (s *Server) requireCreationAgencies(w http.ResponseWriter, r *http.Request, id auth.Identity,
 	perm string, agencyIDs []string, label string) ([]string, bool) {
 
+	// 2.4.4 S3: in an agency context, a create that names no agency is that
+	// agency's, and one that names another is refused. (Several named is the
+	// one_agency refusal below.)
+	if len(agencyIDs) <= 1 {
+		given := ""
+		if len(agencyIDs) == 1 {
+			given = agencyIDs[0]
+		}
+		owner, ok := s.ownerInContext(w, r, given, label)
+		if !ok {
+			return nil, false
+		}
+		if owner != "" {
+			agencyIDs = []string{owner}
+		}
+	}
 	// ⚠️ The predicate is GlobalAdmin(perm), not Unrestricted(). Unrestricted() is
 	// permission-BLIND — it asks only whether some grant reaches every scope, and
 	// UnionGrantScopes collapses to ["*"] if ANY grant does. A user who is an

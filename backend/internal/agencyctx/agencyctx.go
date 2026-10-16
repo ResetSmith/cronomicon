@@ -22,7 +22,7 @@ import (
 )
 
 // Header names the agency a request works in: an agency's id, or "global".
-const Header = "X-Cronomicon-Agency"
+const Header = auth.AgencyHeader
 
 // unreadable is the context of a request that named an agency its caller may
 // not read. No row's owner is ever this value, so every list is empty.
@@ -40,6 +40,10 @@ func From(r *http.Request) (string, bool) {
 	}
 	return v, true
 }
+
+// Readable reports whether an agency From answered is one the caller may read
+// (false for the stand-in of one they may not).
+func Readable(agency string) bool { return agency != unreadable }
 
 // Narrow is the SQL clause (" AND <owner> = ?") and its argument that narrow a
 // list to the request's agency, or nothing when the request names none.

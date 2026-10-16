@@ -275,6 +275,12 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid calendar name (want "+composeNameRe.String()+")")
 		return
 	}
+	// In an agency context, that agency's (2.4.4 S3).
+	if a, ok := s.ownerInContext(w, r, in.OwnerAgency, "calendar"); !ok {
+		return
+	} else {
+		in.OwnerAgency = a
+	}
 	in.OwnerAgency = ownerOrGlobal(in.OwnerAgency)
 	var known int
 	if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, in.OwnerAgency).Scan(&known); err != nil {
