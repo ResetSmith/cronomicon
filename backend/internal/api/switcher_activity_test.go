@@ -62,3 +62,31 @@ func TestSwitcherAnAgencysOwnSyncsAndChangesAreInItsActivity(t *testing.T) {
 		t.Errorf("a change made with no agency named is recorded as %q's", *agency)
 	}
 }
+
+// A change to the installation (Settings → Installation, requireGlobal) is
+// Global's, whichever agency the administrator is viewing: neither its
+// Activity row nor its change log entry names the agency.
+func TestSwitcherAnInstallationChangeIsGlobalsWhereverItIsMade(t *testing.T) {
+	h, pool := gateServer(t)
+	seedSwitcher(t, pool)
+	cur := gateReq(t, h, http.MethodGet, "/api/v1/settings/general", gRoot, "")
+	if cur.Code != http.StatusOK {
+		t.Fatalf("read the general settings: %d %s", cur.Code, cur.Body)
+	}
+	var lastLog, lastAct int
+	_ = pool.QueryRow(`SELECT COALESCE(MAX(rowid), 0) FROM change_log`).Scan(&lastLog)
+	_ = pool.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM activity`).Scan(&lastAct)
+	if r := gateReqWithHeader(t, h, http.MethodPut, "/api/v1/settings/general", gRoot, cur.Body.String(), agencyctx.Header, "ag:FIN"); r.Code != http.StatusOK {
+		t.Fatalf("save the general settings while viewing FIN: %d %s", r.Code, r.Body)
+	}
+	var logs, logsNamed, acts, actsNamed int
+	_ = pool.QueryRow(`SELECT COUNT(*), COUNT(acting_agency) FROM change_log WHERE rowid > ?`, lastLog).Scan(&logs, &logsNamed)
+	_ = pool.QueryRow(`SELECT COUNT(*), COUNT(agency_id) FROM activity WHERE id > ?`, lastAct).Scan(&acts, &actsNamed)
+	if logs+acts == 0 {
+		t.Fatalf("saving the general settings recorded nothing to check")
+	}
+	if logsNamed != 0 || actsNamed != 0 {
+		t.Errorf("an installation change made while viewing FIN names an agency: %d of %d change log rows, %d of %d Activity rows",
+			logsNamed, logs, actsNamed, acts)
+	}
+}

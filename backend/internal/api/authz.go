@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/execspec"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -231,7 +232,11 @@ func (s *Server) globalOnly(perm, message string, next http.Handler) http.Handle
 			s.denyEntityAgency(w, r, id, perm, auth.AllScopes, message)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// 2.4.4: a change to the installation is Global's, whichever agency
+		// the administrator is viewing: its Activity row names no agency, and
+		// its change log entry no "acting in".
+		ctx := auditlog.WithActingAgency(auditlog.WithRequestAgency(r.Context(), ""), "")
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
