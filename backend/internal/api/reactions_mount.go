@@ -51,8 +51,13 @@ func (s *Server) mountReactions(mux *http.ServeMux) {
 	requireSession := s.auth.RequireSession
 	mux.Handle("GET /api/v1/reactions", requireSession(http.HandlerFunc(s.listReactions)))
 	mux.Handle("GET /api/v1/reactions/{ownerKind}/{ownerName}", requireSession(http.HandlerFunc(s.getDefinitionReactions)))
-	mux.Handle("PUT /api/v1/reactions/{ownerKind}/{ownerName}", s.requireComposeAdmin(http.HandlerFunc(s.replaceDefinitionReactions)))
-	mux.Handle("DELETE /api/v1/reactions/{ownerKind}/{ownerName}/{name}", s.requireComposeAdmin(http.HandlerFunc(s.deleteReaction)))
+	// Compose on the agency of the definition the reactions are of (2.4.2, the
+	// owner's answer to question 61), as calendars and schedules since §0a: a
+	// reaction's upstream is its own agency's (upstreamExistsFor), so it can no
+	// longer trigger another agency's definition, which is what kept these
+	// routes an administrator's of every agency.
+	mux.Handle("PUT /api/v1/reactions/{ownerKind}/{ownerName}", s.requireCompose(http.HandlerFunc(s.replaceDefinitionReactions)))
+	mux.Handle("DELETE /api/v1/reactions/{ownerKind}/{ownerName}/{name}", s.requireCompose(http.HandlerFunc(s.deleteReaction)))
 }
 
 // ErrCodeReactionsWatching is the error code both definition-delete routes
@@ -294,6 +299,9 @@ func (s *Server) replaceDefinitionReactions(w http.ResponseWriter, r *http.Reque
 	if !s.requireCronomiconOwner(w, kind, source, name) {
 		return
 	}
+	if !s.requireReactionOwnerCompose(w, r, reactionRef{Source: source, Kind: kind, Name: name, UID: owner.uid}) {
+		return
+	}
 
 	var body struct {
 		Reactions []reactionInput `json:"reactions"`
@@ -400,6 +408,9 @@ func (s *Server) deleteReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.requireCronomiconOwner(w, kind, owner.source, name) {
+		return
+	}
+	if !s.requireReactionOwnerCompose(w, r, reactionRef{Source: owner.source, Kind: kind, Name: name, UID: owner.uid}) {
 		return
 	}
 	mine, mineArgs := owner.rowsSQL(kind, name)
@@ -757,6 +768,19 @@ var inAppJobAgencySQL = `COALESCE(` + agencyid.JobSQL("jobs") + `, '` + agencyid
 // repository's, a definition built in the app's owner. By the owner's uid
 // when the ref carries one (I2: a name may be held in each agency); by the
 // name otherwise, for a row that records no owner.
+// requireReactionOwnerCompose answers 403 unless the caller holds compose on
+// the agency of the definition whose reactions are written (question 61).
+func (s *Server) requireReactionOwnerCompose(w http.ResponseWriter, r *http.Request, owner reactionRef) bool {
+	id, _ := auth.IdentityFrom(r.Context())
+	agency := s.reactionOwnerAgency(r.Context(), owner)
+	if id.CanAgency(auth.PermCompose, agency) {
+		return true
+	}
+	s.denyEntityAgency(w, r, id, auth.PermCompose, agency,
+		"a reaction belongs to its definition's agency, and writing it takes compose on that agency")
+	return false
+}
+
 func (s *Server) reactionOwnerAgency(ctx context.Context, owner reactionRef) string {
 	agency := agencyid.Global
 	if owner.UID != "" {
