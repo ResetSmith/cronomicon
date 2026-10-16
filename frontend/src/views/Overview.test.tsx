@@ -9,6 +9,8 @@ let CONTEXT: Record<string, unknown> = {};
 let OVERVIEW: unknown = null;
 let HITS: unknown[] = [];
 let RUNS: unknown[] = [];
+// Set: /runs answers page by page, one run a page, of this many runs in all.
+let RUNS_TOTAL: number | null = null;
 const asked: { path: string; headers?: Record<string, string> }[] = [];
 
 vi.mock("../api/client", async (importOriginal) => {
@@ -17,8 +19,20 @@ vi.mock("../api/client", async (importOriginal) => {
     ...actual,
     setRequestAgency: vi.fn(),
     api: {
-      GET: vi.fn(async (path: string, opts?: { headers?: Record<string, string> }) => {
+      GET: vi.fn(async (path: string, opts?: { headers?: Record<string, string>; params?: { query?: { page?: number } } }) => {
         asked.push({ path, headers: opts?.headers });
+        if (path === "/runs" && RUNS_TOTAL != null) {
+          const page = opts?.params?.query?.page ?? 1;
+          const at = new Date(Date.now() - page * 3600 * 1000).toISOString();
+          return {
+            data: {
+              items: [{ traceId: "p" + page, jobName: "job-" + page, ownerAgency: "ag-a", status: "success", kind: "job", startedAt: at }],
+              totalItems: RUNS_TOTAL,
+              totalPages: RUNS_TOTAL,
+              page,
+            },
+          };
+        }
         if (path === "/runs") return { data: { items: RUNS } };
         if (path === "/me/context") return { data: CONTEXT };
         if (path === "/overview") return { data: OVERVIEW };
@@ -30,7 +44,7 @@ vi.mock("../api/client", async (importOriginal) => {
 });
 
 import { AgencyProvider, useAgency } from "../agency";
-import { Overview, attentionHref, hitHref } from "./Overview";
+import { Overview, SCORE_MAX_PAGES, attentionHref, hitHref } from "./Overview";
 
 const choices = [
   { id: "overview", name: "Overview: all agencies", kind: "overview" },
@@ -79,6 +93,7 @@ beforeEach(() => {
   };
   HITS = [];
   RUNS = [];
+  RUNS_TOTAL = null;
   asked.length = 0;
 });
 afterEach(cleanup);
@@ -150,6 +165,22 @@ describe("the Operations overview (2.4.4 F3)", () => {
       const a = asked.find((x) => x.path === p);
       expect(a?.headers?.["X-Cronomicon-Agency"], p).toBe("none");
     }
+  });
+
+  it("reads the Score's runs page after page, and says when the day held more", async () => {
+    RUNS_TOTAL = 1350;
+    renderAt("/overview");
+    const note = await screen.findByTestId("score-cut");
+    expect(asked.filter((a) => a.path === "/runs")).toHaveLength(SCORE_MAX_PAGES);
+    expect(note.textContent).toContain("Showing the newest 5 of 1,350 runs");
+  });
+
+  it("reads no further than the last page, and says nothing then", async () => {
+    RUNS_TOTAL = 2;
+    renderAt("/overview");
+    await screen.findByTestId("overview-score");
+    await waitFor(() => expect(asked.filter((a) => a.path === "/runs")).toHaveLength(2));
+    expect(screen.queryByTestId("score-cut")).toBeNull();
   });
 
   it("links each kind of item where it is worked on", () => {
