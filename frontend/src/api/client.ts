@@ -45,6 +45,10 @@ let requestAgency = "";
 export function setRequestAgency(agency: string): void {
   requestAgency = agency;
 }
+/** The agency requests name now ("" for none): a cache of agency-narrowed answers keys by it. */
+export function getRequestAgency(): string {
+  return requestAgency;
+}
 // A refused request may mean the person's grants changed during the session;
 // agency.tsx reads their choices again when it hears this (SW-15).
 export const AGENCY_REFRESH_EVENT = "cronomicon:agency-refresh";

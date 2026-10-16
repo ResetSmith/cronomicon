@@ -45,7 +45,7 @@ vi.mock("../api/client", async (importOriginal) => {
 
 import { AgencyProvider, useAgency } from "../agency";
 import { Overview, attentionHref, hitHref } from "./Overview";
-import { SCORE_MAX_PAGES } from "../components/score-runs";
+import { SCORE_MAX_PAGES, resetScoreRunsCache } from "../components/score-runs";
 
 const choices = [
   { id: "overview", name: "Overview: all agencies", kind: "overview" },
@@ -95,6 +95,7 @@ beforeEach(() => {
   HITS = [];
   RUNS = [];
   RUNS_TOTAL = null;
+  resetScoreRunsCache();
   asked.length = 0;
 });
 afterEach(cleanup);

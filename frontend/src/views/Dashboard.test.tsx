@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { groupMarks, scoreWindow, inWindow, type Mark } from "../components/score-model";
 import { c } from "../theme";
+import { resetScoreRunsCache } from "../components/score-runs";
 
 // VU-19: the two tests that used to live here rendered `JobHistogram`, which
 // Phase D deleted along with the three list cards. Their replacement is not a
@@ -183,6 +184,7 @@ beforeEach(() => {
   feeds.warned = [];
   feeds.upcoming = [];
   feeds.scoreTotal = null;
+  resetScoreRunsCache();
   jobsFeed.length = 0;
   jobsFeed.push(...DEFAULT_JOBS);
   // The verdict strip's dismissal is persisted per browser, and jsdom shares one
