@@ -13,6 +13,37 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.4.3] - 2026-10-16
+
+A scope from Global's repository is Global's (the owner's answer to the
+review's question 58). One migration (1470, schema v1470); runner protocol 14 is
+unchanged.
+
+**Upgrading.** A scope of Global's repository that a repair gave to an agency
+before this release becomes that agency's own, built in the app, keeping its
+hosts, groups, variables, inventory and host records (the host records become
+the agency's too). The inventory file in Global's repository is then no
+scope's: its sync makes no second scope of the name for Global, and the
+repository's problems say so on the file until it is removed or renamed, or
+the agency deletes its scope. An installation without data has nothing to do.
+
+### Changed
+
+- **A scope from Global's repository cannot be repaired into an agency**: 409
+  `scope_agency_fixed`, as for a scope of an agency's repository since 2.4.0.
+  Another agency gets its hosts by **Clone to an agency**. Until now the repair
+  went through and the agency held a scope that Global's sync went on
+  writing, that it could not edit, and that it lost when the file left Global's
+  repository. A Git scope's row says `canRepair: false`, so the Scopes screen
+  offers no repair for it.
+
+### For developers
+
+- `scopes.released_from` names the repository a scope was released from
+  (1470); it goes with the row. `scope_agencies_repo_fixed` and
+  `settings.ScopeAgencyFixedTo` no longer make an exception of Global's
+  repository. 1470's down is lossy: a converted scope stays the agency's own.
+
 ## [2.4.2] - 2026-10-16
 
 What the review of the 2.4 line found, put right before 2.5.0. Seventeen
@@ -103,7 +134,7 @@ next fire of the same job, once.
   of its name (`jobs_born_owned`): taking that out broke 35 tests' fixtures,
   and under per-agency names it is safe. Put to the owner.
 - A scope repaired out of Global's repository into an agency still follows
-  Global's inventory file (question 58): waiting for the owner.
+  Global's inventory file (question 58): waiting for the owner. (Done in 2.4.3.)
 - The workflow editor does not yet pick a sub-workflow by identity from a list,
   nor offer an owner for a new empty workflow.
 - Routes other than the runner's owner still answer `validation_error`.
