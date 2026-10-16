@@ -351,6 +351,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	// packages, so they can be built independently and in parallel.
 	s.mountAuth(mux)                 // B2: /me, /auth/*, /access/recent-logins
 	s.mountMeContext(mux)            // 2.4.4 S4: /me/context, /me/preferences (the agency switcher)
+	s.mountOverview(mux)             // 2.4.4 S5: /overview, /overview/search, /me/agency-badges
 	s.mountGit(mux)                  // B3: /schedules/*, /git/*, /webhooks/gitlab, scopes-from-git
 	s.mountRunners(mux)              // B4: /runners/*, /runs/{traceId}/log (ingest + stream)
 	execEng := s.mountExecution(mux) // B5: /jobs/*, /workflows/*, /runs, /history, /activity, /change-log
