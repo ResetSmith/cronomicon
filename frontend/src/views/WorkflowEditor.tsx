@@ -5,7 +5,6 @@ import "@xyflow/react/dist/style.css";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
-import { COMPOSE_ADMIN_ONLY, globalOnly } from "../api/globalAdmin";
 import { useGet, rows } from "../hooks";
 import { c } from "../theme";
 import { StepChain } from "./workflows/StepChain";
@@ -263,14 +262,11 @@ export function WorkflowEditor() {
 
 
   const [canCompose, setCanCompose] = useState<boolean | null>(null);
-  // GC (v2.2.2) — reactions are written through their own endpoint, which the
-  // server takes only from a compose ADMINISTRATOR. The workflow itself and its
-  // inline schedules stay per-scope compose.
-  const [composeAdmin, setComposeAdmin] = useState(false);
+  // Reactions are written through their own endpoint, by compose on the
+  // workflow's agency (2.4.2, question 61; a compose administrator's until then).
   useEffect(() => {
     fetchCapabilities().then((cap) => {
       setCanCompose(cap.compose);
-      setComposeAdmin(!!cap.composeAdmin);
     });
   }, []);
 
@@ -854,7 +850,9 @@ export function WorkflowEditor() {
           ownerKind="workflow"
           ownerName={isEdit ? name : ""}
           ownerSource="cronomicon"
-          disabledReason={globalOnly(composeAdmin, COMPOSE_ADMIN_ONLY) || undefined}
+          // 2.4.2 (question 61): reactions are written by compose on the
+          // definition's agency, which whoever may save the workflow holds.
+          disabledReason={undefined}
           loadError={reactions.loadError}
         />
         {reactionsError({ kind: "workflow", name, source: "cronomicon" }, reactions.list) && (

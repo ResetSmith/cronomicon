@@ -182,20 +182,20 @@ describe("JobComposer — All is withheld without composeUnbound (AF-2)", () => 
 // job and its inline schedules; the Reactions section is read-only for them and
 // says why (FX-7), rather than accepting input the second save would refuse
 // with "the job was saved, but its reactions were not".
-describe("JobComposer — reactions need a compose administrator (GC)", () => {
-  const WHY = /only a global administrator \(a role on every agency\) can change them\./;
+// Reactions needed a compose administrator from GC (v2.2.2) until 2.4.2; since
+// question 61 they are the definition's agency's, like the definition.
+describe("JobComposer — reactions are the job's agency's (question 61)", () => {
   const BASE = {
     vault: false, apprise: false, compose: true, composeUnbound: true, manageRoles: false,
     configureApp: false, manageEnvVars: true, publishSchedule: false, triggerJobs: false,
     killJobs: false, unrestricted: false,
   };
 
-  it("disables Add reaction with the reason for a departmental composer", async () => {
+  it("enables Add reaction for a departmental composer", async () => {
     const q = renderComposer("/compose?id=8");
     const add = (await waitFor(() => q.getByRole("button", { name: "+ Add reaction" }))) as HTMLButtonElement;
-    await waitFor(() => expect(add.disabled).toBe(true));
-    expect(add.title).toMatch(WHY);
-    expect(q.getByRole("note").textContent).toMatch(WHY);
+    await waitFor(() => expect(add.disabled).toBe(false));
+    expect(add.title).toBe("");
   });
 
   it("enables it for a compose administrator", async () => {
