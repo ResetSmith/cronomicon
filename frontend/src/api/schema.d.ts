@@ -4917,6 +4917,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The agencies the caller may work in, and where they start (v2.4.4)
+         * @description The agency switcher. choices are what the caller may switch to: the Operations overview first for those whose grant reaches every agency, then Global (everyone's), then the agencies they may read, by name. effectiveDefault is where a visit with no agency in its address starts: the caller's stored default while they may still have it; else Global for a global administrator; else the overview for anyone else whose grant reaches every agency; else the first, by name and ignoring case, of the agencies they hold a grant on; else Global. workingAgency is the agency the lists use, the same as effectiveDefault except on the overview, where it is the rule without the overview.
+         */
+        get: operations["getMyAgencyContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Store the caller's own default agency (v2.4.4)
+         * @description The caller's own choice of where a visit starts: an agency they may read, `global`, or `overview` for one whose grant reaches every agency; `null` clears it. Anything else is 422 `invalid_default_agency`, whether or not the agency exists. A default the caller later loses access to is ignored, not removed. CSRF required. Answers as GET /me/context.
+         */
+        put: operations["putMyPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/agency-badges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What each of the caller's agencies has waiting (v2.4.4)
+         * @description For each agency among the caller's choices (GET /me/context, the overview excepted): its open notices the caller may act on (configureApp on that agency, as the notices bell counts them; 0 otherwise) and its failed runs in the last 24 hours. The switcher shows them beside each choice, so that a person of several agencies is not blind to the ones they are not viewing.
+         */
+        get: operations["getMyAgencyBadges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Operations overview, across every agency (v2.4.4)
+         * @description One read-only page across every agency, for those whose grant reaches every agency (a global administrator, a viewer of everything); 403 for anyone else, a person granted on several agencies included. A row per agency, Global included, by name: its jobs and workflows and how many are paused, its runs in the last 24 hours by outcome (`lost` for one whose agent went away), its next scheduled run in the coming week, its repository's last sync and its open notices. Then what needs attention across agencies, newest first, at most 100 with the total: jobs and workflows whose last run failed, runs lost in the last day, runs still running past their job's timeout, and repositories whose last sync failed or was partial. Owners are read as each agency's own view reads them.
+         */
+        get: operations["getOperationsOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/overview/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find a job or workflow by name across agencies (v2.4.4)
+         * @description The overview's search: jobs and workflows whose name contains q, each with the agency it belongs to, by name, at most 50. The overview's audience only (403 otherwise). An empty q is an empty list.
+         */
+        get: operations["searchOperationsOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/sessions/revoke": {
         parameters: {
             query?: never;
@@ -6556,6 +6656,8 @@ export interface components {
             suppressedLabel?: string;
         };
         Run: {
+            /** @description Whose the run is (v2.4.4, migration 1480); Global's is `global`. A link to another agency's run switches to its agency, and the Operations overview's Score names it. */
+            readonly ownerAgency?: string;
             /**
              * @description RX — the run whose completion CAUSED this one, for a reaction-fired
              *     run; null for every other run, which is every run that existed before
@@ -9543,6 +9645,62 @@ export interface components {
              * @description FX-E4 — the sliding activity stamp behind the sessionPolicy idle cap. Absent on a session established before the cap shipped. The raw Identity serializes onto /me, so the field is declared here rather than left as undocumented drift — the exact class this band exists to close.
              */
             readonly seen?: string | null;
+        };
+        /** @description The agency switcher's choices and defaults for the caller (v2.4.4; GET /me/context). */
+        MyAgencyContext: {
+            choices: {
+                /** @description An agency's id, `global`, or `overview`. */
+                id: string;
+                name: string;
+                /** @enum {string} */
+                kind: "overview" | "agency";
+            }[];
+            /** @description The caller's own choice */
+            storedDefault?: string | null;
+            /** @description Where a visit with no agency in its address starts. */
+            effectiveDefault: string;
+            /** @description The agency the lists use; on the overview */
+            workingAgency: string;
+            /** @description True when the caller's grant reaches every agency. */
+            canOverview: boolean;
+        };
+        /** @description The Operations overview (v2.4.4; GET /overview). */
+        OperationsOverview: {
+            agencies: {
+                id: string;
+                name: string;
+                jobs: number;
+                pausedJobs: number;
+                workflows: number;
+                pausedWorkflows: number;
+                /** @description Runs created in the last 24 hours, by status (success, failure, warning, running, queued, killed, skipped) and `lost`. */
+                runs24h: {
+                    [key: string]: number;
+                };
+                /** Format: date-time */
+                nextRunAt?: string | null;
+                repository?: {
+                    status?: string | null;
+                    syncedAt?: string | null;
+                } | null;
+                openNotices: number;
+            }[];
+            attention: {
+                /** @enum {string} */
+                kind: "job_failed" | "workflow_failed" | "run_lost" | "run_overdue" | "sync_failed";
+                agencyId: string;
+                agencyName: string;
+                name: string;
+                /** @description The job's or workflow's uid */
+                id?: string;
+                /** @description The run (or workflow run) to open. */
+                traceId?: string;
+                at: string;
+            }[];
+            /** @description How many need attention; at most 100 are listed. */
+            attentionTotal: number;
+            /** Format: date-time */
+            generatedAt: string;
         };
         /** @description LR-87 — the caller's own groups and what they grant. */
         MyAccess: {
@@ -18081,6 +18239,144 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    getMyAgencyContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's choices and defaults. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAgencyContext"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    putMyPreferences: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description CSRF double-submit token mirroring the csrf-token cookie (T8). Required on all state-changing operator requests. */
+                "X-CSRF-Token": components["parameters"]["csrf"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    defaultAgencyId: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored; the caller's choices and defaults. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyAgencyContext"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            /** @description Not an agency the caller may start in. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getMyAgencyBadges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One entry per agency among the caller's choices. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agencyId: string;
+                        openNotices: number;
+                        failedRuns24h: number;
+                    }[];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getOperationsOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The overview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsOverview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    searchOperationsOverview: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The matches. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind: "job" | "workflow";
+                        id: string;
+                        name: string;
+                        agencyId: string;
+                        agencyName: string;
+                    }[];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     revokeSessions: {

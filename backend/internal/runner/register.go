@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auditlog"
 	"github.com/ResetSmith/cronomicon/internal/auth"
@@ -373,6 +374,15 @@ func (s *Service) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// 2.4.4: the agency the request works in (agencyctx). A runner is its
+	// owner's (LR-58); one with no owner row is Global's.
+	out = agencyctx.Keep(r, out, func(rr runnerResponse) string {
+		if rr.OwnerAgency == nil {
+			return ""
+		}
+		return rr.OwnerAgency.ID
+	})
 
 	// DR-7 (c), re-keyed by MA-32: offer to re-point the scope bindings a
 	// previous enrolment under the same name still holds, for the scopes of each

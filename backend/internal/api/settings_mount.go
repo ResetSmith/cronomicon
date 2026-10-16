@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/runref"
 	"github.com/ResetSmith/cronomicon/internal/vaultpath"
@@ -74,7 +75,10 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 			httpx.Fail(w, http.StatusUnauthorized, "unauthorized", "login required")
 			return
 		}
-		list, err := sec.List(r.Context(), func(agency, scope string) bool { return auth.ScopeReadableIn(id, agency, scope) })
+		// 2.4.4: and of the agency the request works in (agencyctx).
+		list, err := sec.List(r.Context(), func(agency, scope string) bool {
+			return auth.ScopeReadableIn(id, agency, scope) && agencyctx.In(r, agency)
+		})
 		if err != nil {
 			httpx.Fail500(w, s.log, "db_error", err)
 			return
@@ -463,6 +467,11 @@ func (s *Server) mountSettings(mux *http.ServeMux) {
 		}
 		if list == nil {
 			list = []sshkeys.Credential{}
+		}
+		// 2.4.4: the agency the request works in. A key names its owner.
+		if _, named := agencyctx.From(r); named {
+			agencyIDs := s.agencyIDsByName(r.Context())
+			list = agencyctx.Keep(r, list, func(c sshkeys.Credential) string { return agencyIDs[c.OwnerAgency] })
 		}
 		if tagFilter := tagutil.ParseQuery(r.URL.Query()); !tagFilter.Empty() {
 			kept := make([]sshkeys.Credential, 0, len(list))
@@ -938,7 +947,9 @@ func (s *Server) handleListEnvVars(w http.ResponseWriter, r *http.Request) {
 	filtered := make([]settings.EnvVar, 0, len(list))
 	agencyIDs := s.agencyIDsByName(r.Context()) // a row names its owner (I2: whose scope it is)
 	for _, ev := range list {
-		if auth.ScopeReadableIn(id, agencyIDs[ev.OwnerAgency], scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) {
+		// 2.4.4: and in the agency the request works in (agencyctx).
+		if auth.ScopeReadableIn(id, agencyIDs[ev.OwnerAgency], scopeStrOf(ev.Scope)) && tagFilter.Match(ev.Tags) &&
+			agencyctx.In(r, agencyIDs[ev.OwnerAgency]) {
 			filtered = append(filtered, ev)
 		}
 	}
@@ -1133,6 +1144,14 @@ func (s *Server) handleListScopes(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.Scope{}
 	}
+	// 2.4.4: the agency the request works in.
+	// A scope's owner is its one agency, Global's for one several share (1410).
+	list = agencyctx.Keep(r, list, func(sc settings.Scope) string {
+		if len(sc.Agencies) == 1 {
+			return sc.Agencies[0].ID
+		}
+		return ""
+	})
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(sc settings.Scope) (rowFlags, error) {
 		fl, err := s.flagsByMembership(r.Context(), id, auth.PermConfigureApp, "scope_agencies", "scope_id", sc.ID)
@@ -1584,6 +1603,8 @@ func (s *Server) handleListSshHosts(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshHost{}
 	}
+	// 2.4.4: the agency the request works in.
+	list = agencyctx.Keep(r, list, func(h settings.SshHost) string { return h.OwnerAgency })
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(h settings.SshHost) (rowFlags, error) { return s.hostRecordFlags(r.Context(), id, h.ID) })
 	if err != nil {
@@ -1924,6 +1945,8 @@ func (s *Server) handleListBastions(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []settings.SshBastion{}
 	}
+	// 2.4.4: the agency the request works in.
+	list = agencyctx.Keep(r, list, func(b settings.SshBastion) string { return b.OwnerAgency })
 	id, _ := auth.IdentityFrom(r.Context())
 	rows, err := withRowFlags(list, func(b settings.SshBastion) (rowFlags, error) { return s.bastionFlags(r.Context(), id, b.ID) })
 	if err != nil {

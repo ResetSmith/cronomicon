@@ -80,6 +80,7 @@ var writeRouteGates = map[string]routeGate{
 	"PUT /api/v1/runner-agencies":                                     {clsObject, "per runner: requireRunnerOwner, and each agency named; the writer's invariant decides what may be written (MA-11)"},
 	"PUT /api/v1/":                                                    {clsObject, "the four {kind}-agencies setters: requireMove, the kind's permission on the row's agency and on the one named (one agency per row, LR-7/LR-54); a scope named into another agency by a global administrator only (2.4.0)"},
 	"POST /api/v1/auth/logout":                                        {clsSelf, "ends the caller's own session"},
+	"PUT /api/v1/me/preferences":                                      {clsSelf, "the caller's own default agency, one they may read (2.4.4)"},
 	"POST /api/v1/auth/sessions/revoke":                               {clsGlobal, "signs out every agency's users (LR-79); requireGlobal(manageRoles)"},
 	"PUT /api/v1/job-reference-bindings/{jobId}":                      {clsObject, "manageEnvVars on the job's scope, from ONE grant (unbound: every scope)"},
 	"PUT /api/v1/script-reference-bindings/{name...}":                 {clsGlobal, "a script is shared across scopes: an unrestricted manageEnvVars grant"},

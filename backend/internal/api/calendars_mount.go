@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
@@ -220,6 +221,10 @@ func (s *Server) listCalendars(w http.ResponseWriter, r *http.Request) {
 	items := make([]calendarRow, 0, len(rows))
 	caller, _ := auth.IdentityFrom(r.Context())
 	for _, c := range rows {
+		// 2.4.4: the agency the request works in.
+		if !agencyctx.In(r, c.OwnerAgency) {
+			continue
+		}
 		c.UsedBy = bindings[calKey(c.OwnerAgency, c.Name)]
 		c.Days = nil // the list view carries counts and coverage, not every date
 		c.CanEdit = caller.CanAgency(auth.PermCompose, c.OwnerAgency)
@@ -269,6 +274,12 @@ func (s *Server) createCalendar(w http.ResponseWriter, r *http.Request) {
 	if !composeNameRe.MatchString(in.Name) {
 		httpx.Fail(w, http.StatusUnprocessableEntity, "validation_failed", "invalid calendar name (want "+composeNameRe.String()+")")
 		return
+	}
+	// In an agency context, that agency's (2.4.4 S3).
+	if a, ok := s.ownerInContext(w, r, in.OwnerAgency, "calendar"); !ok {
+		return
+	} else {
+		in.OwnerAgency = a
 	}
 	in.OwnerAgency = ownerOrGlobal(in.OwnerAgency)
 	var known int

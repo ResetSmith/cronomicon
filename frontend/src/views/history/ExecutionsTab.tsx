@@ -1,6 +1,7 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
+import { useEnsureAgency } from "../../agency";
 import { useGet, useLiveGet, paged, useColumnWidths, useTableSort } from "../../hooks";
 import { ColumnsMenu, TableHead, renderCells, useTableColumns } from "../../components/table";
 import { useNameDisambiguator } from "../../utils/disambiguate";
@@ -346,6 +347,22 @@ export function ExecutionsTab() {
   const reactedTo = searchParams.get("reactedTo") ?? "";
   // RX-17 — the forward pivot's landing spot: one run, by trace id.
   const traceFocus = searchParams.get("trace") ?? "";
+  // 2.4.4 (SW-8) — the list is the agency in use's; a link to another agency's
+  // run (an alert, a notice, a colleague) switches to its agency. Reading the
+  // one run is not narrowed, and says whose it is.
+  const [traceOwner, setTraceOwner] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!traceFocus) return;
+    let cancelled = false;
+    void api.GET("/runs/{traceId}", { params: { path: { traceId: traceFocus } } }).then((res) => {
+      const owner = (res.data as { ownerAgency?: string } | undefined)?.ownerAgency;
+      if (!cancelled && owner) setTraceOwner(owner);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [traceFocus]);
+  useEnsureAgency(traceOwner);
   const [triggerFilter, setTriggerFilterRaw] = useState(() => {
     const raw = searchParams.get("triggerKind");
     return raw && TRIGGER_WIRE_SET.has(raw) ? raw : "";

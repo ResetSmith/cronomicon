@@ -7872,6 +7872,142 @@ paths:
               schema: { $ref: '#/components/schemas/MyAccess' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /me/context:
+    get:
+      tags: [Access]
+      operationId: getMyAgencyContext
+      summary: The agencies the caller may work in, and where they start (v2.4.4)
+      description: >-
+        The agency switcher. choices are what the caller may switch to: the Operations overview
+        first for those whose grant reaches every agency, then Global (everyone's), then the
+        agencies they may read, by name. effectiveDefault is where a visit with no agency in its
+        address starts: the caller's stored default while they may still have it; else Global for
+        a global administrator; else the overview for anyone else whose grant reaches every
+        agency; else the first, by name and ignoring case, of the agencies they hold a grant on;
+        else Global. workingAgency is the agency the lists use, the same as effectiveDefault except
+        on the overview, where it is the rule without the overview.
+      responses:
+        '200':
+          description: The caller's choices and defaults.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAgencyContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/preferences:
+    put:
+      tags: [Access]
+      operationId: putMyPreferences
+      summary: Store the caller's own default agency (v2.4.4)
+      description: >-
+        The caller's own choice of where a visit starts: an agency they may read, `global`, or
+        `overview` for one whose grant reaches every agency; `null` clears it. Anything else is
+        422 `invalid_default_agency`, whether or not the agency exists. A default the caller later
+        loses access to is ignored, not removed. CSRF required. Answers as GET /me/context.
+      parameters: [{ $ref: '#/components/parameters/csrf' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [defaultAgencyId]
+              properties:
+                defaultAgencyId: { type: [string, 'null'] }
+      responses:
+        '200':
+          description: Stored; the caller's choices and defaults.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAgencyContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422':
+          description: Not an agency the caller may start in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/agency-badges:
+    get:
+      tags: [Access]
+      operationId: getMyAgencyBadges
+      summary: What each of the caller's agencies has waiting (v2.4.4)
+      description: >-
+        For each agency among the caller's choices (GET /me/context, the overview excepted): its
+        open notices the caller may act on (configureApp on that agency, as the notices bell
+        counts them; 0 otherwise) and its failed runs in the last 24 hours. The switcher shows
+        them beside each choice, so that a person of several agencies is not blind to the ones
+        they are not viewing.
+      responses:
+        '200':
+          description: One entry per agency among the caller's choices.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [agencyId, openNotices, failedRuns24h]
+                  properties:
+                    agencyId: { type: string }
+                    openNotices: { type: integer }
+                    failedRuns24h: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /overview:
+    get:
+      tags: [Access]
+      operationId: getOperationsOverview
+      summary: The Operations overview, across every agency (v2.4.4)
+      description: >-
+        One read-only page across every agency, for those whose grant reaches every agency (a
+        global administrator, a viewer of everything); 403 for anyone else, a person granted on
+        several agencies included. A row per agency, Global included, by name: its jobs and
+        workflows and how many are paused, its runs in the last 24 hours by outcome (`lost` for
+        one whose agent went away), its next scheduled run in the coming week, its repository's
+        last sync and its open notices. Then what needs attention across agencies, newest first,
+        at most 100 with the total: jobs and workflows whose last run failed, runs lost in the
+        last day, runs still running past their job's timeout, and repositories whose last sync
+        failed or was partial. Owners are read as each agency's own view reads them.
+      responses:
+        '200':
+          description: The overview.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationsOverview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /overview/search:
+    get:
+      tags: [Access]
+      operationId: searchOperationsOverview
+      summary: Find a job or workflow by name across agencies (v2.4.4)
+      description: >-
+        The overview's search: jobs and workflows whose name contains q, each with the agency it
+        belongs to, by name, at most 50. The overview's audience only (403 otherwise). An empty q
+        is an empty list.
+      parameters:
+        - { name: q, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: The matches.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [kind, id, name, agencyId, agencyName]
+                  properties:
+                    kind: { type: string, enum: [job, workflow] }
+                    id: { type: string }
+                    name: { type: string }
+                    agencyId: { type: string }
+                    agencyName: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /auth/sessions/revoke:
     post:
       tags: [Access]
@@ -10215,6 +10351,10 @@ components:
     Run:
       type: object
       properties:
+        ownerAgency:
+          type: string
+          readOnly: true
+          description: Whose the run is (v2.4.4, migration 1480); Global's is `global`. A link to another agency's run switches to its agency, and the Operations overview's Score names it.
         reactedToRunId:
           type: [string, 'null']
           readOnly: true
@@ -14077,6 +14217,67 @@ components:
             the field is declared here rather than left as undocumented drift — the exact class
             this band exists to close.
 
+    MyAgencyContext:
+      type: object
+      description: The agency switcher's choices and defaults for the caller (v2.4.4; GET /me/context).
+      required: [choices, effectiveDefault, workingAgency, canOverview]
+      properties:
+        choices:
+          type: array
+          items:
+            type: object
+            required: [id, name, kind]
+            properties:
+              id: { type: string, description: "An agency's id, `global`, or `overview`." }
+              name: { type: string }
+              kind: { type: string, enum: [overview, agency] }
+        storedDefault: { type: [string, 'null'], description: The caller's own choice, as stored; null when none. }
+        effectiveDefault: { type: string, description: Where a visit with no agency in its address starts. }
+        workingAgency: { type: string, description: The agency the lists use; on the overview, the rule without it. }
+        canOverview: { type: boolean, description: True when the caller's grant reaches every agency. }
+    OperationsOverview:
+      type: object
+      description: The Operations overview (v2.4.4; GET /overview).
+      required: [agencies, attention, attentionTotal, generatedAt]
+      properties:
+        agencies:
+          type: array
+          items:
+            type: object
+            required: [id, name, jobs, pausedJobs, workflows, pausedWorkflows, runs24h, openNotices]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              jobs: { type: integer }
+              pausedJobs: { type: integer }
+              workflows: { type: integer }
+              pausedWorkflows: { type: integer }
+              runs24h:
+                type: object
+                description: Runs created in the last 24 hours, by status (success, failure, warning, running, queued, killed, skipped) and `lost`.
+                additionalProperties: { type: integer }
+              nextRunAt: { type: [string, 'null'], format: date-time }
+              repository:
+                type: [object, 'null']
+                properties:
+                  status: { type: [string, 'null'] }
+                  syncedAt: { type: [string, 'null'] }
+              openNotices: { type: integer }
+        attention:
+          type: array
+          items:
+            type: object
+            required: [kind, agencyId, agencyName, name, at]
+            properties:
+              kind: { type: string, enum: [job_failed, workflow_failed, run_lost, run_overdue, sync_failed] }
+              agencyId: { type: string }
+              agencyName: { type: string }
+              name: { type: string }
+              id: { type: string, description: The job's or workflow's uid, or the run's job's. }
+              traceId: { type: string, description: The run (or workflow run) to open. }
+              at: { type: string }
+        attentionTotal: { type: integer, description: How many need attention; at most 100 are listed. }
+        generatedAt: { type: string, format: date-time }
     MyAccess:
       type: object
       readOnly: true

@@ -67,9 +67,9 @@ func TestExportAuditStreamCSV(t *testing.T) {
 
 	var want bytes.Buffer
 	cw := csv.NewWriter(&want)
-	_ = cw.Write([]string{"source", "at", "actor", "category", "action", "target", "details", "status", "traceId"})
+	_ = cw.Write([]string{"source", "at", "actor", "category", "action", "target", "details", "status", "traceId", "actingAgency"})
 	for _, r := range wantRows() {
-		_ = cw.Write([]string{r.Source, r.At, r.Actor, r.Category, r.Action, r.Target, r.Details, r.Status, r.TraceID})
+		_ = cw.Write([]string{r.Source, r.At, r.Actor, r.Category, r.Action, r.Target, r.Details, r.Status, r.TraceID, r.ActingAgency})
 	}
 	cw.Flush()
 	if buf.String() != want.String() {
@@ -94,7 +94,7 @@ func TestExportAuditEmpty(t *testing.T) {
 	if err := ExportAudit(context.Background(), pool, &cbuf, "", "", nil, "csv"); err != nil {
 		t.Fatalf("csv: %v", err)
 	}
-	if got := strings.TrimSpace(cbuf.String()); got != "source,at,actor,category,action,target,details,status,traceId" {
+	if got := strings.TrimSpace(cbuf.String()); got != "source,at,actor,category,action,target,details,status,traceId,actingAgency" {
 		t.Errorf("empty CSV = %q, want header only", got)
 	}
 }

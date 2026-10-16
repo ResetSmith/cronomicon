@@ -881,6 +881,24 @@ func (s *Server) workflowOwner(r *http.Request, steps []workflow.Step) (owner st
 // (the change was a repair), and any agency's composer could edit it. false
 // after a refusal is written.
 func (s *Server) workflowSaveOwner(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
+	// 2.4.4 S3: a workflow being created in an agency context is that agency's:
+	// a jobless one takes it, and one whose jobs are another agency's is
+	// refused. An edit keeps the owner it has.
+	if stored == "" {
+		if named, ok = s.ownerInContext(w, r, named, "workflow"); !ok {
+			return "", false, false
+		}
+		owner, spans, ok = s.workflowSaveOwnerResolved(w, r, id, steps, named, stored)
+		if ok && !spans && !s.ownerMatchesContext(w, r, owner, "workflow") {
+			return "", false, false
+		}
+		return owner, spans, ok
+	}
+	return s.workflowSaveOwnerResolved(w, r, id, steps, named, stored)
+}
+
+// workflowSaveOwnerResolved is workflowSaveOwner before the agency context.
+func (s *Server) workflowSaveOwnerResolved(w http.ResponseWriter, r *http.Request, id auth.Identity, steps []workflow.Step, named, stored string) (owner string, spans bool, ok bool) {
 	owner, spans, err := s.workflowOwner(r, steps)
 	if err != nil {
 		httpx.Fail500(w, s.log, "db_error", err)

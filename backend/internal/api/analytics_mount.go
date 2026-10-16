@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
 )
 
@@ -127,6 +128,11 @@ func (s *Server) runAnalytics(w http.ResponseWriter, r *http.Request) {
 		// and so a 500, for every caller who is not unrestricted.
 		where += scopeFrag
 		args = append(args, scopeArgs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, runOwnerSQL); frag != "" {
+		where += frag
+		args = append(args, fargs...)
 	}
 
 	out := analyticsResponse{

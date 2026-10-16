@@ -4,6 +4,7 @@ import { c } from "../theme";
 import { api, csrfHeader, errMsg, fetchCapabilities, logout } from "../api/client";
 import { fetchMyAccess, type MyAccess } from "../api/access";
 import { ConfirmDialog, InlineLoading, Modal } from "./ui";
+import { OVERVIEW, useAgencyOptional } from "../agency";
 
 // The user menu (LR-86, LR-87; v2.3.0) — the sidebar footer's identity block,
 // made into a menu on the HelpMenu pattern.
@@ -91,6 +92,8 @@ export function UserMenu({
   }, [open]);
 
   const chip = accessChip(access);
+  const ag = useAgencyOptional();
+  const here = ag ? (ag.onOverview ? OVERVIEW : ag.agency) : "";
   const item = (label: string, onClick: () => void, extra?: { danger?: boolean; title?: string }) => (
     <button
       type="button"
@@ -198,6 +201,15 @@ export function UserMenu({
             {chip && <div style={{ fontSize: c.fontXs, color: c.textSec, marginTop: 2 }}>{chip}</div>}
           </div>
           {item("My access…", () => setShowAccess(true))}
+          {/* 2.4.4 — where a visit starts (SW-9). */}
+          {ag && ag.choices.length > 1 && ag.storedDefault !== here &&
+            item(`Make ${ag.nameOf(here)} my default`, () => void ag.setDefault(here), {
+              title: "Start here when you open Cronomicon",
+            })}
+          {ag && ag.storedDefault &&
+            item("Clear my default", () => void ag.setDefault(null), {
+              title: "Start where your access says",
+            })}
           {canRevoke &&
             item("Sign out everyone else…", () => setConfirmRevoke(true), {
               title: "End every other signed-in session. Yours stays.",

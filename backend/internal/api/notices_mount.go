@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -113,7 +114,8 @@ func (s *Server) handleListNotices(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []noticeJSON{}
 	for _, n := range open {
-		if !id.CanAgency(auth.PermConfigureApp, n.AgencyID) {
+		// 2.4.4: and in the agency the request works in (agencyctx).
+		if !id.CanAgency(auth.PermConfigureApp, n.AgencyID) || !agencyctx.In(r, n.AgencyID) {
 			continue
 		}
 		out = append(out, noticeJSON{
@@ -140,6 +142,9 @@ func (s *Server) handleListNotices(w http.ResponseWriter, r *http.Request) {
 			agency := scopeAgency[p.Scope]
 			if agency == "" {
 				agency = agencyid.Global
+			}
+			if !agencyctx.In(r, agency) {
+				continue
 			}
 			where := "has no scope"
 			if p.Scope != "" {

@@ -7,7 +7,9 @@ import { c } from "../theme";
 import { DOC_LINKS } from "../components/docLinks";
 import { SkeletonRows, StatTile, statusLabel, statusTone, DocLink } from "../components/ui";
 import { Score } from "../components/Score";
-import { HOURS_BACK, type Mark } from "../components/score-model";
+import { type Mark } from "../components/score-model";
+import { buildScoreMarks, scoreTruncatedAt } from "../components/score-feed";
+import { ScoreCutNote, fetchScoreRuns } from "../components/score-runs";
 import { GlobalCalendarBanner } from "./scheduling/GlobalCalendarBanner";
 import { excludeSuppressed } from "./scheduling/calendars";
 import { appZoneParts, fmtInAppZone } from "../utils/datetime";
@@ -152,14 +154,10 @@ export function Dashboard() {
   // the window displays and clip on startedAt below. Without that margin, a run
   // queued just before the window but started inside it would be missing from
   // the plot. `from` is computed inside the thunk, so each poll slides it.
-  const scoreRunsQ = useLiveGet<unknown>(
-    () =>
-      api.GET("/runs", {
-        params: { query: { kind: "job", from: new Date(Date.now() - (HOURS_BACK + 1) * 3600 * 1000).toISOString(), pageSize: 200 } },
-      }),
-    [],
-    () => true,
-  );
+  //
+  // 2.4.4 — read page after page (fetchScoreRuns): one page of 200 dropped a
+  // busy day's morning silently. ScoreCutNote says when even that is not all.
+  const scoreRunsQ = useLiveGet<unknown>(() => fetchScoreRuns(), [], () => true);
   // Forward half. `window` is an ENUM (`24h` | `7d`), not a duration — any other
   // value is silently coerced to 24h server-side — so request 24h and trim to
   // the 12h the Score shows. At that horizon the projection caps
@@ -181,7 +179,8 @@ export function Dashboard() {
   const errorsRef = useRef<HTMLDivElement>(null);
 
   const jobs = rows<Job>(jobsQ.data);
-  const scoreRuns = rows<Run>(scoreRunsQ.data);
+  const scoreRunsPage = paged<Run>(scoreRunsQ.data);
+  const scoreRuns = scoreRunsPage.items;
   // SR-1 — the claiming runner's name. A run row carries its own copy since
   // 2.3.0 (`runnerName`); the runners list is the fallback for a run claimed
   // before that, whose row was stamped only if its runner was still registered.
@@ -211,7 +210,6 @@ export function Dashboard() {
   // it differently. Here the split is a single field, and everything downstream
   // is tense-agnostic.
   const marks = useMemo<Mark[]>(() => {
-    const out: Mark[] = [];
     // R2F-3 — past runs and future fires share one timeline, so they share one
     // ambiguity set: a name is badged if EITHER half of the timeline holds two
     // definitions by that name. Computed here rather than via the hook because
@@ -221,38 +219,12 @@ export function Dashboard() {
       ...upcoming.map((u) => ({ uid: u.ownerUid, name: u.ownerName, agencies: u.ownerAgencies })),
     ];
     const ambiguous = ambiguousNames(refs);
-    const markLabel = (ref: NamedRef) => disambiguate(ref, ambiguous);
-    for (const r of scoreRuns) {
-      // Plot the START. The API filtered on enqueue time, so clip here — and a
-      // run with no startedAt has not begun and has no place on the timeline.
-      const at = r.startedAt ? Date.parse(r.startedAt) : NaN;
-      if (Number.isNaN(at) || r.kind === "ssh-test") continue;
-      out.push({
-        at,
-        tense: "past",
-        jobName: markLabel({ uid: r.jobUid, name: r.jobName, agencies: r.agencies }) || "—",
-        status: r.status,
-        durationMs: r.durationMs ?? null,
-        traceId: r.traceId,
-        type: r.type,
-        triggerKind: r.triggerKind,
-        triggeredBy: r.triggeredBy,
-        scheduleName: r.scheduleName,
-        executor: r.executor,
-        runnerName: r.runnerName ?? (r.runnerId ? (runnerNames.get(r.runnerId) ?? null) : null),
-      });
-    }
-    for (const u of upcoming) {
-      const at = u.at ? Date.parse(u.at) : NaN;
-      if (Number.isNaN(at)) continue;
-      out.push({
-        at,
-        tense: "future",
-        jobName: markLabel({ uid: u.ownerUid, name: u.ownerName, agencies: u.ownerAgencies }) || "—",
-        ownerKind: u.ownerKind,
-      });
-    }
-    return out;
+    // The marks themselves are the shared builder's (score-feed.ts, 2.4.4 F4),
+    // the Operations overview's too.
+    return buildScoreMarks(scoreRuns, upcoming, runnerNames, {
+      run: (r) => disambiguate({ uid: r.jobUid, name: r.jobName, agencies: r.agencies }, ambiguous),
+      upcoming: (u) => disambiguate({ uid: u.ownerUid, name: u.ownerName, agencies: u.ownerAgencies }, ambiguous),
+    });
   }, [scoreRuns, upcoming, runnerNames]);
 
   // D-2b. The API gives NO truncation signal — the response is `{ window, items }`
@@ -262,8 +234,7 @@ export function Dashboard() {
   // Inferred from the RAW projection, before the CAL-11 suppression filter: the
   // cap is applied server-side to every item it returned, so filtering first
   // would hide a real truncation whenever any projected fire was suppressed.
-  const truncatedAt =
-    upcomingAll.length >= 500 && upcomingAll[upcomingAll.length - 1]?.at ? Date.parse(upcomingAll[upcomingAll.length - 1].at!) : null;
+  const truncatedAt = scoreTruncatedAt(upcomingAll);
 
   // Ticks and the day rule follow the APPLICATION timezone — the zone the
   // scheduler fires in, and the zone /schedules/upcoming projects in. Browser-
@@ -502,6 +473,7 @@ export function Dashboard() {
               and swaps the single lane for the per-job staves in place. The state
               stays here rather than inside Score so the Dashboard keeps owning
               what it feeds the panel. */}
+          <ScoreCutNote shown={scoreRuns.length} total={scoreRunsPage.totalItems} />
           <Score
             marks={marks}
             now={now}
@@ -513,6 +485,7 @@ export function Dashboard() {
             onOpenRun={(t) => navigate(`/runs?trace=${encodeURIComponent(t)}`)}
             truncatedAt={truncatedAt}
             loading={scoreRunsQ.loading}
+            pinnedReadout
             jobNames={jobNames}
             types={jobTypes}
             expanded={fullScore}

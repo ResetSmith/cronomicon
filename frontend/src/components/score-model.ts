@@ -35,6 +35,8 @@ export interface Mark {
   executor?: string | null;
   /** The runner that took it — an agent or the local runner; the run's own copy of the name. */
   runnerName?: string | null;
+  /** The agency the job belongs to (2.4.4): set where the Score spans agencies (the Operations overview). */
+  agency?: string | null;
 }
 
 /**

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, fetchCapabilities } from "../api/client";
 import { GLOBAL_AGENCY, agenciesFor, fetchMyAccess, type AgencyRef } from "../api/access";
 import { c } from "../theme";
+import { useAgencyOptional } from "../agency";
 
 type Agency = { id?: string; name?: string };
 
@@ -30,13 +31,17 @@ type Agency = { id?: string; name?: string };
  * falls back to the permission-blind `unrestricted`, as before.
  */
 export function useCreationAgencies(isEdit: boolean, permission?: "configureApp" | "manageEnvVars" | "compose") {
+  // 2.4.4 (F2): a person works in one agency at a time, and what they create is
+  // that agency's. The form names it, and the server refuses another
+  // (agency_context_mismatch); to create elsewhere, switch agency.
+  const ag = useAgencyOptional();
   const [global, setGlobal] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [agencies, setAgencies] = useState<AgencyRef[]>([]);
   const [selected, setSelected] = useState("");
 
   useEffect(() => {
-    if (isEdit) return;
+    if (isEdit || ag) return;
     let cancelled = false;
     (async () => {
       // Fail CLOSED on a capabilities error: CAPS_OFF reports every flag false,
@@ -84,9 +89,27 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
     return () => {
       cancelled = true;
     };
+    // ag is the provider's; a form mounts inside one or not at all.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEdit, permission]);
 
   const visible = !isEdit;
+  if (ag) {
+    const here = { id: ag.agency, name: ag.agencyName };
+    return {
+      visible,
+      required: false,
+      global: false,
+      agencies: [here],
+      selected: here.id,
+      setSelected: (_: string) => {},
+      body: visible ? { agencyIds: [here.id] } : {},
+      ownerBody: visible ? { ownerAgency: here.id } : {},
+      blockedReason: "",
+      /** The agency the person works in: the form shows it, fixed. */
+      context: here as { id: string; name: string } | null,
+    };
+  }
   return {
     /** Mount the picker (every create form; never an edit). */
     visible,
@@ -104,6 +127,7 @@ export function useCreationAgencies(isEdit: boolean, permission?: "configureApp"
     // Nothing to choose from (the lists could not be read) does not block: the
     // server places the row in the caller's one agency, or says which to name.
     blockedReason: visible && loaded && !global && !selected && agencies.length > 0 ? "Choose an agency" : "",
+    context: null as { id: string; name: string } | null,
   };
 }
 
@@ -122,6 +146,19 @@ export function CreationAgencyPicker({
   pick: CreationAgencies;
 }) {
   if (!pick.visible) return null;
+  if (pick.context) {
+    return (
+      <div style={{ marginTop: 12 }} data-testid="creation-agency">
+        <div style={{ fontSize: c.fontSm, color: c.textMuted }}>
+          Created in <strong style={{ color: c.text }}>{pick.context.name}</strong>
+        </div>
+        <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
+          This {label} will belong to {pick.context.name}, the agency you are working in. To create it in another agency,
+          switch to that agency first.
+        </div>
+      </div>
+    );
+  }
   const only = !pick.global && pick.agencies.length === 1;
   return (
     <div style={{ marginTop: 12 }}>

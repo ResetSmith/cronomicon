@@ -25,13 +25,16 @@ type Event struct {
 	Source string `json:"source"` // change_log | activity | auth
 	Kind   string `json:"kind,omitempty"`
 
-	Actor    string `json:"actor,omitempty"`
-	Outcome  string `json:"outcome,omitempty"`
-	Category string `json:"category,omitempty"`
-	Action   string `json:"action,omitempty"`
-	Target   string `json:"target,omitempty"`
-	Summary  string `json:"summary,omitempty"`
-	Details  string `json:"details,omitempty"`
+	Actor string `json:"actor,omitempty"`
+	// ActingAgency is the agency a global administrator was working in when
+	// they made a change (2.4.4): the change is "Actor, acting in ActingAgency".
+	ActingAgency string `json:"actingAgency,omitempty"`
+	Outcome      string `json:"outcome,omitempty"`
+	Category     string `json:"category,omitempty"`
+	Action       string `json:"action,omitempty"`
+	Target       string `json:"target,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	Details      string `json:"details,omitempty"`
 
 	// Execution context, present on activity rows.
 	JobName      string `json:"jobName,omitempty"`

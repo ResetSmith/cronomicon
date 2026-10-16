@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"strconv"
@@ -136,7 +137,9 @@ func (s *Server) listServiceAccounts(w http.ResponseWriter, r *http.Request) {
 		if !visible && agencyID.String != "" {
 			visible = viewer.CanAgency(auth.PermManageRoles, agencyID.String)
 		}
-		if !visible {
+		// 2.4.4: and in the agency the request works in; an all-scopes account
+		// names none, and is Global's.
+		if !visible || !agencyctx.In(r, agencyID.String) {
 			continue
 		}
 		it.Status = serviceAccountStatus(revoked, expires, now)

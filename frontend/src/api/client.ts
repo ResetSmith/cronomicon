@@ -37,11 +37,44 @@ const authInterceptor: Middleware = {
   },
 };
 
+// The agency switcher (2.4.4): every request names the agency the person works
+// in, and the server narrows each list by it. agency.tsx sets it during render,
+// before any view fetches; empty (a test, the login screen) names none.
+export const AGENCY_HEADER = "X-Cronomicon-Agency";
+let requestAgency = "";
+export function setRequestAgency(agency: string): void {
+  requestAgency = agency;
+}
+/** The agency requests name now ("" for none): a cache of agency-narrowed answers keys by it. */
+export function getRequestAgency(): string {
+  return requestAgency;
+}
+// A refused request may mean the person's grants changed during the session;
+// agency.tsx reads their choices again when it hears this (SW-15).
+export const AGENCY_REFRESH_EVENT = "cronomicon:agency-refresh";
+// A request that is to name NO agency passes this as its headers, and is
+// answered with everything the caller may read (SW-11). Only the Operations
+// overview's Score does: its audience reads every agency (2.4.4 F4).
+export const NO_AGENCY = "none";
+export const allReadable = { [AGENCY_HEADER]: NO_AGENCY };
+export const agencyMiddleware: Middleware = {
+  async onRequest({ request }) {
+    if (request.headers.get(AGENCY_HEADER) === NO_AGENCY) request.headers.delete(AGENCY_HEADER);
+    else if (requestAgency) request.headers.set(AGENCY_HEADER, requestAgency);
+    return request;
+  },
+  async onResponse({ response }) {
+    if (response.status === 403) window.dispatchEvent(new Event(AGENCY_REFRESH_EVENT));
+    return response;
+  },
+};
+
 // Typed client generated from openapi.yaml. baseUrl is the /api/v1 server; the
 // session cookie rides along via credentials: "include" (T8).
 export const api = createClient<paths>({ baseUrl: "/api/v1", credentials: "include" });
 api.use(csrf);
 api.use(authInterceptor);
+api.use(agencyMiddleware);
 
 // Placeholder header object for the generated client's typed `header` param on
 // mutating routes. The real X-CSRF-Token is attached by the `csrf` middleware

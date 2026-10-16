@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, csrfHeader, fetchCapabilities } from "../api/client";
 import { useGet, rows } from "../hooks";
+import { useEnsureAgency } from "../agency";
 import { c } from "../theme";
 import { StepChain } from "./workflows/StepChain";
 import { WorkflowCanvas } from "./workflows/WorkflowCanvas";
@@ -318,6 +319,8 @@ export function WorkflowEditor() {
   // The loaded workflow's agency (2.4.1): its inline entries are judged by that
   // agency's calendars. A new workflow's is not known until it is saved.
   const [wfAgency, setWfAgency] = useState<string | undefined>(undefined);
+  // 2.4.4 (SW-8) — a link to another agency's workflow switches to its agency.
+  useEnsureAgency(editId ? wfAgency : undefined);
 
   useEffect(() => {
     if (!editId) return;

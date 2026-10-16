@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/cronutil"
@@ -318,6 +319,21 @@ func (s *Server) scopeWhereFragment(r *http.Request, col, ownerExpr string) (str
 // for, from its snapshot, for scopeWhereFragment.
 var runScopeOwnerSQL = agencyid.RunScopeOwnerSQL("agencies_json")
 
+// runOwnerSQL is whose a row of `runs` is, for the agency context (2.4.4):
+// the owner stamped when it was queued (migration 1480), by the no-owner rule.
+var runOwnerSQL = agencyid.Owner("owner_agency")
+
+// activityOwnerSQL is whose a row of `activity` is, for the agency context: its
+// run's, or its workflow run's (by the trace id it records), else its job's,
+// else the agency the row records (migration 1510: a sync's or a push's
+// repository's, or the agency a change was made in); Global's for a row that
+// names none (a script's change, history from before 2.4.4).
+var activityOwnerSQL = agencyid.Owner(`COALESCE(
+	(SELECT ru.owner_agency FROM runs ru WHERE ru.id = activity.trace_id),
+	(SELECT ` + agencyid.WorkflowRunSQL("wr") + ` FROM workflow_runs wr WHERE wr.id = activity.trace_id),
+	(SELECT ` + agencyid.JobSQL("aj") + ` FROM jobs aj WHERE aj.uid = activity.job_uid),
+	activity.agency_id)`)
+
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	typeFilter := q.Get("type")
@@ -421,6 +437,11 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	// with any explicit ?scope= above (it does not replace it), so a restricted
 	// actor requesting an out-of-scope ?scope= simply gets no rows.
 	if frag, fargs := s.scopeWhereFragment(r, "j.scope", "COALESCE("+agencyid.JobSQL("j")+", '"+agencyid.Global+"')"); frag != "" {
+		inner += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.JobOwnerSQL("j")); frag != "" {
 		inner += frag
 		args = append(args, fargs...)
 	}
@@ -2600,6 +2621,12 @@ func (s *Server) listWorkflows(w http.ResponseWriter, r *http.Request) {
 		query += frag
 		args = append(args, fargs...)
 	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.WorkflowOwnerSQL); frag != "" {
+		cq += frag
+		query += frag
+		args = append(args, fargs...)
+	}
 	if search != "" {
 		cq += " AND w.name LIKE ?"
 		query += " AND w.name LIKE ?"
@@ -3339,9 +3366,12 @@ func (s *Server) listWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	// The run's workflow's agency: by the uid the run records, else by its
 	// source and name (a run from before 1010 records none); NULL, judged by
 	// the name, when the workflow is gone.
-	if frag, fargs := s.scopeWhereFragment(r, "scope",
-		"COALESCE((SELECT "+agencyid.WorkflowSQL+" FROM workflows w WHERE w.uid = workflow_runs.workflow_uid),"+
-			" (SELECT "+agencyid.WorkflowSQL+" FROM workflows w WHERE w.source = COALESCE(workflow_runs.workflow_source, 'git') AND w.name = workflow_runs.workflow_name ORDER BY w.rowid LIMIT 1))"); frag != "" {
+	if frag, fargs := s.scopeWhereFragment(r, "scope", agencyid.WorkflowRunSQL("workflow_runs")); frag != "" {
+		base += frag
+		args = append(args, fargs...)
+	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, agencyid.Owner(agencyid.WorkflowRunSQL("workflow_runs"))); frag != "" {
 		base += frag
 		args = append(args, fargs...)
 	}
@@ -4137,6 +4167,11 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		base += frag
 		args = append(args, fargs...)
 	}
+	// 2.4.4: the agency the request works in, on top of what may be read.
+	if frag, fargs := agencyctx.Narrow(r, runOwnerSQL); frag != "" {
+		base += frag
+		args = append(args, fargs...)
+	}
 
 	// TS-20: ?sort=&order= against an allowlist (never interpolated). Status
 	// sorts by the worst-first rank the UI uses, not alphabetically; the
@@ -4173,7 +4208,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
 		suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
-		runner_name, script_uid ` +
+		runner_name, script_uid, owner_agency ` +
 		base + orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, pageSize, (page-1)*pageSize)
 
@@ -4234,7 +4269,6 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
 	httpx.JSON(w, http.StatusOK, run)
 }
 
@@ -4245,7 +4279,7 @@ func (s *Server) fetchRunByID(r *http.Request, traceID string) map[string]any {
 		       started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		       script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
 		       suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
-		       runner_name, script_uid
+		       runner_name, script_uid, owner_agency
 		FROM runs WHERE id = ?
 	`, traceID)
 	if err != nil {
@@ -4307,6 +4341,19 @@ type runRaw struct {
 	// on runs whose job vanished between resolution and insert. It is what
 	// History attributes by once two agencies may share a job name.
 	jobUID sql.NullString
+	// ownerAgency is whose the run is (1480; 2.4.4): its job's owner when it
+	// was queued. The overview's Score names it, and a link to the run
+	// switches to it.
+	ownerAgency sql.NullString
+}
+
+// runOwnerOf is whose a run is, by the no-owner rule: Global's for a row
+// with none.
+func runOwnerOf(rr runRaw) string {
+	if !rr.ownerAgency.Valid || rr.ownerAgency.String == "" {
+		return agencyid.Global
+	}
+	return rr.ownerAgency.String
 }
 
 // scanRunRaw scans the current row into a runRaw. It runs NO nested query, so it
@@ -4318,7 +4365,7 @@ func scanRunRaw(rows *sql.Rows) (runRaw, bool) {
 		&rr.startedAt, &rr.completedAt, &rr.durationMs, &rr.exitCode, &rr.createdAt, &rr.scheduleName,
 		&rr.kind, &rr.executor, &rr.scriptRef, &rr.contentHash, &rr.jobSource, &rr.outputsJSON, &rr.overrideJSON, &rr.agenciesJSON, &rr.runnerID,
 		&rr.suppressedByCalendar, &rr.reactedToRunID, &rr.reactionDepth, &rr.runnerTag, &rr.jobUID, &rr.logArchivedAt,
-		&rr.runnerName, &rr.scriptUID); err != nil {
+		&rr.runnerName, &rr.scriptUID, &rr.ownerAgency); err != nil {
 		return runRaw{}, false
 	}
 	return rr, true
@@ -4488,6 +4535,7 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 		"kind":         rr.kind,
 		"scope":        nullStrVal(rr.scope),
 		"agencies":     parseAgenciesJSON(rr.agenciesJSON),
+		"ownerAgency":  runOwnerOf(rr),
 		"status":       mapRunStatus(rr.status),
 		"statusReason": statusReason,
 		"executor":     runExecutor(rr),
@@ -4792,6 +4840,12 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 	if to != "" {
 		base += " AND at < ?"
 		args = append(args, to)
+	}
+	// 2.4.4: the agency the request works in. (Activity has no read filter of
+	// its own: who reads which is 2.5.0's, CF-2.)
+	if frag, fargs := agencyctx.Narrow(r, activityOwnerSQL); frag != "" {
+		base += frag
+		args = append(args, fargs...)
 	}
 
 	// One filter slice for the COUNT + page query (CC.14 — no parallel cArgs).

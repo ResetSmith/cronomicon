@@ -46,6 +46,48 @@ func RunScopeOwnerSQL(agenciesJSONExpr string) string {
 	         '` + Global + `')`
 }
 
+// Owner is the no-owner rule of the agency switcher (2.4.4): a row with no
+// owner is Global's. The tables spell "no owner" three ways (NULL in jobs and
+// in a grant or service account that reaches every agency, the empty string in secrets,
+// variables and SSH keys, 'global' elsewhere), and the switcher, the overview
+// and the badges must read them alike.
+func Owner(expr string) string {
+	return `COALESCE(NULLIF(` + expr + `, ''), '` + Global + `')`
+}
+
+// JobOwnerSQL is the owner of the row `alias` of `jobs`, by the no-owner rule:
+// a Git job whose repository is gone (JobSQL's NULL) counts as Global's.
+func JobOwnerSQL(alias string) string { return Owner(JobSQL(alias)) }
+
+// WorkflowOwnerSQL is the owner of the row `w` of `workflows`, by the no-owner
+// rule.
+var WorkflowOwnerSQL = Owner(WorkflowSQL)
+
+// WorkflowRunSQL is the agency of the row `alias` of `workflow_runs`: its
+// workflow's, by the uid the run records, else by its source and name (a run
+// from before 1010 records no uid); NULL when the workflow is gone.
+func WorkflowRunSQL(alias string) string {
+	return `COALESCE((SELECT ` + WorkflowSQL + ` FROM workflows w WHERE w.uid = ` + alias + `.workflow_uid),` +
+		` (SELECT ` + WorkflowSQL + ` FROM workflows w WHERE w.source = COALESCE(` + alias + `.workflow_source, 'git') AND w.name = ` + alias + `.workflow_name ORDER BY w.rowid LIMIT 1))`
+}
+
+// ScriptOwnerSQL is the owner of the row `alias` of `scripts`: its
+// repository's agency, by the no-owner rule.
+func ScriptOwnerSQL(alias string) string {
+	return Owner(`(SELECT g.agency_id FROM git_repos g WHERE g.id = ` + alias + `.repo_id)`)
+}
+
+// ColumnOwnerSQL is the owner of a row that records it in a column of its own
+// (scopes, runners, schedules, secrets, variables, SSH keys and hosts,
+// bastions, calendars: owner_agency; notices, repositories, grants and service
+// accounts: agency_id), by the no-owner rule.
+func ColumnOwnerSQL(alias, column string) string {
+	if alias != "" {
+		column = alias + "." + column
+	}
+	return Owner(column)
+}
+
 // DefinitionSQL is the agency of a definition by its uid (?1) and kind (?2):
 // a job's (JobSQL), a workflow's (WorkflowSQL). NULL for no such row.
 var DefinitionSQL = DefinitionOf("?1", "?2")

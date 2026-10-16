@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -70,7 +71,8 @@ func (s *Server) handleListGitRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]*settings.Repo, 0, len(all))
 	for _, repo := range all {
-		if id.CanAgency(auth.PermConfigureApp, repo.AgencyID) {
+		// 2.4.4: and in the agency the request works in (agencyctx).
+		if id.CanAgency(auth.PermConfigureApp, repo.AgencyID) && agencyctx.In(r, repo.AgencyID) {
 			items = append(items, repo)
 		}
 	}
@@ -110,7 +112,7 @@ func (s *Server) handleListGitRepoNames(w http.ResponseWriter, r *http.Request) 
 	}
 	items := make([]repoName, 0, len(all))
 	for _, repo := range all {
-		if id.ReadsAgency(repo.AgencyID) {
+		if id.ReadsAgency(repo.AgencyID) && agencyctx.In(r, repo.AgencyID) {
 			publish := id.CanUnbound(auth.PermPublishSchedule) ||
 				(repo.ID != repoid.Global && id.CanAgency(auth.PermPublishSchedule, repo.AgencyID))
 			items = append(items, repoName{ID: repo.ID, AgencyID: repo.AgencyID, AgencyName: repo.AgencyName,

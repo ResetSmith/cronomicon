@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/calendar"
@@ -168,6 +169,10 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		// SU-2: never expose a scoped job owner's schedule (its plaintext env) to a
 		// restricted actor outside that scope.
 		if !scheduleOwnerReadable(id, hasID, sr) {
+			continue
+		}
+		// 2.4.4: the agency the request works in, on top of what may be read.
+		if !agencyctx.In(r, sr.ownerAgency) {
 			continue
 		}
 		readable = append(readable, sr)
@@ -378,6 +383,10 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 		if !scheduleOwnerReadable(id, hasID, sr) {
 			continue
 		}
+		// 2.4.4: the agency the request works in, on top of what may be read.
+		if !agencyctx.In(r, sr.ownerAgency) {
+			continue
+		}
 		key := defKey{sr.source, sr.kind, sr.owner}
 		if !enabledSet[key] || pausedSet[key] {
 			continue
@@ -437,7 +446,7 @@ func (s *Server) listUpcomingSchedules(w http.ResponseWriter, r *http.Request) {
 	// pending id, so the UI can offer Cancel) and interleaved by instant.
 	// 'missed' rows ride a separate key: they are not upcoming, but silently
 	// hiding them would defeat the point of keeping them.
-	adhoc, missed := s.pendingRunItems(ctx, id, hasID, now, end)
+	adhoc, missed := s.pendingRunItems(ctx, id, hasID, now, end, func(owner string) bool { return agencyctx.In(r, owner) })
 	if len(adhoc) > 0 {
 		items = append(items, adhoc...)
 		sort.Slice(items, func(i, j int) bool {
@@ -715,7 +724,7 @@ func rfc3339Ptr(t time.Time) *string {
 // upcoming items, plus any 'missed' rows (regardless of instant — they are a
 // standing notice until cancelled). Job rows are filtered by the caller's scope
 // grants (SU-2), using the scope frozen on the pending row.
-func (s *Server) pendingRunItems(ctx context.Context, id auth.Identity, hasID bool, now, end time.Time) (upcoming, missed []map[string]any) {
+func (s *Server) pendingRunItems(ctx context.Context, id auth.Identity, hasID bool, now, end time.Time, inAgency func(owner string) bool) (upcoming, missed []map[string]any) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, kind, name, source, scope, run_at, scheduled_by, status, COALESCE(miss_reason,''),
 		       COALESCE(gate_kind,''), COALESCE(concurrency_key,''), COALESCE(origin_kind,''),
@@ -750,6 +759,10 @@ func (s *Server) pendingRunItems(ctx context.Context, id auth.Identity, hasID bo
 		// actor sees everything; anyone else is gated by ScopeReadableIn (which
 		// still admits NULL/global scopes), asked of the owner's agency (I2).
 		if !(hasID && id.Unrestricted()) && !auth.ScopeReadableIn(id, ownerAgency, scope.String) {
+			continue
+		}
+		// 2.4.4: the agency the request works in (agencyctx.In).
+		if !inAgency(ownerAgency) {
 			continue
 		}
 		item := map[string]any{

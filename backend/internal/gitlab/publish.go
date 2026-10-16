@@ -585,6 +585,7 @@ func (s *Service) RecordPush(ctx context.Context, actor, filePath, baseSHA, newS
 			Actor:        actor,
 			ScheduleFile: filePath,
 			Summary:      fmt.Sprintf("Published %s — commit %s", filePath, newSHA),
+			AgencyID:     s.agency(), // 2.4.4: in its agency's Activity
 		})
 	}
 	return nil

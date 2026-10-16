@@ -13,6 +13,87 @@ before 1.0.0 are kept in their original prose form.
 
 ---
 
+## [2.4.4] - 2026-10-16
+
+The agency switcher and the Operations overview (the 2.5.0 plan's C9, brought
+forward and re-cut by the owner): a person works in one agency at a time, and
+those whose access reaches every agency have one read-only page across all of
+them. Four migrations (1480 to 1510, schema v1510); runner protocol 14 is
+unchanged.
+
+**Upgrading.** Nothing to do. Existing runs are given their owner from their
+job (1480); a run whose job is gone takes the one agency its scope named, else
+Global. Activity recorded before this release names no agency and shows under
+Global. A request that names no agency (scripts, service accounts, the CI
+template) is answered exactly as before. The audit export's CSV gains a last
+column, `actingAgency`; a reader that takes columns by position sees one more.
+
+### Added
+
+- **The agency switcher**, under the wordmark. Every list, the Dashboard and
+  the notices bell show the agency in use; the page title says which. A person
+  with one choice sees a label. Each agency in the menu shows its failed runs
+  in the last day and its open notices, so the agencies not in view are not out
+  of mind. The agency is in the address (`?agency=`), so a link keeps it; one
+  the person may not use gives way to their default with a notice that does
+  not say why. A link to another agency's run, job, workflow or schedule
+  switches to it and says so.
+- **Where a visit starts**: a person's own default (user menu, **Make … my
+  default**), else Global for a global administrator, else the overview for
+  anyone else whose access reaches every agency, else the first of their
+  agencies by name.
+- **The Operations overview** (`/overview`), for global administrators and
+  viewers of every agency: the Score across every agency (each run with its
+  agency), a row per agency (jobs, workflows, paused ones, runs in the last day
+  by outcome, the next run, the repository's last sync, open notices), what
+  needs attention across agencies (failed jobs and workflows, lost and overdue
+  runs, failed syncs), and a search for a job or workflow by name. Every line
+  opens its item in its own agency. Nothing on it changes anything.
+
+### Changed
+
+- **What is created is the agency in use's.** A create form says where (no
+  agency picker); naming another agency is refused (422
+  `agency_context_mismatch`). A person of several agencies no longer has to
+  name one. A global administrator creates for another agency by switching to
+  it, and their changes there are recorded in the change log as acting in it.
+- **Activity is the agency's**: its runs, its repository's syncs and pushes,
+  and the changes made while working in it. A change to the installation
+  (Settings → Installation) is Global's wherever it is made.
+- **The Score** (Dashboard and overview) reads its whole day, page after page
+  up to 1,000 runs, and says when the day held more; until now a busy day lost
+  its morning without a word. The table under it always shows (the latest runs
+  at rest) and keeps one size, ten jobs and a scroll.
+- The repository pickers go where there is one repository to choose.
+
+### Known, and left for 2.5.0
+
+The switcher hides other agencies' rows on screen; it is not the gate. Several
+lists still answer every agency's rows to anyone signed in when asked directly
+(scopes, runners, SSH keys, hosts and bastions, calendars, agency-wide secrets
+and variables by key, workflows and schedules built in the app, and a job or run
+with no scope). Reading them is the confidential reads of 2.5.0 (CF-2); the
+switcher's tests pin them as they are.
+
+### For developers
+
+- `X-Cronomicon-Agency` names the agency a request works in
+  (`internal/agencyctx`: `From`, `Narrow`, `In`, `Keep`). Each list adds its
+  clause to its read filter, never in its place; an agency the caller may not
+  read gives an empty list. Owners are read by `agencyid.Owner` (NULL, the
+  empty string and `global` are Global's) and the per-resource expressions
+  beside it.
+- New routes: `GET /me/context`, `PUT /me/preferences` (clsSelf),
+  `GET /me/agency-badges`, `GET /overview`, `GET /overview/search`. Runs carry
+  `ownerAgency`.
+- Migrations: 1480 `runs.owner_agency` (stamped by a trigger, indexed with
+  `started_at`), 1490 `change_log.acting_agency`, 1500 `user_preferences`,
+  1510 `activity.agency_id`.
+- The frontend: `agency.tsx` (the provider, `useAgency`, `useEnsureAgency`),
+  `AgencySwitcher`, `views/Overview.tsx`, and the Score's shared feed
+  (`score-feed.ts`, `score-runs.tsx`). The API client sends the agency on
+  every request; `allReadable` leaves it off one.
+
 ## [2.4.3] - 2026-10-16
 
 A scope from Global's repository is Global's (the owner's answer to the

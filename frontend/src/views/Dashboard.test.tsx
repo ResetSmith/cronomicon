@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { groupMarks, scoreWindow, inWindow, type Mark } from "../components/score-model";
 import { c } from "../theme";
+import { resetScoreRunsCache } from "../components/score-runs";
 
 // VU-19: the two tests that used to live here rendered `JobHistogram`, which
 // Phase D deleted along with the three list cards. Their replacement is not a
@@ -119,6 +120,9 @@ const feeds = vi.hoisted(() => ({
   failed: [] as unknown[],
   warned: [] as unknown[],
   upcoming: [] as unknown[],
+  // The Score's own read (2.4.4): set, /runs with a page answers one run a
+  // page, of this many in all.
+  scoreTotal: null as number | null,
 }));
 
 // Mutable so a test can exercise the no-jobs state (VU2-1's invitation).
@@ -146,6 +150,11 @@ vi.mock("../api/client", async (importOriginal) => {
           const status = opts?.params?.query?.status;
           if (status === "danger") return { data: { items: feeds.failed, totalItems: feeds.failed.length } };
           if (status === "warning") return { data: { items: feeds.warned, totalItems: feeds.warned.length } };
+          const page = opts?.params?.query?.page as number | undefined;
+          if (!status && page && feeds.scoreTotal != null) {
+            const run = { traceId: "s-" + page, jobName: "score-job-" + page, status: "success", kind: "job", startedAt: ago(page * 3600_000) };
+            return { data: { items: [run], totalItems: feeds.scoreTotal, totalPages: feeds.scoreTotal, page } };
+          }
         }
         return { data: { items: [], totalItems: 0 } };
       }),
@@ -174,6 +183,8 @@ beforeEach(() => {
   feeds.failed = [];
   feeds.warned = [];
   feeds.upcoming = [];
+  feeds.scoreTotal = null;
+  resetScoreRunsCache();
   jobsFeed.length = 0;
   jobsFeed.push(...DEFAULT_JOBS);
   // The verdict strip's dismissal is persisted per browser, and jsdom shares one
@@ -377,6 +388,11 @@ describe("Dashboard → verdict strip (VU2-1)", () => {
   });
 });
 
+// Since 2.4.4 the Score's readout shows at rest too (pinnedReadout), so a
+// name can appear there as well; these look inside the card they are about.
+const upNext = () => screen.getByText("Up next").parentElement as HTMLElement;
+const currentStatus = () => screen.getByRole("heading", { name: "Current status" }).parentElement as HTMLElement;
+
 describe("Dashboard → Current status", () => {
   it("shows no alert banner even with failures — Current status replaced it (CS-1)", async () => {
     feeds.failed = [FAILED, { ...FAILED, traceId: "t-2" }];
@@ -394,7 +410,7 @@ describe("Dashboard → Current status", () => {
     await renderDashboard();
 
     await screen.findByText("Up next");
-    expect(screen.getByText("disk-usage-audit")).toBeTruthy();
+    expect(within(upNext()).getByText("disk-usage-audit")).toBeTruthy();
   });
 
   // VU2-3 — three fires, not one. CS-4's single-fact rule was about the
@@ -410,21 +426,22 @@ describe("Dashboard → Current status", () => {
     await renderDashboard();
 
     await screen.findByText("Up next");
-    expect(screen.getByText("disk-usage-audit")).toBeTruthy();
-    expect(screen.getByText("nightly-db-backup")).toBeTruthy();
-    expect(screen.getByText("nightly-maintenance")).toBeTruthy();
+    expect(within(upNext()).getByText("disk-usage-audit")).toBeTruthy();
+    expect(within(upNext()).getByText("nightly-db-backup")).toBeTruthy();
+    expect(within(upNext()).getByText("nightly-maintenance")).toBeTruthy();
     // Capped at three: the fourth belongs to Upcoming, which the card links to.
-    expect(screen.queryByText("cert-renewal")).toBeNull();
+    expect(within(upNext()).queryByText("cert-renewal")).toBeNull();
     // The workflow tag still rides along — a workflow's projection is not a job's.
-    expect(screen.getByText("workflow")).toBeTruthy();
+    expect(within(upNext()).getByText("workflow")).toBeTruthy();
   });
 
   it("keeps a past instant out of Up next even when the projection carries one", async () => {
     feeds.upcoming = [{ ownerKind: "job", ownerName: "already-fired", at: ago(5 * 60_000) }, NEXT_UP];
     await renderDashboard();
 
-    await screen.findByText("disk-usage-audit");
-    expect(screen.queryByText("already-fired")).toBeNull();
+    await screen.findByText("Up next");
+    await waitFor(() => expect(within(upNext()).getByText("disk-usage-audit")).toBeTruthy());
+    expect(within(upNext()).queryByText("already-fired")).toBeNull();
   });
 
   it("says so plainly when nothing is scheduled ahead — and bounds the claim (RX-18)", async () => {
@@ -449,7 +466,7 @@ describe("Dashboard → Current status", () => {
 
     await screen.findByText(/All 2 jobs healthy\./);
     expect(screen.getByText("Nothing has failed or warned in the last 24 hours.")).toBeTruthy();
-    expect(screen.getAllByText("disk-usage-audit")).toHaveLength(1);
+    expect(within(currentStatus()).getAllByText("disk-usage-audit")).toHaveLength(1);
   });
 
   it("sends an attention row to that job's History entry, not to every failure (CS-3)", async () => {
@@ -480,5 +497,26 @@ describe("Dashboard → Current status", () => {
     // Scoped to the row: "Warn" also appears in the Score's legend above.
     expect(rows[1].textContent).toContain("cert-renewal");
     expect(rows[1].textContent).toContain("Warn");
+  });
+});
+
+// ── The Score's readout and read (2.4.4, the owner's asks) ─────────────────────
+describe("Dashboard → the Score's readout", () => {
+  it("shows at rest, in a fixed slot that scrolls", async () => {
+    feeds.scoreTotal = 3;
+    await renderDashboard();
+    const slot = await screen.findByTestId("score-readout");
+    // At rest the most recent run, not the idle hint.
+    await waitFor(() => expect(within(slot).getByText("score-job-1")).toBeTruthy());
+    expect(slot.style.height).toMatch(/^\d+px$/);
+    expect(screen.getByTestId("score-readout-rows").style.overflowY).toBe("auto");
+  });
+
+  it("reads its day page after page, and says when it held more", async () => {
+    feeds.scoreTotal = 1350;
+    await renderDashboard();
+    const note = await screen.findByTestId("score-cut");
+    expect(note.textContent).toContain("Showing the newest 5 of 1,350 runs");
+    expect(note.textContent).not.toContain("one agency at a time");
   });
 });

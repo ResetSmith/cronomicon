@@ -335,6 +335,12 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 // for a job with no scope. When two of the actor's agencies hold the name the
 // agency must be named (422 ambiguous_scope). false after a refusal is written.
 func (s *Server) composeOwnerFor(w http.ResponseWriter, r *http.Request, id auth.Identity, in jobComposeInput) (string, bool) {
+	// 2.4.4 S3: in an agency context the job is that agency's.
+	if a, ok := s.ownerInContext(w, r, in.OwnerAgency, "job"); !ok {
+		return "", false
+	} else {
+		in.OwnerAgency = a
+	}
 	if a := strings.TrimSpace(in.OwnerAgency); a != "" {
 		var n int
 		if err := s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM agencies WHERE id = ?`, a).Scan(&n); err != nil || n == 0 {

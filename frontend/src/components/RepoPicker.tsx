@@ -86,7 +86,9 @@ export function RepoSelect({
   all?: string;
   label?: string;
 }) {
-  if (repos.length <= 1 && !all) return null;
+  // One repository: nothing to choose, and "every repository" is that one. With
+  // the agency switcher (2.4.4) a person works in one agency, which has one.
+  if (repos.length <= 1) return null;
   return (
     <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: c.fontXs, color: c.textSec, whiteSpace: "nowrap" }}>
       {label}

@@ -82,6 +82,45 @@ type ActivityParams struct {
 	Repository   string
 	Branch       string
 	ScheduleFile string
+	// AgencyID is the agency the event is of (2.4.4): a sync's or a push's
+	// repository's. Empty: the agency the request worked in
+	// (WithRequestAgency), else none, which is Global's.
+	AgencyID string
+}
+
+// requestAgencyKey carries the agency a request works in (2.4.4).
+type requestAgencyKey struct{}
+
+// WithRequestAgency marks ctx with the agency its request works in, one the
+// caller may read (the agency switcher). An activity row written under it
+// records that agency, so that an agency's own changes are in its Activity.
+// auth marks it when it attaches the identity.
+func WithRequestAgency(ctx context.Context, agencyID string) context.Context {
+	return context.WithValue(ctx, requestAgencyKey{}, agencyID)
+}
+
+// RequestAgency is the agency WithRequestAgency marked ctx with, or "".
+func RequestAgency(ctx context.Context) string {
+	a, _ := ctx.Value(requestAgencyKey{}).(string)
+	return a
+}
+
+// actingKey carries the agency a global administrator works in (2.4.4).
+type actingKey struct{}
+
+// WithActingAgency marks ctx as a global administrator's request made while
+// working in agencyID (the agency switcher, 2.4.4 S3; the 2.5.0 plan's IN-9):
+// each change_log row written under it records both, "actor, acting in
+// agencyID". auth marks it when it attaches the identity; this package stays a
+// leaf.
+func WithActingAgency(ctx context.Context, agencyID string) context.Context {
+	return context.WithValue(ctx, actingKey{}, agencyID)
+}
+
+// ActingAgency is the agency WithActingAgency marked ctx with, or "".
+func ActingAgency(ctx context.Context) string {
+	a, _ := ctx.Value(actingKey{}).(string)
+	return a
 }
 
 // WriteChangeLog inserts one change_log row (S6). Optional columns (target,
@@ -106,10 +145,20 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, actor, category, actio
 	// several sites (env-var names, hosts, the denied scope).
 	target = TrimForAudit(mask(target))
 	details = TrimForAudit(mask(details))
-	_, err := db.ExecContext(ctx,
-		`INSERT INTO change_log (at, actor, category, action, target, details, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		now, actor, category, action, target, details, now)
+	acting := ActingAgency(ctx)
+	var err error
+	if acting == "" {
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO change_log (at, actor, category, action, target, details, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			now, actor, category, action, target, details, now)
+	} else {
+		// Only then: a change_log written by a test's own schema has no column.
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO change_log (at, actor, category, action, target, details, created_at, acting_agency)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			now, actor, category, action, target, details, now, acting)
+	}
 	if err != nil {
 		return fmt.Errorf("write change_log: %w", err)
 	}
@@ -117,7 +166,7 @@ func WriteChangeLogAt(ctx context.Context, db Execer, at, actor, category, actio
 	// file is an export of it (see Sink).
 	emit(Event{
 		At: now, Source: "change_log",
-		Actor: actor, Category: category, Action: action,
+		Actor: actor, ActingAgency: acting, Category: category, Action: action,
 		Target: target, Details: details,
 	})
 	return nil
@@ -138,7 +187,7 @@ func WriteActivity(ctx context.Context, db Execer, p ActivityParams) error {
 	p.Target = TrimForAudit(mask(p.Target))
 	p.Details = TrimForAudit(mask(p.Details))
 	p.Summary = TrimForAudit(mask(p.Summary))
-	_, err := db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		INSERT INTO activity
 			(kind, outcome, actor, job_name, job_id, workflow_name, workflow_id,
 			 job_uid, workflow_uid,
@@ -173,6 +222,19 @@ func WriteActivity(ctx context.Context, db Execer, p ActivityParams) error {
 	)
 	if err != nil {
 		return err
+	}
+	// The agency the event is of (2.4.4), written apart and only when there is
+	// one: a test's own schema of the table has no column for it.
+	agency := p.AgencyID
+	if agency == "" {
+		agency = RequestAgency(ctx)
+	}
+	if agency != "" {
+		if id, ierr := res.LastInsertId(); ierr == nil {
+			if _, err := db.ExecContext(ctx, `UPDATE activity SET agency_id = ? WHERE id = ?`, agency, id); err != nil {
+				return err
+			}
+		}
 	}
 	if ev, ok := activityEvent(now, p); ok {
 		emit(ev)

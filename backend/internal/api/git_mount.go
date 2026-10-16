@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
+	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"github.com/ResetSmith/cronomicon/internal/auth"
 	"github.com/ResetSmith/cronomicon/internal/gitlab"
 	"github.com/ResetSmith/cronomicon/internal/httpx"
@@ -84,6 +86,11 @@ func (s *Server) mountGit(mux *http.ServeMux) {
 				cond, args := "", []any(nil)
 				if id, ok := auth.IdentityFrom(r.Context()); ok {
 					cond, args = readableRepoSQL(id, "repo_id")
+				}
+				// 2.4.4: the agency the request works in, by the repository's.
+				if frag, fargs := agencyctx.Narrow(r, agencyid.Owner("(SELECT g.agency_id FROM git_repos g WHERE g.id = COALESCE(repo_id, 'global'))")); frag != "" {
+					cond += frag
+					args = append(args, fargs...)
 				}
 				h.ListSchedulePushes(s.db, cond, args, w, r)
 			}),

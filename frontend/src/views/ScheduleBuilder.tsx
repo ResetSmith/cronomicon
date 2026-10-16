@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, fetchCapabilities } from "../api/client";
+import { useEnsureAgency } from "../agency";
 import { CreationAgencyPicker, useCreationAgencies } from "../components/CreationAgencyPicker";
 import { c } from "../theme";
 import type { components } from "../api/schema";
@@ -35,6 +36,8 @@ export function ScheduleBuilder() {
   // 2.4.0 (I2; R8) — a schedule is one agency's, and two agencies may each
   // have one of a name: the Schedules page names whose (`?agencyId=`).
   const editAgency = params.get("agencyId") ?? undefined;
+  // 2.4.4 (SW-8) — a link to another agency's schedule switches to its agency.
+  useEnsureAgency(editAgency);
   const isEdit = !!editName;
 
   // 2.4.0 (I2) — an in-app schedule belongs to one agency (`ownerAgency`), and

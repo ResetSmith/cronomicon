@@ -3841,6 +3841,7 @@ func (s *Service) recordSyncEvent(ctx context.Context, triggeredBy string, res S
 		CommitSha:  res.SHA,
 		Repository: repoPath,
 		Branch:     branch,
+		AgencyID:   s.agency(), // 2.4.4: in its agency's Activity
 	})
 
 	return nil

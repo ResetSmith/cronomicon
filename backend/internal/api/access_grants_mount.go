@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/ResetSmith/cronomicon/internal/agencyctx"
 	"github.com/ResetSmith/cronomicon/internal/agencyid"
 	"net/http"
 	"strings"
@@ -83,6 +84,11 @@ func (s *Server) handleListAccessGrants(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		g.AllScopes = all != 0
+		// 2.4.4: the agency the request works in. A grant on every agency
+		// names none, and is shown under Global (SW-10).
+		if !agencyctx.In(r, g.AgencyID) {
+			continue
+		}
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
