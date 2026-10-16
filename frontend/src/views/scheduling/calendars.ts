@@ -93,6 +93,40 @@ export function useCalendarDays(refs: CalendarRef[]): { days: DaysByCalendar; lo
   return { days, loading };
 }
 
+/**
+ * useAgencyCalendars — the calendars an entry of one agency is judged by
+ * (2.4.1), as the scheduler judges it: the entry's bound names resolve within
+ * its agency, and only that agency's global calendars apply (calendar.Load and
+ * EvaluateFor, since 2.4.0's I2). Two agencies may each have a calendar of a
+ * name; by the name alone a preview read the other's days, and a picker
+ * offered both.
+ *
+ * `agency` is the definition's agency id (`global` for Global's). Unknown
+ * (undefined: a new workflow, a scope not chosen yet) keeps the behaviour of
+ * before: every calendar, read by name. `names` are the bound calendars whose
+ * days are wanted beside the globals'. The days come back keyed by name, for
+ * suppressionFor.
+ */
+export function useAgencyCalendars(
+  calendars: Calendar[],
+  agency: string | undefined,
+  names: string[],
+  /** Whether the days are wanted at all (false: only the list). */
+  withDays = true,
+): { relevant: Calendar[]; globals: string[]; daysByName: DaysByCalendar } {
+  const ownerOf = (cal: Calendar) => cal.ownerAgency || "global";
+  const relevant = agency ? calendars.filter((cal) => ownerOf(cal) === agency) : calendars;
+  const globals = relevant.filter((cal) => cal.global).map((cal) => cal.name ?? "").filter(Boolean);
+  const wanted = withDays ? [...new Set([...names, ...globals])].filter(Boolean) : [];
+  const { days } = useCalendarDays(wanted.map((name) => ({ name, owner: agency })));
+  const daysByName: DaysByCalendar = {};
+  for (const name of wanted) {
+    const d = days[calendarDaysKey(name, agency)];
+    if (d) daysByName[name] = d;
+  }
+  return { relevant, globals, daysByName };
+}
+
 // useCalendarRollupMap — the server-computed roll-up for every definition, keyed
 // "kind:source:name" (rollupKey) and already restricted to what the caller may
 // read (SU-2). For a surface that holds a definition's own schedule entries,

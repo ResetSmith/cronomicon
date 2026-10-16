@@ -319,6 +319,9 @@ export function WorkflowEditor() {
   // RX-24 — the server's refusal when reactions watch this workflow. Non-null
   // swaps both confirm rows (canvas and simple) for the forced one.
   const [delBlock, setDelBlock] = useState<string | null>(null);
+  // The loaded workflow's agency (2.4.1): its inline entries are judged by that
+  // agency's calendars. A new workflow's is not known until it is saved.
+  const [wfAgency, setWfAgency] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!editId) return;
@@ -336,6 +339,7 @@ export function WorkflowEditor() {
         return;
       }
       const loaded = (wf.steps ?? []) as WorkflowStep[];
+      setWfAgency(wf.ownerAgency || undefined);
       setName(wf.name ?? "");
       setDescription(wf.description ?? "");
       setEnabled(!wf.disabled);
@@ -703,7 +707,7 @@ export function WorkflowEditor() {
               </div>
             </div>
           )}
-          <InlineCalendarBindings entries={preservedInline} onPatch={(i, b) => { patchInlineBinding(i, b); markDirty(); }} />
+          <InlineCalendarBindings entries={preservedInline} agency={wfAgency} onPatch={(i, b) => { patchInlineBinding(i, b); markDirty(); }} />
         </div>
 
         <WorkflowCanvasEditor value={canvasTree} onChange={(t) => { setCanvasTree(t); markDirty(); }} jobs={jobs.map((j) => ({ name: j.name ?? "", source: j.source, uid: j.uid, agencies: (j as NamedRef).agencies ?? undefined }))} layout={canvasLayout} onLayoutChange={(m) => { setCanvasLayout(m); markDirty(); }} />
@@ -890,7 +894,7 @@ export function WorkflowEditor() {
             {preservedInline.length} inline schedule{preservedInline.length === 1 ? "" : "s"} preserved on save (authored via the API).
           </div>
         )}
-        <InlineCalendarBindings entries={preservedInline} onPatch={patchInlineBinding} />
+        <InlineCalendarBindings entries={preservedInline} agency={wfAgency} onPatch={patchInlineBinding} />
       </Field>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: c.fontSm, color: c.textSec }}>
@@ -950,9 +954,12 @@ export function WorkflowEditor() {
 // inline entries.
 function InlineCalendarBindings({
   entries,
+  agency,
   onPatch,
 }: {
   entries: PreservedInline[];
+  /** The workflow's agency, whose calendars its entries are judged by. */
+  agency?: string;
   onPatch: (i: number, b: { skipCalendars: string[]; onlyCalendars: string[] }) => void;
 }) {
   if (entries.length === 0) return null;
@@ -968,6 +975,7 @@ function InlineCalendarBindings({
             onChange={(b) => onPatch(i, b)}
             spec={s}
             compact
+            agency={agency}
           />
         </div>
       ))}

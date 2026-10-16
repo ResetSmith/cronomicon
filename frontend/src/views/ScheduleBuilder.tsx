@@ -283,7 +283,7 @@ export function ScheduleBuilder() {
       </Field>
 
       <Field label="Working calendars (optional)">
-        <CalendarPicker value={calendarBinding} onChange={setCalendarBinding} spec={spec} />
+        <CalendarPicker value={calendarBinding} onChange={setCalendarBinding} spec={spec} agency={editAgency ?? (ownerPick.selected || undefined)} />
       </Field>
 
       <Field label="Env (optional)">

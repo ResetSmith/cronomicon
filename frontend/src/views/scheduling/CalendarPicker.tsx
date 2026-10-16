@@ -12,7 +12,7 @@ import {
   dayInAppZone,
   suppressionFor,
   useCalendars,
-  useCalendarDays,
+  useAgencyCalendars,
   type Calendar,
 } from "./calendars";
 
@@ -36,6 +36,7 @@ export function CalendarPicker({
   onChange,
   compact,
   spec,
+  agency,
 }: {
   value: CalendarBinding;
   onChange: (next: CalendarBinding) => void;
@@ -44,14 +45,17 @@ export function CalendarPicker({
   /** The entry's firing spec, when the caller has one — enables the once-mode
    *  suppression warning (a suppressed one-shot never runs, not "not today"). */
   spec?: ScheduleSpec;
+  /** The agency of the definition the entry is of (2.4.1): its calendars are
+   *  the ones offered and judged, as the scheduler judges them. Unknown: every
+   *  calendar, as before. */
+  agency?: string;
 }) {
-  const { calendars } = useCalendars();
+  const { calendars: all } = useCalendars();
   const bound = [...value.skipCalendars, ...value.onlyCalendars];
-  const globals = calendars.filter((cal) => cal.global).map((cal) => cal.name ?? "");
   // Day sets for the once-mode preview only: the bound calendars plus the
-  // globals that would veto the instant anyway.
+  // globals that would veto the instant anyway (the agency's own).
   const isOnce = !!spec && modeOf(spec) === "once" && !!spec.startAt?.trim();
-  const { days } = useCalendarDays(isOnce ? [...bound, ...globals] : []);
+  const { relevant: calendars, globals, daysByName: days } = useAgencyCalendars(all, agency, bound, isOnce);
 
   const err = bindingError(value);
   // Dangling names (CAL-16): a force-deleted calendar leaves its bindings in

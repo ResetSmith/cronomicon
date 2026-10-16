@@ -464,6 +464,11 @@ export function JobComposer() {
   // ansible may carry a declared "connect as"; terraform 422s.
   const identityCapable = isIdentityCapable(runType);
   const chosenScope = scopesList.find((s) => s.scope === scope);
+  // The job's agency is its scope's (2.4.0, I2): its schedule entries are
+  // judged by that agency's calendars (2.4.1). No scope is Global's; a scope
+  // not chosen yet, or in no single agency, leaves it unknown.
+  const jobAgency =
+    scope === "" ? "global" : (chosenScope?.agencies ?? []).length === 1 ? chosenScope!.agencies![0].id : undefined;
   const scopeHosts = chosenScope?.hosts ?? [];
 
   // JC-P4 — env context for the chosen scope. '*'/empty scope = a global (mirrors the
@@ -1356,6 +1361,7 @@ export function JobComposer() {
                 onChange={(patch) => updateInline(i, patch)}
                 onRemove={() => removeInline(i)}
                 nameError={inlineErrors[i]}
+                agency={jobAgency}
               />
             ))}
           </div>
@@ -1718,11 +1724,14 @@ function InlineScheduleRow({
   onChange,
   onRemove,
   nameError,
+  agency,
 }: {
   entry: InlineSchedule;
   onChange: (patch: Partial<InlineSchedule>) => void;
   onRemove: () => void;
   nameError?: string | null;
+  /** The job's agency, whose calendars the entry is judged by (2.4.1). */
+  agency?: string;
 }) {
   const cronTrim = entry.cron.trim();
   const mode = modeOf(entry);
@@ -1816,6 +1825,7 @@ function InlineScheduleRow({
           onChange={(b) => onChange({ skipCalendars: b.skipCalendars, onlyCalendars: b.onlyCalendars })}
           spec={entry}
           compact
+          agency={agency}
         />
       </div>
 
