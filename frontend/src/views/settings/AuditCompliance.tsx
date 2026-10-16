@@ -38,7 +38,7 @@ const RETENTION_FIELDS: { k: keyof RetentionDays; label: string; hint: string }[
   { k: "activity", label: "Activity Log", hint: "How long an entry stays in the Activity feed." },
   { k: "workflowRuns", label: "Workflow Runs", hint: "How long a workflow's own run record is kept. The job runs inside it follow Run History." },
   { k: "changeLog", label: "Change Log", hint: "Who changed what, and when. Sign-in events are kept for the same window." },
-  { k: "schedulePushes", label: "Schedule Pushes", hint: "How long the record of each schedule published to GitLab is kept." },
+  { k: "schedulePushes", label: "Schedule Pushes", hint: "How long the record of each schedule published to its repository is kept." },
   {
     k: "logFiles",
     label: "Run Log Files",

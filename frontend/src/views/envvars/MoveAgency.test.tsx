@@ -95,7 +95,8 @@ describe("MoveAgency — a repair", () => {
   it("says what Global means", async () => {
     show();
     fireEvent.change(await select(), { target: { value: "global" } });
-    expect(await screen.findByText(/It becomes Global's: every agency's runs may use it, and only global administrators change it\./)).toBeTruthy();
+    // §0a (IN-6): Global's is Global's runs' only (until 2.4.2 the dialog said every agency's).
+    expect(await screen.findByText(/It becomes Global's: only Global's runs may use it, and only global administrators change it\./)).toBeTruthy();
   });
 
   it("is not offered to an agency's administrator, who reads that the agency does not change", async () => {

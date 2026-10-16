@@ -266,7 +266,7 @@ export function GitSyncTab() {
                   <EmptyRow
                     colSpan={cols.visible.length}
                     title="No Git sync events yet"
-                    hint="Sync events appear after the first GitLab pull or push."
+                    hint="Sync events appear after the first pull or push."
                     action={
                       <Btn small onClick={syncNow} disabled={syncing || !!syncWhy} title={syncWhy || undefined}>
                         {syncing ? "Syncing…" : "Sync now"}

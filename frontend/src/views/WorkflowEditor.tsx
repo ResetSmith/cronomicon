@@ -643,7 +643,7 @@ export function WorkflowEditor() {
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
         In-app workflow composition requires the <strong>Compose</strong> capability (Admin-only in v20).
-        Git-defined workflows are authored through the GitLab publish flow.
+        Git-defined workflows are authored through the publish flow.
       </div>
     );
   }
@@ -651,7 +651,7 @@ export function WorkflowEditor() {
   if (gitSource)
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
-        This workflow is <strong>Git-authored</strong> — read-only here. Edit it through the GitLab publish flow;
+        This workflow is <strong>Git-authored</strong> — read-only here. Edit it through the publish flow;
         only cronomicon-source workflows are editable in-app.
       </div>
     );

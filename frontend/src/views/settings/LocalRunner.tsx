@@ -134,7 +134,7 @@ export function LocalRunnerSection({ canWrite }: { canWrite: boolean }) {
           message={
             <>
               This server will hold SSH private keys in memory and open connections to job targets. It starts claiming at once:
-              queued shell runs of {serves.map((a) => a.name).join(", ") || "the agencies it serves"} that no other runner has taken
+              queued shell runs of {serves.map((a) => a.name).join(", ") || "Global"} that no other runner has taken
               will run from here. The change is recorded with your name.
             </>
           }

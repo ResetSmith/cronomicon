@@ -115,7 +115,8 @@ describe("BoundRunnersCell — the catalog column", () => {
 describe("ScopeRunnersField — the expanded row", () => {
   it("names the pool an unbound scope draws from, and offers to bind", () => {
     const { container } = render(<ScopeRunnersField scope={scope()} canEdit onSaved={vi.fn()} />);
-    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may take this scope's runs: its agents, and the local\s+runner if it serves Finance/);
+    // The local runner serves Global only (§0a, IN-3).
+    expect(container.textContent).toMatch(/Not bound — any runner that serves Finance may take this scope's runs: its agents, and, for a\s+scope of Global's, the local runner/);
     expect(within(container).getByRole("button", { name: "Bind runners…" })).toBeTruthy();
   });
 

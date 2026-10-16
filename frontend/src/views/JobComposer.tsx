@@ -802,7 +802,7 @@ export function JobComposer() {
     return (
       <div style={{ color: c.textSec, maxWidth: 560 }}>
         In-app job composition requires the <strong>Compose</strong> capability (Admin-only in v20).
-        Git-defined jobs are authored through the GitLab publish flow.
+        Git-defined jobs are authored through the publish flow.
       </div>
     );
   }
@@ -1077,7 +1077,7 @@ export function JobComposer() {
             ) : (
               <>
                 Whichever runner that serves the job&rsquo;s scope asks first takes a run: an agent, or the local runner
-                (this server, over SSH) where it is switched on and serves the scope&rsquo;s agency.
+                (this server, over SSH) where it is switched on, for a job of Global&rsquo;s.
               </>
             )}{" "}
             To keep a scope&rsquo;s jobs on particular runners, bind them on Scopes → Runners.

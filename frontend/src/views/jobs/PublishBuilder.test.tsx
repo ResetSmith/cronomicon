@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-// Publish to GitLab, per repository (2.4.0 GR-24; R8). A publish names its
+// Publish to the repository, per repository (2.4.0 GR-24; R8). A publish names its
 // repository (`repoId`): an agency's takes its own publishers', Global's a
 // global publisher's only. The picker offers what the caller may publish to,
 // the base commit (If-Match) is that repository's last sync, and a push the
@@ -84,7 +84,7 @@ const open = async () => {
 const publish = async () => {
   fireEvent.change(screen.getByPlaceholderText("e.g. daily-backup"), { target: { value: "nightly" } });
   fireEvent.change(screen.getByPlaceholderText("echo hello"), { target: { value: "echo hi" } });
-  const go = screen.getByRole("button", { name: "Publish to GitLab" }) as HTMLButtonElement;
+  const go = screen.getByRole("button", { name: "Publish to the repository" }) as HTMLButtonElement;
   await waitFor(() => expect(go.disabled).toBe(false));
   fireEvent.click(go);
   const confirm = await waitFor(() => {
@@ -141,7 +141,7 @@ describe("Publish — per repository (R8)", () => {
     expect(select.disabled).toBe(true);
     expect(screen.getByText(/nightly is in Finance's repository, and an edit of it is published there\./)).toBeTruthy();
     await waitFor(() => expect(historyRepos).toContain("repo-fin"));
-    const go = screen.getByRole("button", { name: "Publish to GitLab" }) as HTMLButtonElement;
+    const go = screen.getByRole("button", { name: "Publish to the repository" }) as HTMLButtonElement;
     await waitFor(() => expect(go.disabled).toBe(false));
     fireEvent.click(go);
     const confirm = await waitFor(() => {
@@ -159,6 +159,6 @@ describe("Publish — per repository (R8)", () => {
     await waitFor(() => expect(select.options.length).toBe(1));
     fireEvent.change(screen.getAllByRole("combobox")[1], { target: { value: "1" } });
     expect(await screen.findByText(/nightly is in Global repository, which you may not publish to\./)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Publish to GitLab" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Publish to the repository" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

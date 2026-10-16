@@ -451,7 +451,7 @@ export function ScopesTab({
         <div style={{ color: c.textSec }}>
           {scopes.length === 0 ? (
             <>
-              <div>No scopes yet. Git-source scopes appear after the first GitLab sync of an inventories/ directory.</div>
+              <div>No scopes yet. Git-source scopes appear after the first sync of an inventories/ directory.</div>
               {canEdit && (
                 <div style={{ marginTop: 12 }}>
                   <Btn small onClick={() => setAdding(true)}>
@@ -578,7 +578,7 @@ export function ScopesTab({
                           const current = s.agencies ?? [];
                           const single = current.length === 1 ? current[0].id : "";
                           const effect =
-                            "Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets and keys (and Global's) are injectable.";
+                            "Only a runner that serves this agency can execute this scope's jobs, and only this agency's secrets and keys are injectable.";
                           if (!mayRepair(s)) {
                             return (
                               <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -789,7 +789,7 @@ export function ScopesTab({
           message={
             <>
               Its jobs will run only on runners that serve {scopeRepair.target.name}, and only {scopeRepair.target.name}'s secrets and keys
-              (and Global's) are injectable. A workflow that names it beside another agency's scopes would span agencies.
+              are injectable. A workflow that names it beside another agency's scopes is refused at its next run and save.
             </>
           }
           confirmLabel={`Move to ${scopeRepair.target.name}`}

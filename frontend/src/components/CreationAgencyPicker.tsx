@@ -18,7 +18,7 @@ type Agency = { id?: string; name?: string };
  *   - An administrator of SEVERAL must say which (the server answers 422
  *     `agency_required` otherwise). Their own agencies are offered and no others.
  *   - A GLOBAL administrator may name any agency, or leave it Global's, which is
- *     the default: usable by every agency, changed only by global administrators.
+ *     the default: Global's runs' only (§0a), changed only by global administrators.
  *
  * Until 2.3.0 this was a multi-select shown only to restricted callers, because
  * a row could be shared by several agencies and "no agency" meant shared
@@ -155,7 +155,7 @@ export function CreationAgencyPicker({
       <div style={{ fontSize: c.fontXs, color: c.textMuted, marginTop: 4 }}>
         {pick.global ? (
           <>
-            A {label} belongs to one agency. Global's is usable by every agency and changed only by global
+            A {label} belongs to one agency, and is used by that agency's runs only. Global's is changed only by global
             administrators; an agency's is that agency's own.
           </>
         ) : only ? (

@@ -130,9 +130,9 @@ export function AgenciesTab({
       )}
       <div style={{ marginBottom: 12, color: c.textSec, fontSize: c.fontSm, lineHeight: 1.55 }}>
         An agency is a department&rsquo;s isolation zone. Every scope, secret, variable, SSH key, host record and
-        runner belongs to exactly one, and <strong>Global</strong> holds what belongs to no department: Global&rsquo;s
-        rows are every agency&rsquo;s to use and a global administrator&rsquo;s to change. A run goes only to a runner
-        that serves its scope&rsquo;s agency, and receives only that agency&rsquo;s secrets and keys, or Global&rsquo;s.{" "}
+        runner belongs to exactly one, and <strong>Global</strong> is the global administrators&rsquo; own agency:
+        its rows are Global&rsquo;s runs&rsquo; to use and a global administrator&rsquo;s to change. A run goes only to a
+        runner that serves its scope&rsquo;s agency, and receives only that agency&rsquo;s secrets and keys.{" "}
         <strong>Expand a row to see and edit what it contains.</strong> To go the other way — which agency one secret,
         variable, key, scope or runner belongs to — that row&rsquo;s own catalog carries an Agency column.{" "}
         <DocLink href={DOC_LINKS.agencies}>How membership and ownership work</DocLink>

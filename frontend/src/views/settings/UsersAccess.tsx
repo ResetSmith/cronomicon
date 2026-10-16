@@ -35,7 +35,7 @@ const PERMISSION_LABELS: { key: keyof RolePermissions; label: string; hint: stri
   { key: "triggerJobs", label: "Trigger jobs", hint: "Run jobs and workflows, within the scopes this role is granted." },
   { key: "killJobs", label: "Kill jobs", hint: "Stop, pause and resume runs, within the scopes this role is granted." },
   { key: "manageEnvVars", label: "Manage variables & secrets", hint: "Create, edit and reveal variables and secrets." },
-  { key: "publishSchedule", label: "Publish to GitLab", hint: "Publish job and schedule definitions to the shared repository." },
+  { key: "publishSchedule", label: "Publish to the repository", hint: "Publish job and schedule definitions to their agency's repository." },
   { key: "configureApp", label: "Configure application", hint: "Settings, integrations, scopes, runners and SSH configuration." },
   { key: "manageRoles", label: "Manage roles & access", hint: "This screen: roles and access grants." },
   // AF-2. The hint states BOTH halves of the rule, because the permission is

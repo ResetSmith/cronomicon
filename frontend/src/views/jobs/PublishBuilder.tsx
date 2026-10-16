@@ -121,7 +121,7 @@ function jobSource(d: JobDetail): { kind: "command" | "script" | "scriptPath"; b
   return null;
 }
 
-// "Publish to GitLab" authoring mode for Jobs — reached from Jobs via the hidden
+// "Publish to the repository" authoring mode for Jobs — reached from Jobs via the hidden
 // /jobs/publish route (mirrors how Jobs launches Compose). Authors a `kind: Job`
 // YAML (scope→target_host, concurrency, timeout, retries, tags +
 // schedules) and Git-publishes it via POST /schedules/publish with an If-Match
@@ -533,7 +533,7 @@ export function PublishBuilder() {
                 disabled={!canPublish}
                 style={{ ...btn(), background: canPublish ? c.primary : c.panel2, color: canPublish ? c.onSolid : c.textSec, cursor: canPublish ? "pointer" : "not-allowed" }}
               >
-                {phase === "publishing" ? "Publishing…" : "Publish to GitLab"}
+                {phase === "publishing" ? "Publishing…" : "Publish to the repository"}
               </button>
             </div>
 
@@ -599,7 +599,7 @@ export function PublishBuilder() {
             )}
             {result?.kind === "error" && (
               <div style={{ ...banner(c.danger), marginTop: 12 }}>
-                ✗ {result.status === 403 ? "403 Forbidden — missing schedule publish permission." : result.status === 503 ? "503 — GitLab unreachable, retry later." : `${result.status} — error.`} {result.message}
+                ✗ {result.status === 403 ? "403 Forbidden — missing schedule publish permission." : result.status === 503 ? "503 — the repository is unreachable, retry later." : `${result.status} — error.`} {result.message}
               </div>
             )}
           </div>
@@ -618,7 +618,7 @@ export function PublishBuilder() {
       {/* ── Confirm Publish modal ── */}
       {phase === "confirm" && (
         <Modal
-          title="Confirm Publish to GitLab"
+          title="Confirm Publish to the repository"
           wide
           onClose={() => setPhase("idle")}
           /* FX-10 — the YAML preview is already capped, but the whole panel is

@@ -9,7 +9,7 @@ import { MemoryRouter } from "react-router-dom";
 // git-synced rows is translated into a sentence rather than a status code.
 
 // `compose` is the capability under test; `publishSchedule` is a second flag set
-// in the SAME .then() as compose, so the "+ Publish to GitLab" button doubles as
+// in the SAME .then() as compose, so the "+ Publish to the repository" button doubles as
 // a positive control that the capability fetch has landed before a test asserts
 // the ABSENCE of Delete.
 let composeOn = true;
@@ -130,7 +130,7 @@ describe("Jobs — expanded-row Delete", () => {
     const q = await renderJobs();
     // Positive control: publishSchedule rides the same capability .then(), so its
     // button proves the fetch landed and compose was genuinely off.
-    await waitFor(() => expect(q.getByRole("link", { name: /Publish to GitLab/ })).toBeTruthy());
+    await waitFor(() => expect(q.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
     expandRow(q, "cronomicon-job");
     await waitFor(() => expect(q.getByText("Run on")).toBeTruthy());
     expect(deleteBtn(q)).toBeNull();
@@ -147,9 +147,9 @@ describe("Jobs — expanded-row Delete", () => {
 
     composeOn = false;
     const off = await renderJobs();
-    // Positive control, as above: Publish to GitLab rides the same capability
+    // Positive control, as above: Publish to the repository rides the same capability
     // fetch, so its presence proves compose was genuinely off rather than unread.
-    await waitFor(() => expect(off.getByRole("link", { name: /Publish to GitLab/ })).toBeTruthy());
+    await waitFor(() => expect(off.getByRole("link", { name: /Publish to the repository/ })).toBeTruthy());
     expect(off.queryByRole("link", { name: "+ Create" })).toBeNull();
   });
 

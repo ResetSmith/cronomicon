@@ -460,7 +460,7 @@ function ScopesServed({
 /** The local runner: this server itself, listed with the agents. */
 const isLocal = (r: Runner) => r.kind === "server";
 
-// Where the local runner is turned on and off and given the agencies it serves.
+// Where the local runner is turned on and off (it serves Global only, §0a).
 const LOCAL_RUNNER_SETTINGS = "/settings?tab=localrunner";
 
 // Where the local runner is turned on and off. That Settings section is listed
@@ -991,8 +991,8 @@ function RunnerDetail({
           {local && (
             <Section title="Settings">
               <span style={{ color: c.textSec, fontSize: c.fontSm }}>
-                <LocalRunnerState />A global administrator turns it on or off, and sets how many runs it takes at once and the
-                agencies it serves, under <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>.
+                <LocalRunnerState />A global administrator turns it on or off, and sets how many runs it takes at once, under{" "}
+                <LocalRunnerSettingsLink>Settings → Local runner</LocalRunnerSettingsLink>. It serves Global only.
               </span>
             </Section>
           )}

@@ -186,7 +186,7 @@ export function Jobs() {
     });
 
   // Compose capability gates the cronomicon-only Edit affordance (D6); publish gates
-  // the "+ Publish to GitLab" button on the PublishSchedule permission (PP-B1).
+  // the "+ Publish to the repository" button on the PublishSchedule permission (PP-B1).
   // triggerJobs/killJobs gate Run/Kill/Pause/Resume (RB-3).
   const [canCompose, setCanCompose] = useState(false);
   const [canPublish, setCanPublish] = useState(false);
@@ -817,7 +817,7 @@ export function Jobs() {
             (admin OR approver), matching the server requirePerm gate (PP-B1). */}
         {canPublish && (
           <Link to="/jobs/publish" style={{ textDecoration: "none" }}>
-            <Btn style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Publish to GitLab</Btn>
+            <Btn style={{ padding: "8px 14px", fontSize: c.fontSm }}>+ Publish to the repository</Btn>
           </Link>
         )}
         {Object.keys(cw.widths).length > 0 && (

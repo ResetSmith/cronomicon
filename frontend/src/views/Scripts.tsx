@@ -358,7 +358,7 @@ export function Scripts() {
           primary
           onClick={gitPull}
           disabled={pulling || !!syncWhy}
-          title={syncWhy || `Pulls ${pullRepo ? repoLabel(pullRepo) : "the"} repository from GitLab (jobs, scripts, schedules, workflows).`}
+          title={syncWhy || `Pulls ${pullRepo ? repoLabel(pullRepo) : "the"} repository (jobs, scripts, schedules, workflows).`}
           style={{ padding: "8px 14px", fontSize: c.fontSm }}
         >
           {pulling ? "Pulling…" : pullable.length > 1 || !pullRepo ? "↻ Git Pull" : `↻ Pull ${repoLabel(pullRepo)}`}
@@ -392,7 +392,7 @@ export function Scripts() {
             <div>No scripts yet. They are synced from the scripts/ directory of the definitions repo — there is no in-app script authoring.</div>
             <div style={{ marginTop: 12 }}>
               <Btn small onClick={gitPull} disabled={pulling || !!syncWhy} title={syncWhy || undefined}>
-                {pulling ? "Pulling…" : "Pull from GitLab"}
+                {pulling ? "Pulling…" : "Pull from the repository"}
               </Btn>
             </div>
           </div>

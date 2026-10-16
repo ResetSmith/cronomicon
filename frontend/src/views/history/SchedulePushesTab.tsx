@@ -228,7 +228,7 @@ export function SchedulePushesTab() {
                   <EmptyRow
                     colSpan={cols.visible.length}
                     title="No schedule pushes yet"
-                    hint="A push is recorded here when a schedule is published to GitLab."
+                    hint="A push is recorded here when a schedule is published to its repository."
                     action={
                       <Link to="/schedules" style={{ textDecoration: "none" }}>
                         <Btn small>Go to Schedules</Btn>

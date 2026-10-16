@@ -20,7 +20,7 @@ const ROUTE = {
  * a repair since 2.4.0 I4, IN-7; the owner's answer to question 48).
  *
  * Each belongs to exactly one agency, which owns it: its administrators change
- * it and only its runs may use it (Global's is usable by every agency). The
+ * it and only its runs may use it (Global's too, since 2.4.0, §0a). The
  * owner is chosen at creation. Since 2.4.0 it does not change by an agency
  * administrator's move: another agency gets one by making it again. What is
  * left is a global administrator's repair of a placement that was a mistake,
@@ -119,7 +119,7 @@ export function MoveAgency({
           message={
             <>
               {target.id === GLOBAL_AGENCY ? (
-                <>It becomes Global's: every agency's runs may use it, and only global administrators change it.</>
+                <>It becomes Global's: only Global's runs may use it, and only global administrators change it.</>
               ) : (
                 <>
                   {target.name}'s administrators will manage it, and only {target.name}'s runs will resolve it.

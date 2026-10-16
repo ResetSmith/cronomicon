@@ -597,7 +597,7 @@ function ScheduleDetail({ listRow, canCompose, authorWhy, ownerName, onChanged, 
           )
         ) : (
           <span style={{ fontSize: c.fontSm, color: c.textMuted }}>
-            Authored in Git{s.sourcePath ? <> (<span style={{ fontFamily: c.mono }}>{s.sourcePath}</span>)</> : null} — read-only here; edit via the GitLab publish flow.
+            Authored in Git{s.sourcePath ? <> (<span style={{ fontFamily: c.mono }}>{s.sourcePath}</span>)</> : null} — read-only here; edit via the publish flow.
           </span>
         )}
         {delErr && <span style={{ fontSize: c.fontSm, color: pendingForce ? c.warning : c.danger }}>{delErr}</span>}

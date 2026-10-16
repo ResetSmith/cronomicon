@@ -158,7 +158,7 @@ export function ScheduleBuilder() {
     return (
       <div role="note" style={{ color: c.textSec, maxWidth: 560 }}>
         In-app schedule authoring requires the <strong>Compose</strong> capability on the agency the schedule belongs to.
-        Git-defined schedules are authored through the GitLab publish flow.
+        Git-defined schedules are authored through the publish flow.
       </div>
     );
   }

@@ -144,11 +144,11 @@ describe("Scripts — Git Pull needs a global administrator (GC)", () => {
     expect(vi.mocked(api.POST)).not.toHaveBeenCalled();
   });
 
-  it("disables the empty catalog's Pull from GitLab the same way", async () => {
+  it("disables the empty catalog's Pull from the repository the same way", async () => {
     syncOn = false;
     scripts = { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 200 };
     const q = renderScripts();
-    const pull = (await waitFor(() => q.getByRole("button", { name: "Pull from GitLab" }))) as HTMLButtonElement;
+    const pull = (await waitFor(() => q.getByRole("button", { name: "Pull from the repository" }))) as HTMLButtonElement;
     await waitFor(() => expect(pull.title).toBe(WHY));
     expect(pull.disabled).toBe(true);
   });
@@ -156,11 +156,11 @@ describe("Scripts — Git Pull needs a global administrator (GC)", () => {
   it("enables both for a global administrator", async () => {
     scripts = { items: [], totalItems: 0, totalPages: 1, page: 1, pageSize: 200 };
     const q = renderScripts();
-    const empty = (await waitFor(() => q.getByRole("button", { name: "Pull from GitLab" }))) as HTMLButtonElement;
+    const empty = (await waitFor(() => q.getByRole("button", { name: "Pull from the repository" }))) as HTMLButtonElement;
     const toolbar = () => q.getByRole("button", { name: /^↻/ }) as HTMLButtonElement;
     await waitFor(() => expect(toolbar().disabled).toBe(false));
     expect(toolbar().textContent).toBe("↻ Pull Global");
-    expect(toolbar().title).toMatch(/Pulls Global repository from GitLab/);
+    expect(toolbar().title).toMatch(/Pulls Global repository \(jobs/);
     expect(empty.disabled).toBe(false);
     expect(empty.title).toBe("");
   });
