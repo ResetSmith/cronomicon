@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -319,6 +320,25 @@ func TestSwitcherReadingOneObjectIsNotNarrowed(t *testing.T) {
 	rec := gateReqWithHeader(t, h, http.MethodGet, "/api/v1/runs/r-tax", gTaxAdmin, "", agencyctx.Header, "global")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "s0-tax-job") {
 		t.Fatalf("TAX's run, read with Global named = %d %s, want it", rec.Code, rec.Body)
+	}
+	// The list says whose each run is too (F4): the overview's Score names it.
+	// FIN's run with no scope is FIN's (S2).
+	list := gateReq(t, h, http.MethodGet, "/api/v1/runs?pageSize=200", gRoot, "").Body.String()
+	if !strings.Contains(list, `"ownerAgency":"ag:FIN"`) || !strings.Contains(list, `"ownerAgency":"ag:TAX"`) || !strings.Contains(list, `"ownerAgency":"global"`) {
+		t.Errorf("the runs list does not say whose each run is: %.400s", list)
+	}
+	var runs struct {
+		Items []struct {
+			TraceID     string `json:"traceId"`
+			OwnerAgency string `json:"ownerAgency"`
+		} `json:"items"`
+	}
+	if json.Unmarshal([]byte(list), &runs) == nil {
+		for _, r := range runs.Items {
+			if r.TraceID == "r-fin0" && r.OwnerAgency != "ag:FIN" {
+				t.Errorf("FIN's run with no scope is listed as %q's", r.OwnerAgency)
+			}
+		}
 	}
 	// It says whose it is (F2, SW-8): a link to it switches to its agency.
 	if !strings.Contains(rec.Body.String(), `"ownerAgency":"ag:TAX"`) {

@@ -4208,7 +4208,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
 		suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
-		runner_name, script_uid ` +
+		runner_name, script_uid, owner_agency ` +
 		base + orderBy + " LIMIT ? OFFSET ?"
 	args = append(args, pageSize, (page-1)*pageSize)
 
@@ -4269,13 +4269,6 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 2.4.4 (SW-8): whose the run is (1480), so that a link to it from another
-	// agency's view switches to its agency.
-	var owner string
-	if err := s.db.QueryRowContext(r.Context(), `SELECT `+runOwnerSQL+` FROM runs WHERE id = ?`, traceID).Scan(&owner); err == nil {
-		run["ownerAgency"] = owner
-	}
-
 	httpx.JSON(w, http.StatusOK, run)
 }
 
@@ -4286,7 +4279,7 @@ func (s *Server) fetchRunByID(r *http.Request, traceID string) map[string]any {
 		       started_at, completed_at, duration_ms, exit_code, created_at, schedule_name, kind, executor,
 		       script_ref, content_hash, job_source, outputs_json, override_json, agencies_json, runner_id,
 		       suppressed_by_calendar, reacted_to_run_id, reaction_depth, runner_tag, job_uid, log_archived_at,
-		       runner_name, script_uid
+		       runner_name, script_uid, owner_agency
 		FROM runs WHERE id = ?
 	`, traceID)
 	if err != nil {
@@ -4348,6 +4341,19 @@ type runRaw struct {
 	// on runs whose job vanished between resolution and insert. It is what
 	// History attributes by once two agencies may share a job name.
 	jobUID sql.NullString
+	// ownerAgency is whose the run is (1480; 2.4.4): its job's owner when it
+	// was queued. The overview's Score names it, and a link to the run
+	// switches to it.
+	ownerAgency sql.NullString
+}
+
+// runOwnerOf is whose a run is, by the no-owner rule: Global's for a row
+// with none.
+func runOwnerOf(rr runRaw) string {
+	if !rr.ownerAgency.Valid || rr.ownerAgency.String == "" {
+		return agencyid.Global
+	}
+	return rr.ownerAgency.String
 }
 
 // scanRunRaw scans the current row into a runRaw. It runs NO nested query, so it
@@ -4359,7 +4365,7 @@ func scanRunRaw(rows *sql.Rows) (runRaw, bool) {
 		&rr.startedAt, &rr.completedAt, &rr.durationMs, &rr.exitCode, &rr.createdAt, &rr.scheduleName,
 		&rr.kind, &rr.executor, &rr.scriptRef, &rr.contentHash, &rr.jobSource, &rr.outputsJSON, &rr.overrideJSON, &rr.agenciesJSON, &rr.runnerID,
 		&rr.suppressedByCalendar, &rr.reactedToRunID, &rr.reactionDepth, &rr.runnerTag, &rr.jobUID, &rr.logArchivedAt,
-		&rr.runnerName, &rr.scriptUID); err != nil {
+		&rr.runnerName, &rr.scriptUID, &rr.ownerAgency); err != nil {
 		return runRaw{}, false
 	}
 	return rr, true
@@ -4529,6 +4535,7 @@ func (s *Server) runToMap(rr runRaw, caches *runMapCaches) map[string]any {
 		"kind":         rr.kind,
 		"scope":        nullStrVal(rr.scope),
 		"agencies":     parseAgenciesJSON(rr.agenciesJSON),
+		"ownerAgency":  runOwnerOf(rr),
 		"status":       mapRunStatus(rr.status),
 		"statusReason": statusReason,
 		"executor":     runExecutor(rr),

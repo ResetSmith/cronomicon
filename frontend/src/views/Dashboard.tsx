@@ -8,6 +8,7 @@ import { DOC_LINKS } from "../components/docLinks";
 import { SkeletonRows, StatTile, statusLabel, statusTone, DocLink } from "../components/ui";
 import { Score } from "../components/Score";
 import { HOURS_BACK, type Mark } from "../components/score-model";
+import { buildScoreMarks, scoreTruncatedAt } from "../components/score-feed";
 import { GlobalCalendarBanner } from "./scheduling/GlobalCalendarBanner";
 import { excludeSuppressed } from "./scheduling/calendars";
 import { appZoneParts, fmtInAppZone } from "../utils/datetime";
@@ -211,7 +212,6 @@ export function Dashboard() {
   // it differently. Here the split is a single field, and everything downstream
   // is tense-agnostic.
   const marks = useMemo<Mark[]>(() => {
-    const out: Mark[] = [];
     // R2F-3 — past runs and future fires share one timeline, so they share one
     // ambiguity set: a name is badged if EITHER half of the timeline holds two
     // definitions by that name. Computed here rather than via the hook because
@@ -221,38 +221,12 @@ export function Dashboard() {
       ...upcoming.map((u) => ({ uid: u.ownerUid, name: u.ownerName, agencies: u.ownerAgencies })),
     ];
     const ambiguous = ambiguousNames(refs);
-    const markLabel = (ref: NamedRef) => disambiguate(ref, ambiguous);
-    for (const r of scoreRuns) {
-      // Plot the START. The API filtered on enqueue time, so clip here — and a
-      // run with no startedAt has not begun and has no place on the timeline.
-      const at = r.startedAt ? Date.parse(r.startedAt) : NaN;
-      if (Number.isNaN(at) || r.kind === "ssh-test") continue;
-      out.push({
-        at,
-        tense: "past",
-        jobName: markLabel({ uid: r.jobUid, name: r.jobName, agencies: r.agencies }) || "—",
-        status: r.status,
-        durationMs: r.durationMs ?? null,
-        traceId: r.traceId,
-        type: r.type,
-        triggerKind: r.triggerKind,
-        triggeredBy: r.triggeredBy,
-        scheduleName: r.scheduleName,
-        executor: r.executor,
-        runnerName: r.runnerName ?? (r.runnerId ? (runnerNames.get(r.runnerId) ?? null) : null),
-      });
-    }
-    for (const u of upcoming) {
-      const at = u.at ? Date.parse(u.at) : NaN;
-      if (Number.isNaN(at)) continue;
-      out.push({
-        at,
-        tense: "future",
-        jobName: markLabel({ uid: u.ownerUid, name: u.ownerName, agencies: u.ownerAgencies }) || "—",
-        ownerKind: u.ownerKind,
-      });
-    }
-    return out;
+    // The marks themselves are the shared builder's (score-feed.ts, 2.4.4 F4),
+    // the Operations overview's too.
+    return buildScoreMarks(scoreRuns, upcoming, runnerNames, {
+      run: (r) => disambiguate({ uid: r.jobUid, name: r.jobName, agencies: r.agencies }, ambiguous),
+      upcoming: (u) => disambiguate({ uid: u.ownerUid, name: u.ownerName, agencies: u.ownerAgencies }, ambiguous),
+    });
   }, [scoreRuns, upcoming, runnerNames]);
 
   // D-2b. The API gives NO truncation signal — the response is `{ window, items }`
@@ -262,8 +236,7 @@ export function Dashboard() {
   // Inferred from the RAW projection, before the CAL-11 suppression filter: the
   // cap is applied server-side to every item it returned, so filtering first
   // would hide a real truncation whenever any projected fire was suppressed.
-  const truncatedAt =
-    upcomingAll.length >= 500 && upcomingAll[upcomingAll.length - 1]?.at ? Date.parse(upcomingAll[upcomingAll.length - 1].at!) : null;
+  const truncatedAt = scoreTruncatedAt(upcomingAll);
 
   // Ticks and the day rule follow the APPLICATION timezone — the zone the
   // scheduler fires in, and the zone /schedules/upcoming projects in. Browser-

@@ -8,6 +8,8 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 let CONTEXT: Record<string, unknown> = {};
 let OVERVIEW: unknown = null;
 let HITS: unknown[] = [];
+let RUNS: unknown[] = [];
+const asked: { path: string; headers?: Record<string, string> }[] = [];
 
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
@@ -15,7 +17,9 @@ vi.mock("../api/client", async (importOriginal) => {
     ...actual,
     setRequestAgency: vi.fn(),
     api: {
-      GET: vi.fn(async (path: string) => {
+      GET: vi.fn(async (path: string, opts?: { headers?: Record<string, string> }) => {
+        asked.push({ path, headers: opts?.headers });
+        if (path === "/runs") return { data: { items: RUNS } };
         if (path === "/me/context") return { data: CONTEXT };
         if (path === "/overview") return { data: OVERVIEW };
         if (path === "/overview/search") return { data: HITS };
@@ -74,6 +78,8 @@ beforeEach(() => {
     generatedAt: "2026-10-16T12:00:00Z",
   };
   HITS = [];
+  RUNS = [];
+  asked.length = 0;
 });
 afterEach(cleanup);
 
@@ -116,6 +122,25 @@ describe("the Operations overview (2.4.4 F3)", () => {
     CONTEXT = { ...CONTEXT, effectiveDefault: "global", workingAgency: "global" };
     renderAt("/");
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/|global"));
+  });
+
+  it("draws the Score across every agency, each mark naming its agency (F4)", async () => {
+    const recent = new Date(Date.now() - 3600 * 1000).toISOString();
+    RUNS = [
+      { traceId: "t-a", jobName: "backup", ownerAgency: "ag-a", status: "success", kind: "job", startedAt: recent },
+      { traceId: "t-b", jobName: "report", ownerAgency: "ag-b", status: "danger", kind: "job", startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString() },
+    ];
+    renderAt("/overview");
+    await screen.findByTestId("overview-score");
+    await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(0));
+    const names = screen.getAllByRole("option").map((o) => o.getAttribute("aria-label") ?? "").join(" | ");
+    expect(names).toContain("backup · agency-alpha");
+    expect(names).toContain("report · agency-beta");
+    // Its feeds ask for every agency the viewer reads, not the one in use.
+    for (const p of ["/runs", "/schedules/upcoming", "/runners"]) {
+      const a = asked.find((x) => x.path === p);
+      expect(a?.headers?.["X-Cronomicon-Agency"], p).toBe("none");
+    }
   });
 
   it("links each kind of item where it is worked on", () => {

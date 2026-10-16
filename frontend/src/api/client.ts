@@ -48,9 +48,15 @@ export function setRequestAgency(agency: string): void {
 // A refused request may mean the person's grants changed during the session;
 // agency.tsx reads their choices again when it hears this (SW-15).
 export const AGENCY_REFRESH_EVENT = "cronomicon:agency-refresh";
+// A request that is to name NO agency passes this as its headers, and is
+// answered with everything the caller may read (SW-11). Only the Operations
+// overview's Score does: its audience reads every agency (2.4.4 F4).
+export const NO_AGENCY = "none";
+export const allReadable = { [AGENCY_HEADER]: NO_AGENCY };
 export const agencyMiddleware: Middleware = {
   async onRequest({ request }) {
-    if (requestAgency) request.headers.set(AGENCY_HEADER, requestAgency);
+    if (request.headers.get(AGENCY_HEADER) === NO_AGENCY) request.headers.delete(AGENCY_HEADER);
+    else if (requestAgency) request.headers.set(AGENCY_HEADER, requestAgency);
     return request;
   },
   async onResponse({ response }) {

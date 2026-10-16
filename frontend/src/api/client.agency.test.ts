@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MiddlewareCallbackParams } from "openapi-fetch";
-import { AGENCY_HEADER, AGENCY_REFRESH_EVENT, agencyMiddleware, setRequestAgency } from "./client";
+import { AGENCY_HEADER, AGENCY_REFRESH_EVENT, agencyMiddleware, allReadable, setRequestAgency } from "./client";
 
 // The API client names the agency the person works in on every request
 // (2.4.4 F1), and asks for the choices again when a request is refused. The
@@ -22,6 +22,14 @@ describe("the agency header", () => {
     setRequestAgency("ag-a");
     expect((await send("GET")).headers.get(AGENCY_HEADER)).toBe("ag-a");
     expect((await send("PUT")).headers.get(AGENCY_HEADER)).toBe("ag-a");
+  });
+
+  it("is left off a request that asks for every agency it may read (F4)", async () => {
+    setRequestAgency("ag-a");
+    const out = (await agencyMiddleware.onRequest!(
+      params(new Request("http://localhost/api/v1/runs", { headers: allReadable })),
+    )) as Request;
+    expect(out.headers.get(AGENCY_HEADER)).toBeNull();
   });
 
   it("is absent when no agency is set", async () => {

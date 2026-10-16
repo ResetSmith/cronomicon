@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Link } from "react-router-dom";
-import { api } from "../api/client";
-import { useLiveGet } from "../hooks";
+import { Link, useNavigate } from "react-router-dom";
+import { allReadable, api } from "../api/client";
+import { rows, useGet, useLiveGet } from "../hooks";
+import { Score } from "../components/Score";
+import { HOURS_BACK } from "../components/score-model";
+import { buildScoreMarks, scoreTruncatedAt, type ScoreRun, type ScoreUpcoming } from "../components/score-feed";
+import { excludeSuppressed } from "./scheduling/calendars";
+import { appZoneParts, fmtInAppZone } from "../utils/datetime";
 import { useAgency } from "../agency";
 import { InlineLoading } from "../components/ui";
 import { c } from "../theme";
@@ -114,6 +119,71 @@ function Section({ title, aside, children }: { title: string; aside?: ReactNode;
   );
 }
 
+/**
+ * OverviewScore — the Dashboard's Score across every agency (2.4.4 F4): runs
+ * in the last day and fires in the next twelve hours, each named with its
+ * agency. Its feeds name no agency (allReadable), which the overview's
+ * audience reads in full; a mark opens its run in its own agency (the run
+ * link switches, SW-8).
+ */
+function OverviewScore() {
+  const ag = useAgency();
+  const navigate = useNavigate();
+  const runsQ = useLiveGet<unknown>(
+    () =>
+      api.GET("/runs", {
+        params: { query: { kind: "job", from: new Date(Date.now() - (HOURS_BACK + 1) * 3600 * 1000).toISOString(), pageSize: 200 } },
+        headers: allReadable,
+      }),
+    [],
+    () => true,
+    REFRESH_MS,
+  );
+  const upcomingQ = useLiveGet<unknown>(
+    () => api.GET("/schedules/upcoming", { params: { query: { window: "24h" } }, headers: allReadable }),
+    [],
+    () => true,
+    REFRESH_MS,
+  );
+  const runnersQ = useGet<unknown>(() => api.GET("/runners", { headers: allReadable }));
+  const runs = rows<ScoreRun>(runsQ.data);
+  const upcomingAll = rows<ScoreUpcoming & { suppressed?: boolean }>(upcomingQ.data);
+  const upcoming = excludeSuppressed(upcomingAll);
+  const runnerNames = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows<{ id?: string; name?: string }>(runnersQ.data)) if (r.id && r.name) m.set(r.id, r.name);
+    return m;
+  }, [runnersQ.data]);
+  // Every mark says whose it is: the strip mixes agencies.
+  const marks = useMemo(
+    () =>
+      buildScoreMarks(runs, upcoming, runnerNames, {
+        run: (r) => `${r.jobName ?? "—"} · ${ag.nameOf(r.ownerAgency || "global")}`,
+        upcoming: (u) => `${u.ownerName ?? "—"} · ${u.ownerAgencies?.[0] ?? ag.nameOf("global")}`,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runsQ.data, upcomingQ.data, runnerNames],
+  );
+  const now = Math.floor(Date.now() / 60_000) * 60_000;
+  const zone = (opts: Intl.DateTimeFormatOptions) => (at: number) => fmtInAppZone(new Date(at).toISOString(), { ...opts, hour12: false });
+  return (
+    <div data-testid="overview-score" style={{ marginBottom: 20 }}>
+      <Score
+        marks={marks}
+        now={now}
+        hourInZone={(at) => appZoneParts(new Date(at)).hour}
+        labelInZone={zone({ hour: "2-digit", minute: "2-digit" })}
+        timeInZone={zone({ hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+        stampInZone={zone({ month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+        runHref={(t) => `/runs?trace=${encodeURIComponent(t)}`}
+        onOpenRun={(t) => navigate(`/runs?trace=${encodeURIComponent(t)}`)}
+        truncatedAt={scoreTruncatedAt(upcomingAll)}
+        loading={runsQ.loading}
+      />
+    </div>
+  );
+}
+
 export function Overview() {
   const ag = useAgency();
   const q = useLiveGet<OverviewData>(() => api.GET("/overview") as never, [], () => true, REFRESH_MS);
@@ -152,6 +222,7 @@ export function Overview() {
 
   return (
     <div data-testid="overview">
+      <OverviewScore />
       <Section
         title="Find a job or workflow"
         aside={<span style={{ fontSize: c.fontXs, color: c.textMuted }}>Across every agency</span>}
