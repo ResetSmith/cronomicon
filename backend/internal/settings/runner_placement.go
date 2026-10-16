@@ -20,9 +20,10 @@ import (
 //
 // One shape predates that rule and is allowed to go on existing: a runner that
 // served several agencies in 2.2 is Global-owned with its serve list unchanged,
-// a "legacy placement" (LR-64, MA-9). It keeps working, can be narrowed, and can
-// never be widened; narrowed to one agency it can be handed to that agency,
-// which ends it.
+// a "legacy placement" (LR-64, MA-9). Since §0a (I1) it serves its owner only
+// (the claim joins on owner_agency): the other agencies on its list are listed
+// in the notice, not served. It can be narrowed, never widened; narrowed to one
+// agency it can be handed to that agency, which ends it.
 
 var (
 	// ErrServeListFixed is returned when a write would give an agent a serve

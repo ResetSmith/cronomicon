@@ -678,8 +678,8 @@ func (s *Scheduler) fire(source, jobName, jobUID, runType, scope, policy, concKe
 	}
 	// M3/T3.6 — snapshot the agency SET the effective scope belongs to onto the run,
 	// frozen at enqueue and intersected against runner membership at claim time
-	// (hard isolation). The scalar ScopeAgency is gone: a scope may now belong to
-	// several agencies, so there is no single answer to snapshot.
+	// (hard isolation). A scope belongs to one agency (a shared one is Global's
+	// since 1410), and the set is kept because a run's agencies are a set.
 	scopeAgencies, aerr := execspec.ScopeAgencies(ctx, s.db, jobAgencyFor(ctx, s.db, jobUID, source, jobName), scope)
 	if aerr != nil {
 		// Not enqueued: a run written with a guessed agency set would be dispatched

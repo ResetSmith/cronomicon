@@ -873,12 +873,12 @@ func (e *AmbiguousJobError) Error() string {
 //
 // A body kept as a file (script_path) is read from the clone of the SCRIPT's
 // repository (GR-22): dirs says where that is. The job's path is a copy of its
-// script's, relative to the script's repository; an agency's job may use
-// Global's script (GR-16), and a job built in the app has no repository of its
-// own. Until 2.4.0 there was one clone, and both callers read Global's. A job
-// from Git that has no script row (a path of its own, or a script that has
-// gone) is read in the job's own repository, and then in Global's, where it
-// was read before.
+// script's, relative to the script's repository, and a job built in the app has
+// no repository of its own. Until 2.4.0 there was one clone, and both callers
+// read Global's. A job from Git that has no script row (a path of its own, or a
+// script that has gone) is read in the job's own repository (Global's for one
+// that records none). (From GR-16 until §0a an agency's job could use Global's
+// script, and was read there.)
 //
 // A job BUILT IN THE APP is read through its script's record and not from the
 // job's own copy: the inline body, or the path of the file, is the script's as
