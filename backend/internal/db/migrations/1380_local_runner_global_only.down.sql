@@ -13,3 +13,8 @@ SELECT r.id, j.value
    AND j.value IN (SELECT id FROM agencies);
 
 DELETE FROM settings WHERE key = 'upgrade.2.4.0.localRunnerServed';
+
+-- The notice listing the agencies the upgrade took off the local runner is
+-- this migration's; the older code neither writes nor resolves it (added in
+-- 2.4.2).
+DELETE FROM notices WHERE kind = 'local_runner_served';
