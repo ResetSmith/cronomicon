@@ -76,9 +76,9 @@ func TestI4_AWorkflowChangesAgencyOnlyByARepair(t *testing.T) {
 		t.Errorf("the workflow's repair audit row: %d, want 1", n)
 	}
 
-	// A workflow with no jobs yet is Global's only by default: it takes the
-	// agency of the first jobs it is given, without a repair.
-	if c := req(gFinAdmin, http.MethodPost, "/api/v1/workflows", `{"name":"draft-flow","steps":[]}`); c/100 != 2 || owner("draft-flow") != "global" {
+	// A workflow with no jobs yet is its creator's (question 52), and takes
+	// the agency of the first jobs it is given without a repair.
+	if c := req(gFinAdmin, http.MethodPost, "/api/v1/workflows", `{"name":"draft-flow","steps":[]}`); c/100 != 2 || owner("draft-flow") != "ag:FIN" {
 		t.Fatalf("an empty workflow: %d, %s's", c, owner("draft-flow"))
 	}
 	if c := req(gFinAdmin, http.MethodPut, path("draft-flow"), steps("draft-flow", "fin-a")); c != http.StatusOK || owner("draft-flow") != "ag:FIN" {

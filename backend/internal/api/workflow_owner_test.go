@@ -67,8 +67,9 @@ func TestAWorkflowBelongsToTheAgencyOfItsJobs(t *testing.T) {
 		}
 	}
 
-	// A job with no scope is Global's, and so is a workflow that runs it; one
-	// that runs nothing is Global's too, and anybody who may compose saves it.
+	// A job with no scope is Global's, and so is a workflow that runs it. One
+	// that runs nothing is its creator's agency's (question 52; Global's until
+	// 2.4.2, whoever built it).
 	if code := post(gRoot, unscoped, "free-flow"); code/100 != 2 || owner("free-flow") != "global" {
 		t.Errorf("a workflow of an unscoped job: %d, %q's; want saved, Global's", code, owner("free-flow"))
 	}
@@ -77,8 +78,8 @@ func TestAWorkflowBelongsToTheAgencyOfItsJobs(t *testing.T) {
 	if code := post(gRoot, withFree, "fin-and-free-flow"); code != http.StatusConflict || owner("fin-and-free-flow") != "(not saved)" {
 		t.Errorf("a workflow of FIN's job and an unscoped job: %d, %q's; want 409, not saved", code, owner("fin-and-free-flow"))
 	}
-	if code := post(gFinAdmin, empty, "empty-flow"); code/100 != 2 || owner("empty-flow") != "global" {
-		t.Errorf("a workflow with no steps: %d, %q's; want saved, Global's", code, owner("empty-flow"))
+	if code := post(gFinAdmin, empty, "empty-flow"); code/100 != 2 || owner("empty-flow") != "ag:FIN" {
+		t.Errorf("a workflow with no steps: %d, %q's; want saved, FIN's", code, owner("empty-flow"))
 	}
 
 	// The owner follows the steps: saved again with one agency's jobs, the

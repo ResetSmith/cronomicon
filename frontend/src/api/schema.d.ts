@@ -6076,6 +6076,16 @@ export interface components {
                     y?: number;
                 };
             } | null;
+            /**
+             * @description v2.4.2 (question 52). Whose a workflow being CREATED is while it has no
+             *     jobs: read on a create only. A workflow's agency follows its jobs once it
+             *     has any (GR-6); with none, an edit keeps the agency it has. Omitted, a new
+             *     jobless workflow is its creator's one agency to compose in (Global's for a
+             *     global administrator; 422 `ambiguous_owner` for a composer in several
+             *     agencies). Naming an agency the caller may not compose in is 403; an agency
+             *     that does not exist is 422 `unknown_agency`.
+             */
+            ownerAgency?: string;
         };
         /** @description Result of the WB-A1 dry-run validate endpoint. Returned with 200; `ok` is false when `errors` is non-empty. */
         WorkflowValidationResult: {
