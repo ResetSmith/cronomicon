@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { c } from "../theme";
 import { Btn, CopyText, statusLabel, statusTone } from "./ui";
 import { fmtDuration } from "../utils/datetime";
@@ -55,7 +55,8 @@ function markLabel(g: MarkGroup, stampInZone: (at: number) => string): string {
     const verb = g.tense === "past" ? "ran" : "scheduled";
     return `${g.members.length} runs ${verb} at ${when}, worst result ${outcome}`;
   }
-  const name = g.members[0]?.jobName ?? "Run";
+  const m0 = g.members[0];
+  const name = m0 ? (m0.agency ? `${m0.jobName}, ${m0.agency}` : m0.jobName) : "Run";
   return g.tense === "past" ? `${name}, ${outcome}, ran ${when}` : `${name}, scheduled ${when}`;
 }
 
@@ -97,6 +98,12 @@ export interface ScoreProps {
   /** The forward projection stopped here because the API capped it (D-2b). */
   truncatedAt?: number | null;
   loading?: boolean;
+  /**
+   * 2.4.4 — the readout always shows something: at rest the most recent runs
+   * (else the next scheduled), and after the pointer leaves, the mark it last
+   * rested on rather than the idle line. The Operations overview's Score.
+   */
+  pinnedReadout?: boolean;
   /* FX-1 — the full score is an EXPANSION of this panel, not a second block below
      it. Supply these three and the header grows an expand control that swaps the
      single lane for the per-job staves inside the same surface; omit them and the
@@ -141,7 +148,7 @@ export function Score(props: ScoreProps) {
 // The compact single-lane body: the plot and its readout. Extracted from Score
 // unchanged (FX-1) so the shell above can swap it out wholesale — every line
 // below this point behaves exactly as it did when Score rendered it directly.
-function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZone, runHref, onOpenRun, truncatedAt, loading }: ScoreProps) {
+function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZone, runHref, onOpenRun, truncatedAt, loading, pinnedReadout }: ScoreProps) {
   const w = useMemo(() => scoreWindow(now), [now]);
   const groups = useMemo(() => groupMarks(marks.filter((m) => inWindow(w, m.at))), [marks, w]);
   const axis = useMemo(() => ticks(w, hourInZone), [w, hourInZone]);
@@ -157,7 +164,20 @@ function ScorePlot({ marks, now, hourInZone, labelInZone, stampInZone, timeInZon
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [cursorKey, setCursorKey] = useState<string | null>(null);
   const plotRef = useRef<HTMLDivElement>(null);
-  const activeKey = hoveredKey ?? cursorKey;
+  // pinnedReadout (2.4.4): the last mark pointed at stays shown, and at rest
+  // the most recent past group (else the next future one) is.
+  const [lastKey, setLastKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (pinnedReadout && hoveredKey != null) setLastKey(hoveredKey);
+  }, [pinnedReadout, hoveredKey]);
+  const restKey = useMemo(() => {
+    if (!pinnedReadout) return null;
+    const past = groups.filter((g) => g.tense === "past");
+    const g = past.length > 0 ? past[past.length - 1] : groups.find((x) => x.tense === "future");
+    return g ? groupKey(g) : null;
+  }, [pinnedReadout, groups]);
+  const lastShown = lastKey != null && groups.some((g) => groupKey(g) === lastKey) ? lastKey : null;
+  const activeKey = hoveredKey ?? cursorKey ?? (pinnedReadout ? (lastShown ?? restKey) : null);
   const active = activeKey != null ? (groups.find((g) => groupKey(g) === activeKey) ?? null) : null;
   // The keyboard cursor specifically — aria-activedescendant tracks this and not
   // `active`, so hovering does not narrate (H-1). Null when the cursor's mark has
@@ -609,11 +629,14 @@ function Readout({
             const cell: CSSProperties = { padding: "4px 14px 0 0", verticalAlign: "baseline", whiteSpace: "nowrap" };
             const quiet: CSSProperties = { ...cell, fontSize: c.fontXs, color: c.textMuted };
             const cap: CSSProperties = { maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis" };
+            // 2.4.4 — a Score that spans agencies says whose each job is.
+            const agencies = group.members.some((m) => !!m.agency);
             return (
               <table style={{ borderCollapse: "collapse", tableLayout: "auto", width: "100%" }}>
                 <thead>
                   <tr>
                     <th scope="col" style={head}>Job</th>
+                    {agencies && <th scope="col" style={head}>Agency</th>}
                     <th scope="col" style={head}>Status</th>
                     <th scope="col" style={head}>{past ? "Started" : "Fires"}</th>
                     {past && <th scope="col" style={head}>Trigger</th>}
@@ -630,6 +653,7 @@ function Readout({
                         {m.jobName}
                         {m.ownerKind === "workflow" && <span style={{ fontSize: c.fontXs, color: c.info, fontWeight: 400, marginLeft: 8 }}>workflow</span>}
                       </td>
+                      {agencies && <td style={{ ...cell, ...cap, color: c.textSec }}>{m.agency ?? ""}</td>}
                       <td style={{ ...cell, color: markInk(m.status, group.tense), fontSize: c.fontXs }}>
                         {/* A future mark defaults to "scheduled", not "queued": it is a
                             projection, not something the scheduler has accepted, and

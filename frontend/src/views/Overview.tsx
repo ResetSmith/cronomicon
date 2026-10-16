@@ -154,12 +154,14 @@ function OverviewScore() {
     for (const r of rows<{ id?: string; name?: string }>(runnersQ.data)) if (r.id && r.name) m.set(r.id, r.name);
     return m;
   }, [runnersQ.data]);
-  // Every mark says whose it is: the strip mixes agencies.
+  // Every mark says whose it is (the readout's Agency column): the strip mixes agencies.
   const marks = useMemo(
     () =>
       buildScoreMarks(runs, upcoming, runnerNames, {
-        run: (r) => `${r.jobName ?? "—"} · ${ag.nameOf(r.ownerAgency || "global")}`,
-        upcoming: (u) => `${u.ownerName ?? "—"} · ${u.ownerAgencies?.[0] ?? ag.nameOf("global")}`,
+        run: (r) => r.jobName ?? "—",
+        upcoming: (u) => u.ownerName ?? "—",
+        runAgency: (r) => ag.nameOf(r.ownerAgency || "global"),
+        upcomingAgency: (u) => u.ownerAgencies?.[0] ?? ag.nameOf("global"),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [runsQ.data, upcomingQ.data, runnerNames],
@@ -179,6 +181,7 @@ function OverviewScore() {
         onOpenRun={(t) => navigate(`/runs?trace=${encodeURIComponent(t)}`)}
         truncatedAt={scoreTruncatedAt(upcomingAll)}
         loading={runsQ.loading}
+        pinnedReadout
       />
     </div>
   );

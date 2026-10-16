@@ -39,6 +39,9 @@ export interface ScoreUpcoming {
 export interface ScoreNamer {
   run: (r: ScoreRun) => string;
   upcoming: (u: ScoreUpcoming) => string;
+  /** Where the Score spans agencies: each mark's agency, for the readout's Agency column. */
+  runAgency?: (r: ScoreRun) => string;
+  upcomingAgency?: (u: ScoreUpcoming) => string;
 }
 
 /**
@@ -70,12 +73,19 @@ export function buildScoreMarks(
       scheduleName: r.scheduleName,
       executor: r.executor,
       runnerName: r.runnerName ?? (r.runnerId ? (runnerNames.get(r.runnerId) ?? null) : null),
+      ...(name.runAgency ? { agency: name.runAgency(r) } : {}),
     });
   }
   for (const u of upcoming) {
     const at = u.at ? Date.parse(u.at) : NaN;
     if (Number.isNaN(at)) continue;
-    out.push({ at, tense: "future", jobName: name.upcoming(u) || "—", ownerKind: u.ownerKind });
+    out.push({
+      at,
+      tense: "future",
+      jobName: name.upcoming(u) || "—",
+      ownerKind: u.ownerKind,
+      ...(name.upcomingAgency ? { agency: name.upcomingAgency(u) } : {}),
+    });
   }
   return out;
 }

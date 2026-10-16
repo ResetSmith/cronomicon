@@ -124,7 +124,7 @@ describe("the Operations overview (2.4.4 F3)", () => {
     await waitFor(() => expect(screen.getByTestId("where").textContent).toBe("/|global"));
   });
 
-  it("draws the Score across every agency, each mark naming its agency (F4)", async () => {
+  it("draws the Score across every agency, its readout always showing, with an Agency column (F4)", async () => {
     const recent = new Date(Date.now() - 3600 * 1000).toISOString();
     RUNS = [
       { traceId: "t-a", jobName: "backup", ownerAgency: "ag-a", status: "success", kind: "job", startedAt: recent },
@@ -134,8 +134,13 @@ describe("the Operations overview (2.4.4 F3)", () => {
     await screen.findByTestId("overview-score");
     await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(0));
     const names = screen.getAllByRole("option").map((o) => o.getAttribute("aria-label") ?? "").join(" | ");
-    expect(names).toContain("backup · agency-alpha");
-    expect(names).toContain("report · agency-beta");
+    expect(names).toContain("backup, agency-alpha");
+    expect(names).toContain("report, agency-beta");
+    // The readout shows at rest (the most recent run) and has an Agency column.
+    const agencyHead = await within(screen.getByTestId("overview-score")).findByRole("columnheader", { name: "Agency" });
+    const table = agencyHead.closest("table") as HTMLElement;
+    expect(within(table).getByText("backup")).toBeTruthy();
+    expect(within(table).getByText("agency-alpha")).toBeTruthy();
     // Its feeds ask for every agency the viewer reads, not the one in use.
     for (const p of ["/runs", "/schedules/upcoming", "/runners"]) {
       const a = asked.find((x) => x.path === p);
