@@ -4883,8 +4883,9 @@ paths:
         belong to.
 
         Takes `configureApp` on the runner's present owner (a global
-        administrator, for the one case that is accepted) and on the agency
-        named. CSRF required.
+        administrator, for the one case that is accepted) and is a global
+        administrator's repair (`repair`, `reason`). A runner that does not
+        exist is 404 before anything else is asked (v2.4.2). CSRF required.
       parameters: [{ $ref: '#/components/parameters/runnerId' }, { $ref: '#/components/parameters/csrf' }]
       requestBody:
         required: true
@@ -4902,6 +4903,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: "`repair_required`: a global administrator's request without `repair: true`." }
         '422': { $ref: '#/components/responses/Validation' }
   /runners/{runnerId}/placement:
     post:

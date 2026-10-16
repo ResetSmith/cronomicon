@@ -2848,8 +2848,9 @@ export interface paths {
          *     belong to.
          *
          *     Takes `configureApp` on the runner's present owner (a global
-         *     administrator, for the one case that is accepted) and on the agency
-         *     named. CSRF required.
+         *     administrator, for the one case that is accepted) and is a global
+         *     administrator's repair (`repair`, `reason`). A runner that does not
+         *     exist is 404 before anything else is asked (v2.4.2). CSRF required.
          */
         post: operations["setRunnerOwner"];
         delete?: never;
@@ -14793,6 +14794,13 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description `repair_required`: a global administrator's request without `repair: true`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             422: components["responses"]["Validation"];
         };
     };

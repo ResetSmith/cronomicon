@@ -1068,3 +1068,19 @@ func TestG4_TheRetiredPinListIsByAuthority(t *testing.T) {
 		}
 	}
 }
+
+// Present defect 65 (found by the review of 2.4.x): handing on a runner that
+// does not exist answered a global administrator 409 repair_required (an
+// unknown runner reads as Global's to the owner gate), and a body without
+// agencyId answered a code the contract does not have.
+func TestRV_HandingOnAnUnknownRunnerIsNotFoundFirst(t *testing.T) {
+	h, _ := gateServer(t)
+	rec := gateReq(t, h, http.MethodPost, "/api/v1/runners/no-such-runner/owner", gRoot, `{"agencyId":"ag:FIN"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("handing on a runner that does not exist, without a repair = %d %s, want 404", rec.Code, rec.Body)
+	}
+	rec = gateReq(t, h, http.MethodPost, "/api/v1/runners/no-such-runner/owner", gRoot, `{}`)
+	if rec.Code != http.StatusUnprocessableEntity || errCode(rec.Body.Bytes()) != "validation_failed" {
+		t.Errorf("a body without agencyId = %d %q, want 422 validation_failed", rec.Code, errCode(rec.Body.Bytes()))
+	}
+}
